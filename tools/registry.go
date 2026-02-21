@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"sort"
 
 	"clod/anthropic"
 )
@@ -44,7 +45,9 @@ func (r *Registry) All() []*Tool {
 	return out
 }
 
-// ToolDefs returns tool definitions for the Anthropic API.
+// ToolDefs returns tool definitions for the Anthropic API, sorted by name
+// for deterministic ordering (required for prompt caching — tools are part
+// of the cached prefix).
 func (r *Registry) ToolDefs() []anthropic.ToolDef {
 	defs := make([]anthropic.ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
@@ -54,5 +57,6 @@ func (r *Registry) ToolDefs() []anthropic.ToolDef {
 			InputSchema: t.Parameters,
 		})
 	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
 }
