@@ -81,25 +81,37 @@ else
     run useradd --system --home-dir "$CLOD_HOME" --create-home --shell /usr/sbin/nologin "$CLOD_USER"
 fi
 
-# ---------- 2. Build and install binaries ----------
-info "Step 2: Binaries"
-if [[ -f "$SCRIPT_DIR/clodgw" && -f "$SCRIPT_DIR/clod" ]]; then
-    # Pre-built binaries exist — just install them (user ran `make build cli` first)
-    info "  Found pre-built binaries in $SCRIPT_DIR"
-    if ! $DRY_RUN; then
-        install -m 755 "$SCRIPT_DIR/clodgw" "$INSTALL_DIR/clodgw"
-        install -m 755 "$SCRIPT_DIR/clod" "$INSTALL_DIR/clod"
-    fi
-    info "  Installed clodgw and clod to $INSTALL_DIR"
-elif [[ -f "$INSTALL_DIR/clodgw" && -f "$INSTALL_DIR/clod" ]]; then
-    # Already installed, no local binaries to update from
-    warn "  No pre-built binaries in $SCRIPT_DIR, keeping existing install"
-else
-    error "No binaries found. Build first:"
-    error "  make build cli"
-    error "Then re-run: sudo ./setup.sh"
+# ---------- 2. Build binaries from source ----------
+info "Step 2: Build binaries from source"
+if ! command -v go &>/dev/null; then
+    error "Go not found. Install Go 1.19+ first: https://golang.org/doc/install"
     exit 1
 fi
+
+# Ensure Go env vars are set (sudo strips HOME and caches)
+export GOPATH="${GOPATH:-$SCRIPT_DIR/.gopath}"
+export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
+export GOCACHE="${GOCACHE:-$SCRIPT_DIR/.gocache}"
+export GOFLAGS="${GOFLAGS:--buildvcs=false}"
+
+info "  Building clodgw (gateway/main binary)..."
+if ! $DRY_RUN; then
+    cd "$SCRIPT_DIR"
+    go build -o clodgw . || { error "Failed to build clodgw"; exit 1; }
+fi
+
+info "  Building clod (CLI tool)..."
+if ! $DRY_RUN; then
+    cd "$SCRIPT_DIR"
+    go build -o clod ./cmd/clod/ || { error "Failed to build clod"; exit 1; }
+fi
+
+# Install built binaries
+if ! $DRY_RUN; then
+    install -m 755 "$SCRIPT_DIR/clodgw" "$INSTALL_DIR/clodgw"
+    install -m 755 "$SCRIPT_DIR/clod" "$INSTALL_DIR/clod"
+fi
+info "  Installed clodgw and clod to $INSTALL_DIR"
 
 # ---------- 3. Directories ----------
 info "Step 3: Directories"
