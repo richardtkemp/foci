@@ -184,6 +184,13 @@ func main() {
 
 	// Compactor
 	compactor := compaction.NewCompactor(client, sessions, cfg.Agent.Model, cfg.Sessions.CompactionThreshold)
+	compactor.WithConfig(
+		cfg.Sessions.CompactionModel,
+		cfg.Sessions.CompactionMaxTokens,
+		cfg.Sessions.CompactionMinMessages,
+		cfg.Sessions.CompactionSummaryPrompt,
+		cfg.Sessions.CompactionHandoffMsg,
+	)
 	compactor.Scratchpad = scratchpadStore
 
 	// Agent

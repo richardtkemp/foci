@@ -31,8 +31,13 @@ type TelegramConfig struct {
 }
 
 type SessionsConfig struct {
-	Dir                  string  `toml:"dir"`
-	CompactionThreshold  float64 `toml:"compaction_threshold"`
+	Dir                   string  `toml:"dir"`
+	CompactionThreshold   float64 `toml:"compaction_threshold"`   // compact at this % of context window (default 0.8)
+	CompactionModel       string  `toml:"compaction_model"`       // model to use for summarization (default: agent model)
+	CompactionMaxTokens   int     `toml:"compaction_max_tokens"`  // max output tokens for summary (default 4096)
+	CompactionMinMessages int     `toml:"compaction_min_messages"` // min messages before compacting (default 4)
+	CompactionSummaryPrompt string `toml:"compaction_summary_prompt"` // custom summary prompt
+	CompactionHandoffMsg  string  `toml:"compaction_handoff_msg"`  // handoff message after compaction
 }
 
 type MemoryConfig struct {
@@ -122,6 +127,18 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Sessions.CompactionThreshold == 0 {
 		cfg.Sessions.CompactionThreshold = 0.8
+	}
+	if cfg.Sessions.CompactionMaxTokens == 0 {
+		cfg.Sessions.CompactionMaxTokens = 4096
+	}
+	if cfg.Sessions.CompactionMinMessages == 0 {
+		cfg.Sessions.CompactionMinMessages = 4
+	}
+	if cfg.Sessions.CompactionSummaryPrompt == "" {
+		cfg.Sessions.CompactionSummaryPrompt = "Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history."
+	}
+	if cfg.Sessions.CompactionHandoffMsg == "" {
+		cfg.Sessions.CompactionHandoffMsg = "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
 	}
 	if cfg.HTTP.Port == 0 {
 		cfg.HTTP.Port = 18791

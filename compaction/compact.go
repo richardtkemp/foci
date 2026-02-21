@@ -12,21 +12,49 @@ import (
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
-	client     *anthropic.Client
-	sessions   *session.Store
-	model      string
-	threshold  float64 // fraction of context window (e.g. 0.8)
-	Scratchpad *memory.Scratchpad // nil disables scratchpad injection
+	client            *anthropic.Client
+	sessions          *session.Store
+	model             string
+	threshold         float64 // fraction of context window (e.g. 0.8)
+	maxTokens         int
+	minMessages       int
+	summaryPrompt     string
+	handoffMessage    string
+	Scratchpad        *memory.Scratchpad // nil disables scratchpad injection
 }
 
-// NewCompactor creates a new Compactor.
+// NewCompactor creates a new Compactor with defaults.
 func NewCompactor(client *anthropic.Client, sessions *session.Store, model string, threshold float64) *Compactor {
 	return &Compactor{
-		client:    client,
-		sessions:  sessions,
-		model:     model,
-		threshold: threshold,
+		client:         client,
+		sessions:       sessions,
+		model:          model,
+		threshold:      threshold,
+		maxTokens:      4096,
+		minMessages:    4,
+		summaryPrompt:  "Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history.",
+		handoffMessage: "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]",
 	}
+}
+
+// WithConfig updates compactor settings from configuration.
+func (c *Compactor) WithConfig(model string, maxTokens, minMessages int, summaryPrompt, handoffMessage string) *Compactor {
+	if model != "" {
+		c.model = model
+	}
+	if maxTokens > 0 {
+		c.maxTokens = maxTokens
+	}
+	if minMessages > 0 {
+		c.minMessages = minMessages
+	}
+	if summaryPrompt != "" {
+		c.summaryPrompt = summaryPrompt
+	}
+	if handoffMessage != "" {
+		c.handoffMessage = handoffMessage
+	}
+	return c
 }
 
 // contextLimit returns the approximate context window for a model.
@@ -78,7 +106,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		return fmt.Errorf("load session for compaction: %w", err)
 	}
 
-	if len(messages) < 4 {
+	if len(messages) < c.minMessages {
 		return nil // not enough to compact
 	}
 
@@ -89,12 +117,12 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	copy(summaryMessages, messages)
 	summaryMessages = append(summaryMessages, anthropic.Message{
 		Role:    "user",
-		Content: anthropic.TextContent("Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history."),
+		Content: anthropic.TextContent(c.summaryPrompt),
 	})
 
 	resp, err := c.client.SendMessage(ctx, &anthropic.MessageRequest{
 		Model:     c.model,
-		MaxTokens: 4096,
+		MaxTokens: c.maxTokens,
 		System:    system,
 		Messages:  summaryMessages,
 	})
@@ -105,7 +133,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	summary := anthropic.TextOf(resp.Content)
 
 	// Collect scratchpad contents to preserve through compaction
-	handoff := "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
+	handoff := c.handoffMessage
 	if c.Scratchpad != nil {
 		if entries, err := c.Scratchpad.All(); err == nil && len(entries) > 0 {
 			handoff += "\n\n[scratchpad — working state preserved through compaction]"
