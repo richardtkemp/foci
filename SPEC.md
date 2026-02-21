@@ -230,11 +230,9 @@ No tool call should prevent the system from responding to interrupts. If it does
 
 ### Session reset guard
 
-Daily session resets must not fire on active sessions. A session is "active" if:
-- The agent is currently processing a turn, OR
-- The last message was received less than N minutes ago (configurable, default 10)
+`/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — clod has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
 
-If the reset hour arrives and the session is active, defer the reset until the session goes idle. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow. Don't repeat that.
+If automatic resets are added later: never reset an active session. A session is "active" if the agent is processing a turn OR the last message was received less than N minutes ago. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow — that's the failure to avoid.
 
 ## Logging
 
