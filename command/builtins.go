@@ -404,6 +404,18 @@ func NewUptimeCommand(startTime time.Time) *Command {
 	}
 }
 
+// NewUsageCommand returns a /usage command that checks Claude subscription usage.
+// usageFn is a callback that fetches the usage data (avoids import coupling).
+func NewUsageCommand(usageFn func(context.Context) (string, error)) *Command {
+	return &Command{
+		Name:        "usage",
+		Description: "Check Claude subscription usage and rate limits",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return usageFn(ctx)
+		},
+	}
+}
+
 // tailFile returns the last n lines from a file.
 func tailFile(path string, n int) (string, error) {
 	f, err := os.Open(path)

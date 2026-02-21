@@ -80,6 +80,10 @@ func main() {
 	if v, ok := store.Get("anthropic.token"); ok {
 		anthropicToken = v
 	}
+	anthropicOAuthToken := cfg.Anthropic.OAuthToken
+	if v, ok := store.Get("anthropic.oauth_token"); ok {
+		anthropicOAuthToken = v
+	}
 	telegramToken := cfg.Telegram.BotToken
 	if v, ok := store.Get("telegram.bot_token"); ok {
 		telegramToken = v
@@ -335,6 +339,19 @@ func main() {
 	}))
 	cmds.Register(command.NewUptimeCommand(startTime))
 	cmds.Register(command.NewHelpCommand(cmds))
+
+	// Register /usage command (check Claude subscription usage)
+	usageClient := anthropic.NewUsageClient(anthropicOAuthToken)
+	cmds.Register(command.NewUsageCommand(func(ctx context.Context) (string, error) {
+		if anthropicOAuthToken == "" {
+			return "OAuth token not configured (add anthropic.oauth_token to config or secrets.toml)", nil
+		}
+		usage, err := usageClient.GetUsage(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error fetching usage: %v", err), nil
+		}
+		return anthropic.FormatUsage(usage), nil
+	}))
 
 	// Custom script commands from config
 	for _, cc := range cfg.Commands {

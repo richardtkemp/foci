@@ -19,7 +19,8 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	Token       string `toml:"token"`
+	Token      string `toml:"token"`
+	OAuthToken string `toml:"oauth_token"` // OAuth access token for usage API
 	BraveAPIKey string `toml:"brave_api_key"`
 }
 
