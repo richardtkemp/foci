@@ -558,6 +558,7 @@ bind = "127.0.0.1"
 
 **Out (enhancement):**
 - Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
+- Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
 - Plugin/hook architecture
 - Reactions
 - Config schema validation beyond basic TOML parsing
