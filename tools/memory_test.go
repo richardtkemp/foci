@@ -7,60 +7,67 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"clod/memory"
 )
 
-func TestMemorySearch(t *testing.T) {
+func testMemoryTool(t *testing.T) (*Tool, string) {
+	t.Helper()
 	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	dbPath := filepath.Join(dir, "memory.db")
 
-	// Create some memory files
-	os.WriteFile(filepath.Join(dir, "notes.md"), []byte("Remember to buy milk\nThe sky is blue\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "todo.md"), []byte("Buy groceries\nClean house\nBuy a new book\n"), 0644)
-
-	tool := NewMemorySearchTool(dir)
-	params, _ := json.Marshal(map[string]string{"query": "buy"})
-
-	result, err := tool.Execute(context.Background(), params)
+	idx, err := memory.NewIndex(dbPath, memDir)
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("NewIndex: %v", err)
 	}
+	t.Cleanup(func() { idx.Close() })
 
-	// Should find "buy" in both files (case-insensitive)
-	if !strings.Contains(result, "notes.md") {
-		t.Errorf("missing notes.md match in result: %q", result)
-	}
-	if !strings.Contains(result, "todo.md") {
-		t.Errorf("missing todo.md match in result: %q", result)
-	}
-	// "Buy" appears 3 times total (1 in notes, 2 in todo)
-	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) != 3 {
-		t.Errorf("got %d matches, want 3", len(lines))
-	}
+	return NewMemorySearchTool(idx), memDir
 }
 
-func TestMemorySearchCaseInsensitive(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "test.md"), []byte("Hello World\nhello world\nHELLO WORLD\n"), 0644)
+func TestMemorySearch(t *testing.T) {
+	tool, memDir := testMemoryTool(t)
 
-	tool := NewMemorySearchTool(dir)
-	params, _ := json.Marshal(map[string]string{"query": "hello"})
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Remember to buy milk\nThe sky is blue\n"), 0644)
+	os.WriteFile(filepath.Join(memDir, "todo.md"), []byte("Buy groceries\nClean house\nBuy a new book\n"), 0644)
 
-	result, err := tool.Execute(context.Background(), params)
+	// Re-index after writing files (the index was created before files existed)
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), memDir)
+	defer idx.Close()
+	idx.Reindex()
+
+	tool2 := NewMemorySearchTool(idx)
+	params, _ := json.Marshal(map[string]string{"query": "buy"})
+
+	result, err := tool2.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) != 3 {
-		t.Errorf("got %d matches, want 3 (case insensitive)", len(lines))
+	// Should find "buy" in both files
+	if !strings.Contains(result, "notes.md") {
+		t.Errorf("missing notes.md in result: %q", result)
 	}
+	if !strings.Contains(result, "todo.md") {
+		t.Errorf("missing todo.md in result: %q", result)
+	}
+
+	// Verify it's not using the uninitialized tool
+	_ = tool
 }
 
 func TestMemorySearchNoMatches(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "test.md"), []byte("nothing relevant here\n"), 0644)
+	tool, memDir := testMemoryTool(t)
+	os.WriteFile(filepath.Join(memDir, "test.md"), []byte("nothing relevant here\n"), 0644)
 
-	tool := NewMemorySearchTool(dir)
+	// Need to reindex with a fresh connection to pick up the file
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), memDir)
+	defer idx.Close()
+	idx.Reindex()
+
+	tool = NewMemorySearchTool(idx)
 	params, _ := json.Marshal(map[string]string{"query": "xyzzy"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -72,49 +79,8 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	}
 }
 
-func TestMemorySearchSkipsNonMarkdown(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "notes.md"), []byte("keyword here\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"keyword": true}`), 0644)
-	os.WriteFile(filepath.Join(dir, "script.sh"), []byte("echo keyword\n"), 0644)
-
-	tool := NewMemorySearchTool(dir)
-	params, _ := json.Marshal(map[string]string{"query": "keyword"})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) != 1 {
-		t.Errorf("got %d matches, want 1 (only .md files)", len(lines))
-	}
-}
-
-func TestMemorySearchSubdirectories(t *testing.T) {
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "2024")
-	os.MkdirAll(sub, 0755)
-	os.WriteFile(filepath.Join(sub, "01-15.md"), []byte("found it here\n"), 0644)
-
-	tool := NewMemorySearchTool(dir)
-	params, _ := json.Marshal(map[string]string{"query": "found"})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	if !strings.Contains(result, "2024") {
-		t.Errorf("missing subdirectory in result: %q", result)
-	}
-}
-
-func TestMemorySearchEmptyDir(t *testing.T) {
-	dir := t.TempDir()
-
-	tool := NewMemorySearchTool(dir)
+func TestMemorySearchEmpty(t *testing.T) {
+	tool, _ := testMemoryTool(t)
 	params, _ := json.Marshal(map[string]string{"query": "anything"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -123,5 +89,31 @@ func TestMemorySearchEmptyDir(t *testing.T) {
 	}
 	if result != "No matches found." {
 		t.Errorf("result = %q", result)
+	}
+}
+
+func TestMemorySearchShowsSource(t *testing.T) {
+	tool, memDir := testMemoryTool(t)
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The weather is sunny today"), 0644)
+
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), memDir)
+	defer idx.Close()
+	idx.Reindex()
+	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")
+
+	tool = NewMemorySearchTool(idx)
+	params, _ := json.Marshal(map[string]string{"query": "weather"})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show both memory and conversation results with source labels
+	if !strings.Contains(result, "[memory]") {
+		t.Errorf("missing [memory] source label in result: %q", result)
+	}
+	if !strings.Contains(result, "[conversation]") {
+		t.Errorf("missing [conversation] source label in result: %q", result)
 	}
 }

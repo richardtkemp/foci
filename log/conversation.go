@@ -29,6 +29,10 @@ type ConversationLog struct {
 
 var convLog *ConversationLog
 
+// ConversationHook is called for each logged conversation entry.
+// Set by main.go to index conversation text into the memory FTS5 index.
+var ConversationHook func(text, session string)
+
 // InitConversation opens (or creates) the SQLite conversation log.
 func InitConversation(path string) error {
 	db, err := sql.Open("sqlite", path)
@@ -77,6 +81,10 @@ func Conversation(entry ConversationEntry) {
 		return
 	}
 	convLog.log(entry)
+
+	if ConversationHook != nil && entry.Text != "" {
+		ConversationHook(entry.Text, entry.Session)
+	}
 }
 
 func (c *ConversationLog) log(entry ConversationEntry) {

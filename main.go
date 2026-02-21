@@ -18,6 +18,7 @@ import (
 	"clod/compaction"
 	"clod/config"
 	"clod/log"
+	"clod/memory"
 	"clod/secrets"
 	"clod/session"
 	"clod/telegram"
@@ -99,8 +100,23 @@ func main() {
 	if braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(braveKey))
 	}
+	// Memory FTS5 index
+	var memIdx *memory.Index
 	if cfg.Memory.Dir != "" {
-		registry.Register(tools.NewMemorySearchTool(cfg.Memory.Dir))
+		memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
+		memIdx, err = memory.NewIndex(memDbPath, cfg.Memory.Dir)
+		if err != nil {
+			log.Fatalf("main", "create memory index: %v", err)
+		}
+		defer memIdx.Close()
+
+		if err := memIdx.Reindex(); err != nil {
+			log.Errorf("main", "reindex memory: %v", err)
+		}
+		registry.Register(tools.NewMemorySearchTool(memIdx))
+
+		// Index conversation messages into FTS5 as they're logged
+		log.ConversationHook = memIdx.IndexConversation
 	}
 
 	// Workspace bootstrap

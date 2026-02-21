@@ -31,7 +31,8 @@ main
  ├── secrets       → BurntSushi/toml
  ├── anthropic     (no deps)
  ├── session       → anthropic
- ├── tools         → anthropic, log, secrets
+ ├── memory        → modernc.org/sqlite
+ ├── tools         → anthropic, log, memory, secrets
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
  ├── command       (no deps)
@@ -39,7 +40,7 @@ main
  └── telegram      → agent, command, log
 ```
 
-No circular dependencies. `config`, `log`, `secrets`, and `command` are leaf packages.
+No circular dependencies. `config`, `log`, `secrets`, `memory`, and `command` are leaf packages.
 
 ## The Agent Loop (`agent/agent.go`)
 
@@ -158,7 +159,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `edit` | files.go | Find-and-replace (old_string must be unique) |
 | `web_fetch` | web.go | HTTP GET, strip HTML tags |
 | `web_search` | web.go | Brave Search API |
-| `memory_search` | memory.go | Grep across .md files in memory dir |
+| `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x) |
 
 ## Slash Commands (`command/`)
 

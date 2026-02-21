@@ -1,36 +1,35 @@
 package tools
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"clod/memory"
 )
 
-func NewMemorySearchTool(memoryDir string) *Tool {
+func NewMemorySearchTool(idx *memory.Index) *Tool {
 	return &Tool{
 		Name:        "memory_search",
-		Description: "Search across all markdown files in the memory directory. Returns matching lines with filenames.",
+		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"query": {
 					"type": "string",
-					"description": "Search query (case-insensitive substring match)"
+					"description": "Search query (supports natural language with stemming)"
 				}
 			},
 			"required": ["query"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return memorySearch(ctx, params, memoryDir)
+			return memorySearch(ctx, params, idx)
 		},
 	}
 }
 
-func memorySearch(ctx context.Context, params json.RawMessage, memoryDir string) (string, error) {
+func memorySearch(ctx context.Context, params json.RawMessage, idx *memory.Index) (string, error) {
 	var p struct {
 		Query string `json:"query"`
 	}
@@ -38,52 +37,18 @@ func memorySearch(ctx context.Context, params json.RawMessage, memoryDir string)
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
-	query := strings.ToLower(p.Query)
-
-	var results strings.Builder
-	matches := 0
-	const maxMatches = 100
-
-	err := filepath.Walk(memoryDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return err
-		}
-		if !strings.HasSuffix(path, ".md") {
-			return nil
-		}
-		if matches >= maxMatches {
-			return filepath.SkipAll
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return nil // skip files we can't read
-		}
-		defer f.Close()
-
-		relPath, _ := filepath.Rel(memoryDir, path)
-		scanner := bufio.NewScanner(f)
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-			if strings.Contains(strings.ToLower(line), query) {
-				fmt.Fprintf(&results, "%s:%d: %s\n", relPath, lineNum, line)
-				matches++
-				if matches >= maxMatches {
-					break
-				}
-			}
-		}
-		return nil
-	})
-
+	results, err := idx.Search(p.Query)
 	if err != nil {
-		return "", fmt.Errorf("search memory: %w", err)
+		return "", fmt.Errorf("search: %w", err)
 	}
 
-	if results.Len() == 0 {
+	if len(results) == 0 {
 		return "No matches found.", nil
 	}
-	return results.String(), nil
+
+	var sb strings.Builder
+	for _, r := range results {
+		fmt.Fprintf(&sb, "[%s] %s: %s\n", r.Source, r.Path, r.Snippet)
+	}
+	return sb.String(), nil
 }
