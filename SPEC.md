@@ -183,6 +183,27 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
 - `request_model` — escalate to a heavier model for the next turn
 
+### Tool Result Guard
+
+When a tool returns a result exceeding a configurable character threshold (default: 10,000 chars), clod does NOT inject the full result into session history. Instead:
+
+1. Write the full result to a temp file in the agent's home dir: `/home/clod/tmp/tool-result-{tool}-{timestamp}.txt`
+2. Return a truncated result to the agent with instructions:
+   ```
+   [Result too large: 47,231 chars. Full output saved to /home/clod/tmp/tool-result-exec-1708512345.txt]
+   Use `read` tool to inspect specific sections. First 500 chars:
+   ...
+   ```
+
+This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history until compaction. The agent can still access the full result via `read` — it just doesn't sit in context forever.
+
+```toml
+[tools]
+result_guard_chars = 10000   # max chars before writing to file
+```
+
+Reference implementation: OpenClaw's `session-tool-result-guard-wrapper.ts` (`~/git/openclaw_code/src/agents/session-tool-result-guard-wrapper.ts`)
+
 **Each tool is a function with signature:**
 ```go
 type Tool struct {
@@ -453,6 +474,9 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/log [n]` - last `n` lines from clod.log (default 20)
 - `/errors [n]` - last `n` ERROR/WARN lines from clod.log (default 10)
 - `/cost [today|session]` - total API cost from api.jsonl, grouped by session. Default: today.
+
+**Context:**
+- `/context` - character count breakdown of the full prompt. Shows each section separately: system prompt (per character file: IDENTITY.md, SOUL.md, etc.), tools schema, conversation history (user/assistant/tool messages), total. Helps diagnose what's eating context and whether cache is being used efficiently.
 
 **System:**
 - `/version` - binary version, go version, build time, git commit
