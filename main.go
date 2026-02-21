@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -353,6 +354,15 @@ func main() {
 		}
 
 		log.Infof("http", "send: %s", req.Text)
+
+		// Route slash commands through the command dispatcher
+		if strings.HasPrefix(req.Text, "/") {
+			if result, ok := cmds.Dispatch(ctx, req.Text); ok {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"response": result})
+				return
+			}
+		}
 
 		resp, err := ag.HandleMessage(ctx, sessionKey, req.Text)
 		if err != nil {
