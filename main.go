@@ -159,6 +159,9 @@ func main() {
 		Model:     cfg.Agent.Model,
 	}
 
+	// Model escalation tool (needs agent reference)
+	registry.Register(tools.NewRequestModelTool(ag))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

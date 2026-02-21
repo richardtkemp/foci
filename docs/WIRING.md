@@ -236,6 +236,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_write` | scratchpad.go | Write working notes (key + content); survives compaction |
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
+| `request_model` | model.go | Escalate to a heavier model for the next turn only; auto-reverts after one turn |
 
 ## Slash Commands (`command/`)
 

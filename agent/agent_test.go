@@ -688,3 +688,52 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 		t.Errorf("user message missing original text: %q", text)
 	}
 }
+
+func TestModelEscalation(t *testing.T) {
+	var requestModels []string
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		requestModels = append(requestModels, req.Model)
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// First turn: default model
+	ag.HandleMessage(context.Background(), "agent:test:esc", "Turn 1")
+	if requestModels[0] != "claude-haiku-4-5" {
+		t.Errorf("turn 1 model = %q, want haiku", requestModels[0])
+	}
+
+	// Set override for next turn
+	ag.SetOverrideModel("claude-opus-4-6")
+
+	// Second turn: should use override
+	ag.HandleMessage(context.Background(), "agent:test:esc", "Turn 2")
+	if requestModels[1] != "claude-opus-4-6" {
+		t.Errorf("turn 2 model = %q, want opus", requestModels[1])
+	}
+
+	// Third turn: should auto-revert to default
+	ag.HandleMessage(context.Background(), "agent:test:esc", "Turn 3")
+	if requestModels[2] != "claude-haiku-4-5" {
+		t.Errorf("turn 3 model = %q, want haiku (auto-revert)", requestModels[2])
+	}
+}
