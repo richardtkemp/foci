@@ -13,11 +13,12 @@ config.Load(path)
   → session.NewStore(dir)
   → tools.NewRegistry() + register all tools             ← exec gets secrets.Store
   → workspace.NewBootstrap(dir, fileOrder)
-  → agent.Agent{Client, Sessions, Tools, Bootstrap, Model}
+  → compaction.NewCompactor(client, sessions, model, threshold)
+  → agent.Agent{Client, Sessions, Tools, Bootstrap, Compactor, Model}
   → command.NewRegistry() + register built-ins + custom scripts
   → telegram.NewBot(token, allowedUsers, agent, cmds, sessionKey)  → goroutine
   → agent.NewHeartbeat(agent, sessionKey, interval)           → goroutine
-  → http.Server{"/wake" handler}                              → goroutine
+  → http.Server{"/send", "/status", "/command", "/wake"}      → goroutine
   → signal.Notify(SIGINT, SIGTERM) → shutdown
 ```
 
@@ -34,7 +35,7 @@ main
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
  ├── command       (no deps)
- ├── agent         → anthropic, session, tools, workspace, log
+ ├── agent         → anthropic, compaction, session, tools, workspace, log
  └── telegram      → agent, command, log
 ```
 
@@ -50,17 +51,19 @@ The core of the system. `HandleMessage(ctx, sessionKey, userMessage)`:
 3. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
 4. tools.ToolDefs()                       ← registry → []ToolDef
 5. LOOP (max 25 iterations):
-   a. client.SendMessage(system, messages, tools)
-   b. log event + log API entry
-   c. if stop_reason == "end_turn" → save & return text
-   d. if stop_reason == "tool_use":
-      - execute each tool via registry
+   a. logCacheDebug(system, messages, model)  ← warns if system < min threshold
+   b. client.SendMessage(system, messages, tools)
+   c. log event + log API entry
+   d. if stop_reason == "end_turn" → save & check compaction & return text
+   e. if stop_reason == "tool_use":
+      - execute each tool via registry (check ctx.Err() between calls)
       - append assistant msg + tool_result msg
       - goto 5a
 6. sessions.AppendAll(sessionKey, newMessages)
+7. if compactor.ShouldCompact(messages, usage) → compactor.Compact(sessionKey)
 ```
 
-Messages are only saved to disk after the full turn completes (all tool loops resolved).
+Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
 
 ## Session Storage
 
