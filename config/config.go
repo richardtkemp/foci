@@ -87,7 +87,7 @@ func Load(path string) (*Config, error) {
 		cfg.Sessions.CompactionThreshold = 0.8
 	}
 	if cfg.HTTP.Port == 0 {
-		cfg.HTTP.Port = 18790
+		cfg.HTTP.Port = 18791
 	}
 	if cfg.HTTP.Bind == "" {
 		cfg.HTTP.Bind = "127.0.0.1"

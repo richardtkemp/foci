@@ -198,7 +198,7 @@ Endpoints for external integration (used by `clod-cli`):
 
 ## CLI Tool (`cmd/clod-cli/`)
 
-Separate binary (`go build ./cmd/clod-cli`) for scripts, cron jobs, and external tools. Commands: `send`, `wake`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway at `CLOD_ADDR` (default `127.0.0.1:18790`).
+Separate binary (`go build ./cmd/clod-cli`) for scripts, cron jobs, and external tools. Commands: `send`, `wake`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway at `CLOD_ADDR` (default `127.0.0.1:18791`).
 
 ## Heartbeat & Wake
 

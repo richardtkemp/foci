@@ -361,7 +361,7 @@ compaction_threshold = 0.8  # compact at 80% context usage
 dir = "/home/rich/git/openclaw/workspace/memory"
 
 [http]
-port = 18790
+port = 18791
 bind = "127.0.0.1"
 ```
 

@@ -126,8 +126,8 @@ token = "test-token"
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
 	}
-	if cfg.HTTP.Port != 18790 {
-		t.Errorf("default HTTP.Port = %d, want 18790", cfg.HTTP.Port)
+	if cfg.HTTP.Port != 18791 {
+		t.Errorf("default HTTP.Port = %d, want 18791", cfg.HTTP.Port)
 	}
 	if cfg.HTTP.Bind != "127.0.0.1" {
 		t.Errorf("default HTTP.Bind = %q, want %q", cfg.HTTP.Bind, "127.0.0.1")
