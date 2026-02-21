@@ -207,6 +207,60 @@ Structured JSONL, one object per API request. For debugging cache behaviour, tra
 
 Searchable with `jq`. The agent can query its own API logs via tools.
 
+## Slash Commands
+
+Messages starting with `/` are intercepted before reaching the agent. They execute immediately - never queued behind an in-flight agent turn. This is a hard architectural constraint: commands must bypass the agent reply pipeline entirely.
+
+### Built-in commands
+
+- `/status` - session info, token count, model, uptime
+- `/reset` - clear session, start fresh
+- `/model <name>` - switch model for current session
+
+### Custom commands (TOML config)
+
+```toml
+[[commands]]
+name = "usage"
+description = "Show API usage stats"
+script = "jq -s 'map(.cost_usd) | add' api.jsonl"
+
+[[commands]]
+name = "logs"
+description = "Recent event log"
+script = "tail -20 clod.log"
+
+[[commands]]
+name = "health"
+description = "System health check"
+script = "~/scripts/health-check.sh"
+```
+
+Each custom command runs a shell script and returns stdout as a Telegram message. Timeout: 10s default, configurable per command.
+
+### Code-defined commands
+
+Commands can also be registered in Go for anything that needs access to internal state:
+
+```go
+type Command struct {
+    Name        string
+    Description string
+    Execute     func(ctx context.Context, args string) (string, error)
+}
+```
+
+Built-in commands are code-defined. Custom commands from TOML are script-defined. Both share the same dispatch path.
+
+### Dispatch
+
+1. Telegram message arrives starting with `/`
+2. Router matches command name (before any agent processing)
+3. Execute immediately, return result to Telegram
+4. Never touches the agent session or message history
+
+If the agent is mid-turn processing a previous message, `/status` still returns instantly. That's the point.
+
 ## Config
 
 Single TOML file. Flat, commented, no deep nesting.
