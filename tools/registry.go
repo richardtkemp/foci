@@ -36,12 +36,13 @@ func (r *Registry) Get(name string) *Tool {
 	return r.tools[name]
 }
 
-// All returns all registered tools.
+// All returns all registered tools, sorted by name.
 func (r *Registry) All() []*Tool {
 	out := make([]*Tool, 0, len(r.tools))
 	for _, t := range r.tools {
 		out = append(out, t)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
