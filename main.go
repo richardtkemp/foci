@@ -23,8 +23,8 @@ import (
 	"clod/memory"
 	"clod/secrets"
 	"clod/session"
-	"clod/telegram"
 	"clod/skills"
+	"clod/telegram"
 	"clod/tools"
 	"clod/voice"
 	"clod/workspace"
@@ -37,6 +37,18 @@ var (
 	buildTime = "unknown"
 	goVersion = runtime.Version()
 )
+
+// agentInstance holds all per-agent state.
+type agentInstance struct {
+	id         string
+	ag         *agent.Agent
+	cmds       *command.Registry
+	registry   *tools.Registry
+	bootstrap  *workspace.Bootstrap
+	sessionKey string
+	heartbeat  *agent.Heartbeat
+	agentCfg   config.AgentConfig
+}
 
 func main() {
 	configPath := config.ParseFlags()
@@ -75,7 +87,7 @@ func main() {
 		log.Infof("main", "loaded %d secrets: %v", len(names), names)
 	}
 
-	// Resolve credentials: secrets.toml overrides clod.toml
+	// Resolve shared credentials: secrets.toml overrides clod.toml
 	anthropicToken := cfg.Anthropic.Token
 	if v, ok := store.Get("anthropic.token"); ok {
 		anthropicToken = v
@@ -84,8 +96,6 @@ func main() {
 	if v, ok := store.Get("anthropic.oauth_token"); ok {
 		anthropicOAuthToken = v
 	}
-	// Resolve primary bot token: new format (telegram.bots + secrets) or legacy
-	telegramToken := cfg.ResolveBotToken(cfg.Agent.TelegramBot, store)
 	braveKey := cfg.Anthropic.BraveAPIKey
 	if v, ok := store.Get("brave.api_key"); ok {
 		braveKey = v
@@ -99,34 +109,13 @@ func main() {
 		openrouterKey = v
 	}
 
-	// Anthropic client
+	// Shared: Anthropic client
 	client := anthropic.NewClient(anthropicToken)
 
-	// Session store
+	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
 
-	// Forward-declare bot pointer for tools that need telegram access.
-	// Populated later when the bot is created.
-	var primaryBot *telegram.Bot
-
-	// Tool registry
-	registry := tools.NewRegistry()
-	registry.Register(tools.NewExecTool(store))
-	registry.Register(tools.NewTmuxTool())
-	registry.Register(tools.NewReadTool())
-	registry.Register(tools.NewWriteTool())
-	registry.Register(tools.NewEditTool())
-	registry.Register(tools.NewWebFetchTool())
-	if braveKey != "" {
-		registry.Register(tools.NewWebSearchTool(braveKey))
-	}
-	registry.Register(tools.NewSendTelegramTool(func() tools.TelegramSender {
-		if primaryBot == nil {
-			return nil
-		}
-		return primaryBot
-	}))
-	// Memory FTS5 index
+	// Shared: Memory FTS5 index
 	var memIdx *memory.Index
 	var reminderStore *memory.ReminderStore
 	var scratchpadStore *memory.Scratchpad
@@ -178,8 +167,6 @@ func main() {
 			}
 		}
 
-		registry.Register(tools.NewMemorySearchTool(memIdx))
-
 		// Reminder store (same DB directory)
 		reminderDbPath := filepath.Join(filepath.Dir(configPath), "reminders.db")
 		reminderStore, err = memory.NewReminderStore(reminderDbPath)
@@ -187,7 +174,6 @@ func main() {
 			log.Fatalf("main", "create reminder store: %v", err)
 		}
 		defer reminderStore.Close()
-		registry.Register(tools.NewMemoryRemindTool(reminderStore))
 
 		// Scratchpad (working state that survives compaction)
 		scratchpadDbPath := filepath.Join(filepath.Dir(configPath), "scratchpad.db")
@@ -196,62 +182,12 @@ func main() {
 			log.Fatalf("main", "create scratchpad: %v", err)
 		}
 		defer scratchpadStore.Close()
-		registry.Register(tools.NewScratchpadWriteTool(scratchpadStore))
-		registry.Register(tools.NewScratchpadReadTool(scratchpadStore))
-		registry.Register(tools.NewScratchpadClearTool(scratchpadStore))
 
 		// Index conversation messages into FTS5 as they're logged
 		log.ConversationHook = memIdx.IndexConversation
 	}
 
-	// Workspace bootstrap
-	bootstrap := workspace.NewBootstrap(cfg.Agent.Workspace, cfg.Agent.SystemFiles)
-
-	// Inject available secret names so agent knows what {{secret:NAME}} references are available
-	bootstrap.SetSecretNames(store.Names())
-
-	// Skills
-	skillRegistry := skills.Load(cfg.Skills.Dirs)
-	var extraSystemBlocks []anthropic.SystemBlock
-	if skillRegistry.Len() > 0 {
-		extraSystemBlocks = []anthropic.SystemBlock{
-			{Type: "text", Text: skillRegistry.SystemBlock()},
-		}
-		log.Infof("main", "loaded %d skills", skillRegistry.Len())
-	}
-
-	// Compactor
-	compactor := compaction.NewCompactor(client, sessions, cfg.Agent.Model, cfg.Sessions.CompactionThreshold)
-	compactor.WithConfig(
-		cfg.Sessions.CompactionModel,
-		cfg.Sessions.CompactionMaxTokens,
-		cfg.Sessions.CompactionMinMessages,
-		cfg.Sessions.CompactionSummaryPrompt,
-		cfg.Sessions.CompactionHandoffMsg,
-	)
-	compactor.Scratchpad = scratchpadStore
-
-	// Agent
-	ag := &agent.Agent{
-		Client:             client,
-		Sessions:           sessions,
-		Tools:              registry,
-		Bootstrap:          bootstrap,
-		Compactor:          compactor,
-		Reminders:          reminderStore,
-		Model:              cfg.Agent.Model,
-		ExtraSystemBlocks:  extraSystemBlocks,
-		CacheStrategy:      cfg.Cache.Strategy,
-		CacheBustDetect:    cfg.Logging.CacheBustDetect,
-		DuplicateMessages:  cfg.Agent.DuplicateMessages,
-		MaxResultChars:     cfg.Tools.MaxResultChars,
-		ToolResultTempDir:  cfg.Tools.TempDir,
-	}
-
-	// Model escalation tool (sync one-shot call to a different model)
-	registry.Register(tools.NewRequestModelTool(client, bootstrap))
-
-	// Voice: STT (speech-to-text) and TTS (text-to-speech)
+	// Shared: Voice providers
 	var sttProvider voice.STT
 	var ttsProvider voice.TTS
 
@@ -308,337 +244,105 @@ func main() {
 		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
 	}
 
-	if ttsProvider != nil {
-		// Register TTS tool — lets the agent send voice notes explicitly
-		registry.Register(tools.NewTTSTool(ttsProvider, func() tools.VoiceReplyFunc {
-			fn := ag.GetVoiceReplyFunc()
-			if fn == nil {
-				return nil
-			}
-			return tools.VoiceReplyFunc(fn)
-		}))
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sessionKey := fmt.Sprintf("agent:%s:main", cfg.Agent.ID)
 	startTime := time.Now()
 
-	// Scheduled wakes (timers that inject messages into the session)
-	var wakesMu sync.Mutex
-	wakes := make(map[string]context.CancelFunc)
+	// Bot manager — owns all Telegram bots
+	botMgr := telegram.NewBotManager()
 
-	wakeScheduleFn := func(delay time.Duration, message string) error {
-		wakeCtx, wakeCancel := context.WithCancel(context.Background())
-
-		go func() {
-			select {
-			case <-time.After(delay):
-				log.Infof("schedule_wake", "firing wake after %v: %q", delay, message)
-				resp, err := ag.HandleMessage(ctx, sessionKey, "[SCHEDULED WAKE]\n"+message)
-				if err != nil {
-					log.Errorf("schedule_wake", "error: %v", err)
-				} else {
-					log.Debugf("schedule_wake", "response: %s", resp)
-				}
-				wakesMu.Lock()
-				delete(wakes, message)
-				wakesMu.Unlock()
-			case <-wakeCtx.Done():
-				wakesMu.Lock()
-				delete(wakes, message)
-				wakesMu.Unlock()
-			}
-		}()
-
-		wakesMu.Lock()
-		wakes[message] = wakeCancel
-		wakesMu.Unlock()
-		return nil
-	}
-	tools.SetScheduleWakeFn(wakeScheduleFn)
-	registry.Register(tools.NewScheduleWakeTool())
-
-	// Slash commands — bypass agent pipeline entirely
-	// Create store for tracking last messages (used by // repeat command)
-	lastMsgStore := command.NewLastMessageStore()
-
-	cmds := command.NewRegistry()
-	cmds.Register(command.NewPingCommand())
-	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
-		return command.StatusInfo{
-			SessionKey:   sessionKey,
-			MessageCount: sessionMessageCount(sessions, sessionKey),
-			Model:        ag.Model,
-			Uptime:       time.Since(startTime),
-			AgentBusy:    ag.IsProcessing(),
-		}
-	}, cfg.Logging.APIFile))
-	cmds.Register(command.NewCacheCommand(cfg.Logging.APIFile))
-	cmds.Register(command.NewLastCommand(cfg.Logging.APIFile))
-	cmds.Register(command.NewCostCommand(cfg.Logging.APIFile))
-	cmds.Register(command.NewResetCommand(func() error {
-		if ag.IsProcessing() {
-			return fmt.Errorf("agent is processing — send /stop first, then /reset")
-		}
-		if err := sessions.Clear(sessionKey); err != nil {
-			return err
-		}
-		bootstrap.Reload()
-		return nil
-	}))
-	cmds.Register(command.NewModelCommand(
-		func() string { return ag.Model },
-		func(m string) { ag.Model = m },
-	))
-	cmds.Register(command.NewSessionCommand(func() command.SessionInfo {
-		return command.SessionInfo{
-			SessionKey:   sessionKey,
-			MessageCount: sessionMessageCount(sessions, sessionKey),
-			CreatedAt:    sessions.CreatedAt(sessionKey),
-			LastActivity: sessions.LastActivity(sessionKey),
-		}
-	}))
-	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
-		var infos []command.ToolInfo
-		for _, t := range registry.All() {
-			infos = append(infos, command.ToolInfo{Name: t.Name, Description: t.Description})
-		}
-		return infos
-	}))
-	cmds.Register(command.NewConfigCommand(func() string {
-		return fmt.Sprintf("[agent]\nid = %q\nmodel = %q\nworkspace = %q\n\n[sessions]\ndir = %q\n\n[memory]\ndir = %q\n\n[http]\nbind = %q\nport = %d\n\n[logging]\nlevel = %q",
-			cfg.Agent.ID, ag.Model, cfg.Agent.Workspace,
-			cfg.Sessions.Dir, cfg.Memory.Dir,
-			cfg.HTTP.Bind, cfg.HTTP.Port,
-			cfg.Logging.Level)
-	}))
-	cmds.Register(command.NewLogCommand(cfg.Logging.EventFile))
-	cmds.Register(command.NewErrorsCommand(cfg.Logging.EventFile))
-	cmds.Register(command.NewVersionCommand(command.BuildInfo{
-		Version:   version,
-		GoVersion: goVersion,
-		GitCommit: gitCommit,
-		BuildTime: buildTime,
-	}))
-	cmds.Register(command.NewUptimeCommand(startTime))
-	cmds.Register(command.NewHelpCommand(cmds))
-
-	// Register /usage command (check Claude subscription usage)
+	// Shared: usage client
 	usageClient := anthropic.NewUsageClient(anthropicOAuthToken)
-	cmds.Register(command.NewUsageCommand(func(ctx context.Context) (string, error) {
-		if anthropicOAuthToken == "" {
-			return "OAuth token not configured (add anthropic.oauth_token to config or secrets.toml)", nil
-		}
-		usage, err := usageClient.GetUsage(ctx)
-		if err != nil {
-			return fmt.Sprintf("Error fetching usage: %v", err), nil
-		}
-		return anthropic.FormatUsage(usage), nil
-	}))
 
-	// Register /reload command (reload config, skills, system files)
-	cmds.Register(command.NewReloadCommand(func() (string, error) {
-		// Reload workspace (system files)
-		bootstrap.Reload()
+	// ========== Per-agent setup ==========
+	agents := make(map[string]*agentInstance, len(cfg.Agents))
+	var agentOrder []string // preserve config order
 
-		// Reload skills
-		newSkillRegistry := skills.Load(cfg.Skills.Dirs)
-
-		// Update system blocks with new skills
-		var newExtraSystemBlocks []anthropic.SystemBlock
-		if newSkillRegistry.Len() > 0 {
-			newExtraSystemBlocks = []anthropic.SystemBlock{
-				{Type: "text", Text: newSkillRegistry.SystemBlock()},
-			}
-		}
-		ag.ExtraSystemBlocks = newExtraSystemBlocks
-
-		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills", newSkillRegistry.Len())
-		return msg, nil
-	}))
-
-	// Custom script commands from config
-	for _, cc := range cfg.Commands {
-		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
+	for _, acfg := range cfg.Agents {
+		inst := setupAgent(setupParams{
+			acfg:             acfg,
+			cfg:              cfg,
+			configPath:       configPath,
+			client:           client,
+			sessions:         sessions,
+			store:            store,
+			memIdx:           memIdx,
+			reminderStore:    reminderStore,
+			scratchpadStore:  scratchpadStore,
+			sttProvider:      sttProvider,
+			ttsProvider:      ttsProvider,
+			braveKey:         braveKey,
+			anthropicOAuthToken: anthropicOAuthToken,
+			usageClient:      usageClient,
+			botMgr:           botMgr,
+			startTime:        startTime,
+			ctx:              ctx,
+		})
+		agents[acfg.ID] = inst
+		agentOrder = append(agentOrder, acfg.ID)
+		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
 	}
 
-	// Skill slash commands (command + script in frontmatter)
-	for _, s := range skillRegistry.All() {
-		if s.Command != "" && s.Script != "" {
-			name := strings.TrimPrefix(s.Command, "/")
-			cmds.Register(command.NewScriptCommand(name, s.Description, s.Script, 30))
-		}
+	// Start all bots
+	botMgr.StartAll(ctx)
+
+	// Start all heartbeats
+	for _, id := range agentOrder {
+		agents[id].heartbeat.Start(ctx)
 	}
 
-	// Register /voice command (before bot start, needs sessionKey)
-	cmds.Register(command.NewVoiceCommand(
-		func() bool { return ag.VoiceMode(sessionKey) },
-		func(on bool) { ag.SetVoiceMode(sessionKey, on) },
-	))
-
-	// Multiball: secondary bot pool (populated below if configured)
-	var pool *telegram.Pool
-
-	// Register /multiball (and /mb alias) — closures capture pool by reference
-	forkFn := func() (string, error) {
-		if pool == nil || pool.Size() == 0 {
-			return "", fmt.Errorf("no secondary bots configured")
-		}
-		secBot, ok := pool.Acquire()
-		if !ok {
-			return "", fmt.Errorf("all secondary bots are busy")
-		}
-
-		branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
-		branchKey := fmt.Sprintf("agent:%s:multiball:%s", cfg.Agent.ID, branchID)
-
-		if err := sessions.CreateBranch(sessionKey, branchKey); err != nil {
-			pool.Release(secBot)
-			return "", fmt.Errorf("create branch: %w", err)
-		}
-
-		// Inject fork prompt so the agent knows it's on a branch
-		if fp := cfg.Agent.ForkPrompt; fp != "" {
-			sessions.AppendAll(branchKey, []anthropic.Message{
-				{Role: "user", Content: anthropic.TextContent(fp)},
-				{Role: "assistant", Content: anthropic.TextContent("Understood.")},
-			})
-		}
-
-		secBot.SetSessionKey(branchKey)
-		if primaryBot != nil {
-			secBot.SetChatID(primaryBot.ChatID())
-		}
-		secBot.SendNotification("🎱 Forked from main. What do you need?")
-
-		return fmt.Sprintf("Forked to @%s (session: %s)", secBot.Username(), branchKey), nil
-	}
-	cmds.Register(command.NewMultiballCommand(forkFn))
-	cmds.Register(&command.Command{
-		Name:        "mb",
-		Description: "Fork session to a secondary bot (alias for /multiball)",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return forkFn()
-		},
-	})
-	cmds.Register(command.NewRepeatCommand(lastMsgStore))
-
-	// Auto-expose all slash commands as tools (except those marked SkipToolExport)
-	// This allows the agent to invoke commands programmatically
-	// Detect and prevent naming collisions between commands and tools
-	for _, cmd := range cmds.All() {
-		if cmd.SkipToolExport {
-			continue // skip commands that should not be exposed as tools
-		}
-		if existingTool := registry.Get(cmd.Name); existingTool != nil {
-			log.Fatalf("main", "naming collision: command '%s' conflicts with existing tool '%s'", cmd.Name, cmd.Name)
-		}
-		registry.Register(tools.CreateCommandWrapperTool(cmd))
-	}
-
-	// Start Telegram bot
-	if telegramToken != "" {
-		var err error
-		primaryBot, err = telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, sessionKey)
-		if err != nil {
-			log.Fatalf("main", "create telegram bot: %v", err)
-		}
-
-		// Wire voice support
-		if sttProvider != nil {
-			primaryBot.SetTranscriber(sttProvider)
-		}
-		if ttsProvider != nil {
-			primaryBot.SetTTS(ttsProvider)
-		}
-
-		// Wire cache bust alerts to Telegram notification
-		if ag.CacheBustDetect {
-			ag.CacheBustAlert = func(session string, prevRead, curRead int) {
-				msg := fmt.Sprintf("⚠️ Cache bust: read dropped %d → %d on %s", prevRead, curRead, session)
-				log.Warnf("agent", "%s", msg)
-				primaryBot.SendNotification(msg)
-			}
-		}
-
-		// Secondary bots for multiball
-		secondaryTokens := cfg.Telegram.SecondaryBots
-		if v, ok := store.Get("telegram.secondary_bots"); ok && v != "" {
-			for _, t := range strings.Split(v, ",") {
-				if t = strings.TrimSpace(t); t != "" {
-					secondaryTokens = append(secondaryTokens, t)
-				}
-			}
-		}
-		if len(secondaryTokens) > 0 {
-			pool = telegram.NewPool()
-			for _, token := range secondaryTokens {
-				secBot, err := telegram.NewBot(token, cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "")
-				if err != nil {
-					log.Errorf("main", "create secondary bot: %v", err)
-					continue
-				}
-				secBot.SetSecondary(pool)
-				if sttProvider != nil {
-					secBot.SetTranscriber(sttProvider)
-				}
-				if ttsProvider != nil {
-					secBot.SetTTS(ttsProvider)
-				}
-				pool.Add(secBot)
-				go secBot.Run(ctx)
-			}
-			log.Infof("main", "multiball: %d secondary bots ready", pool.Size())
-		}
-
-		go primaryBot.Run(ctx)
-	}
-
-	// Start heartbeat
-	interval, err := time.ParseDuration(cfg.Agent.HeartbeatInterval)
-	if err != nil {
-		interval = 45 * time.Minute
-	}
-	hb := agent.NewHeartbeat(ag, sessionKey, interval)
-	hb.Start(ctx)
-
-	// HTTP server
+	// ========== HTTP server ==========
 	mux := http.NewServeMux()
 
-	// POST /send — send message to main session, return response
+	// resolveAgent returns the agent instance for the given ID, or the first agent if empty.
+	resolveAgent := func(agentID string) (*agentInstance, bool) {
+		if agentID == "" && len(agentOrder) > 0 {
+			return agents[agentOrder[0]], true
+		}
+		inst, ok := agents[agentID]
+		return inst, ok
+	}
+
+	// POST /send — send message to agent session, return response
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
-			Text string `json:"text"`
+			Agent string `json:"agent"`
+			Text  string `json:"text"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
 			return
 		}
 
-		log.Infof("http", "send: %s", req.Text)
+		inst, ok := resolveAgent(req.Agent)
+		if !ok {
+			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
+			return
+		}
+
+		log.Infof("http", "send (agent=%s): %s", inst.id, req.Text)
 
 		// Route slash commands through the command dispatcher
 		if strings.HasPrefix(req.Text, "/") {
-			if result, ok := cmds.Dispatch(ctx, req.Text); ok {
+			if result, ok := inst.cmds.Dispatch(ctx, req.Text); ok {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]string{"response": result})
 				return
 			}
 		}
 
-		resp, err := ag.HandleMessage(ctx, sessionKey, req.Text)
+		resp, err := inst.ag.HandleMessage(ctx, inst.sessionKey, req.Text)
 		if err != nil {
 			log.Errorf("http", "send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		hb.Reset()
+		inst.heartbeat.Reset()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
@@ -649,7 +353,13 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		result, _ := cmds.Dispatch(context.Background(), "/status")
+		agentID := r.URL.Query().Get("agent")
+		inst, ok := resolveAgent(agentID)
+		if !ok {
+			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
+			return
+		}
+		result, _ := inst.cmds.Dispatch(context.Background(), "/status")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": result})
 	})
@@ -661,13 +371,19 @@ func main() {
 			return
 		}
 		var req struct {
+			Agent   string `json:"agent"`
 			Command string `json:"command"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
 			http.Error(w, "bad request: need {\"command\": \"/ping\"}", http.StatusBadRequest)
 			return
 		}
-		result, ok := cmds.Dispatch(context.Background(), req.Command)
+		inst, ok := resolveAgent(req.Agent)
+		if !ok {
+			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
+			return
+		}
+		result, ok := inst.cmds.Dispatch(context.Background(), req.Command)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
@@ -695,17 +411,19 @@ func main() {
 			}
 		}
 
-		if req.Agent == "" {
-			req.Agent = cfg.Agent.ID
+		inst, ok := resolveAgent(req.Agent)
+		if !ok {
+			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
+			return
 		}
 		if req.Text == "" {
 			req.Text = "[WAKE]"
 		}
 
 		// Create a branch session for this wake call
-		parentKey := fmt.Sprintf("agent:%s:main", req.Agent)
+		parentKey := inst.sessionKey
 		branchID := fmt.Sprintf("wake-%d", time.Now().Unix())
-		branchKey := fmt.Sprintf("agent:%s:cron:%s", req.Agent, branchID)
+		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
 		if err := sessions.CreateBranch(parentKey, branchKey); err != nil {
 			log.Errorf("wake", "branch error: %v", err)
@@ -715,14 +433,14 @@ func main() {
 
 		log.Infof("wake", "branch %s from %s, text=%q", branchKey, parentKey, req.Text)
 
-		resp, err := ag.HandleMessage(ctx, branchKey, req.Text)
+		resp, err := inst.ag.HandleMessage(ctx, branchKey, req.Text)
 		if err != nil {
 			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
-		hb.Reset()
+		inst.heartbeat.Reset()
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
@@ -752,7 +470,12 @@ func main() {
 		}
 	}()
 
-	log.Infof("main", "started (agent=%s, model=%s)", cfg.Agent.ID, cfg.Agent.Model)
+	// Log startup
+	var agentNames []string
+	for _, id := range agentOrder {
+		agentNames = append(agentNames, fmt.Sprintf("%s(%s)", id, agents[id].agentCfg.Model))
+	}
+	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// Wait for signal
 	sigCh := make(chan os.Signal, 1)
@@ -760,11 +483,25 @@ func main() {
 	<-sigCh
 
 	log.Infof("main", "shutting down...")
-	hb.Stop()
+
+	// Stop all heartbeats
+	for _, id := range agentOrder {
+		agents[id].heartbeat.Stop()
+	}
 	cancel()
 
 	// Wait for in-flight agent turns to flush session state
-	for i := 0; i < 50 && ag.IsProcessing(); i++ {
+	for i := 0; i < 50; i++ {
+		anyBusy := false
+		for _, inst := range agents {
+			if inst.ag.IsProcessing() {
+				anyBusy = true
+				break
+			}
+		}
+		if !anyBusy {
+			break
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -773,6 +510,411 @@ func main() {
 		httpServer.Close()
 	}
 	httpMu.Unlock()
+}
+
+// setupParams holds the shared resources needed by each agent.
+type setupParams struct {
+	acfg                config.AgentConfig
+	cfg                 *config.Config
+	configPath          string
+	client              *anthropic.Client
+	sessions            *session.Store
+	store               *secrets.Store
+	memIdx              *memory.Index
+	reminderStore       *memory.ReminderStore
+	scratchpadStore     *memory.Scratchpad
+	sttProvider         voice.STT
+	ttsProvider         voice.TTS
+	braveKey            string
+	anthropicOAuthToken string
+	usageClient         *anthropic.UsageClient
+	botMgr              *telegram.BotManager
+	startTime           time.Time
+	ctx                 context.Context
+}
+
+// setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
+func setupAgent(p setupParams) *agentInstance {
+	acfg := p.acfg
+	sessionKey := fmt.Sprintf("agent:%s:main", acfg.ID)
+
+	// Per-agent tool registry
+	registry := tools.NewRegistry()
+	registry.Register(tools.NewExecTool(p.store))
+	registry.Register(tools.NewTmuxTool())
+	registry.Register(tools.NewReadTool())
+	registry.Register(tools.NewWriteTool())
+	registry.Register(tools.NewEditTool())
+	registry.Register(tools.NewWebFetchTool())
+	if p.braveKey != "" {
+		registry.Register(tools.NewWebSearchTool(p.braveKey))
+	}
+
+	// Memory tools (shared stores, registered per-agent)
+	if p.memIdx != nil {
+		registry.Register(tools.NewMemorySearchTool(p.memIdx))
+	}
+	if p.reminderStore != nil {
+		registry.Register(tools.NewMemoryRemindTool(p.reminderStore))
+	}
+	if p.scratchpadStore != nil {
+		registry.Register(tools.NewScratchpadWriteTool(p.scratchpadStore))
+		registry.Register(tools.NewScratchpadReadTool(p.scratchpadStore))
+		registry.Register(tools.NewScratchpadClearTool(p.scratchpadStore))
+	}
+
+	// Per-agent workspace bootstrap
+	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
+	bootstrap.SetSecretNames(p.store.Names())
+
+	// Per-agent skills
+	skillRegistry := skills.Load(p.cfg.Skills.Dirs)
+	var extraSystemBlocks []anthropic.SystemBlock
+	if skillRegistry.Len() > 0 {
+		extraSystemBlocks = []anthropic.SystemBlock{
+			{Type: "text", Text: skillRegistry.SystemBlock()},
+		}
+		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
+	}
+
+	// Per-agent compactor
+	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, p.cfg.Sessions.CompactionThreshold)
+	compactor.WithConfig(
+		p.cfg.Sessions.CompactionModel,
+		p.cfg.Sessions.CompactionMaxTokens,
+		p.cfg.Sessions.CompactionMinMessages,
+		p.cfg.Sessions.CompactionSummaryPrompt,
+		p.cfg.Sessions.CompactionHandoffMsg,
+	)
+	compactor.Scratchpad = p.scratchpadStore
+
+	// Per-agent send_telegram tool (closure captures this agent's bot)
+	registry.Register(tools.NewSendTelegramTool(func() tools.TelegramSender {
+		bot := p.botMgr.PrimaryBot(acfg.ID)
+		if bot == nil {
+			return nil
+		}
+		return bot
+	}))
+
+	// Per-agent agent struct
+	ag := &agent.Agent{
+		Client:            p.client,
+		Sessions:          p.sessions,
+		Tools:             registry,
+		Bootstrap:         bootstrap,
+		Compactor:         compactor,
+		Reminders:         p.reminderStore,
+		Model:             acfg.Model,
+		ExtraSystemBlocks: extraSystemBlocks,
+		CacheStrategy:     p.cfg.Cache.Strategy,
+		CacheBustDetect:   p.cfg.Logging.CacheBustDetect,
+		DuplicateMessages: acfg.DuplicateMessages,
+		MaxResultChars:    p.cfg.Tools.MaxResultChars,
+		ToolResultTempDir: p.cfg.Tools.TempDir,
+	}
+
+	// Model escalation tool (needs this agent's bootstrap)
+	registry.Register(tools.NewRequestModelTool(p.client, bootstrap))
+
+	// TTS tool (needs this agent's voice reply func)
+	if p.ttsProvider != nil {
+		registry.Register(tools.NewTTSTool(p.ttsProvider, func() tools.VoiceReplyFunc {
+			fn := ag.GetVoiceReplyFunc()
+			if fn == nil {
+				return nil
+			}
+			return tools.VoiceReplyFunc(fn)
+		}))
+	}
+
+	// Per-agent scheduled wakes
+	var wakesMu sync.Mutex
+	wakes := make(map[string]context.CancelFunc)
+	wakeScheduleFn := func(delay time.Duration, message string) error {
+		wakeCtx, wakeCancel := context.WithCancel(context.Background())
+		go func() {
+			select {
+			case <-time.After(delay):
+				log.Infof("schedule_wake", "firing wake after %v for agent %s: %q", delay, acfg.ID, message)
+				resp, err := ag.HandleMessage(p.ctx, sessionKey, "[SCHEDULED WAKE]\n"+message)
+				if err != nil {
+					log.Errorf("schedule_wake", "error: %v", err)
+				} else {
+					log.Debugf("schedule_wake", "response: %s", resp)
+				}
+				wakesMu.Lock()
+				delete(wakes, message)
+				wakesMu.Unlock()
+			case <-wakeCtx.Done():
+				wakesMu.Lock()
+				delete(wakes, message)
+				wakesMu.Unlock()
+			}
+		}()
+		wakesMu.Lock()
+		wakes[message] = wakeCancel
+		wakesMu.Unlock()
+		return nil
+	}
+	registry.Register(tools.NewScheduleWakeTool(wakeScheduleFn))
+
+	// Per-agent slash commands
+	lastMsgStore := command.NewLastMessageStore()
+	cmds := command.NewRegistry()
+	cmds.Register(command.NewPingCommand())
+	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
+		return command.StatusInfo{
+			SessionKey:   sessionKey,
+			MessageCount: sessionMessageCount(p.sessions, sessionKey),
+			Model:        ag.Model,
+			Uptime:       time.Since(p.startTime),
+			AgentBusy:    ag.IsProcessing(),
+		}
+	}, p.cfg.Logging.APIFile))
+	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
+	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
+	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
+	cmds.Register(command.NewResetCommand(func() error {
+		if ag.IsProcessing() {
+			return fmt.Errorf("agent is processing — send /stop first, then /reset")
+		}
+		if err := p.sessions.Clear(sessionKey); err != nil {
+			return err
+		}
+		bootstrap.Reload()
+		return nil
+	}))
+	cmds.Register(command.NewModelCommand(
+		func() string { return ag.Model },
+		func(m string) { ag.Model = m },
+	))
+	cmds.Register(command.NewSessionCommand(func() command.SessionInfo {
+		return command.SessionInfo{
+			SessionKey:   sessionKey,
+			MessageCount: sessionMessageCount(p.sessions, sessionKey),
+			CreatedAt:    p.sessions.CreatedAt(sessionKey),
+			LastActivity: p.sessions.LastActivity(sessionKey),
+		}
+	}))
+	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
+		var infos []command.ToolInfo
+		for _, t := range registry.All() {
+			infos = append(infos, command.ToolInfo{Name: t.Name, Description: t.Description})
+		}
+		return infos
+	}))
+	cmds.Register(command.NewConfigCommand(func() string {
+		return fmt.Sprintf("[agent]\nid = %q\nmodel = %q\nworkspace = %q\n\n[sessions]\ndir = %q\n\n[memory]\ndir = %q\n\n[http]\nbind = %q\nport = %d\n\n[logging]\nlevel = %q",
+			acfg.ID, ag.Model, acfg.Workspace,
+			p.cfg.Sessions.Dir, p.cfg.Memory.Dir,
+			p.cfg.HTTP.Bind, p.cfg.HTTP.Port,
+			p.cfg.Logging.Level)
+	}))
+	cmds.Register(command.NewLogCommand(p.cfg.Logging.EventFile))
+	cmds.Register(command.NewErrorsCommand(p.cfg.Logging.EventFile))
+	cmds.Register(command.NewVersionCommand(command.BuildInfo{
+		Version:   version,
+		GoVersion: goVersion,
+		GitCommit: gitCommit,
+		BuildTime: buildTime,
+	}))
+	cmds.Register(command.NewUptimeCommand(p.startTime))
+	cmds.Register(command.NewHelpCommand(cmds))
+
+	// /usage command (shared usage client)
+	cmds.Register(command.NewUsageCommand(func(ctx context.Context) (string, error) {
+		if p.anthropicOAuthToken == "" {
+			return "OAuth token not configured (add anthropic.oauth_token to config or secrets.toml)", nil
+		}
+		usage, err := p.usageClient.GetUsage(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error fetching usage: %v", err), nil
+		}
+		return anthropic.FormatUsage(usage), nil
+	}))
+
+	// /reload command
+	cmds.Register(command.NewReloadCommand(func() (string, error) {
+		bootstrap.Reload()
+		newSkillRegistry := skills.Load(p.cfg.Skills.Dirs)
+		var newExtraSystemBlocks []anthropic.SystemBlock
+		if newSkillRegistry.Len() > 0 {
+			newExtraSystemBlocks = []anthropic.SystemBlock{
+				{Type: "text", Text: newSkillRegistry.SystemBlock()},
+			}
+		}
+		ag.ExtraSystemBlocks = newExtraSystemBlocks
+		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills", newSkillRegistry.Len())
+		return msg, nil
+	}))
+
+	// Custom script commands from config
+	for _, cc := range p.cfg.Commands {
+		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
+	}
+
+	// Skill slash commands (command + script in frontmatter)
+	for _, s := range skillRegistry.All() {
+		if s.Command != "" && s.Script != "" {
+			name := strings.TrimPrefix(s.Command, "/")
+			cmds.Register(command.NewScriptCommand(name, s.Description, s.Script, 30))
+		}
+	}
+
+	// /voice command
+	cmds.Register(command.NewVoiceCommand(
+		func() bool { return ag.VoiceMode(sessionKey) },
+		func(on bool) { ag.SetVoiceMode(sessionKey, on) },
+	))
+
+	// /multiball and /mb — per-agent, uses this agent's pool
+	forkFn := func() (string, error) {
+		pool := p.botMgr.Pool(acfg.ID)
+		if pool == nil || pool.Size() == 0 {
+			return "", fmt.Errorf("no secondary bots configured")
+		}
+		secBot, ok := pool.Acquire()
+		if !ok {
+			return "", fmt.Errorf("all secondary bots are busy")
+		}
+
+		branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
+		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
+
+		if err := p.sessions.CreateBranch(sessionKey, branchKey); err != nil {
+			pool.Release(secBot)
+			return "", fmt.Errorf("create branch: %w", err)
+		}
+
+		// Inject fork prompt so the agent knows it's on a branch
+		if fp := acfg.ForkPrompt; fp != "" {
+			p.sessions.AppendAll(branchKey, []anthropic.Message{
+				{Role: "user", Content: anthropic.TextContent(fp)},
+				{Role: "assistant", Content: anthropic.TextContent("Understood.")},
+			})
+		}
+
+		secBot.SetSessionKey(branchKey)
+		if primaryBot := p.botMgr.PrimaryBot(acfg.ID); primaryBot != nil {
+			secBot.SetChatID(primaryBot.ChatID())
+		}
+		secBot.SendNotification("🎱 Forked from main. What do you need?")
+
+		return fmt.Sprintf("Forked to @%s (session: %s)", secBot.Username(), branchKey), nil
+	}
+	cmds.Register(command.NewMultiballCommand(forkFn))
+	cmds.Register(&command.Command{
+		Name:        "mb",
+		Description: "Fork session to a secondary bot (alias for /multiball)",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return forkFn()
+		},
+	})
+	cmds.Register(command.NewRepeatCommand(lastMsgStore))
+
+	// Auto-expose all slash commands as tools
+	for _, cmd := range cmds.All() {
+		if cmd.SkipToolExport {
+			continue
+		}
+		if existingTool := registry.Get(cmd.Name); existingTool != nil {
+			log.Fatalf("main", "agent %q: naming collision: command '%s' conflicts with existing tool", acfg.ID, cmd.Name)
+		}
+		registry.Register(tools.CreateCommandWrapperTool(cmd))
+	}
+
+	// Create and register Telegram bots via BotManager
+	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)
+	if telegramToken != "" {
+		primaryBot, err := telegram.NewBot(telegramToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, sessionKey)
+		if err != nil {
+			log.Fatalf("main", "agent %q: create telegram bot: %v", acfg.ID, err)
+		}
+
+		if p.sttProvider != nil {
+			primaryBot.SetTranscriber(p.sttProvider)
+		}
+		if p.ttsProvider != nil {
+			primaryBot.SetTTS(p.ttsProvider)
+		}
+
+		// Wire cache bust alerts to this agent's bot
+		if ag.CacheBustDetect {
+			ag.CacheBustAlert = func(session string, prevRead, curRead int) {
+				msg := fmt.Sprintf("⚠️ Cache bust: read dropped %d → %d on %s", prevRead, curRead, session)
+				log.Warnf("agent", "%s", msg)
+				primaryBot.SendNotification(msg)
+			}
+		}
+
+		p.botMgr.AddPrimary(acfg.ID, primaryBot)
+
+		// Multiball bot (if configured)
+		if acfg.MultiballBot != "" {
+			mbToken := p.cfg.ResolveBotToken(acfg.MultiballBot, p.store)
+			if mbToken != "" {
+				mbBot, err := telegram.NewBot(mbToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "")
+				if err != nil {
+					log.Errorf("main", "agent %q: create multiball bot: %v", acfg.ID, err)
+				} else {
+					if p.sttProvider != nil {
+						mbBot.SetTranscriber(p.sttProvider)
+					}
+					if p.ttsProvider != nil {
+						mbBot.SetTTS(p.ttsProvider)
+					}
+					p.botMgr.AddMultiball(acfg.ID, mbBot)
+					log.Infof("main", "agent %q: multiball bot ready", acfg.ID)
+				}
+			}
+		} else {
+			// Legacy: secondary bots from [telegram] config
+			secondaryTokens := p.cfg.Telegram.SecondaryBots
+			if v, ok := p.store.Get("telegram.secondary_bots"); ok && v != "" {
+				for _, t := range strings.Split(v, ",") {
+					if t = strings.TrimSpace(t); t != "" {
+						secondaryTokens = append(secondaryTokens, t)
+					}
+				}
+			}
+			for _, token := range secondaryTokens {
+				secBot, err := telegram.NewBot(token, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "")
+				if err != nil {
+					log.Errorf("main", "agent %q: create secondary bot: %v", acfg.ID, err)
+					continue
+				}
+				if p.sttProvider != nil {
+					secBot.SetTranscriber(p.sttProvider)
+				}
+				if p.ttsProvider != nil {
+					secBot.SetTTS(p.ttsProvider)
+				}
+				p.botMgr.AddMultiball(acfg.ID, secBot)
+			}
+			if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
+				log.Infof("main", "agent %q: %d multiball bots ready", acfg.ID, pool.Size())
+			}
+		}
+	}
+
+	// Per-agent heartbeat
+	interval, err := time.ParseDuration(acfg.HeartbeatInterval)
+	if err != nil {
+		interval = 45 * time.Minute
+	}
+	hb := agent.NewHeartbeat(ag, sessionKey, interval)
+
+	return &agentInstance{
+		id:         acfg.ID,
+		ag:         ag,
+		cmds:       cmds,
+		registry:   registry,
+		bootstrap:  bootstrap,
+		sessionKey: sessionKey,
+		heartbeat:  hb,
+		agentCfg:   acfg,
+	}
 }
 
 func sessionMessageCount(sessions *session.Store, key string) int {

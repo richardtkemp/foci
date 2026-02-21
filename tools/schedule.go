@@ -12,15 +12,19 @@ import (
 // ScheduleWakeFn is a callback to schedule a wake event
 type ScheduleWakeFn func(delay time.Duration, message string) error
 
-var scheduleWakeFn ScheduleWakeFn
-
-// SetScheduleWakeFn registers the callback for scheduling wakes.
-// This is set by main.go before the tools are used.
+// SetScheduleWakeFn is deprecated. Use NewScheduleWakeTool(fn) instead.
+// Kept for backward compatibility during transition.
 func SetScheduleWakeFn(fn ScheduleWakeFn) {
-	scheduleWakeFn = fn
+	// no-op: callers should pass fn to NewScheduleWakeTool directly
 }
 
-func NewScheduleWakeTool() *Tool {
+// NewScheduleWakeTool creates a schedule_wake tool bound to the given wake function.
+// Each agent gets its own instance targeting its own session.
+func NewScheduleWakeTool(fn ...ScheduleWakeFn) *Tool {
+	var wakeFn ScheduleWakeFn
+	if len(fn) > 0 {
+		wakeFn = fn[0]
+	}
 	return &Tool{
 		Name:        "schedule_wake",
 		Description: "Schedule a message to be sent to the session at a specified time or delay",
@@ -43,12 +47,12 @@ func NewScheduleWakeTool() *Tool {
 			"required": ["message"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return scheduleWakeExecute(ctx, params)
+			return scheduleWakeExecute(ctx, params, wakeFn)
 		},
 	}
 }
 
-func scheduleWakeExecute(ctx context.Context, params json.RawMessage) (string, error) {
+func scheduleWakeExecute(ctx context.Context, params json.RawMessage, scheduleWakeFn ScheduleWakeFn) (string, error) {
 	var p struct {
 		Delay   string `json:"delay"`
 		At      string `json:"at"`
