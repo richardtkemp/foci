@@ -15,6 +15,7 @@ import (
 	"clod/agent"
 	"clod/anthropic"
 	"clod/command"
+	"clod/compaction"
 	"clod/config"
 	"clod/log"
 	"clod/secrets"
@@ -105,12 +106,16 @@ func main() {
 	// Workspace bootstrap
 	bootstrap := workspace.NewBootstrap(cfg.Agent.Workspace, nil)
 
+	// Compactor
+	compactor := compaction.NewCompactor(client, sessions, cfg.Agent.Model, cfg.Sessions.CompactionThreshold)
+
 	// Agent
 	ag := &agent.Agent{
 		Client:    client,
 		Sessions:  sessions,
 		Tools:     registry,
 		Bootstrap: bootstrap,
+		Compactor: compactor,
 		Model:     cfg.Agent.Model,
 	}
 

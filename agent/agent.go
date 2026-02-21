@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"clod/anthropic"
+	"clod/compaction"
 	"clod/log"
 	"clod/session"
 	"clod/tools"
@@ -22,6 +23,7 @@ type Agent struct {
 	Sessions  *session.Store
 	Tools     *tools.Registry
 	Bootstrap *workspace.Bootstrap
+	Compactor *compaction.Compactor // nil disables auto-compaction
 	Model     string
 
 	processing int32 // atomic: number of in-flight HandleMessage calls
@@ -120,6 +122,14 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 				return "", fmt.Errorf("save session: %w", err)
 			}
+
+			// Check if compaction is needed
+			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
+				if err := a.Compactor.Compact(ctx, sessionKey, system); err != nil {
+					log.Errorf("agent", "compaction failed: %v", err)
+				}
+			}
+
 			return anthropic.TextOf(resp.Content), nil
 		}
 
