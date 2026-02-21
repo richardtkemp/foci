@@ -143,6 +143,47 @@ token = "test-token"
 	}
 }
 
+func TestLoadCustomCommands(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+[anthropic]
+token = "test-token"
+
+[[commands]]
+name = "usage"
+description = "Show API usage"
+script = "jq '.cost_usd' api.jsonl"
+
+[[commands]]
+name = "health"
+description = "Health check"
+script = "~/scripts/health.sh"
+timeout = 30
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Commands) != 2 {
+		t.Fatalf("Commands len = %d, want 2", len(cfg.Commands))
+	}
+	if cfg.Commands[0].Name != "usage" {
+		t.Errorf("Commands[0].Name = %q", cfg.Commands[0].Name)
+	}
+	if cfg.Commands[0].Script != "jq '.cost_usd' api.jsonl" {
+		t.Errorf("Commands[0].Script = %q", cfg.Commands[0].Script)
+	}
+	if cfg.Commands[1].Timeout != 30 {
+		t.Errorf("Commands[1].Timeout = %d, want 30", cfg.Commands[1].Timeout)
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	_, err := Load("/nonexistent/path/clod.toml")
 	if err == nil {

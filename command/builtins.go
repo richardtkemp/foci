@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -410,6 +412,38 @@ func tailFileFiltered(path string, n int, filter func(string) bool) (string, err
 		start = len(matching) - n
 	}
 	return strings.Join(matching[start:], "\n"), nil
+}
+
+// NewScriptCommand creates a command that runs a shell script and returns stdout.
+func NewScriptCommand(name, description, script string, timeout int) *Command {
+	if timeout <= 0 {
+		timeout = 10
+	}
+	return &Command{
+		Name:        name,
+		Description: description,
+		Execute: func(ctx context.Context, args string) (string, error) {
+			ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+			defer cancel()
+
+			cmd := exec.CommandContext(ctx, "sh", "-c", script)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error {
+				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+
+			out, err := cmd.CombinedOutput()
+			result := strings.TrimRight(string(out), "\n")
+
+			if err != nil {
+				if ctx.Err() != nil {
+					return result + "\n(timed out)", nil
+				}
+				return result + "\nError: " + err.Error(), nil
+			}
+			return result, nil
+		},
+	}
 }
 
 // readAPILog reads all entries from an api.jsonl file.

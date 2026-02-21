@@ -174,6 +174,11 @@ func main() {
 	}))
 	cmds.Register(command.NewUptimeCommand(startTime))
 
+	// Custom script commands from config
+	for _, cc := range cfg.Commands {
+		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
+	}
+
 	// Start Telegram bot
 	if telegramToken != "" {
 		bot, err := telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, sessionKey)

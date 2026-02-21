@@ -381,6 +381,51 @@ func TestUptimeCommand(t *testing.T) {
 	}
 }
 
+func TestScriptCommand(t *testing.T) {
+	cmd := NewScriptCommand("test", "test cmd", "echo hello from script", 10)
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result != "hello from script" {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestScriptCommandFailure(t *testing.T) {
+	cmd := NewScriptCommand("fail", "failing cmd", "echo oops >&2; exit 1", 10)
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute returned Go error: %v", err)
+	}
+	if !strings.Contains(result, "oops") {
+		t.Errorf("missing stderr in: %q", result)
+	}
+	if !strings.Contains(result, "Error:") {
+		t.Errorf("missing Error in: %q", result)
+	}
+}
+
+func TestScriptCommandTimeout(t *testing.T) {
+	cmd := NewScriptCommand("slow", "slow cmd", "sleep 60", 1)
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute returned Go error: %v", err)
+	}
+	if !strings.Contains(result, "timed out") {
+		t.Errorf("missing timeout message in: %q", result)
+	}
+}
+
+func TestScriptCommandDefaultTimeout(t *testing.T) {
+	// Verify default timeout is applied (not 0)
+	cmd := NewScriptCommand("test", "test", "echo ok", 0)
+	result, _ := cmd.Execute(context.Background(), "")
+	if result != "ok" {
+		t.Errorf("result = %q", result)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		d    time.Duration

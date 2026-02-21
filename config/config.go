@@ -46,6 +46,13 @@ type LoggingConfig struct {
 	ConversationFile string `toml:"conversation_file"`
 }
 
+type CommandConfig struct {
+	Name        string `toml:"name"`
+	Description string `toml:"description"`
+	Script      string `toml:"script"`
+	Timeout     int    `toml:"timeout"` // seconds, default 10
+}
+
 type Config struct {
 	Agent     AgentConfig     `toml:"agent"`
 	Anthropic AnthropicConfig `toml:"anthropic"`
@@ -54,6 +61,7 @@ type Config struct {
 	Memory    MemoryConfig    `toml:"memory"`
 	HTTP      HTTPConfig      `toml:"http"`
 	Logging   LoggingConfig   `toml:"logging"`
+	Commands  []CommandConfig `toml:"commands"`
 }
 
 // Load reads config from the given TOML file path.
