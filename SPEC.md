@@ -180,6 +180,62 @@ The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path
 - How to reference them: `{{secret:NAME}}`
 - Nothing about their values
 
+## Concurrency & Interrupts
+
+Hard constraints learned from OpenClaw's failure modes. These aren't nice-to-haves.
+
+### Message receiving never blocks
+
+The Telegram listener runs on its own goroutine. It receives and queues messages regardless of what the agent is doing. Even if the agent is mid-way through a 5-minute tool call, incoming messages are received, logged, and — if they're slash commands — executed immediately.
+
+```
+[telegram goroutine]  →  receive msg  →  slash command?  →  yes: execute, reply
+                                                          →  no:  enqueue for agent
+[agent goroutine]     →  dequeue msg  →  build turn  →  call API  →  run tools  →  reply
+```
+
+Two goroutines, one channel. The agent pulls from the queue at its own pace. The receiver never waits on the agent.
+
+### Agent turns are cancellable
+
+Every agent turn gets a `context.Context`. When a cancel signal arrives (new `/stop` command, shutdown, timeout), the context is cancelled and:
+
+- In-flight Anthropic API calls abort via the HTTP client's context
+- In-flight tool executions (exec, web_fetch) abort via process kill
+- The agent loop checks `ctx.Err()` between tool calls and after API responses
+
+**Stop means stop, immediately.** Not "after the current tool finishes." If exec is running a 3-minute command and the user sends `/stop`, the process is killed within seconds. This is a first-class design constraint.
+
+```go
+func (a *Agent) RunTurn(ctx context.Context, msg string) error {
+    // Every API call and tool execution passes ctx
+    resp, err := a.client.Send(ctx, messages)
+    if ctx.Err() != nil {
+        return ctx.Err() // cancelled mid-API-call
+    }
+    for _, tool := range resp.ToolCalls {
+        result, err := a.tools.Execute(ctx, tool)
+        if ctx.Err() != nil {
+            return ctx.Err() // cancelled mid-tool
+        }
+    }
+}
+```
+
+### Long-running tools yield control
+
+Tool executions that may block (exec with long commands, web_fetch on slow endpoints) must be interruptible via context cancellation. The exec tool runs commands in a child process and kills the process group on context cancel.
+
+No tool call should prevent the system from responding to interrupts. If it does, that's a bug.
+
+### Session reset guard
+
+Daily session resets must not fire on active sessions. A session is "active" if:
+- The agent is currently processing a turn, OR
+- The last message was received less than N minutes ago (configurable, default 10)
+
+If the reset hour arrives and the session is active, defer the reset until the session goes idle. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow. Don't repeat that.
+
 ## Logging
 
 Two log outputs, both plain files on disk. No systemd journal dependency.
