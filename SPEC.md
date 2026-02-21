@@ -131,7 +131,56 @@ This injects the text as a user message into a branch session of the specified a
 
 **Beta:** Built-in cron scheduler if system crontab proves limiting.
 
-### Config
+### Secrets
+
+Secrets never pass through agent context. The agent cannot read, echo, or exfiltrate credentials.
+
+### Principle
+Credentials are loaded once at startup into process memory. Built-in integrations (Anthropic, Telegram, Brave Search) use them directly from Go structs. The agent interacts with tools, tools use credentials internally — the agent never constructs auth headers or sees token values.
+
+### Architecture
+
+**`secrets.toml`** — separate from main config, `0600` permissions, read once at startup.
+
+```toml
+# secrets.toml — loaded at startup, never accessible to agent
+
+[anthropic]
+token = "sk-ant-oat01-..."
+
+[telegram]
+bot_token = "8351531463:AAH..."
+
+[brave]
+api_key = "BSA..."
+
+# Ad-hoc secrets for exec template references
+[custom]
+github_token = "ghp_..."
+openrouter_key = "sk-or-v1-..."
+```
+
+**Three layers:**
+
+1. **Built-in integrations** — Anthropic client, Telegram bot, etc. receive credentials via Go structs at init. Agent calls tools; tools use credentials internally. Zero exposure.
+
+2. **Exec template references** — For ad-hoc commands the agent can reference secrets by name:
+   ```
+   curl -H "Authorization: Bearer {{secret:custom.github_token}}" https://api.github.com/...
+   ```
+   Clod resolves `{{secret:NAME}}` before spawning the subprocess. The agent sees the template, never the value. Unresolved references are an error (not silently passed through).
+
+3. **Output redaction** — Exec tool output is scanned for known secret patterns and redacted before returning to the agent. Defence in depth — catches accidental leaks from `env`, error messages, config dumps, etc.
+
+### Blocked paths
+The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path matching a configurable blocklist. Not adversarial defence — the agent isn't hostile, just careless.
+
+### What the agent knows
+- That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
+- How to reference them: `{{secret:NAME}}`
+- Nothing about their values
+
+## Config
 
 Single TOML file. Flat, commented, no deep nesting.
 
