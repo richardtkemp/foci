@@ -213,9 +213,27 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 
 ### Built-in commands
 
-- `/status` - session info, token count, model, uptime
-- `/reset` - clear session, start fresh
-- `/model <name>` - switch model for current session
+**Session:**
+- `/status` - session key, message count, total tokens (input/output/cache read/write), model, uptime, current agent turn status (idle/processing)
+- `/reset` - clear session history, start fresh. Confirms before acting.
+- `/model [name]` - show current model, or switch to `name` for this session
+- `/session` - dump raw session metadata (message count, created at, last activity, compaction count)
+
+**Debug & inspection:**
+- `/cache` - last 5 API calls with cache hit/miss breakdown from api.jsonl. Shows: tokens in, cache read, cache write, cost. Quick way to verify caching is working.
+- `/last` - show the last API request/response: model, stop reason, token usage, duration, cost. The single most useful debug command.
+- `/tools` - list registered tools with enabled/disabled status
+- `/config` - dump current running config (redact secrets)
+- `/ping` - return "pong" with timestamp. Simplest possible liveness check.
+
+**Logs:**
+- `/log [n]` - last `n` lines from clod.log (default 20)
+- `/errors [n]` - last `n` ERROR/WARN lines from clod.log (default 10)
+- `/cost [today|session]` - total API cost from api.jsonl, grouped by session. Default: today.
+
+**System:**
+- `/version` - binary version, go version, build time, git commit
+- `/uptime` - process uptime, system load, memory usage
 
 ### Custom commands (TOML config)
 
