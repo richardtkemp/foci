@@ -363,6 +363,22 @@ func NewVersionCommand(info BuildInfo) *Command {
 	}
 }
 
+// NewVoiceCommand returns a /voice command to toggle voice mode.
+func NewVoiceCommand(getVoice func() bool, setVoice func(bool)) *Command {
+	return &Command{
+		Name:        "voice",
+		Description: "Toggle voice mode (replies sent as voice notes)",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			current := getVoice()
+			setVoice(!current)
+			if !current {
+				return "Voice mode ON — replies will be sent as voice notes.", nil
+			}
+			return "Voice mode OFF — replies will be sent as text.", nil
+		},
+	}
+}
+
 // NewUptimeCommand returns a /uptime command.
 func NewUptimeCommand(startTime time.Time) *Command {
 	return &Command{

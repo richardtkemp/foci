@@ -23,6 +23,7 @@ import (
 	"clod/session"
 	"clod/telegram"
 	"clod/tools"
+	"clod/voice"
 	"clod/workspace"
 )
 
@@ -83,6 +84,14 @@ func main() {
 	braveKey := cfg.Anthropic.BraveAPIKey
 	if v, ok := store.Get("brave.api_key"); ok {
 		braveKey = v
+	}
+	groqKey := ""
+	if v, ok := store.Get("groq.api_key"); ok {
+		groqKey = v
+	}
+	openrouterKey := ""
+	if v, ok := store.Get("openrouter.api_key"); ok {
+		openrouterKey = v
 	}
 
 	// Anthropic client
@@ -164,6 +173,58 @@ func main() {
 	// Model escalation tool (sync one-shot call to a different model)
 	registry.Register(tools.NewRequestModelTool(client, bootstrap))
 
+	// Voice: transcriber (Groq Whisper) and TTS (OpenRouter)
+	var transcriber *voice.Transcriber
+	var tts *voice.TTS
+
+	whisperEndpoint := cfg.Voice.WhisperEndpoint
+	if whisperEndpoint == "" {
+		whisperEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+	}
+	whisperModel := cfg.Voice.WhisperModel
+	if whisperModel == "" {
+		whisperModel = "whisper-large-v3"
+	}
+	if groqKey != "" {
+		transcriber = &voice.Transcriber{
+			Endpoint: whisperEndpoint,
+			APIKey:   groqKey,
+			Model:    whisperModel,
+		}
+		log.Infof("main", "voice transcription enabled (groq, %s)", whisperModel)
+	}
+
+	ttsEndpoint := cfg.Voice.TTSEndpoint
+	if ttsEndpoint == "" {
+		ttsEndpoint = "https://openrouter.ai/api/v1/audio/speech"
+	}
+	ttsModel := cfg.Voice.TTSModel
+	if ttsModel == "" {
+		ttsModel = "openai/tts-1-mini"
+	}
+	ttsVoice := cfg.Voice.TTSVoice
+	if ttsVoice == "" {
+		ttsVoice = "alloy"
+	}
+	if openrouterKey != "" {
+		tts = &voice.TTS{
+			Endpoint: ttsEndpoint,
+			APIKey:   openrouterKey,
+			Model:    ttsModel,
+			Voice:    ttsVoice,
+		}
+		log.Infof("main", "voice TTS enabled (openrouter, %s, voice=%s)", ttsModel, ttsVoice)
+
+		// Register TTS tool — lets the agent send voice notes explicitly
+		registry.Register(tools.NewTTSTool(tts, func() tools.VoiceReplyFunc {
+			fn := ag.GetVoiceReplyFunc()
+			if fn == nil {
+				return nil
+			}
+			return tools.VoiceReplyFunc(fn)
+		}))
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -233,11 +294,25 @@ func main() {
 		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
 	}
 
+	// Register /voice command (before bot start, needs sessionKey)
+	cmds.Register(command.NewVoiceCommand(
+		func() bool { return ag.VoiceMode(sessionKey) },
+		func(on bool) { ag.SetVoiceMode(sessionKey, on) },
+	))
+
 	// Start Telegram bot
 	if telegramToken != "" {
 		bot, err := telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, sessionKey)
 		if err != nil {
 			log.Fatalf("main", "create telegram bot: %v", err)
+		}
+
+		// Wire voice support
+		if transcriber != nil {
+			bot.SetTranscriber(transcriber)
+		}
+		if tts != nil {
+			bot.SetTTS(tts)
 		}
 
 		// Wire cache bust alerts to Telegram notification

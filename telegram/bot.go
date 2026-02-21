@@ -11,6 +11,7 @@ import (
 	"clod/agent"
 	"clod/command"
 	"clod/log"
+	"clod/voice"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -52,6 +53,9 @@ type Bot struct {
 	sessionKey   string
 	botToken     string           // for building file download URLs
 
+	transcriber  *voice.Transcriber // nil = voice notes not supported
+	tts          *voice.TTS         // nil = TTS not available
+
 	queue      chan queuedMessage     // receiver → agent worker
 	turnCancel context.CancelFunc     // cancel the current agent turn
 	turnMu     sync.Mutex             // protects turnCancel
@@ -82,6 +86,16 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 		botToken:     token,
 		queue:        make(chan queuedMessage, 64),
 	}, nil
+}
+
+// SetTranscriber sets the Whisper transcriber for inbound voice notes.
+func (b *Bot) SetTranscriber(t *voice.Transcriber) {
+	b.transcriber = t
+}
+
+// SetTTS sets the TTS engine for outbound voice notes.
+func (b *Bot) SetTTS(t *voice.TTS) {
+	b.tts = t
 }
 
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
@@ -128,6 +142,22 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 	text := msg.Text
 	if text == "" {
 		text = msg.Caption
+	}
+
+	// Handle voice notes: download, transcribe, tag with [voice]
+	if msg.Voice != nil && b.transcriber != nil {
+		if data, err := b.downloadFile(msg.Voice.FileID); err != nil {
+			log.Errorf("telegram", "download voice: %v", err)
+		} else {
+			transcript, err := b.transcriber.Transcribe(ctx, data, "voice.ogg")
+			if err != nil {
+				log.Errorf("telegram", "transcribe voice: %v", err)
+				b.sendReply(msg, userID, "Could not transcribe voice note.")
+				return
+			}
+			log.Infof("telegram", "voice transcription from %s: %s", msg.From.UserName, truncate(transcript, 100))
+			text = "[voice] " + transcript
+		}
 	}
 
 	// Download images from photos or image documents
@@ -232,6 +262,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	})
 	defer b.agent.SetReplyFunc(nil)
 
+	// Set up voice reply delivery (for TTS tool)
+	b.agent.SetVoiceReplyFunc(func(oggData []byte) {
+		b.sendVoiceNote(qm.msg.Chat.ID, qm.userID, qm.msg.From.UserName, oggData)
+	})
+	defer b.agent.SetVoiceReplyFunc(nil)
+
 	var response string
 	var err error
 	if len(qm.images) > 0 {
@@ -251,6 +287,17 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		}
 		log.Errorf("telegram", "agent error: %v", err)
 		response = fmt.Sprintf("Error: %v", err)
+	}
+
+	// Voice mode: convert final reply to voice note
+	if b.agent.VoiceMode(b.sessionKey) && b.tts != nil && response != "" {
+		if audioData, err := b.tts.Synthesize(turnCtx, response); err != nil {
+			log.Errorf("telegram", "tts for voice mode: %v", err)
+			b.sendReply(qm.msg, qm.userID, response) // fall back to text
+		} else {
+			b.sendVoiceNote(qm.msg.Chat.ID, qm.userID, qm.msg.From.UserName, audioData)
+		}
+		return
 	}
 
 	b.sendReply(qm.msg, qm.userID, response)
@@ -312,6 +359,26 @@ func (b *Bot) SendNotification(text string) {
 	if _, err := b.sender.Send(msg); err != nil {
 		log.Errorf("telegram", "send notification: %v", err)
 	}
+}
+
+// sendVoiceNote sends audio data as a Telegram voice note.
+func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
+	voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
+		Name:  "voice.mp3",
+		Bytes: audioData,
+	})
+	if _, err := b.sender.Send(voice); err != nil {
+		log.Errorf("telegram", "send voice note: %v", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		UserID:    userID,
+		Username:  username,
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[voice note %d bytes]", len(audioData)),
+		Session:   b.sessionKey,
+	})
 }
 
 // downloadFile downloads a file from Telegram by file ID.

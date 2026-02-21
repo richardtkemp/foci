@@ -49,6 +49,14 @@ type LoggingConfig struct {
 	CacheBustThreshold  int    `toml:"cache_bust_threshold"`  // alert when cache_write exceeds this (0 = disabled)
 }
 
+type VoiceConfig struct {
+	WhisperEndpoint string `toml:"whisper_endpoint"` // OpenAI-compatible transcription endpoint
+	WhisperModel    string `toml:"whisper_model"`    // e.g. "whisper-large-v3"
+	TTSEndpoint     string `toml:"tts_endpoint"`     // OpenAI-compatible TTS endpoint
+	TTSModel        string `toml:"tts_model"`        // e.g. "openai/tts-1-mini"
+	TTSVoice        string `toml:"tts_voice"`        // e.g. "alloy"
+}
+
 type CommandConfig struct {
 	Name        string `toml:"name"`
 	Description string `toml:"description"`
@@ -64,6 +72,7 @@ type Config struct {
 	Memory    MemoryConfig    `toml:"memory"`
 	HTTP      HTTPConfig      `toml:"http"`
 	Logging   LoggingConfig   `toml:"logging"`
+	Voice     VoiceConfig     `toml:"voice"`
 	Commands  []CommandConfig `toml:"commands"`
 }
 

@@ -460,3 +460,35 @@ func TestFormatDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestVoiceCommand(t *testing.T) {
+	voiceOn := false
+	cmd := NewVoiceCommand(
+		func() bool { return voiceOn },
+		func(on bool) { voiceOn = on },
+	)
+
+	// Toggle on
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !voiceOn {
+		t.Error("voice mode should be on after toggle")
+	}
+	if !strings.Contains(result, "ON") {
+		t.Errorf("expected ON in result, got %q", result)
+	}
+
+	// Toggle off
+	result, err = cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if voiceOn {
+		t.Error("voice mode should be off after second toggle")
+	}
+	if !strings.Contains(result, "OFF") {
+		t.Errorf("expected OFF in result, got %q", result)
+	}
+}

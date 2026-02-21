@@ -837,3 +837,69 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 	}
 }
 
+func TestVoiceMode(t *testing.T) {
+	ag := &Agent{Model: "test"}
+
+	// Default: voice mode off
+	if ag.VoiceMode("session1") {
+		t.Error("voice mode should be off by default")
+	}
+
+	// Turn on
+	ag.SetVoiceMode("session1", true)
+	if !ag.VoiceMode("session1") {
+		t.Error("voice mode should be on after SetVoiceMode(true)")
+	}
+
+	// Other session unaffected
+	if ag.VoiceMode("session2") {
+		t.Error("voice mode should be off for different session")
+	}
+
+	// Turn off
+	ag.SetVoiceMode("session1", false)
+	if ag.VoiceMode("session1") {
+		t.Error("voice mode should be off after SetVoiceMode(false)")
+	}
+}
+
+func TestBuildMetaPrefix_VoiceMode(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+
+	// Without voice mode
+	sm := &sessionMeta{}
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", sm)
+	if strings.Contains(prefix, "voice=on") {
+		t.Errorf("should not contain voice=on when voice mode off: %q", prefix)
+	}
+
+	// With voice mode
+	sm.voiceMode = true
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", sm)
+	if !strings.Contains(prefix, "voice=on") {
+		t.Errorf("should contain voice=on when voice mode on: %q", prefix)
+	}
+}
+
+func TestVoiceReplyFunc(t *testing.T) {
+	ag := &Agent{Model: "test"}
+
+	var received []byte
+	ag.SetVoiceReplyFunc(func(data []byte) {
+		received = data
+	})
+
+	ag.sendVoice([]byte("test-audio"))
+	if string(received) != "test-audio" {
+		t.Errorf("got %q, want %q", string(received), "test-audio")
+	}
+
+	// Clear and verify
+	ag.SetVoiceReplyFunc(nil)
+	received = nil
+	ag.sendVoice([]byte("should-not-deliver"))
+	if received != nil {
+		t.Error("should not deliver after clearing voice reply func")
+	}
+}
+

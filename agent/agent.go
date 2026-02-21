@@ -35,6 +35,7 @@ type sessionMeta struct {
 	prevOutput      int
 	prevCacheRead   int
 	prevCacheWrite  int
+	voiceMode       bool
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -59,11 +60,12 @@ type Agent struct {
 	CacheBustThreshold int           // alert when cache_write exceeds this (0 = disabled)
 	CacheBustAlert     CacheBustFunc // callback for alerts (set by telegram bot)
 
-	processing     int32 // atomic: number of in-flight HandleMessage calls
-	metaMu         sync.Mutex
-	meta           map[string]*sessionMeta // per-session metadata
-	replyMu        sync.Mutex
-	replyFunc      ReplyFunc // optional: set per-turn for intermediate replies
+	processing      int32 // atomic: number of in-flight HandleMessage calls
+	metaMu          sync.Mutex
+	meta            map[string]*sessionMeta // per-session metadata
+	replyMu         sync.Mutex
+	replyFunc       ReplyFunc      // optional: set per-turn for intermediate replies
+	voiceReplyFunc  VoiceReplyFunc // optional: set per-turn for voice note delivery
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
@@ -79,6 +81,33 @@ func (a *Agent) SetReplyFunc(fn ReplyFunc) {
 	a.replyFunc = fn
 }
 
+// VoiceReplyFunc is called to deliver voice audio during a turn.
+type VoiceReplyFunc func(oggData []byte)
+
+// SetVoiceReplyFunc sets a callback for voice note delivery during a turn.
+func (a *Agent) SetVoiceReplyFunc(fn VoiceReplyFunc) {
+	a.replyMu.Lock()
+	defer a.replyMu.Unlock()
+	a.voiceReplyFunc = fn
+}
+
+// sendVoice sends a voice note if a VoiceReplyFunc is set.
+func (a *Agent) sendVoice(data []byte) {
+	a.replyMu.Lock()
+	fn := a.voiceReplyFunc
+	a.replyMu.Unlock()
+	if fn != nil && len(data) > 0 {
+		fn(data)
+	}
+}
+
+// GetVoiceReplyFunc returns the current voice reply function (set per-turn by the telegram bot).
+func (a *Agent) GetVoiceReplyFunc() VoiceReplyFunc {
+	a.replyMu.Lock()
+	defer a.replyMu.Unlock()
+	return a.voiceReplyFunc
+}
+
 // sendIntermediate sends an intermediate reply if a ReplyFunc is set.
 func (a *Agent) sendIntermediate(text string) {
 	a.replyMu.Lock()
@@ -87,6 +116,22 @@ func (a *Agent) sendIntermediate(text string) {
 	if fn != nil && text != "" {
 		fn(text)
 	}
+}
+
+// VoiceMode returns whether voice mode is active for the session.
+func (a *Agent) VoiceMode(sessionKey string) bool {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.voiceMode
+}
+
+// SetVoiceMode toggles voice mode for the session.
+func (a *Agent) SetVoiceMode(sessionKey string, on bool) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	sm.voiceMode = on
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {
@@ -110,13 +155,18 @@ func buildMetaPrefix(now time.Time, model string, sm *sessionMeta) string {
 		gap = formatGap(now.Sub(sm.lastMessageTime))
 	}
 
-	if sm.prevCost == 0 && sm.prevInput == 0 {
-		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s model=%s", now.UTC().Format(time.RFC3339), gap, model)
+	voiceFlag := ""
+	if sm.voiceMode {
+		voiceFlag = " voice=on"
 	}
 
-	return fmt.Sprintf("[meta] time=%s gap=%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
-		now.UTC().Format(time.RFC3339), gap, model,
+	if sm.prevCost == 0 && sm.prevInput == 0 {
+		// First message in session — no previous turn data
+		return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s", now.UTC().Format(time.RFC3339), gap, voiceFlag, model)
+	}
+
+	return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
+		now.UTC().Format(time.RFC3339), gap, voiceFlag, model,
 		sm.prevCost,
 		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite)
 }

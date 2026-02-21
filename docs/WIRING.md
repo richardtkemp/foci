@@ -32,12 +32,13 @@ main
  ├── anthropic     (no deps)
  ├── session       → anthropic
  ├── memory        → modernc.org/sqlite
- ├── tools         → anthropic, log, memory, secrets
+ ├── voice         (no deps — uses net/http only)
+ ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
  ├── command       (no deps)
  ├── agent         → anthropic, compaction, session, tools, workspace, log
- └── telegram      → agent, command, log
+ └── telegram      → agent, command, log, voice
 ```
 
 No circular dependencies. `config`, `log`, `secrets`, `memory`, and `command` are leaf packages.
@@ -240,6 +241,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
 | `request_model` | model.go | Synchronous one-shot call to a different model. Sends prompt, returns response as tool result. Supports prompt weight: full (character files), light (minimal), none. Session's own model/cache unaffected. |
+| `tts` | voice.go | Convert text to speech via OpenRouter TTS API. Sends audio as Telegram voice note. Used when the agent wants to reply with voice explicitly. |
 
 ## Slash Commands (`command/`)
 
@@ -248,7 +250,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`
 2. **Custom** (script-defined in `clod.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
 Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
@@ -262,6 +264,7 @@ Single `clod.toml` parsed with BurntSushi/toml. Sections: `[agent]`, `[anthropic
 Two goroutines:
 ```
 [receiver goroutine]   →  receive msg  →  slash command?  →  yes: execute, reply
+                                       →  voice note?     →  download OGG, transcribe via Whisper → text
                                        →  photo/doc?      →  download image via Telegram file API
                                                            →  enqueue (buffered chan) with text + images
 [agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage[WithImages]  →  reply
@@ -274,6 +277,36 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 **Turn cancellation:** Each agent turn gets its own `context.WithCancel`. `/stop` calls `turnCancel()`, which propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). The agent loop checks `ctx.Err()` after API responses and between tool calls.
 
 **Reset guard:** `/reset` refuses when `agent.IsProcessing()` is true — prevents clearing an active conversation mid-turn.
+
+## Voice (`voice/`, `telegram/bot.go`)
+
+**Inbound (Whisper transcription):**
+```
+Telegram voice note → downloadFile(voice.FileID) → voice.Transcriber.Transcribe()
+  → Groq Whisper API (multipart/form-data, whisper-large-v3)
+  → "[voice] transcript text" queued as regular message
+```
+
+API key from `secrets.toml` under `[groq] api_key`. Endpoint and model configurable in `[voice]` config section (defaults: `https://api.groq.com/openai/v1/audio/transcriptions`, `whisper-large-v3`).
+
+**Outbound (TTS):**
+Two paths:
+1. **Voice mode** — session-level flag toggled via `/voice`. When on, all agent text replies are converted to voice notes via `voice.TTS.Synthesize()` before sending.
+2. **TTS tool** — the agent can explicitly call `tts(text)` to send a voice note. Works regardless of voice mode.
+
+```
+voice.TTS.Synthesize(text) → OpenRouter TTS API (openai/tts-1-mini)
+  → raw MP3 bytes → tgbotapi.NewVoice(chatID, FileBytes{mp3})
+```
+
+API key from `secrets.toml` under `[openrouter] api_key`. Endpoint/model/voice configurable in `[voice]` config section (defaults: `https://openrouter.ai/api/v1/audio/speech`, `openai/tts-1-mini`, `alloy`).
+
+**Voice mode metadata:** When voice mode is on, the metadata prefix includes `voice=on`:
+```
+[meta] time=2026-02-21T05:30:00Z gap=3h12m voice=on model=claude-haiku-4-5
+```
+
+The agent sees this and adjusts its style (shorter, conversational, no markdown).
 
 ## HTTP Gateway (`main.go`)
 
