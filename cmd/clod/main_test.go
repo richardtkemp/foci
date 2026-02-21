@@ -69,7 +69,7 @@ func TestCLIIntegration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Build the CLI binary
-			binPath := t.TempDir() + "/clod-cli"
+			binPath := t.TempDir() + "/clod"
 			build := exec.Command("go", "build", "-o", binPath, ".")
 			build.Dir = "."
 			if out, err := build.CombinedOutput(); err != nil {

@@ -59,7 +59,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod-cli <command> [args...]
+	fmt.Fprintf(os.Stderr, `Usage: clod <command> [args...]
 
 Commands:
   send <text>          Send a message to the agent (main session)
@@ -76,7 +76,7 @@ Environment:
 
 func cmdSend(base string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod-cli send <message text>")
+		return fmt.Errorf("usage: clod send <message text>")
 	}
 	text := strings.Join(args, " ")
 	return postJSON(base+"/send", map[string]string{"text": text})
@@ -102,7 +102,7 @@ func cmdStatus(base string) error {
 
 func cmdEval(base string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod-cli eval <shell command>")
+		return fmt.Errorf("usage: clod eval <shell command>")
 	}
 	cmd := strings.Join(args, " ")
 	text := fmt.Sprintf("Run this command and show the output:\n```\n%s\n```", cmd)
@@ -111,7 +111,7 @@ func cmdEval(base string, args []string) error {
 
 func cmdCommand(base string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod-cli command </cmd> [args]")
+		return fmt.Errorf("usage: clod command </cmd> [args]")
 	}
 	cmd := strings.Join(args, " ")
 	if !strings.HasPrefix(cmd, "/") {

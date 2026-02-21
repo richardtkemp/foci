@@ -1,5 +1,5 @@
 /clod
-/clod-cli
+/clodgw
 clod.toml
 sessions/
 workspace/*.md

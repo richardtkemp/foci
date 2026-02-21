@@ -420,7 +420,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 ### What it does
 
 1. **System user:** Create `clod` user if it doesn't exist (no login shell, home at `/home/clod`)
-2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `clod` and `clod-cli` to `/usr/local/bin/`
+2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `clod` and `clodgw` to `/usr/local/bin/`
 3. **systemd service:** Install `/etc/systemd/system/clod.service` if it doesn't exist. `User=clod`, `WorkingDirectory=/home/clod`, restart on failure. Enable and start.
 4. **Config:** Write `/home/clod/clod.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
