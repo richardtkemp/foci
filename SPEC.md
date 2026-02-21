@@ -57,6 +57,27 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 - Route incoming messages to the correct agent session
 - DM only for alpha; group chat support in beta
 
+### Multi-Bot Sessions (/multiball)
+
+An agent can have multiple Telegram bots assigned — one primary, the rest secondary. Secondary bots are idle until needed.
+
+```toml
+[telegram]
+bot_token = "primary-bot-token"
+allowed_users = ["5970082313"]
+secondary_bots = ["secondary-bot-token-1", "secondary-bot-token-2"]
+```
+
+**`/multiball` (alias `/mb`):**
+1. Fork the current session (cache-sharing branch)
+2. Attach the fork to the least-recently-used secondary bot
+3. That bot sends the user a Telegram message: "🎱 Forked from main. What do you need?" (plain Telegram message, not an agent turn — no tokens spent)
+4. All subsequent messages to that bot route to the forked session
+
+The user now has two (or more) parallel conversations with the same agent, each in its own Telegram chat, sharing the cached prefix. When the fork is done, `/done` in that chat detaches the bot and returns it to the pool.
+
+**Why:** Sometimes you want to ask a side question without derailing the main conversation. Or run parallel investigations. Each gets its own chat window — no interleaving, no confusion.
+
 ### Voice (Telegram Voice Notes)
 
 **Inbound:** Receive Telegram voice notes → transcribe via Whisper API (OpenAI-compatible, via OpenRouter or local) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
