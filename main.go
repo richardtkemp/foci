@@ -278,6 +278,41 @@ func main() {
 	sessionKey := fmt.Sprintf("agent:%s:main", cfg.Agent.ID)
 	startTime := time.Now()
 
+	// Scheduled wakes (timers that inject messages into the session)
+	var wakesMu sync.Mutex
+	wakes := make(map[string]context.CancelFunc)
+
+	wakeScheduleFn := func(delay time.Duration, message string) error {
+		wakeCtx, wakeCancel := context.WithCancel(context.Background())
+
+		go func() {
+			select {
+			case <-time.After(delay):
+				log.Infof("schedule_wake", "firing wake after %v: %q", delay, message)
+				resp, err := ag.HandleMessage(ctx, sessionKey, "[SCHEDULED WAKE]\n"+message)
+				if err != nil {
+					log.Errorf("schedule_wake", "error: %v", err)
+				} else {
+					log.Debugf("schedule_wake", "response: %s", resp)
+				}
+				wakesMu.Lock()
+				delete(wakes, message)
+				wakesMu.Unlock()
+			case <-wakeCtx.Done():
+				wakesMu.Lock()
+				delete(wakes, message)
+				wakesMu.Unlock()
+			}
+		}()
+
+		wakesMu.Lock()
+		wakes[message] = wakeCancel
+		wakesMu.Unlock()
+		return nil
+	}
+	tools.SetScheduleWakeFn(wakeScheduleFn)
+	registry.Register(tools.NewScheduleWakeTool())
+
 	// Slash commands — bypass agent pipeline entirely
 	cmds := command.NewRegistry()
 	cmds.Register(command.NewPingCommand())
