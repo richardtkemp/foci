@@ -62,12 +62,13 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 Each user message injected into the conversation carries metadata the agent can see. This is NOT in the system prompt (that would bust cache) — it's prepended to the user message content.
 
 ```
-[meta] time=2026-02-21T05:30:00Z gap=3h12m prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200
+[meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200
 ```
 
 Fields:
 - `time` — current UTC timestamp
 - `gap` — time since the previous message in this session (human-readable: "3h12m", "2d4h", "38s")
+- `model` — current model name (so the agent knows its own capabilities)
 - `prev_cost` — total cost of the previous agent turn (API call that generated the last response)
 - `prev_tokens` — token breakdown of the previous turn (input/output/cache_read/cache_write)
 
@@ -95,6 +96,17 @@ memory_remind("Ask Dick about the Greece decision", "tomorrow")
 ```
 
 Reminders surface as injected context at the specified time (next heartbeat, next session, specific date). Stored in SQLite alongside conversation log. Lightweight — not a full task system, just "future me should think about this."
+
+### Scratchpad
+
+Working notes that survive compaction but aren't permanent memory. For when the agent is mid-investigation and building up context that would be catastrophic to lose but isn't worth saving to memory files.
+
+Tools:
+- `scratchpad_write(text)` — append to scratchpad
+- `scratchpad_read()` — return current scratchpad contents
+- `scratchpad_clear()` — empty the scratchpad
+
+Stored in SQLite. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
 
 ### Tool System
 
