@@ -267,9 +267,20 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 	messages = append(messages, userMsg)
 
-	// Track new messages to save
+	// Track new messages to save. The defer flushes unsaved messages on
+	// shutdown (e.g. SIGTERM during a tool call like "systemctl restart clod").
+	// Normal exits set newMessages=nil after saving, so the defer is a no-op.
 	var newMessages []anthropic.Message
 	newMessages = append(newMessages, userMsg)
+	defer func() {
+		if len(newMessages) > 0 {
+			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
+				log.Errorf("agent", "flush in-flight messages: %v", err)
+			} else {
+				log.Infof("agent", "flushed %d in-flight messages for %s", len(newMessages), sessionKey)
+			}
+		}
+	}()
 
 	system := a.Bootstrap.SystemBlocks()
 	toolDefs := a.Tools.ToolDefs()
@@ -357,6 +368,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 				return "", fmt.Errorf("save session: %w", err)
 			}
+			newMessages = nil // saved — defer won't double-save
 
 			// Update session metadata for next turn
 			sm.lastMessageTime = now
@@ -437,6 +449,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 		return "", fmt.Errorf("save session: %w", err)
 	}
+	newMessages = nil // saved — defer won't double-save
 	return "Max tool call depth reached.", nil
 }
 

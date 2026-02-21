@@ -586,6 +586,12 @@ func main() {
 	log.Infof("main", "shutting down...")
 	hb.Stop()
 	cancel()
+
+	// Wait for in-flight agent turns to flush session state
+	for i := 0; i < 50 && ag.IsProcessing(); i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	httpMu.Lock()
 	if httpServer != nil {
 		httpServer.Close()
