@@ -9,20 +9,36 @@ config.Load(path)
   → log.Init(cfg.Logging)
   → log.InitConversation(cfg.Logging.ConversationFile)  ← SQLite
   → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
+
+  Shared resources (created once):
   → anthropic.NewClient(token)
   → session.NewStore(dir)
-  → tools.NewRegistry() + register all tools             ← exec gets secrets.Store
-  → workspace.NewBootstrap(dir, fileOrder)
-  → skills.Load(cfg.Skills.Dirs)                          ← scan skill dirs for SKILL.md
-  → compaction.NewCompactor(client, sessions, model, threshold)
-  → agent.Agent{Client, Sessions, Tools, Bootstrap, Compactor, Model, ExtraSystemBlocks}
-  → command.NewRegistry() + register built-ins + custom scripts + skill commands
-  → auto-expose all commands as tools (wrap each command in tool interface)
-  → telegram.NewBot(token, allowedUsers, agent, cmds, sessionKey)  → goroutine
-  → agent.NewHeartbeat(agent, sessionKey, interval)           → goroutine
-  → http.Server{"/send", "/status", "/command", "/wake"}      → goroutine
+  → memory.NewIndex + ReminderStore + Scratchpad         ← shared across agents
+  → voice STT/TTS providers                              ← shared across agents
+  → telegram.NewBotManager()
+
+  Per-agent loop (for each cfg.Agents[i]):
+  → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap, heartbeat}
+    → tools.NewRegistry() + register all tools            ← per-agent registry
+    → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
+    → skills.Load(cfg.Skills.Dirs)
+    → compaction.NewCompactor(client, sessions, model, threshold)
+    → agent.Agent{Client, Sessions, Tools, Bootstrap, ...}
+    → command.NewRegistry() + register built-ins + custom scripts + skill commands
+    → auto-expose all commands as tools
+    → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
+    → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
+    → agent.NewHeartbeat(agent, sessionKey, interval)
+
+  → botMgr.StartAll(ctx)                                  ← starts all bots
+  → start all heartbeats
+  → http.Server{"/send", "/status", "/command", "/wake"}  ← routes by agent param
   → signal.Notify(SIGINT, SIGTERM) → shutdown
 ```
+
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, heartbeat, and Telegram bot(s). Shared resources (anthropic client, session store, memory index, voice providers) are passed to each agent.
+
+**Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
 
 ## Package Dependency Graph
 
@@ -415,11 +431,12 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 ## HTTP Gateway (`main.go`)
 
-Endpoints for external integration (used by `clod` CLI):
-- `POST /send` — message to main session, returns response
-- `GET /status` — dispatches `/status` command
-- `POST /command` — dispatches any slash command
-- `POST /wake` — branch session for cron/external triggers
+Endpoints for external integration (used by `clod` CLI). All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent (backward compat).
+
+- `POST /send` — `{"agent": "clutch", "text": "..."}` — message to agent session
+- `GET /status?agent=clutch` — dispatches `/status` for the specified agent
+- `POST /command` — `{"agent": "clutch", "command": "/ping"}` — dispatches slash command
+- `POST /wake` — `{"agent": "clutch", "text": "morning routine"}` — branch session for cron
 
 ## CLI Tool (`cmd/clod/`)
 
