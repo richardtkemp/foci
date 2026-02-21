@@ -154,7 +154,7 @@ func main() {
 	}
 
 	// Workspace bootstrap
-	bootstrap := workspace.NewBootstrap(cfg.Agent.Workspace, nil)
+	bootstrap := workspace.NewBootstrap(cfg.Agent.Workspace, cfg.Agent.SystemFiles)
 
 	// Compactor
 	compactor := compaction.NewCompactor(client, sessions, cfg.Agent.Model, cfg.Sessions.CompactionThreshold)

@@ -9,10 +9,11 @@ import (
 )
 
 type AgentConfig struct {
-	ID                string `toml:"id"`
-	Model             string `toml:"model"`
-	Workspace         string `toml:"workspace"`
-	HeartbeatInterval string `toml:"heartbeat_interval"`
+	ID                string   `toml:"id"`
+	Model             string   `toml:"model"`
+	Workspace         string   `toml:"workspace"`
+	HeartbeatInterval string   `toml:"heartbeat_interval"`
+	SystemFiles       []string `toml:"system_files"` // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 }
 
 type AnthropicConfig struct {
