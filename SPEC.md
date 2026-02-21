@@ -405,6 +405,30 @@ Structured JSONL, one object per API request. For debugging cache behaviour, tra
 
 Searchable with `jq`. The agent can query its own API logs via tools.
 
+**Full payload logging:** Optional — records complete API request/response bodies (system prompt, messages, tool calls, full response). Off by default (large files, contains conversation content). Enable in config:
+
+```toml
+[logging]
+full_payload = true   # write full API payloads to api-payload.jsonl
+```
+
+Useful during development and debugging. The agent and `/last` can reference it for detailed inspection of what was actually sent to Anthropic.
+
+### Cache bust alerts
+
+When a single API call writes more than a configurable threshold of cache tokens, clod sends an immediate Telegram notification to the session's chat. This is a plain Telegram message, not an agent turn — zero tokens spent.
+
+```toml
+[logging]
+cache_bust_threshold = 20000  # tokens — alert when cache_write exceeds this in one call
+```
+
+```
+⚠️ Cache write: 43,201 tokens ($0.27) on agent:main:main
+```
+
+Default threshold: 20,000 tokens. Set to 0 to disable. Helps catch system prompt mutations, unexpected session resets, or compaction failures that silently blow up costs.
+
 ## Slash Commands
 
 Messages starting with `/` are intercepted before reaching the agent. They execute immediately - never queued behind an in-flight agent turn. This is a hard architectural constraint: commands must bypass the agent reply pipeline entirely.
