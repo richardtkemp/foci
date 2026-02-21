@@ -3,11 +3,7 @@
 # Usage: sudo ./setup.sh [--dry-run]
 set -euo pipefail
 
-CLOD_USER="clod"
-CLOD_HOME="/home/$CLOD_USER"
 INSTALL_DIR="/usr/local/bin"
-SERVICE_FILE="/etc/systemd/system/clod.service"
-LOGROTATE_FILE="/etc/logrotate.d/clod"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DRY_RUN=false
 
@@ -38,7 +34,8 @@ for arg in "$@"; do
             echo "Usage: sudo $0 [--dry-run]"
             echo "Installs clod agent. Idempotent — safe to re-run."
             echo ""
-            echo "Credentials can be provided via environment variables:"
+            echo "Configuration can be provided via environment variables:"
+            echo "  CLOD_USER             System username (default: clod)"
             echo "  CLOD_ANTHROPIC_TOKEN  Anthropic API token"
             echo "  CLOD_TELEGRAM_TOKEN   Telegram bot token"
             echo "  CLOD_TELEGRAM_USER    Telegram user ID for allowed_users"
@@ -56,6 +53,20 @@ if ! $DRY_RUN && [[ $EUID -ne 0 ]]; then
     error "Run as root: sudo $0"
     exit 1
 fi
+
+# Resolve system username (needed before step 1)
+CLOD_USER="${CLOD_USER:-}"
+if [[ -z "$CLOD_USER" ]]; then
+    if [[ -t 0 ]] && ! $DRY_RUN; then
+        read -rp "System username [clod]: " CLOD_USER
+    fi
+    CLOD_USER="${CLOD_USER:-clod}"
+fi
+CLOD_HOME="/home/$CLOD_USER"
+SERVICE_FILE="/etc/systemd/system/clod.service"
+LOGROTATE_FILE="/etc/logrotate.d/clod"
+
+info "Installing as user: $CLOD_USER (home: $CLOD_HOME)"
 
 # ---------- 1. System user ----------
 info "Step 1: System user"
