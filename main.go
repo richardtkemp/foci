@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -477,11 +478,26 @@ func main() {
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
-	server := &http.Server{Addr: addr, Handler: mux}
+	var httpServer *http.Server
+	var httpMu sync.Mutex
 	go func() {
-		log.Infof("http", "listening on %s", addr)
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Errorf("http", "server error: %v", err)
+		for ctx.Err() == nil {
+			srv := &http.Server{Addr: addr, Handler: mux}
+			httpMu.Lock()
+			httpServer = srv
+			httpMu.Unlock()
+
+			log.Infof("http", "listening on %s", addr)
+			if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+				log.Errorf("http", "server error: %v — restarting in 5s", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
+			} else {
+				return
+			}
 		}
 	}()
 
@@ -495,7 +511,11 @@ func main() {
 	log.Infof("main", "shutting down...")
 	hb.Stop()
 	cancel()
-	server.Close()
+	httpMu.Lock()
+	if httpServer != nil {
+		httpServer.Close()
+	}
+	httpMu.Unlock()
 }
 
 func sessionMessageCount(sessions *session.Store, key string) int {

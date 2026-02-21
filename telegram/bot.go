@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"clod/agent"
 	"clod/command"
@@ -99,22 +100,52 @@ func (b *Bot) SetTTS(t voice.TTS) {
 }
 
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
+// If polling fails, it recovers and retries with backoff.
 func (b *Bot) Run(ctx context.Context) {
 	log.Infof("telegram", "bot started as @%s", b.api.Self.UserName)
 
 	// Agent worker — processes queued messages sequentially
 	go b.agentWorker(ctx)
 
+	for ctx.Err() == nil {
+		b.pollUpdates(ctx)
+
+		if ctx.Err() != nil {
+			return
+		}
+
+		log.Warnf("telegram", "polling interrupted, restarting in 5s...")
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// pollUpdates runs the telegram update polling loop. Returns if the channel
+// closes, a panic occurs, or ctx is cancelled. Caller should retry on return.
+func (b *Bot) pollUpdates(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("telegram", "panic in polling: %v", r)
+		}
+	}()
+
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := b.api.GetUpdatesChan(u)
+	defer b.api.StopReceivingUpdates()
 
 	for {
 		select {
 		case <-ctx.Done():
-			b.api.StopReceivingUpdates()
 			return
-		case update := <-updates:
+		case update, ok := <-updates:
+			if !ok {
+				log.Warnf("telegram", "updates channel closed")
+				return
+			}
 			if update.Message == nil {
 				continue
 			}
