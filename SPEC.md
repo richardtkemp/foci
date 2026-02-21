@@ -116,23 +116,15 @@ Stored in SQLite. On compaction, scratchpad contents are injected back into the 
 
 ### Model Escalation
 
-The agent can request a heavier model for a single reasoning task via `request_model`:
+No dedicated mechanism. Use `request_model` — which is just a synchronous subagent call with a custom prompt, no tools, and no cache writing:
 
 ```
 request_model("opus", "Evaluate whether this cache-sharing architecture has a subtle correctness bug: [full context here]")
 ```
 
-**This is NOT a session model switch.** Different models don't share Anthropic's prompt cache, so switching the session model mid-conversation would pay a full cold cache write — catastrophically expensive.
+The agent constructs a self-contained prompt with all necessary context. Opus (or whatever model) gets a one-shot cold call, responds, and the result comes back as a tool result. The session stays on its original model with its warm cache intact.
 
-Instead, `request_model` works like a one-shot consultation:
-1. The session agent (Haiku) constructs a complete, self-contained prompt — question, all relevant context, what kind of answer it needs
-2. Clod sends that as a standalone API call to the requested model (Opus) with **no cache writing** (`cache_control` omitted)
-3. The response comes back to the session agent as the tool result
-4. The session continues on Haiku with its warm cache intact
-
-The agent is responsible for packing enough context into the request. This is a tool call, not a model switch — Opus never sees the session history directly, only what the agent explicitly passes.
-
-Design intent: one model per session, always. Escalation is delegation, not switching.
+This is syntactic sugar over the subagent system — same dispatch path, just synchronous and tool-less.
 
 ### Thought Queue
 
