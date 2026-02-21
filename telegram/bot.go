@@ -13,6 +13,11 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// sender abstracts the Telegram send API for testability.
+type sender interface {
+	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+}
+
 // queuedMessage is a message waiting for the agent to process.
 type queuedMessage struct {
 	msg    *tgbotapi.Message
@@ -24,7 +29,8 @@ type queuedMessage struct {
 // Messages are received on one goroutine and processed on another.
 // Slash commands execute immediately on the receiver goroutine.
 type Bot struct {
-	api          *tgbotapi.BotAPI
+	api          *tgbotapi.BotAPI // for receiving updates (Run)
+	sender       sender           // for sending messages (mockable in tests)
 	agent        *agent.Agent
 	commands     *command.Registry
 	allowedUsers map[string]bool
@@ -49,6 +55,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 
 	return &Bot{
 		api:          api,
+		sender:       api,
 		agent:        ag,
 		commands:     cmds,
 		allowedUsers: allowed,
@@ -164,7 +171,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	// Send typing indicator
 	typing := tgbotapi.NewChatAction(qm.msg.Chat.ID, tgbotapi.ChatTyping)
-	b.api.Send(typing)
+	b.sender.Send(typing)
 
 	response, err := b.agent.HandleMessage(turnCtx, b.sessionKey, qm.text)
 	if err != nil {
@@ -197,10 +204,10 @@ func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, chunk)
 		reply.ParseMode = "Markdown"
 		sendErr := ""
-		if _, err := b.api.Send(reply); err != nil {
+		if _, err := b.sender.Send(reply); err != nil {
 			// Retry without markdown if parsing fails
 			reply.ParseMode = ""
-			if _, err := b.api.Send(reply); err != nil {
+			if _, err := b.sender.Send(reply); err != nil {
 				log.Errorf("telegram", "send error: %v", err)
 				sendErr = err.Error()
 			}
