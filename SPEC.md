@@ -57,6 +57,45 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 - Route incoming messages to the correct agent session
 - DM only for alpha; group chat support in beta
 
+### Message Metadata
+
+Each user message injected into the conversation carries metadata the agent can see. This is NOT in the system prompt (that would bust cache) — it's prepended to the user message content.
+
+```
+[meta] time=2026-02-21T05:30:00Z gap=3h12m prev_cost=$0.043 prev_tokens=in:2400/out:312/cR:18000/cW:200
+```
+
+Fields:
+- `time` — current UTC timestamp
+- `gap` — time since the previous message in this session (human-readable: "3h12m", "2d4h", "38s")
+- `prev_cost` — total cost of the previous agent turn (API call that generated the last response)
+- `prev_tokens` — token breakdown of the previous turn (input/output/cache_read/cache_write)
+
+**Why metadata on messages, not system prompt:** The system prompt must be byte-identical across turns for cache reuse. Dynamic values like timestamps go on messages instead — they're past the cache breakpoint.
+
+**Why previous turn's cost, not current:** The current turn's cost isn't known until after the API responds. So each message carries the cost of the turn that came before it. The agent always knows what its last response cost.
+
+### Deferred Replies
+
+The agent can acknowledge a message and deliver a full response later. For complex questions requiring research or long tool chains:
+
+1. Agent sends an immediate short reply ("Looking into this, give me a minute")
+2. Agent continues working (tool calls, research, etc.)
+3. Agent sends the full response when ready
+
+Implementation: The agent turn can produce multiple Telegram messages. The first is sent immediately. Subsequent messages are sent as the agent completes tool calls. This is just streaming tool results to Telegram rather than batching everything into one final response.
+
+### Thought Queue
+
+The agent can defer thoughts for later via a `memory_remind` tool:
+
+```
+memory_remind("Look into whether FTS5 supports phrase boosting", "next_heartbeat")
+memory_remind("Ask Dick about the Greece decision", "tomorrow")
+```
+
+Reminders surface as injected context at the specified time (next heartbeat, next session, specific date). Stored in SQLite alongside conversation log. Lightweight — not a full task system, just "future me should think about this."
+
 ### Tool System
 
 Tools are Go functions registered at compile time. No dynamic loading, no plugin discovery.
