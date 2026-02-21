@@ -3,6 +3,8 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -18,11 +20,23 @@ type sender interface {
 	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
 }
 
+// fileGetter abstracts getting file info from Telegram for testability.
+type fileGetter interface {
+	GetFile(config tgbotapi.FileConfig) (tgbotapi.File, error)
+}
+
+// imageAttachment is a downloaded image ready for the agent.
+type imageAttachment struct {
+	data      []byte
+	mediaType string
+}
+
 // queuedMessage is a message waiting for the agent to process.
 type queuedMessage struct {
 	msg    *tgbotapi.Message
 	userID string
 	text   string
+	images []imageAttachment
 }
 
 // Bot wraps the Telegram bot API with agent integration.
@@ -31,14 +45,18 @@ type queuedMessage struct {
 type Bot struct {
 	api          *tgbotapi.BotAPI // for receiving updates (Run)
 	sender       sender           // for sending messages (mockable in tests)
+	fileGetter   fileGetter       // for getting file info (mockable in tests)
 	agent        *agent.Agent
 	commands     *command.Registry
 	allowedUsers map[string]bool
 	sessionKey   string
+	botToken     string           // for building file download URLs
 
 	queue      chan queuedMessage     // receiver → agent worker
 	turnCancel context.CancelFunc     // cancel the current agent turn
 	turnMu     sync.Mutex             // protects turnCancel
+	chatID     int64                   // last known chat ID (for notifications)
+	chatMu     sync.Mutex
 }
 
 // NewBot creates a new Telegram bot.
@@ -56,10 +74,12 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 	return &Bot{
 		api:          api,
 		sender:       api,
+		fileGetter:   api,
 		agent:        ag,
 		commands:     cmds,
 		allowedUsers: allowed,
 		sessionKey:   sessionKey,
+		botToken:     token,
 		queue:        make(chan queuedMessage, 64),
 	}, nil
 }
@@ -99,12 +119,45 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
+	// Remember chat ID for notifications (cache bust alerts, etc.)
+	b.chatMu.Lock()
+	b.chatID = msg.Chat.ID
+	b.chatMu.Unlock()
+
+	// Get text from message or caption (photos use caption)
 	text := msg.Text
 	if text == "" {
+		text = msg.Caption
+	}
+
+	// Download images from photos or image documents
+	var images []imageAttachment
+	if msg.Photo != nil && len(msg.Photo) > 0 {
+		// Take the largest photo (last in the array)
+		photo := msg.Photo[len(msg.Photo)-1]
+		if data, err := b.downloadFile(photo.FileID); err != nil {
+			log.Errorf("telegram", "download photo: %v", err)
+		} else {
+			images = append(images, imageAttachment{data: data, mediaType: "image/jpeg"})
+		}
+	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
+		if data, err := b.downloadFile(msg.Document.FileID); err != nil {
+			log.Errorf("telegram", "download document: %v", err)
+		} else {
+			images = append(images, imageAttachment{data: data, mediaType: msg.Document.MimeType})
+		}
+	}
+
+	// Drop messages with no text and no images
+	if text == "" && len(images) == 0 {
 		return
 	}
 
-	log.Infof("telegram", "message from %s: %s", msg.From.UserName, truncate(text, 100))
+	logText := text
+	if len(images) > 0 {
+		logText = fmt.Sprintf("[%d image(s)] %s", len(images), text)
+	}
+	log.Infof("telegram", "message from %s: %s", msg.From.UserName, truncate(logText, 100))
 
 	// Log received message
 	log.Conversation(log.ConversationEntry{
@@ -112,12 +165,12 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		UserID:    userID,
 		Username:  msg.From.UserName,
 		ChatID:    msg.Chat.ID,
-		Text:      text,
+		Text:      logText,
 		Session:   b.sessionKey,
 	})
 
 	// Slash commands bypass the agent pipeline entirely
-	if strings.HasPrefix(text, "/") {
+	if text != "" && strings.HasPrefix(text, "/") {
 		// /stop cancels the current agent turn
 		if strings.ToLower(strings.TrimSpace(text)) == "/stop" {
 			b.cancelTurn()
@@ -134,7 +187,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	// Queue for the agent worker
 	select {
-	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text}:
+	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, images: images}:
 	default:
 		log.Warnf("telegram", "message queue full, dropping message from %s", msg.From.UserName)
 		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
@@ -179,7 +232,18 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	})
 	defer b.agent.SetReplyFunc(nil)
 
-	response, err := b.agent.HandleMessage(turnCtx, b.sessionKey, qm.text)
+	var response string
+	var err error
+	if len(qm.images) > 0 {
+		// Convert telegram images to agent image data
+		agentImages := make([]agent.ImageData, len(qm.images))
+		for i, img := range qm.images {
+			agentImages[i] = agent.ImageData{MediaType: img.mediaType, Data: img.data}
+		}
+		response, err = b.agent.HandleMessageWithImages(turnCtx, b.sessionKey, qm.text, agentImages)
+	} else {
+		response, err = b.agent.HandleMessage(turnCtx, b.sessionKey, qm.text)
+	}
 	if err != nil {
 		if turnCtx.Err() != nil {
 			log.Infof("telegram", "agent turn cancelled")
@@ -230,6 +294,59 @@ func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
 			Error:     sendErr,
 		})
 	}
+}
+
+// SendNotification sends a plain text notification to the last known chat.
+// Used for system alerts (cache bust, etc.) — not an agent turn, no tokens spent.
+func (b *Bot) SendNotification(text string) {
+	b.chatMu.Lock()
+	chatID := b.chatID
+	b.chatMu.Unlock()
+
+	if chatID == 0 {
+		log.Warnf("telegram", "no chat ID for notification: %s", text)
+		return
+	}
+
+	msg := tgbotapi.NewMessage(chatID, text)
+	if _, err := b.sender.Send(msg); err != nil {
+		log.Errorf("telegram", "send notification: %v", err)
+	}
+}
+
+// downloadFile downloads a file from Telegram by file ID.
+func (b *Bot) downloadFile(fileID string) ([]byte, error) {
+	file, err := b.fileGetter.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		return nil, fmt.Errorf("get file info: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.botToken, file.FilePath)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download file: status %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read file body: %w", err)
+	}
+
+	return data, nil
+}
+
+// isImageMIME returns true if the MIME type is a supported image format.
+func isImageMIME(mime string) bool {
+	switch mime {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	}
+	return false
 }
 
 func splitMessage(text string, maxLen int) []string {

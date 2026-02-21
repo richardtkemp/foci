@@ -44,8 +44,9 @@ type LoggingConfig struct {
 	EventFile        string `toml:"event_file"`
 	APIFile          string `toml:"api_file"`
 	ConversationFile string `toml:"conversation_file"`
-	FullPayload      bool   `toml:"full_payload"`      // write full API payloads to api-payload.jsonl
-	PayloadFile      string `toml:"payload_file"`       // path to api-payload.jsonl (default: api-payload.jsonl)
+	FullPayload         bool   `toml:"full_payload"`          // write full API payloads to api-payload.jsonl
+	PayloadFile         string `toml:"payload_file"`          // path to api-payload.jsonl (default: api-payload.jsonl)
+	CacheBustThreshold  int    `toml:"cache_bust_threshold"`  // alert when cache_write exceeds this (0 = disabled)
 }
 
 type CommandConfig struct {

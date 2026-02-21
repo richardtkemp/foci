@@ -151,13 +151,14 @@ func main() {
 
 	// Agent
 	ag := &agent.Agent{
-		Client:    client,
-		Sessions:  sessions,
-		Tools:     registry,
-		Bootstrap: bootstrap,
-		Compactor: compactor,
-		Reminders: reminderStore,
-		Model:     cfg.Agent.Model,
+		Client:             client,
+		Sessions:           sessions,
+		Tools:              registry,
+		Bootstrap:          bootstrap,
+		Compactor:          compactor,
+		Reminders:          reminderStore,
+		Model:              cfg.Agent.Model,
+		CacheBustThreshold: cfg.Logging.CacheBustThreshold,
 	}
 
 	// Model escalation tool (sync one-shot call to a different model)
@@ -238,6 +239,16 @@ func main() {
 		if err != nil {
 			log.Fatalf("main", "create telegram bot: %v", err)
 		}
+
+		// Wire cache bust alerts to Telegram notification
+		if ag.CacheBustThreshold > 0 {
+			ag.CacheBustAlert = func(session string, tokens int, cost float64) {
+				msg := fmt.Sprintf("⚠️ Cache write: %d tokens ($%.2f) on %s", tokens, cost, session)
+				log.Warnf("agent", "%s", msg)
+				bot.SendNotification(msg)
+			}
+		}
+
 		go bot.Run(ctx)
 	}
 

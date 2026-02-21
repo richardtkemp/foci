@@ -42,6 +42,10 @@ type sessionMeta struct {
 // the agent continues working (e.g., "Looking into this...").
 type ReplyFunc func(text string)
 
+// CacheBustFunc is called when cache_write exceeds the threshold.
+// session is the session key, tokens is the cache_write count, cost is the write cost.
+type CacheBustFunc func(session string, tokens int, cost float64)
+
 // Agent is the core agent loop.
 type Agent struct {
 	Client    *anthropic.Client
@@ -51,6 +55,9 @@ type Agent struct {
 	Compactor *compaction.Compactor // nil disables auto-compaction
 	Reminders *memory.ReminderStore // nil disables reminder injection
 	Model     string
+
+	CacheBustThreshold int           // alert when cache_write exceeds this (0 = disabled)
+	CacheBustAlert     CacheBustFunc // callback for alerts (set by telegram bot)
 
 	processing     int32 // atomic: number of in-flight HandleMessage calls
 	metaMu         sync.Mutex
@@ -274,6 +281,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				Response:   respJSON,
 				DurationMS: duration.Milliseconds(),
 			})
+		}
+
+		// Cache bust alert
+		if a.CacheBustThreshold > 0 && resp.Usage.CacheCreationInputTokens > a.CacheBustThreshold && a.CacheBustAlert != nil {
+			writeCost := log.CalculateCost(turnModel, 0, 0, 0, resp.Usage.CacheCreationInputTokens)
+			a.CacheBustAlert(sessionKey, resp.Usage.CacheCreationInputTokens, writeCost)
 		}
 
 		// Build assistant message from response
