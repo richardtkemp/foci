@@ -44,15 +44,18 @@ No circular dependencies. `config`, `log`, `secrets`, `memory`, and `command` ar
 
 ## The Agent Loop (`agent/agent.go`)
 
-The core of the system. `HandleMessage(ctx, sessionKey, userMessage)`:
+The core of the system. Two entry points:
+- `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithImages`
+- `HandleMessageWithImages(ctx, sessionKey, text, images)` — full version with optional image attachments
 
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
 2. buildMetaPrefix() + prepend to user message text
-3. append user message (with metadata)
-4. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
-4. tools.ToolDefs()                       ← registry → []ToolDef
-5. LOOP (max 25 iterations):
+3. build content blocks: image block(s) first, then text block (with metadata)
+4. append user message
+5. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
+5. tools.ToolDefs()                       ← registry → []ToolDef
+6. LOOP (max 25 iterations):
    a. logCacheDebug(system, messages, model)  ← warns if system < min threshold
    b. client.SendMessage(system, messages, tools)
    c. log event + log API entry
@@ -60,9 +63,9 @@ The core of the system. `HandleMessage(ctx, sessionKey, userMessage)`:
    e. if stop_reason == "tool_use":
       - execute each tool via registry (check ctx.Err() between calls)
       - append assistant msg + tool_result msg
-      - goto 5a
-6. sessions.AppendAll(sessionKey, newMessages)
-7. if compactor.ShouldCompact(messages, usage) → compactor.Compact(sessionKey)
+      - goto 6a
+7. sessions.AppendAll(sessionKey, newMessages)
+8. if compactor.ShouldCompact(messages, usage) → compactor.Compact(sessionKey)
 ```
 
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
@@ -236,7 +239,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_write` | scratchpad.go | Write working notes (key + content); survives compaction |
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
-| `request_model` | model.go | Escalate to a heavier model for the next turn only; auto-reverts after one turn |
+| `request_model` | model.go | Synchronous one-shot call to a different model. Sends prompt, returns response as tool result. Supports prompt weight: full (character files), light (minimal), none. Session's own model/cache unaffected. |
 
 ## Slash Commands (`command/`)
 
@@ -259,11 +262,14 @@ Single `clod.toml` parsed with BurntSushi/toml. Sections: `[agent]`, `[anthropic
 Two goroutines:
 ```
 [receiver goroutine]   →  receive msg  →  slash command?  →  yes: execute, reply
-                                                           →  no:  enqueue (buffered chan)
-[agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage  →  reply
+                                       →  photo/doc?      →  download image via Telegram file API
+                                                           →  enqueue (buffered chan) with text + images
+[agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage[WithImages]  →  reply
 ```
 
 The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
+
+**Image handling:** Photos (`msg.Photo`, largest size selected) and image documents (`msg.Document` with image MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `imageAttachment` structs alongside the message text (which may come from `msg.Caption` for photos). The agent worker converts these to `agent.ImageData` and calls `HandleMessageWithImages`.
 
 **Turn cancellation:** Each agent turn gets its own `context.WithCancel`. `/stop` calls `turnCancel()`, which propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). The agent loop checks `ctx.Err()` after API responses and between tool calls.
 

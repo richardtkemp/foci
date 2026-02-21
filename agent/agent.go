@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,12 @@ import (
 	"clod/tools"
 	"clod/workspace"
 )
+
+// ImageData holds a raw image for inclusion in a message.
+type ImageData struct {
+	MediaType string // "image/jpeg", "image/png", etc.
+	Data      []byte // raw bytes (base64-encoded when building content blocks)
+}
 
 const maxToolLoops = 25
 const defaultMaxTokens = 8192
@@ -49,35 +56,11 @@ type Agent struct {
 	meta           map[string]*sessionMeta // per-session metadata
 	replyMu        sync.Mutex
 	replyFunc      ReplyFunc // optional: set per-turn for intermediate replies
-	overrideMu     sync.Mutex
-	overrideModel  string // one-shot model override, cleared after use
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
 func (a *Agent) IsProcessing() bool {
 	return atomic.LoadInt32(&a.processing) > 0
-}
-
-// SetOverrideModel sets a one-shot model override for the next turn.
-// The override is consumed (cleared) when the next HandleMessage starts.
-func (a *Agent) SetOverrideModel(model string) {
-	a.overrideMu.Lock()
-	defer a.overrideMu.Unlock()
-	a.overrideModel = model
-}
-
-// consumeOverrideModel returns and clears the model override, if set.
-// Returns the override model or the default model.
-func (a *Agent) consumeOverrideModel() string {
-	a.overrideMu.Lock()
-	defer a.overrideMu.Unlock()
-	if a.overrideModel != "" {
-		model := a.overrideModel
-		a.overrideModel = ""
-		log.Infof("agent", "model escalation: using %s for this turn (default: %s)", model, a.Model)
-		return model
-	}
-	return a.Model
 }
 
 // SetReplyFunc sets a callback for intermediate replies during a turn.
@@ -179,8 +162,13 @@ func (a *Agent) collectReminders() string {
 	return block
 }
 
-// HandleMessage processes a user message in the given session and returns the final text response.
+// HandleMessage processes a text-only user message. Delegates to HandleMessageWithImages.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
+	return a.HandleMessageWithImages(ctx, sessionKey, userMessage, nil)
+}
+
+// HandleMessageWithImages processes a user message with optional image attachments.
+func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, userMessage string, images []ImageData) (string, error) {
 	atomic.AddInt32(&a.processing, 1)
 	defer atomic.AddInt32(&a.processing, -1)
 
@@ -190,8 +178,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 		return "", fmt.Errorf("load session: %w", err)
 	}
 
-	// Consume one-shot model override (if set by request_model tool)
-	turnModel := a.consumeOverrideModel()
+	turnModel := a.Model
 
 	// Build metadata prefix and prepend to user message
 	now := time.Now()
@@ -200,10 +187,20 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 	reminderBlock := a.collectReminders()
 	annotatedMessage := metaPrefix + reminderBlock + "\n" + userMessage
 
+	// Build content blocks: images first, then text
+	var contentBlocks []anthropic.ContentBlock
+	for _, img := range images {
+		contentBlocks = append(contentBlocks, anthropic.ImageBlock(
+			img.MediaType,
+			base64.StdEncoding.EncodeToString(img.Data),
+		))
+	}
+	contentBlocks = append(contentBlocks, anthropic.ContentBlock{Type: "text", Text: annotatedMessage})
+
 	// Append user message with metadata
 	userMsg := anthropic.Message{
 		Role:    "user",
-		Content: anthropic.TextContent(annotatedMessage),
+		Content: contentBlocks,
 	}
 	messages = append(messages, userMsg)
 

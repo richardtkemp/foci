@@ -581,6 +581,154 @@ func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 	return anthropic.NewClientWithBase(baseURL, apiKey)
 }
 
+func TestHandleMessageWithImages(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("I see a cat!"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	images := []ImageData{
+		{MediaType: "image/jpeg", Data: []byte("fake-jpeg-data")},
+	}
+	resp, err := ag.HandleMessageWithImages(context.Background(), "agent:test:img", "What is this?", images)
+	if err != nil {
+		t.Fatalf("HandleMessageWithImages: %v", err)
+	}
+	if resp != "I see a cat!" {
+		t.Errorf("response = %q", resp)
+	}
+
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+
+	// Check the user message has image + text blocks
+	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	if len(userMsg.Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(userMsg.Content))
+	}
+
+	// First block should be image
+	if userMsg.Content[0].Type != "image" {
+		t.Errorf("content[0].Type = %q, want image", userMsg.Content[0].Type)
+	}
+	if userMsg.Content[0].Source == nil {
+		t.Fatal("content[0].Source is nil")
+	}
+	if userMsg.Content[0].Source.MediaType != "image/jpeg" {
+		t.Errorf("content[0].Source.MediaType = %q", userMsg.Content[0].Source.MediaType)
+	}
+
+	// Second block should be text with metadata + user text
+	if userMsg.Content[1].Type != "text" {
+		t.Errorf("content[1].Type = %q, want text", userMsg.Content[1].Type)
+	}
+	if !strings.Contains(userMsg.Content[1].Text, "What is this?") {
+		t.Errorf("content[1].Text missing user text: %q", userMsg.Content[1].Text)
+	}
+	if !strings.Contains(userMsg.Content[1].Text, "[meta]") {
+		t.Errorf("content[1].Text missing [meta]: %q", userMsg.Content[1].Text)
+	}
+}
+
+func TestHandleMessageWithImagesNoText(t *testing.T) {
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("I see an image."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	images := []ImageData{
+		{MediaType: "image/png", Data: []byte("fake-png-data")},
+	}
+	// Empty text — image only
+	resp, err := ag.HandleMessageWithImages(context.Background(), "agent:test:imgonly", "", images)
+	if err != nil {
+		t.Fatalf("HandleMessageWithImages: %v", err)
+	}
+	if resp != "I see an image." {
+		t.Errorf("response = %q", resp)
+	}
+}
+
+func TestHandleMessageDelegatesToWithImages(t *testing.T) {
+	// Verify HandleMessage (text-only) still works correctly
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	ag.HandleMessage(context.Background(), "agent:test:delegate", "Hello")
+
+	// Text-only message should have exactly 1 content block (text)
+	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	if len(userMsg.Content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(userMsg.Content))
+	}
+	if userMsg.Content[0].Type != "text" {
+		t.Errorf("content[0].Type = %q, want text", userMsg.Content[0].Type)
+	}
+}
+
 func TestFormatGap(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
@@ -689,51 +837,3 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 	}
 }
 
-func TestModelEscalation(t *testing.T) {
-	var requestModels []string
-
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		requestModels = append(requestModels, req.Model)
-		return &anthropic.MessageResponse{
-			ID:         "msg_test",
-			Type:       "message",
-			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
-			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
-		}
-	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL, "test-token")
-	store := session.NewStore(t.TempDir())
-	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	ag := &Agent{
-		Client:    client,
-		Sessions:  store,
-		Tools:     tools.NewRegistry(),
-		Bootstrap: bootstrap,
-		Model:     "claude-haiku-4-5",
-	}
-
-	// First turn: default model
-	ag.HandleMessage(context.Background(), "agent:test:esc", "Turn 1")
-	if requestModels[0] != "claude-haiku-4-5" {
-		t.Errorf("turn 1 model = %q, want haiku", requestModels[0])
-	}
-
-	// Set override for next turn
-	ag.SetOverrideModel("claude-opus-4-6")
-
-	// Second turn: should use override
-	ag.HandleMessage(context.Background(), "agent:test:esc", "Turn 2")
-	if requestModels[1] != "claude-opus-4-6" {
-		t.Errorf("turn 2 model = %q, want opus", requestModels[1])
-	}
-
-	// Third turn: should auto-revert to default
-	ag.HandleMessage(context.Background(), "agent:test:esc", "Turn 3")
-	if requestModels[2] != "claude-haiku-4-5" {
-		t.Errorf("turn 3 model = %q, want haiku (auto-revert)", requestModels[2])
-	}
-}
