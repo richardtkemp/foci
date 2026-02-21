@@ -968,6 +968,170 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 	}
 }
 
+func TestRepairInterruptedToolCalls(t *testing.T) {
+	t.Run("empty messages", func(t *testing.T) {
+		if got := repairInterruptedToolCalls(nil); got != nil {
+			t.Errorf("expected nil for empty messages, got %v", got)
+		}
+	})
+
+	t.Run("last message is user", func(t *testing.T) {
+		msgs := []anthropic.Message{
+			{Role: "user", Content: anthropic.TextContent("hi")},
+		}
+		if got := repairInterruptedToolCalls(msgs); got != nil {
+			t.Errorf("expected nil when last message is user, got %v", got)
+		}
+	})
+
+	t.Run("assistant with text only", func(t *testing.T) {
+		msgs := []anthropic.Message{
+			{Role: "user", Content: anthropic.TextContent("hi")},
+			{Role: "assistant", Content: anthropic.TextContent("hello")},
+		}
+		if got := repairInterruptedToolCalls(msgs); got != nil {
+			t.Errorf("expected nil when no tool_use blocks, got %v", got)
+		}
+	})
+
+	t.Run("single tool_use", func(t *testing.T) {
+		msgs := []anthropic.Message{
+			{Role: "user", Content: anthropic.TextContent("hi")},
+			{Role: "assistant", Content: []anthropic.ContentBlock{
+				{Type: "text", Text: "Let me check."},
+				{Type: "tool_use", ID: "tu_123", Name: "some_tool", Input: json.RawMessage(`{}`)},
+			}},
+		}
+		got := repairInterruptedToolCalls(msgs)
+		if got == nil {
+			t.Fatal("expected repair message, got nil")
+		}
+		if got.Role != "user" {
+			t.Errorf("repair message role = %q, want user", got.Role)
+		}
+		if len(got.Content) != 1 {
+			t.Fatalf("expected 1 tool_result block, got %d", len(got.Content))
+		}
+		if got.Content[0].Type != "tool_result" {
+			t.Errorf("block type = %q, want tool_result", got.Content[0].Type)
+		}
+		if got.Content[0].ToolUseID != "tu_123" {
+			t.Errorf("tool_use_id = %q, want tu_123", got.Content[0].ToolUseID)
+		}
+		if !got.Content[0].IsError {
+			t.Error("expected is_error = true")
+		}
+		if got.Content[0].Content != "no data" {
+			t.Errorf("content = %q, want %q", got.Content[0].Content, "no data")
+		}
+	})
+
+	t.Run("multiple tool_use blocks", func(t *testing.T) {
+		msgs := []anthropic.Message{
+			{Role: "user", Content: anthropic.TextContent("hi")},
+			{Role: "assistant", Content: []anthropic.ContentBlock{
+				{Type: "tool_use", ID: "tu_a", Name: "tool_a", Input: json.RawMessage(`{}`)},
+				{Type: "tool_use", ID: "tu_b", Name: "tool_b", Input: json.RawMessage(`{}`)},
+			}},
+		}
+		got := repairInterruptedToolCalls(msgs)
+		if got == nil {
+			t.Fatal("expected repair message, got nil")
+		}
+		if len(got.Content) != 2 {
+			t.Fatalf("expected 2 tool_result blocks, got %d", len(got.Content))
+		}
+		if got.Content[0].ToolUseID != "tu_a" {
+			t.Errorf("block[0].tool_use_id = %q, want tu_a", got.Content[0].ToolUseID)
+		}
+		if got.Content[1].ToolUseID != "tu_b" {
+			t.Errorf("block[1].tool_use_id = %q, want tu_b", got.Content[1].ToolUseID)
+		}
+	})
+}
+
+func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
+	// Simulate a session with an interrupted tool call, then verify
+	// HandleMessage repairs it before sending to the API.
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Recovered."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 50, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	// Pre-populate session with an interrupted tool call
+	sessionKey := "agent:test:repair"
+	store.Append(sessionKey, anthropic.Message{
+		Role: "user", Content: anthropic.TextContent("do something"),
+	})
+	store.Append(sessionKey, anthropic.Message{
+		Role: "assistant", Content: []anthropic.ContentBlock{
+			{Type: "tool_use", ID: "tu_interrupted", Name: "some_tool", Input: json.RawMessage(`{}`)},
+		},
+	})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	_, err := ag.HandleMessage(context.Background(), sessionKey, "continue")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// The API request should include the repair tool_result before the new user message
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+
+	// Messages: user("do something"), assistant(tool_use), user(tool_result repair), user("continue")
+	// But Anthropic requires alternating roles, so the repair and new message are separate user turns.
+	// Let's check the repair is in there.
+	found := false
+	for _, msg := range receivedReq.Messages {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" && block.ToolUseID == "tu_interrupted" && block.IsError {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("API request missing repair tool_result for tu_interrupted")
+	}
+
+	// Verify repair was persisted to the session store
+	saved, _ := store.Load(sessionKey)
+	// Should have: user, assistant(tool_use), user(tool_result repair), user(continue), assistant(Recovered.)
+	repairFound := false
+	for _, msg := range saved {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" && block.ToolUseID == "tu_interrupted" {
+				repairFound = true
+			}
+		}
+	}
+	if !repairFound {
+		t.Error("repair tool_result not persisted to session store")
+	}
+}
+
 func TestVoiceReplyFunc(t *testing.T) {
 	ag := &Agent{Model: "test"}
 

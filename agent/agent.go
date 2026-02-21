@@ -239,6 +239,18 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		return "", fmt.Errorf("load session: %w", err)
 	}
 
+	// Repair interrupted tool calls (e.g. SIGTERM during tool execution).
+	// If the last message is assistant with tool_use but no tool_result follows,
+	// inject synthetic error results so the API accepts the message history.
+	if repair := repairInterruptedToolCalls(messages); repair != nil {
+		messages = append(messages, *repair)
+		if err := a.Sessions.Append(sessionKey, *repair); err != nil {
+			log.Errorf("agent", "persist tool call repair: %v", err)
+		} else {
+			log.Infof("agent", "repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
+		}
+	}
+
 	turnModel := a.Model
 
 	// Build metadata prefix and prepend to user message
@@ -553,6 +565,37 @@ func logCacheDebug(system []anthropic.SystemBlock, messages []anthropic.Message,
 		log.Warnf("agent", "system prompt ~%d tokens is below %s minimum of %d for caching — cache will not activate",
 			systemTokensEst, model, minTokens)
 	}
+}
+
+// repairInterruptedToolCalls checks if the last message in the history is an
+// assistant message with tool_use blocks that have no following tool_result.
+// This happens when SIGTERM kills the process during tool execution — the defer
+// flushes the assistant message but no tool_result was ever created.
+// Returns a synthetic tool_result message to append, or nil if no repair needed.
+func repairInterruptedToolCalls(messages []anthropic.Message) *anthropic.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	last := messages[len(messages)-1]
+	if last.Role != "assistant" {
+		return nil
+	}
+
+	var toolUseIDs []string
+	for _, block := range last.Content {
+		if block.Type == "tool_use" {
+			toolUseIDs = append(toolUseIDs, block.ID)
+		}
+	}
+	if len(toolUseIDs) == 0 {
+		return nil
+	}
+
+	var results []anthropic.ContentBlock
+	for _, id := range toolUseIDs {
+		results = append(results, anthropic.ToolResultBlock(id, "no data", true))
+	}
+	return &anthropic.Message{Role: "user", Content: results}
 }
 
 // TurnResult holds the result of a single agent turn.
