@@ -416,6 +416,18 @@ func NewUsageCommand(usageFn func(context.Context) (string, error)) *Command {
 	}
 }
 
+// NewReloadCommand returns a /reload command that reloads config and system files.
+// reloadFn is a callback that performs the reload (avoids import coupling).
+func NewReloadCommand(reloadFn func() (string, error)) *Command {
+	return &Command{
+		Name:        "reload",
+		Description: "Reload config, skills, and system prompt from disk",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return reloadFn()
+		},
+	}
+}
+
 // tailFile returns the last n lines from a file.
 func tailFile(path string, n int) (string, error) {
 	f, err := os.Open(path)

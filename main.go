@@ -397,6 +397,27 @@ func main() {
 		return anthropic.FormatUsage(usage), nil
 	}))
 
+	// Register /reload command (reload config, skills, system files)
+	cmds.Register(command.NewReloadCommand(func() (string, error) {
+		// Reload workspace (system files)
+		bootstrap.Reload()
+
+		// Reload skills
+		newSkillRegistry := skills.Load(cfg.Skills.Dirs)
+
+		// Update system blocks with new skills
+		var newExtraSystemBlocks []anthropic.SystemBlock
+		if newSkillRegistry.Len() > 0 {
+			newExtraSystemBlocks = []anthropic.SystemBlock{
+				{Type: "text", Text: newSkillRegistry.SystemBlock()},
+			}
+		}
+		ag.ExtraSystemBlocks = newExtraSystemBlocks
+
+		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills", newSkillRegistry.Len())
+		return msg, nil
+	}))
+
 	// Custom script commands from config
 	for _, cc := range cfg.Commands {
 		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
