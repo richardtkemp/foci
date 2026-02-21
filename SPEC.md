@@ -668,6 +668,9 @@ api_file = "api.jsonl"
 - FTS5 memory search (memory files + conversation history, weighted)
 - TOML config (single file + secrets.toml)
 - Voice outbound (Edge TTS via OpenRouter)
+- Voice inbound (STT via Groq Whisper)
+- Deferred replies (multiple Telegram messages per turn)
+- Cache bust alerts (Telegram notification on large cache writes)
 - Tool result size guard (large results saved to temp file)
 - Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball
 - Cron system (system crontab, prompts loaded from disk)
@@ -680,7 +683,6 @@ api_file = "api.jsonl"
 - **Sub-agents** — agent-initiated branch sessions for delegated tasks
 - **Inter-agent messaging** — agents communicating with each other
 - **File attachments** — send/receive files via Telegram
-- **Voice inbound** — STT transcription of voice notes (Groq Whisper)
 - **Compaction pre-save prompt** — "save important context" before compacting
 - **Pre-session-end memory prompt** — memory save on /new or idle timeout
 
@@ -692,7 +694,6 @@ api_file = "api.jsonl"
 - Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
 - Exec template secrets (`{{secret:NAME}}`) — resolve secret refs in exec commands
 - Tool output redaction — scan exec output for leaked secret patterns
-- Cache bust alerts — Telegram notification on large cache writes
 - Signal/Discord/other channels
 - Plugin/hook architecture
 - Reactions
