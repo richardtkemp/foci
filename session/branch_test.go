@@ -1,0 +1,156 @@
+package session
+
+import (
+	"testing"
+
+	"clod/anthropic"
+)
+
+func TestCreateBranchAndLoadFull(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:morning"
+
+	// Build parent session with 4 messages
+	s.Append(parentKey, msg("user", "hello"))
+	s.Append(parentKey, msg("assistant", "hi"))
+	s.Append(parentKey, msg("user", "how are you"))
+	s.Append(parentKey, msg("assistant", "good"))
+
+	// Create branch at current point (4 messages)
+	if err := s.CreateBranch(parentKey, branchKey); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+
+	// Append branch-only messages
+	s.Append(branchKey, msg("user", "branch question"))
+	s.Append(branchKey, msg("assistant", "branch answer"))
+
+	// LoadFull should return parent prefix + branch messages
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+
+	if len(msgs) != 6 {
+		t.Fatalf("len = %d, want 6 (4 parent + 2 branch)", len(msgs))
+	}
+
+	// First 4 from parent
+	if anthropic.TextOf(msgs[0].Content) != "hello" {
+		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	}
+	if anthropic.TextOf(msgs[3].Content) != "good" {
+		t.Errorf("msgs[3] = %q", anthropic.TextOf(msgs[3].Content))
+	}
+	// Last 2 from branch
+	if anthropic.TextOf(msgs[4].Content) != "branch question" {
+		t.Errorf("msgs[4] = %q", anthropic.TextOf(msgs[4].Content))
+	}
+	if anthropic.TextOf(msgs[5].Content) != "branch answer" {
+		t.Errorf("msgs[5] = %q", anthropic.TextOf(msgs[5].Content))
+	}
+}
+
+func TestBranchParentContinuesGrowing(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:test"
+
+	s.Append(parentKey, msg("user", "one"))
+	s.Append(parentKey, msg("assistant", "two"))
+
+	// Branch at 2 messages
+	s.CreateBranch(parentKey, branchKey)
+
+	// Parent grows after branching
+	s.Append(parentKey, msg("user", "three"))
+	s.Append(parentKey, msg("assistant", "four"))
+
+	// Branch should only see the first 2 parent messages
+	s.Append(branchKey, msg("user", "branch msg"))
+
+	msgs, _ := s.LoadFull(branchKey)
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3 (2 parent + 1 branch)", len(msgs))
+	}
+
+	// Should see parent[0:2], not parent[0:4]
+	if anthropic.TextOf(msgs[0].Content) != "one" {
+		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	}
+	if anthropic.TextOf(msgs[1].Content) != "two" {
+		t.Errorf("msgs[1] = %q", anthropic.TextOf(msgs[1].Content))
+	}
+	if anthropic.TextOf(msgs[2].Content) != "branch msg" {
+		t.Errorf("msgs[2] = %q", anthropic.TextOf(msgs[2].Content))
+	}
+}
+
+func TestBranchFromEmptyParent(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:empty"
+
+	// Don't add any messages to parent — branch from empty
+	s.CreateBranch(parentKey, branchKey)
+	s.Append(branchKey, msg("user", "branch only"))
+
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("len = %d, want 1", len(msgs))
+	}
+	if anthropic.TextOf(msgs[0].Content) != "branch only" {
+		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	}
+}
+
+func TestLoadFullNonBranch(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:main:main"
+
+	s.Append(key, msg("user", "hello"))
+
+	// LoadFull on a regular session should work like Load
+	msgs, err := s.LoadFull(key)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("len = %d, want 1", len(msgs))
+	}
+}
+
+func TestLoadFullNonexistent(t *testing.T) {
+	s := NewStore(t.TempDir())
+	msgs, err := s.LoadFull("agent:ghost:main")
+	if err != nil {
+		t.Fatalf("LoadFull nonexistent: %v", err)
+	}
+	if msgs != nil {
+		t.Errorf("LoadFull nonexistent = %v, want nil", msgs)
+	}
+}
+
+func TestBranchDoesNotContaminateParent(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:test"
+
+	s.Append(parentKey, msg("user", "parent msg"))
+	s.Append(parentKey, msg("assistant", "parent reply"))
+	s.CreateBranch(parentKey, branchKey)
+
+	// Add messages to branch
+	s.Append(branchKey, msg("user", "branch only"))
+	s.Append(branchKey, msg("assistant", "branch reply"))
+
+	// Parent should still have only 2 messages
+	parentMsgs, _ := s.Load(parentKey)
+	if len(parentMsgs) != 2 {
+		t.Errorf("parent has %d messages, want 2", len(parentMsgs))
+	}
+}

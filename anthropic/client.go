@@ -26,6 +26,15 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+// NewClientWithBase creates a client with a custom base URL (for testing).
+func NewClientWithBase(baseURL, apiKey string) *Client {
+	return &Client{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: 120 * time.Second},
+		baseURL:    baseURL,
+	}
+}
+
 // SendMessage sends a message request and returns the response.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	body, err := json.Marshal(req)

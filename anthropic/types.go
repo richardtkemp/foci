@@ -1,15 +1,31 @@
 package anthropic
 
+import "encoding/json"
+
 // CacheControl marks a content block for prompt caching.
 type CacheControl struct {
 	Type string `json:"type"`
 }
 
 // ContentBlock is a block of content in a message or response.
+// Covers text, tool_use, and tool_result block types.
 type ContentBlock struct {
-	Type         string        `json:"type"`
-	Text         string        `json:"text,omitempty"`
-	CacheControl *CacheControl `json:"cache_control,omitempty"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	CacheControl *CacheControl   `json:"cache_control,omitempty"`
+	ID           string          `json:"id,omitempty"`        // tool_use: block ID
+	Name         string          `json:"name,omitempty"`      // tool_use: tool name
+	Input        json.RawMessage `json:"input,omitempty"`     // tool_use: parameters
+	ToolUseID    string          `json:"tool_use_id,omitempty"` // tool_result: references tool_use block
+	Content      string          `json:"content,omitempty"`   // tool_result: result text
+	IsError      bool            `json:"is_error,omitempty"`  // tool_result: error flag
+}
+
+// ToolDef defines a tool for the API request.
+type ToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
 }
 
 // SystemBlock is a block of content in the system prompt.
@@ -31,6 +47,7 @@ type MessageRequest struct {
 	MaxTokens int           `json:"max_tokens"`
 	System    []SystemBlock `json:"system,omitempty"`
 	Messages  []Message     `json:"messages"`
+	Tools     []ToolDef     `json:"tools,omitempty"`
 }
 
 // Usage contains token usage information from a response.
@@ -43,12 +60,13 @@ type Usage struct {
 
 // MessageResponse is the response from the /v1/messages endpoint.
 type MessageResponse struct {
-	ID      string         `json:"id"`
-	Type    string         `json:"type"`
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-	Model   string         `json:"model"`
-	Usage   Usage          `json:"usage"`
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Role       string         `json:"role"`
+	Content    []ContentBlock `json:"content"`
+	Model      string         `json:"model"`
+	Usage      Usage          `json:"usage"`
+	StopReason string         `json:"stop_reason"`
 }
 
 // Ephemeral returns a CacheControl with type "ephemeral".
@@ -64,6 +82,16 @@ func TextContent(text string) []ContentBlock {
 // CachedTextContent creates a single text content block with cache control.
 func CachedTextContent(text string) []ContentBlock {
 	return []ContentBlock{{Type: "text", Text: text, CacheControl: Ephemeral()}}
+}
+
+// ToolResultBlock creates a tool_result content block.
+func ToolResultBlock(toolUseID string, content string, isError bool) ContentBlock {
+	return ContentBlock{
+		Type:      "tool_result",
+		ToolUseID: toolUseID,
+		Content:   content,
+		IsError:   isError,
+	}
 }
 
 // TextOf extracts the concatenated text from content blocks.

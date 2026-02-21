@@ -1,0 +1,90 @@
+package agent
+
+import (
+	"context"
+	"log"
+	"sync"
+	"time"
+)
+
+// Heartbeat fires when a session has been idle for a configurable duration.
+type Heartbeat struct {
+	agent      *Agent
+	sessionKey string
+	interval   time.Duration
+	timer      *time.Timer
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+}
+
+// NewHeartbeat creates a new heartbeat for the given session.
+func NewHeartbeat(ag *Agent, sessionKey string, interval time.Duration) *Heartbeat {
+	return &Heartbeat{
+		agent:      ag,
+		sessionKey: sessionKey,
+		interval:   interval,
+	}
+}
+
+// Start begins the heartbeat timer.
+func (h *Heartbeat) Start(ctx context.Context) {
+	ctx, h.cancel = context.WithCancel(ctx)
+
+	h.mu.Lock()
+	h.timer = time.NewTimer(h.interval)
+	h.mu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-h.timer.C:
+				h.fire(ctx)
+				h.mu.Lock()
+				h.timer.Reset(h.interval)
+				h.mu.Unlock()
+			}
+		}
+	}()
+}
+
+// Reset resets the heartbeat timer. Call this on any activity.
+func (h *Heartbeat) Reset() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.timer != nil {
+		h.timer.Reset(h.interval)
+	}
+}
+
+// Stop stops the heartbeat.
+func (h *Heartbeat) Stop() {
+	h.mu.Lock()
+	if h.timer != nil {
+		h.timer.Stop()
+	}
+	h.mu.Unlock()
+	if h.cancel != nil {
+		h.cancel()
+	}
+}
+
+func (h *Heartbeat) fire(ctx context.Context) {
+	log.Printf("[heartbeat] firing for session %s", h.sessionKey)
+
+	resp, err := h.agent.HandleMessage(ctx, h.sessionKey, "[HEARTBEAT] The idle timer has fired. Check HEARTBEAT.md for instructions on what to do during idle time.")
+	if err != nil {
+		log.Printf("[heartbeat] error: %v", err)
+		return
+	}
+
+	log.Printf("[heartbeat] response: %s", truncateStr(resp, 200))
+}
+
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
