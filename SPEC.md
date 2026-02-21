@@ -273,7 +273,7 @@ POST /wake
 
 This injects the text as a user message into a branch session of the specified agent.
 
-**Beta:** Built-in cron scheduler if system crontab proves limiting.
+System crontab is sufficient — no built-in scheduler planned.
 
 ### Secrets
 
@@ -556,8 +556,8 @@ bind = "127.0.0.1"
 - Skill framework
 - Signal/Discord/other channels
 
-**Out (maybe never):**
-- Built-in cron scheduler
+**Out (enhancement):**
+- Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
 - Plugin/hook architecture
 - Reactions
 - Config schema validation beyond basic TOML parsing
