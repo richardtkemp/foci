@@ -3,9 +3,9 @@ package compaction
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"clod/anthropic"
+	"clod/log"
 	"clod/session"
 )
 
@@ -80,7 +80,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		return nil // not enough to compact
 	}
 
-	log.Printf("[compaction] compacting session %s (%d messages)", sessionKey, len(messages))
+	log.Infof("compaction", "compacting session %s (%d messages)", sessionKey, len(messages))
 
 	// Ask model to summarize the conversation
 	summaryMessages := make([]anthropic.Message, len(messages))
@@ -122,6 +122,6 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		return fmt.Errorf("replace session after compaction: %w", err)
 	}
 
-	log.Printf("[compaction] session %s compacted from %d messages to %d", sessionKey, len(messages), len(compacted))
+	log.Infof("compaction", "session %s compacted from %d messages to %d", sessionKey, len(messages), len(compacted))
 	return nil
 }

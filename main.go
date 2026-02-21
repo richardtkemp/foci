@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +13,7 @@ import (
 	"clod/agent"
 	"clod/anthropic"
 	"clod/config"
+	"clod/log"
 	"clod/session"
 	"clod/telegram"
 	"clod/tools"
@@ -25,8 +25,18 @@ func main() {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatalf("main", "load config: %v", err)
 	}
+
+	// Initialize logging
+	if err := log.Init(log.Config{
+		Level:     cfg.Logging.Level,
+		EventFile: cfg.Logging.EventFile,
+		APIFile:   cfg.Logging.APIFile,
+	}); err != nil {
+		log.Fatalf("main", "init logging: %v", err)
+	}
+	defer log.Close()
 
 	// Anthropic client
 	client := anthropic.NewClient(cfg.Anthropic.Token)
@@ -69,7 +79,7 @@ func main() {
 	if cfg.Telegram.BotToken != "" {
 		bot, err := telegram.NewBot(cfg.Telegram.BotToken, cfg.Telegram.AllowedUsers, ag, sessionKey)
 		if err != nil {
-			log.Fatalf("create telegram bot: %v", err)
+			log.Fatalf("main", "create telegram bot: %v", err)
 		}
 		go bot.Run(ctx)
 	}
@@ -109,14 +119,16 @@ func main() {
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", req.Agent, branchID)
 
 		if err := sessions.CreateBranch(parentKey, branchKey); err != nil {
-			log.Printf("[wake] branch error: %v", err)
+			log.Errorf("wake", "branch error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
+		log.Infof("wake", "branch %s from %s, text=%q", branchKey, parentKey, req.Text)
+
 		resp, err := ag.HandleMessage(ctx, branchKey, req.Text)
 		if err != nil {
-			log.Printf("[wake] error: %v", err)
+			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -130,20 +142,20 @@ func main() {
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
 	server := &http.Server{Addr: addr, Handler: mux}
 	go func() {
-		log.Printf("[http] listening on %s", addr)
+		log.Infof("http", "listening on %s", addr)
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			log.Printf("[http] server error: %v", err)
+			log.Errorf("http", "server error: %v", err)
 		}
 	}()
 
-	log.Printf("[clod] started (agent=%s, model=%s)", cfg.Agent.ID, cfg.Agent.Model)
+	log.Infof("main", "started (agent=%s, model=%s)", cfg.Agent.ID, cfg.Agent.Model)
 
 	// Wait for signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Println("[clod] shutting down...")
+	log.Infof("main", "shutting down...")
 	hb.Stop()
 	cancel()
 	server.Close()

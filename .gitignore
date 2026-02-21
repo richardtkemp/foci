@@ -2,3 +2,5 @@ clod
 clod.toml
 sessions/
 workspace/*.md
+*.log
+api.jsonl

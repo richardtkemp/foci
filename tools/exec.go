@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"clod/log"
 )
 
 func NewExecTool() *Tool {
@@ -45,6 +47,8 @@ func execCommand(ctx context.Context, params json.RawMessage) (string, error) {
 		timeout = time.Duration(p.Timeout) * time.Second
 	}
 
+	log.Debugf("exec", "running: %s (timeout=%s)", truncateCmd(p.Command, 200), timeout)
+
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -62,8 +66,18 @@ func execCommand(ctx context.Context, params json.RawMessage) (string, error) {
 	}
 
 	if err != nil {
+		if ctx.Err() != nil {
+			log.Warnf("exec", "command timed out after %s: %s", timeout, truncateCmd(p.Command, 100))
+		}
 		return result + "\nError: " + err.Error(), nil
 	}
 
 	return result, nil
+}
+
+func truncateCmd(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }

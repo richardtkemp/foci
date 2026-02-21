@@ -3,10 +3,10 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"clod/agent"
+	"clod/log"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -41,7 +41,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, sessionKey str
 
 // Run starts the long-polling loop. Blocks until ctx is cancelled.
 func (b *Bot) Run(ctx context.Context) {
-	log.Printf("[telegram] bot started as @%s", b.api.Self.UserName)
+	log.Infof("telegram", "bot started as @%s", b.api.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
@@ -66,7 +66,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	userID := fmt.Sprintf("%d", msg.From.ID)
 
 	if !b.allowedUsers[userID] {
-		log.Printf("[telegram] rejected message from user %s (%s)", userID, msg.From.UserName)
+		log.Warnf("telegram", "rejected message from user %s (%s)", userID, msg.From.UserName)
 		return
 	}
 
@@ -75,7 +75,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	log.Printf("[telegram] message from %s: %s", msg.From.UserName, truncate(text, 100))
+	log.Infof("telegram", "message from %s: %s", msg.From.UserName, truncate(text, 100))
 
 	// Send typing indicator
 	typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
@@ -83,7 +83,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	response, err := b.agent.HandleMessage(ctx, b.sessionKey, text)
 	if err != nil {
-		log.Printf("[telegram] error: %v", err)
+		log.Errorf("telegram", "agent error: %v", err)
 		response = fmt.Sprintf("Error: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			// Retry without markdown if parsing fails
 			reply.ParseMode = ""
 			if _, err := b.api.Send(reply); err != nil {
-				log.Printf("[telegram] send error: %v", err)
+				log.Errorf("telegram", "send error: %v", err)
 			}
 		}
 	}

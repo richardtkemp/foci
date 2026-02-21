@@ -3,9 +3,10 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
+	"time"
 
 	"clod/anthropic"
+	"clod/log"
 	"clod/session"
 	"clod/tools"
 	"clod/workspace"
@@ -54,14 +55,33 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 			Tools:     toolDefs,
 		}
 
+		start := time.Now()
 		resp, err := a.Client.SendMessage(ctx, req)
+		duration := time.Since(start)
+
 		if err != nil {
 			return "", fmt.Errorf("send message: %w", err)
 		}
 
-		log.Printf("[agent] stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d",
-			resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
+		cost := log.CalculateCost(a.Model,
+			resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+
+		log.Infof("agent", "stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
+			resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
+			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, cost)
+
+		log.API(log.APIEntry{
+			Timestamp:  start.UTC(),
+			Session:    sessionKey,
+			Model:      a.Model,
+			Input:      resp.Usage.InputTokens,
+			Output:     resp.Usage.OutputTokens,
+			CacheRead:  resp.Usage.CacheReadInputTokens,
+			CacheWrite: resp.Usage.CacheCreationInputTokens,
+			CostUSD:    cost,
+			DurationMS: duration.Milliseconds(),
+		})
 
 		// Build assistant message from response
 		assistantMsg := anthropic.Message{
@@ -88,15 +108,17 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 
 			tool := a.Tools.Get(block.Name)
 			if tool == nil {
+				log.Warnf("agent", "unknown tool: %s", block.Name)
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 				))
 				continue
 			}
 
-			log.Printf("[agent] tool_use: %s", block.Name)
+			log.Debugf("agent", "tool_use: %s", block.Name)
 			result, err := tool.Execute(ctx, block.Input)
 			if err != nil {
+				log.Warnf("agent", "tool %s error: %v", block.Name, err)
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
 				))
@@ -118,13 +140,14 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 	}
 
 	// Max loops reached — save what we have and return last text
+	log.Warnf("agent", "max tool call depth reached for session %s", sessionKey)
 	if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 		return "", fmt.Errorf("save session: %w", err)
 	}
 	return "Max tool call depth reached.", nil
 }
 
-// LastUsage returns the usage from the most recent API response.
+// TurnResult holds the result of a single agent turn.
 // (For compaction to use.)
 type TurnResult struct {
 	Text  string

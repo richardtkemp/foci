@@ -39,6 +39,12 @@ type HTTPConfig struct {
 	Bind string `toml:"bind"`
 }
 
+type LoggingConfig struct {
+	Level     string `toml:"level"`
+	EventFile string `toml:"event_file"`
+	APIFile   string `toml:"api_file"`
+}
+
 type Config struct {
 	Agent     AgentConfig     `toml:"agent"`
 	Anthropic AnthropicConfig `toml:"anthropic"`
@@ -46,6 +52,7 @@ type Config struct {
 	Sessions  SessionsConfig  `toml:"sessions"`
 	Memory    MemoryConfig    `toml:"memory"`
 	HTTP      HTTPConfig      `toml:"http"`
+	Logging   LoggingConfig   `toml:"logging"`
 }
 
 // Load reads config from the given TOML file path.
@@ -75,6 +82,15 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.HTTP.Bind == "" {
 		cfg.HTTP.Bind = "127.0.0.1"
+	}
+	if cfg.Logging.Level == "" {
+		cfg.Logging.Level = "INFO"
+	}
+	if cfg.Logging.EventFile == "" {
+		cfg.Logging.EventFile = "clod.log"
+	}
+	if cfg.Logging.APIFile == "" {
+		cfg.Logging.APIFile = "api.jsonl"
 	}
 
 	return &cfg, nil

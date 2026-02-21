@@ -2,9 +2,10 @@ package agent
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
+
+	"clod/log"
 )
 
 // Heartbeat fires when a session has been idle for a configurable duration.
@@ -71,15 +72,15 @@ func (h *Heartbeat) Stop() {
 }
 
 func (h *Heartbeat) fire(ctx context.Context) {
-	log.Printf("[heartbeat] firing for session %s", h.sessionKey)
+	log.Infof("heartbeat", "firing for session %s", h.sessionKey)
 
 	resp, err := h.agent.HandleMessage(ctx, h.sessionKey, "[HEARTBEAT] The idle timer has fired. Check HEARTBEAT.md for instructions on what to do during idle time.")
 	if err != nil {
-		log.Printf("[heartbeat] error: %v", err)
+		log.Errorf("heartbeat", "error: %v", err)
 		return
 	}
 
-	log.Printf("[heartbeat] response: %s", truncateStr(resp, 200))
+	log.Debugf("heartbeat", "response: %s", truncateStr(resp, 200))
 }
 
 func truncateStr(s string, max int) string {

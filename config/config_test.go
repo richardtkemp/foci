@@ -35,6 +35,11 @@ dir = "/tmp/memory"
 [http]
 port = 9999
 bind = "0.0.0.0"
+
+[logging]
+level = "DEBUG"
+event_file = "/tmp/clod.log"
+api_file = "/tmp/api.jsonl"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -82,6 +87,15 @@ bind = "0.0.0.0"
 	if cfg.HTTP.Bind != "0.0.0.0" {
 		t.Errorf("HTTP.Bind = %q", cfg.HTTP.Bind)
 	}
+	if cfg.Logging.Level != "DEBUG" {
+		t.Errorf("Logging.Level = %q, want %q", cfg.Logging.Level, "DEBUG")
+	}
+	if cfg.Logging.EventFile != "/tmp/clod.log" {
+		t.Errorf("Logging.EventFile = %q", cfg.Logging.EventFile)
+	}
+	if cfg.Logging.APIFile != "/tmp/api.jsonl" {
+		t.Errorf("Logging.APIFile = %q", cfg.Logging.APIFile)
+	}
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -117,6 +131,15 @@ token = "test-token"
 	}
 	if cfg.HTTP.Bind != "127.0.0.1" {
 		t.Errorf("default HTTP.Bind = %q, want %q", cfg.HTTP.Bind, "127.0.0.1")
+	}
+	if cfg.Logging.Level != "INFO" {
+		t.Errorf("default Logging.Level = %q, want %q", cfg.Logging.Level, "INFO")
+	}
+	if cfg.Logging.EventFile != "clod.log" {
+		t.Errorf("default Logging.EventFile = %q, want %q", cfg.Logging.EventFile, "clod.log")
+	}
+	if cfg.Logging.APIFile != "api.jsonl" {
+		t.Errorf("default Logging.APIFile = %q, want %q", cfg.Logging.APIFile, "api.jsonl")
 	}
 }
 
