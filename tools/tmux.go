@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -14,16 +16,33 @@ import (
 
 var tmuxCounter uint64
 
+// watchedSession tracks a tmux session being monitored for inactivity
+type watchedSession struct {
+	session       string
+	window        int
+	threshold     time.Duration
+	lastContent   [16]byte // md5 hash
+	lastActivity  time.Time
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+}
+
+var (
+	watchedMu   sync.Mutex
+	watchedSess = make(map[string]*watchedSession)
+)
+
 func NewTmuxTool() *Tool {
 	return &Tool{
 		Name:        "tmux",
-		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill. Sessions persist across agent turns.",
+		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"operation": {
 					"type": "string",
-					"enum": ["start", "send", "read", "list", "kill"],
+					"enum": ["start", "send", "read", "list", "kill", "watch", "unwatch"],
 					"description": "Operation to perform"
 				},
 				"name": {
@@ -49,6 +68,14 @@ func NewTmuxTool() *Tool {
 				"lines": {
 					"type": "integer",
 					"description": "Lines to capture (read, default 50)"
+				},
+				"window": {
+					"type": "integer",
+					"description": "Window index (watch/unwatch, default 0)"
+				},
+				"threshold_seconds": {
+					"type": "integer",
+					"description": "Inactivity threshold in seconds (watch, default 30)"
 				}
 			},
 			"required": ["operation"]
@@ -61,13 +88,15 @@ func NewTmuxTool() *Tool {
 
 func tmuxExecute(ctx context.Context, params json.RawMessage) (string, error) {
 	var p struct {
-		Operation string `json:"operation"`
-		Name      string `json:"name"`
-		Command   string `json:"command"`
-		Workdir   string `json:"workdir"`
-		Keys      string `json:"keys"`
-		Enter     *bool  `json:"enter"`
-		Lines     int    `json:"lines"`
+		Operation        string `json:"operation"`
+		Name             string `json:"name"`
+		Command          string `json:"command"`
+		Workdir          string `json:"workdir"`
+		Keys             string `json:"keys"`
+		Enter            *bool  `json:"enter"`
+		Lines            int    `json:"lines"`
+		Window           int    `json:"window"`
+		ThresholdSeconds int    `json:"threshold_seconds"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
@@ -92,8 +121,20 @@ func tmuxExecute(ctx context.Context, params json.RawMessage) (string, error) {
 		return tmuxList(ctx)
 	case "kill":
 		return tmuxKill(ctx, p.Name)
+	case "watch":
+		window := 0
+		if p.Window > 0 {
+			window = p.Window
+		}
+		threshold := 30
+		if p.ThresholdSeconds > 0 {
+			threshold = p.ThresholdSeconds
+		}
+		return tmuxWatch(ctx, p.Name, window, threshold)
+	case "unwatch":
+		return tmuxUnwatch(ctx, p.Name)
 	default:
-		return "", fmt.Errorf("unknown operation: %q (valid: start, send, read, list, kill)", p.Operation)
+		return "", fmt.Errorf("unknown operation: %q (valid: start, send, read, list, kill, watch, unwatch)", p.Operation)
 	}
 }
 
@@ -196,4 +237,103 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func tmuxWatch(ctx context.Context, name string, window, thresholdSeconds int) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("name is required for watch")
+	}
+	if thresholdSeconds < 1 {
+		thresholdSeconds = 30
+	}
+
+	log.Debugf("tmux", "watch: name=%s window=%d threshold=%ds", name, window, thresholdSeconds)
+
+	watchedMu.Lock()
+	key := fmt.Sprintf("%s:%d", name, window)
+	if _, exists := watchedSess[key]; exists {
+		watchedMu.Unlock()
+		return "", fmt.Errorf("session %s is already being watched", key)
+	}
+
+	monCtx, cancel := context.WithCancel(context.Background())
+	ws := &watchedSession{
+		session:      name,
+		window:       window,
+		threshold:    time.Duration(thresholdSeconds) * time.Second,
+		lastActivity: time.Now(),
+		ctx:          monCtx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+	}
+	watchedSess[key] = ws
+	watchedMu.Unlock()
+
+	// Start monitoring goroutine
+	go tmuxWatchMonitor(ws)
+
+	return fmt.Sprintf("Watching session %s (window %d) for inactivity (threshold: %ds)", name, window, thresholdSeconds), nil
+}
+
+func tmuxUnwatch(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("name is required for unwatch")
+	}
+
+	log.Debugf("tmux", "unwatch: name=%s", name)
+
+	watchedMu.Lock()
+	key := name + ":0" // unwatch without window removes all watches for this session
+	ws, exists := watchedSess[key]
+	if !exists {
+		watchedMu.Unlock()
+		return "", fmt.Errorf("session %s is not being watched", name)
+	}
+	delete(watchedSess, key)
+	watchedMu.Unlock()
+
+	ws.cancel()
+	<-ws.done
+	return fmt.Sprintf("Stopped watching session %s", name), nil
+}
+
+func tmuxWatchMonitor(ws *watchedSession) {
+	defer close(ws.done)
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			// Read pane content
+			out, err := runTmux(context.Background(), "capture-pane", "-t",
+				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
+			if err != nil {
+				log.Debugf("tmux", "watch monitor read error: %v", err)
+				return // session probably doesn't exist, stop watching
+			}
+
+			// Compute md5 hash of pane content
+			hash := md5.Sum([]byte(out))
+
+			// Check if content changed
+			if hash != ws.lastContent {
+				ws.lastContent = hash
+				ws.lastActivity = time.Now()
+			} else {
+				// Content unchanged; check if threshold exceeded
+				if time.Since(ws.lastActivity) > ws.threshold {
+					// Send wake message to the session (just log for now)
+					log.Infof("tmux", "watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
+
+					// Reset activity timer to avoid repeated alerts
+					ws.lastActivity = time.Now()
+				}
+			}
+
+		case <-ws.ctx.Done():
+			return
+		}
+	}
 }
