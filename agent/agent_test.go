@@ -605,12 +605,15 @@ func TestBuildMetaPrefix(t *testing.T) {
 
 	// First message — no previous turn data
 	sm := &sessionMeta{}
-	prefix := buildMetaPrefix(now, sm)
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", sm)
 	if !strings.Contains(prefix, "time=2026-02-21T05:30:00Z") {
 		t.Errorf("missing timestamp in prefix: %q", prefix)
 	}
 	if !strings.Contains(prefix, "gap=none") {
 		t.Errorf("first message should have gap=none: %q", prefix)
+	}
+	if !strings.Contains(prefix, "model=claude-haiku-4-5") {
+		t.Errorf("missing model in prefix: %q", prefix)
 	}
 	if strings.Contains(prefix, "prev_cost") {
 		t.Errorf("first message should not have prev_cost: %q", prefix)
@@ -624,9 +627,12 @@ func TestBuildMetaPrefix(t *testing.T) {
 	sm.prevCacheRead = 18000
 	sm.prevCacheWrite = 200
 
-	prefix = buildMetaPrefix(now, sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", sm)
 	if !strings.Contains(prefix, "gap=3h12m") {
 		t.Errorf("missing gap in prefix: %q", prefix)
+	}
+	if !strings.Contains(prefix, "model=claude-haiku-4-5") {
+		t.Errorf("missing model in prefix: %q", prefix)
 	}
 	if !strings.Contains(prefix, "prev_cost=$0.0430") {
 		t.Errorf("missing prev_cost in prefix: %q", prefix)
@@ -674,6 +680,9 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 	text := anthropic.TextOf(lastMsg.Content)
 	if !strings.Contains(text, "[meta]") {
 		t.Errorf("user message missing [meta] prefix: %q", text)
+	}
+	if !strings.Contains(text, "model=claude-haiku-4-5") {
+		t.Errorf("user message missing model in [meta]: %q", text)
 	}
 	if !strings.Contains(text, "Hello") {
 		t.Errorf("user message missing original text: %q", text)

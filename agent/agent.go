@@ -89,7 +89,7 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 }
 
 // buildMetaPrefix creates the metadata line prepended to user messages.
-func buildMetaPrefix(now time.Time, sm *sessionMeta) string {
+func buildMetaPrefix(now time.Time, model string, sm *sessionMeta) string {
 	gap := "none"
 	if !sm.lastMessageTime.IsZero() {
 		gap = formatGap(now.Sub(sm.lastMessageTime))
@@ -97,11 +97,11 @@ func buildMetaPrefix(now time.Time, sm *sessionMeta) string {
 
 	if sm.prevCost == 0 && sm.prevInput == 0 {
 		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s", now.UTC().Format(time.RFC3339), gap)
+		return fmt.Sprintf("[meta] time=%s gap=%s model=%s", now.UTC().Format(time.RFC3339), gap, model)
 	}
 
-	return fmt.Sprintf("[meta] time=%s gap=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
-		now.UTC().Format(time.RFC3339), gap,
+	return fmt.Sprintf("[meta] time=%s gap=%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
+		now.UTC().Format(time.RFC3339), gap, model,
 		sm.prevCost,
 		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite)
 }
@@ -169,7 +169,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 	// Build metadata prefix and prepend to user message
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	metaPrefix := buildMetaPrefix(now, sm)
+	metaPrefix := buildMetaPrefix(now, a.Model, sm)
 	reminderBlock := a.collectReminders()
 	annotatedMessage := metaPrefix + reminderBlock + "\n" + userMessage
 

@@ -72,11 +72,12 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 Each user message gets a metadata line prepended (NOT in system prompt — that would bust cache):
 
 ```
-[meta] time=2026-02-21T05:30:00Z gap=3h12m prev_cost=$0.0430 prev_tokens=in:2400/out:312/cR:18000/cW:200
+[meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 prev_cost=$0.0430 prev_tokens=in:2400/out:312/cR:18000/cW:200
 ```
 
 - `time` — current UTC timestamp
 - `gap` — human-readable time since previous message ("3h12m", "2d4h", "38s", "none")
+- `model` — current model name (e.g., "claude-haiku-4-5", "claude-opus-4-6")
 - `prev_cost` / `prev_tokens` — cost and token breakdown of the previous turn (omitted on first message)
 
 Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The metadata goes past the cache breakpoint, so it doesn't affect prompt caching.
