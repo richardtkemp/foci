@@ -51,11 +51,12 @@ type Message struct {
 
 // MessageRequest is the request body for the /v1/messages endpoint.
 type MessageRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	System    []SystemBlock `json:"system,omitempty"`
-	Messages  []Message     `json:"messages"`
-	Tools     []ToolDef     `json:"tools,omitempty"`
+	Model        string        `json:"model"`
+	MaxTokens    int           `json:"max_tokens"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"` // top-level automatic caching
+	System       []SystemBlock `json:"system,omitempty"`
+	Messages     []Message     `json:"messages"`
+	Tools        []ToolDef     `json:"tools,omitempty"`
 }
 
 // Usage contains token usage information from a response.

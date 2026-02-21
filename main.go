@@ -191,6 +191,7 @@ func main() {
 		Reminders:          reminderStore,
 		Model:              cfg.Agent.Model,
 		ExtraSystemBlocks:  extraSystemBlocks,
+		CacheStrategy:      cfg.Cache.Strategy,
 		CacheBustThreshold: cfg.Logging.CacheBustThreshold,
 		DuplicateMessages:  cfg.Agent.DuplicateMessages,
 	}

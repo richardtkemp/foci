@@ -126,6 +126,18 @@ STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenA
 
 ---
 
+## `[cache]`
+
+Prompt caching strategy.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `strategy` | string | `"auto"` | `"auto"`: top-level `cache_control` on the request body — Anthropic automatically caches the optimal prefix. `"explicit"`: manual breakpoints on last system block + second-to-last message (legacy). |
+
+`auto` is recommended. It requires no breakpoint management and handles growing conversations automatically. `explicit` gives fine-grained control but is fragile (breakpoints can accumulate or shift if not carefully managed).
+
+---
+
 ## `[skills]`
 
 Skill directories to scan on startup.

@@ -58,6 +58,7 @@ type Agent struct {
 	Model     string
 
 	ExtraSystemBlocks  []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
+	CacheStrategy      string                  // "auto" (top-level) or "explicit" (manual breakpoints)
 	CacheBustThreshold int                     // alert when cache_write exceeds this (0 = disabled)
 	CacheBustAlert     CacheBustFunc           // callback for alerts (set by telegram bot)
 	DuplicateMessages  bool                    // send user text twice per API call (improves instruction following)
@@ -284,9 +285,21 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}()
 
 	system := a.Bootstrap.SystemBlocks()
-	if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
-		// Insert extra blocks before the last block (which has cache_control).
-		// This keeps extra content inside the cached prefix.
+	useAutoCache := a.CacheStrategy == "auto"
+
+	if useAutoCache {
+		// Auto caching: strip all cache_control from system blocks — top-level handles it.
+		if len(a.ExtraSystemBlocks) > 0 {
+			system = append(system, a.ExtraSystemBlocks...)
+		}
+		cleanSystem := make([]anthropic.SystemBlock, len(system))
+		copy(cleanSystem, system)
+		for i := range cleanSystem {
+			cleanSystem[i].CacheControl = nil
+		}
+		system = cleanSystem
+	} else if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
+		// Explicit caching: insert extra blocks before the last block (which has cache_control).
 		combined := make([]anthropic.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
 		combined = append(combined, system[:len(system)-1]...)
 		combined = append(combined, a.ExtraSystemBlocks...)
@@ -296,17 +309,25 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	toolDefs := a.Tools.ToolDefs()
 
 	for i := 0; i < maxToolLoops; i++ {
-		cachedMessages := withCacheBreakpoint(messages)
+		var reqMessages []anthropic.Message
+		if useAutoCache {
+			reqMessages = messages
+		} else {
+			reqMessages = withCacheBreakpoint(messages)
+		}
 		req := &anthropic.MessageRequest{
 			Model:     turnModel,
 			MaxTokens: defaultMaxTokens,
 			System:    system,
-			Messages:  cachedMessages,
+			Messages:  reqMessages,
 			Tools:     toolDefs,
+		}
+		if useAutoCache {
+			req.CacheControl = anthropic.Ephemeral()
 		}
 
 		// Debug: log cache_control placement
-		logCacheDebug(system, cachedMessages, turnModel)
+		logCacheDebug(system, reqMessages, turnModel)
 
 		start := time.Now()
 		resp, err := a.Client.SendMessage(ctx, req)

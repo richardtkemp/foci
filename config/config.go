@@ -64,6 +64,10 @@ type VoiceConfig struct {
 	TTSVoice    string `toml:"tts_voice"`    // voice name (provider-specific)
 }
 
+type CacheConfig struct {
+	Strategy string `toml:"strategy"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
+}
+
 type SkillsConfig struct {
 	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
 }
@@ -84,6 +88,7 @@ type Config struct {
 	HTTP      HTTPConfig      `toml:"http"`
 	Logging   LoggingConfig   `toml:"logging"`
 	Voice     VoiceConfig     `toml:"voice"`
+	Cache     CacheConfig     `toml:"cache"`
 	Skills    SkillsConfig    `toml:"skills"`
 	Commands  []CommandConfig `toml:"commands"`
 }
@@ -130,6 +135,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "api-payload.jsonl"
+	}
+	if cfg.Cache.Strategy == "" {
+		cfg.Cache.Strategy = "auto"
 	}
 
 	return &cfg, nil
