@@ -375,6 +375,14 @@ func main() {
 			return "", fmt.Errorf("create branch: %w", err)
 		}
 
+		// Inject fork prompt so the agent knows it's on a branch
+		if fp := cfg.Agent.ForkPrompt; fp != "" {
+			sessions.AppendAll(branchKey, []anthropic.Message{
+				{Role: "user", Content: anthropic.TextContent(fp)},
+				{Role: "assistant", Content: anthropic.TextContent("Understood.")},
+			})
+		}
+
 		secBot.SetSessionKey(branchKey)
 		if primaryBot != nil {
 			secBot.SetChatID(primaryBot.ChatID())

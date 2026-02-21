@@ -22,6 +22,7 @@ Core agent settings.
 | `heartbeat_interval` | string | `"45m"` | Duration between idle heartbeats. Go duration format (`30s`, `5m`, `2h`). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
+| `fork_prompt` | string | `""` | Prompt injected into multiball branch sessions to inform the agent of the fork. Empty disables. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
