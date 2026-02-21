@@ -40,6 +40,14 @@ func main() {
 	}
 	defer log.Close()
 
+	// Conversation log (SQLite)
+	if cfg.Logging.ConversationFile != "" {
+		if err := log.InitConversation(cfg.Logging.ConversationFile); err != nil {
+			log.Fatalf("main", "init conversation log: %v", err)
+		}
+		defer log.CloseConversation()
+	}
+
 	// Load secrets (from secrets.toml alongside config file)
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	store, err := secrets.Load(secretsPath)

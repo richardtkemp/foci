@@ -77,6 +77,16 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	log.Infof("telegram", "message from %s: %s", msg.From.UserName, truncate(text, 100))
 
+	// Log received message
+	log.Conversation(log.ConversationEntry{
+		Direction: "recv",
+		UserID:    userID,
+		Username:  msg.From.UserName,
+		ChatID:    msg.Chat.ID,
+		Text:      text,
+		Session:   b.sessionKey,
+	})
+
 	// Send typing indicator
 	typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
 	b.api.Send(typing)
@@ -91,13 +101,26 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	for _, chunk := range splitMessage(response, 4096) {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, chunk)
 		reply.ParseMode = "Markdown"
+		sendErr := ""
 		if _, err := b.api.Send(reply); err != nil {
 			// Retry without markdown if parsing fails
 			reply.ParseMode = ""
 			if _, err := b.api.Send(reply); err != nil {
 				log.Errorf("telegram", "send error: %v", err)
+				sendErr = err.Error()
 			}
 		}
+
+		log.Conversation(log.ConversationEntry{
+			Direction: "sent",
+			UserID:    userID,
+			Username:  msg.From.UserName,
+			ChatID:    msg.Chat.ID,
+			Text:      chunk,
+			ParseMode: reply.ParseMode,
+			Session:   b.sessionKey,
+			Error:     sendErr,
+		})
 	}
 }
 

@@ -5,3 +5,6 @@ workspace/*.md
 *.log
 api.jsonl
 secrets.toml
+conversation.db
+conversation.db-wal
+conversation.db-shm

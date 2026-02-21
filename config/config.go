@@ -40,9 +40,10 @@ type HTTPConfig struct {
 }
 
 type LoggingConfig struct {
-	Level     string `toml:"level"`
-	EventFile string `toml:"event_file"`
-	APIFile   string `toml:"api_file"`
+	Level            string `toml:"level"`
+	EventFile        string `toml:"event_file"`
+	APIFile          string `toml:"api_file"`
+	ConversationFile string `toml:"conversation_file"`
 }
 
 type Config struct {
@@ -91,6 +92,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.APIFile == "" {
 		cfg.Logging.APIFile = "api.jsonl"
+	}
+	if cfg.Logging.ConversationFile == "" {
+		cfg.Logging.ConversationFile = "conversation.db"
 	}
 
 	return &cfg, nil

@@ -133,6 +133,11 @@ Two outputs:
    - Use: `log.API(log.APIEntry{...})`
    - Queryable with `jq`
 
+3. **Conversation log** (`conversation.db`): SQLite database logging exact Telegram messages sent and received. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
+   - Use: `log.Conversation(log.ConversationEntry{...})`
+   - Queryable with `sqlite3 conversation.db "SELECT * FROM messages"`
+   - Useful for debugging formatting (see exact markdown sent vs plain text fallback)
+
 ## Tool System (`tools/`)
 
 Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. Registry maps name → tool. Tools available:
