@@ -14,7 +14,8 @@ config.Load(path)
   → tools.NewRegistry() + register all tools             ← exec gets secrets.Store
   → workspace.NewBootstrap(dir, fileOrder)
   → agent.Agent{Client, Sessions, Tools, Bootstrap, Model}
-  → telegram.NewBot(token, allowedUsers, agent, sessionKey)  → goroutine
+  → command.NewRegistry() + register built-ins + custom scripts
+  → telegram.NewBot(token, allowedUsers, agent, cmds, sessionKey)  → goroutine
   → agent.NewHeartbeat(agent, sessionKey, interval)           → goroutine
   → http.Server{"/wake" handler}                              → goroutine
   → signal.Notify(SIGINT, SIGTERM) → shutdown
@@ -32,11 +33,12 @@ main
  ├── tools         → anthropic, log, secrets
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
+ ├── command       (no deps)
  ├── agent         → anthropic, session, tools, workspace, log
- └── telegram      → agent, log
+ └── telegram      → agent, command, log
 ```
 
-No circular dependencies. `config`, `log`, and `secrets` are leaf packages.
+No circular dependencies. `config`, `log`, `secrets`, and `command` are leaf packages.
 
 ## The Agent Loop (`agent/agent.go`)
 
@@ -155,13 +157,25 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `web_search` | web.go | Brave Search API |
 | `memory_search` | memory.go | Grep across .md files in memory dir |
 
+## Slash Commands (`command/`)
+
+Messages starting with `/` are intercepted at the Telegram router level before reaching the agent. They execute immediately — never queued behind an in-flight agent turn.
+
+**Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
+
+**Two types:**
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`
+2. **Custom** (script-defined in `clod.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
+
+Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
+
 ## Config (`config/config.go`)
 
-Single `clod.toml` parsed with BurntSushi/toml. Sections: `[agent]`, `[anthropic]`, `[telegram]`, `[sessions]`, `[memory]`, `[http]`, `[logging]`. Defaults applied for missing fields.
+Single `clod.toml` parsed with BurntSushi/toml. Sections: `[agent]`, `[anthropic]`, `[telegram]`, `[sessions]`, `[memory]`, `[http]`, `[logging]`, `[[commands]]`. Defaults applied for missing fields.
 
 ## Telegram Bot (`telegram/bot.go`)
 
-Long-polling loop. Filters by `allowed_users` (string user IDs). Sends typing indicator while agent processes. Splits responses at 4096 chars. Falls back to plain text if markdown parsing fails.
+Long-polling loop. Filters by `allowed_users` (string user IDs). Slash commands dispatched before agent pipeline. Sends typing indicator while agent processes. Splits responses at 4096 chars. Falls back to plain text if markdown parsing fails.
 
 ## Heartbeat & Wake
 
