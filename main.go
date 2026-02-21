@@ -197,6 +197,7 @@ func main() {
 		BuildTime: buildTime,
 	}))
 	cmds.Register(command.NewUptimeCommand(startTime))
+	cmds.Register(command.NewHelpCommand(cmds))
 
 	// Custom script commands from config
 	for _, cc := range cfg.Commands {

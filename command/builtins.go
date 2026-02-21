@@ -328,6 +328,21 @@ func NewErrorsCommand(eventLogPath string) *Command {
 	}
 }
 
+// NewHelpCommand returns a /help command that lists all registered commands.
+func NewHelpCommand(registry *Registry) *Command {
+	return &Command{
+		Name:        "help",
+		Description: "List available commands",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			var sb strings.Builder
+			for _, cmd := range registry.All() {
+				fmt.Fprintf(&sb, "/%s — %s\n", cmd.Name, cmd.Description)
+			}
+			return sb.String(), nil
+		},
+	}
+}
+
 // BuildInfo holds data for the /version command.
 type BuildInfo struct {
 	Version   string

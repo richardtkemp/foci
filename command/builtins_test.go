@@ -426,6 +426,24 @@ func TestScriptCommandDefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestHelpCommand(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(NewPingCommand())
+	reg.Register(NewHelpCommand(reg))
+
+	cmd := reg.Get("help")
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "/ping") {
+		t.Errorf("missing /ping in help output: %q", result)
+	}
+	if !strings.Contains(result, "/help") {
+		t.Errorf("missing /help in help output: %q", result)
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
