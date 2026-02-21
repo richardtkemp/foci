@@ -13,7 +13,8 @@ type AgentConfig struct {
 	Model             string   `toml:"model"`
 	Workspace         string   `toml:"workspace"`
 	HeartbeatInterval string   `toml:"heartbeat_interval"`
-	SystemFiles       []string `toml:"system_files"` // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	SystemFiles       []string `toml:"system_files"`       // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	DuplicateMessages bool     `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
 }
 
 type AnthropicConfig struct {

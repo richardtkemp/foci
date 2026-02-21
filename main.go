@@ -170,6 +170,7 @@ func main() {
 		Reminders:          reminderStore,
 		Model:              cfg.Agent.Model,
 		CacheBustThreshold: cfg.Logging.CacheBustThreshold,
+		DuplicateMessages:  cfg.Agent.DuplicateMessages,
 	}
 
 	// Model escalation tool (sync one-shot call to a different model)

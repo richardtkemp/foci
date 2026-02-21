@@ -881,6 +881,93 @@ func TestBuildMetaPrefix_VoiceMode(t *testing.T) {
 	}
 }
 
+func TestDuplicateMessages(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:            client,
+		Sessions:          store,
+		Tools:             tools.NewRegistry(),
+		Bootstrap:         bootstrap,
+		Model:             "claude-haiku-4-5",
+		DuplicateMessages: true,
+	}
+
+	ag.HandleMessage(context.Background(), "agent:test:dup", "Do the thing")
+
+	// The user message text should contain the instruction twice
+	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	text := anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 2 {
+		t.Errorf("expected user text duplicated (2 occurrences), got %d in: %q", count, text)
+	}
+
+	// Meta prefix should only appear once
+	if count := strings.Count(text, "[meta]"); count != 1 {
+		t.Errorf("expected [meta] once, got %d", count)
+	}
+
+	// Saved session should also have the duplicated text (for cache coherence)
+	saved, _ := store.Load("agent:test:dup")
+	savedText := anthropic.TextOf(saved[0].Content)
+	if count := strings.Count(savedText, "Do the thing"); count != 2 {
+		t.Errorf("saved session should have duplicated text, got %d occurrences", count)
+	}
+}
+
+func TestDuplicateMessagesDisabled(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:            client,
+		Sessions:          store,
+		Tools:             tools.NewRegistry(),
+		Bootstrap:         bootstrap,
+		Model:             "claude-haiku-4-5",
+		DuplicateMessages: false,
+	}
+
+	ag.HandleMessage(context.Background(), "agent:test:nodup", "Do the thing")
+
+	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	text := anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 1 {
+		t.Errorf("expected user text once (no duplication), got %d in: %q", count, text)
+	}
+}
+
 func TestVoiceReplyFunc(t *testing.T) {
 	ag := &Agent{Model: "test"}
 

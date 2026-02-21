@@ -59,6 +59,7 @@ type Agent struct {
 
 	CacheBustThreshold int           // alert when cache_write exceeds this (0 = disabled)
 	CacheBustAlert     CacheBustFunc // callback for alerts (set by telegram bot)
+	DuplicateMessages  bool          // send user text twice per API call (improves instruction following)
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
@@ -243,7 +244,11 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	sm := a.getSessionMeta(sessionKey)
 	metaPrefix := buildMetaPrefix(now, turnModel, sm)
 	reminderBlock := a.collectReminders()
-	annotatedMessage := metaPrefix + reminderBlock + "\n" + userMessage
+	msgBody := userMessage
+	if a.DuplicateMessages {
+		msgBody = userMessage + "\n\n" + userMessage
+	}
+	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
 
 	// Build content blocks: images first, then text
 	var contentBlocks []anthropic.ContentBlock
