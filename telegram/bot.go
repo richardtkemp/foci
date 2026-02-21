@@ -374,6 +374,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	})
 	defer b.agent.SetVoiceReplyFunc(nil)
 
+	// Refresh typing indicator when tools complete, so user sees continuous activity
+	b.agent.SetActivityFunc(func() {
+		b.sender.Send(tgbotapi.NewChatAction(qm.msg.Chat.ID, tgbotapi.ChatTyping))
+	})
+	defer b.agent.SetActivityFunc(nil)
+
 	var response string
 	var err error
 	if len(qm.images) > 0 {

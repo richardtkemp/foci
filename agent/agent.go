@@ -70,6 +70,7 @@ type Agent struct {
 	replyMu         sync.Mutex
 	replyFunc       ReplyFunc      // optional: set per-turn for intermediate replies
 	voiceReplyFunc  VoiceReplyFunc // optional: set per-turn for voice note delivery
+	activityFunc    func()         // optional: called when tool completes (typing indicator refresh)
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
@@ -110,6 +111,24 @@ func (a *Agent) GetVoiceReplyFunc() VoiceReplyFunc {
 	a.replyMu.Lock()
 	defer a.replyMu.Unlock()
 	return a.voiceReplyFunc
+}
+
+// SetActivityFunc sets a callback fired after each tool completes.
+// Used by the Telegram bot to refresh the typing indicator.
+func (a *Agent) SetActivityFunc(fn func()) {
+	a.replyMu.Lock()
+	defer a.replyMu.Unlock()
+	a.activityFunc = fn
+}
+
+// signalActivity calls the activity callback if set.
+func (a *Agent) signalActivity() {
+	a.replyMu.Lock()
+	fn := a.activityFunc
+	a.replyMu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // sendIntermediate sends an intermediate reply if a ReplyFunc is set.
@@ -462,6 +481,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 				))
+				a.signalActivity()
 				continue
 			}
 
@@ -475,12 +495,14 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
 				))
+				a.signalActivity()
 				continue
 			}
 
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
 				block.ID, result, false,
 			))
+			a.signalActivity()
 		}
 
 		// Append tool results as user message
