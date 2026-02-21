@@ -80,8 +80,11 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
 
 	if p.Background {
-		// Background mode: children survive the exec call. No process group,
-		// no group kill. WaitDelay closes pipes if a child holds them open.
+		// Background mode: children survive the exec call. Setsid puts the
+		// child in a new session so it won't be killed when the parent's
+		// process group is cleaned up. WaitDelay closes pipes if a child
+		// holds them open.
+		proc.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		proc.WaitDelay = 2 * time.Second
 	} else {
 		// Normal mode: own process group, kill the group on timeout/cancel.
