@@ -183,27 +183,40 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `memory_search` — FTS5 search over memory files + conversation history
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
 - `request_model` — escalate to a heavier model for the next turn
+- `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
+- `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
+
+### Tmux Session Monitoring
+
+The `tmux` tool includes operations for monitoring pane inactivity:
+
+- `watch` — monitor a pane for inactivity; fires if content unchanged for threshold seconds (default 30s)
+  - Parameters: `session` (required), `window` (default 0), `threshold_seconds` (default 30)
+  - Tracks content with MD5 hash; timer resets on change
+  - Runs as background goroutine, one-shot alert mechanism
+- `unwatch` — stop monitoring a session
+
+**Use case:** Long-running background tasks. Start a build/deploy with `tmux start`, then `watch` to be notified when it completes.
 
 ### Tool Result Guard
 
 When a tool returns a result exceeding a configurable character threshold (default: 10,000 chars), clod does NOT inject the full result into session history. Instead:
 
-1. Write the full result to a temp file in the agent's home dir: `/home/clod/tmp/tool-result-{tool}-{timestamp}.txt`
+1. Write the full result to a temp file: `{temp_dir}/tool-result-{tool}-{random}.txt`
 2. Return a truncated result to the agent with instructions:
    ```
-   [Result too large: 47,231 chars. Full output saved to /home/clod/tmp/tool-result-exec-1708512345.txt]
-   Use `read` tool to inspect specific sections. First 500 chars:
+   [Result too large: 47,231 chars. Full output saved to /tmp/clod-tool-results/tool-result-exec-a1b2c3d4.txt]
+   Use `read` tool to inspect sections. First 10000 chars:
    ...
    ```
 
-This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history until compaction. The agent can still access the full result via `read` — it just doesn't sit in context forever.
+This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via `read` — it just doesn't sit in context forever.
 
 ```toml
 [tools]
-result_guard_chars = 10000   # max chars before writing to file
+max_result_chars = 10000              # max chars before writing to file
+temp_dir = "/tmp/clod-tool-results"   # where to write large results
 ```
-
-Reference implementation: OpenClaw's `session-tool-result-guard-wrapper.ts` (`~/git/openclaw_code/src/agents/session-tool-result-guard-wrapper.ts`)
 
 **Each tool is a function with signature:**
 ```go
@@ -310,14 +323,26 @@ ORDER BY weighted_rank;
 
 ### Compaction
 
-**Alpha:** Simple threshold-based.
+**Alpha:** Threshold-based with fully configurable parameters.
 - When context exceeds N% of model's context window, trigger compaction
 - Pre-compaction: inject system message "save important context to memory now", let agent write to memory files
 - Pre-session-end: same memory prompt fires before a session goes inactive — e.g. when the user runs `/new`, or after N minutes of inactivity. The agent gets a chance to persist anything important before the session is replaced or archived.
-- Compaction: call model with "summarise this conversation" prompt, replace history with summary
+- Compaction: call model with configurable summary prompt, replace history with summary
 - Post-compaction: inject handoff note so agent knows compaction occurred
+- Scratchpad preserved through compaction (appended to handoff)
 
-**Beta:** Custom identity-aware prompts, configurable thresholds, retry logic.
+**Configuration:**
+```toml
+[sessions]
+compaction_threshold = 0.8               # compact at 80% of context window
+compaction_model = ""                    # model for summarization (default: agent model)
+compaction_max_tokens = 4096             # max output tokens for summary
+compaction_min_messages = 4              # min messages before compacting
+compaction_summary_prompt = "..."        # custom summary prompt
+compaction_handoff_msg = "..."           # message after compaction
+```
+
+All parameters have sensible defaults. Customize only what you need.
 
 ### Heartbeat
 
@@ -328,17 +353,23 @@ A timer that fires when the session has been idle for a configurable duration.
 - If agent responds with `HEARTBEAT_OK`, no action taken
 - Configurable interval (default: 45 minutes)
 
-### Cron
+### Scheduled Wakes
 
-**Alpha:** Use system crontab. A tiny HTTP endpoint accepts wake messages:
+**HTTP endpoint (for cron jobs):**
 ```
 POST /wake
 {"agent": "main", "text": "morning routine"}
 ```
+Injects text as a user message into a branch session.
 
-This injects the text as a user message into a branch session of the specified agent.
+**Tool-based scheduling:**
+The `schedule_wake` tool allows the agent to schedule messages to itself:
+- `delay: "30m"` — schedule message after a duration (e.g., "30m", "2h", "1d")
+- `at: "2026-02-21T15:30:00Z"` — schedule message at ISO timestamp
+- One-shot, auto-cleaned after firing
+- Useful for self-reminders, follow-ups, or timed actions
 
-System crontab is sufficient — no built-in scheduler planned.
+System crontab can trigger `/wake` endpoint for external scheduling. For agent-initiated delays, use the `schedule_wake` tool.
 
 ### Secrets
 
@@ -509,6 +540,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **Debug & inspection:**
 - `/cache` - last 5 API calls with cache hit/miss breakdown from api.jsonl. Shows: tokens in, cache read, cache write, cost. Quick way to verify caching is working.
 - `/last` - show the last API request/response: model, stop reason, token usage, duration, cost. The single most useful debug command.
+- `/usage` - check Claude subscription usage and rate limits (requires OAuth token in config)
 - `/tools` - list registered tools with enabled/disabled status
 - `/config` - dump current running config (redact secrets)
 - `/ping` - return "pong" with timestamp. Simplest possible liveness check.
@@ -584,6 +616,7 @@ heartbeat_interval = "45m"
 
 [anthropic]
 token = "sk-ant-oat01-..."
+oauth_token = "sk-ant-oat01-..."  # OAuth token for /usage command
 
 [telegram]
 bot_token = "8351531463:AAH..."
@@ -591,14 +624,30 @@ allowed_users = ["5970082313"]
 
 [sessions]
 dir = "/home/rich/git/clod/sessions"
-compaction_threshold = 0.8  # compact at 80% context usage
+compaction_threshold = 0.8
+compaction_max_tokens = 4096
+compaction_min_messages = 4
 
 [memory]
 dir = "/home/rich/git/openclaw/workspace/memory"
 
+[tools]
+max_result_chars = 10000
+temp_dir = "/tmp/clod-tool-results"
+
+[voice]
+stt_endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+stt_model = "whisper-large-v3"
+tts_provider = "edge-tts"
+
 [http]
 port = 18791
 bind = "127.0.0.1"
+
+[logging]
+level = "INFO"
+event_file = "clod.log"
+api_file = "api.jsonl"
 ```
 
 ## Alpha Scope
