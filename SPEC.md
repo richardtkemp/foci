@@ -249,6 +249,7 @@ ORDER BY weighted_rank;
 **Alpha:** Simple threshold-based.
 - When context exceeds N% of model's context window, trigger compaction
 - Pre-compaction: inject system message "save important context to memory now", let agent write to memory files
+- Pre-session-end: same memory prompt fires before a session goes inactive — e.g. when the user runs `/new`, or after N minutes of inactivity. The agent gets a chance to persist anything important before the session is replaced or archived.
 - Compaction: call model with "summarise this conversation" prompt, replace history with summary
 - Post-compaction: inject handoff note so agent knows compaction occurred
 
