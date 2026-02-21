@@ -126,6 +126,16 @@ The agent constructs a self-contained prompt with all necessary context. Opus (o
 
 This is syntactic sugar over the subagent system — same dispatch path, just synchronous and tool-less.
 
+### Subagent Prompt Weight
+
+Subagents (including `request_model`) accept a prompt weight that controls how much system context they inherit:
+
+- **`full`** — character files (identity, soul, agents, tools, memory) + parent's payload. Default for background tasks that need to "be you."
+- **`light`** — minimal system prompt + parent's payload. Default for `request_model`. You're asking a question, not spawning a personality.
+- **`none`** — parent's payload only. Zero overhead. Parent is 100% responsible for context.
+
+This keeps model escalation cheap — an Opus consultation with `light` or `none` prompt is just the question + context the agent packs, not 15k tokens of character files.
+
 ### Thought Queue
 
 The agent can defer thoughts for later via a `memory_remind` tool:
