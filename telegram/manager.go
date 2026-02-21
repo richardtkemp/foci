@@ -1,0 +1,83 @@
+package telegram
+
+import (
+	"context"
+	"sync"
+
+	"clod/log"
+)
+
+// BotManager owns all Telegram bots and provides lookups by agent ID.
+// Each agent has one primary bot and optionally a multiball pool.
+type BotManager struct {
+	primary map[string]*Bot  // agentID → primary bot
+	pools   map[string]*Pool // agentID → multiball pool
+	all     []*Bot           // all bots for iteration
+	mu      sync.RWMutex
+}
+
+// NewBotManager creates an empty BotManager.
+func NewBotManager() *BotManager {
+	return &BotManager{
+		primary: make(map[string]*Bot),
+		pools:   make(map[string]*Pool),
+	}
+}
+
+// AddPrimary registers the primary bot for an agent.
+func (m *BotManager) AddPrimary(agentID string, bot *Bot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.primary[agentID] = bot
+	m.all = append(m.all, bot)
+}
+
+// AddMultiball registers a multiball bot for an agent.
+// Creates the pool for the agent if it doesn't exist.
+func (m *BotManager) AddMultiball(agentID string, bot *Bot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pool, ok := m.pools[agentID]
+	if !ok {
+		pool = NewPool()
+		m.pools[agentID] = pool
+	}
+	bot.SetSecondary(pool)
+	pool.Add(bot)
+	m.all = append(m.all, bot)
+}
+
+// PrimaryBot returns the primary bot for an agent, or nil if not found.
+func (m *BotManager) PrimaryBot(agentID string) *Bot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.primary[agentID]
+}
+
+// Pool returns the multiball pool for an agent, or nil if not configured.
+func (m *BotManager) Pool(agentID string) *Pool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.pools[agentID]
+}
+
+// StartAll starts all bots as goroutines. Non-blocking.
+func (m *BotManager) StartAll(ctx context.Context) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, bot := range m.all {
+		go bot.Run(ctx)
+	}
+	log.Infof("telegram", "started %d bot(s)", len(m.all))
+}
+
+// AgentIDs returns the IDs of all agents with primary bots.
+func (m *BotManager) AgentIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.primary))
+	for id := range m.primary {
+		ids = append(ids, id)
+	}
+	return ids
+}
