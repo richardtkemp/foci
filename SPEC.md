@@ -417,6 +417,8 @@ The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path
 
 ### What the agent knows
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
+  - Available secret names are injected into the system prompt at startup so the agent can discover what's available
+  - Unresolved secret references in exec commands are errors (not silently passed through)
 - How to reference them: `{{secret:NAME}}`
 - Nothing about their values
 
@@ -556,6 +558,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **System:**
 - `/version` - binary version, go version, build time, git commit
 - `/uptime` - process uptime, system load, memory usage
+- `/reload` - reload config and workspace files (IDENTITY.md, SOUL.md, etc.) without restarting
 
 ### Custom commands (TOML config)
 
@@ -673,7 +676,7 @@ api_file = "api.jsonl"
 - Cache bust alerts (Telegram notification on large cache writes)
 - Exec template secrets (`{{secret:NAME}}`) — resolved before spawning subprocess
 - Tool output redaction — exec output scanned for known secret patterns
-- Telegram markdown rendering (Markdown parse mode with plain text fallback)
+- Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
 - Tool result size guard (large results saved to temp file)
 - Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball
 - Cron system (system crontab, prompts loaded from disk)
