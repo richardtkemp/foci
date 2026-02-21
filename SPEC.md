@@ -86,6 +86,22 @@ The agent can acknowledge a message and deliver a full response later. For compl
 
 Implementation: The agent turn can produce multiple Telegram messages. The first is sent immediately. Subsequent messages are sent as the agent completes tool calls. This is just streaming tool results to Telegram rather than batching everything into one final response.
 
+### Scratchpad
+
+The agent has a `scratchpad.md` file in the workspace for working state — mid-investigation notes, partial analyses, things that aren't worth saving to memory but would be disruptive to lose. Mentioned in the system prompt so the agent knows it's available. The agent manages it like any other file (read/write/edit). Compaction preserves a note that the scratchpad exists and may contain working state.
+
+### Model Escalation
+
+The agent can request a heavier model for a single turn via `request_model`:
+
+```
+request_model("opus", "Complex multi-step reasoning about cache interaction patterns")
+```
+
+The escalation applies to the next turn only, then reverts to the session default. No human approval gate — trust the agent, monitor via `/cost`. The tool returns confirmation of what model the next turn will use.
+
+Design intent: one model per session, no mid-session switching as a rule. Model escalation is the exception — explicit, logged, auto-reverting.
+
 ### Thought Queue
 
 The agent can defer thoughts for later via a `memory_remind` tool:
@@ -96,17 +112,6 @@ memory_remind("Ask Dick about the Greece decision", "tomorrow")
 ```
 
 Reminders surface as injected context at the specified time (next heartbeat, next session, specific date). Stored in SQLite alongside conversation log. Lightweight — not a full task system, just "future me should think about this."
-
-### Scratchpad
-
-Working notes that survive compaction but aren't permanent memory. For when the agent is mid-investigation and building up context that would be catastrophic to lose but isn't worth saving to memory files.
-
-Tools:
-- `scratchpad_write(text)` — append to scratchpad
-- `scratchpad_read()` — return current scratchpad contents
-- `scratchpad_clear()` — empty the scratchpad
-
-Stored in SQLite. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
 
 ### Tool System
 
@@ -120,6 +125,8 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `web_fetch` — HTTP GET, extract readable content
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history
+- `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
+- `request_model` — escalate to a heavier model for the next turn
 
 **Each tool is a function with signature:**
 ```go
