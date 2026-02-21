@@ -94,6 +94,28 @@ When the model responds with text alongside `tool_use` blocks (e.g., "Looking in
 
 The `ReplyFunc` is cleared after each turn via `defer agent.SetReplyFunc(nil)`.
 
+## Thought Queue (Reminders)
+
+The agent can defer thoughts for later via the `memory_remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due.
+
+**Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `text`, `due_at`, `due_tag`, `created`.
+
+**Time resolution (`resolveWhen`):**
+- `next_heartbeat`, `next_session`, `now` → immediate
+- `tomorrow` → midnight tomorrow UTC
+- `YYYY-MM-DD` → that date at midnight UTC
+- Go duration (e.g., `2h`, `30m`) → now + duration
+
+**Injection:** At the start of each `HandleMessage`, `collectReminders()` checks for due reminders. If any exist, they're appended to the metadata line as a `[reminders]` block in the user message (past the cache breakpoint, so caching is unaffected). Due reminders are auto-dismissed after surfacing.
+
+**Example injected message:**
+```
+[meta] time=2026-02-21T05:30:00Z gap=45m0s
+[reminders]
+- Look into FTS5 phrase boosting (set next_heartbeat, due: 2026-02-21 05:00)
+Hello, what should I work on?
+```
+
 ## Session Storage
 
 **Format:** JSONL files, one JSON-encoded `anthropic.Message` per line.
@@ -188,6 +210,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `web_fetch` | web.go | HTTP GET, strip HTML tags |
 | `web_search` | web.go | Brave Search API |
 | `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x) |
+| `memory_remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due |
 
 ## Slash Commands (`command/`)
 

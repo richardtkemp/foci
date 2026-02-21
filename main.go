@@ -102,6 +102,7 @@ func main() {
 	}
 	// Memory FTS5 index
 	var memIdx *memory.Index
+	var reminderStore *memory.ReminderStore
 	if cfg.Memory.Dir != "" {
 		memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
 		memIdx, err = memory.NewIndex(memDbPath, cfg.Memory.Dir)
@@ -114,6 +115,15 @@ func main() {
 			log.Errorf("main", "reindex memory: %v", err)
 		}
 		registry.Register(tools.NewMemorySearchTool(memIdx))
+
+		// Reminder store (same DB directory)
+		reminderDbPath := filepath.Join(filepath.Dir(configPath), "reminders.db")
+		reminderStore, err = memory.NewReminderStore(reminderDbPath)
+		if err != nil {
+			log.Fatalf("main", "create reminder store: %v", err)
+		}
+		defer reminderStore.Close()
+		registry.Register(tools.NewMemoryRemindTool(reminderStore))
 
 		// Index conversation messages into FTS5 as they're logged
 		log.ConversationHook = memIdx.IndexConversation
@@ -132,6 +142,7 @@ func main() {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Compactor: compactor,
+		Reminders: reminderStore,
 		Model:     cfg.Agent.Model,
 	}
 

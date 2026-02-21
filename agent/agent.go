@@ -10,6 +10,7 @@ import (
 	"clod/anthropic"
 	"clod/compaction"
 	"clod/log"
+	"clod/memory"
 	"clod/session"
 	"clod/tools"
 	"clod/workspace"
@@ -40,6 +41,7 @@ type Agent struct {
 	Tools     *tools.Registry
 	Bootstrap *workspace.Bootstrap
 	Compactor *compaction.Compactor // nil disables auto-compaction
+	Reminders *memory.ReminderStore // nil disables reminder injection
 	Model     string
 
 	processing int32 // atomic: number of in-flight HandleMessage calls
@@ -123,6 +125,36 @@ func formatGap(d time.Duration) string {
 	return fmt.Sprintf("%dd%dh", days, hours)
 }
 
+// collectReminders returns due reminders formatted for injection into the user message.
+// Returns empty string if no reminders are due or the store is nil.
+func (a *Agent) collectReminders() string {
+	if a.Reminders == nil {
+		return ""
+	}
+
+	reminders, err := a.Reminders.Due()
+	if err != nil {
+		log.Errorf("agent", "fetch reminders: %v", err)
+		return ""
+	}
+	if len(reminders) == 0 {
+		return ""
+	}
+
+	var block string
+	block = "\n[reminders]"
+	for _, r := range reminders {
+		block += fmt.Sprintf("\n- %s (set %s, due: %s)", r.Text, r.DueTag, r.Created.Format("2006-01-02 15:04"))
+	}
+
+	// Auto-dismiss surfaced reminders
+	if err := a.Reminders.DismissAll(); err != nil {
+		log.Errorf("agent", "dismiss reminders: %v", err)
+	}
+
+	return block
+}
+
 // HandleMessage processes a user message in the given session and returns the final text response.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
 	atomic.AddInt32(&a.processing, 1)
@@ -138,7 +170,8 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	metaPrefix := buildMetaPrefix(now, sm)
-	annotatedMessage := metaPrefix + "\n" + userMessage
+	reminderBlock := a.collectReminders()
+	annotatedMessage := metaPrefix + reminderBlock + "\n" + userMessage
 
 	// Append user message with metadata
 	userMsg := anthropic.Message{
