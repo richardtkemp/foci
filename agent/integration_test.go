@@ -87,8 +87,11 @@ func TestBranchCacheSharing(t *testing.T) {
 	entry1 := lastAPIEntry(t, apiLogPath)
 	t.Logf("Step 1: input=%d output=%d cache_creation=%d cache_read=%d",
 		entry1.Input, entry1.Output, entry1.CacheWrite, entry1.CacheRead)
-	if entry1.CacheWrite == 0 {
-		t.Error("Step 1: expected cache_creation > 0 (cache write)")
+	if entry1.CacheWrite == 0 && entry1.CacheRead == 0 {
+		t.Error("Step 1: expected caching activity (cache_creation or cache_read > 0)")
+	}
+	if entry1.CacheRead > 0 {
+		t.Log("Step 1: cache already warm from previous run (cache_read > 0)")
 	}
 
 	// --- Step 2: Second parent request (expect cache READ) ---

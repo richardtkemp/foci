@@ -64,8 +64,11 @@ func TestCacheSharing(t *testing.T) {
 		t.Fatalf("Step 1 failed: %v", err)
 	}
 	logUsage(t, "Step 1", resp1.Usage)
-	if resp1.Usage.CacheCreationInputTokens == 0 {
-		t.Error("Step 1: expected cache_creation_input_tokens > 0 (cache write)")
+	if resp1.Usage.CacheCreationInputTokens == 0 && resp1.Usage.CacheReadInputTokens == 0 {
+		t.Error("Step 1: expected caching activity (cache_creation or cache_read > 0)")
+	}
+	if resp1.Usage.CacheReadInputTokens > 0 {
+		t.Log("Step 1: cache already warm from previous run")
 	}
 
 	// --- Step 2: Second parent request (expect cache READ) ---
