@@ -175,12 +175,35 @@ Single `clod.toml` parsed with BurntSushi/toml. Sections: `[agent]`, `[anthropic
 
 ## Telegram Bot (`telegram/bot.go`)
 
-Long-polling loop. Filters by `allowed_users` (string user IDs). Slash commands dispatched before agent pipeline. Sends typing indicator while agent processes. Splits responses at 4096 chars. Falls back to plain text if markdown parsing fails.
+Two goroutines:
+```
+[receiver goroutine]   →  receive msg  →  slash command?  →  yes: execute, reply
+                                                           →  no:  enqueue (buffered chan)
+[agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage  →  reply
+```
+
+The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
+
+**Turn cancellation:** Each agent turn gets its own `context.WithCancel`. `/stop` calls `turnCancel()`, which propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). The agent loop checks `ctx.Err()` after API responses and between tool calls.
+
+**Reset guard:** `/reset` refuses when `agent.IsProcessing()` is true — prevents clearing an active conversation mid-turn.
+
+## HTTP Gateway (`main.go`)
+
+Endpoints for external integration (used by `clod-cli`):
+- `POST /send` — message to main session, returns response
+- `GET /status` — dispatches `/status` command
+- `POST /command` — dispatches any slash command
+- `POST /wake` — branch session for cron/external triggers
+
+## CLI Tool (`cmd/clod-cli/`)
+
+Separate binary (`go build ./cmd/clod-cli`) for scripts, cron jobs, and external tools. Commands: `send`, `wake`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway at `CLOD_ADDR` (default `127.0.0.1:18790`).
 
 ## Heartbeat & Wake
 
 - **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into main session. Resets on any activity.
-- **Wake** (in `main.go`): `POST /wake` creates a branch session from the agent's main session, injects the text, runs the agent on the branch.
+- **Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch.
 
 ## Compaction (`compaction/compact.go`)
 
