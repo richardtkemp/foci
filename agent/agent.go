@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -63,6 +67,8 @@ type Agent struct {
 	CacheBustDetect    bool                    // detect cache busts (cache_read drop >50%)
 	CacheBustAlert     CacheBustFunc           // callback for cache bust alerts
 	DuplicateMessages  bool                    // send user text twice per API call (improves instruction following)
+	MaxResultChars     int                     // max chars for tool result before writing to file (0 disables)
+	ToolResultTempDir  string                  // where to write large tool results
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
@@ -211,6 +217,57 @@ func formatGap(d time.Duration) string {
 	days := int(d.Hours()) / 24
 	hours := int(d.Hours()) % 24
 	return fmt.Sprintf("%dd%dh", days, hours)
+}
+
+// guardToolResult checks if a tool result exceeds the size limit.
+// If it does, writes to a temp file and returns a truncated message with instructions.
+// If no limit is set or result is small, returns the original result.
+func (a *Agent) guardToolResult(toolName string, result string) string {
+	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
+		return result
+	}
+
+	// Result is too large — write to file
+	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
+		log.Warnf("agent", "create tool result temp dir: %v", err)
+		// Fall back to returning the full result if we can't write the file
+		return result
+	}
+
+	// Generate a unique filename
+	var randBytes [8]byte
+	if _, err := rand.Read(randBytes[:]); err != nil {
+		log.Warnf("agent", "generate random filename: %v", err)
+		return result
+	}
+	filename := fmt.Sprintf("tool-result-%s-%s.txt", toolName, hex.EncodeToString(randBytes[:]))
+	filepath := filepath.Join(a.ToolResultTempDir, filename)
+
+	if err := os.WriteFile(filepath, []byte(result), 0o600); err != nil {
+		log.Warnf("agent", "write tool result to file: %v", err)
+		return result
+	}
+
+	// Return truncated result with file path
+	truncated := result[:a.MaxResultChars]
+	if len(truncated) < len(result) {
+		// Find last newline to avoid cutting in the middle of a line
+		if lastNewline := truncated[:len(truncated)-200]; len(lastNewline) > 0 {
+			if idx := len(truncated) - 1; idx > 0 && truncated[idx] != '\n' {
+				if nlIdx := len(truncated) - 1; nlIdx > len(truncated)-200 {
+					for i := nlIdx; i >= nlIdx-200 && i >= 0; i-- {
+						if truncated[i] == '\n' {
+							truncated = truncated[:i+1]
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	msg := fmt.Sprintf("[Result too large: %d chars. Full output saved to %s]\nUse `read` tool to inspect sections. First %d chars:\n%s", len(result), filepath, a.MaxResultChars, truncated)
+	return msg
 }
 
 // collectReminders returns due reminders formatted for injection into the user message.
@@ -499,8 +556,10 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				continue
 			}
 
+			// Guard against oversized tool results
+			guardedResult := a.guardToolResult(block.Name, result)
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
-				block.ID, result, false,
+				block.ID, guardedResult, false,
 			))
 			a.signalActivity()
 		}

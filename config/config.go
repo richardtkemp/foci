@@ -74,6 +74,11 @@ type SkillsConfig struct {
 	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
 }
 
+type ToolsConfig struct {
+	MaxResultChars int    `toml:"max_result_chars"` // max chars before writing result to file (default 10000)
+	TempDir        string `toml:"temp_dir"`         // where to write large tool results (default /tmp/clod-tool-results)
+}
+
 type CommandConfig struct {
 	Name        string `toml:"name"`
 	Description string `toml:"description"`
@@ -92,6 +97,7 @@ type Config struct {
 	Voice     VoiceConfig     `toml:"voice"`
 	Cache     CacheConfig     `toml:"cache"`
 	Skills    SkillsConfig    `toml:"skills"`
+	Tools     ToolsConfig     `toml:"tools"`
 	Commands  []CommandConfig `toml:"commands"`
 }
 
@@ -140,6 +146,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Cache.Strategy == "" {
 		cfg.Cache.Strategy = "auto"
+	}
+	if cfg.Tools.MaxResultChars == 0 {
+		cfg.Tools.MaxResultChars = 10000
+	}
+	if cfg.Tools.TempDir == "" {
+		cfg.Tools.TempDir = "/tmp/clod-tool-results"
 	}
 
 	return &cfg, nil

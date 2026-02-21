@@ -199,6 +199,8 @@ func main() {
 		CacheStrategy:      cfg.Cache.Strategy,
 		CacheBustDetect:    cfg.Logging.CacheBustDetect,
 		DuplicateMessages:  cfg.Agent.DuplicateMessages,
+		MaxResultChars:     cfg.Tools.MaxResultChars,
+		ToolResultTempDir:  cfg.Tools.TempDir,
 	}
 
 	// Model escalation tool (sync one-shot call to a different model)
