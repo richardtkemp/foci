@@ -110,6 +110,7 @@ func main() {
 	// Tool registry
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewExecTool(store))
+	registry.Register(tools.NewTmuxTool())
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())

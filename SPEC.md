@@ -174,6 +174,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 
 **Alpha tools:**
 - `exec` — run shell commands (with timeout, background support)
+- `tmux` — manage tmux sessions (start, send keys, read pane output, list, kill)
 - `read` — read file contents
 - `write` — create/overwrite files
 - `edit` — find-and-replace in files
