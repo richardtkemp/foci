@@ -184,6 +184,219 @@ timeout = 30
 	}
 }
 
+func TestLoadSingleAgentBackwardCompat(t *testing.T) {
+	// Old [agent] format should populate Agents slice
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "main"
+model = "claude-sonnet-4-6"
+workspace = "/tmp/workspace"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Agents slice should be populated from [agent]
+	if len(cfg.Agents) != 1 {
+		t.Fatalf("Agents len = %d, want 1", len(cfg.Agents))
+	}
+	if cfg.Agents[0].ID != "main" {
+		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
+	}
+	if cfg.Agents[0].Model != "claude-sonnet-4-6" {
+		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "claude-sonnet-4-6")
+	}
+
+	// cfg.Agent should mirror first agent
+	if cfg.Agent.ID != "main" {
+		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
+	}
+}
+
+func TestLoadMultiAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[[agents]]
+id = "clutch"
+model = "claude-sonnet-4-6"
+workspace = "/home/rich/workspace1"
+heartbeat_interval = "30m"
+telegram_bot = "primary"
+multiball_bot = "secondary"
+
+[[agents]]
+id = "scout"
+workspace = "/home/rich/workspace2"
+telegram_bot = "scout"
+
+[telegram]
+allowed_users = ["111"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+secondary = { token_secret = "telegram.secondary" }
+scout = { token_secret = "telegram.scout" }
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Two agents
+	if len(cfg.Agents) != 2 {
+		t.Fatalf("Agents len = %d, want 2", len(cfg.Agents))
+	}
+
+	// First agent
+	if cfg.Agents[0].ID != "clutch" {
+		t.Errorf("Agents[0].ID = %q", cfg.Agents[0].ID)
+	}
+	if cfg.Agents[0].Model != "claude-sonnet-4-6" {
+		t.Errorf("Agents[0].Model = %q", cfg.Agents[0].Model)
+	}
+	if cfg.Agents[0].HeartbeatInterval != "30m" {
+		t.Errorf("Agents[0].HeartbeatInterval = %q", cfg.Agents[0].HeartbeatInterval)
+	}
+	if cfg.Agents[0].TelegramBot != "primary" {
+		t.Errorf("Agents[0].TelegramBot = %q", cfg.Agents[0].TelegramBot)
+	}
+	if cfg.Agents[0].MultiballBot != "secondary" {
+		t.Errorf("Agents[0].MultiballBot = %q", cfg.Agents[0].MultiballBot)
+	}
+
+	// Second agent — defaults applied
+	if cfg.Agents[1].ID != "scout" {
+		t.Errorf("Agents[1].ID = %q", cfg.Agents[1].ID)
+	}
+	if cfg.Agents[1].Model != "claude-haiku-4-5" {
+		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
+	}
+	if cfg.Agents[1].HeartbeatInterval != "45m" {
+		t.Errorf("Agents[1].HeartbeatInterval = %q, want default", cfg.Agents[1].HeartbeatInterval)
+	}
+	if cfg.Agents[1].TelegramBot != "scout" {
+		t.Errorf("Agents[1].TelegramBot = %q", cfg.Agents[1].TelegramBot)
+	}
+	if cfg.Agents[1].MultiballBot != "" {
+		t.Errorf("Agents[1].MultiballBot = %q, want empty", cfg.Agents[1].MultiballBot)
+	}
+
+	// cfg.Agent should mirror first agent
+	if cfg.Agent.ID != "clutch" {
+		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "clutch")
+	}
+
+	// Telegram bots map
+	if len(cfg.Telegram.Bots) != 3 {
+		t.Fatalf("Telegram.Bots len = %d, want 3", len(cfg.Telegram.Bots))
+	}
+	if cfg.Telegram.Bots["primary"].TokenSecret != "telegram.primary" {
+		t.Errorf("Bots[primary].TokenSecret = %q", cfg.Telegram.Bots["primary"].TokenSecret)
+	}
+	if cfg.Telegram.Bots["scout"].TokenSecret != "telegram.scout" {
+		t.Errorf("Bots[scout].TokenSecret = %q", cfg.Telegram.Bots["scout"].TokenSecret)
+	}
+}
+
+func TestLoadAgentsIgnoresLegacyWhenBothPresent(t *testing.T) {
+	// If both [agent] and [[agents]] are present, [[agents]] wins
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "ignored"
+
+[[agents]]
+id = "used"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Agents) != 1 {
+		t.Fatalf("Agents len = %d, want 1", len(cfg.Agents))
+	}
+	if cfg.Agents[0].ID != "used" {
+		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "used")
+	}
+	// cfg.Agent should be the first from [[agents]], not the [agent] block
+	if cfg.Agent.ID != "used" {
+		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "used")
+	}
+}
+
+// mockSecrets implements config.SecretGetter for testing.
+type mockSecrets map[string]string
+
+func (m mockSecrets) Get(key string) (string, bool) {
+	v, ok := m[key]
+	return v, ok
+}
+
+func TestResolveBotToken(t *testing.T) {
+	t.Run("new format: telegram.bots map + secrets", func(t *testing.T) {
+		cfg := &Config{
+			Telegram: TelegramConfig{
+				Bots: map[string]TelegramBotConfig{
+					"primary": {TokenSecret: "telegram.primary"},
+					"scout":   {TokenSecret: "telegram.scout"},
+				},
+			},
+		}
+		secrets := mockSecrets{
+			"telegram.primary": "token-primary-123",
+			"telegram.scout":   "token-scout-456",
+		}
+
+		if got := cfg.ResolveBotToken("primary", secrets); got != "token-primary-123" {
+			t.Errorf("ResolveBotToken(primary) = %q, want %q", got, "token-primary-123")
+		}
+		if got := cfg.ResolveBotToken("scout", secrets); got != "token-scout-456" {
+			t.Errorf("ResolveBotToken(scout) = %q, want %q", got, "token-scout-456")
+		}
+	})
+
+	t.Run("legacy format: telegram.bot_token in secrets", func(t *testing.T) {
+		cfg := &Config{
+			Telegram: TelegramConfig{
+				BotToken: "config-token",
+			},
+		}
+		secrets := mockSecrets{
+			"telegram.bot_token": "secret-token",
+		}
+
+		// Unknown bot name falls through to legacy
+		if got := cfg.ResolveBotToken("anything", secrets); got != "secret-token" {
+			t.Errorf("ResolveBotToken(anything) = %q, want %q", got, "secret-token")
+		}
+	})
+
+	t.Run("legacy format: telegram.bot_token in config", func(t *testing.T) {
+		cfg := &Config{
+			Telegram: TelegramConfig{
+				BotToken: "config-token",
+			},
+		}
+		secrets := mockSecrets{}
+
+		if got := cfg.ResolveBotToken("anything", secrets); got != "config-token" {
+			t.Errorf("ResolveBotToken(anything) = %q, want %q", got, "config-token")
+		}
+	})
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	_, err := Load("/nonexistent/path/clod.toml")
 	if err == nil {

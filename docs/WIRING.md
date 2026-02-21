@@ -33,7 +33,7 @@ main
  ├── secrets       → BurntSushi/toml
  ├── anthropic     (no deps)
  ├── session       → anthropic
- ├── memory        → modernc.org/sqlite
+ ├── memory        → modernc.org/sqlite, fsnotify/v4 (file watching for auto-reindex)
  ├── voice         (no deps — uses net/http only)
  ├── skills        → log (leaf package)
  ├── tools         → anthropic, log, memory, secrets, voice
@@ -289,7 +289,46 @@ Commands use callbacks (closures) to access internal state, avoiding package dep
 
 ## Config (`config/config.go`)
 
-Single `clod.toml` parsed with BurntSushi/toml. Sections: `[agent]`, `[anthropic]`, `[telegram]`, `[sessions]`, `[memory]`, `[http]`, `[logging]`, `[[commands]]`. Defaults applied for missing fields.
+Single `clod.toml` parsed with BurntSushi/toml. Defaults applied for missing fields.
+
+**Multi-agent config:** Two formats supported:
+
+1. **Legacy (single agent):** `[agent]` table — backward compatible, auto-promoted to single-element `Agents` slice.
+2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `model`, `workspace`, `telegram_bot`, `multiball_bot`.
+
+When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
+
+`cfg.Agent` always mirrors `cfg.Agents[0]` so legacy code paths work unchanged.
+
+**Telegram bots config:** Two formats:
+
+1. **Legacy:** `[telegram]` with `bot_token` and `secondary_bots` — single bot, tokens inline or in secrets.
+2. **Multi-agent:** `[telegram.bots]` map of named bots. Each entry has `token_secret` referencing a key in `secrets.toml`. Agents reference bots by name via `telegram_bot` and `multiball_bot` fields.
+
+**Token resolution:** `Config.ResolveBotToken(botName, secrets)` checks `[telegram.bots.<name>].token_secret` → secrets store first, then falls back to legacy `telegram.bot_token`.
+
+**Example multi-agent config:**
+```toml
+[[agents]]
+id = "clutch"
+model = "claude-sonnet-4-6"
+workspace = "/home/rich/workspace1"
+telegram_bot = "primary"
+multiball_bot = "secondary"
+
+[[agents]]
+id = "scout"
+workspace = "/home/rich/workspace2"
+telegram_bot = "scout"
+
+[telegram]
+allowed_users = ["5970082313"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+secondary = { token_secret = "telegram.secondary" }
+scout = { token_secret = "telegram.scout" }
+```
 
 ## Telegram Bot (`telegram/bot.go`)
 

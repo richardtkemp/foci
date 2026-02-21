@@ -13,7 +13,13 @@ func testIndex(t *testing.T) (*Index, string) {
 	os.MkdirAll(memDir, 0755)
 	dbPath := filepath.Join(dir, "memory.db")
 
-	idx, err := NewIndex(dbPath, memDir)
+	sources := map[string]SourceConfig{
+		"memory": {
+			Dir:    memDir,
+			Weight: 1.0,
+		},
+	}
+	idx, err := NewIndex(dbPath, sources, 0)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
@@ -195,5 +201,130 @@ func TestPorterStemming(t *testing.T) {
 	}
 	if len(results) == 0 {
 		t.Fatal("porter stemmer should match 'program' against stemmed variants")
+	}
+}
+
+func TestMultiSourceIndexing(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "memory.db")
+
+	// Create two source directories
+	canonical := filepath.Join(dir, "canonical")
+	code := filepath.Join(dir, "code")
+	os.MkdirAll(canonical, 0755)
+	os.MkdirAll(code, 0755)
+
+	// Create files in each source
+	os.WriteFile(filepath.Join(canonical, "notes.md"), []byte("Important fact about Go interfaces"), 0644)
+	os.WriteFile(filepath.Join(code, "example.md"), []byte("Go interfaces allow duck typing"), 0644)
+
+	sources := map[string]SourceConfig{
+		"canonical": {Dir: canonical, Weight: 1.0},
+		"code":      {Dir: code, Weight: 0.3},
+	}
+
+	idx, err := NewIndex(dbPath, sources, 0)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	results, err := idx.Search("Go interfaces")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// First result should be from canonical (higher weight)
+	if results[0].Source != "canonical" {
+		t.Errorf("first result source = %q, want 'canonical'", results[0].Source)
+	}
+	if results[1].Source != "code" {
+		t.Errorf("second result source = %q, want 'code'", results[1].Source)
+	}
+}
+
+func TestWeightedRanking(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "memory.db")
+
+	// Create sources with different weights
+	highPriority := filepath.Join(dir, "high")
+	lowPriority := filepath.Join(dir, "low")
+	os.MkdirAll(highPriority, 0755)
+	os.MkdirAll(lowPriority, 0755)
+
+	// Both files have the same content
+	content := []byte("The quick brown fox jumps over lazy dog")
+	os.WriteFile(filepath.Join(highPriority, "a.md"), content, 0644)
+	os.WriteFile(filepath.Join(lowPriority, "b.md"), content, 0644)
+
+	sources := map[string]SourceConfig{
+		"high": {Dir: highPriority, Weight: 1.0}, // 2.0x multiplier
+		"low":  {Dir: lowPriority, Weight: 0.0},  // 1.0x multiplier
+	}
+
+	idx, err := NewIndex(dbPath, sources, 0)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	results, err := idx.Search("quick brown")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// High-weight source should rank higher
+	if results[0].Source != "high" {
+		t.Errorf("first result source = %q, want 'high'", results[0].Source)
+	}
+}
+
+func TestBackwardCompatSingleDir(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "memory.db")
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	// Create a single source with the old default weight
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Testing backward compatibility"), 0644)
+
+	sources := map[string]SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+
+	idx, err := NewIndex(dbPath, sources, 0)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	results, err := idx.Search("backward compatibility")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for backward compat single-source test")
+	}
+	if results[0].Source != "memory" {
+		t.Errorf("source = %q, want 'memory'", results[0].Source)
 	}
 }

@@ -16,6 +16,8 @@ type AgentConfig struct {
 	SystemFiles       []string `toml:"system_files"`       // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages bool     `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
 	ForkPrompt        string   `toml:"fork_prompt"`        // injected as context when a multiball session is forked
+	TelegramBot       string   `toml:"telegram_bot"`       // references key in [telegram.bots] map
+	MultiballBot      string   `toml:"multiball_bot"`      // references key in [telegram.bots] map (optional)
 }
 
 type AnthropicConfig struct {
@@ -24,10 +26,17 @@ type AnthropicConfig struct {
 	BraveAPIKey string `toml:"brave_api_key"`
 }
 
+// TelegramBotConfig defines a named Telegram bot in the [telegram.bots] map.
+// Each bot's token is resolved from secrets.toml via the token_secret key.
+type TelegramBotConfig struct {
+	TokenSecret string `toml:"token_secret"` // key in secrets.toml (e.g., "telegram.primary")
+}
+
 type TelegramConfig struct {
-	BotToken      string   `toml:"bot_token"`
-	AllowedUsers  []string `toml:"allowed_users"`
-	SecondaryBots []string `toml:"secondary_bots"` // tokens for secondary bots (multiball)
+	BotToken      string                        `toml:"bot_token"`       // legacy single-bot token
+	AllowedUsers  []string                      `toml:"allowed_users"`
+	SecondaryBots []string                      `toml:"secondary_bots"` // legacy: tokens for secondary bots (multiball)
+	Bots          map[string]TelegramBotConfig  `toml:"bots"`           // named bots for multi-agent
 }
 
 type SessionsConfig struct {
@@ -40,8 +49,16 @@ type SessionsConfig struct {
 	CompactionHandoffMsg  string  `toml:"compaction_handoff_msg"`  // handoff message after compaction
 }
 
+type MemorySource struct {
+	Name   string  `toml:"name"`   // unique identifier (e.g., "canonical", "code", "docs")
+	Dir    string  `toml:"dir"`    // directory path to index
+	Weight float64 `toml:"weight"` // weight multiplier: 0.0-1.0 (1.0 = highest priority)
+}
+
 type MemoryConfig struct {
-	Dir string `toml:"dir"`
+	Dir                string         `toml:"dir"`                // backward compat: single directory
+	Sources            []MemorySource `toml:"sources"`            // new: multiple sources with weights
+	ReindexDebounce    string         `toml:"reindex_debounce"`   // delay before reindex (e.g., "500ms", "2s"), default "0s"
 }
 
 type HTTPConfig struct {
@@ -92,7 +109,8 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	Agent     AgentConfig     `toml:"agent"`
+	Agent     AgentConfig     `toml:"agent"`    // legacy: single agent
+	Agents    []AgentConfig   `toml:"agents"`   // multi-agent: array of agents
 	Anthropic AnthropicConfig `toml:"anthropic"`
 	Telegram  TelegramConfig  `toml:"telegram"`
 	Sessions  SessionsConfig  `toml:"sessions"`
@@ -118,7 +136,27 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Defaults
+	// Backward compat: [agent] (singular) → single-element Agents array
+	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
+		cfg.Agents = []AgentConfig{cfg.Agent}
+	}
+
+	// Apply defaults to all agents
+	for i := range cfg.Agents {
+		if cfg.Agents[i].Model == "" {
+			cfg.Agents[i].Model = "claude-haiku-4-5"
+		}
+		if cfg.Agents[i].HeartbeatInterval == "" {
+			cfg.Agents[i].HeartbeatInterval = "45m"
+		}
+	}
+
+	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
+	if len(cfg.Agents) > 0 {
+		cfg.Agent = cfg.Agents[0]
+	}
+
+	// Legacy agent defaults (in case nothing is configured at all)
 	if cfg.Agent.Model == "" {
 		cfg.Agent.Model = "claude-haiku-4-5"
 	}
@@ -172,6 +210,29 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// SecretGetter is the interface main.go uses to look up secrets.
+type SecretGetter interface {
+	Get(key string) (string, bool)
+}
+
+// ResolveBotToken resolves a Telegram bot token for the given bot name.
+// It checks the [telegram.bots] map first (token_secret → secrets store),
+// then falls back to the legacy telegram.bot_token path.
+func (c *Config) ResolveBotToken(botName string, secrets SecretGetter) string {
+	// New path: [telegram.bots.<name>].token_secret → secrets store
+	if bot, ok := c.Telegram.Bots[botName]; ok && bot.TokenSecret != "" {
+		if v, ok := secrets.Get(bot.TokenSecret); ok {
+			return v
+		}
+	}
+
+	// Legacy path: [telegram].bot_token or secrets.telegram.bot_token
+	if v, ok := secrets.Get("telegram.bot_token"); ok {
+		return v
+	}
+	return c.Telegram.BotToken
 }
 
 // ParseFlags returns the config file path from command-line flags.

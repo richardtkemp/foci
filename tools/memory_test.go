@@ -18,7 +18,10 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 	os.MkdirAll(memDir, 0755)
 	dbPath := filepath.Join(dir, "memory.db")
 
-	idx, err := memory.NewIndex(dbPath, memDir)
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, err := memory.NewIndex(dbPath, sources, 0)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
@@ -34,7 +37,10 @@ func TestMemorySearch(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "todo.md"), []byte("Buy groceries\nClean house\nBuy a new book\n"), 0644)
 
 	// Re-index after writing files (the index was created before files existed)
-	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), memDir)
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0)
 	defer idx.Close()
 	idx.Reindex()
 
@@ -63,7 +69,10 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "test.md"), []byte("nothing relevant here\n"), 0644)
 
 	// Need to reindex with a fresh connection to pick up the file
-	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), memDir)
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0)
 	defer idx.Close()
 	idx.Reindex()
 
@@ -96,7 +105,10 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	tool, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The weather is sunny today"), 0644)
 
-	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), memDir)
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0)
 	defer idx.Close()
 	idx.Reindex()
 	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")

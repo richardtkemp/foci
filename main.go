@@ -84,10 +84,8 @@ func main() {
 	if v, ok := store.Get("anthropic.oauth_token"); ok {
 		anthropicOAuthToken = v
 	}
-	telegramToken := cfg.Telegram.BotToken
-	if v, ok := store.Get("telegram.bot_token"); ok {
-		telegramToken = v
-	}
+	// Resolve primary bot token: new format (telegram.bots + secrets) or legacy
+	telegramToken := cfg.ResolveBotToken(cfg.Agent.TelegramBot, store)
 	braveKey := cfg.Anthropic.BraveAPIKey
 	if v, ok := store.Get("brave.api_key"); ok {
 		braveKey = v
@@ -132,9 +130,38 @@ func main() {
 	var memIdx *memory.Index
 	var reminderStore *memory.ReminderStore
 	var scratchpadStore *memory.Scratchpad
-	if cfg.Memory.Dir != "" {
+	if cfg.Memory.Dir != "" || len(cfg.Memory.Sources) > 0 {
 		memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
-		memIdx, err = memory.NewIndex(memDbPath, cfg.Memory.Dir)
+
+		// Build source map from config
+		sources := make(map[string]memory.SourceConfig)
+
+		if len(cfg.Memory.Sources) > 0 {
+			// Use new multi-source config
+			for _, src := range cfg.Memory.Sources {
+				sources[src.Name] = memory.SourceConfig{
+					Dir:    src.Dir,
+					Weight: src.Weight,
+				}
+			}
+		} else if cfg.Memory.Dir != "" {
+			// Backward compat: single dir with default weight
+			sources["memory"] = memory.SourceConfig{
+				Dir:    cfg.Memory.Dir,
+				Weight: 1.0,
+			}
+		}
+
+		// Parse debounce delay
+		debounce := time.Duration(0)
+		if cfg.Memory.ReindexDebounce != "" {
+			debounce, err = time.ParseDuration(cfg.Memory.ReindexDebounce)
+			if err != nil {
+				log.Fatalf("main", "invalid reindex_debounce: %v", err)
+			}
+		}
+
+		memIdx, err = memory.NewIndex(memDbPath, sources, debounce)
 		if err != nil {
 			log.Fatalf("main", "create memory index: %v", err)
 		}
@@ -143,6 +170,14 @@ func main() {
 		if err := memIdx.Reindex(); err != nil {
 			log.Errorf("main", "reindex memory: %v", err)
 		}
+
+		// Start file watching if debounce is configured
+		if debounce > 0 || len(cfg.Memory.Sources) > 0 {
+			if err := memIdx.Watch(); err != nil {
+				log.Errorf("main", "start memory file watching: %v", err)
+			}
+		}
+
 		registry.Register(tools.NewMemorySearchTool(memIdx))
 
 		// Reminder store (same DB directory)

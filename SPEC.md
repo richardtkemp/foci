@@ -282,36 +282,76 @@ Skills are not dynamic plugins — no code loading, no compilation. Just directo
 
 ### Memory System
 
-**Alpha:** File-based with FTS5 search.
+**Alpha:** File-based with FTS5 search and multiple weighted sources.
 - Memory files in `workspace/memory/YYYY-MM-DD.md`
 - Curated long-term memory in `workspace/MEMORY.md`
 - `MEMORY.md` injected into system prompt on each turn
 
-**Search:** SQLite FTS5 index over two sources, with explicit memories weighted higher:
+**Multiple Sources with Weights:**
 
-1. **Explicit memories** (weight: 2.0) — all `.md` files in memory directory + `MEMORY.md`
-2. **Conversation history** (weight: 1.0) — past messages from the conversation SQLite log
+Configure multiple indexed directories, each with a configurable weight multiplier in `clod.toml`:
 
-Both are indexed into the same FTS5 table with a `source` column to enable weighting:
+```toml
+[[memory.sources]]
+name = "canonical"
+dir = "/home/clod/workspace/memory"
+weight = 1.0      # highest priority: 2.0x multiplier
+
+[[memory.sources]]
+name = "code"
+dir = "/home/clod/src"
+weight = 0.3      # lower priority: 1.3x multiplier
+
+[[memory.sources]]
+name = "docs"
+dir = "/home/clod/docs"
+weight = 0.5      # medium priority: 1.5x multiplier
+```
+
+Each source is indexed with `source={sourceName}` and searched with weight multiplier: `rank * (1.0 + weight)`.
+
+**Backward Compatibility:**
+
+If `sources` array is empty, fall back to single `dir` field (default weight=1.0):
+
+```toml
+[memory]
+dir = "/home/clod/workspace/memory"   # old way, still works
+```
+
+**Search:** SQLite FTS5 index over multiple sources with conversation history:
 
 ```sql
 CREATE VIRTUAL TABLE memory_fts USING fts5(
-  content, path, source,    -- source: 'memory' or 'conversation'
+  content, path, source,    -- source: 'canonical'|'code'|'docs'|'conversation'
   tokenize='porter unicode61'
 );
 
--- Search with explicit memories ranked higher
+-- Search with per-source weights
 SELECT path, snippet(memory_fts, 0, '→', '←', '...', 30),
-       CASE source WHEN 'memory' THEN rank * 2.0 ELSE rank END AS weighted_rank
-FROM memory_fts 
+       CASE source
+         WHEN 'canonical' THEN rank * 2.0    -- (1.0 + 1.0)
+         WHEN 'code' THEN rank * 1.3         -- (1.0 + 0.3)
+         WHEN 'docs' THEN rank * 1.5         -- (1.0 + 0.5)
+         WHEN 'conversation' THEN rank * 1.0 -- default
+       END AS weighted_rank
+FROM memory_fts
 WHERE memory_fts MATCH ?
 ORDER BY weighted_rank;
 ```
 
-**Indexing:**
-- Memory files: re-indexed on startup and when files change (fsnotify or periodic rescan)
+**Indexing and Auto-Reindex:**
+
+- Memory files: re-indexed on startup
+- File watching: optional auto-reindex when `.md` files change via fsnotify
+- Debounce: configurable delay (default 0s = immediate):
+
+```toml
+[memory]
+reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
+```
+
 - Conversation history: indexed as messages are logged (already going to SQLite)
-- Incremental: only re-index changed files, not full rebuild each time
 
 **Why FTS5 over vector embeddings:**
 - Zero dependencies (built into SQLite, which we already use)
@@ -608,6 +648,7 @@ If the agent is mid-turn processing a previous message, `/status` still returns 
 
 Single TOML file. Flat, commented, no deep nesting.
 
+**Single agent (legacy):**
 ```toml
 # clod.toml
 
@@ -652,6 +693,32 @@ level = "INFO"
 event_file = "clod.log"
 api_file = "api.jsonl"
 ```
+
+**Multi-agent:**
+```toml
+[[agents]]
+id = "clutch"
+model = "claude-sonnet-4-6"
+workspace = "/home/rich/workspace1"
+telegram_bot = "primary"       # references [telegram.bots.primary]
+multiball_bot = "secondary"    # optional, for /multiball
+
+[[agents]]
+id = "scout"
+workspace = "/home/rich/workspace2"
+telegram_bot = "scout"
+# no multiball_bot = no /multiball for this agent
+
+[telegram]
+allowed_users = ["5970082313"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+secondary = { token_secret = "telegram.secondary" }
+scout = { token_secret = "telegram.scout" }
+```
+
+Both formats supported. `[agent]` (singular) is auto-promoted to a single-element `[[agents]]` array. Bot tokens resolved from `secrets.toml` via `token_secret` reference.
 
 ## Implementation Status
 
