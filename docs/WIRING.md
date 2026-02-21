@@ -7,9 +7,11 @@ How the pieces connect. Read this before touching the code.
 ```
 config.Load(path)
   → log.Init(cfg.Logging)
+  → log.InitConversation(cfg.Logging.ConversationFile)  ← SQLite
+  → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
   → anthropic.NewClient(token)
   → session.NewStore(dir)
-  → tools.NewRegistry() + register all tools
+  → tools.NewRegistry() + register all tools             ← exec gets secrets.Store
   → workspace.NewBootstrap(dir, fileOrder)
   → agent.Agent{Client, Sessions, Tools, Bootstrap, Model}
   → telegram.NewBot(token, allowedUsers, agent, sessionKey)  → goroutine
@@ -23,17 +25,18 @@ config.Load(path)
 ```
 main
  ├── config        (no deps)
- ├── log           (no deps)
+ ├── log           → modernc.org/sqlite
+ ├── secrets       → BurntSushi/toml
  ├── anthropic     (no deps)
  ├── session       → anthropic
- ├── tools         → anthropic, log
+ ├── tools         → anthropic, log, secrets
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
  ├── agent         → anthropic, session, tools, workspace, log
  └── telegram      → agent, log
 ```
 
-No circular dependencies. `log` and `config` are leaf packages.
+No circular dependencies. `config`, `log`, and `secrets` are leaf packages.
 
 ## The Agent Loop (`agent/agent.go`)
 
@@ -123,7 +126,7 @@ Features:
 
 ## Logging (`log/`)
 
-Two outputs:
+Three outputs:
 
 1. **Event log** (`clod.log` + stderr): `2026-02-21T03:52:39Z INFO  [telegram] message from rich: hello`
    - Use: `log.Infof("component", "format", args...)`
@@ -144,7 +147,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 
 | Tool | File | What it does |
 |------|------|-------------|
-| `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout |
+| `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, secret template resolution + output redaction |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
 | `edit` | files.go | Find-and-replace (old_string must be unique) |
