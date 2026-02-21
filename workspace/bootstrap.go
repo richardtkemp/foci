@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"clod/anthropic"
 )
@@ -20,22 +21,42 @@ var DefaultFileOrder = []string{
 }
 
 // Bootstrap loads workspace markdown files as system prompt blocks.
+// Blocks are cached in memory and only re-read on Reload().
 type Bootstrap struct {
 	dir       string
 	fileOrder []string
+	cached    []anthropic.SystemBlock
+	mu        sync.RWMutex
 }
 
 // NewBootstrap creates a Bootstrap that reads files from dir in the given order.
+// Performs the initial load from disk.
 func NewBootstrap(dir string, fileOrder []string) *Bootstrap {
 	if len(fileOrder) == 0 {
 		fileOrder = DefaultFileOrder
 	}
-	return &Bootstrap{dir: dir, fileOrder: fileOrder}
+	b := &Bootstrap{dir: dir, fileOrder: fileOrder}
+	b.cached = b.loadFromDisk()
+	return b
 }
 
-// SystemBlocks returns the system prompt blocks for the API request.
-// Missing files are silently skipped. The last block gets cache_control: ephemeral.
+// SystemBlocks returns the cached system prompt blocks for the API request.
 func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.cached
+}
+
+// Reload re-reads workspace files from disk. Call after compaction or session reset.
+func (b *Bootstrap) Reload() {
+	blocks := b.loadFromDisk()
+	b.mu.Lock()
+	b.cached = blocks
+	b.mu.Unlock()
+}
+
+// loadFromDisk reads workspace files and builds system blocks.
+func (b *Bootstrap) loadFromDisk() []anthropic.SystemBlock {
 	var blocks []anthropic.SystemBlock
 
 	for _, name := range b.fileOrder {

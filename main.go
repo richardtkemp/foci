@@ -268,7 +268,11 @@ func main() {
 		if ag.IsProcessing() {
 			return fmt.Errorf("agent is processing — send /stop first, then /reset")
 		}
-		return sessions.Clear(sessionKey)
+		if err := sessions.Clear(sessionKey); err != nil {
+			return err
+		}
+		bootstrap.Reload()
+		return nil
 	}))
 	cmds.Register(command.NewModelCommand(
 		func() string { return ag.Model },
