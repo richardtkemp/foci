@@ -63,7 +63,16 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 
 **Outbound:** Agent can send voice replies via a `tts` tool. Text → TTS engine (Edge TTS or similar, free) → send as Telegram voice note. Good for when the human is mobile/driving.
 
-**Voice mode toggle:** User says "voice mode on" → all agent replies sent as voice notes until "voice mode off". Stored as session state, not config. The agent adjusts its style — shorter, more conversational, no markdown.
+**Voice mode:** A session-level flag toggled by the user ("voice mode on"/"voice mode off"). When active:
+- All agent replies are sent as voice notes via TTS
+- The flag is included in message metadata: `voice=on`
+- The agent sees this and adjusts style — shorter, conversational, no markdown, no code blocks
+
+```
+[meta] time=2026-02-21T05:30:00Z gap=3h12m voice=on model=claude-haiku-4-5 prev_cost=$0.043
+```
+
+Voice mode is session state, not config — it resets on session reset.
 
 ### Message Metadata
 
