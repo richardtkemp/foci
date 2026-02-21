@@ -463,27 +463,32 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	return "Max tool call depth reached.", nil
 }
 
-// withCacheBreakpoint returns a copy of messages with cache_control: ephemeral
-// set on the last content block of the second-to-last message. This creates a
-// cache breakpoint at the conversation history boundary, so the API caches
-// system prompt + history and only processes the latest turn. For branch
-// sessions, this means the shared prefix gets cache hits instead of rewrites.
-// Returns a shallow copy — original messages are not modified.
+// withCacheBreakpoint returns a deep copy of messages with cache_control set
+// on exactly one place: the last content block of the second-to-last message.
+// All other cache_control markers are stripped. This ensures exactly 1 message
+// breakpoint per API call (plus the system prompt breakpoint = 2 total).
+//
+// Deep copy is critical: the originals are saved to session history and must
+// never have cache_control persisted, or it accumulates across turns and
+// mutates the prefix (causing cache misses).
 func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
-	if len(messages) < 2 {
-		return messages
+	// Deep copy all messages, stripping any existing cache_control
+	result := make([]anthropic.Message, len(messages))
+	for i, msg := range messages {
+		content := make([]anthropic.ContentBlock, len(msg.Content))
+		copy(content, msg.Content)
+		for j := range content {
+			content[j].CacheControl = nil
+		}
+		result[i] = anthropic.Message{Role: msg.Role, Content: content}
 	}
 
-	result := make([]anthropic.Message, len(messages))
-	copy(result, messages)
-
-	// Add cache_control to last content block of second-to-last message
-	idx := len(result) - 2
-	if len(result[idx].Content) > 0 {
-		content := make([]anthropic.ContentBlock, len(result[idx].Content))
-		copy(content, result[idx].Content)
-		content[len(content)-1].CacheControl = anthropic.Ephemeral()
-		result[idx].Content = content
+	// Add the one breakpoint to second-to-last message
+	if len(result) >= 2 {
+		idx := len(result) - 2
+		if len(result[idx].Content) > 0 {
+			result[idx].Content[len(result[idx].Content)-1].CacheControl = anthropic.Ephemeral()
+		}
 	}
 
 	return result
