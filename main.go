@@ -486,6 +486,16 @@ func main() {
 		},
 	})
 
+	// Auto-expose all slash commands as tools
+	// This allows the agent to invoke commands programmatically
+	// Detect and prevent naming collisions between commands and tools
+	for _, cmd := range cmds.All() {
+		if existingTool := registry.Get(cmd.Name); existingTool != nil {
+			log.Fatalf("main", "naming collision: command '%s' conflicts with existing tool '%s'", cmd.Name, cmd.Name)
+		}
+		registry.Register(tools.CreateCommandWrapperTool(cmd))
+	}
+
 	// Start Telegram bot
 	if telegramToken != "" {
 		var err error

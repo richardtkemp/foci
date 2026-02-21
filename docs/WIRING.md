@@ -17,6 +17,7 @@ config.Load(path)
   → compaction.NewCompactor(client, sessions, model, threshold)
   → agent.Agent{Client, Sessions, Tools, Bootstrap, Compactor, Model, ExtraSystemBlocks}
   → command.NewRegistry() + register built-ins + custom scripts + skill commands
+  → auto-expose all commands as tools (wrap each command in tool interface)
   → telegram.NewBot(token, allowedUsers, agent, cmds, sessionKey)  → goroutine
   → agent.NewHeartbeat(agent, sessionKey, interval)           → goroutine
   → http.Server{"/send", "/status", "/command", "/wake"}      → goroutine
@@ -275,6 +276,8 @@ If a tool result exceeds `agent.MaxResultChars` (from config, default 10,000), t
 Messages starting with `/` are intercepted at the Telegram router level before reaching the agent. They execute immediately — never queued behind an in-flight agent turn.
 
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
+
+**Commands exposed as tools:** All registered commands are automatically exposed to the agent as tools with the same name (without the `/` prefix). This allows the agent to invoke commands programmatically. Each command tool accepts an optional `args` string parameter. The tool wrapper converts the JSON params to command arguments and passes through the result or error. Naming collisions between tool names and command names cause a fatal startup error.
 
 **Two types:**
 1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/usage`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
