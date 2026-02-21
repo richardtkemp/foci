@@ -397,6 +397,106 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 	}
 }
 
+func TestHandleMessageCancellation(t *testing.T) {
+	// Verify that a cancelled context causes HandleMessage to return ctx.Err()
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return &anthropic.MessageResponse{
+			ID:   "msg_1",
+			Type: "message",
+			Role: "assistant",
+			Content: []anthropic.ContentBlock{
+				{
+					Type:  "tool_use",
+					ID:    "tu_001",
+					Name:  "slow_tool",
+					Input: json.RawMessage(`{}`),
+				},
+			},
+			StopReason: "tool_use",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+
+	// Register a tool that blocks until context is cancelled
+	registry.Register(&tools.Tool{
+		Name:        "slow_tool",
+		Description: "blocks forever",
+		Parameters:  json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	})
+
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel after a short delay
+	go func() {
+		// Wait for tool to start
+		for !ag.IsProcessing() {
+			// spin until processing starts
+		}
+		cancel()
+	}()
+
+	_, err := ag.HandleMessage(ctx, "agent:test:cancel", "Do something slow")
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestIsProcessing(t *testing.T) {
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	if ag.IsProcessing() {
+		t.Error("should not be processing before HandleMessage")
+	}
+
+	ag.HandleMessage(context.Background(), "agent:test:proc", "Hi")
+
+	if ag.IsProcessing() {
+		t.Error("should not be processing after HandleMessage returns")
+	}
+}
+
 // newTestClientWithBase creates a test client with a custom base URL.
 func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 	return anthropic.NewClientWithBase(baseURL, apiKey)

@@ -136,6 +136,9 @@ func main() {
 	cmds.Register(command.NewLastCommand(cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(cfg.Logging.APIFile))
 	cmds.Register(command.NewResetCommand(func() error {
+		if ag.IsProcessing() {
+			return fmt.Errorf("agent is processing — send /stop first, then /reset")
+		}
 		return sessions.Clear(sessionKey)
 	}))
 	cmds.Register(command.NewModelCommand(

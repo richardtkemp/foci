@@ -71,7 +71,15 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 		duration := time.Since(start)
 
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			return "", fmt.Errorf("send message: %w", err)
+		}
+
+		// Check for cancellation after API call
+		if ctx.Err() != nil {
+			return "", ctx.Err()
 		}
 
 		cost := log.CalculateCost(a.Model,
@@ -118,6 +126,11 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 				continue
 			}
 
+			// Check for cancellation between tool calls
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+
 			tool := a.Tools.Get(block.Name)
 			if tool == nil {
 				log.Warnf("agent", "unknown tool: %s", block.Name)
@@ -129,6 +142,9 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 
 			log.Debugf("agent", "tool_use: %s", block.Name)
 			result, err := tool.Execute(ctx, block.Input)
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			if err != nil {
 				log.Warnf("agent", "tool %s error: %v", block.Name, err)
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
