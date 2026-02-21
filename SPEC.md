@@ -224,6 +224,48 @@ IDENTITY.md, SOUL.md, COHERENCE.md, AGENTS.md, TOOLS.md, USER.md, MEMORY.md, HEA
 
 Order matters: most-stable files first maximises cache prefix length.
 
+### Skills
+
+Skills extend the agent without code changes. A skill is a directory containing a `SKILL.md` file with YAML frontmatter and markdown instructions:
+
+```
+/home/clod/skills/
+├── reheat/
+│   ├── SKILL.md
+│   └── reheat.sh
+└── research/
+    └── SKILL.md
+```
+
+**SKILL.md format:**
+```yaml
+---
+name: reheat
+description: Clear API cooldowns
+command: /reheat
+script: reheat.sh
+---
+
+Instructions the agent follows when this skill is activated.
+The agent reads this file with the `read` tool.
+```
+
+**Frontmatter fields:**
+- `name` (required) — skill identifier
+- `description` (required) — one-line description, shown in system prompt
+- `command` (optional) — slash command to register (e.g. `/reheat`)
+- `script` (optional) — script to run when the command fires (path relative to skill dir)
+
+**How it works:**
+1. Config lists directories to scan: `[skills] dirs = ["/home/clod/skills"]`
+2. On startup, scan each dir for subdirectories containing `SKILL.md`
+3. Parse frontmatter, collect name + description into a registry
+4. Inject skill list (name, description, SKILL.md path) as a system prompt block — the agent knows what's available but doesn't load full instructions until needed
+5. The agent reads the full `SKILL.md` with the `read` tool when it decides a skill applies
+6. If `command` + `script` are both present, auto-register as a slash command (runs the script directly, no agent turn)
+
+Skills are not dynamic plugins — no code loading, no compilation. Just directories of files the agent can read, with optional shell scripts for slash commands.
+
 ### Memory System
 
 **Alpha:** File-based with FTS5 search.

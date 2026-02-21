@@ -24,6 +24,7 @@ import (
 	"clod/secrets"
 	"clod/session"
 	"clod/telegram"
+	"clod/skills"
 	"clod/tools"
 	"clod/voice"
 	"clod/workspace"
@@ -166,6 +167,16 @@ func main() {
 	// Workspace bootstrap
 	bootstrap := workspace.NewBootstrap(cfg.Agent.Workspace, cfg.Agent.SystemFiles)
 
+	// Skills
+	skillRegistry := skills.Load(cfg.Skills.Dirs)
+	var extraSystemBlocks []anthropic.SystemBlock
+	if skillRegistry.Len() > 0 {
+		extraSystemBlocks = []anthropic.SystemBlock{
+			{Type: "text", Text: skillRegistry.SystemBlock()},
+		}
+		log.Infof("main", "loaded %d skills", skillRegistry.Len())
+	}
+
 	// Compactor
 	compactor := compaction.NewCompactor(client, sessions, cfg.Agent.Model, cfg.Sessions.CompactionThreshold)
 	compactor.Scratchpad = scratchpadStore
@@ -179,6 +190,7 @@ func main() {
 		Compactor:          compactor,
 		Reminders:          reminderStore,
 		Model:              cfg.Agent.Model,
+		ExtraSystemBlocks:  extraSystemBlocks,
 		CacheBustThreshold: cfg.Logging.CacheBustThreshold,
 		DuplicateMessages:  cfg.Agent.DuplicateMessages,
 	}
@@ -325,6 +337,14 @@ func main() {
 	// Custom script commands from config
 	for _, cc := range cfg.Commands {
 		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
+	}
+
+	// Skill slash commands (command + script in frontmatter)
+	for _, s := range skillRegistry.All() {
+		if s.Command != "" && s.Script != "" {
+			name := strings.TrimPrefix(s.Command, "/")
+			cmds.Register(command.NewScriptCommand(name, s.Description, s.Script, 30))
+		}
 	}
 
 	// Register /voice command (before bot start, needs sessionKey)

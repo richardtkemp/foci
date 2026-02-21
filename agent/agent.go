@@ -57,9 +57,10 @@ type Agent struct {
 	Reminders *memory.ReminderStore // nil disables reminder injection
 	Model     string
 
-	CacheBustThreshold int           // alert when cache_write exceeds this (0 = disabled)
-	CacheBustAlert     CacheBustFunc // callback for alerts (set by telegram bot)
-	DuplicateMessages  bool          // send user text twice per API call (improves instruction following)
+	ExtraSystemBlocks  []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
+	CacheBustThreshold int                     // alert when cache_write exceeds this (0 = disabled)
+	CacheBustAlert     CacheBustFunc           // callback for alerts (set by telegram bot)
+	DuplicateMessages  bool                    // send user text twice per API call (improves instruction following)
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
@@ -283,6 +284,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}()
 
 	system := a.Bootstrap.SystemBlocks()
+	if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
+		// Insert extra blocks before the last block (which has cache_control).
+		// This keeps extra content inside the cached prefix.
+		combined := make([]anthropic.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
+		combined = append(combined, system[:len(system)-1]...)
+		combined = append(combined, a.ExtraSystemBlocks...)
+		combined = append(combined, system[len(system)-1])
+		system = combined
+	}
 	toolDefs := a.Tools.ToolDefs()
 
 	for i := 0; i < maxToolLoops; i++ {

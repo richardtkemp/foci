@@ -64,6 +64,10 @@ type VoiceConfig struct {
 	TTSVoice    string `toml:"tts_voice"`    // voice name (provider-specific)
 }
 
+type SkillsConfig struct {
+	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
+}
+
 type CommandConfig struct {
 	Name        string `toml:"name"`
 	Description string `toml:"description"`
@@ -80,6 +84,7 @@ type Config struct {
 	HTTP      HTTPConfig      `toml:"http"`
 	Logging   LoggingConfig   `toml:"logging"`
 	Voice     VoiceConfig     `toml:"voice"`
+	Skills    SkillsConfig    `toml:"skills"`
 	Commands  []CommandConfig `toml:"commands"`
 }
 

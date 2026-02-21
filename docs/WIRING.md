@@ -13,9 +13,10 @@ config.Load(path)
   → session.NewStore(dir)
   → tools.NewRegistry() + register all tools             ← exec gets secrets.Store
   → workspace.NewBootstrap(dir, fileOrder)
+  → skills.Load(cfg.Skills.Dirs)                          ← scan skill dirs for SKILL.md
   → compaction.NewCompactor(client, sessions, model, threshold)
-  → agent.Agent{Client, Sessions, Tools, Bootstrap, Compactor, Model}
-  → command.NewRegistry() + register built-ins + custom scripts
+  → agent.Agent{Client, Sessions, Tools, Bootstrap, Compactor, Model, ExtraSystemBlocks}
+  → command.NewRegistry() + register built-ins + custom scripts + skill commands
   → telegram.NewBot(token, allowedUsers, agent, cmds, sessionKey)  → goroutine
   → agent.NewHeartbeat(agent, sessionKey, interval)           → goroutine
   → http.Server{"/send", "/status", "/command", "/wake"}      → goroutine
@@ -33,6 +34,7 @@ main
  ├── session       → anthropic
  ├── memory        → modernc.org/sqlite
  ├── voice         (no deps — uses net/http only)
+ ├── skills        → log (leaf package)
  ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
@@ -41,7 +43,7 @@ main
  └── telegram      → agent, command, log, voice
 ```
 
-No circular dependencies. `config`, `log`, `secrets`, `memory`, and `command` are leaf packages.
+No circular dependencies. `config`, `log`, `secrets`, `memory`, `skills`, and `command` are leaf packages.
 
 ## The Agent Loop (`agent/agent.go`)
 
