@@ -273,13 +273,19 @@ func main() {
 			Agent string `json:"agent"`
 			Text  string `json:"text"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
+		// Allow empty body — treat as wake with default text
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
+				return
+			}
 		}
 
 		if req.Agent == "" {
 			req.Agent = cfg.Agent.ID
+		}
+		if req.Text == "" {
+			req.Text = "[WAKE]"
 		}
 
 		// Create a branch session for this wake call
