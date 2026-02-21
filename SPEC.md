@@ -650,46 +650,58 @@ event_file = "clod.log"
 api_file = "api.jsonl"
 ```
 
-## Alpha Scope
+## Implementation Status
 
-**In:**
-- Anthropic API client with prompt caching
+### ✅ Alpha — Complete
+
+- Anthropic API client with prompt caching (auto strategy, deterministic tool ordering)
 - Session store (JSONL-backed)
-- Session branching with cache sharing
+- Session branching with cache sharing (confirmed: branches read cached prefix, zero cold starts)
+- Multiball — `/multiball` forks to secondary Telegram bot, tested and working
+- Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
 - Telegram bot (text messages, DM only)
-- Core tools: exec, read, write, edit, web_fetch, web_search, memory_search
-- Workspace bootstrap (markdown files → system prompt)
-- Heartbeat
-- Simple compaction
-- FTS5 memory search (memory files + conversation history)
-- TOML config
-- Wake endpoint for cron
+- Tools: exec, read, write, edit, web_fetch, web_search, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), request_model, schedule_wake, tts
+- Workspace bootstrap (markdown files → system prompt, configurable file order)
+- Skills framework (YAML frontmatter, command dispatch, script execution)
+- Heartbeat (configurable interval)
+- Compaction (threshold-based, configurable parameters)
+- FTS5 memory search (memory files + conversation history, weighted)
+- TOML config (single file + secrets.toml)
+- Voice outbound (Edge TTS via OpenRouter)
+- Tool result size guard (large results saved to temp file)
+- Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball
+- Cron system (system crontab, prompts loaded from disk)
+- Setup script (idempotent, builds from source, installs as systemd service)
+- Repair interrupted tool calls on session load
 
-**Out (beta):**
-- Vector memory search (semantic, if FTS5 proves insufficient)
-- Multi-agent support (design for it, don't build it)
-- Sub-agents
-- File attachments
-- Skill framework
-- Signal/Discord/other channels
+### 🔶 Phase 2 — Next
 
-**Out (enhancement):**
+- **Multi-agent support** — multiple `[[agents]]` with separate configs, sessions, Telegram bots, workspaces
+- **Sub-agents** — agent-initiated branch sessions for delegated tasks
+- **Inter-agent messaging** — agents communicating with each other
+- **File attachments** — send/receive files via Telegram
+- **Voice inbound** — STT transcription of voice notes (Groq Whisper)
+- **Compaction pre-save prompt** — "save important context" before compacting
+- **Pre-session-end memory prompt** — memory save on /new or idle timeout
+
+### 🔷 Enhancement — Later
+
 - Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
 - Per-session heartbeat configuration — different session types get different heartbeats. Main: general idle heartbeat (reads heartbeat.md). Fork/multiball: cache-aware heartbeat that fires N minutes before cache TTL expires ("Cache going cold, continue or wrap up?"). Subagents: no heartbeat. Configurable per session type in TOML.
 - Telegram markdown/HTML rendering — convert agent markdown output to Telegram's MarkdownV2 or HTML format for proper bold, italic, code blocks, links. Currently sends plain text.
 - Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
+- Exec template secrets (`{{secret:NAME}}`) — resolve secret refs in exec commands
+- Tool output redaction — scan exec output for leaked secret patterns
+- Cache bust alerts — Telegram notification on large cache writes
+- Signal/Discord/other channels
 - Plugin/hook architecture
 - Reactions
 - Config schema validation beyond basic TOML parsing
 
 ## Testing Priority
 
-**Critical first test:** Session branching cache sharing.
-1. Create a session with a system prompt + several messages
-2. Send a request → observe cache write
-3. Send another request on same session → observe cache read
-4. Create a branch from this session
-5. Send a request on the branch → observe cache READ (not write) for shared prefix
+**✅ PASSED: Session branching cache sharing.**
+Confirmed working — wake/cron branches read ~63k cached tokens on first request with zero cold starts. Multiball branches also share parent cache prefix.
 6. Send another request on parent → observe parent cache still works (branch didn't bust it)
 
 If step 5 shows a full cache write instead of a read, the branching architecture doesn't work and we need to rethink.
