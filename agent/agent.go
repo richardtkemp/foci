@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -260,6 +261,20 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			DurationMS: duration.Milliseconds(),
 			StopReason: resp.StopReason,
 		})
+
+		// Full payload logging (opt-in)
+		if log.PayloadEnabled() {
+			reqJSON, _ := json.Marshal(req)
+			respJSON, _ := json.Marshal(resp)
+			log.Payload(log.PayloadEntry{
+				Timestamp:  start.UTC(),
+				Session:    sessionKey,
+				Model:      turnModel,
+				Request:    reqJSON,
+				Response:   respJSON,
+				DurationMS: duration.Milliseconds(),
+			})
+		}
 
 		// Build assistant message from response
 		assistantMsg := anthropic.Message{

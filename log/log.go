@@ -65,12 +65,23 @@ type APIEntry struct {
 	StopReason string    `json:"stop_reason"`
 }
 
+// PayloadEntry is a full API request/response record.
+type PayloadEntry struct {
+	Timestamp time.Time       `json:"ts"`
+	Session   string          `json:"session"`
+	Model     string          `json:"model"`
+	Request   json.RawMessage `json:"request"`
+	Response  json.RawMessage `json:"response"`
+	DurationMS int64          `json:"duration_ms"`
+}
+
 // Logger writes event log lines and structured API log entries.
 type Logger struct {
-	level    Level
-	eventOut io.Writer // clod.log + stderr multiwriter
-	apiFile  *os.File  // api.jsonl (nil if disabled)
-	mu       sync.Mutex
+	level       Level
+	eventOut    io.Writer // clod.log + stderr multiwriter
+	apiFile     *os.File  // api.jsonl (nil if disabled)
+	payloadFile *os.File  // api-payload.jsonl (nil if disabled)
+	mu          sync.Mutex
 }
 
 // std is the global logger instance.
@@ -81,6 +92,7 @@ type Config struct {
 	Level       string // DEBUG, INFO, WARN, ERROR
 	EventFile   string // path to clod.log
 	APIFile     string // path to api.jsonl
+	PayloadFile string // path to api-payload.jsonl (empty = disabled)
 }
 
 // Init initializes the global logger. Call once at startup.
@@ -107,10 +119,21 @@ func Init(cfg Config) error {
 		apiFile = f
 	}
 
+	// Payload log (full request/response bodies)
+	var payloadFile *os.File
+	if cfg.PayloadFile != "" {
+		f, err := os.OpenFile(cfg.PayloadFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("open payload log %s: %w", cfg.PayloadFile, err)
+		}
+		payloadFile = f
+	}
+
 	std.mu.Lock()
 	std.level = level
 	std.eventOut = eventOut
 	std.apiFile = apiFile
+	std.payloadFile = payloadFile
 	std.mu.Unlock()
 
 	return nil
@@ -123,6 +146,10 @@ func Close() {
 	if std.apiFile != nil {
 		std.apiFile.Close()
 		std.apiFile = nil
+	}
+	if std.payloadFile != nil {
+		std.payloadFile.Close()
+		std.payloadFile = nil
 	}
 }
 
@@ -161,6 +188,29 @@ func (l *Logger) api(entry APIEntry) {
 	l.apiFile.Write(append(data, '\n'))
 }
 
+// payload writes a full API request/response record.
+func (l *Logger) payload(entry PayloadEntry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.payloadFile == nil {
+		return
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	l.payloadFile.Write(append(data, '\n'))
+}
+
+// PayloadEnabled returns true if full payload logging is active.
+func PayloadEnabled() bool {
+	std.mu.Lock()
+	defer std.mu.Unlock()
+	return std.payloadFile != nil
+}
+
 // Package-level functions for the global logger.
 
 func Debugf(component string, format string, args ...interface{}) {
@@ -181,6 +231,10 @@ func Errorf(component string, format string, args ...interface{}) {
 
 func API(entry APIEntry) {
 	std.api(entry)
+}
+
+func Payload(entry PayloadEntry) {
+	std.payload(entry)
 }
 
 // Fatalf logs at ERROR level and exits.

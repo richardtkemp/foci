@@ -44,9 +44,10 @@ func main() {
 
 	// Initialize logging
 	if err := log.Init(log.Config{
-		Level:     cfg.Logging.Level,
-		EventFile: cfg.Logging.EventFile,
-		APIFile:   cfg.Logging.APIFile,
+		Level:       cfg.Logging.Level,
+		EventFile:   cfg.Logging.EventFile,
+		APIFile:     cfg.Logging.APIFile,
+		PayloadFile: cfg.Logging.PayloadFile,
 	}); err != nil {
 		log.Fatalf("main", "init logging: %v", err)
 	}

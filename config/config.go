@@ -44,6 +44,8 @@ type LoggingConfig struct {
 	EventFile        string `toml:"event_file"`
 	APIFile          string `toml:"api_file"`
 	ConversationFile string `toml:"conversation_file"`
+	FullPayload      bool   `toml:"full_payload"`      // write full API payloads to api-payload.jsonl
+	PayloadFile      string `toml:"payload_file"`       // path to api-payload.jsonl (default: api-payload.jsonl)
 }
 
 type CommandConfig struct {
@@ -103,6 +105,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.ConversationFile == "" {
 		cfg.Logging.ConversationFile = "conversation.db"
+	}
+	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
+		cfg.Logging.PayloadFile = "api-payload.jsonl"
 	}
 
 	return &cfg, nil
