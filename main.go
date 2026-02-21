@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"clod/anthropic"
 	"clod/config"
 	"clod/log"
+	"clod/secrets"
 	"clod/session"
 	"clod/telegram"
 	"clod/tools"
@@ -38,21 +40,45 @@ func main() {
 	}
 	defer log.Close()
 
+	// Load secrets (from secrets.toml alongside config file)
+	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	store, err := secrets.Load(secretsPath)
+	if err != nil {
+		log.Fatalf("main", "load secrets: %v", err)
+	}
+	if names := store.Names(); len(names) > 0 {
+		log.Infof("main", "loaded %d secrets: %v", len(names), names)
+	}
+
+	// Resolve credentials: secrets.toml overrides clod.toml
+	anthropicToken := cfg.Anthropic.Token
+	if v, ok := store.Get("anthropic.token"); ok {
+		anthropicToken = v
+	}
+	telegramToken := cfg.Telegram.BotToken
+	if v, ok := store.Get("telegram.bot_token"); ok {
+		telegramToken = v
+	}
+	braveKey := cfg.Anthropic.BraveAPIKey
+	if v, ok := store.Get("brave.api_key"); ok {
+		braveKey = v
+	}
+
 	// Anthropic client
-	client := anthropic.NewClient(cfg.Anthropic.Token)
+	client := anthropic.NewClient(anthropicToken)
 
 	// Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
 
 	// Tool registry
 	registry := tools.NewRegistry()
-	registry.Register(tools.NewExecTool())
+	registry.Register(tools.NewExecTool(store))
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	if cfg.Anthropic.BraveAPIKey != "" {
-		registry.Register(tools.NewWebSearchTool(cfg.Anthropic.BraveAPIKey))
+	if braveKey != "" {
+		registry.Register(tools.NewWebSearchTool(braveKey))
 	}
 	if cfg.Memory.Dir != "" {
 		registry.Register(tools.NewMemorySearchTool(cfg.Memory.Dir))
@@ -76,8 +102,8 @@ func main() {
 	sessionKey := fmt.Sprintf("agent:%s:main", cfg.Agent.ID)
 
 	// Start Telegram bot
-	if cfg.Telegram.BotToken != "" {
-		bot, err := telegram.NewBot(cfg.Telegram.BotToken, cfg.Telegram.AllowedUsers, ag, sessionKey)
+	if telegramToken != "" {
+		bot, err := telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, sessionKey)
 		if err != nil {
 			log.Fatalf("main", "create telegram bot: %v", err)
 		}

@@ -80,6 +80,47 @@ Each becomes a `SystemBlock{type:"text", text:content}`. The **last** block gets
 
 Missing/empty files are silently skipped.
 
+## Prompt Caching
+
+Two cache breakpoints per API request:
+
+1. **System prompt** — `cache_control: ephemeral` on the last `SystemBlock` (set by `bootstrap.SystemBlocks()`). Caches the entire system prompt so it's not re-tokenized each turn.
+
+2. **Conversation history** — `cache_control: ephemeral` on the last content block of the second-to-last message (set by `withCacheBreakpoint()` in `agent.go`). Caches system prompt + conversation history up to the previous turn.
+
+Cache breakpoints are added **only to the API request payload**, never persisted to session storage. The `withCacheBreakpoint()` function returns a shallow copy of the messages slice.
+
+**Branch cache sharing:** When a branch session's `LoadFull()` builds a message list starting with the parent's prefix, the cache breakpoint lands on the same byte-identical prefix. The API hits cache (read pricing) instead of re-tokenizing (write pricing).
+
+**Requirements for cache hits:**
+- System prompt must be byte-identical across turns (workspace files don't change mid-conversation)
+- `anthropic-beta: prompt-caching-2024-07-31` header (set in `client.go`)
+- OAuth tokens also need `oauth-2025-04-20` in the beta header
+
+**Verify in `api.jsonl`:** `cache_read > 0` on the second message in a session means caching is working.
+
+## Secrets (`secrets/`)
+
+Loaded from `secrets.toml` (same directory as `clod.toml`). Format:
+
+```toml
+[anthropic]
+token = "sk-ant-oat01-..."
+
+[telegram]
+bot_token = "123:ABC"
+
+[custom]
+github_token = "ghp_..."
+```
+
+Stored as flat keys: `anthropic.token`, `custom.github_token`, etc. Overrides `clod.toml` credentials at startup.
+
+Features:
+- **Template resolution:** `{{secret:custom.github_token}}` in exec commands → replaced with actual value before execution
+- **Output redaction:** Secret values in command output → `[REDACTED]` (skips values < 4 chars)
+- **Path blocking:** Commands referencing `secrets.toml` or `/proc/self/environ` are refused
+
 ## Logging (`log/`)
 
 Two outputs:

@@ -51,7 +51,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 			Model:     a.Model,
 			MaxTokens: defaultMaxTokens,
 			System:    system,
-			Messages:  messages,
+			Messages:  withCacheBreakpoint(messages),
 			Tools:     toolDefs,
 		}
 
@@ -145,6 +145,32 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 		return "", fmt.Errorf("save session: %w", err)
 	}
 	return "Max tool call depth reached.", nil
+}
+
+// withCacheBreakpoint returns a copy of messages with cache_control: ephemeral
+// set on the last content block of the second-to-last message. This creates a
+// cache breakpoint at the conversation history boundary, so the API caches
+// system prompt + history and only processes the latest turn. For branch
+// sessions, this means the shared prefix gets cache hits instead of rewrites.
+// Returns a shallow copy — original messages are not modified.
+func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
+	if len(messages) < 2 {
+		return messages
+	}
+
+	result := make([]anthropic.Message, len(messages))
+	copy(result, messages)
+
+	// Add cache_control to last content block of second-to-last message
+	idx := len(result) - 2
+	if len(result[idx].Content) > 0 {
+		content := make([]anthropic.ContentBlock, len(result[idx].Content))
+		copy(content, result[idx].Content)
+		content[len(content)-1].CacheControl = anthropic.Ephemeral()
+		result[idx].Content = content
+	}
+
+	return result
 }
 
 // TurnResult holds the result of a single agent turn.

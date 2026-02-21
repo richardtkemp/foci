@@ -8,7 +8,7 @@ import (
 )
 
 func TestExecEcho(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo hello world",
@@ -25,7 +25,7 @@ func TestExecEcho(t *testing.T) {
 }
 
 func TestExecWithTimeout(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -42,7 +42,7 @@ func TestExecWithTimeout(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 60",
@@ -60,7 +60,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecFailedCommand(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "false",
@@ -76,7 +76,7 @@ func TestExecFailedCommand(t *testing.T) {
 }
 
 func TestExecStderr(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo stderr_msg >&2",
@@ -92,7 +92,7 @@ func TestExecStderr(t *testing.T) {
 }
 
 func TestExecInvalidParams(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
 	if err == nil {
 		t.Fatal("expected error for invalid params")
@@ -100,7 +100,7 @@ func TestExecInvalidParams(t *testing.T) {
 }
 
 func TestExecMultilineOutput(t *testing.T) {
-	tool := NewExecTool()
+	tool := NewExecTool(nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "printf 'line1\nline2\nline3'",

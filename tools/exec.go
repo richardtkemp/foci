@@ -9,18 +9,21 @@ import (
 	"time"
 
 	"clod/log"
+	"clod/secrets"
 )
 
-func NewExecTool() *Tool {
+// NewExecTool creates an exec tool. If store is non-nil, commands get
+// secret template resolution, output redaction, and blocked path checks.
+func NewExecTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. Use timeout to limit execution time.",
+		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"command": {
 					"type": "string",
-					"description": "Shell command to execute"
+					"description": "Shell command to execute. Use {{secret:NAME}} to reference secrets."
 				},
 				"timeout": {
 					"type": "integer",
@@ -29,17 +32,34 @@ func NewExecTool() *Tool {
 			},
 			"required": ["command"]
 		}`),
-		Execute: execCommand,
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return execCommand(ctx, params, store)
+		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage) (string, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
 	var p struct {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	// Check blocked paths
+	if store != nil && store.IsBlockedCommand(p.Command) {
+		return "", fmt.Errorf("command references a blocked path")
+	}
+
+	// Resolve secret templates
+	cmd := p.Command
+	if store != nil {
+		resolved, err := store.Resolve(cmd)
+		if err != nil {
+			return "", fmt.Errorf("resolve secrets: %w", err)
+		}
+		cmd = resolved
 	}
 
 	timeout := 30 * time.Second
@@ -52,17 +72,22 @@ func execCommand(ctx context.Context, params json.RawMessage) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", p.Command)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
+	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proc.Cancel = func() error {
+		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 	}
-	out, err := cmd.CombinedOutput()
+	out, err := proc.CombinedOutput()
 
 	result := string(out)
 	const maxLen = 100_000
 	if len(result) > maxLen {
 		result = result[:maxLen] + "\n... (truncated)"
+	}
+
+	// Redact secrets from output
+	if store != nil {
+		result = store.Redact(result)
 	}
 
 	if err != nil {

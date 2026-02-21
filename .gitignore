@@ -4,3 +4,4 @@ sessions/
 workspace/*.md
 *.log
 api.jsonl
+secrets.toml

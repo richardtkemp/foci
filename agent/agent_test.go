@@ -263,10 +263,141 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 	}
 }
 
+func TestWithCacheBreakpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []anthropic.Message
+		wantIdx  int // index that should get cache_control (-1 for none)
+	}{
+		{
+			name:     "empty",
+			messages: nil,
+			wantIdx:  -1,
+		},
+		{
+			name: "single message",
+			messages: []anthropic.Message{
+				{Role: "user", Content: anthropic.TextContent("hi")},
+			},
+			wantIdx: -1,
+		},
+		{
+			name: "two messages",
+			messages: []anthropic.Message{
+				{Role: "user", Content: anthropic.TextContent("hi")},
+				{Role: "user", Content: anthropic.TextContent("second")},
+			},
+			wantIdx: 0, // second-to-last
+		},
+		{
+			name: "three messages",
+			messages: []anthropic.Message{
+				{Role: "user", Content: anthropic.TextContent("first")},
+				{Role: "assistant", Content: anthropic.TextContent("reply")},
+				{Role: "user", Content: anthropic.TextContent("second")},
+			},
+			wantIdx: 1, // second-to-last
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := withCacheBreakpoint(tt.messages)
+
+			if tt.wantIdx < 0 {
+				// No cache_control should be set
+				for i, msg := range result {
+					for j, block := range msg.Content {
+						if block.CacheControl != nil {
+							t.Errorf("msg[%d].content[%d] has unexpected cache_control", i, j)
+						}
+					}
+				}
+				return
+			}
+
+			// Verify cache_control on expected message
+			lastBlock := result[tt.wantIdx].Content[len(result[tt.wantIdx].Content)-1]
+			if lastBlock.CacheControl == nil {
+				t.Fatalf("msg[%d] missing cache_control", tt.wantIdx)
+			}
+			if lastBlock.CacheControl.Type != "ephemeral" {
+				t.Errorf("cache_control.type = %q, want ephemeral", lastBlock.CacheControl.Type)
+			}
+
+			// Verify original messages not modified
+			if len(tt.messages) > tt.wantIdx {
+				origBlock := tt.messages[tt.wantIdx].Content[len(tt.messages[tt.wantIdx].Content)-1]
+				if origBlock.CacheControl != nil {
+					t.Error("original message was modified — cache_control should only be on the copy")
+				}
+			}
+		})
+	}
+}
+
+func TestCacheBreakpointInRequest(t *testing.T) {
+	// Verify that the API request includes cache_control but saved session does not
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("reply"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// First message — no breakpoint (only 1 message)
+	ag.HandleMessage(context.Background(), "agent:test:cache", "First")
+
+	// Second message — should have breakpoint on the previous assistant turn
+	ag.HandleMessage(context.Background(), "agent:test:cache", "Second")
+
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+
+	// API request should have cache_control on second-to-last message
+	if len(receivedReq.Messages) < 2 {
+		t.Fatalf("got %d messages in request", len(receivedReq.Messages))
+	}
+	breakpointMsg := receivedReq.Messages[len(receivedReq.Messages)-2]
+	lastBlock := breakpointMsg.Content[len(breakpointMsg.Content)-1]
+	if lastBlock.CacheControl == nil {
+		t.Error("API request missing cache_control on second-to-last message")
+	}
+
+	// Saved session should NOT have cache_control
+	saved, _ := store.Load("agent:test:cache")
+	for i, msg := range saved {
+		for j, block := range msg.Content {
+			if block.CacheControl != nil {
+				t.Errorf("saved msg[%d].content[%d] has cache_control — should not be persisted", i, j)
+			}
+		}
+	}
+}
+
 // newTestClientWithBase creates a test client with a custom base URL.
-// This requires exposing or working around the unexported baseURL field.
-// We do this by creating a custom Client via reflection or by making it testable.
-// For now, use a simpler approach: create the client and set the field.
 func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 	return anthropic.NewClientWithBase(baseURL, apiKey)
 }
