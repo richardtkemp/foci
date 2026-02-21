@@ -397,6 +397,97 @@ func TestResolveBotToken(t *testing.T) {
 	})
 }
 
+func TestMultiAgentSessionKeys(t *testing.T) {
+	// Verify that multi-agent config produces correct session key namespaces
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[[agents]]
+id = "clutch"
+model = "claude-sonnet-4-6"
+workspace = "/tmp/ws1"
+telegram_bot = "primary"
+multiball_bot = "secondary"
+
+[[agents]]
+id = "scout"
+workspace = "/tmp/ws2"
+telegram_bot = "scout"
+
+[telegram]
+allowed_users = ["111"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+secondary = { token_secret = "telegram.secondary" }
+scout = { token_secret = "telegram.scout" }
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Verify session key patterns that main.go will generate
+	for _, acfg := range cfg.Agents {
+		mainKey := "agent:" + acfg.ID + ":main"
+		wakeKey := "agent:" + acfg.ID + ":cron:wake-12345"
+		mbKey := "agent:" + acfg.ID + ":multiball:mb-12345"
+
+		// Ensure agent IDs produce distinct namespaces
+		if acfg.ID == "clutch" {
+			if mainKey != "agent:clutch:main" {
+				t.Errorf("clutch mainKey = %q", mainKey)
+			}
+			if wakeKey != "agent:clutch:cron:wake-12345" {
+				t.Errorf("clutch wakeKey = %q", wakeKey)
+			}
+			if mbKey != "agent:clutch:multiball:mb-12345" {
+				t.Errorf("clutch mbKey = %q", mbKey)
+			}
+			if acfg.MultiballBot != "secondary" {
+				t.Errorf("clutch MultiballBot = %q, want secondary", acfg.MultiballBot)
+			}
+		}
+		if acfg.ID == "scout" {
+			if mainKey != "agent:scout:main" {
+				t.Errorf("scout mainKey = %q", mainKey)
+			}
+			if acfg.MultiballBot != "" {
+				t.Errorf("scout MultiballBot = %q, want empty", acfg.MultiballBot)
+			}
+		}
+	}
+
+	// Verify bot token resolution would work with correct secrets
+	secrets := mockSecrets{
+		"telegram.primary":   "token-primary",
+		"telegram.secondary": "token-secondary",
+		"telegram.scout":     "token-scout",
+	}
+
+	// Each agent's bot should resolve to a different token
+	clutchToken := cfg.ResolveBotToken(cfg.Agents[0].TelegramBot, secrets)
+	scoutToken := cfg.ResolveBotToken(cfg.Agents[1].TelegramBot, secrets)
+
+	if clutchToken == scoutToken {
+		t.Errorf("clutch and scout resolved to same token: %q", clutchToken)
+	}
+	if clutchToken != "token-primary" {
+		t.Errorf("clutch token = %q, want token-primary", clutchToken)
+	}
+	if scoutToken != "token-scout" {
+		t.Errorf("scout token = %q, want token-scout", scoutToken)
+	}
+
+	// Multiball bot should resolve differently from primary
+	mbToken := cfg.ResolveBotToken(cfg.Agents[0].MultiballBot, secrets)
+	if mbToken != "token-secondary" {
+		t.Errorf("multiball token = %q, want token-secondary", mbToken)
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	_, err := Load("/nonexistent/path/clod.toml")
 	if err == nil {

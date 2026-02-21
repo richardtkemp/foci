@@ -64,3 +64,46 @@ func TestBotManagerMultiball(t *testing.T) {
 		t.Errorf("Pool(scout) = %v, want nil", got)
 	}
 }
+
+func TestBotManagerIsolation(t *testing.T) {
+	// Verify that multiball pools are per-agent, not shared
+	mgr := NewBotManager()
+
+	// Two agents, each with their own multiball bot
+	clutchPrimary, _ := testBot(nil, command.NewRegistry())
+	scoutPrimary, _ := testBot(nil, command.NewRegistry())
+	clutchMB, _ := testBot(nil, command.NewRegistry())
+	clutchMB.SetSessionKey("") // multiball bots start idle
+	scoutMB, _ := testBot(nil, command.NewRegistry())
+	scoutMB.SetSessionKey("") // multiball bots start idle
+
+	mgr.AddPrimary("clutch", clutchPrimary)
+	mgr.AddPrimary("scout", scoutPrimary)
+	mgr.AddMultiball("clutch", clutchMB)
+	mgr.AddMultiball("scout", scoutMB)
+
+	// Each agent has its own pool
+	clutchPool := mgr.Pool("clutch")
+	scoutPool := mgr.Pool("scout")
+
+	if clutchPool == scoutPool {
+		t.Error("clutch and scout share the same pool")
+	}
+	if clutchPool.Size() != 1 {
+		t.Errorf("clutch pool size = %d, want 1", clutchPool.Size())
+	}
+	if scoutPool.Size() != 1 {
+		t.Errorf("scout pool size = %d, want 1", scoutPool.Size())
+	}
+
+	// Acquiring from clutch's pool should not affect scout's
+	acquired, ok := clutchPool.Acquire()
+	if !ok {
+		t.Fatal("failed to acquire from clutch pool")
+	}
+	acquired.SetSessionKey("agent:clutch:multiball:mb-1")
+
+	if scoutPool.Available() != 1 {
+		t.Errorf("scout pool available = %d after clutch acquire, want 1", scoutPool.Available())
+	}
+}
