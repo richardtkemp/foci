@@ -196,8 +196,70 @@ func main() {
 	hb := agent.NewHeartbeat(ag, sessionKey, interval)
 	hb.Start(ctx)
 
-	// HTTP server for wake endpoint
+	// HTTP server
 	mux := http.NewServeMux()
+
+	// POST /send — send message to main session, return response
+	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
+			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
+			return
+		}
+
+		log.Infof("http", "send: %s", req.Text)
+
+		resp, err := ag.HandleMessage(ctx, sessionKey, req.Text)
+		if err != nil {
+			log.Errorf("http", "send error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		hb.Reset()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"response": resp})
+	})
+
+	// GET /status — return agent status
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		result, _ := cmds.Dispatch(context.Background(), "/status")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"response": result})
+	})
+
+	// POST /command — dispatch any slash command
+	mux.HandleFunc("/command", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Command string `json:"command"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
+			http.Error(w, "bad request: need {\"command\": \"/ping\"}", http.StatusBadRequest)
+			return
+		}
+		result, ok := cmds.Dispatch(context.Background(), req.Command)
+		if !ok {
+			http.Error(w, "unknown command", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"response": result})
+	})
+
+	// POST /wake — branch session for cron/external triggers
 	mux.HandleFunc("/wake", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
