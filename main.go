@@ -103,6 +103,7 @@ func main() {
 	// Memory FTS5 index
 	var memIdx *memory.Index
 	var reminderStore *memory.ReminderStore
+	var scratchpadStore *memory.Scratchpad
 	if cfg.Memory.Dir != "" {
 		memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
 		memIdx, err = memory.NewIndex(memDbPath, cfg.Memory.Dir)
@@ -125,6 +126,17 @@ func main() {
 		defer reminderStore.Close()
 		registry.Register(tools.NewMemoryRemindTool(reminderStore))
 
+		// Scratchpad (working state that survives compaction)
+		scratchpadDbPath := filepath.Join(filepath.Dir(configPath), "scratchpad.db")
+		scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
+		if err != nil {
+			log.Fatalf("main", "create scratchpad: %v", err)
+		}
+		defer scratchpadStore.Close()
+		registry.Register(tools.NewScratchpadWriteTool(scratchpadStore))
+		registry.Register(tools.NewScratchpadReadTool(scratchpadStore))
+		registry.Register(tools.NewScratchpadClearTool(scratchpadStore))
+
 		// Index conversation messages into FTS5 as they're logged
 		log.ConversationHook = memIdx.IndexConversation
 	}
@@ -134,6 +146,7 @@ func main() {
 
 	// Compactor
 	compactor := compaction.NewCompactor(client, sessions, cfg.Agent.Model, cfg.Sessions.CompactionThreshold)
+	compactor.Scratchpad = scratchpadStore
 
 	// Agent
 	ag := &agent.Agent{

@@ -117,6 +117,27 @@ The agent can defer thoughts for later via the `memory_remind` tool. Reminders a
 Hello, what should I work on?
 ```
 
+## Scratchpad
+
+Working state that survives compaction but isn't permanent memory. The agent writes notes during investigations and clears them when done.
+
+**Storage:** `Scratchpad` in `memory/scratchpad.go`. SQLite table `scratchpad` with columns: `key` (primary key), `content`, `updated`. Stored in `scratchpad.db`.
+
+**Tools:** `scratchpad_write(key, content)`, `scratchpad_read(key)`, `scratchpad_clear(key)`.
+
+**Compaction survival:** When compaction fires (`compaction/compact.go`), all scratchpad entries are serialized and appended to the post-compaction handoff message as a `[scratchpad]` block. This prevents compaction from eating working state mid-investigation.
+
+**Example post-compaction message:**
+```
+[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]
+
+[scratchpad — working state preserved through compaction]
+--- investigation ---
+Checking whether FTS5 supports phrase boosting — preliminary answer is yes via NEAR queries.
+--- debug_notes ---
+The cache miss on branch sessions was caused by a trailing newline difference.
+```
+
 ## Session Storage
 
 **Format:** JSONL files, one JSON-encoded `anthropic.Message` per line.
@@ -212,6 +233,9 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `web_search` | web.go | Brave Search API |
 | `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x) |
 | `memory_remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due |
+| `scratchpad_write` | scratchpad.go | Write working notes (key + content); survives compaction |
+| `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
+| `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
 
 ## Slash Commands (`command/`)
 

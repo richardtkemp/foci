@@ -6,15 +6,17 @@ import (
 
 	"clod/anthropic"
 	"clod/log"
+	"clod/memory"
 	"clod/session"
 )
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
-	client    *anthropic.Client
-	sessions  *session.Store
-	model     string
-	threshold float64 // fraction of context window (e.g. 0.8)
+	client     *anthropic.Client
+	sessions   *session.Store
+	model      string
+	threshold  float64 // fraction of context window (e.g. 0.8)
+	Scratchpad *memory.Scratchpad // nil disables scratchpad injection
 }
 
 // NewCompactor creates a new Compactor.
@@ -102,6 +104,17 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 
 	summary := anthropic.TextOf(resp.Content)
 
+	// Collect scratchpad contents to preserve through compaction
+	handoff := "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
+	if c.Scratchpad != nil {
+		if entries, err := c.Scratchpad.All(); err == nil && len(entries) > 0 {
+			handoff += "\n\n[scratchpad — working state preserved through compaction]"
+			for _, e := range entries {
+				handoff += fmt.Sprintf("\n--- %s ---\n%s", e.Key, e.Content)
+			}
+		}
+	}
+
 	// Replace session with summary + handoff note
 	compacted := []anthropic.Message{
 		{
@@ -114,7 +127,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		},
 		{
 			Role:    "user",
-			Content: anthropic.TextContent("[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"),
+			Content: anthropic.TextContent(handoff),
 		},
 	}
 
