@@ -88,7 +88,14 @@ Implementation: The agent turn can produce multiple Telegram messages. The first
 
 ### Scratchpad
 
-The agent has a `scratchpad.md` file in the workspace for working state — mid-investigation notes, partial analyses, things that aren't worth saving to memory but would be disruptive to lose. Mentioned in the system prompt so the agent knows it's available. The agent manages it like any other file (read/write/edit). Compaction preserves a note that the scratchpad exists and may contain working state.
+Working notes that survive compaction but aren't permanent memory. For when the agent is mid-investigation and building up context that would be catastrophic to lose but isn't worth saving to memory files.
+
+Tools:
+- `scratchpad_write(text)` — append to scratchpad
+- `scratchpad_read()` — return current scratchpad contents
+- `scratchpad_clear()` — empty the scratchpad
+
+Stored in SQLite. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
 
 ### Model Escalation
 
