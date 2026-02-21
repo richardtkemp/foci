@@ -53,8 +53,8 @@ type Bot struct {
 	sessionKey   string
 	botToken     string           // for building file download URLs
 
-	transcriber  *voice.Transcriber // nil = voice notes not supported
-	tts          *voice.TTS         // nil = TTS not available
+	transcriber  voice.STT // nil = voice notes not supported
+	tts          voice.TTS // nil = TTS not available
 
 	queue      chan queuedMessage     // receiver → agent worker
 	turnCancel context.CancelFunc     // cancel the current agent turn
@@ -88,13 +88,13 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 	}, nil
 }
 
-// SetTranscriber sets the Whisper transcriber for inbound voice notes.
-func (b *Bot) SetTranscriber(t *voice.Transcriber) {
+// SetTranscriber sets the STT provider for inbound voice notes.
+func (b *Bot) SetTranscriber(t voice.STT) {
 	b.transcriber = t
 }
 
-// SetTTS sets the TTS engine for outbound voice notes.
-func (b *Bot) SetTTS(t *voice.TTS) {
+// SetTTS sets the TTS provider for outbound voice notes.
+func (b *Bot) SetTTS(t voice.TTS) {
 	b.tts = t
 }
 

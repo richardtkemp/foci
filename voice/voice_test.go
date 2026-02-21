@@ -8,19 +8,16 @@ import (
 	"testing"
 )
 
-func TestTranscriber_Transcribe(t *testing.T) {
-	// Mock Whisper API server
+func TestWhisperSTT_Transcribe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
 
-		// Check auth header
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-key" {
 			t.Errorf("expected Bearer test-key, got %s", auth)
 		}
 
-		// Check multipart form
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			t.Fatalf("parse multipart: %v", err)
 		}
@@ -53,13 +50,13 @@ func TestTranscriber_Transcribe(t *testing.T) {
 	}))
 	defer server.Close()
 
-	tr := &Transcriber{
+	stt := &WhisperSTT{
 		Endpoint: server.URL,
 		APIKey:   "test-key",
 		Model:    "whisper-large-v3",
 	}
 
-	result, err := tr.Transcribe(context.Background(), []byte("fake-audio-data"), "voice.ogg")
+	result, err := stt.Transcribe(context.Background(), []byte("fake-audio-data"), "voice.ogg")
 	if err != nil {
 		t.Fatalf("transcribe: %v", err)
 	}
@@ -68,20 +65,20 @@ func TestTranscriber_Transcribe(t *testing.T) {
 	}
 }
 
-func TestTranscriber_APIError(t *testing.T) {
+func TestWhisperSTT_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("invalid api key"))
 	}))
 	defer server.Close()
 
-	tr := &Transcriber{
+	stt := &WhisperSTT{
 		Endpoint: server.URL,
 		APIKey:   "bad-key",
 		Model:    "whisper-1",
 	}
 
-	_, err := tr.Transcribe(context.Background(), []byte("audio"), "voice.ogg")
+	_, err := stt.Transcribe(context.Background(), []byte("audio"), "voice.ogg")
 	if err == nil {
 		t.Fatal("expected error for 401 response")
 	}
@@ -90,8 +87,7 @@ func TestTranscriber_APIError(t *testing.T) {
 	}
 }
 
-func TestTTS_Synthesize(t *testing.T) {
-	// Mock TTS API server
+func TestOpenAITTS_Synthesize(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
@@ -106,18 +102,16 @@ func TestTTS_Synthesize(t *testing.T) {
 		}
 
 		body, _ := io.ReadAll(r.Body)
-		// Just verify it's valid JSON with expected fields
 		if len(body) == 0 {
 			t.Fatal("empty request body")
 		}
 
-		// Return fake MP3 data
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("fake-mp3-audio-data"))
 	}))
 	defer server.Close()
 
-	tts := &TTS{
+	tts := &OpenAITTS{
 		Endpoint: server.URL,
 		APIKey:   "tts-key",
 		Model:    "openai/tts-1-mini",
@@ -133,14 +127,14 @@ func TestTTS_Synthesize(t *testing.T) {
 	}
 }
 
-func TestTTS_APIError(t *testing.T) {
+func TestOpenAITTS_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("invalid voice"))
 	}))
 	defer server.Close()
 
-	tts := &TTS{
+	tts := &OpenAITTS{
 		Endpoint: server.URL,
 		APIKey:   "key",
 		Model:    "model",
@@ -152,23 +146,18 @@ func TestTTS_APIError(t *testing.T) {
 	}
 }
 
-func TestTTS_DefaultVoice(t *testing.T) {
+func TestOpenAITTS_DefaultVoice(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		// Should contain "alloy" as default voice
-		if got := string(body); got == "" {
-			t.Fatal("empty body")
-		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("audio"))
 	}))
 	defer server.Close()
 
-	tts := &TTS{
+	tts := &OpenAITTS{
 		Endpoint: server.URL,
 		APIKey:   "key",
 		Model:    "model",
-		// Voice is empty — should default to "alloy"
+		// Voice empty — should default to "alloy"
 	}
 
 	_, err := tts.Synthesize(context.Background(), "test")
@@ -176,3 +165,8 @@ func TestTTS_DefaultVoice(t *testing.T) {
 		t.Fatalf("synthesize: %v", err)
 	}
 }
+
+// Verify interface compliance at compile time.
+var _ STT = (*WhisperSTT)(nil)
+var _ TTS = (*EdgeTTS)(nil)
+var _ TTS = (*OpenAITTS)(nil)

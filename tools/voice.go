@@ -14,7 +14,7 @@ type VoiceReplyFunc func(audioData []byte)
 
 // NewTTSTool creates a tool that converts text to a voice note via TTS.
 // The voiceReplyFn callback delivers the audio to the current chat.
-func NewTTSTool(tts *voice.TTS, voiceReplyFn func() VoiceReplyFunc) *Tool {
+func NewTTSTool(tts voice.TTS, voiceReplyFn func() VoiceReplyFunc) *Tool {
 	return &Tool{
 		Name:        "tts",
 		Description: "Convert text to a voice note and send it to the user. Use when you want to reply with audio instead of text. The voice note is sent immediately.",

@@ -174,50 +174,66 @@ func main() {
 	// Model escalation tool (sync one-shot call to a different model)
 	registry.Register(tools.NewRequestModelTool(client, bootstrap))
 
-	// Voice: transcriber (Groq Whisper) and TTS (OpenRouter)
-	var transcriber *voice.Transcriber
-	var tts *voice.TTS
+	// Voice: STT (speech-to-text) and TTS (text-to-speech)
+	var sttProvider voice.STT
+	var ttsProvider voice.TTS
 
-	whisperEndpoint := cfg.Voice.WhisperEndpoint
-	if whisperEndpoint == "" {
-		whisperEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+	// STT: Whisper API (Groq by default, any OpenAI-compatible endpoint)
+	sttEndpoint := cfg.Voice.STTEndpoint
+	if sttEndpoint == "" {
+		sttEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
 	}
-	whisperModel := cfg.Voice.WhisperModel
-	if whisperModel == "" {
-		whisperModel = "whisper-large-v3"
+	sttModel := cfg.Voice.STTModel
+	if sttModel == "" {
+		sttModel = "whisper-large-v3"
 	}
 	if groqKey != "" {
-		transcriber = &voice.Transcriber{
-			Endpoint: whisperEndpoint,
+		sttProvider = &voice.WhisperSTT{
+			Endpoint: sttEndpoint,
 			APIKey:   groqKey,
-			Model:    whisperModel,
+			Model:    sttModel,
 		}
-		log.Infof("main", "voice transcription enabled (groq, %s)", whisperModel)
+		log.Infof("main", "voice STT enabled (whisper, %s)", sttModel)
 	}
 
-	ttsEndpoint := cfg.Voice.TTSEndpoint
-	if ttsEndpoint == "" {
-		ttsEndpoint = "https://openrouter.ai/api/v1/audio/speech"
+	// TTS: edge-tts (default, free) or openai-compatible API
+	ttsProviderName := cfg.Voice.TTSProvider
+	if ttsProviderName == "" {
+		ttsProviderName = "edge-tts"
 	}
-	ttsModel := cfg.Voice.TTSModel
-	if ttsModel == "" {
-		ttsModel = "openai/tts-1-mini"
-	}
-	ttsVoice := cfg.Voice.TTSVoice
-	if ttsVoice == "" {
-		ttsVoice = "alloy"
-	}
-	if openrouterKey != "" {
-		tts = &voice.TTS{
+	switch ttsProviderName {
+	case "edge-tts":
+		ttsProvider = &voice.EdgeTTS{
+			Voice: cfg.Voice.TTSVoice,
+		}
+		log.Infof("main", "voice TTS enabled (edge-tts, voice=%s)", cfg.Voice.TTSVoice)
+	case "openai":
+		ttsEndpoint := cfg.Voice.TTSEndpoint
+		if ttsEndpoint == "" {
+			ttsEndpoint = "https://openrouter.ai/api/v1/audio/speech"
+		}
+		ttsModel := cfg.Voice.TTSModel
+		if ttsModel == "" {
+			ttsModel = "openai/tts-1-mini"
+		}
+		ttsVoice := cfg.Voice.TTSVoice
+		if ttsVoice == "" {
+			ttsVoice = "alloy"
+		}
+		ttsProvider = &voice.OpenAITTS{
 			Endpoint: ttsEndpoint,
 			APIKey:   openrouterKey,
 			Model:    ttsModel,
 			Voice:    ttsVoice,
 		}
-		log.Infof("main", "voice TTS enabled (openrouter, %s, voice=%s)", ttsModel, ttsVoice)
+		log.Infof("main", "voice TTS enabled (openai, %s, voice=%s)", ttsModel, ttsVoice)
+	default:
+		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
+	}
 
+	if ttsProvider != nil {
 		// Register TTS tool — lets the agent send voice notes explicitly
-		registry.Register(tools.NewTTSTool(tts, func() tools.VoiceReplyFunc {
+		registry.Register(tools.NewTTSTool(ttsProvider, func() tools.VoiceReplyFunc {
 			fn := ag.GetVoiceReplyFunc()
 			if fn == nil {
 				return nil
@@ -309,11 +325,11 @@ func main() {
 		}
 
 		// Wire voice support
-		if transcriber != nil {
-			bot.SetTranscriber(transcriber)
+		if sttProvider != nil {
+			bot.SetTranscriber(sttProvider)
 		}
-		if tts != nil {
-			bot.SetTTS(tts)
+		if ttsProvider != nil {
+			bot.SetTTS(ttsProvider)
 		}
 
 		// Wire cache bust alerts to Telegram notification

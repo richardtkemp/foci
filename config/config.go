@@ -50,11 +50,15 @@ type LoggingConfig struct {
 }
 
 type VoiceConfig struct {
-	WhisperEndpoint string `toml:"whisper_endpoint"` // OpenAI-compatible transcription endpoint
-	WhisperModel    string `toml:"whisper_model"`    // e.g. "whisper-large-v3"
-	TTSEndpoint     string `toml:"tts_endpoint"`     // OpenAI-compatible TTS endpoint
-	TTSModel        string `toml:"tts_model"`        // e.g. "openai/tts-1-mini"
-	TTSVoice        string `toml:"tts_voice"`        // e.g. "alloy"
+	// STT (speech-to-text) — provider is always Whisper API (OpenAI-compatible)
+	STTEndpoint string `toml:"stt_endpoint"` // default: Groq
+	STTModel    string `toml:"stt_model"`    // default: whisper-large-v3
+
+	// TTS (text-to-speech) — configurable provider
+	TTSProvider string `toml:"tts_provider"` // "edge-tts" (default) or "openai"
+	TTSEndpoint string `toml:"tts_endpoint"` // for openai provider
+	TTSModel    string `toml:"tts_model"`    // for openai provider, e.g. "openai/tts-1-mini"
+	TTSVoice    string `toml:"tts_voice"`    // voice name (provider-specific)
 }
 
 type CommandConfig struct {
