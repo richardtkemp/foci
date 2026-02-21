@@ -92,15 +92,23 @@ The agent has a `scratchpad.md` file in the workspace for working state — mid-
 
 ### Model Escalation
 
-The agent can request a heavier model for a single turn via `request_model`:
+The agent can request a heavier model for a single reasoning task via `request_model`:
 
 ```
-request_model("opus", "Complex multi-step reasoning about cache interaction patterns")
+request_model("opus", "Evaluate whether this cache-sharing architecture has a subtle correctness bug: [full context here]")
 ```
 
-The escalation applies to the next turn only, then reverts to the session default. No human approval gate — trust the agent, monitor via `/cost`. The tool returns confirmation of what model the next turn will use.
+**This is NOT a session model switch.** Different models don't share Anthropic's prompt cache, so switching the session model mid-conversation would pay a full cold cache write — catastrophically expensive.
 
-Design intent: one model per session, no mid-session switching as a rule. Model escalation is the exception — explicit, logged, auto-reverting.
+Instead, `request_model` works like a one-shot consultation:
+1. The session agent (Haiku) constructs a complete, self-contained prompt — question, all relevant context, what kind of answer it needs
+2. Clod sends that as a standalone API call to the requested model (Opus) with **no cache writing** (`cache_control` omitted)
+3. The response comes back to the session agent as the tool result
+4. The session continues on Haiku with its warm cache intact
+
+The agent is responsible for packing enough context into the request. This is a tool call, not a model switch — Opus never sees the session history directly, only what the agent explicitly passes.
+
+Design intent: one model per session, always. Escalation is delegation, not switching.
 
 ### Thought Queue
 
