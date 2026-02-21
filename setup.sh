@@ -294,6 +294,7 @@ After=network.target
 Type=simple
 User=$CLOD_USER
 WorkingDirectory=$CLOD_HOME
+Environment="PATH=$CLOD_HOME/bin:$CLOD_HOME/.local/bin:$CLOD_HOME/.cargo/bin:$CLOD_HOME/.npm-global/bin:$CLOD_HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=$INSTALL_DIR/clodgw -config $CLOD_HOME/clod.toml
 Restart=on-failure
 RestartSec=5
