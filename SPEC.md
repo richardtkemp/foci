@@ -264,30 +264,6 @@ A timer that fires when the session has been idle for a configurable duration.
 - If agent responds with `HEARTBEAT_OK`, no action taken
 - Configurable interval (default: 45 minutes)
 
-**Per-session heartbeat configuration (enhancement):**
-
-Not just for main sessions. Different session types have different heartbeat needs:
-
-- **Main session:** General heartbeat on idle (45m default). Reads heartbeat.md, does background work.
-- **Multiball/fork sessions:** Cache-aware heartbeat. Fires N minutes before the cache TTL expires with "Cache going cold in X minutes. Continue working, or wrap up?" This keeps the fork's cache warm if there's active work, or lets it close gracefully.
-- **Subagent sessions:** May not need heartbeats at all (they have a task and finish).
-
-Heartbeat config per session type in TOML:
-
-```toml
-[heartbeat]
-interval = "45m"                    # main session default
-prompt_file = "heartbeat.md"        # injected as wake message
-
-[heartbeat.fork]
-mode = "cache_aware"                # fire based on cache TTL, not fixed interval
-warn_before_expiry = "5m"           # warn 5 minutes before cache goes cold
-prompt = "Cache expires soon. Continue or wrap up?"
-
-[heartbeat.subagent]
-enabled = false
-```
-
 ### Cron
 
 **Alpha:** Use system crontab. A tiny HTTP endpoint accepts wake messages:
@@ -583,6 +559,7 @@ bind = "127.0.0.1"
 
 **Out (enhancement):**
 - Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
+- Per-session heartbeat configuration — different session types get different heartbeats. Main: general idle heartbeat (reads heartbeat.md). Fork/multiball: cache-aware heartbeat that fires N minutes before cache TTL expires ("Cache going cold, continue or wrap up?"). Subagents: no heartbeat. Configurable per session type in TOML.
 - Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
 - Plugin/hook architecture
 - Reactions
