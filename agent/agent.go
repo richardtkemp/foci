@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"clod/anthropic"
@@ -22,10 +23,20 @@ type Agent struct {
 	Tools     *tools.Registry
 	Bootstrap *workspace.Bootstrap
 	Model     string
+
+	processing int32 // atomic: number of in-flight HandleMessage calls
+}
+
+// IsProcessing returns true if the agent is currently handling a message.
+func (a *Agent) IsProcessing() bool {
+	return atomic.LoadInt32(&a.processing) > 0
 }
 
 // HandleMessage processes a user message in the given session and returns the final text response.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
+	atomic.AddInt32(&a.processing, 1)
+	defer atomic.AddInt32(&a.processing, -1)
+
 	// Load existing messages
 	messages, err := a.Sessions.LoadFull(sessionKey)
 	if err != nil {
@@ -81,6 +92,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 			CacheWrite: resp.Usage.CacheCreationInputTokens,
 			CostUSD:    cost,
 			DurationMS: duration.Milliseconds(),
+			StopReason: resp.StopReason,
 		})
 
 		// Build assistant message from response

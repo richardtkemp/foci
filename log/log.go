@@ -62,6 +62,7 @@ type APIEntry struct {
 	CacheWrite int       `json:"cache_write"`
 	CostUSD    float64   `json:"cost_usd"`
 	DurationMS int64     `json:"duration_ms"`
+	StopReason string    `json:"stop_reason"`
 }
 
 // Logger writes event log lines and structured API log entries.

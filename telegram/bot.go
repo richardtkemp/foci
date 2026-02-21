@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"clod/agent"
+	"clod/command"
 	"clod/log"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -15,12 +16,13 @@ import (
 type Bot struct {
 	api          *tgbotapi.BotAPI
 	agent        *agent.Agent
+	commands     *command.Registry
 	allowedUsers map[string]bool
 	sessionKey   string
 }
 
 // NewBot creates a new Telegram bot.
-func NewBot(token string, allowedUsers []string, ag *agent.Agent, sessionKey string) (*Bot, error) {
+func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, sessionKey string) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
@@ -34,6 +36,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, sessionKey str
 	return &Bot{
 		api:          api,
 		agent:        ag,
+		commands:     cmds,
 		allowedUsers: allowed,
 		sessionKey:   sessionKey,
 	}, nil
@@ -87,6 +90,15 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		Session:   b.sessionKey,
 	})
 
+	// Slash commands bypass the agent pipeline entirely
+	if strings.HasPrefix(text, "/") {
+		if result, ok := b.commands.Dispatch(ctx, text); ok {
+			log.Debugf("telegram", "command %s dispatched", text)
+			b.sendReply(msg, userID, result)
+			return
+		}
+	}
+
 	// Send typing indicator
 	typing := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
 	b.api.Send(typing)
@@ -97,7 +109,13 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		response = fmt.Sprintf("Error: %v", err)
 	}
 
-	// Split long messages (Telegram limit is 4096 chars)
+	b.sendReply(msg, userID, response)
+}
+
+// sendReply sends a response back to the user, splitting long messages and
+// falling back to plain text if markdown fails. Logs each chunk to the
+// conversation log.
+func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
 	for _, chunk := range splitMessage(response, 4096) {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, chunk)
 		reply.ParseMode = "Markdown"

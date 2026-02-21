@@ -13,6 +13,7 @@ import (
 
 	"clod/agent"
 	"clod/anthropic"
+	"clod/command"
 	"clod/config"
 	"clod/log"
 	"clod/secrets"
@@ -108,10 +109,27 @@ func main() {
 	defer cancel()
 
 	sessionKey := fmt.Sprintf("agent:%s:main", cfg.Agent.ID)
+	startTime := time.Now()
+
+	// Slash commands — bypass agent pipeline entirely
+	cmds := command.NewRegistry()
+	cmds.Register(command.NewPingCommand())
+	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
+		return command.StatusInfo{
+			SessionKey:   sessionKey,
+			MessageCount: sessionMessageCount(sessions, sessionKey),
+			Model:        ag.Model,
+			Uptime:       time.Since(startTime),
+			AgentBusy:    ag.IsProcessing(),
+		}
+	}, cfg.Logging.APIFile))
+	cmds.Register(command.NewCacheCommand(cfg.Logging.APIFile))
+	cmds.Register(command.NewLastCommand(cfg.Logging.APIFile))
+	cmds.Register(command.NewCostCommand(cfg.Logging.APIFile))
 
 	// Start Telegram bot
 	if telegramToken != "" {
-		bot, err := telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, sessionKey)
+		bot, err := telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, sessionKey)
 		if err != nil {
 			log.Fatalf("main", "create telegram bot: %v", err)
 		}
@@ -193,4 +211,9 @@ func main() {
 	hb.Stop()
 	cancel()
 	server.Close()
+}
+
+func sessionMessageCount(sessions *session.Store, key string) int {
+	n, _ := sessions.MessageCount(key)
+	return n
 }
