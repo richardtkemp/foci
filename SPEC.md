@@ -180,6 +180,33 @@ The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path
 - How to reference them: `{{secret:NAME}}`
 - Nothing about their values
 
+## Logging
+
+Two log outputs, both plain files on disk. No systemd journal dependency.
+
+### Event log (`clod.log`)
+Human-readable, one line per event. Timestamp + level + component + message.
+
+```
+2026-02-21T03:52:39Z INFO  [telegram] bot started as @rk_clodbot
+2026-02-21T03:52:41Z INFO  [agent] stop_reason=end_turn input=1119 output=164 cache_read=0 cache_write=1119
+2026-02-21T03:53:01Z WARN  [exec] command timed out after 30s
+2026-02-21T03:53:05Z ERROR [anthropic] 529 overloaded, retrying in 5s
+```
+
+Levels: DEBUG, INFO, WARN, ERROR. Default: INFO. Configurable in TOML.
+
+Also writes to stderr so `tmux capture-pane` and `journalctl` (if run as a unit) work naturally.
+
+### API log (`api.jsonl`)
+Structured JSONL, one object per API request. For debugging cache behaviour, tracking costs, auditing usage.
+
+```json
+{"ts":"2026-02-21T03:52:41Z","session":"agent:main:main","model":"claude-haiku-4-5","input":1119,"output":164,"cache_read":0,"cache_write":1119,"cost_usd":0.003,"duration_ms":1240}
+```
+
+Searchable with `jq`. The agent can query its own API logs via tools.
+
 ## Config
 
 Single TOML file. Flat, commented, no deep nesting.
