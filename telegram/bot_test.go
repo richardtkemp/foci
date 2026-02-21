@@ -41,6 +41,7 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockSender) 
 	b := &Bot{
 		sender:       mock,
 		commands:     cmds,
+		lastMsgStore: command.NewLastMessageStore(),
 		allowedUsers: allowed,
 		sessionKey:   "agent:test:main",
 		queue:        make(chan queuedMessage, 64),

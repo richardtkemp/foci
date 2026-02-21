@@ -9,9 +9,64 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
+
+// LastMessageStore tracks the last message received from each user.
+// Used by the // (repeat) command to re-send the previous message.
+type LastMessageStore struct {
+	mu       sync.RWMutex
+	messages map[string]string // userID → last message text
+}
+
+// NewLastMessageStore creates a new store for tracking last messages.
+func NewLastMessageStore() *LastMessageStore {
+	return &LastMessageStore{
+		messages: make(map[string]string),
+	}
+}
+
+// Record stores the last message from a user.
+func (s *LastMessageStore) Record(userID string, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages[userID] = message
+}
+
+// Get retrieves the last message from a user, or "" if not found.
+func (s *LastMessageStore) Get(userID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.messages[userID]
+}
+
+// LastMessageUserKey is the context key for storing the user ID.
+type LastMessageUserKey struct{}
+
+// NewRepeatCommand creates the // command that repeats the last message.
+// Expects userID to be stored in context via context.WithValue(ctx, LastMessageUserKey{}, userID).
+func NewRepeatCommand(store *LastMessageStore) *Command {
+	return &Command{
+		Name:           "repeat",
+		Description:    "Repeat your last message (command: //)",
+		SkipToolExport: true, // not exposed as a tool
+		Execute: func(ctx context.Context, args string) (string, error) {
+			userID, ok := ctx.Value(LastMessageUserKey{}).(string)
+			if !ok || userID == "" {
+				return "", fmt.Errorf("unable to determine user")
+			}
+
+			lastMsg := store.Get(userID)
+			if lastMsg == "" {
+				return "", fmt.Errorf("no previous message to repeat")
+			}
+
+			return lastMsg, nil
+		},
+	}
+}
 
 // apiEntry mirrors log.APIEntry for reading api.jsonl without importing log.
 type apiEntry struct {

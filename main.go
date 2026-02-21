@@ -326,6 +326,9 @@ func main() {
 	registry.Register(tools.NewScheduleWakeTool())
 
 	// Slash commands — bypass agent pipeline entirely
+	// Create store for tracking last messages (used by // repeat command)
+	lastMsgStore := command.NewLastMessageStore()
+
 	cmds := command.NewRegistry()
 	cmds.Register(command.NewPingCommand())
 	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
@@ -485,11 +488,15 @@ func main() {
 			return forkFn()
 		},
 	})
+	cmds.Register(command.NewRepeatCommand(lastMsgStore))
 
-	// Auto-expose all slash commands as tools
+	// Auto-expose all slash commands as tools (except those marked SkipToolExport)
 	// This allows the agent to invoke commands programmatically
 	// Detect and prevent naming collisions between commands and tools
 	for _, cmd := range cmds.All() {
+		if cmd.SkipToolExport {
+			continue // skip commands that should not be exposed as tools
+		}
 		if existingTool := registry.Get(cmd.Name); existingTool != nil {
 			log.Fatalf("main", "naming collision: command '%s' conflicts with existing tool '%s'", cmd.Name, cmd.Name)
 		}
@@ -499,7 +506,7 @@ func main() {
 	// Start Telegram bot
 	if telegramToken != "" {
 		var err error
-		primaryBot, err = telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, sessionKey)
+		primaryBot, err = telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, sessionKey)
 		if err != nil {
 			log.Fatalf("main", "create telegram bot: %v", err)
 		}
@@ -533,7 +540,7 @@ func main() {
 		if len(secondaryTokens) > 0 {
 			pool = telegram.NewPool()
 			for _, token := range secondaryTokens {
-				secBot, err := telegram.NewBot(token, cfg.Telegram.AllowedUsers, ag, cmds, "")
+				secBot, err := telegram.NewBot(token, cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "")
 				if err != nil {
 					log.Errorf("main", "create secondary bot: %v", err)
 					continue

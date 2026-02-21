@@ -8,9 +8,10 @@ import (
 
 // Command is a slash command that executes outside the agent pipeline.
 type Command struct {
-	Name        string
-	Description string
-	Execute     func(ctx context.Context, args string) (string, error)
+	Name           string
+	Description    string
+	Execute        func(ctx context.Context, args string) (string, error)
+	SkipToolExport bool // if true, not exposed as an agent tool
 }
 
 // Registry holds registered slash commands and dispatches them.

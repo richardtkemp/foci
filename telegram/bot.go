@@ -50,6 +50,7 @@ type Bot struct {
 	fileGetter   fileGetter       // for getting file info (mockable in tests)
 	agent        *agent.Agent
 	commands     *command.Registry
+	lastMsgStore *command.LastMessageStore // for // repeat command
 	allowedUsers map[string]bool
 	sessionKey   string
 	sessionMu    sync.RWMutex        // protects sessionKey (mutable for secondary bots)
@@ -68,7 +69,7 @@ type Bot struct {
 }
 
 // NewBot creates a new Telegram bot.
-func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, sessionKey string) (*Bot, error) {
+func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, lastMsgStore *command.LastMessageStore, sessionKey string) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
@@ -85,6 +86,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 		fileGetter:   api,
 		agent:        ag,
 		commands:     cmds,
+		lastMsgStore: lastMsgStore,
 		allowedUsers: allowed,
 		sessionKey:   sessionKey,
 		botToken:     token,
@@ -272,6 +274,11 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		Session:   b.SessionKey(),
 	})
 
+	// Record the message for // (repeat) command
+	if text != "" && !strings.HasPrefix(text, "/") {
+		b.lastMsgStore.Record(userID, text)
+	}
+
 	// Slash commands bypass the agent pipeline entirely
 	if text != "" && strings.HasPrefix(text, "/") {
 		cmd := strings.ToLower(strings.TrimSpace(text))
@@ -303,7 +310,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 
-		if result, ok := b.commands.Dispatch(ctx, text); ok {
+		// Pass userID to command via context so repeat command can access it
+		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
+		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
 			log.Debugf("telegram", "command %s dispatched", text)
 			b.sendReply(msg, userID, result)
 			return
