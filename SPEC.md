@@ -484,7 +484,7 @@ When a single API call writes more than a configurable threshold of cache tokens
 
 ```toml
 [logging]
-cache_bust_threshold = 20000  # tokens — alert when cache_write exceeds this in one call
+cache_bust_detect = true  # alert when cache_read drops >50% vs previous request
 ```
 
 ```

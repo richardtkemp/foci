@@ -43,9 +43,10 @@ type sessionMeta struct {
 // the agent continues working (e.g., "Looking into this...").
 type ReplyFunc func(text string)
 
-// CacheBustFunc is called when cache_write exceeds the threshold.
-// session is the session key, tokens is the cache_write count, cost is the write cost.
-type CacheBustFunc func(session string, tokens int, cost float64)
+// CacheBustFunc is called when a cache bust is detected (cache_read drops
+// significantly compared to the previous request).
+// session is the session key, prevRead is what we had, curRead is what we got.
+type CacheBustFunc func(session string, prevRead, curRead int)
 
 // Agent is the core agent loop.
 type Agent struct {
@@ -59,8 +60,8 @@ type Agent struct {
 
 	ExtraSystemBlocks  []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy      string                  // "auto" (top-level) or "explicit" (manual breakpoints)
-	CacheBustThreshold int                     // alert when cache_write exceeds this (0 = disabled)
-	CacheBustAlert     CacheBustFunc           // callback for alerts (set by telegram bot)
+	CacheBustDetect    bool                    // detect cache busts (cache_read drop >50%)
+	CacheBustAlert     CacheBustFunc           // callback for cache bust alerts
 	DuplicateMessages  bool                    // send user text twice per API call (improves instruction following)
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
@@ -392,10 +393,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			})
 		}
 
-		// Cache bust alert
-		if a.CacheBustThreshold > 0 && resp.Usage.CacheCreationInputTokens > a.CacheBustThreshold && a.CacheBustAlert != nil {
-			writeCost := log.CalculateCost(turnModel, 0, 0, 0, resp.Usage.CacheCreationInputTokens)
-			a.CacheBustAlert(sessionKey, resp.Usage.CacheCreationInputTokens, writeCost)
+		// Cache bust detection: cache_read dropped significantly vs previous request.
+		// Skip first request (no baseline) — prevCacheRead will be 0.
+		if a.CacheBustDetect && a.CacheBustAlert != nil && sm.prevCacheRead > 0 {
+			if resp.Usage.CacheReadInputTokens < sm.prevCacheRead/2 {
+				a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
+			}
 		}
 
 		// Build assistant message from response
@@ -428,6 +431,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				}
 				// Reload system prompt — compaction may have changed memory files
 				a.Bootstrap.Reload()
+				// Reset cache baseline — next request will have a different prefix
+				sm.prevCacheRead = 0
 			}
 
 			return anthropic.TextOf(resp.Content), nil

@@ -192,7 +192,7 @@ func main() {
 		Model:              cfg.Agent.Model,
 		ExtraSystemBlocks:  extraSystemBlocks,
 		CacheStrategy:      cfg.Cache.Strategy,
-		CacheBustThreshold: cfg.Logging.CacheBustThreshold,
+		CacheBustDetect:    cfg.Logging.CacheBustDetect,
 		DuplicateMessages:  cfg.Agent.DuplicateMessages,
 	}
 
@@ -417,9 +417,9 @@ func main() {
 		}
 
 		// Wire cache bust alerts to Telegram notification
-		if ag.CacheBustThreshold > 0 {
-			ag.CacheBustAlert = func(session string, tokens int, cost float64) {
-				msg := fmt.Sprintf("⚠️ Cache write: %d tokens ($%.2f) on %s", tokens, cost, session)
+		if ag.CacheBustDetect {
+			ag.CacheBustAlert = func(session string, prevRead, curRead int) {
+				msg := fmt.Sprintf("⚠️ Cache bust: read dropped %d → %d on %s", prevRead, curRead, session)
 				log.Warnf("agent", "%s", msg)
 				primaryBot.SendNotification(msg)
 			}

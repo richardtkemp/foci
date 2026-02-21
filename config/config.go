@@ -50,7 +50,7 @@ type LoggingConfig struct {
 	ConversationFile string `toml:"conversation_file"`
 	FullPayload         bool   `toml:"full_payload"`          // write full API payloads to api-payload.jsonl
 	PayloadFile         string `toml:"payload_file"`          // path to api-payload.jsonl (default: api-payload.jsonl)
-	CacheBustThreshold  int    `toml:"cache_bust_threshold"`  // alert when cache_write exceeds this (0 = disabled)
+	CacheBustDetect     bool   `toml:"cache_bust_detect"`     // alert when cache_read drops >50% vs previous request
 }
 
 type VoiceConfig struct {

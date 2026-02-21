@@ -106,7 +106,7 @@ Logging and diagnostics.
 | `conversation_file` | string | `"conversation.db"` | Path to conversation SQLite log. |
 | `full_payload` | bool | `false` | Log full API request/response bodies. |
 | `payload_file` | string | `"api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. |
-| `cache_bust_threshold` | int | `0` | Alert when `cache_write` tokens exceed this value on consecutive requests. `0` disables. |
+| `cache_bust_detect` | bool | `false` | Alert when `cache_read` drops >50% vs previous request (indicates prefix changed). |
 
 ---
 
@@ -261,7 +261,7 @@ api_file = "/home/clod/api.jsonl"
 conversation_file = "/home/clod/conversation.db"
 full_payload = true
 payload_file = "/home/clod/api-payload.jsonl"
-cache_bust_threshold = 20000
+cache_bust_detect = true
 
 [voice]
 stt_endpoint = "https://api.groq.com/openai/v1"
