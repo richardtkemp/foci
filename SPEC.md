@@ -413,6 +413,54 @@ Minimal:
 - `github.com/go-telegram-bot-api/telegram-bot-api/v5` — Telegram (or hand-roll, it's just HTTP)
 - Standard library for everything else (net/http, encoding/json, os/exec, etc.)
 
+## Setup Script (`setup.sh`)
+
+Idempotent. Run it once to install, run it again to update. Safe to re-run.
+
+### What it does
+
+1. **System user:** Create `clod` user if it doesn't exist (no login shell, home at `/home/clod`)
+2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `clod` and `clod-cli` to `/usr/local/bin/`
+3. **systemd service:** Install `/etc/systemd/system/clod.service` if it doesn't exist. `User=clod`, `WorkingDirectory=/home/clod`, restart on failure. Enable and start.
+4. **Config:** Write `/home/clod/clod.toml` if it doesn't exist. Prompt interactively for:
+   - Telegram bot token
+   - Anthropic API token  
+   - Telegram user ID (allowed_users)
+   - Agent model (default: claude-haiku-4-5)
+5. **Character files:** Create `~/character/` with template content if files don't exist:
+   - `identity.md` — name, vibe, emoji
+   - `soul.md` — inner life, what you notice
+   - `user.md` — about your human
+   - `agents.md` — how you work
+   - `tools.md` — what you use
+   - `memory.md` — what you've learned
+6. **Directories:** Create `~/sessions/`, `~/workspace/memory/`, `~/character/` under clod's home
+7. **Log rotation:** Install logrotate config for `clod.log` and `api.jsonl` (weekly, keep 4, compress)
+8. **PATH:** Symlinks already in `/usr/local/bin/`, nothing extra needed
+
+### Config references character files
+
+```toml
+[agent]
+workspace = "/home/clod/character"
+# bootstrap loads: identity.md, soul.md, user.md, agents.md, tools.md, memory.md
+```
+
+### Template content
+
+Character file templates are minimal starters — just enough structure for the agent to understand what goes where, with placeholder text encouraging the human to fill them in. Not our files — generic ones.
+
+### Update mode
+
+When binaries already exist: rebuild/re-download, restart service. When config already exists: don't touch it. When character files already exist: don't touch them. Idempotent means safe.
+
+### What it doesn't do
+
+- No reverse proxy setup (that's deployment-specific)
+- No DNS/domain config
+- No external port exposure (binds to localhost by default)
+- No automatic Telegram webhook (uses long-polling)
+
 ## Directory Structure
 
 ```
