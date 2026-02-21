@@ -671,6 +671,9 @@ api_file = "api.jsonl"
 - Voice inbound (STT via Groq Whisper)
 - Deferred replies (multiple Telegram messages per turn)
 - Cache bust alerts (Telegram notification on large cache writes)
+- Exec template secrets (`{{secret:NAME}}`) — resolved before spawning subprocess
+- Tool output redaction — exec output scanned for known secret patterns
+- Telegram markdown rendering (Markdown parse mode with plain text fallback)
 - Tool result size guard (large results saved to temp file)
 - Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball
 - Cron system (system crontab, prompts loaded from disk)
@@ -690,10 +693,8 @@ api_file = "api.jsonl"
 
 - Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
 - Per-session heartbeat configuration — different session types get different heartbeats. Main: general idle heartbeat (reads heartbeat.md). Fork/multiball: cache-aware heartbeat that fires N minutes before cache TTL expires ("Cache going cold, continue or wrap up?"). Subagents: no heartbeat. Configurable per session type in TOML.
-- Telegram markdown/HTML rendering — convert agent markdown output to Telegram's MarkdownV2 or HTML format for proper bold, italic, code blocks, links. Currently sends plain text.
+- Telegram MarkdownV2/HTML rendering — upgrade from basic Markdown to MarkdownV2 or HTML for better formatting fidelity.
 - Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
-- Exec template secrets (`{{secret:NAME}}`) — resolve secret refs in exec commands
-- Tool output redaction — scan exec output for leaked secret patterns
 - Signal/Discord/other channels
 - Plugin/hook architecture
 - Reactions
