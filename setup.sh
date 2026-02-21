@@ -1,11 +1,13 @@
 #!/bin/bash
 # Clod setup script — idempotent. Run once to install, again to update.
-# Usage: sudo ./setup.sh [--dry-run]
+# Usage: sudo ./setup.sh [-u USER] [--dry-run]
 set -euo pipefail
 
 INSTALL_DIR="/usr/local/bin"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DRY_RUN=false
+CLOD_USER=""
+SERVICE_FILE="/etc/systemd/system/clod.service"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -27,15 +29,21 @@ run() {
 }
 
 # Parse flags
-for arg in "$@"; do
-    case "$arg" in
-        --dry-run) DRY_RUN=true ;;
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true; shift ;;
+        -u)
+            [[ $# -lt 2 ]] && { error "-u requires a username"; exit 1; }
+            CLOD_USER="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: sudo $0 [--dry-run]"
-            echo "Installs clod agent. Idempotent — safe to re-run."
+            echo "Usage: sudo $0 [-u USER] [--dry-run]"
+            echo "Installs clod as a system service. Idempotent — safe to re-run."
+            echo ""
+            echo "Options:"
+            echo "  -u USER    System user to run as (default: clod)"
+            echo "  --dry-run  Show what would be done without doing it"
             echo ""
             echo "Configuration can be provided via environment variables:"
-            echo "  CLOD_USER             System username (default: clod)"
             echo "  CLOD_ANTHROPIC_TOKEN  Anthropic API token"
             echo "  CLOD_TELEGRAM_TOKEN   Telegram bot token"
             echo "  CLOD_TELEGRAM_USER    Telegram user ID for allowed_users"
@@ -44,29 +52,25 @@ for arg in "$@"; do
             echo "If env vars are not set, setup prompts interactively (requires TTY)."
             exit 0
             ;;
-        *) error "Unknown flag: $arg"; exit 1 ;;
+        *) error "Unknown flag: $1"; exit 1 ;;
     esac
 done
 
 # Must be root (skip in dry-run)
-if ! $DRY_RUN && [[ $EUID -ne 0 ]]; then
+if ! $DRY_RUN && [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     error "Run as root: sudo $0"
     exit 1
 fi
 
-# Resolve system username (needed before step 1)
-CLOD_USER="${CLOD_USER:-}"
-if [[ -z "$CLOD_USER" ]]; then
-    if [[ -t 0 ]] && ! $DRY_RUN; then
-        read -rp "System username [clod]: " CLOD_USER
-    fi
-    CLOD_USER="${CLOD_USER:-clod}"
+# Resolve target user and home directory
+CLOD_USER="${CLOD_USER:-clod}"
+if command -v getent &>/dev/null && getent passwd "$CLOD_USER" &>/dev/null; then
+    CLOD_HOME="$(getent passwd "$CLOD_USER" | cut -d: -f6)"
+else
+    CLOD_HOME="/home/$CLOD_USER"
 fi
-CLOD_HOME="/home/$CLOD_USER"
-SERVICE_FILE="/etc/systemd/system/clod.service"
-LOGROTATE_FILE="/etc/logrotate.d/clod"
 
-info "Installing as user: $CLOD_USER (home: $CLOD_HOME)"
+info "Installing for user: $CLOD_USER (home: $CLOD_HOME)"
 
 # ---------- 1. System user ----------
 info "Step 1: System user"
@@ -91,7 +95,7 @@ elif [[ -f "$INSTALL_DIR/clodgw" && -f "$INSTALL_DIR/clod" ]]; then
     # Already installed, no local binaries to update from
     warn "  No pre-built binaries in $SCRIPT_DIR, keeping existing install"
 else
-    error "No binaries found. Build first as your normal user:"
+    error "No binaries found. Build first:"
     error "  make build cli"
     error "Then re-run: sudo ./setup.sh"
     exit 1
@@ -305,26 +309,28 @@ SERVICE
     info "  Service installed and enabled"
 fi
 
-# ---------- 7. Log rotation ----------
-info "Step 7: Log rotation"
-if [[ -f "$LOGROTATE_FILE" ]]; then
-    info "  Logrotate config exists"
+# ---------- 7. Polkit rule (lets clod user manage its own service) ----------
+POLKIT_FILE="/etc/polkit-1/rules.d/49-clod.rules"
+info "Step 7: Polkit rule"
+if ! command -v pkaction &>/dev/null; then
+    warn "  polkit not found — $CLOD_USER won't be able to restart clod without sudo"
+elif [[ -f "$POLKIT_FILE" ]]; then
+    info "  Polkit rule exists"
 else
-    info "  Installing logrotate config"
+    info "  Installing polkit rule"
     if ! $DRY_RUN; then
-        cat > "$LOGROTATE_FILE" << LOGROTATE
-$CLOD_HOME/clod.log $CLOD_HOME/api.jsonl {
-    weekly
-    rotate 4
-    compress
-    delaycompress
-    missingok
-    notifempty
-    copytruncate
-}
-LOGROTATE
+        cat > "$POLKIT_FILE" << POLKIT
+// Allow $CLOD_USER to manage the clod.service unit without a password.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") === "clod.service" &&
+        subject.user === "$CLOD_USER") {
+        return polkit.Result.YES;
+    }
+});
+POLKIT
     fi
-    info "  Logrotate config installed"
+    info "  $CLOD_USER can now: systemctl restart clod"
 fi
 
 # ---------- 8. Start/restart ----------
