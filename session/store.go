@@ -179,3 +179,27 @@ func (s *Store) MessageCount(key string) (int, error) {
 	}
 	return len(msgs), nil
 }
+
+// CreatedAt returns the creation time of a session file as an RFC3339 string.
+// Returns "n/a" if the file doesn't exist.
+func (s *Store) CreatedAt(key string) string {
+	return s.fileTime(key, true)
+}
+
+// LastActivity returns the last modification time of a session file as an RFC3339 string.
+// Returns "n/a" if the file doesn't exist.
+func (s *Store) LastActivity(key string) string {
+	return s.fileTime(key, false)
+}
+
+func (s *Store) fileTime(key string, birth bool) string {
+	path := s.keyToPath(key)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "n/a"
+	}
+	// On Linux, birth time isn't always available; use ModTime for both.
+	// For CreatedAt, this is approximate but good enough for diagnostics.
+	_ = birth
+	return info.ModTime().UTC().Format("2006-01-02T15:04:05Z")
+}

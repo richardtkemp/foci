@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -21,6 +22,14 @@ import (
 	"clod/telegram"
 	"clod/tools"
 	"clod/workspace"
+)
+
+// Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+	buildTime = "unknown"
+	goVersion = runtime.Version()
 )
 
 func main() {
@@ -126,6 +135,44 @@ func main() {
 	cmds.Register(command.NewCacheCommand(cfg.Logging.APIFile))
 	cmds.Register(command.NewLastCommand(cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(cfg.Logging.APIFile))
+	cmds.Register(command.NewResetCommand(func() error {
+		return sessions.Clear(sessionKey)
+	}))
+	cmds.Register(command.NewModelCommand(
+		func() string { return ag.Model },
+		func(m string) { ag.Model = m },
+	))
+	cmds.Register(command.NewSessionCommand(func() command.SessionInfo {
+		return command.SessionInfo{
+			SessionKey:   sessionKey,
+			MessageCount: sessionMessageCount(sessions, sessionKey),
+			CreatedAt:    sessions.CreatedAt(sessionKey),
+			LastActivity: sessions.LastActivity(sessionKey),
+		}
+	}))
+	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
+		var infos []command.ToolInfo
+		for _, t := range registry.All() {
+			infos = append(infos, command.ToolInfo{Name: t.Name, Description: t.Description})
+		}
+		return infos
+	}))
+	cmds.Register(command.NewConfigCommand(func() string {
+		return fmt.Sprintf("[agent]\nid = %q\nmodel = %q\nworkspace = %q\n\n[sessions]\ndir = %q\n\n[memory]\ndir = %q\n\n[http]\nbind = %q\nport = %d\n\n[logging]\nlevel = %q",
+			cfg.Agent.ID, ag.Model, cfg.Agent.Workspace,
+			cfg.Sessions.Dir, cfg.Memory.Dir,
+			cfg.HTTP.Bind, cfg.HTTP.Port,
+			cfg.Logging.Level)
+	}))
+	cmds.Register(command.NewLogCommand(cfg.Logging.EventFile))
+	cmds.Register(command.NewErrorsCommand(cfg.Logging.EventFile))
+	cmds.Register(command.NewVersionCommand(command.BuildInfo{
+		Version:   version,
+		GoVersion: goVersion,
+		GitCommit: gitCommit,
+		BuildTime: buildTime,
+	}))
+	cmds.Register(command.NewUptimeCommand(startTime))
 
 	// Start Telegram bot
 	if telegramToken != "" {

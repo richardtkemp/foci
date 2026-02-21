@@ -201,6 +201,217 @@ func NewCostCommand(apiLogPath string) *Command {
 	}
 }
 
+// NewResetCommand returns a /reset command that clears session history.
+// resetFn performs the actual reset; confirmFn asks for confirmation first.
+func NewResetCommand(resetFn func() error) *Command {
+	return &Command{
+		Name:        "reset",
+		Description: "Clear session history",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			if err := resetFn(); err != nil {
+				return "", err
+			}
+			return "Session cleared.", nil
+		},
+	}
+}
+
+// NewModelCommand returns a /model command to show or switch the model.
+// getModel returns current model; setModel switches it.
+func NewModelCommand(getModel func() string, setModel func(string)) *Command {
+	return &Command{
+		Name:        "model",
+		Description: "Show or switch model",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			if args == "" {
+				return fmt.Sprintf("Current model: %s", getModel()), nil
+			}
+			setModel(args)
+			return fmt.Sprintf("Model switched to: %s", args), nil
+		},
+	}
+}
+
+// SessionInfo holds data for the /session command.
+type SessionInfo struct {
+	SessionKey     string
+	MessageCount   int
+	CreatedAt      string
+	LastActivity   string
+}
+
+// NewSessionCommand returns a /session command showing raw session metadata.
+func NewSessionCommand(infoFn func() SessionInfo) *Command {
+	return &Command{
+		Name:        "session",
+		Description: "Session metadata",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			info := infoFn()
+			return fmt.Sprintf("key: %s\nmessages: %d\ncreated: %s\nlast_activity: %s",
+				info.SessionKey, info.MessageCount, info.CreatedAt, info.LastActivity), nil
+		},
+	}
+}
+
+// ToolInfo holds data for a single tool in the /tools listing.
+type ToolInfo struct {
+	Name        string
+	Description string
+}
+
+// NewToolsCommand returns a /tools command listing registered tools.
+func NewToolsCommand(listFn func() []ToolInfo) *Command {
+	return &Command{
+		Name:        "tools",
+		Description: "List registered tools",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			tools := listFn()
+			if len(tools) == 0 {
+				return "No tools registered.", nil
+			}
+			var b strings.Builder
+			for _, t := range tools {
+				fmt.Fprintf(&b, "• %s — %s\n", t.Name, t.Description)
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+	}
+}
+
+// NewConfigCommand returns a /config command dumping the running config.
+// configFn returns the config as a string with secrets redacted.
+func NewConfigCommand(configFn func() string) *Command {
+	return &Command{
+		Name:        "config",
+		Description: "Show running config (secrets redacted)",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return configFn(), nil
+		},
+	}
+}
+
+// NewLogCommand returns a /log command showing recent event log lines.
+func NewLogCommand(eventLogPath string) *Command {
+	return &Command{
+		Name:        "log",
+		Description: "Recent event log lines",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			n := 20
+			if args != "" {
+				if parsed, err := strconv.Atoi(args); err == nil && parsed > 0 {
+					n = parsed
+				}
+			}
+			return tailFile(eventLogPath, n)
+		},
+	}
+}
+
+// NewErrorsCommand returns a /errors command showing recent ERROR/WARN lines.
+func NewErrorsCommand(eventLogPath string) *Command {
+	return &Command{
+		Name:        "errors",
+		Description: "Recent error/warning log lines",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			n := 10
+			if args != "" {
+				if parsed, err := strconv.Atoi(args); err == nil && parsed > 0 {
+					n = parsed
+				}
+			}
+			return tailFileFiltered(eventLogPath, n, func(line string) bool {
+				return strings.Contains(line, "ERROR") || strings.Contains(line, "WARN")
+			})
+		},
+	}
+}
+
+// BuildInfo holds data for the /version command.
+type BuildInfo struct {
+	Version   string
+	GoVersion string
+	GitCommit string
+	BuildTime string
+}
+
+// NewVersionCommand returns a /version command.
+func NewVersionCommand(info BuildInfo) *Command {
+	return &Command{
+		Name:        "version",
+		Description: "Build version info",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return fmt.Sprintf("version: %s\ngo: %s\ncommit: %s\nbuilt: %s",
+				info.Version, info.GoVersion, info.GitCommit, info.BuildTime), nil
+		},
+	}
+}
+
+// NewUptimeCommand returns a /uptime command.
+func NewUptimeCommand(startTime time.Time) *Command {
+	return &Command{
+		Name:        "uptime",
+		Description: "Process uptime",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return fmt.Sprintf("uptime: %s\nstarted: %s",
+				formatDuration(time.Since(startTime)),
+				startTime.Format(time.RFC3339)), nil
+		},
+	}
+}
+
+// tailFile returns the last n lines from a file.
+func tailFile(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "Log file not found.", nil
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	if len(lines) == 0 {
+		return "Log is empty.", nil
+	}
+
+	start := 0
+	if len(lines) > n {
+		start = len(lines) - n
+	}
+	return strings.Join(lines[start:], "\n"), nil
+}
+
+// tailFileFiltered returns the last n lines matching a filter.
+func tailFileFiltered(path string, n int, filter func(string) bool) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "Log file not found.", nil
+	}
+	defer f.Close()
+
+	var matching []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if filter(line) {
+			matching = append(matching, line)
+		}
+	}
+
+	if len(matching) == 0 {
+		return "No matching lines.", nil
+	}
+
+	start := 0
+	if len(matching) > n {
+		start = len(matching) - n
+	}
+	return strings.Join(matching[start:], "\n"), nil
+}
+
 // readAPILog reads all entries from an api.jsonl file.
 func readAPILog(path string) []apiEntry {
 	f, err := os.Open(path)
