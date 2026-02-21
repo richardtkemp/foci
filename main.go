@@ -102,6 +102,10 @@ func main() {
 	// Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
 
+	// Forward-declare bot pointer for tools that need telegram access.
+	// Populated later when the bot is created.
+	var primaryBot *telegram.Bot
+
 	// Tool registry
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewExecTool(store))
@@ -112,6 +116,12 @@ func main() {
 	if braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(braveKey))
 	}
+	registry.Register(tools.NewSendTelegramTool(func() tools.TelegramSender {
+		if primaryBot == nil {
+			return nil
+		}
+		return primaryBot
+	}))
 	// Memory FTS5 index
 	var memIdx *memory.Index
 	var reminderStore *memory.ReminderStore
@@ -324,7 +334,6 @@ func main() {
 	))
 
 	// Multiball: secondary bot pool (populated below if configured)
-	var primaryBot *telegram.Bot
 	var pool *telegram.Pool
 
 	// Register /multiball (and /mb alias) — closures capture pool by reference

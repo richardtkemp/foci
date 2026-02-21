@@ -467,6 +467,85 @@ func (b *Bot) SendNotification(text string) {
 	}
 }
 
+// SendText sends a text message to the last known chat with markdown support.
+// Returns an error if no chat ID is available.
+func (b *Bot) SendText(text string) error {
+	b.chatMu.Lock()
+	chatID := b.chatID
+	b.chatMu.Unlock()
+
+	if chatID == 0 {
+		return fmt.Errorf("no chat ID — no messages received yet")
+	}
+
+	for _, chunk := range splitMessage(text, 4096) {
+		msg := tgbotapi.NewMessage(chatID, chunk)
+		msg.ParseMode = "Markdown"
+		if _, err := b.sender.Send(msg); err != nil {
+			msg.ParseMode = ""
+			if _, err := b.sender.Send(msg); err != nil {
+				return fmt.Errorf("send: %w", err)
+			}
+		}
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      text,
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendDocument sends a file as a Telegram document to the last known chat.
+func (b *Bot) SendDocument(filePath string) error {
+	b.chatMu.Lock()
+	chatID := b.chatID
+	b.chatMu.Unlock()
+
+	if chatID == 0 {
+		return fmt.Errorf("no chat ID — no messages received yet")
+	}
+
+	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
+	if _, err := b.sender.Send(doc); err != nil {
+		return fmt.Errorf("send document: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[document %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendVoice sends a voice note from a file to the last known chat.
+func (b *Bot) SendVoice(filePath string) error {
+	b.chatMu.Lock()
+	chatID := b.chatID
+	b.chatMu.Unlock()
+
+	if chatID == 0 {
+		return fmt.Errorf("no chat ID — no messages received yet")
+	}
+
+	v := tgbotapi.NewVoice(chatID, tgbotapi.FilePath(filePath))
+	if _, err := b.sender.Send(v); err != nil {
+		return fmt.Errorf("send voice: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[voice %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
 // sendVoiceNote sends audio data as a Telegram voice note.
 func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
 	voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
