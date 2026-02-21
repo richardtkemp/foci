@@ -58,13 +58,17 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 	toolDefs := a.Tools.ToolDefs()
 
 	for i := 0; i < maxToolLoops; i++ {
+		cachedMessages := withCacheBreakpoint(messages)
 		req := &anthropic.MessageRequest{
 			Model:     a.Model,
 			MaxTokens: defaultMaxTokens,
 			System:    system,
-			Messages:  withCacheBreakpoint(messages),
+			Messages:  cachedMessages,
 			Tools:     toolDefs,
 		}
+
+		// Debug: log cache_control placement
+		logCacheDebug(system, cachedMessages, a.Model)
 
 		start := time.Now()
 		resp, err := a.Client.SendMessage(ctx, req)
@@ -199,6 +203,46 @@ func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
 	}
 
 	return result
+}
+
+// logCacheDebug logs cache_control placement and warns about minimum token thresholds.
+func logCacheDebug(system []anthropic.SystemBlock, messages []anthropic.Message, model string) {
+	// Estimate tokens: ~4 chars per token (rough heuristic)
+	const charsPerToken = 4
+
+	var systemChars int
+	var systemCacheIdx = -1
+	for i, block := range system {
+		systemChars += len(block.Text)
+		if block.CacheControl != nil {
+			systemCacheIdx = i
+		}
+	}
+	systemTokensEst := systemChars / charsPerToken
+
+	var msgCacheIdx = -1
+	for i, msg := range messages {
+		for _, block := range msg.Content {
+			if block.CacheControl != nil {
+				msgCacheIdx = i
+				break
+			}
+		}
+	}
+
+	log.Debugf("agent", "cache: system=%d blocks, ~%d tokens, breakpoint=%d; messages=%d, breakpoint=%d",
+		len(system), systemTokensEst, systemCacheIdx, len(messages), msgCacheIdx)
+
+	// Warn about minimum token thresholds
+	minTokens := 2048 // Haiku default
+	if model == "claude-sonnet-4-5" || model == "claude-opus-4-6" {
+		minTokens = 1024
+	}
+
+	if len(system) > 0 && systemTokensEst < minTokens {
+		log.Warnf("agent", "system prompt ~%d tokens is below %s minimum of %d for caching — cache will not activate",
+			systemTokensEst, model, minTokens)
+	}
 }
 
 // TurnResult holds the result of a single agent turn.
