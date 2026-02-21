@@ -82,7 +82,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step 1 failed: %v", err)
 	}
-	t.Logf("Step 1 response: %s", truncateStr(resp1, 80))
+	t.Logf("Step 1 response: %s", ellipsis(resp1, 80))
 
 	entry1 := lastAPIEntry(t, apiLogPath)
 	t.Logf("Step 1: input=%d output=%d cache_creation=%d cache_read=%d",
@@ -97,7 +97,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step 2 failed: %v", err)
 	}
-	t.Logf("Step 2 response: %s", truncateStr(resp2, 80))
+	t.Logf("Step 2 response: %s", ellipsis(resp2, 80))
 
 	entry2 := lastAPIEntry(t, apiLogPath)
 	t.Logf("Step 2: input=%d output=%d cache_creation=%d cache_read=%d",
@@ -127,7 +127,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step 4 failed: %v", err)
 	}
-	t.Logf("Step 4 response: %s", truncateStr(resp4, 80))
+	t.Logf("Step 4 response: %s", ellipsis(resp4, 80))
 
 	entry4 := lastAPIEntry(t, apiLogPath)
 	t.Logf("Step 4: input=%d output=%d cache_creation=%d cache_read=%d",
@@ -143,7 +143,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step 5 failed: %v", err)
 	}
-	t.Logf("Step 5 response: %s", truncateStr(resp5, 80))
+	t.Logf("Step 5 response: %s", ellipsis(resp5, 80))
 
 	entry5 := lastAPIEntry(t, apiLogPath)
 	t.Logf("Step 5: input=%d output=%d cache_creation=%d cache_read=%d",
@@ -207,7 +207,7 @@ func restoreAPIWriter(f *os.File) {
 	log.SetAPIWriter(f)
 }
 
-func truncateStr(s string, max int) string {
+func ellipsis(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
