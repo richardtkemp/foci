@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"syscall"
 	"time"
 
 	"clod/log"
@@ -73,10 +72,13 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	defer cancel()
 
 	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
-	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	proc.Cancel = func() error {
-		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
-	}
+	// No Setpgid/Setsid — children inherit the normal process tree.
+	// On timeout, only the direct sh process is killed (Go default).
+	// Children that have detached (tmux, daemons) survive naturally.
+	// WaitDelay closes pipes shortly after sh exits, preventing blocking
+	// when a child (e.g. tmux server) inherits stdout/stderr.
+	proc.WaitDelay = 2 * time.Second
+
 	out, err := proc.CombinedOutput()
 
 	result := string(out)
