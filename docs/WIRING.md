@@ -48,8 +48,9 @@ The core of the system. `HandleMessage(ctx, sessionKey, userMessage)`:
 
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
-2. append user message
-3. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
+2. buildMetaPrefix() + prepend to user message text
+3. append user message (with metadata)
+4. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
 4. tools.ToolDefs()                       ← registry → []ToolDef
 5. LOOP (max 25 iterations):
    a. logCacheDebug(system, messages, model)  ← warns if system < min threshold
@@ -65,6 +66,20 @@ The core of the system. `HandleMessage(ctx, sessionKey, userMessage)`:
 ```
 
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
+
+## Message Metadata
+
+Each user message gets a metadata line prepended (NOT in system prompt — that would bust cache):
+
+```
+[meta] time=2026-02-21T05:30:00Z gap=3h12m prev_cost=$0.0430 prev_tokens=in:2400/out:312/cR:18000/cW:200
+```
+
+- `time` — current UTC timestamp
+- `gap` — human-readable time since previous message ("3h12m", "2d4h", "38s", "none")
+- `prev_cost` / `prev_tokens` — cost and token breakdown of the previous turn (omitted on first message)
+
+Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The metadata goes past the cache breakpoint, so it doesn't affect prompt caching.
 
 ## Session Storage
 

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"clod/anthropic"
 	"clod/session"
@@ -500,4 +502,103 @@ func TestIsProcessing(t *testing.T) {
 // newTestClientWithBase creates a test client with a custom base URL.
 func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 	return anthropic.NewClientWithBase(baseURL, apiKey)
+}
+
+func TestFormatGap(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{38 * time.Second, "38s"},
+		{90 * time.Second, "1m30s"},
+		{3*time.Hour + 12*time.Minute, "3h12m"},
+		{49*time.Hour + 30*time.Minute, "2d1h"},
+	}
+	for _, tt := range tests {
+		got := formatGap(tt.d)
+		if got != tt.want {
+			t.Errorf("formatGap(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
+func TestBuildMetaPrefix(t *testing.T) {
+	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
+
+	// First message — no previous turn data
+	sm := &sessionMeta{}
+	prefix := buildMetaPrefix(now, sm)
+	if !strings.Contains(prefix, "time=2026-02-21T05:30:00Z") {
+		t.Errorf("missing timestamp in prefix: %q", prefix)
+	}
+	if !strings.Contains(prefix, "gap=none") {
+		t.Errorf("first message should have gap=none: %q", prefix)
+	}
+	if strings.Contains(prefix, "prev_cost") {
+		t.Errorf("first message should not have prev_cost: %q", prefix)
+	}
+
+	// Subsequent message — has previous turn data
+	sm.lastMessageTime = now.Add(-3*time.Hour - 12*time.Minute)
+	sm.prevCost = 0.043
+	sm.prevInput = 2400
+	sm.prevOutput = 312
+	sm.prevCacheRead = 18000
+	sm.prevCacheWrite = 200
+
+	prefix = buildMetaPrefix(now, sm)
+	if !strings.Contains(prefix, "gap=3h12m") {
+		t.Errorf("missing gap in prefix: %q", prefix)
+	}
+	if !strings.Contains(prefix, "prev_cost=$0.0430") {
+		t.Errorf("missing prev_cost in prefix: %q", prefix)
+	}
+	if !strings.Contains(prefix, "prev_tokens=in:2400/out:312/cR:18000/cW:200") {
+		t.Errorf("missing prev_tokens in prefix: %q", prefix)
+	}
+}
+
+func TestMetadataInjectedInMessage(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	ag.HandleMessage(context.Background(), "agent:test:meta", "Hello")
+
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+
+	// The user message should have the meta prefix
+	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	text := anthropic.TextOf(lastMsg.Content)
+	if !strings.Contains(text, "[meta]") {
+		t.Errorf("user message missing [meta] prefix: %q", text)
+	}
+	if !strings.Contains(text, "Hello") {
+		t.Errorf("user message missing original text: %q", text)
+	}
 }

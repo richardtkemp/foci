@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,16 @@ import (
 const maxToolLoops = 25
 const defaultMaxTokens = 8192
 
+// sessionMeta tracks per-session state for metadata injection.
+type sessionMeta struct {
+	lastMessageTime time.Time
+	prevCost        float64
+	prevInput       int
+	prevOutput      int
+	prevCacheRead   int
+	prevCacheWrite  int
+}
+
 // Agent is the core agent loop.
 type Agent struct {
 	Client    *anthropic.Client
@@ -27,11 +38,64 @@ type Agent struct {
 	Model     string
 
 	processing int32 // atomic: number of in-flight HandleMessage calls
+	metaMu     sync.Mutex
+	meta       map[string]*sessionMeta // per-session metadata
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
 func (a *Agent) IsProcessing() bool {
 	return atomic.LoadInt32(&a.processing) > 0
+}
+
+func (a *Agent) getSessionMeta(key string) *sessionMeta {
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	if a.meta == nil {
+		a.meta = make(map[string]*sessionMeta)
+	}
+	m, ok := a.meta[key]
+	if !ok {
+		m = &sessionMeta{}
+		a.meta[key] = m
+	}
+	return m
+}
+
+// buildMetaPrefix creates the metadata line prepended to user messages.
+func buildMetaPrefix(now time.Time, sm *sessionMeta) string {
+	gap := "none"
+	if !sm.lastMessageTime.IsZero() {
+		gap = formatGap(now.Sub(sm.lastMessageTime))
+	}
+
+	if sm.prevCost == 0 && sm.prevInput == 0 {
+		// First message in session — no previous turn data
+		return fmt.Sprintf("[meta] time=%s gap=%s", now.UTC().Format(time.RFC3339), gap)
+	}
+
+	return fmt.Sprintf("[meta] time=%s gap=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
+		now.UTC().Format(time.RFC3339), gap,
+		sm.prevCost,
+		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite)
+}
+
+// formatGap formats a duration as human-readable (e.g., "3h12m", "2d4h", "38s").
+func formatGap(d time.Duration) string {
+	if d < 0 {
+		d = -d
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd%dh", days, hours)
 }
 
 // HandleMessage processes a user message in the given session and returns the final text response.
@@ -45,10 +109,16 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 		return "", fmt.Errorf("load session: %w", err)
 	}
 
-	// Append user message
+	// Build metadata prefix and prepend to user message
+	now := time.Now()
+	sm := a.getSessionMeta(sessionKey)
+	metaPrefix := buildMetaPrefix(now, sm)
+	annotatedMessage := metaPrefix + "\n" + userMessage
+
+	// Append user message with metadata
 	userMsg := anthropic.Message{
 		Role:    "user",
-		Content: anthropic.TextContent(userMessage),
+		Content: anthropic.TextContent(annotatedMessage),
 	}
 	messages = append(messages, userMsg)
 
@@ -122,6 +192,14 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 				return "", fmt.Errorf("save session: %w", err)
 			}
+
+			// Update session metadata for next turn
+			sm.lastMessageTime = now
+			sm.prevCost = cost
+			sm.prevInput = resp.Usage.InputTokens
+			sm.prevOutput = resp.Usage.OutputTokens
+			sm.prevCacheRead = resp.Usage.CacheReadInputTokens
+			sm.prevCacheWrite = resp.Usage.CacheCreationInputTokens
 
 			// Check if compaction is needed
 			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
