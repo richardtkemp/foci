@@ -21,8 +21,9 @@ type AnthropicConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken     string   `toml:"bot_token"`
-	AllowedUsers []string `toml:"allowed_users"`
+	BotToken      string   `toml:"bot_token"`
+	AllowedUsers  []string `toml:"allowed_users"`
+	SecondaryBots []string `toml:"secondary_bots"` // tokens for secondary bots (multiball)
 }
 
 type SessionsConfig struct {

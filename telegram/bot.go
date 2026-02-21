@@ -52,7 +52,10 @@ type Bot struct {
 	commands     *command.Registry
 	allowedUsers map[string]bool
 	sessionKey   string
-	botToken     string           // for building file download URLs
+	sessionMu    sync.RWMutex        // protects sessionKey (mutable for secondary bots)
+	isSecondary  bool                // true for secondary bots (multiball)
+	pool         *Pool               // back-reference to pool (secondary bots only)
+	botToken     string              // for building file download URLs
 
 	transcriber  voice.STT // nil = voice notes not supported
 	tts          voice.TTS // nil = TTS not available
@@ -97,6 +100,45 @@ func (b *Bot) SetTranscriber(t voice.STT) {
 // SetTTS sets the TTS provider for outbound voice notes.
 func (b *Bot) SetTTS(t voice.TTS) {
 	b.tts = t
+}
+
+// SetSecondary marks this bot as a secondary bot in the given pool.
+func (b *Bot) SetSecondary(pool *Pool) {
+	b.isSecondary = true
+	b.pool = pool
+}
+
+// SessionKey returns the current session key (thread-safe).
+func (b *Bot) SessionKey() string {
+	b.sessionMu.RLock()
+	defer b.sessionMu.RUnlock()
+	return b.sessionKey
+}
+
+// SetSessionKey changes the session key (used for multiball fork/done).
+func (b *Bot) SetSessionKey(key string) {
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
+	b.sessionKey = key
+}
+
+// Username returns the bot's Telegram username.
+func (b *Bot) Username() string {
+	return b.api.Self.UserName
+}
+
+// ChatID returns the last known chat ID.
+func (b *Bot) ChatID() int64 {
+	b.chatMu.Lock()
+	defer b.chatMu.Unlock()
+	return b.chatID
+}
+
+// SetChatID sets the chat ID (used for multiball notification delivery).
+func (b *Bot) SetChatID(id int64) {
+	b.chatMu.Lock()
+	b.chatID = id
+	b.chatMu.Unlock()
 }
 
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
@@ -227,15 +269,37 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		Username:  msg.From.UserName,
 		ChatID:    msg.Chat.ID,
 		Text:      logText,
-		Session:   b.sessionKey,
+		Session:   b.SessionKey(),
 	})
 
 	// Slash commands bypass the agent pipeline entirely
 	if text != "" && strings.HasPrefix(text, "/") {
+		cmd := strings.ToLower(strings.TrimSpace(text))
+
 		// /stop cancels the current agent turn
-		if strings.ToLower(strings.TrimSpace(text)) == "/stop" {
+		if cmd == "/stop" {
 			b.cancelTurn()
 			b.sendReply(msg, userID, "Stopped.")
+			return
+		}
+
+		// /done detaches a secondary bot from its forked session
+		if cmd == "/done" {
+			if !b.isSecondary {
+				b.sendReply(msg, userID, "Nothing to detach — this is the main session.")
+				return
+			}
+			sk := b.SessionKey()
+			if sk == "" {
+				b.sendReply(msg, userID, "Already idle.")
+				return
+			}
+			b.cancelTurn()
+			if b.pool != nil {
+				b.pool.Release(b)
+			}
+			b.sendReply(msg, userID, "Session ended.")
+			log.Infof("telegram", "secondary bot detached from %s", sk)
 			return
 		}
 
@@ -244,6 +308,12 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 			b.sendReply(msg, userID, result)
 			return
 		}
+	}
+
+	// Secondary bots with no session reject non-command messages
+	if b.isSecondary && b.SessionKey() == "" {
+		b.sendReply(msg, userID, "This bot is idle. Use /multiball in the main bot to start a session.")
+		return
 	}
 
 	// Queue for the agent worker
@@ -269,6 +339,11 @@ func (b *Bot) agentWorker(ctx context.Context) {
 
 // processAgentMessage handles a single agent turn with a cancellable context.
 func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
+	sk := b.SessionKey()
+	if sk == "" {
+		return // no session assigned (idle secondary bot)
+	}
+
 	// Create a cancellable context for this turn
 	turnCtx, cancel := context.WithCancel(ctx)
 
@@ -307,9 +382,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		for i, img := range qm.images {
 			agentImages[i] = agent.ImageData{MediaType: img.mediaType, Data: img.data}
 		}
-		response, err = b.agent.HandleMessageWithImages(turnCtx, b.sessionKey, qm.text, agentImages)
+		response, err = b.agent.HandleMessageWithImages(turnCtx, sk, qm.text, agentImages)
 	} else {
-		response, err = b.agent.HandleMessage(turnCtx, b.sessionKey, qm.text)
+		response, err = b.agent.HandleMessage(turnCtx, sk, qm.text)
 	}
 	if err != nil {
 		if turnCtx.Err() != nil {
@@ -321,7 +396,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}
 
 	// Voice mode: convert final reply to voice note
-	if b.agent.VoiceMode(b.sessionKey) && b.tts != nil && response != "" {
+	if b.agent.VoiceMode(sk) && b.tts != nil && response != "" {
 		if audioData, err := b.tts.Synthesize(turnCtx, response); err != nil {
 			log.Errorf("telegram", "tts for voice mode: %v", err)
 			b.sendReply(qm.msg, qm.userID, response) // fall back to text
@@ -368,7 +443,7 @@ func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
 			ChatID:    msg.Chat.ID,
 			Text:      chunk,
 			ParseMode: reply.ParseMode,
-			Session:   b.sessionKey,
+			Session:   b.SessionKey(),
 			Error:     sendErr,
 		})
 	}
@@ -408,7 +483,7 @@ func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioD
 		Username:  username,
 		ChatID:    chatID,
 		Text:      fmt.Sprintf("[voice note %d bytes]", len(audioData)),
-		Session:   b.sessionKey,
+		Session:   b.SessionKey(),
 	})
 }
 

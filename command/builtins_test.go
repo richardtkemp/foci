@@ -461,6 +461,39 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
+func TestMultiballCommand(t *testing.T) {
+	forked := false
+	cmd := NewMultiballCommand(func() (string, error) {
+		forked = true
+		return "Forked to @testbot (session: agent:main:multiball:mb-1)", nil
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !forked {
+		t.Error("fork function not called")
+	}
+	if !strings.Contains(result, "@testbot") {
+		t.Errorf("expected bot name in result, got %q", result)
+	}
+}
+
+func TestMultiballCommandError(t *testing.T) {
+	cmd := NewMultiballCommand(func() (string, error) {
+		return "", fmt.Errorf("no secondary bots configured")
+	})
+
+	_, err := cmd.Execute(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "no secondary bots") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestVoiceCommand(t *testing.T) {
 	voiceOn := false
 	cmd := NewVoiceCommand(

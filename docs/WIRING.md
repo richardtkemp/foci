@@ -250,7 +250,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
 2. **Custom** (script-defined in `clod.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
 Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
@@ -307,6 +307,40 @@ API key from `secrets.toml` under `[openrouter] api_key`. Endpoint/model/voice c
 ```
 
 The agent sees this and adjusts its style (shorter, conversational, no markdown).
+
+## Multiball (`telegram/pool.go`, `telegram/bot.go`)
+
+Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix.
+
+**Config** (`secrets.toml`):
+```toml
+[telegram]
+bot_token = "primary-bot-token"
+secondary_bots = "token-1,token-2"   # comma-separated
+```
+
+**Flow:**
+```
+/multiball → sessions.CreateBranch(main, multiball:mb-TIMESTAMP)
+           → pool.Acquire() → least-recently-used idle secondary bot
+           → bot.SetSessionKey(branchKey)
+           → bot.SendNotification("🎱 Forked from main.")
+```
+
+Messages to the secondary bot route to the forked session. `/done` on the secondary bot detaches it and returns it to the pool.
+
+**Bot pool** (`telegram/pool.go`): Tracks secondary bots, acquires LRU idle bot, releases on `/done`.
+
+**Bot changes** (`telegram/bot.go`):
+- `SessionKey()` / `SetSessionKey()` — thread-safe mutable session key
+- `isSecondary` flag — enables `/done` handling, idle message rejection
+- `/done` handled as special case alongside `/stop` (bypasses command registry)
+- Idle secondary bots respond with "This bot is idle. Use /multiball..." to non-command messages
+
+**Special commands on secondary bots:**
+- `/done` — detach from forked session, return to pool
+- `/stop` — cancel current agent turn (same as primary)
+- All other slash commands — shared registry (operate on main session's context)
 
 ## HTTP Gateway (`main.go`)
 

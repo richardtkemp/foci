@@ -470,6 +470,76 @@ func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
 	}
 }
 
+// --- Multiball / Secondary bots ---
+
+func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	msg := makeMsg(111, "owner", "/done")
+	b.receiveMessage(context.Background(), msg)
+
+	// Should reply with "nothing to detach"
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
+	}
+	if len(b.queue) != 0 {
+		t.Error("/done should not be queued")
+	}
+}
+
+func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	pool := NewPool()
+	b.isSecondary = true
+	b.pool = pool
+	pool.Add(b)
+
+	// Simulate active session
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	msg := makeMsg(111, "owner", "/done")
+	b.receiveMessage(context.Background(), msg)
+
+	// Should detach and reply
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
+	}
+	if b.SessionKey() != "" {
+		t.Error("session key should be cleared after /done")
+	}
+}
+
+func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.isSecondary = true
+	b.SetSessionKey("") // idle — no session assigned
+
+	msg := makeMsg(111, "owner", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	// Should reply with "idle" message, not queue
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
+	}
+	if len(b.queue) != 0 {
+		t.Error("idle secondary bot should not queue messages")
+	}
+}
+
+func TestReceiveMessage_SecondaryBotWithSession(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.isSecondary = true
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	msg := makeMsg(111, "owner", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	// Should queue normally when session is assigned
+	if len(b.queue) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	}
+}
+
 func TestIsImageMIME(t *testing.T) {
 	tests := []struct {
 		mime string

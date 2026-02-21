@@ -318,19 +318,59 @@ func main() {
 		func(on bool) { ag.SetVoiceMode(sessionKey, on) },
 	))
 
+	// Multiball: secondary bot pool (populated below if configured)
+	var primaryBot *telegram.Bot
+	var pool *telegram.Pool
+
+	// Register /multiball (and /mb alias) — closures capture pool by reference
+	forkFn := func() (string, error) {
+		if pool == nil || pool.Size() == 0 {
+			return "", fmt.Errorf("no secondary bots configured")
+		}
+		secBot, ok := pool.Acquire()
+		if !ok {
+			return "", fmt.Errorf("all secondary bots are busy")
+		}
+
+		branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
+		branchKey := fmt.Sprintf("agent:%s:multiball:%s", cfg.Agent.ID, branchID)
+
+		if err := sessions.CreateBranch(sessionKey, branchKey); err != nil {
+			pool.Release(secBot)
+			return "", fmt.Errorf("create branch: %w", err)
+		}
+
+		secBot.SetSessionKey(branchKey)
+		if primaryBot != nil {
+			secBot.SetChatID(primaryBot.ChatID())
+		}
+		secBot.SendNotification("🎱 Forked from main. What do you need?")
+
+		return fmt.Sprintf("Forked to @%s (session: %s)", secBot.Username(), branchKey), nil
+	}
+	cmds.Register(command.NewMultiballCommand(forkFn))
+	cmds.Register(&command.Command{
+		Name:        "mb",
+		Description: "Fork session to a secondary bot (alias for /multiball)",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return forkFn()
+		},
+	})
+
 	// Start Telegram bot
 	if telegramToken != "" {
-		bot, err := telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, sessionKey)
+		var err error
+		primaryBot, err = telegram.NewBot(telegramToken, cfg.Telegram.AllowedUsers, ag, cmds, sessionKey)
 		if err != nil {
 			log.Fatalf("main", "create telegram bot: %v", err)
 		}
 
 		// Wire voice support
 		if sttProvider != nil {
-			bot.SetTranscriber(sttProvider)
+			primaryBot.SetTranscriber(sttProvider)
 		}
 		if ttsProvider != nil {
-			bot.SetTTS(ttsProvider)
+			primaryBot.SetTTS(ttsProvider)
 		}
 
 		// Wire cache bust alerts to Telegram notification
@@ -338,11 +378,41 @@ func main() {
 			ag.CacheBustAlert = func(session string, tokens int, cost float64) {
 				msg := fmt.Sprintf("⚠️ Cache write: %d tokens ($%.2f) on %s", tokens, cost, session)
 				log.Warnf("agent", "%s", msg)
-				bot.SendNotification(msg)
+				primaryBot.SendNotification(msg)
 			}
 		}
 
-		go bot.Run(ctx)
+		// Secondary bots for multiball
+		secondaryTokens := cfg.Telegram.SecondaryBots
+		if v, ok := store.Get("telegram.secondary_bots"); ok && v != "" {
+			for _, t := range strings.Split(v, ",") {
+				if t = strings.TrimSpace(t); t != "" {
+					secondaryTokens = append(secondaryTokens, t)
+				}
+			}
+		}
+		if len(secondaryTokens) > 0 {
+			pool = telegram.NewPool()
+			for _, token := range secondaryTokens {
+				secBot, err := telegram.NewBot(token, cfg.Telegram.AllowedUsers, ag, cmds, "")
+				if err != nil {
+					log.Errorf("main", "create secondary bot: %v", err)
+					continue
+				}
+				secBot.SetSecondary(pool)
+				if sttProvider != nil {
+					secBot.SetTranscriber(sttProvider)
+				}
+				if ttsProvider != nil {
+					secBot.SetTTS(ttsProvider)
+				}
+				pool.Add(secBot)
+				go secBot.Run(ctx)
+			}
+			log.Infof("main", "multiball: %d secondary bots ready", pool.Size())
+		}
+
+		go primaryBot.Run(ctx)
 	}
 
 	// Start heartbeat
