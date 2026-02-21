@@ -172,6 +172,9 @@ func main() {
 	// Workspace bootstrap
 	bootstrap := workspace.NewBootstrap(cfg.Agent.Workspace, cfg.Agent.SystemFiles)
 
+	// Inject available secret names so agent knows what {{secret:NAME}} references are available
+	bootstrap.SetSecretNames(store.Names())
+
 	// Skills
 	skillRegistry := skills.Load(cfg.Skills.Dirs)
 	var extraSystemBlocks []anthropic.SystemBlock

@@ -426,12 +426,15 @@ func (b *Bot) cancelTurn() {
 }
 
 // sendReply sends a response back to the user, splitting long messages and
-// falling back to plain text if markdown fails. Logs each chunk to the
-// conversation log.
+// falling back to plain text if HTML formatting fails.
+// Logs each chunk to the conversation log.
 func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
+	// Convert standard markdown to Telegram HTML
+	response = ConvertToTelegramHTML(response)
+
 	for _, chunk := range splitMessage(response, 4096) {
 		reply := tgbotapi.NewMessage(msg.Chat.ID, chunk)
-		reply.ParseMode = "Markdown"
+		reply.ParseMode = "HTML"
 		sendErr := ""
 		if _, err := b.sender.Send(reply); err != nil {
 			// Retry without markdown if parsing fails
@@ -473,9 +476,12 @@ func (b *Bot) SendNotification(text string) {
 	}
 }
 
-// SendText sends a text message to the last known chat with markdown support.
+// SendText sends a text message to the last known chat with HTML support.
 // Returns an error if no chat ID is available.
 func (b *Bot) SendText(text string) error {
+	// Convert standard markdown to Telegram HTML
+	text = ConvertToTelegramHTML(text)
+
 	b.chatMu.Lock()
 	chatID := b.chatID
 	b.chatMu.Unlock()
@@ -486,7 +492,7 @@ func (b *Bot) SendText(text string) error {
 
 	for _, chunk := range splitMessage(text, 4096) {
 		msg := tgbotapi.NewMessage(chatID, chunk)
-		msg.ParseMode = "Markdown"
+		msg.ParseMode = "HTML"
 		if _, err := b.sender.Send(msg); err != nil {
 			msg.ParseMode = ""
 			if _, err := b.sender.Send(msg); err != nil {

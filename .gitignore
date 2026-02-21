@@ -9,3 +9,5 @@ secrets.toml
 conversation.db
 conversation.db-wal
 conversation.db-shm
+.gocache/
+.gopath/

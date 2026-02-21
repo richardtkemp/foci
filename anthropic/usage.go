@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -94,26 +95,70 @@ func FormatUsage(usage *UsageResponse) string {
 		return "No usage data"
 	}
 
-	result := ""
+	var parts []string
 
+	// 5-hour window
 	if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
 		util := *usage.FiveHour.Utilization
-		result += fmt.Sprintf("5-hour: %.1f%%", util)
+
+		// Format percentage (no decimals unless <1%)
+		utilStr := ""
+		if util < 1 {
+			utilStr = fmt.Sprintf("%.1f%%", util)
+		} else {
+			utilStr = fmt.Sprintf("%.0f%%", util)
+		}
+
+		parts = append(parts, fmt.Sprintf("%s used", utilStr))
+
+		// Format reset time
 		if usage.FiveHour.ResetsAt != nil {
-			result += fmt.Sprintf(" | Resets: %s", *usage.FiveHour.ResetsAt)
+			resetTime := parseResetTime(*usage.FiveHour.ResetsAt)
+			if resetTime != "" {
+				parts = append(parts, fmt.Sprintf("resets %s", resetTime))
+			}
 		}
 	}
 
-	if usage.ExtraUsage != nil && usage.ExtraUsage.IsEnabled {
-		result += fmt.Sprintf(" | Extra: $%.2f/$%.0f", usage.ExtraUsage.UsedCredits, usage.ExtraUsage.MonthlyLimit)
-		if usage.ExtraUsage.Utilization != nil {
-			result += fmt.Sprintf(" (%.1f%%)", *usage.ExtraUsage.Utilization)
-		}
+	// Extra usage (only if nonzero)
+	if usage.ExtraUsage != nil && usage.ExtraUsage.IsEnabled && usage.ExtraUsage.UsedCredits > 0 {
+		parts = append(parts, fmt.Sprintf("overage $%.2f", usage.ExtraUsage.UsedCredits))
 	}
 
-	if result == "" {
-		result = "No active usage limits"
+	if len(parts) == 0 {
+		return "No active usage limits"
 	}
 
-	return result
+	return strings.Join(parts, ", ")
+}
+
+// parseResetTime converts ISO timestamp to human-readable time
+// Returns formats like "1am", "3:30pm", "in 2h", or "" if parsing fails
+func parseResetTime(isoTime string) string {
+	t, err := time.Parse(time.RFC3339Nano, isoTime)
+	if err != nil {
+		return ""
+	}
+
+	now := time.Now().UTC()
+	until := t.Sub(now)
+
+	// If reset is more than 24 hours away, show as time
+	if until > 24*time.Hour {
+		return t.Format("2pm")
+	}
+
+	// If reset is very soon or in the past, show "now"
+	if until < 0 {
+		return "now"
+	}
+
+	// Show relative time (in Xh, in Xm, etc)
+	if until < time.Minute {
+		return "in <1m"
+	}
+	if until < time.Hour {
+		return fmt.Sprintf("in %dm", int(until.Minutes()))
+	}
+	return fmt.Sprintf("in %dh", int(until.Hours()))
 }

@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"clod/anthropic"
@@ -23,10 +24,12 @@ var DefaultFileOrder = []string{
 // Bootstrap loads workspace markdown files as system prompt blocks.
 // Blocks are cached in memory and only re-read on Reload().
 type Bootstrap struct {
-	dir       string
-	fileOrder []string
-	cached    []anthropic.SystemBlock
-	mu        sync.RWMutex
+	dir           string
+	fileOrder     []string
+	secretNames   []string // available secret names for {{secret:NAME}} templates
+	cached        []anthropic.SystemBlock
+	cachedWithSec []anthropic.SystemBlock // cached blocks with secrets injected
+	mu            sync.RWMutex
 }
 
 // NewBootstrap creates a Bootstrap that reads files from dir in the given order.
@@ -40,11 +43,51 @@ func NewBootstrap(dir string, fileOrder []string) *Bootstrap {
 	return b
 }
 
-// SystemBlocks returns the cached system prompt blocks for the API request.
+// SetSecretNames sets the available secret names to be injected into system blocks.
+// Names should be sorted alphabetically. Call before using SystemBlocks().
+func (b *Bootstrap) SetSecretNames(names []string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.secretNames = names
+	b.cachedWithSec = nil // invalidate cache so it's regenerated with new secrets
+}
+
+// SystemBlocks returns the cached system prompt blocks for the API request,
+// including injected secret names if available.
 func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.cached
+
+	// Return cached version if we already built it
+	if b.cachedWithSec != nil {
+		return b.cachedWithSec
+	}
+
+	// Build blocks with secrets injected
+	blocks := make([]anthropic.SystemBlock, len(b.cached))
+	copy(blocks, b.cached)
+
+	// Inject secrets block if we have secret names
+	if len(b.secretNames) > 0 {
+		secretsBlock := buildSecretsBlock(b.secretNames)
+		blocks = append(blocks, secretsBlock)
+	}
+
+	// Mark last block for caching
+	if len(blocks) > 0 {
+		blocks[len(blocks)-1].CacheControl = anthropic.Ephemeral()
+	}
+
+	return blocks
+}
+
+// buildSecretsBlock creates a system block listing available secrets
+func buildSecretsBlock(names []string) anthropic.SystemBlock {
+	text := "Available secrets for {{secret:NAME}} templates: " + strings.Join(names, ", ")
+	return anthropic.SystemBlock{
+		Type: "text",
+		Text: text,
+	}
 }
 
 // Reload re-reads workspace files from disk. Call after compaction or session reset.
@@ -52,6 +95,7 @@ func (b *Bootstrap) Reload() {
 	blocks := b.loadFromDisk()
 	b.mu.Lock()
 	b.cached = blocks
+	b.cachedWithSec = nil // invalidate cached blocks with secrets
 	b.mu.Unlock()
 }
 
