@@ -28,6 +28,11 @@ type sessionMeta struct {
 	prevCacheWrite  int
 }
 
+// ReplyFunc is called to deliver intermediate messages during a turn.
+// Used by the Telegram bot to send early/deferred replies while
+// the agent continues working (e.g., "Looking into this...").
+type ReplyFunc func(text string)
+
 // Agent is the core agent loop.
 type Agent struct {
 	Client    *anthropic.Client
@@ -40,11 +45,31 @@ type Agent struct {
 	processing int32 // atomic: number of in-flight HandleMessage calls
 	metaMu     sync.Mutex
 	meta       map[string]*sessionMeta // per-session metadata
+	replyMu    sync.Mutex
+	replyFunc  ReplyFunc // optional: set per-turn for intermediate replies
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
 func (a *Agent) IsProcessing() bool {
 	return atomic.LoadInt32(&a.processing) > 0
+}
+
+// SetReplyFunc sets a callback for intermediate replies during a turn.
+// The callback is called from the agent loop goroutine.
+func (a *Agent) SetReplyFunc(fn ReplyFunc) {
+	a.replyMu.Lock()
+	defer a.replyMu.Unlock()
+	a.replyFunc = fn
+}
+
+// sendIntermediate sends an intermediate reply if a ReplyFunc is set.
+func (a *Agent) sendIntermediate(text string) {
+	a.replyMu.Lock()
+	fn := a.replyFunc
+	a.replyMu.Unlock()
+	if fn != nil && text != "" {
+		fn(text)
+	}
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {
@@ -209,6 +234,12 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 			}
 
 			return anthropic.TextOf(resp.Content), nil
+		}
+
+		// Send any text in the response as an intermediate reply
+		// (the agent said something before/alongside tool calls)
+		if intermediateText := anthropic.TextOf(resp.Content); intermediateText != "" {
+			a.sendIntermediate(intermediateText)
 		}
 
 		// Execute tool calls

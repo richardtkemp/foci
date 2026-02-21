@@ -173,6 +173,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	typing := tgbotapi.NewChatAction(qm.msg.Chat.ID, tgbotapi.ChatTyping)
 	b.sender.Send(typing)
 
+	// Set up intermediate reply delivery (deferred replies)
+	b.agent.SetReplyFunc(func(text string) {
+		b.sendReply(qm.msg, qm.userID, text)
+	})
+	defer b.agent.SetReplyFunc(nil)
+
 	response, err := b.agent.HandleMessage(turnCtx, b.sessionKey, qm.text)
 	if err != nil {
 		if turnCtx.Err() != nil {

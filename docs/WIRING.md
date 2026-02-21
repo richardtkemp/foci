@@ -81,6 +81,19 @@ Each user message gets a metadata line prepended (NOT in system prompt — that 
 
 Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The metadata goes past the cache breakpoint, so it doesn't affect prompt caching.
 
+## Deferred Replies
+
+When the model responds with text alongside `tool_use` blocks (e.g., "Looking into this..."), the text is sent immediately via `ReplyFunc` before tool execution begins. This allows the agent to acknowledge a message and deliver the full response later.
+
+**Flow:**
+1. Telegram bot sets `agent.SetReplyFunc()` before calling `HandleMessage`
+2. Agent loop detects text in a `tool_use` response
+3. `sendIntermediate()` calls the ReplyFunc, which sends the text to Telegram
+4. Agent continues executing tools
+5. Final `end_turn` response is returned from `HandleMessage` as usual
+
+The `ReplyFunc` is cleared after each turn via `defer agent.SetReplyFunc(nil)`.
+
 ## Session Storage
 
 **Format:** JSONL files, one JSON-encoded `anthropic.Message` per line.

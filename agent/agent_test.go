@@ -499,6 +499,83 @@ func TestIsProcessing(t *testing.T) {
 	}
 }
 
+func TestDeferredReply(t *testing.T) {
+	// Verify that text in tool_use responses is sent via ReplyFunc
+	var callCount atomic.Int32
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := callCount.Add(1)
+		if n == 1 {
+			// First response: text + tool_use (deferred reply scenario)
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "Looking into this, give me a moment..."},
+					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		// Second response: final answer
+		return &anthropic.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Here's the full answer."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 15},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "test_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "tool result", nil
+		},
+	})
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// Track intermediate replies
+	var intermediateReplies []string
+	ag.SetReplyFunc(func(text string) {
+		intermediateReplies = append(intermediateReplies, text)
+	})
+	defer ag.SetReplyFunc(nil)
+
+	finalResp, err := ag.HandleMessage(context.Background(), "agent:test:deferred", "Complex question")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// Should have received the intermediate reply
+	if len(intermediateReplies) != 1 {
+		t.Fatalf("expected 1 intermediate reply, got %d", len(intermediateReplies))
+	}
+	if intermediateReplies[0] != "Looking into this, give me a moment..." {
+		t.Errorf("intermediate reply = %q", intermediateReplies[0])
+	}
+
+	// Final response should be the end_turn text
+	if finalResp != "Here's the full answer." {
+		t.Errorf("final response = %q", finalResp)
+	}
+}
+
 // newTestClientWithBase creates a test client with a custom base URL.
 func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 	return anthropic.NewClientWithBase(baseURL, apiKey)
