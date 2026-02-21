@@ -37,6 +37,14 @@ for arg in "$@"; do
         --help|-h)
             echo "Usage: sudo $0 [--dry-run]"
             echo "Installs clod agent. Idempotent — safe to re-run."
+            echo ""
+            echo "Credentials can be provided via environment variables:"
+            echo "  CLOD_ANTHROPIC_TOKEN  Anthropic API token"
+            echo "  CLOD_TELEGRAM_TOKEN   Telegram bot token"
+            echo "  CLOD_TELEGRAM_USER    Telegram user ID for allowed_users"
+            echo "  CLOD_MODEL            Agent model (default: claude-haiku-4-5)"
+            echo ""
+            echo "If env vars are not set, setup prompts interactively (requires TTY)."
             exit 0
             ;;
         *) error "Unknown flag: $arg"; exit 1 ;;
@@ -59,23 +67,23 @@ else
 fi
 
 # ---------- 2. Build and install binaries ----------
-info "Step 2: Build binaries"
-if ! command -v go &>/dev/null; then
-    if [[ -f "$INSTALL_DIR/clodgw" ]]; then
-        warn "  Go not found, keeping existing binaries"
-    else
-        error "Go not found and no existing binaries. Install Go 1.21+ first."
-        exit 1
-    fi
-else
-    info "  Building from source ($SCRIPT_DIR)"
+info "Step 2: Binaries"
+if [[ -f "$SCRIPT_DIR/clodgw" && -f "$SCRIPT_DIR/clod" ]]; then
+    # Pre-built binaries exist — just install them (user ran `make build cli` first)
+    info "  Found pre-built binaries in $SCRIPT_DIR"
     if ! $DRY_RUN; then
-        cd "$SCRIPT_DIR"
-        make build cli
-        install -m 755 clodgw "$INSTALL_DIR/clodgw"
-        install -m 755 clod "$INSTALL_DIR/clod"
+        install -m 755 "$SCRIPT_DIR/clodgw" "$INSTALL_DIR/clodgw"
+        install -m 755 "$SCRIPT_DIR/clod" "$INSTALL_DIR/clod"
     fi
     info "  Installed clodgw and clod to $INSTALL_DIR"
+elif [[ -f "$INSTALL_DIR/clodgw" && -f "$INSTALL_DIR/clod" ]]; then
+    # Already installed, no local binaries to update from
+    warn "  No pre-built binaries in $SCRIPT_DIR, keeping existing install"
+else
+    error "No binaries found. Build first as your normal user:"
+    error "  make build cli"
+    error "Then re-run: sudo ./setup.sh"
+    exit 1
 fi
 
 # ---------- 3. Directories ----------
@@ -91,17 +99,49 @@ info "Step 4: Config"
 if [[ -f "$CLOD_HOME/clod.toml" ]]; then
     info "  Config exists, not touching it"
 else
-    if $DRY_RUN; then
-        info "  (dry-run) Would prompt for credentials and write config"
-    else
-        echo ""
-        info "  First-time setup — enter credentials:"
-        read -rp "  Anthropic API token: " ANTHROPIC_TOKEN
-        read -rp "  Telegram bot token: " TELEGRAM_TOKEN
-        read -rp "  Telegram user ID (allowed_users): " TELEGRAM_USER
-        read -rp "  Agent model [claude-haiku-4-5]: " AGENT_MODEL
-        AGENT_MODEL="${AGENT_MODEL:-claude-haiku-4-5}"
+    # Resolve credentials: env vars → interactive prompts → error
+    ANTHROPIC_TOKEN="${CLOD_ANTHROPIC_TOKEN:-}"
+    TELEGRAM_TOKEN="${CLOD_TELEGRAM_TOKEN:-}"
+    TELEGRAM_USER="${CLOD_TELEGRAM_USER:-}"
+    AGENT_MODEL="${CLOD_MODEL:-}"
 
+    need_prompt=false
+    [[ -z "$ANTHROPIC_TOKEN" || -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_USER" ]] && need_prompt=true
+
+    if $need_prompt; then
+        if $DRY_RUN; then
+            : # handled below
+        elif [[ -t 0 ]]; then
+            # Interactive: prompt for missing values
+            echo ""
+            info "  First-time setup — enter credentials (or set CLOD_ANTHROPIC_TOKEN, CLOD_TELEGRAM_TOKEN, CLOD_TELEGRAM_USER env vars):"
+            [[ -z "$ANTHROPIC_TOKEN" ]] && read -rp "  Anthropic API token: " ANTHROPIC_TOKEN
+            [[ -z "$TELEGRAM_TOKEN" ]] && read -rp "  Telegram bot token: " TELEGRAM_TOKEN
+            [[ -z "$TELEGRAM_USER" ]]  && read -rp "  Telegram user ID (allowed_users): " TELEGRAM_USER
+            [[ -z "$AGENT_MODEL" ]]    && read -rp "  Agent model [claude-haiku-4-5]: " AGENT_MODEL
+        else
+            # Non-interactive (no TTY): error with instructions
+            error "No config found and stdin is not a terminal."
+            error "Set credentials via environment variables:"
+            error "  CLOD_ANTHROPIC_TOKEN  — Anthropic API token (required)"
+            error "  CLOD_TELEGRAM_TOKEN   — Telegram bot token (required)"
+            error "  CLOD_TELEGRAM_USER    — Telegram user ID for allowed_users (required)"
+            error "  CLOD_MODEL            — Agent model (optional, default: claude-haiku-4-5)"
+            error ""
+            error "Example:"
+            error "  sudo CLOD_ANTHROPIC_TOKEN=sk-ant-... CLOD_TELEGRAM_TOKEN=123:ABC CLOD_TELEGRAM_USER=5970082313 ./setup.sh"
+            exit 1
+        fi
+    fi
+    AGENT_MODEL="${AGENT_MODEL:-claude-haiku-4-5}"
+
+    if $DRY_RUN; then
+        if $need_prompt; then
+            info "  (dry-run) Would prompt for missing credentials and write config"
+        else
+            info "  (dry-run) Would write config using env vars"
+        fi
+    else
         cat > "$CLOD_HOME/clod.toml" << TOML
 [agent]
 id = "main"

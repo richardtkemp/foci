@@ -7,11 +7,19 @@ type CacheControl struct {
 	Type string `json:"type"`
 }
 
+// ImageSource holds base64-encoded image data for the API.
+type ImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "image/jpeg", "image/png", etc.
+	Data      string `json:"data"`       // base64-encoded image data
+}
+
 // ContentBlock is a block of content in a message or response.
-// Covers text, tool_use, and tool_result block types.
+// Covers text, image, tool_use, and tool_result block types.
 type ContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
+	Source       *ImageSource    `json:"source,omitempty"`    // image: base64 source
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 	ID           string          `json:"id,omitempty"`        // tool_use: block ID
 	Name         string          `json:"name,omitempty"`      // tool_use: tool name
@@ -82,6 +90,18 @@ func TextContent(text string) []ContentBlock {
 // CachedTextContent creates a single text content block with cache control.
 func CachedTextContent(text string) []ContentBlock {
 	return []ContentBlock{{Type: "text", Text: text, CacheControl: Ephemeral()}}
+}
+
+// ImageBlock creates an image content block from base64-encoded data.
+func ImageBlock(mediaType, base64Data string) ContentBlock {
+	return ContentBlock{
+		Type: "image",
+		Source: &ImageSource{
+			Type:      "base64",
+			MediaType: mediaType,
+			Data:      base64Data,
+		},
+	}
 }
 
 // ToolResultBlock creates a tool_result content block.
