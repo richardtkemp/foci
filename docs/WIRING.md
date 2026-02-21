@@ -51,6 +51,11 @@ The core of the system. Two entry points:
 - `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithImages`
 - `HandleMessageWithImages(ctx, sessionKey, text, images)` — full version with optional image attachments
 
+**Tool execution guarding:**
+- After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
+- If exceeded, writes full result to temp file and returns truncated message
+- Prevents large tool outputs from permanently bloating session history
+
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
 2. buildMetaPrefix() + prepend to user message text
@@ -167,6 +172,20 @@ Each becomes a `SystemBlock{type:"text", text:content}`. The **last** block gets
 
 Missing/empty files are silently skipped.
 
+## Anthropic API Client (`anthropic/`)
+
+Two clients:
+
+1. **MessageClient** (`client.go`) — messages API with prompt caching
+   - Sends model requests with system prompt + conversation history
+   - Sets `anthropic-beta: prompt-caching-2024-07-31` for cache control
+   - OAuth tokens also include `oauth-2025-04-20` in beta header
+
+2. **UsageClient** (`usage.go`) — OAuth usage API
+   - Queries `/api/oauth/usage` endpoint
+   - Requires OAuth token (`sk-ant-oat01-...`)
+   - Returns utilization for 5-hour window, 7-day limits, extra usage billing
+
 ## Prompt Caching
 
 Two cache breakpoints per API request:
@@ -232,7 +251,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | Tool | File | What it does |
 |------|------|-------------|
 | `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, secret template resolution + output redaction |
-| `tmux` | tmux.go | Manage tmux sessions — start, send keys, read pane output, list, kill. Sessions persist across agent turns. |
+| `tmux` | tmux.go | Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity, unwatch |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
 | `edit` | files.go | Find-and-replace (old_string must be unique) |
@@ -244,7 +263,12 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
 | `request_model` | model.go | Synchronous one-shot call to a different model. Sends prompt, returns response as tool result. Supports prompt weight: full (character files), light (minimal), none. Session's own model/cache unaffected. |
+| `schedule_wake` | schedule.go | Schedule message injection at specified time or delay. One-shot, auto-cleaned after firing. |
 | `tts` | voice.go | Convert text to speech via OpenRouter TTS API. Sends audio as Telegram voice note. Used when the agent wants to reply with voice explicitly. |
+
+### Tool Result Guard
+
+If a tool result exceeds `agent.MaxResultChars` (from config, default 10,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. The agent receives a truncated message with the file path and read instructions. This prevents large results from bloating session history indefinitely.
 
 ## Slash Commands (`command/`)
 
@@ -253,7 +277,9 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/reset`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/usage`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
+   - `/usage` — check Claude subscription usage (requires OAuth token)
+   - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `clod.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
 Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
@@ -360,11 +386,22 @@ Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external too
 ## Heartbeat & Wake
 
 - **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into main session. Resets on any activity.
-- **Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch.
+- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch.
+- **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing.
 
 ## Compaction (`compaction/compact.go`)
 
-Checks token usage against threshold (default 80% of 200k). When triggered: asks model to summarize history, replaces session with 3-message compacted version (context note + summary + continuation note).
+Checks token usage against threshold (default 80% of context window). When triggered:
+1. Asks model (configurable) to summarize history using configurable prompt
+2. Replaces session with 3-message compacted version (context note + summary + continuation note)
+3. Appends any scratchpad entries to preservation message
+
+**Configurable via `Compactor.WithConfig()`:**
+- `model` — summarization model (default: agent model)
+- `maxTokens` — max output tokens for summary (default: 4096)
+- `minMessages` — min messages before compacting (default: 4)
+- `summaryPrompt` — custom summary prompt
+- `handoffMessage` — message after compaction completes
 
 ## Testing
 
