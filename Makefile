@@ -6,21 +6,21 @@ LDFLAGS = -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: build cli all clean test
+.PHONY: all build cli test vet clean
 
 all: build cli
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o clod .
+	go build -ldflags "$(LDFLAGS)" -o clodgw .
 
 cli:
-	go build -ldflags "$(LDFLAGS)" -o clod-cli ./cmd/clod-cli
+	go build -ldflags "$(LDFLAGS)" -o clod ./cmd/clod
 
 test:
 	go test ./...
 
 clean:
-	rm -f clod clod-cli
+	rm -f clodgw clod
 
 vet:
 	go vet ./...

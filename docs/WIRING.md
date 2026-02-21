@@ -193,15 +193,15 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 
 ## HTTP Gateway (`main.go`)
 
-Endpoints for external integration (used by `clod-cli`):
+Endpoints for external integration (used by `clod` CLI):
 - `POST /send` — message to main session, returns response
 - `GET /status` — dispatches `/status` command
 - `POST /command` — dispatches any slash command
 - `POST /wake` — branch session for cron/external triggers
 
-## CLI Tool (`cmd/clod-cli/`)
+## CLI Tool (`cmd/clod/`)
 
-Separate binary (`go build ./cmd/clod-cli`) for scripts, cron jobs, and external tools. Commands: `send`, `wake`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway at `CLOD_ADDR` (default `127.0.0.1:18791`).
+Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external tools. Binary name: `clod`. Commands: `send`, `wake`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`clodgw`) at `CLOD_ADDR` (default `127.0.0.1:18791`).
 
 ## Heartbeat & Wake
 

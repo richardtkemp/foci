@@ -61,7 +61,7 @@ fi
 # ---------- 2. Build and install binaries ----------
 info "Step 2: Build binaries"
 if ! command -v go &>/dev/null; then
-    if [[ -f "$INSTALL_DIR/clod" ]]; then
+    if [[ -f "$INSTALL_DIR/clodgw" ]]; then
         warn "  Go not found, keeping existing binaries"
     else
         error "Go not found and no existing binaries. Install Go 1.21+ first."
@@ -72,10 +72,10 @@ else
     if ! $DRY_RUN; then
         cd "$SCRIPT_DIR"
         make build cli
+        install -m 755 clodgw "$INSTALL_DIR/clodgw"
         install -m 755 clod "$INSTALL_DIR/clod"
-        install -m 755 clod-cli "$INSTALL_DIR/clod-cli"
     fi
-    info "  Installed clod and clod-cli to $INSTALL_DIR"
+    info "  Installed clodgw and clod to $INSTALL_DIR"
 fi
 
 # ---------- 3. Directories ----------
@@ -239,7 +239,7 @@ After=network.target
 Type=simple
 User=$CLOD_USER
 WorkingDirectory=$CLOD_HOME
-ExecStart=$INSTALL_DIR/clod -config $CLOD_HOME/clod.toml
+ExecStart=$INSTALL_DIR/clodgw -config $CLOD_HOME/clod.toml
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -292,4 +292,4 @@ echo ""
 info "Done."
 info "  Status:  systemctl status clod"
 info "  Logs:    journalctl -u clod -f"
-info "  CLI:     clod-cli ping"
+info "  CLI:     clod ping"
