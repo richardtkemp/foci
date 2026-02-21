@@ -68,7 +68,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `edit` — find-and-replace in files
 - `web_fetch` — HTTP GET, extract readable content
 - `web_search` — Brave Search API
-- `memory_search` — grep-based search over memory files
+- `memory_search` — FTS5 search over memory files + conversation history
 
 **Each tool is a function with signature:**
 ```go
@@ -92,13 +92,44 @@ Order matters: most-stable files first maximises cache prefix length.
 
 ### Memory System
 
-**Alpha:** File-based with grep search.
+**Alpha:** File-based with FTS5 search.
 - Memory files in `workspace/memory/YYYY-MM-DD.md`
 - Curated long-term memory in `workspace/MEMORY.md`
-- Search: grep across all `.md` files in memory directory
-- Injected into system prompt on each turn
+- `MEMORY.md` injected into system prompt on each turn
 
-**Beta:** Add vector embeddings (OpenAI via OpenRouter), hybrid search, temporal decay.
+**Search:** SQLite FTS5 index over two sources, with explicit memories weighted higher:
+
+1. **Explicit memories** (weight: 2.0) — all `.md` files in memory directory + `MEMORY.md`
+2. **Conversation history** (weight: 1.0) — past messages from the conversation SQLite log
+
+Both are indexed into the same FTS5 table with a `source` column to enable weighting:
+
+```sql
+CREATE VIRTUAL TABLE memory_fts USING fts5(
+  content, path, source,    -- source: 'memory' or 'conversation'
+  tokenize='porter unicode61'
+);
+
+-- Search with explicit memories ranked higher
+SELECT path, snippet(memory_fts, 0, '→', '←', '...', 30),
+       CASE source WHEN 'memory' THEN rank * 2.0 ELSE rank END AS weighted_rank
+FROM memory_fts 
+WHERE memory_fts MATCH ?
+ORDER BY weighted_rank;
+```
+
+**Indexing:**
+- Memory files: re-indexed on startup and when files change (fsnotify or periodic rescan)
+- Conversation history: indexed as messages are logged (already going to SQLite)
+- Incremental: only re-index changed files, not full rebuild each time
+
+**Why FTS5 over vector embeddings:**
+- Zero dependencies (built into SQLite, which we already use)
+- Instant queries, no API calls
+- Deterministic, debuggable
+- Covers 90% of memory recall — you usually remember roughly what you wrote
+
+**Maybe later:** Vector embeddings for semantic search when FTS5 misses. But not until FTS5 proves insufficient.
 
 ### Compaction
 
@@ -376,12 +407,12 @@ bind = "127.0.0.1"
 - Workspace bootstrap (markdown files → system prompt)
 - Heartbeat
 - Simple compaction
-- Basic memory (grep-based)
+- FTS5 memory search (memory files + conversation history)
 - TOML config
 - Wake endpoint for cron
 
 **Out (beta):**
-- Vector memory search
+- Vector memory search (semantic, if FTS5 proves insufficient)
 - Multi-agent support (design for it, don't build it)
 - Sub-agents
 - File attachments
