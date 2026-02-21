@@ -52,10 +52,18 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 ### Telegram Bot
 
 - Long-polling (not webhooks) for simplicity
-- Receive: text messages, file attachments (beta)
-- Send: text messages, markdown formatting, file attachments (beta)
+- Receive: text messages, voice notes, file attachments (beta)
+- Send: text messages, markdown formatting, voice notes, file attachments (beta)
 - Route incoming messages to the correct agent session
 - DM only for alpha; group chat support in beta
+
+### Voice (Telegram Voice Notes)
+
+**Inbound:** Receive Telegram voice notes → transcribe via Whisper API (OpenAI-compatible, via OpenRouter or local) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
+
+**Outbound:** Agent can send voice replies via a `tts` tool. Text → TTS engine (Edge TTS or similar, free) → send as Telegram voice note. Good for when the human is mobile/driving.
+
+**Voice mode toggle:** User says "voice mode on" → all agent replies sent as voice notes until "voice mode off". Stored as session state, not config. The agent adjusts its style — shorter, more conversational, no markdown.
 
 ### Message Metadata
 
