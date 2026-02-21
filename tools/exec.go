@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"syscall"
 	"time"
 
 	"clod/log"
@@ -16,7 +17,7 @@ import (
 func NewExecTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax.",
+		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -27,6 +28,10 @@ func NewExecTool(store *secrets.Store) *Tool {
 				"timeout": {
 					"type": "integer",
 					"description": "Timeout in seconds (default 30)"
+				},
+				"background": {
+					"type": "boolean",
+					"description": "If true, child processes survive after the command exits (for tmux, daemons, etc.)"
 				}
 			},
 			"required": ["command"]
@@ -39,8 +44,9 @@ func NewExecTool(store *secrets.Store) *Tool {
 
 func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
 	var p struct {
-		Command string `json:"command"`
-		Timeout int    `json:"timeout"`
+		Command    string `json:"command"`
+		Timeout    int    `json:"timeout"`
+		Background bool   `json:"background"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
@@ -66,18 +72,25 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		timeout = time.Duration(p.Timeout) * time.Second
 	}
 
-	log.Debugf("exec", "running: %s (timeout=%s)", truncateCmd(p.Command, 200), timeout)
+	log.Debugf("exec", "running: %s (timeout=%s background=%v)", truncateCmd(p.Command, 200), timeout, p.Background)
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
-	// No Setpgid/Setsid — children inherit the normal process tree.
-	// On timeout, only the direct sh process is killed (Go default).
-	// Children that have detached (tmux, daemons) survive naturally.
-	// WaitDelay closes pipes shortly after sh exits, preventing blocking
-	// when a child (e.g. tmux server) inherits stdout/stderr.
-	proc.WaitDelay = 2 * time.Second
+
+	if p.Background {
+		// Background mode: children survive the exec call. No process group,
+		// no group kill. WaitDelay closes pipes if a child holds them open.
+		proc.WaitDelay = 2 * time.Second
+	} else {
+		// Normal mode: own process group, kill the group on timeout/cancel.
+		// Prevents orphan processes from leaking.
+		proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		proc.Cancel = func() error {
+			return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
+		}
+	}
 
 	out, err := proc.CombinedOutput()
 
