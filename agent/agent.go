@@ -69,6 +69,7 @@ type Agent struct {
 	DuplicateMessages  bool                    // send user text twice per API call (improves instruction following)
 	MaxResultChars     int                     // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir  string                  // where to write large tool results
+	Warnings           *WarningQueue           // nil disables warning injection into session
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
@@ -300,6 +301,25 @@ func (a *Agent) collectReminders() string {
 	return block
 }
 
+// collectWarnings returns queued warnings formatted for injection into the user message.
+// Returns empty string if no warnings are queued or the queue is nil.
+func (a *Agent) collectWarnings() string {
+	if a.Warnings == nil {
+		return ""
+	}
+
+	warnings := a.Warnings.Drain()
+	if len(warnings) == 0 {
+		return ""
+	}
+
+	block := "\n[system warnings]"
+	for _, w := range warnings {
+		block += "\n- " + w
+	}
+	return block
+}
+
 // HandleMessage processes a text-only user message. Delegates to HandleMessageWithImages.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
 	return a.HandleMessageWithImages(ctx, sessionKey, userMessage, nil)
@@ -335,11 +355,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	sm := a.getSessionMeta(sessionKey)
 	metaPrefix := buildMetaPrefix(now, turnModel, sm)
 	reminderBlock := a.collectReminders()
+	warningBlock := a.collectWarnings()
 	msgBody := userMessage
 	if a.DuplicateMessages {
 		msgBody = userMessage + "\n\n" + userMessage
 	}
-	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
+	annotatedMessage := metaPrefix + reminderBlock + warningBlock + "\n" + msgBody
 
 	// Build content blocks: images first, then text
 	var contentBlocks []anthropic.ContentBlock

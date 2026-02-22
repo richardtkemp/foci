@@ -71,13 +71,14 @@ type HTTPConfig struct {
 }
 
 type LoggingConfig struct {
-	Level            string `toml:"level"`
-	EventFile        string `toml:"event_file"`
-	APIFile          string `toml:"api_file"`
-	ConversationFile string `toml:"conversation_file"`
-	FullPayload      bool   `toml:"full_payload"`      // write full API payloads to api-payload.jsonl
-	PayloadFile      string `toml:"payload_file"`      // path to api-payload.jsonl (default: api-payload.jsonl)
-	CacheBustDetect  bool   `toml:"cache_bust_detect"` // alert when cache_read drops >50% vs previous request
+	Level               string `toml:"level"`
+	EventFile           string `toml:"event_file"`
+	APIFile             string `toml:"api_file"`
+	ConversationFile    string `toml:"conversation_file"`
+	FullPayload         bool   `toml:"full_payload"`          // write full API payloads to api-payload.jsonl
+	PayloadFile         string `toml:"payload_file"`          // path to api-payload.jsonl (default: api-payload.jsonl)
+	CacheBustDetect     bool   `toml:"cache_bust_detect"`     // alert when cache_read drops >50% vs previous request
+	InjectAgentWarnings bool   `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 }
 
 type VoiceConfig struct {
