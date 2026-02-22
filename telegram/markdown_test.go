@@ -77,14 +77,24 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			want: `click <a href="https://example.com">here</a>`,
 		},
 		{
-			name: "heading",
+			name: "heading h1",
 			in:   "# My Title",
-			want: "<b>My Title</b>",
+			want: "═══ My Title ═══",
 		},
 		{
 			name: "heading h2",
 			in:   "## Subtitle",
-			want: "<b>Subtitle</b>",
+			want: "── Subtitle ──",
+		},
+		{
+			name: "heading h3",
+			in:   "### Section",
+			want: "<b>Section</b>",
+		},
+		{
+			name: "heading h4",
+			in:   "#### Deep Section",
+			want: "<b>Deep Section</b>",
 		},
 		{
 			name: "blockquote single line",
@@ -160,17 +170,22 @@ func TestConvertToTelegramHTML(t *testing.T) {
 		{
 			name: "table simple",
 			in:   "| Col1 | Col2 |\n|------|------|\n| a    | b    |",
-			want: "<pre>| Col1 | Col2 |\n|------|------|\n| a    | b    |</pre>",
+			want: "<pre>| Col1 | Col2 |\n| ---- | ---- |\n| a    | b    |</pre>",
 		},
 		{
 			name: "table with HTML chars",
 			in:   "| Key | Value |\n|-----|-------|\n| a<b | c&d   |",
-			want: "<pre>| Key | Value |\n|-----|-------|\n| a&lt;b | c&amp;d   |</pre>",
+			want: "<pre>| Key | Value |\n| --- | ----- |\n| a&lt;b | c&amp;d   |</pre>",
 		},
 		{
 			name: "table surrounded by text",
 			in:   "Results:\n| Name | Score |\n|------|-------|\n| Bob  | 42    |\nDone.",
-			want: "Results:\n<pre>| Name | Score |\n|------|-------|\n| Bob  | 42    |</pre>\nDone.",
+			want: "Results:\n<pre>| Name | Score |\n| ---- | ----- |\n| Bob  | 42    |</pre>\nDone.",
+		},
+		{
+			name: "table uneven columns padded",
+			in:   "| A | BB | CCC |\n|---|-------|---|\n| x | y | z |",
+			want: "<pre>| A   | BB  | CCC |\n| --- | --- | --- |\n| x   | y   | z   |</pre>",
 		},
 	}
 

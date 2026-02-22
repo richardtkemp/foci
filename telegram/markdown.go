@@ -74,8 +74,11 @@ func ConvertToTelegramHTML(text string) string {
 	// Italic: _text_
 	text = regexp.MustCompile(`_([^_\n]+)_`).ReplaceAllString(text, "<i>$1</i>")
 
-	// Headings: # Text -> <b>Text</b>
-	text = regexp.MustCompile(`(?m)^#+\s+(.+)$`).ReplaceAllString(text, "<b>$1</b>")
+	// Headings: hierarchy rendering (Telegram has no native headings)
+	// H1: ═══ Title ═══, H2: ── Title ──, H3+: just bold
+	text = regexp.MustCompile(`(?m)^#\s+(.+)$`).ReplaceAllString(text, "═══ $1 ═══")
+	text = regexp.MustCompile(`(?m)^##\s+(.+)$`).ReplaceAllString(text, "── $1 ──")
+	text = regexp.MustCompile(`(?m)^###+ (.+)$`).ReplaceAllString(text, "<b>$1</b>")
 
 	// Horizontal rules: ---, ***, ___ (3+ chars on a line by themselves)
 	text = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`).ReplaceAllString(text, "————————————————")
@@ -100,9 +103,10 @@ func ConvertToTelegramHTML(text string) string {
 	return text
 }
 
-// convertTables finds markdown table blocks and converts them to <pre> blocks.
-// A table is identified by consecutive lines containing | characters where at
-// least one line matches the separator pattern (e.g. |---|---|).
+// convertTables finds markdown table blocks and converts them to <pre> blocks
+// with properly padded columns. A table is identified by consecutive lines
+// containing | characters where at least one line matches the separator
+// pattern (e.g. |---|---|).
 func convertTables(text string, codeBlocks *[]string) string {
 	lines := strings.Split(text, "\n")
 	sepRe := regexp.MustCompile(`^\|?\s*[-:]+[-|\s:]*$`)
@@ -133,16 +137,10 @@ func convertTables(text string, codeBlocks *[]string) string {
 
 			// Need at least a header + separator + data row, with a separator
 			if hasSep && tableEnd-tableStart >= 2 {
-				// Extract table lines and wrap in <pre>
-				var tableContent strings.Builder
-				for k := tableStart; k < tableEnd; k++ {
-					if k > tableStart {
-						tableContent.WriteString("\n")
-					}
-					tableContent.WriteString(htmlEscape(lines[k]))
-				}
+				tableLines := lines[tableStart:tableEnd]
+				formatted := formatTable(tableLines, sepRe)
 				idx := len(*codeBlocks)
-				*codeBlocks = append(*codeBlocks, "<pre>"+tableContent.String()+"</pre>")
+				*codeBlocks = append(*codeBlocks, "<pre>"+htmlEscape(formatted)+"</pre>")
 				result = append(result, "[CODEBLOCK"+string(rune('0'+idx))+"]")
 				i = tableEnd
 				continue
@@ -152,6 +150,84 @@ func convertTables(text string, codeBlocks *[]string) string {
 		i++
 	}
 	return strings.Join(result, "\n")
+}
+
+// parseCells splits a table row by | and trims whitespace from each cell.
+// Leading/trailing empty cells from outer pipes are removed.
+func parseCells(line string) []string {
+	parts := strings.Split(line, "|")
+	// Remove leading empty element (from leading |)
+	if len(parts) > 0 && strings.TrimSpace(parts[0]) == "" {
+		parts = parts[1:]
+	}
+	// Remove trailing empty element (from trailing |)
+	if len(parts) > 0 && strings.TrimSpace(parts[len(parts)-1]) == "" {
+		parts = parts[:len(parts)-1]
+	}
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
+}
+
+// formatTable normalizes column widths across all rows and rebuilds the table.
+func formatTable(lines []string, sepRe *regexp.Regexp) string {
+	// Parse all rows into cells
+	type row struct {
+		cells []string
+		isSep bool
+	}
+	var rows []row
+	maxCols := 0
+	for _, line := range lines {
+		isSep := sepRe.MatchString(strings.TrimSpace(line))
+		cells := parseCells(line)
+		if len(cells) > maxCols {
+			maxCols = len(cells)
+		}
+		rows = append(rows, row{cells: cells, isSep: isSep})
+	}
+
+	// Find max width per column (from non-separator rows)
+	colWidths := make([]int, maxCols)
+	for _, r := range rows {
+		if r.isSep {
+			continue
+		}
+		for j, cell := range r.cells {
+			if j < maxCols && len(cell) > colWidths[j] {
+				colWidths[j] = len(cell)
+			}
+		}
+	}
+	// Minimum column width of 3 (for separator dashes)
+	for j := range colWidths {
+		if colWidths[j] < 3 {
+			colWidths[j] = 3
+		}
+	}
+
+	// Rebuild each row with padded cells
+	var out []string
+	for _, r := range rows {
+		var parts []string
+		for j := 0; j < maxCols; j++ {
+			w := colWidths[j]
+			if r.isSep {
+				parts = append(parts, strings.Repeat("-", w))
+			} else {
+				cell := ""
+				if j < len(r.cells) {
+					cell = r.cells[j]
+				}
+				// Pad with spaces to column width
+				parts = append(parts, cell+strings.Repeat(" ", w-len(cell)))
+			}
+		}
+		out = append(out, "| "+strings.Join(parts, " | ")+" |")
+	}
+	return strings.Join(out, "\n")
 }
 
 // convertBlockquotes merges consecutive > lines into single <blockquote> tags.
