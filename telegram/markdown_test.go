@@ -87,9 +87,19 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			want: "<b>Subtitle</b>",
 		},
 		{
-			name: "blockquote",
+			name: "blockquote single line",
 			in:   "> quoted text",
 			want: "<blockquote>quoted text</blockquote>",
+		},
+		{
+			name: "blockquote multiline",
+			in:   "> line 1\n> line 2\n> line 3",
+			want: "<blockquote>line 1\nline 2\nline 3</blockquote>",
+		},
+		{
+			name: "blockquote separated by text",
+			in:   "> first\nsome text\n> second",
+			want: "<blockquote>first</blockquote>\nsome text\n<blockquote>second</blockquote>",
 		},
 		{
 			name: "mixed formatting",
@@ -115,6 +125,52 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			name: "empty string",
 			in:   "",
 			want: "",
+		},
+		// --- New features ---
+		{
+			name: "horizontal rule dashes",
+			in:   "above\n---\nbelow",
+			want: "above\n————————————————\nbelow",
+		},
+		{
+			name: "horizontal rule stars",
+			in:   "above\n***\nbelow",
+			want: "above\n————————————————\nbelow",
+		},
+		{
+			name: "horizontal rule underscores",
+			in:   "above\n___\nbelow",
+			want: "above\n————————————————\nbelow",
+		},
+		{
+			name: "bullet list dash",
+			in:   "- first item\n- second item",
+			want: "  • first item\n  • second item",
+		},
+		{
+			name: "bullet list star",
+			in:   "* first item\n* second item",
+			want: "  • first item\n  • second item",
+		},
+		{
+			name: "ordered list",
+			in:   "1. first\n2. second\n3. third",
+			want: "  1. first\n  2. second\n  3. third",
+		},
+		{
+			name: "table simple",
+			in:   "| Col1 | Col2 |\n|------|------|\n| a    | b    |",
+			want: "<pre>| Col1 | Col2 |\n|------|------|\n| a    | b    |</pre>",
+		},
+		{
+			name: "table with HTML chars",
+			in:   "| Key | Value |\n|-----|-------|\n| a<b | c&d   |",
+			want: "<pre>| Key | Value |\n|-----|-------|\n| a&lt;b | c&amp;d   |</pre>",
+		},
+		{
+			name: "table surrounded by text",
+			in:   "Results:\n| Name | Score |\n|------|-------|\n| Bob  | 42    |\nDone.",
+			want: "Results:\n<pre>| Name | Score |\n|------|-------|\n| Bob  | 42    |</pre>\nDone.",
 		},
 	}
 
