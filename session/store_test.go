@@ -1,7 +1,11 @@
 package session
 
 import (
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"clod/anthropic"
 )
@@ -243,6 +247,80 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 	newCreatedAt := s.CreatedAt(key)
 	if newCreatedAt != originalCreatedAt {
 		t.Errorf("CreatedAt after Replace = %q, want %q", newCreatedAt, originalCreatedAt)
+	}
+}
+
+func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	key := "agent:test:main"
+
+	s.Append(key, msg("user", "hello"))
+
+	// Verify session_meta is written by reading raw file
+	data, err := os.ReadFile(s.keyToPath(key))
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	}
+
+	var meta SessionMeta
+	if err := json.Unmarshal([]byte(lines[0]), &meta); err != nil {
+		t.Fatalf("unmarshal first line: %v", err)
+	}
+	if meta.Type != "session_meta" {
+		t.Errorf("first line type = %q, want session_meta", meta.Type)
+	}
+	if meta.CreatedAt == "" {
+		t.Error("first line missing created_at")
+	}
+}
+
+func TestCreatedAtPreservedAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	key := "agent:test:main"
+
+	// Create session with first store instance
+	s1 := NewStore(dir)
+	s1.Append(key, msg("user", "hello"))
+	originalCreatedAt := s1.CreatedAt(key)
+	if originalCreatedAt == "n/a" {
+		t.Fatal("expected creation time after append")
+	}
+
+	// Simulate restart by creating new store instance
+	s2 := NewStore(dir)
+	newCreatedAt := s2.CreatedAt(key)
+	if newCreatedAt != originalCreatedAt {
+		t.Errorf("CreatedAt after restart = %q, want %q", newCreatedAt, originalCreatedAt)
+	}
+}
+
+func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
+	dir := t.TempDir()
+	key := "agent:test:main"
+
+	s := NewStore(dir)
+	s.Append(key, msg("user", "hello"))
+	originalCreatedAt := s.CreatedAt(key)
+	if originalCreatedAt == "n/a" {
+		t.Fatal("expected creation time after append")
+	}
+
+	// Modify file mtime (simulating external modification)
+	path := s.keyToPath(key)
+	newTime := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(path, newTime, newTime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	// CreatedAt should still return stored value, not file mtime
+	newCreatedAt := s.CreatedAt(key)
+	if newCreatedAt != originalCreatedAt {
+		t.Errorf("CreatedAt after mtime change = %q, want %q", newCreatedAt, originalCreatedAt)
 	}
 }
 
