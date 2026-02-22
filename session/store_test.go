@@ -198,3 +198,50 @@ func TestAppendCreatesDirectories(t *testing.T) {
 		t.Errorf("len = %d, want 1", len(msgs))
 	}
 }
+
+func TestCreatedAtNewSession(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	createdAt := s.CreatedAt(key)
+	if createdAt != "n/a" {
+		t.Errorf("CreatedAt on new session = %q, want 'n/a'", createdAt)
+	}
+
+	// Append first message - should create session with creation time
+	s.Append(key, msg("user", "hello"))
+
+	createdAt = s.CreatedAt(key)
+	if createdAt == "n/a" {
+		t.Error("CreatedAt after append should not be n/a")
+	}
+	// Should be a valid timestamp
+	if len(createdAt) != 20 { // "2006-01-02T15:04:05Z" length
+		t.Errorf("CreatedAt timestamp format = %q, want RFC3339 format", createdAt)
+	}
+}
+
+func TestCreatedAtPreservedThroughReplace(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	// Create session
+	s.Append(key, msg("user", "hello"))
+
+	originalCreatedAt := s.CreatedAt(key)
+	if originalCreatedAt == "n/a" {
+		t.Fatal("expected creation time after append")
+	}
+
+	// Replace (simulating compaction)
+	replacement := []anthropic.Message{
+		msg("user", "summary"),
+	}
+	s.Replace(key, replacement)
+
+	// Creation time should be preserved
+	newCreatedAt := s.CreatedAt(key)
+	if newCreatedAt != originalCreatedAt {
+		t.Errorf("CreatedAt after Replace = %q, want %q", newCreatedAt, originalCreatedAt)
+	}
+}
