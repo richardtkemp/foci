@@ -216,6 +216,23 @@ HTTP API server.
 
 Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`.
 
+All endpoints accept an `agent` field (JSON body for POST, query param for GET) to target a specific agent by ID. When empty or omitted, the first configured agent is used.
+
+### CLI (`clod` command)
+
+The `clod` CLI wraps the HTTP API. All subcommands accept `-a <id>` / `--agent <id>` to target a specific agent:
+
+```
+clod send -a research "check the news"
+clod wake -a research
+clod status --agent=research
+clod ping -a research
+clod eval -a research "df -h"
+clod command -a research /cache
+```
+
+When omitted, the first agent is used (backward compatible).
+
 ---
 
 ## `[logging]`

@@ -37,13 +37,13 @@ func main() {
 	case "wake":
 		err = cmdWake(base, args)
 	case "status":
-		err = cmdStatus(base)
+		err = cmdStatus(base, args)
 	case "eval":
 		err = cmdEval(base, args)
 	case "command":
 		err = cmdCommand(base, args)
 	case "ping":
-		err = cmdCommand(base, []string{"/ping"})
+		err = cmdCommand(base, append(args, "/ping"))
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -69,30 +69,70 @@ Commands:
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
   ping                 Shorthand for 'command /ping'
 
+Flags:
+  -a, --agent <id>     Target a specific agent (default: first agent)
+
 Environment:
   CLOD_ADDR            Gateway address (default: %s)
 `, defaultAddr)
 }
 
+// parseAgentFlag extracts -a/--agent from args, returning the agent ID and
+// remaining args. Returns empty string if no flag is present.
+func parseAgentFlag(args []string) (agentID string, rest []string) {
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "-a" || args[i] == "--agent") && i+1 < len(args) {
+			agentID = args[i+1]
+			rest = append(rest, args[:i]...)
+			rest = append(rest, args[i+2:]...)
+			return agentID, rest
+		}
+		// Handle --agent=value and -a=value
+		for _, prefix := range []string{"--agent=", "-a="} {
+			if strings.HasPrefix(args[i], prefix) {
+				agentID = args[i][len(prefix):]
+				rest = append(rest, args[:i]...)
+				rest = append(rest, args[i+1:]...)
+				return agentID, rest
+			}
+		}
+	}
+	return "", args
+}
+
 func cmdSend(base string, args []string) error {
+	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod send <message text>")
+		return fmt.Errorf("usage: clod send [-a agent] <message text>")
 	}
 	text := strings.Join(args, " ")
-	return postJSON(base+"/send", map[string]string{"text": text})
+	body := map[string]string{"text": text}
+	if agent != "" {
+		body["agent"] = agent
+	}
+	return postJSON(base+"/send", body)
 }
 
 func cmdWake(base string, args []string) error {
+	agent, args := parseAgentFlag(args)
 	text := strings.Join(args, " ")
 	body := map[string]string{}
+	if agent != "" {
+		body["agent"] = agent
+	}
 	if text != "" {
 		body["text"] = text
 	}
 	return postJSON(base+"/wake", body)
 }
 
-func cmdStatus(base string) error {
-	resp, err := client.Get(base + "/status")
+func cmdStatus(base string, args []string) error {
+	agent, _ := parseAgentFlag(args)
+	url := base + "/status"
+	if agent != "" {
+		url += "?agent=" + agent
+	}
+	resp, err := client.Get(url)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -101,23 +141,33 @@ func cmdStatus(base string) error {
 }
 
 func cmdEval(base string, args []string) error {
+	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod eval <shell command>")
+		return fmt.Errorf("usage: clod eval [-a agent] <shell command>")
 	}
 	cmd := strings.Join(args, " ")
 	text := fmt.Sprintf("Run this command and show the output:\n```\n%s\n```", cmd)
-	return postJSON(base+"/send", map[string]string{"text": text})
+	body := map[string]string{"text": text}
+	if agent != "" {
+		body["agent"] = agent
+	}
+	return postJSON(base+"/send", body)
 }
 
 func cmdCommand(base string, args []string) error {
+	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod command </cmd> [args]")
+		return fmt.Errorf("usage: clod command [-a agent] </cmd> [args]")
 	}
 	cmd := strings.Join(args, " ")
 	if !strings.HasPrefix(cmd, "/") {
 		cmd = "/" + cmd
 	}
-	return postJSON(base+"/command", map[string]string{"command": cmd})
+	body := map[string]string{"command": cmd}
+	if agent != "" {
+		body["agent"] = agent
+	}
+	return postJSON(base+"/command", body)
 }
 
 func postJSON(url string, body interface{}) error {
