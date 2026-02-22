@@ -71,6 +71,16 @@ func (m *BotManager) StartAll(ctx context.Context) {
 	log.Infof("telegram", "started %d bot(s)", len(m.all))
 }
 
+// SendStartupNotifications sends a startup notification to all primary bots.
+// Called after bots have started to notify users of service restart.
+func (m *BotManager) SendStartupNotifications() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for agentID, bot := range m.primary {
+		bot.SendStartupNotification(agentID)
+	}
+}
+
 // AgentIDs returns the IDs of all agents with primary bots.
 func (m *BotManager) AgentIDs() []string {
 	m.mu.RLock()

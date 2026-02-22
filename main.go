@@ -261,23 +261,23 @@ func main() {
 
 	for _, acfg := range cfg.Agents {
 		inst := setupAgent(setupParams{
-			acfg:             acfg,
-			cfg:              cfg,
-			configPath:       configPath,
-			client:           client,
-			sessions:         sessions,
-			store:            store,
-			memIdx:           memIdx,
-			reminderStore:    reminderStore,
-			scratchpadStore:  scratchpadStore,
-			sttProvider:      sttProvider,
-			ttsProvider:      ttsProvider,
-			braveKey:         braveKey,
+			acfg:                acfg,
+			cfg:                 cfg,
+			configPath:          configPath,
+			client:              client,
+			sessions:            sessions,
+			store:               store,
+			memIdx:              memIdx,
+			reminderStore:       reminderStore,
+			scratchpadStore:     scratchpadStore,
+			sttProvider:         sttProvider,
+			ttsProvider:         ttsProvider,
+			braveKey:            braveKey,
 			anthropicOAuthToken: anthropicOAuthToken,
-			usageClient:      usageClient,
-			botMgr:           botMgr,
-			startTime:        startTime,
-			ctx:              ctx,
+			usageClient:         usageClient,
+			botMgr:              botMgr,
+			startTime:           startTime,
+			ctx:                 ctx,
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
@@ -286,6 +286,9 @@ func main() {
 
 	// Start all bots
 	botMgr.StartAll(ctx)
+
+	// Send startup notifications to users via Telegram
+	botMgr.SendStartupNotifications()
 
 	// Start all heartbeats
 	for _, id := range agentOrder {

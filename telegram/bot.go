@@ -523,6 +523,29 @@ func (b *Bot) SendNotification(text string) {
 	}
 }
 
+// SendStartupNotification sends a startup notification to the last known chat.
+// Logs a warning if no chat ID is available (first startup without prior messages).
+func (b *Bot) SendStartupNotification(agentID string) {
+	b.chatMu.Lock()
+	chatID := b.chatID
+	b.chatMu.Unlock()
+
+	if chatID == 0 {
+		log.Warnf("telegram", "no chat ID for startup notification (first run?)")
+		return
+	}
+
+	botName := b.Username()
+	if botName == "" {
+		botName = "clod"
+	}
+	text := fmt.Sprintf("%s restarted at %s", botName, time.Now().Format("15:04:05"))
+
+	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
+		log.Errorf("telegram", "send startup notification: %v", err)
+	}
+}
+
 // SendText sends a text message to the last known chat with HTML support.
 // Returns an error if no chat ID is available.
 // Silently skips empty or whitespace-only messages.
