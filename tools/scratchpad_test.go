@@ -21,6 +21,17 @@ func testScratchpadTools(t *testing.T) (*Tool, *Tool, *Tool) {
 	return NewScratchpadWriteTool(s), NewScratchpadReadTool(s), NewScratchpadClearTool(s)
 }
 
+func testScratchpadToolsWithList(t *testing.T) (*Tool, *Tool, *Tool, *Tool) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := memory.NewScratchpad(dbPath)
+	if err != nil {
+		t.Fatalf("NewScratchpad: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return NewScratchpadWriteTool(s), NewScratchpadReadTool(s), NewScratchpadClearTool(s), NewScratchpadListTool(s)
+}
+
 func TestScratchpadToolWriteRead(t *testing.T) {
 	writeTool, readTool, _ := testScratchpadTools(t)
 	ctx := context.Background()
@@ -90,5 +101,42 @@ func TestScratchpadToolWriteMissingKey(t *testing.T) {
 	_, err := writeTool.Execute(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestScratchpadToolListEmpty(t *testing.T) {
+	_, _, _, listTool := testScratchpadToolsWithList(t)
+	params := json.RawMessage("{}")
+
+	result, err := listTool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if result != "No scratchpad entries." {
+		t.Errorf("expected empty message, got %q", result)
+	}
+}
+
+func TestScratchpadToolListWithEntries(t *testing.T) {
+	writeTool, _, _, listTool := testScratchpadToolsWithList(t)
+	ctx := context.Background()
+
+	// Write some entries
+	writeTool.Execute(ctx, json.RawMessage(`{"key": "notes", "content": "some data here"}`))
+	writeTool.Execute(ctx, json.RawMessage(`{"key": "context", "content": "more content for testing"}`))
+
+	params := json.RawMessage("{}")
+	result, err := listTool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if !strings.Contains(result, "notes") {
+		t.Errorf("missing notes in result: %q", result)
+	}
+	if !strings.Contains(result, "context") {
+		t.Errorf("missing context in result: %q", result)
+	}
+	if !strings.Contains(result, "Scratchpad entries:") {
+		t.Errorf("missing header in result: %q", result)
 	}
 }
