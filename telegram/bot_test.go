@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -601,6 +602,46 @@ func TestIsImageMIME(t *testing.T) {
 		if got := isImageMIME(tt.mime); got != tt.want {
 			t.Errorf("isImageMIME(%q) = %v, want %v", tt.mime, got, tt.want)
 		}
+	}
+}
+
+// --- sanitizeError ---
+
+func TestSanitizeError_RedactsToken(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.botToken = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+
+	err := fmt.Errorf(`failed to execute POST request to getUpdates: Post "https://api.telegram.org/bot123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11/getUpdates": context deadline exceeded`)
+	got := b.sanitizeError(err)
+
+	if strings.Contains(got, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11") {
+		t.Errorf("sanitizeError still contains token: %s", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("sanitizeError missing [REDACTED]: %s", got)
+	}
+	expected := `failed to execute POST request to getUpdates: Post "https://api.telegram.org/bot[REDACTED]/getUpdates": context deadline exceeded`
+	if got != expected {
+		t.Errorf("sanitizeError = %q, want %q", got, expected)
+	}
+}
+
+func TestSanitizeError_NilError(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.botToken = "some-token"
+
+	if got := b.sanitizeError(nil); got != "" {
+		t.Errorf("sanitizeError(nil) = %q, want empty", got)
+	}
+}
+
+func TestSanitizeError_NoToken(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.botToken = ""
+
+	err := fmt.Errorf("some error without token")
+	if got := b.sanitizeError(err); got != "some error without token" {
+		t.Errorf("sanitizeError = %q, want original", got)
 	}
 }
 

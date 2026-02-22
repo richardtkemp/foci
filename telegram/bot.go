@@ -208,7 +208,7 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			return
 		case res := <-ch:
 			if res.err != nil {
-				log.Errorf("telegram", "get updates: %v", res.err)
+				log.Errorf("telegram", "get updates: %s", b.sanitizeError(res.err))
 				select {
 				case <-ctx.Done():
 					return
@@ -282,7 +282,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Handle voice notes: download, transcribe, tag with [voice]
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
-			log.Errorf("telegram", "download voice: %v", err)
+			log.Errorf("telegram", "download voice: %s", b.sanitizeError(err))
 		} else {
 			transcript, err := b.transcriber.Transcribe(ctx, data, "voice.ogg")
 			if err != nil {
@@ -301,13 +301,13 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		// Take the largest photo (last in the array)
 		photo := msg.Photo[len(msg.Photo)-1]
 		if data, err := b.downloadFile(photo.FileId); err != nil {
-			log.Errorf("telegram", "download photo: %v", err)
+			log.Errorf("telegram", "download photo: %s", b.sanitizeError(err))
 		} else {
 			images = append(images, imageAttachment{data: data, mediaType: "image/jpeg"})
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
 		if data, err := b.downloadFile(msg.Document.FileId); err != nil {
-			log.Errorf("telegram", "download document: %v", err)
+			log.Errorf("telegram", "download document: %s", b.sanitizeError(err))
 		} else {
 			images = append(images, imageAttachment{data: data, mediaType: msg.Document.MimeType})
 		}
@@ -465,8 +465,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			log.Infof("telegram", "agent turn cancelled")
 			return // /stop was called, "Stopped." already sent
 		}
-		log.Errorf("telegram", "agent error: %v", err)
-		response = fmt.Sprintf("Error: %v", err)
+		log.Errorf("telegram", "agent error: %s", b.sanitizeError(err))
+		response = fmt.Sprintf("Error: %s", b.sanitizeError(err))
 	}
 
 	// Voice mode: convert final reply to voice note
@@ -507,7 +507,7 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 			// Retry without markdown if parsing fails
 			parseMode = ""
 			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, nil); err != nil {
-				log.Errorf("telegram", "send error: %v", err)
+				log.Errorf("telegram", "send error: %s", b.sanitizeError(err))
 				sendErr = err.Error()
 			}
 		}
@@ -538,7 +538,7 @@ func (b *Bot) SendNotification(text string) {
 	}
 
 	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
-		log.Errorf("telegram", "send notification: %v", err)
+		log.Errorf("telegram", "send notification: %s", b.sanitizeError(err))
 	}
 }
 
@@ -561,7 +561,7 @@ func (b *Bot) SendStartupNotification(agentID string) {
 	text := fmt.Sprintf("%s restarted at %s", botName, time.Now().Format("15:04:05"))
 
 	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
-		log.Errorf("telegram", "send startup notification: %v", err)
+		log.Errorf("telegram", "send startup notification: %s", b.sanitizeError(err))
 	}
 }
 
@@ -662,7 +662,7 @@ func (b *Bot) SendVoice(filePath string) error {
 // sendVoiceNote sends audio data as a Telegram voice note.
 func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
 	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil); err != nil {
-		log.Errorf("telegram", "send voice note: %v", err)
+		log.Errorf("telegram", "send voice note: %s", b.sanitizeError(err))
 	}
 
 	log.Conversation(log.ConversationEntry{
@@ -737,4 +737,16 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// sanitizeError replaces the bot token in an error string to prevent it
+// from leaking into log files.
+func (b *Bot) sanitizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if b.botToken == "" {
+		return err.Error()
+	}
+	return strings.ReplaceAll(err.Error(), b.botToken, "[REDACTED]")
 }
