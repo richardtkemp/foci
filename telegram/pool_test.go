@@ -9,7 +9,7 @@ import (
 func testSecondaryBot(name string) *Bot {
 	allowed := map[string]bool{"111": true}
 	return &Bot{
-		sender:       &mockSender{},
+		client:       &mockClient{},
 		commands:     command.NewRegistry(),
 		allowedUsers: allowed,
 		queue:        make(chan queuedMessage, 64),
