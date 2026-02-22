@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -387,6 +388,27 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	return string(out), err
 }
 
+// tuiNoisePatterns matches dynamic TUI elements that change constantly without
+// indicating meaningful activity: elapsed timers, clocks, spinner characters,
+// token/percentage counters, and progress indicators.
+var tuiNoisePatterns = regexp.MustCompile(strings.Join([]string{
+	`\d+[hm]\s*\d+[ms]`,                       // elapsed timers: "1m 3s", "2h 30m"
+	`\d+:\d{2}(:\d{2})?(\s*[AP]M)?`,           // clocks: "14:30", "2:30:00 PM"
+	`\d[\d,]*\s*tokens?`,                       // token counts: "88,447 tokens"
+	`\d+\.?\d*%`,                               // percentages: "44%", "88.5%"
+	`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏◐◓◑◒⣀⣤⣶⣿|/\-\\]`, // spinner chars
+	`\$\d+\.\d+`,                               // cost displays: "$0.0430"
+	`\d+\.\d+s`,                                // durations: "3.2s", "0.5s"
+}, "|"))
+
+// normalizePaneContent strips TUI noise from pane output so that only
+// meaningful content changes are detected by the watch monitor. This prevents
+// status bar clocks, elapsed timers, spinners, token counters, and progress
+// indicators from resetting the inactivity timer.
+func normalizePaneContent(content string) string {
+	return tuiNoisePatterns.ReplaceAllString(content, "")
+}
+
 func tmuxWatchMonitor(ws *watchedSession) {
 	defer close(ws.done)
 
@@ -404,8 +426,10 @@ func tmuxWatchMonitor(ws *watchedSession) {
 				return // session probably doesn't exist, stop watching
 			}
 
-			// Compute md5 hash of pane content
-			hash := md5.Sum([]byte(out))
+			// Normalize pane content to filter out TUI noise (status bar
+			// clocks, spinners, token counts, etc.) before hashing.
+			normalized := normalizePaneContent(out)
+			hash := md5.Sum([]byte(normalized))
 
 			// Check if content changed
 			if hash != ws.lastContent {
