@@ -67,8 +67,8 @@ func TestStatusCommand(t *testing.T) {
 		"42",
 		"idle",
 		"2h30m",
-		"in=300",     // 100+200
-		"out=150",    // 50+100
+		"in=300",         // 100+200
+		"out=150",        // 50+100
 		"cache_read=230", // 80+150
 	}
 	for _, check := range checks {
@@ -523,5 +523,64 @@ func TestVoiceCommand(t *testing.T) {
 	}
 	if !strings.Contains(result, "OFF") {
 		t.Errorf("expected OFF in result, got %q", result)
+	}
+}
+
+func TestManaCommand(t *testing.T) {
+	tests := []struct {
+		name       string
+		cmdName    string
+		manaFn     func(context.Context) (string, error)
+		wantResult string
+	}{
+		{
+			name:    "default mana name",
+			cmdName: "mana",
+			manaFn: func(ctx context.Context) (string, error) {
+				return "mana: 75% remaining", nil
+			},
+			wantResult: "mana: 75% remaining",
+		},
+		{
+			name:    "custom name juice",
+			cmdName: "juice",
+			manaFn: func(ctx context.Context) (string, error) {
+				return "juice: 50% remaining", nil
+			},
+			wantResult: "juice: 50% remaining",
+		},
+		{
+			name:    "custom name credits",
+			cmdName: "credits",
+			manaFn: func(ctx context.Context) (string, error) {
+				return "credits: 10% remaining", nil
+			},
+			wantResult: "credits: 10% remaining",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewManaCommand(tt.cmdName, tt.manaFn)
+			if cmd.Name != tt.cmdName {
+				t.Errorf("cmd.Name = %q, want %q", cmd.Name, tt.cmdName)
+			}
+			result, err := cmd.Execute(context.Background(), "")
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if result != tt.wantResult {
+				t.Errorf("result = %q, want %q", result, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestManaCommandDescription(t *testing.T) {
+	cmd := NewManaCommand("juice", func(ctx context.Context) (string, error) {
+		return "", nil
+	})
+	if !strings.Contains(cmd.Description, "juice") {
+		t.Errorf("Description should contain 'juice', got %q", cmd.Description)
 	}
 }
