@@ -11,32 +11,61 @@ import (
 )
 
 // mockGateway creates a test server that mimics the clod HTTP gateway.
+// It echoes the agent field back in responses so tests can verify it.
 func mockGateway() *httptest.Server {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Text string }
+		var req struct {
+			Agent string `json:"agent"`
+			Text  string `json:"text"`
+		}
 		json.NewDecoder(r.Body).Decode(&req)
+		resp := "echo: " + req.Text
+		if req.Agent != "" {
+			resp = "[" + req.Agent + "] " + resp
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": "echo: " + req.Text})
+		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
 
 	mux.HandleFunc("/wake", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Agent string `json:"agent"`
+			Text  string `json:"text"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		resp := "wake ok"
+		if req.Agent != "" {
+			resp = "[" + req.Agent + "] " + resp
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": "wake ok"})
+		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		agent := r.URL.Query().Get("agent")
+		resp := "status: idle"
+		if agent != "" {
+			resp = "[" + agent + "] " + resp
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": "status: idle"})
+		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
 
 	mux.HandleFunc("/command", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Command string }
+		var req struct {
+			Agent   string `json:"agent"`
+			Command string `json:"command"`
+		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Command == "/ping" {
+			resp := "pong"
+			if req.Agent != "" {
+				resp = "[" + req.Agent + "] " + resp
+			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"response": "pong"})
+			json.NewEncoder(w).Encode(map[string]string{"response": resp})
 			return
 		}
 		http.Error(w, "unknown command", http.StatusNotFound)
@@ -64,18 +93,39 @@ func TestCLIIntegration(t *testing.T) {
 		{"ping", []string{"ping"}, "pong", false},
 		{"command", []string{"command", "/ping"}, "pong", false},
 		{"eval", []string{"eval", "ls -la"}, "echo: Run this command", false},
+
+		// -a flag (space-separated)
+		{"send with -a", []string{"send", "-a", "research", "hello"}, "[research] echo: hello", false},
+		{"wake with -a", []string{"wake", "-a", "research"}, "[research] wake ok", false},
+		{"wake with -a and text", []string{"wake", "-a", "research", "check news"}, "[research] wake ok", false},
+		{"status with -a", []string{"status", "-a", "research"}, "[research] status: idle", false},
+		{"eval with -a", []string{"eval", "-a", "research", "ls"}, "[research] echo: Run this command", false},
+		{"command with -a", []string{"command", "-a", "research", "/ping"}, "[research] pong", false},
+		{"ping with -a", []string{"ping", "-a", "research"}, "[research] pong", false},
+
+		// --agent flag (space-separated)
+		{"send with --agent", []string{"send", "--agent", "main", "hello"}, "[main] echo: hello", false},
+
+		// --agent=value form
+		{"send with --agent=val", []string{"send", "--agent=scout", "hello"}, "[scout] echo: hello", false},
+
+		// -a=value form
+		{"send with -a=val", []string{"send", "-a=scout", "hello"}, "[scout] echo: hello", false},
+
+		// Flag after positional args
+		{"send flag after text", []string{"send", "hello", "-a", "research"}, "[research] echo: hello", false},
+	}
+
+	// Build the CLI binary once
+	binPath := t.TempDir() + "/clod"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %s\n%s", err, out)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Build the CLI binary
-			binPath := t.TempDir() + "/clod"
-			build := exec.Command("go", "build", "-o", binPath, ".")
-			build.Dir = "."
-			if out, err := build.CombinedOutput(); err != nil {
-				t.Fatalf("build failed: %s\n%s", err, out)
-			}
-
 			cmd := exec.Command(binPath, tt.args...)
 			cmd.Env = append(os.Environ(), "CLOD_ADDR="+addr)
 
@@ -90,6 +140,97 @@ func TestCLIIntegration(t *testing.T) {
 			}
 			if !strings.Contains(output, tt.want) {
 				t.Errorf("output %q does not contain %q", output, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAgentFlag(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantAgent string
+		wantRest  []string
+	}{
+		{
+			name:      "no flag",
+			args:      []string{"hello", "world"},
+			wantAgent: "",
+			wantRest:  []string{"hello", "world"},
+		},
+		{
+			name:      "-a with value",
+			args:      []string{"-a", "research", "hello"},
+			wantAgent: "research",
+			wantRest:  []string{"hello"},
+		},
+		{
+			name:      "--agent with value",
+			args:      []string{"--agent", "main", "hello"},
+			wantAgent: "main",
+			wantRest:  []string{"hello"},
+		},
+		{
+			name:      "-a=value",
+			args:      []string{"-a=scout", "hello"},
+			wantAgent: "scout",
+			wantRest:  []string{"hello"},
+		},
+		{
+			name:      "--agent=value",
+			args:      []string{"--agent=scout", "hello"},
+			wantAgent: "scout",
+			wantRest:  []string{"hello"},
+		},
+		{
+			name:      "flag after positional args",
+			args:      []string{"hello", "world", "-a", "research"},
+			wantAgent: "research",
+			wantRest:  []string{"hello", "world"},
+		},
+		{
+			name:      "flag in middle",
+			args:      []string{"hello", "--agent", "research", "world"},
+			wantAgent: "research",
+			wantRest:  []string{"hello", "world"},
+		},
+		{
+			name:      "empty args",
+			args:      []string{},
+			wantAgent: "",
+			wantRest:  []string{},
+		},
+		{
+			name:      "-a without value at end",
+			args:      []string{"hello", "-a"},
+			wantAgent: "",
+			wantRest:  []string{"hello", "-a"},
+		},
+		{
+			name:      "only -a and value",
+			args:      []string{"-a", "research"},
+			wantAgent: "research",
+			wantRest:  []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent, rest := parseAgentFlag(tt.args)
+			if agent != tt.wantAgent {
+				t.Errorf("agent = %q, want %q", agent, tt.wantAgent)
+			}
+			if len(rest) == 0 && len(tt.wantRest) == 0 {
+				return // both empty, ok
+			}
+			if len(rest) != len(tt.wantRest) {
+				t.Errorf("rest = %v (len %d), want %v (len %d)", rest, len(rest), tt.wantRest, len(tt.wantRest))
+				return
+			}
+			for i := range rest {
+				if rest[i] != tt.wantRest[i] {
+					t.Errorf("rest[%d] = %q, want %q", i, rest[i], tt.wantRest[i])
+				}
 			}
 		})
 	}
