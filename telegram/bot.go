@@ -3,6 +3,7 @@ package telegram
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 // botClient abstracts Telegram API methods for testability.
 type botClient interface {
 	SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error)
+	EditMessageText(text string, opts *gotgbot.EditMessageTextOpts) (*gotgbot.Message, bool, error)
 	SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error)
 	SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error)
 	SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error)
@@ -453,6 +455,36 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	})
 	defer b.agent.SetActivityFunc(nil)
 
+	// Track tool calls for live visibility via send+edit pattern
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+	b.agent.SetToolCallObserver(func(toolName string, params json.RawMessage) {
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+
+		text := formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			// First tool call: send a new message
+			sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			if err != nil {
+				log.Debugf("telegram", "send tool call msg: %v", err)
+				return
+			}
+			toolMsgID = sent.MessageId
+		} else {
+			// Subsequent tool calls: edit the existing message
+			_, _, err := b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId:    qm.msg.Chat.Id,
+				MessageId: toolMsgID,
+				ParseMode: "HTML",
+			})
+			if err != nil {
+				log.Debugf("telegram", "edit tool call msg: %v", err)
+			}
+		}
+	})
+	defer b.agent.SetToolCallObserver(nil)
+
 	var response string
 	var err error
 	if len(qm.images) > 0 {
@@ -483,6 +515,35 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, audioData)
 		}
 		return
+	}
+
+	// If we sent a tool-call message, try to edit it with the final response.
+	// Fall back to sendReply if the response is too long for a single edit
+	// or if the edit fails.
+	toolMsgMu.Lock()
+	editID := toolMsgID
+	toolMsgMu.Unlock()
+
+	if editID != 0 && len(response) <= 4096 {
+		htmlResp := ConvertToTelegramHTML(response)
+		_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
+			ChatId:    qm.msg.Chat.Id,
+			MessageId: editID,
+			ParseMode: "HTML",
+		})
+		if editErr == nil {
+			log.Conversation(log.ConversationEntry{
+				Direction: "sent",
+				UserID:    qm.userID,
+				Username:  qm.msg.From.Username,
+				ChatID:    qm.msg.Chat.Id,
+				Text:      htmlResp,
+				ParseMode: "HTML",
+				Session:   b.SessionKey(),
+			})
+			return
+		}
+		log.Debugf("telegram", "edit final response failed, falling back: %v", editErr)
 	}
 
 	b.sendReply(qm.msg, qm.userID, response)
@@ -735,6 +796,29 @@ func splitMessage(text string, maxLen int) []string {
 		text = text[end:]
 	}
 	return chunks
+}
+
+// formatToolCall formats a tool call for display in Telegram.
+func formatToolCall(toolName string, params json.RawMessage) string {
+	// Pretty-print params, truncated
+	paramStr := string(params)
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, params, "", "  ") == nil {
+		paramStr = pretty.String()
+	}
+	if len(paramStr) > 300 {
+		paramStr = paramStr[:300] + "..."
+	}
+	paramStr = htmlEscapeBot(paramStr)
+	return fmt.Sprintf("🔧 <b>%s</b>\n<pre>%s</pre>", htmlEscapeBot(toolName), paramStr)
+}
+
+// htmlEscapeBot escapes HTML special characters for Telegram messages.
+func htmlEscapeBot(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
 }
 
 func truncate(s string, max int) string {

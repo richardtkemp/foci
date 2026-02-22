@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 type mockClient struct {
 	mu    sync.Mutex
 	sends int               // counts SendMessage calls
+	edits int               // counts EditMessageText calls
 	files map[string]string // fileId → filePath for GetFile mock
 }
 
@@ -24,7 +26,14 @@ func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sends++
-	return &gotgbot.Message{}, nil
+	return &gotgbot.Message{MessageId: int64(m.sends)}, nil
+}
+
+func (m *mockClient) EditMessageText(text string, opts *gotgbot.EditMessageTextOpts) (*gotgbot.Message, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.edits++
+	return &gotgbot.Message{}, true, nil
 }
 
 func (m *mockClient) SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error) {
@@ -56,6 +65,12 @@ func (m *mockClient) sentCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.sends
+}
+
+func (m *mockClient) editCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.edits
 }
 
 // testBot creates a Bot for testing with a mock client.
@@ -689,5 +704,41 @@ func TestSendText_SendsNonEmptyMessage(t *testing.T) {
 	}
 	if mock.sentCount() != 1 {
 		t.Errorf("sentCount = %d, want 1 for non-empty message", mock.sentCount())
+	}
+}
+
+// --- Tool call visibility ---
+
+func TestFormatToolCall(t *testing.T) {
+	text := formatToolCall("exec", json.RawMessage(`{"command":"ls -la"}`))
+	if !strings.Contains(text, "🔧") {
+		t.Error("missing tool emoji")
+	}
+	if !strings.Contains(text, "<b>exec</b>") {
+		t.Errorf("missing tool name in %q", text)
+	}
+	if !strings.Contains(text, "ls -la") {
+		t.Errorf("missing params in %q", text)
+	}
+}
+
+func TestFormatToolCall_HTMLEscape(t *testing.T) {
+	text := formatToolCall("exec", json.RawMessage(`{"command":"echo <script>"}`))
+	if strings.Contains(text, "<script>") {
+		t.Errorf("HTML not escaped in %q", text)
+	}
+	if !strings.Contains(text, "&lt;script&gt;") {
+		t.Errorf("expected escaped HTML in %q", text)
+	}
+}
+
+func TestFormatToolCall_LongParams(t *testing.T) {
+	longVal := strings.Repeat("x", 500)
+	text := formatToolCall("exec", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
+	if len(text) > 500 {
+		// Should be truncated
+	}
+	if !strings.Contains(text, "...") {
+		t.Errorf("long params should be truncated: %q", text)
 	}
 }
