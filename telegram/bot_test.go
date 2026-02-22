@@ -9,37 +9,63 @@ import (
 
 	"clod/command"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// mockSender records all sent messages for assertion.
-type mockSender struct {
-	mu   sync.Mutex
-	sent []tgbotapi.Chattable
+// mockClient implements botClient for testing.
+type mockClient struct {
+	mu    sync.Mutex
+	sends int              // counts SendMessage calls
+	files map[string]string // fileId → filePath for GetFile mock
 }
 
-func (m *mockSender) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sent = append(m.sent, c)
-	return tgbotapi.Message{}, nil
+	m.sends++
+	return &gotgbot.Message{}, nil
 }
 
-func (m *mockSender) sentCount() int {
+func (m *mockClient) SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error) {
+	return &gotgbot.Message{}, nil
+}
+
+func (m *mockClient) SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error) {
+	return &gotgbot.Message{}, nil
+}
+
+func (m *mockClient) SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error) {
+	return true, nil
+}
+
+func (m *mockClient) GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.sent)
+	if m.files == nil {
+		return nil, fmt.Errorf("file not found: %s", fileId)
+	}
+	fp, ok := m.files[fileId]
+	if !ok {
+		return nil, fmt.Errorf("file not found: %s", fileId)
+	}
+	return &gotgbot.File{FileId: fileId, FilePath: fp}, nil
 }
 
-// testBot creates a Bot for testing with a mock sender.
-func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockSender) {
-	mock := &mockSender{}
+func (m *mockClient) sentCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sends
+}
+
+// testBot creates a Bot for testing with a mock client.
+func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) {
+	mock := &mockClient{}
 	allowed := make(map[string]bool)
 	for _, u := range allowedUsers {
 		allowed[u] = true
 	}
 	b := &Bot{
-		sender:       mock,
+		client:       mock,
 		commands:     cmds,
 		lastMsgStore: command.NewLastMessageStore(),
 		allowedUsers: allowed,
@@ -49,34 +75,34 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockSender) 
 	return b, mock
 }
 
-func makeMsg(userID int64, username, text string) *tgbotapi.Message {
-	return &tgbotapi.Message{
-		From: &tgbotapi.User{ID: userID, UserName: username},
-		Chat: &tgbotapi.Chat{ID: 12345},
+func makeMsg(userID int64, username, text string) *gotgbot.Message {
+	return &gotgbot.Message{
+		From: &gotgbot.User{Id: userID, Username: username},
+		Chat: gotgbot.Chat{Id: 12345},
 		Text: text,
 	}
 }
 
 // makeMsgWithPhoto creates a test message with a photo attachment.
-func makeMsgWithPhoto(userID int64, username, caption string) *tgbotapi.Message {
-	return &tgbotapi.Message{
-		From:    &tgbotapi.User{ID: userID, UserName: username},
-		Chat:    &tgbotapi.Chat{ID: 12345},
+func makeMsgWithPhoto(userID int64, username, caption string) *gotgbot.Message {
+	return &gotgbot.Message{
+		From:    &gotgbot.User{Id: userID, Username: username},
+		Chat:    gotgbot.Chat{Id: 12345},
 		Caption: caption,
-		Photo: []tgbotapi.PhotoSize{
-			{FileID: "small_id", Width: 90, Height: 90, FileSize: 1000},
-			{FileID: "large_id", Width: 800, Height: 600, FileSize: 50000},
+		Photo: []gotgbot.PhotoSize{
+			{FileId: "small_id", Width: 90, Height: 90, FileSize: 1000},
+			{FileId: "large_id", Width: 800, Height: 600, FileSize: 50000},
 		},
 	}
 }
 
 // makeMsgWithDocument creates a test message with a document attachment.
-func makeMsgWithDocument(userID int64, username, mime string) *tgbotapi.Message {
-	return &tgbotapi.Message{
-		From: &tgbotapi.User{ID: userID, UserName: username},
-		Chat: &tgbotapi.Chat{ID: 12345},
-		Document: &tgbotapi.Document{
-			FileID:   "doc_id",
+func makeMsgWithDocument(userID int64, username, mime string) *gotgbot.Message {
+	return &gotgbot.Message{
+		From: &gotgbot.User{Id: userID, Username: username},
+		Chat: gotgbot.Chat{Id: 12345},
+		Document: &gotgbot.Document{
+			FileId:   "doc_id",
 			MimeType: mime,
 		},
 	}
@@ -349,34 +375,13 @@ func TestTruncate_Long(t *testing.T) {
 
 // --- Image support ---
 
-// mockFileGetter implements fileGetter for tests.
-type mockFileGetter struct {
-	files map[string]tgbotapi.File
-	err   error
-}
-
-func (m *mockFileGetter) GetFile(config tgbotapi.FileConfig) (tgbotapi.File, error) {
-	if m.err != nil {
-		return tgbotapi.File{}, m.err
-	}
-	f, ok := m.files[config.FileID]
-	if !ok {
-		return tgbotapi.File{}, fmt.Errorf("file not found: %s", config.FileID)
-	}
-	return f, nil
-}
-
 func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	// Set up a mock file getter that returns file info
-	// (actual download hits the network, but we can test queueing without it)
-	fg := &mockFileGetter{
-		files: map[string]tgbotapi.File{
-			"large_id": {FileID: "large_id", FilePath: "photos/test.jpg"},
-		},
+	// Set up mock file info for photo downloads
+	mock.files = map[string]string{
+		"large_id": "photos/test.jpg",
 	}
-	b.fileGetter = fg
 	b.botToken = "test-token"
 
 	// The download will fail (no real server), but the message should still queue
@@ -396,12 +401,10 @@ func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
 
 func TestReceiveMessage_PhotoWithoutCaption(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	fg := &mockFileGetter{
-		files: map[string]tgbotapi.File{
-			"large_id": {FileID: "large_id", FilePath: "photos/test.jpg"},
-		},
+	mock := b.client.(*mockClient)
+	mock.files = map[string]string{
+		"large_id": "photos/test.jpg",
 	}
-	b.fileGetter = fg
 	b.botToken = "test-token"
 
 	// Photo message with no text and no caption — should still be queued
@@ -409,22 +412,16 @@ func TestReceiveMessage_PhotoWithoutCaption(t *testing.T) {
 	msg := makeMsgWithPhoto(111, "owner", "")
 	b.receiveMessage(context.Background(), msg)
 
-	// Even if download fails, it shouldn't be silently dropped anymore
-	// The message will queue if it has text or images (download error logged but message still queued with text="" and whatever images succeeded)
 	// Since download hits network and fails, images will be empty, and text is empty => dropped
-	// Let's just verify the old behavior of not dropping when there's a caption
-	// This case tests that empty caption + failed download = dropped (same as before for no-content messages)
-	// The real test is TestReceiveMessage_PhotoMessageQueued which has caption
+	// This case tests that empty caption + failed download = dropped
 }
 
 func TestReceiveMessage_DocumentImageQueued(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	fg := &mockFileGetter{
-		files: map[string]tgbotapi.File{
-			"doc_id": {FileID: "doc_id", FilePath: "documents/image.png"},
-		},
+	mock := b.client.(*mockClient)
+	mock.files = map[string]string{
+		"doc_id": "documents/image.png",
 	}
-	b.fileGetter = fg
 	b.botToken = "test-token"
 
 	msg := makeMsgWithDocument(111, "owner", "image/png")
@@ -448,11 +445,11 @@ func TestReceiveMessage_NonImageDocumentIgnored(t *testing.T) {
 
 // --- Voice support ---
 
-func makeMsgWithVoice(userID int64, username string) *tgbotapi.Message {
-	return &tgbotapi.Message{
-		From:  &tgbotapi.User{ID: userID, UserName: username},
-		Chat:  &tgbotapi.Chat{ID: 12345},
-		Voice: &tgbotapi.Voice{FileID: "voice_id", Duration: 5},
+func makeMsgWithVoice(userID int64, username string) *gotgbot.Message {
+	return &gotgbot.Message{
+		From:  &gotgbot.User{Id: userID, Username: username},
+		Chat:  gotgbot.Chat{Id: 12345},
+		Voice: &gotgbot.Voice{FileId: "voice_id", Duration: 5},
 	}
 }
 

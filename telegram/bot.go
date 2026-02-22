@@ -1,10 +1,13 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -14,17 +17,16 @@ import (
 	"clod/log"
 	"clod/voice"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// sender abstracts the Telegram send API for testability.
-type sender interface {
-	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
-}
-
-// fileGetter abstracts getting file info from Telegram for testability.
-type fileGetter interface {
-	GetFile(config tgbotapi.FileConfig) (tgbotapi.File, error)
+// botClient abstracts Telegram API methods for testability.
+type botClient interface {
+	SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error)
+	SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error)
+	SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error)
+	SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error)
+	GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error)
 }
 
 // imageAttachment is a downloaded image ready for the agent.
@@ -35,7 +37,7 @@ type imageAttachment struct {
 
 // queuedMessage is a message waiting for the agent to process.
 type queuedMessage struct {
-	msg    *tgbotapi.Message
+	msg    *gotgbot.Message
 	userID string
 	text   string
 	images []imageAttachment
@@ -45,9 +47,8 @@ type queuedMessage struct {
 // Messages are received on one goroutine and processed on another.
 // Slash commands execute immediately on the receiver goroutine.
 type Bot struct {
-	api          *tgbotapi.BotAPI // for receiving updates (Run)
-	sender       sender           // for sending messages (mockable in tests)
-	fileGetter   fileGetter       // for getting file info (mockable in tests)
+	api          *gotgbot.Bot // for receiving updates (Run)
+	client       botClient    // for sending messages and files (mockable in tests)
 	agent        *agent.Agent
 	commands     *command.Registry
 	lastMsgStore *command.LastMessageStore // for // repeat command
@@ -70,7 +71,7 @@ type Bot struct {
 
 // NewBot creates a new Telegram bot.
 func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, lastMsgStore *command.LastMessageStore, sessionKey string) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(token)
+	api, err := gotgbot.NewBot(token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
 	}
@@ -82,8 +83,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 
 	return &Bot{
 		api:          api,
-		sender:       api,
-		fileGetter:   api,
+		client:       api,
 		agent:        ag,
 		commands:     cmds,
 		lastMsgStore: lastMsgStore,
@@ -126,7 +126,7 @@ func (b *Bot) SetSessionKey(key string) {
 
 // Username returns the bot's Telegram username.
 func (b *Bot) Username() string {
-	return b.api.Self.UserName
+	return b.api.Username
 }
 
 // ChatID returns the last known chat ID.
@@ -146,7 +146,7 @@ func (b *Bot) SetChatID(id int64) {
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
 // If polling fails, it recovers and retries with backoff.
 func (b *Bot) Run(ctx context.Context) {
-	log.Infof("telegram", "bot started as @%s", b.api.Self.UserName)
+	log.Infof("telegram", "bot started as @%s", b.api.Username)
 
 	// Agent worker — processes queued messages sequentially
 	go b.agentWorker(ctx)
@@ -167,8 +167,8 @@ func (b *Bot) Run(ctx context.Context) {
 	}
 }
 
-// pollUpdates runs the telegram update polling loop. Returns if the channel
-// closes, a panic occurs, or ctx is cancelled. Caller should retry on return.
+// pollUpdates runs the telegram update polling loop. Returns if a panic
+// occurs or ctx is cancelled. Caller should retry on return.
 func (b *Bot) pollUpdates(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -176,41 +176,67 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 		}
 	}()
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	updates := b.api.GetUpdatesChan(u)
-	defer b.api.StopReceivingUpdates()
+	type updateResult struct {
+		updates []gotgbot.Update
+		err     error
+	}
 
+	var offset int64
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Poll in a goroutine so we can select on ctx.Done()
+		ch := make(chan updateResult, 1)
+		go func() {
+			updates, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
+				Offset:  offset,
+				Timeout: 60,
+			})
+			ch <- updateResult{updates, err}
+		}()
+
 		select {
 		case <-ctx.Done():
 			return
-		case update, ok := <-updates:
-			if !ok {
-				log.Warnf("telegram", "updates channel closed")
-				return
-			}
-			if update.Message == nil {
+		case res := <-ch:
+			if res.err != nil {
+				log.Errorf("telegram", "get updates: %v", res.err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
 				continue
 			}
-			b.receiveMessage(ctx, update.Message)
+
+			for _, update := range res.updates {
+				if update.UpdateId >= offset {
+					offset = update.UpdateId + 1
+				}
+				if update.Message == nil {
+					continue
+				}
+				b.receiveMessage(ctx, update.Message)
+			}
 		}
 	}
 }
 
 // receiveMessage handles an incoming message on the receiver goroutine.
 // Slash commands execute immediately. Agent messages are queued.
-func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
-	userID := fmt.Sprintf("%d", msg.From.ID)
+func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
+	userID := fmt.Sprintf("%d", msg.From.Id)
 
 	if !b.allowedUsers[userID] {
-		log.Warnf("telegram", "rejected message from user %s (%s)", userID, msg.From.UserName)
+		log.Warnf("telegram", "rejected message from user %s (%s)", userID, msg.From.Username)
 		return
 	}
 
 	// Remember chat ID for notifications (cache bust alerts, etc.)
 	b.chatMu.Lock()
-	b.chatID = msg.Chat.ID
+	b.chatID = msg.Chat.Id
 	b.chatMu.Unlock()
 
 	// Get text from message or caption (photos use caption)
@@ -219,8 +245,12 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		text = msg.Caption
 	}
 
-	// Include quoted message context when user replies to a specific message
-	if msg.ReplyToMessage != nil {
+	// Include quoted message context when user replies to a specific message.
+	// Prefer the specific quote text (user highlighted a portion) over the
+	// full replied-to message, which may be very long.
+	if msg.Quote != nil && msg.Quote.Text != "" {
+		text = fmt.Sprintf("[Quoting: %s]\n\n%s", msg.Quote.Text, text)
+	} else if msg.ReplyToMessage != nil {
 		quoted := msg.ReplyToMessage.Text
 		if quoted == "" {
 			quoted = msg.ReplyToMessage.Caption
@@ -232,7 +262,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	// Handle voice notes: download, transcribe, tag with [voice]
 	if msg.Voice != nil && b.transcriber != nil {
-		if data, err := b.downloadFile(msg.Voice.FileID); err != nil {
+		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			log.Errorf("telegram", "download voice: %v", err)
 		} else {
 			transcript, err := b.transcriber.Transcribe(ctx, data, "voice.ogg")
@@ -241,23 +271,23 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 				b.sendReply(msg, userID, "Could not transcribe voice note.")
 				return
 			}
-			log.Infof("telegram", "voice transcription from %s: %s", msg.From.UserName, truncate(transcript, 100))
+			log.Infof("telegram", "voice transcription from %s: %s", msg.From.Username, truncate(transcript, 100))
 			text = "[voice] " + transcript
 		}
 	}
 
 	// Download images from photos or image documents
 	var images []imageAttachment
-	if msg.Photo != nil && len(msg.Photo) > 0 {
+	if len(msg.Photo) > 0 {
 		// Take the largest photo (last in the array)
 		photo := msg.Photo[len(msg.Photo)-1]
-		if data, err := b.downloadFile(photo.FileID); err != nil {
+		if data, err := b.downloadFile(photo.FileId); err != nil {
 			log.Errorf("telegram", "download photo: %v", err)
 		} else {
 			images = append(images, imageAttachment{data: data, mediaType: "image/jpeg"})
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
-		if data, err := b.downloadFile(msg.Document.FileID); err != nil {
+		if data, err := b.downloadFile(msg.Document.FileId); err != nil {
 			log.Errorf("telegram", "download document: %v", err)
 		} else {
 			images = append(images, imageAttachment{data: data, mediaType: msg.Document.MimeType})
@@ -273,14 +303,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 	if len(images) > 0 {
 		logText = fmt.Sprintf("[%d image(s)] %s", len(images), text)
 	}
-	log.Infof("telegram", "message from %s: %s", msg.From.UserName, truncate(logText, 100))
+	log.Infof("telegram", "message from %s: %s", msg.From.Username, truncate(logText, 100))
 
 	// Log received message
 	log.Conversation(log.ConversationEntry{
 		Direction: "recv",
 		UserID:    userID,
-		Username:  msg.From.UserName,
-		ChatID:    msg.Chat.ID,
+		Username:  msg.From.Username,
+		ChatID:    msg.Chat.Id,
 		Text:      logText,
 		Session:   b.SessionKey(),
 	})
@@ -340,7 +370,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 	select {
 	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, images: images}:
 	default:
-		log.Warnf("telegram", "message queue full, dropping message from %s", msg.From.UserName)
+		log.Warnf("telegram", "message queue full, dropping message from %s", msg.From.Username)
 		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
 	}
 }
@@ -379,8 +409,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}()
 
 	// Send typing indicator
-	typing := tgbotapi.NewChatAction(qm.msg.Chat.ID, tgbotapi.ChatTyping)
-	b.sender.Send(typing)
+	b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 
 	// Set up intermediate reply delivery (deferred replies)
 	b.agent.SetReplyFunc(func(text string) {
@@ -390,13 +419,13 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	// Set up voice reply delivery (for TTS tool)
 	b.agent.SetVoiceReplyFunc(func(oggData []byte) {
-		b.sendVoiceNote(qm.msg.Chat.ID, qm.userID, qm.msg.From.UserName, oggData)
+		b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, oggData)
 	})
 	defer b.agent.SetVoiceReplyFunc(nil)
 
 	// Refresh typing indicator when tools complete, so user sees continuous activity
 	b.agent.SetActivityFunc(func() {
-		b.sender.Send(tgbotapi.NewChatAction(qm.msg.Chat.ID, tgbotapi.ChatTyping))
+		b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 	})
 	defer b.agent.SetActivityFunc(nil)
 
@@ -427,7 +456,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			log.Errorf("telegram", "tts for voice mode: %v", err)
 			b.sendReply(qm.msg, qm.userID, response) // fall back to text
 		} else {
-			b.sendVoiceNote(qm.msg.Chat.ID, qm.userID, qm.msg.From.UserName, audioData)
+			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, audioData)
 		}
 		return
 	}
@@ -448,18 +477,17 @@ func (b *Bot) cancelTurn() {
 // sendReply sends a response back to the user, splitting long messages and
 // falling back to plain text if HTML formatting fails.
 // Logs each chunk to the conversation log.
-func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
+func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 	// Convert standard markdown to Telegram HTML
 	response = ConvertToTelegramHTML(response)
 
 	for _, chunk := range splitMessage(response, 4096) {
-		reply := tgbotapi.NewMessage(msg.Chat.ID, chunk)
-		reply.ParseMode = "HTML"
+		parseMode := "HTML"
 		sendErr := ""
-		if _, err := b.sender.Send(reply); err != nil {
+		if _, err := b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
 			// Retry without markdown if parsing fails
-			reply.ParseMode = ""
-			if _, err := b.sender.Send(reply); err != nil {
+			parseMode = ""
+			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, nil); err != nil {
 				log.Errorf("telegram", "send error: %v", err)
 				sendErr = err.Error()
 			}
@@ -468,10 +496,10 @@ func (b *Bot) sendReply(msg *tgbotapi.Message, userID string, response string) {
 		log.Conversation(log.ConversationEntry{
 			Direction: "sent",
 			UserID:    userID,
-			Username:  msg.From.UserName,
-			ChatID:    msg.Chat.ID,
+			Username:  msg.From.Username,
+			ChatID:    msg.Chat.Id,
 			Text:      chunk,
-			ParseMode: reply.ParseMode,
+			ParseMode: parseMode,
 			Session:   b.SessionKey(),
 			Error:     sendErr,
 		})
@@ -490,8 +518,7 @@ func (b *Bot) SendNotification(text string) {
 		return
 	}
 
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := b.sender.Send(msg); err != nil {
+	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
 		log.Errorf("telegram", "send notification: %v", err)
 	}
 }
@@ -511,11 +538,8 @@ func (b *Bot) SendText(text string) error {
 	}
 
 	for _, chunk := range splitMessage(text, 4096) {
-		msg := tgbotapi.NewMessage(chatID, chunk)
-		msg.ParseMode = "HTML"
-		if _, err := b.sender.Send(msg); err != nil {
-			msg.ParseMode = ""
-			if _, err := b.sender.Send(msg); err != nil {
+		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
+			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
 				return fmt.Errorf("send: %w", err)
 			}
 		}
@@ -540,8 +564,13 @@ func (b *Bot) SendDocument(filePath string) error {
 		return fmt.Errorf("no chat ID — no messages received yet")
 	}
 
-	doc := tgbotapi.NewDocument(chatID, tgbotapi.FilePath(filePath))
-	if _, err := b.sender.Send(doc); err != nil {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open document: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendDocument(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send document: %w", err)
 	}
 
@@ -564,8 +593,13 @@ func (b *Bot) SendVoice(filePath string) error {
 		return fmt.Errorf("no chat ID — no messages received yet")
 	}
 
-	v := tgbotapi.NewVoice(chatID, tgbotapi.FilePath(filePath))
-	if _, err := b.sender.Send(v); err != nil {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open voice file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send voice: %w", err)
 	}
 
@@ -580,11 +614,7 @@ func (b *Bot) SendVoice(filePath string) error {
 
 // sendVoiceNote sends audio data as a Telegram voice note.
 func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
-	voice := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{
-		Name:  "voice.mp3",
-		Bytes: audioData,
-	})
-	if _, err := b.sender.Send(voice); err != nil {
+	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil); err != nil {
 		log.Errorf("telegram", "send voice note: %v", err)
 	}
 
@@ -600,7 +630,7 @@ func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioD
 
 // downloadFile downloads a file from Telegram by file ID.
 func (b *Bot) downloadFile(fileID string) ([]byte, error) {
-	file, err := b.fileGetter.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	file, err := b.client.GetFile(fileID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get file info: %w", err)
 	}
