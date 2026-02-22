@@ -671,7 +671,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			// Check if compaction is needed
 			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
-				if err := a.Compactor.Compact(ctx, sessionKey, system, a.CompactionSummaryPrompt, a.CompactionHandoffMsg); err != nil {
+				if err := a.Compactor.Compact(ctx, sessionKey, a.CompactionSummaryPrompt, a.CompactionHandoffMsg); err != nil {
 					log.Errorf("agent", "compaction failed: %v", err)
 				}
 				// Reload system prompt — compaction may have changed memory files
@@ -849,7 +849,7 @@ func repairInterruptedToolCalls(messages []anthropic.Message) *anthropic.Message
 
 	var results []anthropic.ContentBlock
 	for _, id := range toolUseIDs {
-		results = append(results, anthropic.ToolResultBlock(id, "no data", true))
+		results = append(results, anthropic.ToolResultBlock(id, "Tool call interrupted by service restart", true))
 	}
 	return &anthropic.Message{Role: "user", Content: results}
 }

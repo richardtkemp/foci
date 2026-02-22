@@ -245,3 +245,163 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 		t.Errorf("CreatedAt after Replace = %q, want %q", newCreatedAt, originalCreatedAt)
 	}
 }
+
+// --- RepairOrphans tests ---
+
+func toolUseMsg(ids ...string) anthropic.Message {
+	var blocks []anthropic.ContentBlock
+	for _, id := range ids {
+		blocks = append(blocks, anthropic.ContentBlock{
+			Type:  "tool_use",
+			ID:    id,
+			Name:  "exec",
+			Input: []byte(`{"command":"ls"}`),
+		})
+	}
+	return anthropic.Message{Role: "assistant", Content: blocks}
+}
+
+func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	s.Append(key, msg("user", "hello"))
+	s.Append(key, toolUseMsg("toolu_123"))
+
+	n, err := s.RepairOrphans()
+	if err != nil {
+		t.Fatalf("RepairOrphans: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("repaired = %d, want 1", n)
+	}
+
+	msgs, err := s.Load(key)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3", len(msgs))
+	}
+
+	repair := msgs[2]
+	if repair.Role != "user" {
+		t.Errorf("repair role = %q, want user", repair.Role)
+	}
+	if len(repair.Content) != 1 {
+		t.Fatalf("repair content blocks = %d, want 1", len(repair.Content))
+	}
+	block := repair.Content[0]
+	if block.Type != "tool_result" {
+		t.Errorf("block type = %q, want tool_result", block.Type)
+	}
+	if block.ToolUseID != "toolu_123" {
+		t.Errorf("tool_use_id = %q, want toolu_123", block.ToolUseID)
+	}
+	if !block.IsError {
+		t.Error("expected is_error = true")
+	}
+	if block.Content != "Tool call interrupted by service restart" {
+		t.Errorf("content = %q", block.Content)
+	}
+}
+
+func TestRepairOrphansNoOpWhenClean(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	s.Append(key, msg("user", "hello"))
+	s.Append(key, msg("assistant", "hi"))
+	s.Append(key, msg("user", "bye"))
+
+	n, err := s.RepairOrphans()
+	if err != nil {
+		t.Fatalf("RepairOrphans: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("repaired = %d, want 0", n)
+	}
+
+	msgs, _ := s.Load(key)
+	if len(msgs) != 3 {
+		t.Errorf("len = %d, want 3 (unchanged)", len(msgs))
+	}
+}
+
+func TestRepairOrphansMultipleSessions(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	// Broken session
+	broken := "agent:test:main"
+	s.Append(broken, msg("user", "hello"))
+	s.Append(broken, toolUseMsg("toolu_aaa"))
+
+	// Clean session
+	clean := "agent:test:cron:daily"
+	s.Append(clean, msg("user", "wake"))
+	s.Append(clean, msg("assistant", "done"))
+
+	n, err := s.RepairOrphans()
+	if err != nil {
+		t.Fatalf("RepairOrphans: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("repaired = %d, want 1", n)
+	}
+
+	// Broken should be repaired
+	msgs, _ := s.Load(broken)
+	if len(msgs) != 3 {
+		t.Errorf("broken len = %d, want 3", len(msgs))
+	}
+
+	// Clean should be unchanged
+	msgs, _ = s.Load(clean)
+	if len(msgs) != 2 {
+		t.Errorf("clean len = %d, want 2", len(msgs))
+	}
+}
+
+func TestRepairOrphansMultipleToolUse(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	s.Append(key, msg("user", "do things"))
+	s.Append(key, toolUseMsg("toolu_one", "toolu_two"))
+
+	n, err := s.RepairOrphans()
+	if err != nil {
+		t.Fatalf("RepairOrphans: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("repaired = %d, want 1", n)
+	}
+
+	msgs, _ := s.Load(key)
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3", len(msgs))
+	}
+
+	repair := msgs[2]
+	if len(repair.Content) != 2 {
+		t.Fatalf("repair blocks = %d, want 2", len(repair.Content))
+	}
+	if repair.Content[0].ToolUseID != "toolu_one" {
+		t.Errorf("block[0] tool_use_id = %q", repair.Content[0].ToolUseID)
+	}
+	if repair.Content[1].ToolUseID != "toolu_two" {
+		t.Errorf("block[1] tool_use_id = %q", repair.Content[1].ToolUseID)
+	}
+}
+
+func TestRepairOrphansEmptyDir(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	n, err := s.RepairOrphans()
+	if err != nil {
+		t.Fatalf("RepairOrphans: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("repaired = %d, want 0", n)
+	}
+}

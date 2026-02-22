@@ -116,6 +116,13 @@ func main() {
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
 
+	// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts)
+	if n, err := sessions.RepairOrphans(); err != nil {
+		log.Warnf("main", "session repair: %v", err)
+	} else if n > 0 {
+		log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
+	}
+
 	// Shared: State persistence (JSON file in sessions dir)
 	statePath := filepath.Join(cfg.Sessions.Dir, "state.json")
 	stateStore := state.New(statePath)
