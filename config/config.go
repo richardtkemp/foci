@@ -105,10 +105,11 @@ type SkillsConfig struct {
 }
 
 type ToolsConfig struct {
-	MaxResultChars int    `toml:"max_result_chars"` // max chars before writing result to file (default 10000)
-	TempDir        string `toml:"temp_dir"`         // where to write large tool results (default /tmp/clod-tool-results)
-	TmuxCols       int    `toml:"tmux_cols"`        // tmux window columns on start (default 300)
-	TmuxRows       int    `toml:"tmux_rows"`        // tmux window rows on start (default 30)
+	MaxResultChars     int    `toml:"max_result_chars"`      // max chars before writing result to file (default 10000)
+	TempDir            string `toml:"temp_dir"`              // where to write large tool results (default /tmp/clod-tool-results)
+	TmuxCols           int    `toml:"tmux_cols"`             // tmux window columns on start (default 300)
+	TmuxRows           int    `toml:"tmux_rows"`             // tmux window rows on start (default 30)
+	ExecAutoBackground int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec (default 10, 0 disables)
 }
 
 type CommandConfig struct {
@@ -230,6 +231,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.TmuxRows == 0 {
 		cfg.Tools.TmuxRows = 30
+	}
+	if cfg.Tools.ExecAutoBackground == 0 && !md.IsDefined("tools", "exec_auto_background") {
+		cfg.Tools.ExecAutoBackground = 10
 	}
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
