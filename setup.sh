@@ -399,7 +399,7 @@ info "Step 8: Service"
 if command -v systemctl &>/dev/null; then
     if systemctl is-active --quiet clod 2>/dev/null; then
         info "  Restarting clod"
-        run systemctl restart clod
+        run systemctl restart clod --no-block
     else
         info "  Starting clod"
         run systemctl start clod
