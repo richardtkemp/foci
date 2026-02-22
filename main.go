@@ -284,6 +284,18 @@ func main() {
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
 	}
 
+	// Wire log warnings into agent sessions (if enabled)
+	if cfg.Logging.InjectAgentWarnings {
+		log.WarnHook = func(level log.Level, component string, msg string) {
+			for _, inst := range agents {
+				if inst.ag.Warnings != nil {
+					inst.ag.Warnings.Push(level.String(), component, msg)
+				}
+			}
+		}
+		log.Infof("main", "warning injection into agent sessions enabled")
+	}
+
 	// Start all bots
 	botMgr.StartAll(ctx)
 
@@ -615,6 +627,11 @@ func setupAgent(p setupParams) *agentInstance {
 		DuplicateMessages: acfg.DuplicateMessages,
 		MaxResultChars:    p.cfg.Tools.MaxResultChars,
 		ToolResultTempDir: p.cfg.Tools.TempDir,
+	}
+
+	// Warning injection queue (if enabled)
+	if p.cfg.Logging.InjectAgentWarnings {
+		ag.Warnings = agent.NewWarningQueue()
 	}
 
 	// Model escalation tool (needs this agent's bootstrap)

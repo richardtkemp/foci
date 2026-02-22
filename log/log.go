@@ -153,6 +153,11 @@ func Close() {
 	}
 }
 
+// WarnHook is called for each WARN or ERROR log event, if set.
+// The callback receives the severity level, component, and message.
+// Used to inject warnings into the agent session.
+var WarnHook func(level Level, component string, msg string)
+
 // event writes a formatted log line if the level is at or above the configured level.
 func (l *Logger) event(level Level, component string, format string, args ...interface{}) {
 	if level < l.level {
@@ -170,6 +175,11 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	l.mu.Lock()
 	l.eventOut.Write([]byte(line))
 	l.mu.Unlock()
+
+	// Fire warn hook for WARN and ERROR levels
+	if (level == WARN || level == ERROR) && WarnHook != nil {
+		WarnHook(level, component, msg)
+	}
 }
 
 // api writes a structured API log entry.
