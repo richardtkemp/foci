@@ -63,7 +63,7 @@ func usage() {
 
 Commands:
   send <text>          Send a message to the agent (main session)
-  branch [text]         Trigger a branch session (wake alias for backward compat)
+  branch [text]        Trigger a branch session (wake alias for backward compat)
   status               Query agent status
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
@@ -71,6 +71,7 @@ Commands:
 
 Flags:
   -a, --agent <id>     Target a specific agent (default: first agent)
+  -s, --session <id>   Target a specific session (default: main)
 
 Environment:
   CLOD_ADDR            Gateway address (default: %s)
@@ -100,15 +101,59 @@ func parseAgentFlag(args []string) (agentID string, rest []string) {
 	return "", args
 }
 
+type sendFlags struct {
+	agent   string
+	session string
+}
+
+func parseSendFlags(args []string) (flags sendFlags, rest []string) {
+	var filtered []string
+	for i := 0; i < len(args); i++ {
+		consumed := false
+		if args[i] == "-a" || args[i] == "--agent" {
+			if i+1 < len(args) {
+				flags.agent = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if args[i] == "-s" || args[i] == "--session" {
+			if i+1 < len(args) {
+				flags.session = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--agent=") {
+			flags.agent = args[i][len("--agent="):]
+			consumed = true
+		} else if strings.HasPrefix(args[i], "-a=") {
+			flags.agent = args[i][len("-a="):]
+			consumed = true
+		} else if strings.HasPrefix(args[i], "--session=") {
+			flags.session = args[i][len("--session="):]
+			consumed = true
+		} else if strings.HasPrefix(args[i], "-s=") {
+			flags.session = args[i][len("-s="):]
+			consumed = true
+		}
+		if !consumed {
+			filtered = append(filtered, args[i])
+		}
+	}
+	return flags, filtered
+}
+
 func cmdSend(base string, args []string) error {
-	agent, args := parseAgentFlag(args)
+	flags, args := parseSendFlags(args)
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod send [-a agent] <message text>")
+		return fmt.Errorf("usage: clod send [-a agent] [-s session] <message text>")
 	}
 	text := strings.Join(args, " ")
 	body := map[string]string{"text": text}
-	if agent != "" {
-		body["agent"] = agent
+	if flags.agent != "" {
+		body["agent"] = flags.agent
+	}
+	if flags.session != "" {
+		body["session"] = flags.session
 	}
 	return postJSON(base+"/send", body)
 }
