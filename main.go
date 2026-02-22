@@ -517,6 +517,9 @@ func main() {
 	}
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
+	// Check for welcome file (written by setup.sh on update)
+	injectWelcomeFile(cfg.WelcomeFile, agents, agentOrder, sessions)
+
 	// Wait for signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -1028,4 +1031,35 @@ func gracefulShutdown(agents map[string]*agentInstance) {
 		time.Sleep(tickInterval)
 	}
 	log.Warnf("main", "graceful shutdown timed out — some agents still processing")
+}
+
+// injectWelcomeFile checks for a welcome/changelog file written by setup.sh
+// on update. If found, appends its contents to the most recent active session
+// for the first agent, then deletes the file.
+func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder []string, sessions *session.Store) {
+	if path == "" || len(agentOrder) == 0 {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return // file doesn't exist — normal for non-update starts
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		os.Remove(path)
+		return
+	}
+
+	// Inject into the first agent's main session
+	inst := agents[agentOrder[0]]
+	msg := fmt.Sprintf("[SYSTEM UPDATE]\n%s", content)
+	sessions.AppendAll(inst.sessionKey, []anthropic.Message{
+		{Role: "user", Content: anthropic.TextContent(msg)},
+		{Role: "assistant", Content: anthropic.TextContent("Update acknowledged. I'll review the changes.")},
+	})
+	log.Infof("main", "injected welcome file into session %s", inst.sessionKey)
+
+	if err := os.Remove(path); err != nil {
+		log.Warnf("main", "remove welcome file: %v", err)
+	}
 }

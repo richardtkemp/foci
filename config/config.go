@@ -140,7 +140,8 @@ type Config struct {
 	Skills    SkillsConfig    `toml:"skills"`
 	Tools     ToolsConfig     `toml:"tools"`
 	Commands    []CommandConfig `toml:"commands"`
-	PromptRules []PromptRule   `toml:"prompt_rules"` // regex find/replace rules applied to inbound messages
+	PromptRules []PromptRule   `toml:"prompt_rules"`  // regex find/replace rules applied to inbound messages
+	WelcomeFile string         `toml:"welcome_file"`  // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
 }
 
 // Load reads config from the given TOML file path.
@@ -251,6 +252,9 @@ func Load(path string) (*Config, error) {
 	}
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
+	}
+	if cfg.WelcomeFile == "" {
+		cfg.WelcomeFile = "WELCOME.md" // relative to working directory (usually $CLOD_HOME)
 	}
 
 	// Bool defaults: default to true unless explicitly set to false in config.

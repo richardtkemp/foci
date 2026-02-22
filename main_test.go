@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"clod/agent"
+	"clod/session"
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {
@@ -102,4 +105,91 @@ func TestProcessingCounter_Multiple(t *testing.T) {
 	if ag.IsProcessing() {
 		t.Fatal("should not be processing with count 0")
 	}
+}
+
+func TestInjectWelcomeFile(t *testing.T) {
+	dir := t.TempDir()
+	sessDir := filepath.Join(dir, "sessions")
+	os.MkdirAll(sessDir, 0755)
+	sessions := session.NewStore(sessDir)
+
+	welcomePath := filepath.Join(dir, "WELCOME.md")
+	os.WriteFile(welcomePath, []byte("# Updated\n\nNew stuff here."), 0644)
+
+	agents := map[string]*agentInstance{
+		"main": {id: "main", sessionKey: "agent:main:main"},
+	}
+	agentOrder := []string{"main"}
+
+	injectWelcomeFile(welcomePath, agents, agentOrder, sessions)
+
+	// File should be deleted
+	if _, err := os.Stat(welcomePath); !os.IsNotExist(err) {
+		t.Error("welcome file should be deleted after injection")
+	}
+
+	// Session should have messages
+	msgs, err := sessions.LoadFull("agent:main:main")
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user + assistant), got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("first message role = %q, want 'user'", msgs[0].Role)
+	}
+}
+
+func TestInjectWelcomeFile_NoFile(t *testing.T) {
+	dir := t.TempDir()
+	sessDir := filepath.Join(dir, "sessions")
+	os.MkdirAll(sessDir, 0755)
+	sessions := session.NewStore(sessDir)
+
+	agents := map[string]*agentInstance{
+		"main": {id: "main", sessionKey: "agent:main:main"},
+	}
+	agentOrder := []string{"main"}
+
+	// Should not panic or error when file doesn't exist
+	injectWelcomeFile(filepath.Join(dir, "nonexistent.md"), agents, agentOrder, sessions)
+
+	msgs, _ := sessions.LoadFull("agent:main:main")
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages when no welcome file, got %d", len(msgs))
+	}
+}
+
+func TestInjectWelcomeFile_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	sessDir := filepath.Join(dir, "sessions")
+	os.MkdirAll(sessDir, 0755)
+	sessions := session.NewStore(sessDir)
+
+	welcomePath := filepath.Join(dir, "WELCOME.md")
+	os.WriteFile(welcomePath, []byte(""), 0644)
+
+	agents := map[string]*agentInstance{
+		"main": {id: "main", sessionKey: "agent:main:main"},
+	}
+	agentOrder := []string{"main"}
+
+	injectWelcomeFile(welcomePath, agents, agentOrder, sessions)
+
+	// File should be deleted even if empty
+	if _, err := os.Stat(welcomePath); !os.IsNotExist(err) {
+		t.Error("empty welcome file should be deleted")
+	}
+
+	// No messages should be injected
+	msgs, _ := sessions.LoadFull("agent:main:main")
+	if len(msgs) != 0 {
+		t.Errorf("expected 0 messages for empty welcome file, got %d", len(msgs))
+	}
+}
+
+func TestInjectWelcomeFile_EmptyPath(t *testing.T) {
+	// Should not panic when path is empty
+	injectWelcomeFile("", nil, nil, nil)
 }
