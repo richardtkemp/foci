@@ -421,15 +421,13 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeCalled atomic.Int32
-	var wakeSession string
-	var wakeWindow int
-	wakeFn := func(session string, window int, threshold time.Duration) {
+	var wakeMsg string
+	notifier := NewAsyncNotifier(func(msg string) {
 		wakeCalled.Add(1)
-		wakeSession = session
-		wakeWindow = window
-	}
+		wakeMsg = msg
+	})
 
-	tool := NewTmuxTool(300, 30, wakeFn)
+	tool := NewTmuxTool(300, 30, notifier)
 
 	name := "clod-test-wake"
 	defer tmuxCleanup(t, name)
@@ -466,11 +464,11 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		}
 	}
 
-	if wakeSession != name {
-		t.Errorf("wake session = %q, want %q", wakeSession, name)
+	if !strings.Contains(wakeMsg, name) {
+		t.Errorf("wake message = %q, want to contain session name %q", wakeMsg, name)
 	}
-	if wakeWindow != 0 {
-		t.Errorf("wake window = %d, want 0", wakeWindow)
+	if !strings.Contains(wakeMsg, "[TMUX WATCH]") {
+		t.Errorf("wake message = %q, want to contain [TMUX WATCH]", wakeMsg)
 	}
 
 	// Cleanup
@@ -604,12 +602,12 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
-	toolA := NewTmuxTool(300, 30, func(session string, window int, threshold time.Duration) {
+	toolA := NewTmuxTool(300, 30, NewAsyncNotifier(func(msg string) {
 		wakeA.Add(1)
-	})
-	toolB := NewTmuxTool(300, 30, func(session string, window int, threshold time.Duration) {
+	}))
+	toolB := NewTmuxTool(300, 30, NewAsyncNotifier(func(msg string) {
 		wakeB.Add(1)
-	})
+	}))
 
 	nameA := "clod-test-wakeroute-a"
 	nameB := "clod-test-wakeroute-b"

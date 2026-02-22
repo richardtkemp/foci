@@ -638,31 +638,20 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent tool registry
 	registry := tools.NewRegistry()
 
-	// Exec auto-background: deliver results when long commands complete
-	execWakeFn := func(command string, result string) {
-		log.Infof("exec_wake", "command completed: %s", command)
-		resp, err := ag.HandleMessage(p.ctx, sessionKey, result)
-		if err != nil {
-			log.Errorf("exec_wake", "error: %v", err)
-		} else {
-			log.Debugf("exec_wake", "response length: %d", len(resp))
-		}
-	}
-	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, execWakeFn))
-
-	// Tmux wake function: inject a message into the agent session on inactivity
-	tmuxWakeFn := func(tmuxSession string, window int, threshold time.Duration) {
-		msg := fmt.Sprintf("[TMUX WATCH] Session %s:%d has been inactive for %v", tmuxSession, window, threshold)
+	// Async notifier: delivers results from auto-backgrounded exec commands
+	// and tmux watch inactivity alerts to the agent session.
+	notifier := tools.NewAsyncNotifier(func(message string) {
 		go func() {
-			resp, err := ag.HandleMessage(p.ctx, sessionKey, msg)
+			resp, err := ag.HandleMessage(p.ctx, sessionKey, message)
 			if err != nil {
-				log.Errorf("tmux_wake", "error: %v", err)
+				log.Errorf("async_notify", "error: %v", err)
 			} else {
-				log.Debugf("tmux_wake", "response: %s", resp)
+				log.Debugf("async_notify", "response length: %d", len(resp))
 			}
 		}()
-	}
-	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, tmuxWakeFn))
+	})
+	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, notifier))
+	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier))
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
