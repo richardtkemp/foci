@@ -123,59 +123,97 @@ func main() {
 		log.Errorf("main", "load state: %v", err)
 	}
 
-	// Shared: Memory FTS5 index
-	var memIdx *memory.Index
+	// ========== Memory system ==========
+	// Build global source map from [memory] config
+	globalMemSources := make(map[string]memory.SourceConfig)
+	if len(cfg.Memory.Sources) > 0 {
+		for _, src := range cfg.Memory.Sources {
+			globalMemSources[src.Name] = memory.SourceConfig{Dir: src.Dir, Weight: src.Weight}
+		}
+	} else if cfg.Memory.Dir != "" {
+		globalMemSources["memory"] = memory.SourceConfig{Dir: cfg.Memory.Dir, Weight: 1.0}
+	}
+
+	// Parse debounce delay
+	memDebounce := time.Duration(0)
+	if cfg.Memory.ReindexDebounce != "" {
+		memDebounce, err = time.ParseDuration(cfg.Memory.ReindexDebounce)
+		if err != nil {
+			log.Fatalf("main", "invalid reindex_debounce: %v", err)
+		}
+	}
+
+	// Check if any agent has per-agent memory sources
+	hasPerAgentMemory := false
+	for _, acfg := range cfg.Agents {
+		if len(acfg.Memory.Sources) > 0 {
+			hasPerAgentMemory = true
+			break
+		}
+	}
+
+	var sharedMemIdx *memory.Index                         // used when no per-agent memory
+	agentMemIndices := make(map[string]*memory.Index)      // agentID → per-agent index
 	var reminderStore *memory.ReminderStore
 	var scratchpadStore *memory.Scratchpad
-	if cfg.Memory.Dir != "" || len(cfg.Memory.Sources) > 0 {
-		memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
 
-		// Build source map from config
-		sources := make(map[string]memory.SourceConfig)
+	memoryEnabled := len(globalMemSources) > 0 || hasPerAgentMemory
+	if memoryEnabled {
+		if hasPerAgentMemory {
+			// Per-agent indices: each agent gets global + agent-specific sources
+			for _, acfg := range cfg.Agents {
+				combined := buildAgentMemorySources(globalMemSources, acfg.Memory.Sources)
+				if len(combined) == 0 {
+					continue
+				}
+				dbPath := filepath.Join(filepath.Dir(configPath), fmt.Sprintf("memory-%s.db", acfg.ID))
+				idx, err := memory.NewIndex(dbPath, combined, memDebounce)
+				if err != nil {
+					log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
+				}
+				defer idx.Close()
+				if err := idx.Reindex(); err != nil {
+					log.Errorf("main", "reindex memory for agent %q: %v", acfg.ID, err)
+				}
+				if memDebounce > 0 || len(combined) > 0 {
+					if err := idx.Watch(); err != nil {
+						log.Errorf("main", "start memory file watching for agent %q: %v", acfg.ID, err)
+					}
+				}
+				agentMemIndices[acfg.ID] = idx
+				log.Infof("main", "agent %q: memory index with %d sources", acfg.ID, len(combined))
+			}
 
-		if len(cfg.Memory.Sources) > 0 {
-			// Use new multi-source config
-			for _, src := range cfg.Memory.Sources {
-				sources[src.Name] = memory.SourceConfig{
-					Dir:    src.Dir,
-					Weight: src.Weight,
+			// Conversation hook: route to agent's index by session key prefix
+			log.ConversationHook = func(text, session string) {
+				for agentID, idx := range agentMemIndices {
+					if strings.HasPrefix(session, "agent:"+agentID+":") {
+						idx.IndexConversation(text, session)
+						return
+					}
 				}
 			}
-		} else if cfg.Memory.Dir != "" {
-			// Backward compat: single dir with default weight
-			sources["memory"] = memory.SourceConfig{
-				Dir:    cfg.Memory.Dir,
-				Weight: 1.0,
-			}
-		}
-
-		// Parse debounce delay
-		debounce := time.Duration(0)
-		if cfg.Memory.ReindexDebounce != "" {
-			debounce, err = time.ParseDuration(cfg.Memory.ReindexDebounce)
+		} else {
+			// Shared index (backward compat — no agent has per-agent memory)
+			memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
+			sharedMemIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce)
 			if err != nil {
-				log.Fatalf("main", "invalid reindex_debounce: %v", err)
+				log.Fatalf("main", "create memory index: %v", err)
 			}
-		}
+			defer sharedMemIdx.Close()
 
-		memIdx, err = memory.NewIndex(memDbPath, sources, debounce)
-		if err != nil {
-			log.Fatalf("main", "create memory index: %v", err)
-		}
-		defer memIdx.Close()
-
-		if err := memIdx.Reindex(); err != nil {
-			log.Errorf("main", "reindex memory: %v", err)
-		}
-
-		// Start file watching if debounce is configured
-		if debounce > 0 || len(cfg.Memory.Sources) > 0 {
-			if err := memIdx.Watch(); err != nil {
-				log.Errorf("main", "start memory file watching: %v", err)
+			if err := sharedMemIdx.Reindex(); err != nil {
+				log.Errorf("main", "reindex memory: %v", err)
 			}
+			if memDebounce > 0 || len(cfg.Memory.Sources) > 0 {
+				if err := sharedMemIdx.Watch(); err != nil {
+					log.Errorf("main", "start memory file watching: %v", err)
+				}
+			}
+			log.ConversationHook = sharedMemIdx.IndexConversation
 		}
 
-		// Reminder store (same DB directory)
+		// Reminder store (shared across agents)
 		reminderDbPath := filepath.Join(filepath.Dir(configPath), "reminders.db")
 		reminderStore, err = memory.NewReminderStore(reminderDbPath)
 		if err != nil {
@@ -183,16 +221,13 @@ func main() {
 		}
 		defer reminderStore.Close()
 
-		// Scratchpad (working state that survives compaction)
+		// Scratchpad (shared across agents)
 		scratchpadDbPath := filepath.Join(filepath.Dir(configPath), "scratchpad.db")
 		scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
 		if err != nil {
 			log.Fatalf("main", "create scratchpad: %v", err)
 		}
 		defer scratchpadStore.Close()
-
-		// Index conversation messages into FTS5 as they're logged
-		log.ConversationHook = memIdx.IndexConversation
 	}
 
 	// Shared: Voice providers
@@ -282,6 +317,12 @@ func main() {
 	var agentOrder []string // preserve config order
 
 	for _, acfg := range cfg.Agents {
+		// Resolve memory index: per-agent (if configured) or shared
+		agentMemIdx := sharedMemIdx
+		if idx, ok := agentMemIndices[acfg.ID]; ok {
+			agentMemIdx = idx
+		}
+
 		inst := setupAgent(setupParams{
 			acfg:                acfg,
 			cfg:                 cfg,
@@ -290,7 +331,7 @@ func main() {
 			sessions:            sessions,
 			store:               store,
 			stateStore:          stateStore,
-			memIdx:              memIdx,
+			memIdx:              agentMemIdx,
 			reminderStore:       reminderStore,
 			scratchpadStore:     scratchpadStore,
 			sttProvider:         sttProvider,
@@ -1062,4 +1103,31 @@ func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder
 	if err := os.Remove(path); err != nil {
 		log.Warnf("main", "remove welcome file: %v", err)
 	}
+}
+
+// AgentMemoryBoost is the weight added to agent-specific memory sources.
+// With a boost of 1.0, an agent-specific source with weight 0.5 gets an
+// effective weight of 1.5 (multiplier = 1.0 + 1.5 = 2.5), making it rank
+// higher than global sources with the same base weight.
+const AgentMemoryBoost = 1.0
+
+// buildAgentMemorySources combines global memory sources with agent-specific
+// sources. Agent-specific sources get a weight boost to rank higher.
+func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agentSources []config.MemorySource) map[string]memory.SourceConfig {
+	combined := make(map[string]memory.SourceConfig, len(globalSources)+len(agentSources))
+
+	// Add global sources as-is
+	for name, src := range globalSources {
+		combined[name] = src
+	}
+
+	// Add agent-specific sources with weight boost
+	for _, src := range agentSources {
+		combined["agent:"+src.Name] = memory.SourceConfig{
+			Dir:    src.Dir,
+			Weight: src.Weight + AgentMemoryBoost,
+		}
+	}
+
+	return combined
 }

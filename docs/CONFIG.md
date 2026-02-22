@@ -25,6 +25,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `fork_prompt` | string | `""` | Prompt injected into multiball branch sessions to inform the agent of the fork. Empty disables. |
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
 | `multiball_bot` | string | `""` | References a key in `[telegram.bots]` map. Used for multiball (branch) sessions. |
+| `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
@@ -159,6 +160,48 @@ name = "docs"
 dir = "/home/clod/project/docs"
 weight = 0.5
 ```
+
+### Per-agent memory (`[[agents.memory.sources]]`)
+
+Agents can have their own memory directories in addition to the global sources. When any agent has per-agent memory configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global + agent-specific sources.
+
+Agent-specific sources automatically receive a weight boost of +1.0, so they rank higher than global sources with the same base weight. Source names are prefixed with `agent:` in search results.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | required | Source identifier (prefixed with `agent:` in results). |
+| `dir` | string | required | Directory path to index. |
+| `weight` | float | `1.0` | Base weight (boosted by +1.0 automatically). |
+
+Example:
+```toml
+# Global memory (shared by all agents)
+[[memory.sources]]
+name = "shared"
+dir = "/home/clod/shared/memory"
+weight = 1.0
+
+# Agent-specific memory
+[[agents]]
+id = "clutch"
+model = "claude-sonnet-4-6"
+
+[[agents.memory.sources]]
+name = "workspace"
+dir = "/home/clod/clutch/memory"
+weight = 1.0    # effective weight: 2.0 (1.0 + 1.0 boost)
+
+[[agents]]
+id = "scout"
+model = "claude-haiku-4-5"
+
+[[agents.memory.sources]]
+name = "workspace"
+dir = "/home/clod/scout/memory"
+weight = 1.0
+```
+
+When no agent has per-agent memory sources, a single shared index (`memory.db`) is used — fully backward compatible.
 
 ---
 
