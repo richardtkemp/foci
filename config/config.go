@@ -112,6 +112,11 @@ type ToolsConfig struct {
 	ExecAutoBackground int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec (default 10, 0 disables)
 }
 
+type PromptRule struct {
+	Find    string `toml:"find"`    // regex pattern to match
+	Replace string `toml:"replace"` // replacement string (supports $1, $2, etc.)
+}
+
 type CommandConfig struct {
 	Name        string `toml:"name"`
 	Description string `toml:"description"`
@@ -132,7 +137,8 @@ type Config struct {
 	Cache     CacheConfig     `toml:"cache"`
 	Skills    SkillsConfig    `toml:"skills"`
 	Tools     ToolsConfig     `toml:"tools"`
-	Commands  []CommandConfig `toml:"commands"`
+	Commands    []CommandConfig `toml:"commands"`
+	PromptRules []PromptRule   `toml:"prompt_rules"` // regex find/replace rules applied to inbound messages
 }
 
 // Load reads config from the given TOML file path.

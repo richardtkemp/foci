@@ -683,6 +683,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ToolResultTempDir: p.cfg.Tools.TempDir,
 		StateStore:        p.stateStore,
 		UsageClient:       p.usageClient,
+		PromptRules:       agent.CompilePromptRules(p.cfg.PromptRules),
 	}
 	ag.RestoreVoiceMode(sessionKey)
 

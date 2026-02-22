@@ -77,6 +77,7 @@ type Agent struct {
 	Warnings           *WarningQueue           // nil disables warning injection into session
 	StateStore         *state.Store            // nil disables state persistence
 	UsageClient        *anthropic.UsageClient  // nil disables mana metadata
+	PromptRules        []CompiledPromptRule    // compiled regex rules for inbound message transformation
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
@@ -430,6 +431,11 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 
 	turnModel := a.Model
+
+	// Apply prompt rules (regex find/replace on inbound message)
+	if len(a.PromptRules) > 0 {
+		userMessage = ApplyPromptRules(a.PromptRules, userMessage)
+	}
 
 	// Build metadata prefix and prepend to user message
 	now := time.Now()
