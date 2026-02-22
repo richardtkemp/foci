@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,5 +137,134 @@ func TestDefaultFileOrder(t *testing.T) {
 		if DefaultFileOrder[i] != name {
 			t.Errorf("DefaultFileOrder[%d] = %q, want %q", i, DefaultFileOrder[i], name)
 		}
+	}
+}
+
+func TestSetSecretNames(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+
+	b := NewBootstrap(dir, nil)
+
+	// Without secrets
+	blocks := b.SystemBlocks()
+	for _, blk := range blocks {
+		if strings.Contains(blk.Text, "secret") {
+			t.Errorf("should not have secrets before SetSecretNames: %q", blk.Text)
+		}
+	}
+
+	// Set secret names
+	b.SetSecretNames([]string{"anthropic.token", "github.pat"})
+
+	blocks = b.SystemBlocks()
+	// Should have 2 blocks: IDENTITY + secrets
+	if len(blocks) != 2 {
+		t.Fatalf("len = %d, want 2", len(blocks))
+	}
+
+	// Secrets block should contain the names
+	secretsBlock := blocks[len(blocks)-1]
+	if !strings.Contains(secretsBlock.Text, "anthropic.token") {
+		t.Errorf("secrets block missing anthropic.token: %q", secretsBlock.Text)
+	}
+	if !strings.Contains(secretsBlock.Text, "github.pat") {
+		t.Errorf("secrets block missing github.pat: %q", secretsBlock.Text)
+	}
+}
+
+func TestSetSecretNamesCacheInvalidation(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+
+	b := NewBootstrap(dir, nil)
+
+	// First call — no secrets
+	blocks1 := b.SystemBlocks()
+	count1 := len(blocks1)
+
+	// Set secret names — should invalidate cache
+	b.SetSecretNames([]string{"my.secret"})
+
+	blocks2 := b.SystemBlocks()
+	count2 := len(blocks2)
+
+	if count2 != count1+1 {
+		t.Errorf("expected 1 more block after SetSecretNames: before=%d, after=%d", count1, count2)
+	}
+}
+
+func TestSecretsCacheControlOnLastBlock(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
+
+	b := NewBootstrap(dir, nil)
+	b.SetSecretNames([]string{"secret.key"})
+
+	blocks := b.SystemBlocks()
+	if len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks, got %d", len(blocks))
+	}
+
+	// Last block (secrets) should have cache control
+	last := blocks[len(blocks)-1]
+	if last.CacheControl == nil || last.CacheControl.Type != "ephemeral" {
+		t.Errorf("last block cache control = %+v, want ephemeral", last.CacheControl)
+	}
+
+	// Secrets block text should contain the secret name
+	if !strings.Contains(last.Text, "secret.key") {
+		t.Errorf("last block text = %q, want secret name", last.Text)
+	}
+}
+
+func TestReload(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("original content"), 0644)
+
+	b := NewBootstrap(dir, nil)
+
+	blocks := b.SystemBlocks()
+	if blocks[0].Text != "original content" {
+		t.Errorf("initial text = %q", blocks[0].Text)
+	}
+
+	// Modify file on disk
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("updated content"), 0644)
+
+	// Before reload — should still have old content
+	blocks = b.SystemBlocks()
+	if blocks[0].Text != "original content" {
+		t.Errorf("before reload text = %q, want original", blocks[0].Text)
+	}
+
+	// Reload
+	b.Reload()
+
+	blocks = b.SystemBlocks()
+	if blocks[0].Text != "updated content" {
+		t.Errorf("after reload text = %q, want updated", blocks[0].Text)
+	}
+}
+
+func TestReloadInvalidatesSecretCache(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("content"), 0644)
+
+	b := NewBootstrap(dir, nil)
+	b.SetSecretNames([]string{"my.key"})
+
+	// Build cache with secrets
+	blocks1 := b.SystemBlocks()
+
+	// Reload — should rebuild
+	b.Reload()
+
+	blocks2 := b.SystemBlocks()
+
+	// Both should still have the same structure
+	if len(blocks1) != len(blocks2) {
+		t.Errorf("block counts differ: %d vs %d", len(blocks1), len(blocks2))
 	}
 }

@@ -3,8 +3,12 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"clod/secrets"
 )
 
 func TestExecEcho(t *testing.T) {
@@ -114,5 +118,120 @@ func TestExecMultilineOutput(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) != 3 {
 		t.Errorf("got %d lines, want 3", len(lines))
+	}
+}
+
+func TestExecBackgroundMode(t *testing.T) {
+	tool := NewExecTool(nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command":    "echo bg",
+		"background": true,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "bg") {
+		t.Errorf("result = %q, want 'bg'", result)
+	}
+}
+
+func TestExecSecretResolution(t *testing.T) {
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "secrets.toml")
+	os.WriteFile(secretsPath, []byte(`[custom]
+token = "secret-value-12345"
+`), 0644)
+
+	store, err := secrets.Load(secretsPath)
+	if err != nil {
+		t.Fatalf("Load secrets: %v", err)
+	}
+
+	tool := NewExecTool(store)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo {{secret:custom.token}}",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// The secret value should have been resolved and then the output should contain it
+	// But it should be redacted in output
+	if strings.Contains(result, "secret-value-12345") {
+		t.Errorf("secret value should be redacted in output: %q", result)
+	}
+	if !strings.Contains(result, "[REDACTED]") {
+		t.Errorf("result should contain [REDACTED]: %q", result)
+	}
+}
+
+func TestExecBlockedPath(t *testing.T) {
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "secrets.toml")
+	os.WriteFile(secretsPath, []byte(`[test]
+key = "value"
+`), 0644)
+
+	store, err := secrets.Load(secretsPath)
+	if err != nil {
+		t.Fatalf("Load secrets: %v", err)
+	}
+
+	tool := NewExecTool(store)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "cat secrets.toml",
+	})
+
+	_, err = tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for blocked path")
+	}
+	if !strings.Contains(err.Error(), "blocked path") {
+		t.Errorf("error = %q, want 'blocked path'", err.Error())
+	}
+}
+
+func TestExecOutputTruncation(t *testing.T) {
+	tool := NewExecTool(nil)
+
+	// Generate output >100k chars
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "python3 -c 'print(\"x\" * 110000)'",
+		"timeout": 10,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "truncated") {
+		t.Errorf("expected truncation notice in long output")
+	}
+	if len(result) > 110_000 {
+		t.Errorf("result length = %d, expected truncated", len(result))
+	}
+}
+
+func TestExecNilStoreWithTemplate(t *testing.T) {
+	tool := NewExecTool(nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo '{{secret:test.key}}'",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// With nil store, template syntax should pass through literally
+	if !strings.Contains(result, "{{secret:test.key}}") {
+		t.Errorf("result = %q, want template passed through", result)
 	}
 }

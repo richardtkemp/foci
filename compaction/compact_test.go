@@ -1,9 +1,17 @@
 package compaction
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"clod/anthropic"
+	"clod/memory"
+	"clod/session"
 )
 
 func TestEstimateTokens(t *testing.T) {
@@ -86,5 +94,250 @@ func TestShouldCompactExactThreshold(t *testing.T) {
 	usage = &anthropic.Usage{InputTokens: 160_001}
 	if !c.ShouldCompact(nil, usage) {
 		t.Error("should compact one above threshold")
+	}
+}
+
+// mockCompactionServer returns a test API server for compaction tests.
+func mockCompactionServer(summaryText string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent(summaryText),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+}
+
+func TestCompactBasic(t *testing.T) {
+	server := mockCompactionServer("Summary of conversation: user said hello, we discussed Go testing.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// Add 6 messages (above default minMessages=4)
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("user message")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("assistant reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	err := c.Compact(context.Background(), sessionKey, nil)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// After compaction: should have 3 messages (marker + summary + handoff)
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("after compact: %d messages, want 3", len(msgs))
+	}
+
+	// First message: compaction marker
+	if !strings.Contains(anthropic.TextOf(msgs[0].Content), "compacted") {
+		t.Errorf("msgs[0] = %q, want compaction marker", anthropic.TextOf(msgs[0].Content))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("msgs[0].Role = %q, want user", msgs[0].Role)
+	}
+
+	// Second message: summary from model
+	if !strings.Contains(anthropic.TextOf(msgs[1].Content), "Summary") {
+		t.Errorf("msgs[1] = %q, want summary", anthropic.TextOf(msgs[1].Content))
+	}
+	if msgs[1].Role != "assistant" {
+		t.Errorf("msgs[1].Role = %q, want assistant", msgs[1].Role)
+	}
+
+	// Third message: handoff
+	if !strings.Contains(anthropic.TextOf(msgs[2].Content), "Compaction complete") {
+		t.Errorf("msgs[2] = %q, want handoff", anthropic.TextOf(msgs[2].Content))
+	}
+	if msgs[2].Role != "user" {
+		t.Errorf("msgs[2].Role = %q, want user", msgs[2].Role)
+	}
+}
+
+func TestCompactTooFewMessages(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// Add only 2 messages (below default minMessages=4)
+	store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")})
+	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("hello")})
+
+	c := NewCompactor(nil, store, "claude-haiku-4-5", 0.8)
+	err := c.Compact(context.Background(), sessionKey, nil)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Messages should be unchanged
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %d, want 2 (unchanged)", len(msgs))
+	}
+}
+
+func TestCompactWithScratchpad(t *testing.T) {
+	server := mockCompactionServer("Summary: testing scratchpad.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// Create scratchpad with entries
+	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
+	sp, err := memory.NewScratchpad(dbPath)
+	if err != nil {
+		t.Fatalf("NewScratchpad: %v", err)
+	}
+	defer sp.Close()
+
+	sp.Write("plan", "Step 1: refactor\nStep 2: test")
+	sp.Write("notes", "important detail")
+
+	// Add enough messages
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.Scratchpad = sp
+
+	err = c.Compact(context.Background(), sessionKey, nil)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+
+	// Handoff message should include scratchpad content
+	handoff := anthropic.TextOf(msgs[2].Content)
+	if !strings.Contains(handoff, "scratchpad") {
+		t.Errorf("handoff missing scratchpad mention: %q", handoff)
+	}
+	if !strings.Contains(handoff, "plan") {
+		t.Errorf("handoff missing scratchpad key 'plan': %q", handoff)
+	}
+	if !strings.Contains(handoff, "notes") {
+		t.Errorf("handoff missing scratchpad key 'notes': %q", handoff)
+	}
+}
+
+func TestCompactEmptyScratchpad(t *testing.T) {
+	server := mockCompactionServer("Summary: empty scratchpad.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// Create empty scratchpad
+	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
+	sp, err := memory.NewScratchpad(dbPath)
+	if err != nil {
+		t.Fatalf("NewScratchpad: %v", err)
+	}
+	defer sp.Close()
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.Scratchpad = sp
+
+	err = c.Compact(context.Background(), sessionKey, nil)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	msgs, _ := store.Load(sessionKey)
+	handoff := anthropic.TextOf(msgs[2].Content)
+	// Should have default handoff without scratchpad section
+	if strings.Contains(handoff, "scratchpad") {
+		t.Errorf("handoff should not mention scratchpad when empty: %q", handoff)
+	}
+}
+
+func TestCompactAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal error"))
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	err := c.Compact(context.Background(), sessionKey, nil)
+	if err == nil {
+		t.Fatal("expected error from API failure")
+	}
+	if !strings.Contains(err.Error(), "summarize for compaction") {
+		t.Errorf("error = %q", err.Error())
+	}
+
+	// Messages should be unchanged after error
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 6 {
+		t.Fatalf("messages = %d, want 6 (unchanged after error)", len(msgs))
+	}
+}
+
+func TestWithConfigOverrides(t *testing.T) {
+	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c.WithConfig("claude-sonnet-4-5", 2048, 8, "custom prompt", "custom handoff")
+
+	if c.model != "claude-sonnet-4-5" {
+		t.Errorf("model = %q", c.model)
+	}
+	if c.maxTokens != 2048 {
+		t.Errorf("maxTokens = %d", c.maxTokens)
+	}
+	if c.minMessages != 8 {
+		t.Errorf("minMessages = %d", c.minMessages)
+	}
+	if c.summaryPrompt != "custom prompt" {
+		t.Errorf("summaryPrompt = %q", c.summaryPrompt)
+	}
+	if c.handoffMessage != "custom handoff" {
+		t.Errorf("handoffMessage = %q", c.handoffMessage)
+	}
+}
+
+func TestWithConfigEmptyValues(t *testing.T) {
+	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	original := *c
+	c.WithConfig("", 0, 0, "", "")
+
+	// Empty/zero values should not override
+	if c.model != original.model {
+		t.Errorf("model changed to %q", c.model)
+	}
+	if c.maxTokens != original.maxTokens {
+		t.Errorf("maxTokens changed to %d", c.maxTokens)
+	}
+	if c.minMessages != original.minMessages {
+		t.Errorf("minMessages changed to %d", c.minMessages)
 	}
 }
