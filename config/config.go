@@ -24,9 +24,10 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	Token       string `toml:"token"`
-	OAuthToken  string `toml:"oauth_token"` // OAuth access token for usage API
-	BraveAPIKey string `toml:"brave_api_key"`
+	Token           string `toml:"token"`
+	OAuthToken      string `toml:"oauth_token"`      // OAuth access token for usage API (legacy, static)
+	BraveAPIKey     string `toml:"brave_api_key"`
+	CredentialsFile string `toml:"credentials_file"` // path to Claude Code credentials.json (default ~/.claude/.credentials.json)
 }
 
 // TelegramBotConfig defines a named Telegram bot in the [telegram.bots] map.
@@ -211,6 +212,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "api-payload.jsonl"
+	}
+	if cfg.Anthropic.CredentialsFile == "" {
+		cfg.Anthropic.CredentialsFile = "~/.claude/.credentials.json"
 	}
 	if cfg.Cache.Strategy == "" {
 		cfg.Cache.Strategy = "auto"

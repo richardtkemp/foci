@@ -252,8 +252,22 @@ func main() {
 	// Bot manager — owns all Telegram bots
 	botMgr := telegram.NewBotManager()
 
-	// Shared: usage client
-	usageClient := anthropic.NewUsageClient(anthropicOAuthToken)
+	// Shared: usage client — prefer credentials file (auto-refreshing), fall back to static token
+	credFile := cfg.Anthropic.CredentialsFile
+	var usageClient *anthropic.UsageClient
+	if credFile != "" {
+		usageClient = anthropic.NewUsageClientWithFunc(func() string {
+			token, err := anthropic.ReadCredentialsToken(credFile)
+			if err != nil {
+				log.Debugf("main", "read credentials file: %v", err)
+				return anthropicOAuthToken // fallback to static token
+			}
+			return token
+		})
+		log.Infof("main", "usage: reading OAuth token from %s", credFile)
+	} else {
+		usageClient = anthropic.NewUsageClient(anthropicOAuthToken)
+	}
 
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
@@ -746,9 +760,6 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// /usage command (shared usage client)
 	cmds.Register(command.NewUsageCommand(func(ctx context.Context) (string, error) {
-		if p.anthropicOAuthToken == "" {
-			return "OAuth token not configured (add anthropic.oauth_token to config or secrets.toml)", nil
-		}
 		usage, err := p.usageClient.GetUsage(ctx)
 		if err != nil {
 			return fmt.Sprintf("Error fetching usage: %v", err), nil

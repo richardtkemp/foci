@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -228,6 +230,62 @@ func TestGetUsageEmptyToken(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "OAuth token not configured") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestReadCredentialsToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+
+	creds := `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-test123","refreshToken":"sk-ant-ort01-test456","expiresAt":1771770729992}}`
+	os.WriteFile(path, []byte(creds), 0644)
+
+	token, err := ReadCredentialsToken(path)
+	if err != nil {
+		t.Fatalf("ReadCredentialsToken: %v", err)
+	}
+	if token != "sk-ant-oat01-test123" {
+		t.Errorf("token = %q, want %q", token, "sk-ant-oat01-test123")
+	}
+}
+
+func TestReadCredentialsTokenMissingFile(t *testing.T) {
+	_, err := ReadCredentialsToken("/nonexistent/path/credentials.json")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestReadCredentialsTokenInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+	os.WriteFile(path, []byte("not json"), 0644)
+
+	_, err := ReadCredentialsToken(path)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestNewUsageClientWithFunc(t *testing.T) {
+	callCount := 0
+	client := NewUsageClientWithFunc(func() string {
+		callCount++
+		return "dynamic-token"
+	})
+
+	// getToken should call the func
+	if got := client.getToken(); got != "dynamic-token" {
+		t.Errorf("getToken() = %q, want %q", got, "dynamic-token")
+	}
+	if callCount != 1 {
+		t.Errorf("callCount = %d, want 1", callCount)
+	}
+
+	// Call again — should call func again (not cached)
+	client.getToken()
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2", callCount)
 	}
 }
 
