@@ -126,24 +126,44 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			want: `click <a href="https://example.com">here</a>`,
 		},
 		{
-			name: "heading h1",
+			name: "heading single level h1 only",
 			in:   "# My Title",
-			want: "═══ My Title ═══",
+			want: "<b>My Title</b>",
 		},
 		{
-			name: "heading h2",
-			in:   "## Subtitle",
-			want: "── Subtitle ──",
-		},
-		{
-			name: "heading h3",
+			name: "heading single level h3 only",
 			in:   "### Section",
 			want: "<b>Section</b>",
 		},
 		{
-			name: "heading h4",
+			name: "heading single level h4 only",
 			in:   "#### Deep Section",
 			want: "<b>Deep Section</b>",
+		},
+		{
+			name: "heading two levels h1 and h2",
+			in:   "# Title\n## Subtitle",
+			want: "── Title ──\n<b>Subtitle</b>",
+		},
+		{
+			name: "heading two levels h1 and h3",
+			in:   "# Title\n### Section",
+			want: "── Title ──\n<b>Section</b>",
+		},
+		{
+			name: "heading three levels h1 h2 h3",
+			in:   "# Title\n## Subtitle\n### Section",
+			want: "═══ Title ═══\n── Subtitle ──\n<b>Section</b>",
+		},
+		{
+			name: "heading three levels h1 h2 h4",
+			in:   "# Title\n## Subtitle\n#### Deep",
+			want: "═══ Title ═══\n── Subtitle ──\n<b>Deep</b>",
+		},
+		{
+			name: "heading four levels",
+			in:   "# H1\n## H2\n### H3\n#### H4",
+			want: "═══ H1 ═══\n── H2 ──\n<b>H3</b>\n<b>H4</b>",
 		},
 		{
 			name: "blockquote single line",
