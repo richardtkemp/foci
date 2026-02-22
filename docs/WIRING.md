@@ -13,7 +13,8 @@ config.Load(path)
   Shared resources (created once):
   → anthropic.NewClient(token)
   → session.NewStore(dir)
-  → memory.NewIndex + ReminderStore + Scratchpad         ← shared across agents
+  → memory: ReminderStore + Scratchpad                   ← shared across agents
+  → memory.NewIndex                                      ← shared OR per-agent (see below)
   → voice STT/TTS providers                              ← shared across agents
   → telegram.NewBotManager()
 
@@ -37,7 +38,9 @@ config.Load(path)
   → signal.Notify(SIGINT, SIGTERM) → shutdown
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, heartbeat, and Telegram bot(s). Shared resources (anthropic client, session store, memory index, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, heartbeat, and Telegram bot(s). Shared resources (anthropic client, session store, voice providers) are passed to each agent.
+
+**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single `memory.db` index (backward compat). Reminder and scratchpad stores are always shared.
 
 **Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
 

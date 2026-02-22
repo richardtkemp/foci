@@ -11,16 +11,24 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// AgentMemoryConfig holds per-agent memory sources.
+// These are combined with global [memory] sources, with agent-specific
+// sources receiving an automatic weight boost.
+type AgentMemoryConfig struct {
+	Sources []MemorySource `toml:"sources"` // agent-specific memory directories
+}
+
 type AgentConfig struct {
-	ID                string   `toml:"id"`
-	Model             string   `toml:"model"`
-	Workspace         string   `toml:"workspace"`
-	HeartbeatInterval string   `toml:"heartbeat_interval"`
-	SystemFiles       []string `toml:"system_files"`       // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages bool     `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
-	ForkPrompt        string   `toml:"fork_prompt"`        // injected as context when a multiball session is forked
-	TelegramBot       string   `toml:"telegram_bot"`       // references key in [telegram.bots] map
-	MultiballBot      string   `toml:"multiball_bot"`      // references key in [telegram.bots] map (optional)
+	ID                string            `toml:"id"`
+	Model             string            `toml:"model"`
+	Workspace         string            `toml:"workspace"`
+	HeartbeatInterval string            `toml:"heartbeat_interval"`
+	SystemFiles       []string          `toml:"system_files"`       // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	DuplicateMessages bool              `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
+	ForkPrompt        string            `toml:"fork_prompt"`        // injected as context when a multiball session is forked
+	TelegramBot       string            `toml:"telegram_bot"`       // references key in [telegram.bots] map
+	MultiballBot      string            `toml:"multiball_bot"`      // references key in [telegram.bots] map (optional)
+	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
 }
 
 type AnthropicConfig struct {
