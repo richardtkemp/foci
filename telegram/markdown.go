@@ -42,7 +42,7 @@ func ConvertToTelegramHTML(text string) string {
 	// Extract early to protect | chars from other conversions.
 	text = convertTables(text, &codeBlocks)
 
-	// Inline code
+	// Inline code (extract early to protect content)
 	var inlineCodes []string
 	inlineCodeRe := regexp.MustCompile("`([^`]+)`")
 	text = inlineCodeRe.ReplaceAllStringFunc(text, func(match string) string {
@@ -71,8 +71,10 @@ func ConvertToTelegramHTML(text string) string {
 	// Italic: *text* (avoid bold markers which are **)
 	text = regexp.MustCompile(`\*([^\*\n]+)\*`).ReplaceAllString(text, "<i>$1</i>")
 
-	// Italic: _text_
-	text = regexp.MustCompile(`_([^_\n]+)_`).ReplaceAllString(text, "<i>$1</i>")
+	// Italic: _text_ (but not when part of snake_case identifiers like word_word_word)
+	// Only matches single-word content between underscores (no additional underscores inside)
+	// Uses capture groups to preserve surrounding characters
+	text = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`).ReplaceAllString(text, "$1<i>$2</i>$3")
 
 	// Headings: hierarchy rendering (Telegram has no native headings)
 	// H1: ═══ Title ═══, H2: ── Title ──, H3+: just bold
