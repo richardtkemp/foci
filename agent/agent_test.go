@@ -1050,8 +1050,8 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 		if !got.Content[0].IsError {
 			t.Error("expected is_error = true")
 		}
-		if got.Content[0].Content != "no data" {
-			t.Errorf("content = %q, want %q", got.Content[0].Content, "no data")
+		if got.Content[0].Content != "Tool call interrupted by service restart" {
+			t.Errorf("content = %q, want %q", got.Content[0].Content, "Tool call interrupted by service restart")
 		}
 	})
 

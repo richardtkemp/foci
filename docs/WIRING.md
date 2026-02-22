@@ -13,6 +13,7 @@ config.Load(path)                                        ← validates values; l
   Shared resources (created once):
   → anthropic.NewClient(token)
   → session.NewStore(dir)
+  → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → memory: ReminderStore + Scratchpad                   ← shared across agents
   → memory.NewIndex                                      ← shared OR per-agent (see below)
   → voice STT/TTS providers                              ← shared across agents

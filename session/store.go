@@ -244,6 +244,74 @@ func (s *Store) getStoredCreatedAt(key string) string {
 	return ""
 }
 
+// RepairOrphans scans all session files and repairs any that end with an
+// assistant message containing tool_use blocks without a following tool_result.
+// This happens when the process is killed mid-tool-call: the defer flush writes
+// the assistant message but no tool_result is ever created, leaving the session
+// structurally invalid for the Anthropic API.
+// Returns the number of repaired sessions and any error.
+func (s *Store) RepairOrphans() (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	repaired := 0
+
+	err := filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+
+		// Convert file path back to session key
+		rel, err := filepath.Rel(s.dir, path)
+		if err != nil {
+			return nil
+		}
+		rel = strings.TrimSuffix(rel, ".jsonl")
+		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+
+		msgs, err := s.loadUnlocked(key)
+		if err != nil || len(msgs) == 0 {
+			return nil
+		}
+
+		last := msgs[len(msgs)-1]
+		if last.Role != "assistant" {
+			return nil
+		}
+
+		var toolUseIDs []string
+		for _, block := range last.Content {
+			if block.Type == "tool_use" {
+				toolUseIDs = append(toolUseIDs, block.ID)
+			}
+		}
+		if len(toolUseIDs) == 0 {
+			return nil
+		}
+
+		// Build synthetic tool_result message
+		var results []anthropic.ContentBlock
+		for _, id := range toolUseIDs {
+			results = append(results, anthropic.ToolResultBlock(id, "Tool call interrupted by service restart", true))
+		}
+		repairMsg := anthropic.Message{Role: "user", Content: results}
+
+		if err := s.appendUnlocked(key, repairMsg); err != nil {
+			return fmt.Errorf("repair %s: %w", key, err)
+		}
+		repaired++
+		return nil
+	})
+
+	if err != nil && !os.IsNotExist(err) {
+		return repaired, err
+	}
+	return repaired, nil
+}
+
 // MessageCount returns the number of messages in a session.
 func (s *Store) MessageCount(key string) (int, error) {
 	msgs, err := s.Load(key)
