@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -16,6 +17,11 @@ import (
 // ExecWakeFunc is called when an auto-backgrounded command completes.
 // It delivers the result back to the agent session.
 type ExecWakeFunc func(command string, result string)
+
+// sleepRegexp matches commands that start with "sleep" (case-insensitive).
+// This blocks bare sleep commands which block for up to 10s then silently
+// background — the worst of both worlds.
+var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 
 // NewExecTool creates an exec tool. If store is non-nil, commands get
 // secret template resolution, output redaction, and blocked path checks.
@@ -63,6 +69,12 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	// Check blocked paths
 	if store != nil && store.IsBlockedCommand(p.Command) {
 		return "", fmt.Errorf("command references a blocked path")
+	}
+
+	// Block bare sleep commands - they block for up to 10s then silently
+	// background, which is the worst of both worlds. Use memory_remind instead.
+	if sleepRegexp.MatchString(p.Command) {
+		return "", fmt.Errorf("sleep is not allowed via exec — use memory_remind for timed check-ins instead")
 	}
 
 	// Resolve secret templates

@@ -50,7 +50,7 @@ func TestExecTimeout(t *testing.T) {
 	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "sleep 60",
+		"command": "read -t 60 < /dev/null",
 		"timeout": 1,
 	})
 
@@ -268,7 +268,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	})
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "sleep 2 && echo done",
+		"command": "timeout 3 tail -f /dev/null",
 		"timeout": 10,
 	})
 
@@ -285,10 +285,97 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	// Wait for the command to complete
 	select {
 	case completed := <-completeCh:
-		if !strings.Contains(completed, "done") {
-			t.Errorf("completed result = %q, want 'done'", completed)
+		if strings.Contains(completed, "still running") {
+			t.Errorf("should have completed, got auto-background message: %q", completed)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for auto-backgrounded command")
+	}
+}
+
+func TestExecSleepBlocked(t *testing.T) {
+	tool := NewExecTool(nil, 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "sleep 5",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for sleep command")
+	}
+	if !strings.Contains(err.Error(), "memory_remind") {
+		t.Errorf("error should mention memory_remind, got: %v", err)
+	}
+}
+
+func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
+	tool := NewExecTool(nil, 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "sleep 30s",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for sleep 30s command")
+	}
+	if !strings.Contains(err.Error(), "memory_remind") {
+		t.Errorf("error should mention memory_remind, got: %v", err)
+	}
+}
+
+func TestExecSleepCaseInsensitive(t *testing.T) {
+	tool := NewExecTool(nil, 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "SLEEP 10",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for SLEEP command")
+	}
+}
+
+func TestExecSleepWithLeadingWhitespaceBlocked(t *testing.T) {
+	tool := NewExecTool(nil, 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "  sleep 5",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for '  sleep 5' command")
+	}
+}
+
+func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
+	tool := NewExecTool(nil, 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "sleep 5 && do_thing",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for 'sleep 5 && do_thing' command")
+	}
+}
+
+func TestExecSleepNotBlockedInMiddle(t *testing.T) {
+	tool := NewExecTool(nil, 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo 'going to sleep'",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "going to sleep") {
+		t.Errorf("expected 'going to sleep' in output, got: %q", result)
 	}
 }
