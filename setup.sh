@@ -106,7 +106,7 @@ export GOCACHE="${GOCACHE:-$SCRIPT_DIR/.gocache}"
 export GOFLAGS="${GOFLAGS:--buildvcs=false}"
 
 # Build info for ldflags
-NEW_COMMIT="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+NEW_COMMIT="$(git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 LDFLAGS="-X main.gitCommit=$NEW_COMMIT -X main.buildTime=$BUILD_TIME"
 
@@ -140,7 +140,7 @@ if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]];
             echo ""
             echo "## Changes"
             echo ""
-            git -C "$SCRIPT_DIR" log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null || echo "(could not read git log)"
+            git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null || echo "(could not read git log)"
         } > "$WELCOME_FILE"
         chown "$CLOD_USER:$CLOD_USER" "$WELCOME_FILE"
         info "  Wrote changelog to $WELCOME_FILE"
