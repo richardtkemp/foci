@@ -707,6 +707,7 @@ func setupAgent(p setupParams) *agentInstance {
 		p.cfg.Sessions.CompactionMinMessages,
 	)
 	compactor.Scratchpad = p.scratchpadStore
+	compactor.SystemPrompt = p.cfg.Sessions.CompactionSystemPrompt
 
 	// Per-agent send_telegram tool (closure captures this agent's bot)
 	registry.Register(tools.NewSendTelegramTool(func() tools.TelegramSender {

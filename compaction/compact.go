@@ -19,6 +19,7 @@ type Compactor struct {
 	maxTokens         int
 	minMessages       int
 	Scratchpad        *memory.Scratchpad // nil disables scratchpad injection
+	SystemPrompt      string             // extra system prompt injected only during compaction
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -136,10 +137,23 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		Content: anthropic.TextContent(summaryPrompt),
 	})
 
+	// Inject compaction-specific system prompt if configured.
+	// This keeps compaction instructions out of every regular API call,
+	// saving ~1500 tokens per turn.
+	compactionSystem := system
+	if c.SystemPrompt != "" {
+		compactionSystem = make([]anthropic.SystemBlock, len(system), len(system)+1)
+		copy(compactionSystem, system)
+		compactionSystem = append(compactionSystem, anthropic.SystemBlock{
+			Type: "text",
+			Text: c.SystemPrompt,
+		})
+	}
+
 	resp, err := c.client.SendMessage(ctx, &anthropic.MessageRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
-		System:    system,
+		System:    compactionSystem,
 		Messages:  summaryMessages,
 	})
 	if err != nil {
