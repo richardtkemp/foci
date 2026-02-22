@@ -97,7 +97,9 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 
 ## Message Metadata
 
-Each user message gets a metadata line prepended (NOT in system prompt — that would bust cache):
+Before metadata is added, **prompt rules** (`[[prompt_rules]]` in config) run regex find/replace on the raw user message. Rules run in sequence. This happens before duplication (`DuplicateMessages`), before metadata prefix, and after STT transcription.
+
+Each user message then gets a metadata line prepended (NOT in system prompt — that would bust cache):
 
 ```
 [meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 prev_cost=$0.0430 prev_tokens=in:2400/out:312/cR:18000/cW:200

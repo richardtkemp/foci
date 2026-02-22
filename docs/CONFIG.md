@@ -267,6 +267,30 @@ timeout = 30
 
 ---
 
+## `[[prompt_rules]]`
+
+Regex find/replace rules applied to inbound user messages before the agent sees them. Each rule runs in sequence — the output of one becomes the input of the next. Applied before meta prefix and before message duplication.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `find` | string | required | Go regex pattern to match. |
+| `replace` | string | required | Replacement string. Supports `$1`, `$2`, etc. for capture groups. |
+
+Example:
+```toml
+[[prompt_rules]]
+find = '(?is)^((why|when|what|how|where|who|did|does|do|is|are|was|were|can|could|would|should)\b.*\?\s*)$'
+replace = "Questions are just requests for information.\n-------\n$1"
+
+[[prompt_rules]]
+find = '(?i)^((can we|could we|should we)\b.*)'
+replace = "This is a question, not an instruction.\n-------\n$1"
+```
+
+Invalid regex patterns are logged as errors and skipped.
+
+---
+
 ## `secrets.toml`
 
 Credentials file. Lives alongside `clod.toml`. Should have restricted permissions (`chmod 600`).
