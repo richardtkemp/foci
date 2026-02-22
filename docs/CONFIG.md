@@ -135,6 +135,7 @@ Memory system (FTS5 search over markdown files + conversation history).
 |-----|------|---------|-------------|
 | `dir` | string | `""` | Legacy: single directory containing memory markdown files. Enables `memory_search`, `memory_remind`, and scratchpad tools. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format (`500ms`, `2s`). |
+| `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
 
 When set, creates SQLite databases alongside the config file: `memory.db`, `reminders.db`, `scratchpad.db`.
 

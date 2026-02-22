@@ -785,3 +785,89 @@ func TestLoadInvalidTOML(t *testing.T) {
 		t.Fatal("expected error for invalid TOML")
 	}
 }
+
+func TestLoadMemoryConversationWeightDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Memory.ConversationWeight != 0.1 {
+		t.Errorf("ConversationWeight = %f, want default 0.1", cfg.Memory.ConversationWeight)
+	}
+}
+
+func TestLoadMemoryConversationWeightCustom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+
+[memory]
+conversation_weight = 0.25
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Memory.ConversationWeight != 0.25 {
+		t.Errorf("ConversationWeight = %f, want 0.25", cfg.Memory.ConversationWeight)
+	}
+}
+
+func TestValidateMemoryConversationWeight(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{
+			"weight too high",
+			"[agent]\nid = \"test\"\n[memory]\nconversation_weight = 1.5",
+			"conversation_weight = 1.5",
+		},
+		{
+			"weight negative",
+			"[agent]\nid = \"test\"\n[memory]\nconversation_weight = -0.1",
+			"conversation_weight = -0.1",
+		},
+		{
+			"weight valid",
+			"[agent]\nid = \"test\"\n[memory]\nconversation_weight = 0.5",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "clod.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}

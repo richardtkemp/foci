@@ -17,7 +17,7 @@ import (
 type Result struct {
 	Path    string
 	Snippet string
-	Source  string  // source name (e.g., "memory", "code", "docs") or "conversation"
+	Source  string // source name (e.g., "memory", "code", "docs") or "conversation"
 	Rank    float64
 }
 
@@ -31,18 +31,19 @@ type SourceConfig struct {
 // and conversation history. Multiple sources can be indexed, each
 // with a configurable weight multiplier.
 type Index struct {
-	db           *sql.DB
-	sources      map[string]SourceConfig  // name -> {dir, weight}
-	watcher      *fsnotify.Watcher
-	debounce     time.Duration
-	reindexTimer *time.Timer
-	mu           sync.Mutex
+	db                 *sql.DB
+	sources            map[string]SourceConfig // name -> {dir, weight}
+	conversationWeight float64                 // weight multiplier for conversation results
+	watcher            *fsnotify.Watcher
+	debounce           time.Duration
+	reindexTimer       *time.Timer
+	mu                 sync.Mutex
 }
 
 // NewIndex creates or opens an FTS5 index at dbPath, indexing .md files from the given sources.
 // sources maps source names to {dir, weight}. debounce is the delay before auto-reindexing
-// on file change (0s = immediate).
-func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Duration) (*Index, error) {
+// on file change (0s = immediate). conversationWeight is the multiplier for conversation search results.
+func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Duration, conversationWeight float64) (*Index, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open memory db: %w", err)
@@ -63,9 +64,10 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 	}
 
 	return &Index{
-		db:       db,
-		sources:  sources,
-		debounce: debounce,
+		db:                 db,
+		sources:            sources,
+		conversationWeight: conversationWeight,
+		debounce:           debounce,
 	}, nil
 }
 
@@ -141,8 +143,8 @@ func (idx *Index) buildWeightedRankCase() string {
 		multiplier := 1.0 + cfg.Weight
 		cases = append(cases, fmt.Sprintf("WHEN '%s' THEN rank * %.2f", name, multiplier))
 	}
-	// Add conversation with default 1.0x multiplier
-	cases = append(cases, "WHEN 'conversation' THEN rank * 1.0")
+	// Conversation is fallback — only surfaces when memory files don't match
+	cases = append(cases, fmt.Sprintf("WHEN 'conversation' THEN rank * %.2f", idx.conversationWeight))
 	cases = append(cases, "ELSE rank")
 
 	return "CASE source " + strings.Join(cases, " ") + " END"

@@ -298,7 +298,7 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 
 	// Create per-agent index
 	dbPath := filepath.Join(dir, "memory-test.db")
-	idx, err := memory.NewIndex(dbPath, combined, 0)
+	idx, err := memory.NewIndex(dbPath, combined, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}

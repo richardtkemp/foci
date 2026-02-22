@@ -19,7 +19,7 @@ func testIndex(t *testing.T) (*Index, string) {
 			Weight: 1.0,
 		},
 	}
-	idx, err := NewIndex(dbPath, sources, 0)
+	idx, err := NewIndex(dbPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
@@ -135,6 +135,46 @@ func TestMemoryWeightedHigher(t *testing.T) {
 	}
 }
 
+func TestConversationWeightConfigurable(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "memory.db")
+
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Neural networks are great"), 0644)
+
+	sources := map[string]SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+
+	idx, err := NewIndex(dbPath, sources, 0, 0.5)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	idx.IndexConversation("Neural networks are interesting", "agent:main:main")
+
+	results, err := idx.Search("neural")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	if results[0].Source != "memory" {
+		t.Errorf("first result source = %q, want 'memory'", results[0].Source)
+	}
+	if results[1].Source != "conversation" {
+		t.Errorf("second result source = %q, want 'conversation'", results[1].Source)
+	}
+}
+
 func TestSearchNoMatches(t *testing.T) {
 	idx, memDir := testIndex(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("nothing relevant here"), 0644)
@@ -223,7 +263,7 @@ func TestMultiSourceIndexing(t *testing.T) {
 		"code":      {Dir: code, Weight: 0.3},
 	}
 
-	idx, err := NewIndex(dbPath, sources, 0)
+	idx, err := NewIndex(dbPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
@@ -270,7 +310,7 @@ func TestWeightedRanking(t *testing.T) {
 		"low":  {Dir: lowPriority, Weight: 0.0},  // 1.0x multiplier
 	}
 
-	idx, err := NewIndex(dbPath, sources, 0)
+	idx, err := NewIndex(dbPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
@@ -307,7 +347,7 @@ func TestBackwardCompatSingleDir(t *testing.T) {
 		"memory": {Dir: memDir, Weight: 1.0},
 	}
 
-	idx, err := NewIndex(dbPath, sources, 0)
+	idx, err := NewIndex(dbPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
