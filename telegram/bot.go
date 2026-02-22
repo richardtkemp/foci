@@ -59,9 +59,10 @@ type Bot struct {
 	pool         *Pool        // back-reference to pool (secondary bots only)
 	botToken     string       // for building file download URLs
 
-	transcriber voice.STT // nil = voice notes not supported
-	tts         voice.TTS // nil = TTS not available
-	stopAliases []string  // aliases for /stop command
+	transcriber       voice.STT // nil = voice notes not supported
+	tts               voice.TTS // nil = TTS not available
+	stopAliases       []string  // aliases for /stop command
+	enableStopAliases bool      // whether to use stop aliases (default true)
 
 	queue      chan queuedMessage // receiver → agent worker
 	turnCancel context.CancelFunc // cancel the current agent turn
@@ -105,9 +106,10 @@ func (b *Bot) SetTTS(t voice.TTS) {
 	b.tts = t
 }
 
-// SetStopAliases sets the aliases for the /stop command.
-func (b *Bot) SetStopAliases(aliases []string) {
+// SetStopAliases sets the aliases for the /stop command and whether to enable them.
+func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
 	b.stopAliases = aliases
+	b.enableStopAliases = enabled
 }
 
 // SetSecondary marks this bot as a secondary bot in the given pool.
@@ -234,6 +236,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 func (b *Bot) isStopCommand(cmd string) bool {
 	if cmd == "/stop" {
 		return true
+	}
+	if !b.enableStopAliases {
+		return false
 	}
 	for _, alias := range b.stopAliases {
 		if cmd == "/"+alias {
