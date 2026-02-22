@@ -185,11 +185,8 @@ func ConvertToTelegramHTML(text string) string {
 	// Uses capture groups to preserve surrounding characters
 	text = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`).ReplaceAllString(text, "$1<i>$2</i>$3")
 
-	// Headings: hierarchy rendering (Telegram has no native headings)
-	// H1: ═══ Title ═══, H2: ── Title ──, H3+: just bold
-	text = regexp.MustCompile(`(?m)^#\s+(.+)$`).ReplaceAllString(text, "═══ $1 ═══")
-	text = regexp.MustCompile(`(?m)^##\s+(.+)$`).ReplaceAllString(text, "── $1 ──")
-	text = regexp.MustCompile(`(?m)^###+ (.+)$`).ReplaceAllString(text, "<b>$1</b>")
+	// Headings: relative hierarchy rendering based on levels actually used
+	text = convertHeadings(text)
 
 	// Horizontal rules: ---, ***, ___ (3+ chars on a line by themselves)
 	text = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`).ReplaceAllString(text, "————————————————")
@@ -343,6 +340,84 @@ func formatTable(lines []string, sepRe *regexp.Regexp) string {
 		out = append(out, "| "+strings.Join(parts, " | ")+" |")
 	}
 	return strings.Join(out, "\n")
+}
+
+// headingStyle represents the visual style for a heading level
+type headingStyle int
+
+const (
+	headingBold headingStyle = iota
+	headingDoubleLine
+	headingTripleLine
+)
+
+// convertHeadings detects heading levels used and maps them to styles.
+// Mapping is relative based on distinct levels:
+// - 1 level: bold
+// - 2 levels: double-line + bold
+// - 3 levels: triple-line + double-line + bold
+// - 4+ levels: triple-line + double-line + bold, extras all bold
+func convertHeadings(text string) string {
+	h1Re := regexp.MustCompile(`(?m)^#\s+(.+)$`)
+	h2Re := regexp.MustCompile(`(?m)^##\s+(.+)$`)
+	h3PlusRe := regexp.MustCompile(`(?m)^###+ (.+)$`)
+
+	hasH1 := h1Re.MatchString(text)
+	hasH2 := h2Re.MatchString(text)
+	hasH3Plus := h3PlusRe.MatchString(text)
+
+	levels := 0
+	if hasH1 {
+		levels++
+	}
+	if hasH2 {
+		levels++
+	}
+	if hasH3Plus {
+		levels++
+	}
+
+	var h1Style, h2Style, h3Style headingStyle
+	switch levels {
+	case 1:
+		h1Style = headingBold
+		h2Style = headingBold
+		h3Style = headingBold
+	case 2:
+		h1Style = headingDoubleLine
+		h2Style = headingBold
+		h3Style = headingBold
+	default:
+		h1Style = headingTripleLine
+		h2Style = headingDoubleLine
+		h3Style = headingBold
+	}
+
+	text = h1Re.ReplaceAllStringFunc(text, func(m string) string {
+		title := h1Re.FindStringSubmatch(m)[1]
+		return formatHeading(title, h1Style)
+	})
+	text = h2Re.ReplaceAllStringFunc(text, func(m string) string {
+		title := h2Re.FindStringSubmatch(m)[1]
+		return formatHeading(title, h2Style)
+	})
+	text = h3PlusRe.ReplaceAllStringFunc(text, func(m string) string {
+		title := h3PlusRe.FindStringSubmatch(m)[1]
+		return formatHeading(title, h3Style)
+	})
+
+	return text
+}
+
+func formatHeading(title string, style headingStyle) string {
+	switch style {
+	case headingTripleLine:
+		return "═══ " + title + " ═══"
+	case headingDoubleLine:
+		return "── " + title + " ──"
+	default:
+		return "<b>" + title + "</b>"
+	}
 }
 
 // convertBlockquotes merges consecutive > lines into single <blockquote> tags.
