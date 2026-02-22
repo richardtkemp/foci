@@ -524,32 +524,27 @@ func main() {
 
 	log.Infof("main", "shutting down...")
 
-	// Stop all heartbeats
+	// Stop all heartbeats first — prevents new heartbeat-triggered turns
 	for _, id := range agentOrder {
 		agents[id].heartbeat.Stop()
 	}
-	cancel()
 
-	// Wait for in-flight agent turns to flush session state
-	for i := 0; i < 50; i++ {
-		anyBusy := false
-		for _, inst := range agents {
-			if inst.ag.IsProcessing() {
-				anyBusy = true
-				break
-			}
-		}
-		if !anyBusy {
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
+	// Close HTTP server — prevents new HTTP-triggered turns
 	httpMu.Lock()
 	if httpServer != nil {
 		httpServer.Close()
 	}
 	httpMu.Unlock()
+
+	// Wait for in-flight agent turns to complete naturally.
+	// The turn lock prevents new turns from starting on sessions that are
+	// already processing. With heartbeats stopped and HTTP closed, no new
+	// turns will be initiated. We defer cancel() until AFTER this loop so
+	// that in-flight turns (including exec subprocesses) aren't killed.
+	gracefulShutdown(agents)
+
+	// Now cancel the context — stops Telegram bots and cleans up goroutines
+	cancel()
 }
 
 // setupParams holds the shared resources needed by each agent.
@@ -1010,4 +1005,27 @@ func setupAgent(p setupParams) *agentInstance {
 func sessionMessageCount(sessions *session.Store, key string) int {
 	n, _ := sessions.MessageCount(key)
 	return n
+}
+
+// gracefulShutdown waits up to 5 seconds for all in-flight agent turns to complete.
+// This allows exec subprocesses and API calls to finish naturally before the
+// context is cancelled.
+func gracefulShutdown(agents map[string]*agentInstance) {
+	const maxWaitTicks = 50
+	const tickInterval = 100 * time.Millisecond
+
+	for i := 0; i < maxWaitTicks; i++ {
+		anyBusy := false
+		for _, inst := range agents {
+			if inst.ag.IsProcessing() {
+				anyBusy = true
+				break
+			}
+		}
+		if !anyBusy {
+			return
+		}
+		time.Sleep(tickInterval)
+	}
+	log.Warnf("main", "graceful shutdown timed out — some agents still processing")
 }
