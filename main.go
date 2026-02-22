@@ -689,7 +689,11 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Warning injection queue (if enabled)
 	if p.cfg.Logging.InjectAgentWarnings {
-		ag.Warnings = agent.NewWarningQueue()
+		warningWindow, err := time.ParseDuration(p.cfg.Logging.WarningWindowDuration)
+		if err != nil {
+			warningWindow = 5 * time.Minute
+		}
+		ag.Warnings = agent.NewWarningQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
 	}
 
 	// Model escalation tool (needs this agent's bootstrap)
