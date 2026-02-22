@@ -88,22 +88,38 @@ if ! command -v go &>/dev/null; then
     exit 1
 fi
 
+# Capture the currently-deployed commit hash (for changelog on update)
+OLD_COMMIT=""
+IS_UPDATE=false
+COMMIT_FILE="$CLOD_HOME/.clod-commit"
+if [[ -f "$INSTALL_DIR/clodgw" ]]; then
+    IS_UPDATE=true
+    if [[ -f "$COMMIT_FILE" ]]; then
+        OLD_COMMIT="$(cat "$COMMIT_FILE" 2>/dev/null || true)"
+    fi
+fi
+
 # Ensure Go env vars are set (sudo strips HOME and caches)
 export GOPATH="${GOPATH:-$SCRIPT_DIR/.gopath}"
 export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
 export GOCACHE="${GOCACHE:-$SCRIPT_DIR/.gocache}"
 export GOFLAGS="${GOFLAGS:--buildvcs=false}"
 
+# Build info for ldflags
+NEW_COMMIT="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+LDFLAGS="-X main.gitCommit=$NEW_COMMIT -X main.buildTime=$BUILD_TIME"
+
 info "  Building clodgw (gateway/main binary)..."
 if ! $DRY_RUN; then
     cd "$SCRIPT_DIR"
-    go build -o clodgw . || { error "Failed to build clodgw"; exit 1; }
+    go build -ldflags "$LDFLAGS" -o clodgw . || { error "Failed to build clodgw"; exit 1; }
 fi
 
 info "  Building clod (CLI tool)..."
 if ! $DRY_RUN; then
     cd "$SCRIPT_DIR"
-    go build -o clod ./cmd/clod/ || { error "Failed to build clod"; exit 1; }
+    go build -ldflags "$LDFLAGS" -o clod ./cmd/clod/ || { error "Failed to build clod"; exit 1; }
 fi
 
 # Install built binaries
@@ -112,6 +128,34 @@ if ! $DRY_RUN; then
     install -m 755 "$SCRIPT_DIR/clod" "$INSTALL_DIR/clod"
 fi
 info "  Installed clodgw and clod to $INSTALL_DIR"
+
+# Write changelog (WELCOME.md) on update — not fresh install
+if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]]; then
+    WELCOME_FILE="$CLOD_HOME/WELCOME.md"
+    if ! $DRY_RUN; then
+        {
+            echo "# Clod Updated"
+            echo ""
+            echo "Updated from \`$OLD_COMMIT\` to \`$NEW_COMMIT\` on $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo ""
+            echo "## Changes"
+            echo ""
+            git -C "$SCRIPT_DIR" log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null || echo "(could not read git log)"
+        } > "$WELCOME_FILE"
+        chown "$CLOD_USER:$CLOD_USER" "$WELCOME_FILE"
+        info "  Wrote changelog to $WELCOME_FILE"
+    else
+        info "  (dry-run) Would write changelog to $CLOD_HOME/WELCOME.md"
+    fi
+elif $IS_UPDATE; then
+    info "  Update detected but no previous commit recorded — skipping changelog"
+fi
+
+# Save current commit for next update
+if ! $DRY_RUN; then
+    echo "$NEW_COMMIT" > "$COMMIT_FILE"
+    chown "$CLOD_USER:$CLOD_USER" "$COMMIT_FILE"
+fi
 
 # ---------- 3. Directories ----------
 info "Step 3: Directories"

@@ -296,6 +296,16 @@ Invalid regex patterns are logged as errors and skipped.
 
 ---
 
+## Top-level keys
+
+Miscellaneous top-level config keys (not in any section).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `welcome_file` | string | `"WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Written by `setup.sh` on update (not fresh install). |
+
+---
+
 ## `secrets.toml`
 
 Credentials file. Lives alongside `clod.toml`. Should have restricted permissions (`chmod 600`).

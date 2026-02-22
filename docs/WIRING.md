@@ -33,6 +33,7 @@ config.Load(path)
   → botMgr.StartAll(ctx)                                  ← starts all bots
   → start all heartbeats
   → http.Server{"/send", "/status", "/command", "/wake"}  ← routes by agent param
+  → injectWelcomeFile()                                    ← setup.sh changelog injection
   → signal.Notify(SIGINT, SIGTERM) → shutdown
 ```
 
