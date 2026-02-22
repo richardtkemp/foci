@@ -83,19 +83,14 @@ type Agent struct {
 	CompactionSummaryPrompt string                  // passed to Compactor.Compact(); empty uses default
 	CompactionHandoffMsg    string                  // passed to Compactor.Compact(); empty uses default
 
-	processing       int32 // atomic: number of in-flight HandleMessage calls
-	turnLocksMu      sync.Mutex
-	turnLocks        map[string]*sync.Mutex // per-session turn serialization
-	metaMu           sync.Mutex
-	meta             map[string]*sessionMeta // per-session metadata
-	manaCacheMu      sync.Mutex
-	manaCached       string
-	manaCacheTime    time.Time
-	replyMu          sync.Mutex
-	replyFunc        ReplyFunc        // optional: set per-turn for intermediate replies
-	voiceReplyFunc   VoiceReplyFunc   // optional: set per-turn for voice note delivery
-	activityFunc     func()           // optional: called when tool completes (typing indicator refresh)
-	toolCallObserver ToolCallObserver // optional: set per-turn for tool call visibility
+	processing    int32 // atomic: number of in-flight HandleMessage calls
+	turnLocksMu   sync.Mutex
+	turnLocks     map[string]*sync.Mutex // per-session turn serialization
+	metaMu        sync.Mutex
+	meta          map[string]*sessionMeta // per-session metadata
+	manaCacheMu   sync.Mutex
+	manaCached    string
+	manaCacheTime time.Time
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
@@ -108,86 +103,8 @@ func (a *Agent) SetProcessingForTest(n int32) {
 	atomic.StoreInt32(&a.processing, n)
 }
 
-// SetReplyFunc sets a callback for intermediate replies during a turn.
-// The callback is called from the agent loop goroutine.
-func (a *Agent) SetReplyFunc(fn ReplyFunc) {
-	a.replyMu.Lock()
-	defer a.replyMu.Unlock()
-	a.replyFunc = fn
-}
-
 // VoiceReplyFunc is called to deliver voice audio during a turn.
 type VoiceReplyFunc func(oggData []byte)
-
-// SetVoiceReplyFunc sets a callback for voice note delivery during a turn.
-func (a *Agent) SetVoiceReplyFunc(fn VoiceReplyFunc) {
-	a.replyMu.Lock()
-	defer a.replyMu.Unlock()
-	a.voiceReplyFunc = fn
-}
-
-// sendVoice sends a voice note if a VoiceReplyFunc is set.
-func (a *Agent) sendVoice(data []byte) {
-	a.replyMu.Lock()
-	fn := a.voiceReplyFunc
-	a.replyMu.Unlock()
-	if fn != nil && len(data) > 0 {
-		fn(data)
-	}
-}
-
-// GetVoiceReplyFunc returns the current voice reply function (set per-turn by the telegram bot).
-func (a *Agent) GetVoiceReplyFunc() VoiceReplyFunc {
-	a.replyMu.Lock()
-	defer a.replyMu.Unlock()
-	return a.voiceReplyFunc
-}
-
-// SetToolCallObserver sets a callback fired before each tool execution.
-// Used by the Telegram bot to show tool call info.
-func (a *Agent) SetToolCallObserver(fn ToolCallObserver) {
-	a.replyMu.Lock()
-	defer a.replyMu.Unlock()
-	a.toolCallObserver = fn
-}
-
-// notifyToolCall calls the tool call observer if set.
-func (a *Agent) notifyToolCall(name string, params json.RawMessage) {
-	a.replyMu.Lock()
-	fn := a.toolCallObserver
-	a.replyMu.Unlock()
-	if fn != nil {
-		fn(name, params)
-	}
-}
-
-// SetActivityFunc sets a callback fired after each tool completes.
-// Used by the Telegram bot to refresh the typing indicator.
-func (a *Agent) SetActivityFunc(fn func()) {
-	a.replyMu.Lock()
-	defer a.replyMu.Unlock()
-	a.activityFunc = fn
-}
-
-// signalActivity calls the activity callback if set.
-func (a *Agent) signalActivity() {
-	a.replyMu.Lock()
-	fn := a.activityFunc
-	a.replyMu.Unlock()
-	if fn != nil {
-		fn()
-	}
-}
-
-// sendIntermediate sends an intermediate reply if a ReplyFunc is set.
-func (a *Agent) sendIntermediate(text string) {
-	a.replyMu.Lock()
-	fn := a.replyFunc
-	a.replyMu.Unlock()
-	if fn != nil && text != "" {
-		fn(text)
-	}
-}
 
 // VoiceMode returns whether voice mode is active for the session.
 func (a *Agent) VoiceMode(sessionKey string) bool {
@@ -686,7 +603,14 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		// Send any text in the response as an intermediate reply
 		// (the agent said something before/alongside tool calls)
 		if intermediateText := anthropic.TextOf(resp.Content); intermediateText != "" {
-			a.sendIntermediate(intermediateText)
+			sendIntermediateCtx(ctx, intermediateText)
+		}
+
+		// Build tool execution context: inject voice reply func so TTS
+		// tool can extract it without importing agent (via tools.VoiceReplyFuncFromContext).
+		toolCtx := ctx
+		if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.VoiceReplyFunc != nil {
+			toolCtx = tools.WithVoiceReplyFunc(ctx, tools.VoiceReplyFunc(cb.VoiceReplyFunc))
 		}
 
 		// Execute tool calls
@@ -707,13 +631,13 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 				))
-				a.signalActivity()
+				signalActivityCtx(ctx)
 				continue
 			}
 
 			log.Debugf("agent", "tool_use: %s", block.Name)
-			a.notifyToolCall(block.Name, block.Input)
-			result, err := tool.Execute(ctx, block.Input)
+			notifyToolCallCtx(ctx, block.Name, block.Input)
+			result, err := tool.Execute(toolCtx, block.Input)
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
@@ -722,7 +646,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
 				))
-				a.signalActivity()
+				signalActivityCtx(ctx)
 				continue
 			}
 
@@ -731,7 +655,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
 				block.ID, guardedResult, false,
 			))
-			a.signalActivity()
+			signalActivityCtx(ctx)
 		}
 
 		// Append tool results as user message

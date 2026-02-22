@@ -9,21 +9,26 @@ import (
 )
 
 type ManaWatcher struct {
+	name       string
 	thresholds []int
 	firedToday map[int]bool
 	mu         sync.Mutex
 	lastReset  time.Time
 }
 
-func NewManaWatcher(thresholds []int) *ManaWatcher {
+func NewManaWatcher(name string, thresholds []int) *ManaWatcher {
 	if len(thresholds) == 0 {
 		return nil
+	}
+	if name == "" {
+		name = "mana"
 	}
 	sorted := make([]int, len(thresholds))
 	copy(sorted, thresholds)
 	sort.Sort(sort.Reverse(sort.IntSlice(sorted)))
 
 	return &ManaWatcher{
+		name:       name,
 		thresholds: sorted,
 		firedToday: make(map[int]bool),
 		lastReset:  time.Now().Truncate(24 * time.Hour),
@@ -70,5 +75,5 @@ func (m *ManaWatcher) parseManaPercentage(manaStr string) int {
 }
 
 func (m *ManaWatcher) formatWarning(mana, threshold int) string {
-	return fmt.Sprintf("low mana: %d%% remaining (threshold: %d%%)", mana, threshold)
+	return fmt.Sprintf("low %s: %d%% remaining (threshold: %d%%)", m.name, mana, threshold)
 }

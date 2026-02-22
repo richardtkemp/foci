@@ -140,17 +140,17 @@ Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The meta
 When the model responds with text alongside `tool_use` blocks (e.g., "Looking into this..."), the text is sent immediately via `ReplyFunc` before tool execution begins. This allows the agent to acknowledge a message and deliver the full response later.
 
 **Flow:**
-1. Telegram bot sets `agent.SetReplyFunc()` before calling `HandleMessage`
+1. Telegram bot creates a `TurnCallbacks` struct and attaches it to the turn context via `agent.WithTurnCallbacks(ctx, cb)`
 2. Agent loop detects text in a `tool_use` response
-3. `sendIntermediate()` calls the ReplyFunc, which sends the text to Telegram
+3. `sendIntermediateCtx(ctx)` extracts the ReplyFunc from context and calls it
 4. Agent continues executing tools
 5. Final `end_turn` response is returned from `HandleMessage` as usual
 
-The `ReplyFunc` is cleared after each turn via `defer agent.SetReplyFunc(nil)`.
+Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks. Async callers (heartbeat, tmux watch, exec auto-background, scheduled wakes) that don't set callbacks get nil — no Telegram side effects. No cross-turn state corruption.
 
 ## Tool Call Visibility
 
-Tool calls are shown in Telegram via a send+edit pattern using `ToolCallObserver`. The first tool call in a turn sends a new message; subsequent tool calls edit that same message. The final response then edits the tool message with the answer (or falls back to a new message if too long).
+Tool calls are shown in Telegram via a send+edit pattern using `ToolCallObserver`. The first tool call in a turn sends a new message; subsequent tool calls edit that same message. The final response then edits the tool message with the answer (or falls back to a new message if too long). Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCallbacks` struct — per-turn, not agent-global.
 
 **Ordering with deferred replies:** When intermediate text fires between tool loops, `ReplyFunc` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
 

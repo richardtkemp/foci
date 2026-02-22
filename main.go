@@ -746,21 +746,15 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Mana threshold warnings (if thresholds configured)
 	if len(p.cfg.ManaWarnings.Thresholds) > 0 && ag.Warnings != nil {
-		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Thresholds)
+		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, p.cfg.ManaWarnings.Thresholds)
 	}
 
 	// Model escalation tool (needs this agent's bootstrap)
 	registry.Register(tools.NewRequestModelTool(p.client, bootstrap))
 
-	// TTS tool (needs this agent's voice reply func)
+	// TTS tool -- voice reply func is injected into tool context by the agent loop
 	if p.ttsProvider != nil {
-		registry.Register(tools.NewTTSTool(p.ttsProvider, func() tools.VoiceReplyFunc {
-			fn := ag.GetVoiceReplyFunc()
-			if fn == nil {
-				return nil
-			}
-			return tools.VoiceReplyFunc(fn)
-		}))
+		registry.Register(tools.NewTTSTool(p.ttsProvider))
 	}
 
 	// Per-agent scheduled wakes
@@ -864,6 +858,23 @@ func setupAgent(p setupParams) *agentInstance {
 			return fmt.Sprintf("Error fetching usage: %v", err), nil
 		}
 		return anthropic.FormatUsage(usage), nil
+	}))
+
+	// Dynamic mana command (configurable name: /mana, /juice, /credits, etc.)
+	manaName := p.cfg.ManaWarnings.Name
+	if manaName == "" {
+		manaName = "mana"
+	}
+	cmds.Register(command.NewManaCommand(manaName, func(ctx context.Context) (string, error) {
+		usage, err := p.usageClient.GetUsage(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error fetching %s: %v", manaName, err), nil
+		}
+		percent := anthropic.FormatMana(usage)
+		if percent == "" {
+			return fmt.Sprintf("%s: unknown", manaName), nil
+		}
+		return fmt.Sprintf("%s: %s remaining", manaName, percent), nil
 	}))
 
 	// /reload command

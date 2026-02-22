@@ -554,14 +554,16 @@ func TestDeferredReply(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Track intermediate replies
+	// Track intermediate replies via context-scoped callbacks
 	var intermediateReplies []string
-	ag.SetReplyFunc(func(text string) {
-		intermediateReplies = append(intermediateReplies, text)
-	})
-	defer ag.SetReplyFunc(nil)
+	cb := &TurnCallbacks{
+		ReplyFunc: func(text string) {
+			intermediateReplies = append(intermediateReplies, text)
+		},
+	}
+	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(context.Background(), "agent:test:deferred", "Complex question")
+	finalResp, err := ag.HandleMessage(ctx, "agent:test:deferred", "Complex question")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -1162,24 +1164,24 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 }
 
 func TestVoiceReplyFunc(t *testing.T) {
-	ag := &Agent{Model: "test"}
-
 	var received []byte
-	ag.SetVoiceReplyFunc(func(data []byte) {
-		received = data
-	})
+	cb := &TurnCallbacks{
+		VoiceReplyFunc: func(data []byte) {
+			received = data
+		},
+	}
+	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	ag.sendVoice([]byte("test-audio"))
+	sendVoiceCtx(ctx, []byte("test-audio"))
 	if string(received) != "test-audio" {
 		t.Errorf("got %q, want %q", string(received), "test-audio")
 	}
 
-	// Clear and verify
-	ag.SetVoiceReplyFunc(nil)
+	// Empty context -- no delivery
 	received = nil
-	ag.sendVoice([]byte("should-not-deliver"))
+	sendVoiceCtx(context.Background(), []byte("should-not-deliver"))
 	if received != nil {
-		t.Error("should not deliver after clearing voice reply func")
+		t.Error("should not deliver without callbacks in context")
 	}
 }
 
@@ -1424,21 +1426,21 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	var mu sync.Mutex
 	var order []string
 
-	ag.SetReplyFunc(func(text string) {
-		mu.Lock()
-		order = append(order, "reply:"+text)
-		mu.Unlock()
-	})
-	defer ag.SetReplyFunc(nil)
+	cb := &TurnCallbacks{
+		ReplyFunc: func(text string) {
+			mu.Lock()
+			order = append(order, "reply:"+text)
+			mu.Unlock()
+		},
+		ToolCallObserver: func(name string, params json.RawMessage) {
+			mu.Lock()
+			order = append(order, "tool:"+name)
+			mu.Unlock()
+		},
+	}
+	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	ag.SetToolCallObserver(func(name string, params json.RawMessage) {
-		mu.Lock()
-		order = append(order, "tool:"+name)
-		mu.Unlock()
-	})
-	defer ag.SetToolCallObserver(nil)
-
-	_, err := ag.HandleMessage(context.Background(), "agent:test:order", "Check something")
+	_, err := ag.HandleMessage(ctx, "agent:test:order", "Check something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

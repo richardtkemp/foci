@@ -291,10 +291,10 @@ func NewModelCommand(getModel func() string, setModel func(string)) *Command {
 
 // SessionInfo holds data for the /session command.
 type SessionInfo struct {
-	SessionKey     string
-	MessageCount   int
-	CreatedAt      string
-	LastActivity   string
+	SessionKey   string
+	MessageCount int
+	CreatedAt    string
+	LastActivity string
 }
 
 // NewSessionCommand returns a /session command showing raw session metadata.
@@ -467,6 +467,18 @@ func NewUsageCommand(usageFn func(context.Context) (string, error)) *Command {
 		Description: "Check Claude subscription usage and rate limits",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return usageFn(ctx)
+		},
+	}
+}
+
+// NewManaCommand returns a dynamic slash command for checking quota.
+// The command name is configurable (e.g., /mana, /juice, /credits).
+func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *Command {
+	return &Command{
+		Name:        name,
+		Description: "Check current " + name + " (quota remaining)",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return manaFn(ctx)
 		},
 	}
 }

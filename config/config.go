@@ -114,7 +114,8 @@ type CacheConfig struct {
 }
 
 type ManaWarningsConfig struct {
-	Thresholds []int `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	Name       string `toml:"name"`       // what to call quota (default "mana")
+	Thresholds []int  `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
 }
 
 type SkillsConfig struct {
@@ -306,6 +307,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Cache.Strategy == "" {
 		cfg.Cache.Strategy = "auto"
+	}
+	if cfg.ManaWarnings.Name == "" {
+		cfg.ManaWarnings.Name = "mana"
 	}
 	if cfg.Tools.MaxResultChars == 0 {
 		cfg.Tools.MaxResultChars = 10000
