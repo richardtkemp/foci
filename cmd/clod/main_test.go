@@ -17,13 +17,17 @@ func mockGateway() *httptest.Server {
 
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Agent string `json:"agent"`
-			Text  string `json:"text"`
+			Agent   string `json:"agent"`
+			Session string `json:"session"`
+			Text    string `json:"text"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		resp := "echo: " + req.Text
 		if req.Agent != "" {
 			resp = "[" + req.Agent + "] " + resp
+		}
+		if req.Session != "" {
+			resp = "(session:" + req.Session + ") " + resp
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
@@ -114,6 +118,17 @@ func TestCLIIntegration(t *testing.T) {
 
 		// -a=value form
 		{"send with -a=val", []string{"send", "-a=scout", "hello"}, "[scout] echo: hello", false},
+
+		// -s/--session flag
+		{"send with -s", []string{"send", "-s", "research", "hello"}, "(session:research) echo: hello", false},
+		{"send with --session", []string{"send", "--session", "feature1", "hello"}, "(session:feature1) echo: hello", false},
+		{"send with -s=value", []string{"send", "-s=branch1", "hello"}, "(session:branch1) echo: hello", false},
+		{"send with --session=value", []string{"send", "--session=testing", "hello"}, "(session:testing) echo: hello", false},
+
+		// -a and -s flags together
+		{"send with -a and -s", []string{"send", "-a", "clutch", "-s", "research", "hello"}, "(session:research) [clutch] echo: hello", false},
+		{"send with -s and -a", []string{"send", "-s", "feature", "-a", "clutch", "hello"}, "(session:feature) [clutch] echo: hello", false},
+		{"send with -a= and -s=", []string{"send", "-a=clutch", "-s=main", "hello"}, "(session:main) [clutch] echo: hello", false},
 
 		// Flag after positional args
 		{"send flag after text", []string{"send", "hello", "-a", "research"}, "[research] echo: hello", false},
