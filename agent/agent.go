@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -67,33 +68,34 @@ type Agent struct {
 	Reminders *memory.ReminderStore // nil disables reminder injection
 	Model     string
 
-	ExtraSystemBlocks      []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
-	CacheStrategy          string                  // "auto" (top-level) or "explicit" (manual breakpoints)
-	CacheBustDetect        bool                    // detect cache busts (cache_read drop >50%)
-	CacheBustAlert         CacheBustFunc           // callback for cache bust alerts
-	DuplicateMessages      bool                    // send user text twice per API call (improves instruction following)
-	MaxResultChars         int                     // max chars for tool result before writing to file (0 disables)
-	ToolResultTempDir      string                  // where to write large tool results
-	Warnings               *WarningQueue           // nil disables warning injection into session
-	StateStore             *state.Store            // nil disables state persistence
-	UsageClient            *anthropic.UsageClient  // nil disables mana metadata
-	PromptRules            []CompiledPromptRule    // compiled regex rules for inbound message transformation
-	CompactionSummaryPrompt string                 // passed to Compactor.Compact(); empty uses default
-	CompactionHandoffMsg    string                 // passed to Compactor.Compact(); empty uses default
+	ExtraSystemBlocks       []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
+	CacheStrategy           string                  // "auto" (top-level) or "explicit" (manual breakpoints)
+	CacheBustDetect         bool                    // detect cache busts (cache_read drop >50%)
+	CacheBustAlert          CacheBustFunc           // callback for cache bust alerts
+	DuplicateMessages       bool                    // send user text twice per API call (improves instruction following)
+	MaxResultChars          int                     // max chars for tool result before writing to file (0 disables)
+	ToolResultTempDir       string                  // where to write large tool results
+	Warnings                *WarningQueue           // nil disables warning injection into session
+	ManaWatcher             *ManaWatcher            // nil disables mana threshold warnings
+	StateStore              *state.Store            // nil disables state persistence
+	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
+	PromptRules             []CompiledPromptRule    // compiled regex rules for inbound message transformation
+	CompactionSummaryPrompt string                  // passed to Compactor.Compact(); empty uses default
+	CompactionHandoffMsg    string                  // passed to Compactor.Compact(); empty uses default
 
-	processing      int32 // atomic: number of in-flight HandleMessage calls
-	turnLocksMu     sync.Mutex
-	turnLocks       map[string]*sync.Mutex // per-session turn serialization
-	metaMu          sync.Mutex
-	meta            map[string]*sessionMeta // per-session metadata
-	manaCacheMu     sync.Mutex
-	manaCached      string
-	manaCacheTime   time.Time
-	replyMu           sync.Mutex
-	replyFunc         ReplyFunc        // optional: set per-turn for intermediate replies
-	voiceReplyFunc    VoiceReplyFunc   // optional: set per-turn for voice note delivery
-	activityFunc      func()           // optional: called when tool completes (typing indicator refresh)
-	toolCallObserver  ToolCallObserver // optional: set per-turn for tool call visibility
+	processing       int32 // atomic: number of in-flight HandleMessage calls
+	turnLocksMu      sync.Mutex
+	turnLocks        map[string]*sync.Mutex // per-session turn serialization
+	metaMu           sync.Mutex
+	meta             map[string]*sessionMeta // per-session metadata
+	manaCacheMu      sync.Mutex
+	manaCached       string
+	manaCacheTime    time.Time
+	replyMu          sync.Mutex
+	replyFunc        ReplyFunc        // optional: set per-turn for intermediate replies
+	voiceReplyFunc   VoiceReplyFunc   // optional: set per-turn for voice note delivery
+	activityFunc     func()           // optional: called when tool completes (typing indicator refresh)
+	toolCallObserver ToolCallObserver // optional: set per-turn for tool call visibility
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
@@ -311,6 +313,12 @@ func formatGap(d time.Duration) string {
 	return fmt.Sprintf("%dd%dh", days, hours)
 }
 
+// isSystemMessage returns true if the message is from a system source
+// (heartbeat, scheduled wake) rather than a human user.
+func isSystemMessage(msg string) bool {
+	return strings.HasPrefix(msg, "[HEARTBEAT]") || strings.HasPrefix(msg, "[SCHEDULED WAKE]")
+}
+
 // guardToolResult checks if a tool result exceeds the size limit.
 // If it does, writes to a temp file and returns a truncated message with instructions.
 // If no limit is set or result is small, returns the original result.
@@ -482,6 +490,17 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	mana := a.manaString()
+
+	// Check mana thresholds and inject warning for active conversations only
+	// (not heartbeats or scheduled wakes)
+	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
+		a.ManaWatcher.CheckAndWarn(mana, func(warn string) {
+			if a.Warnings != nil {
+				a.Warnings.Push("WARN", "mana", warn)
+			}
+		})
+	}
+
 	metaPrefix := buildMetaPrefix(now, turnModel, mana, sm)
 	reminderBlock := a.collectReminders()
 	warningBlock := a.collectWarnings()
