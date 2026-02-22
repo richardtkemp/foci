@@ -16,6 +16,7 @@ import (
 	"clod/agent"
 	"clod/command"
 	"clod/log"
+	"clod/state"
 	"clod/voice"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -71,6 +72,9 @@ type Bot struct {
 	turnMu     sync.Mutex         // protects turnCancel
 	chatID     int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
+
+	stateStore   *state.Store // nil = no persistence
+	stateKey     string       // state key prefix (e.g. "bot:mybot")
 }
 
 // NewBot creates a new Telegram bot.
@@ -112,6 +116,20 @@ func (b *Bot) SetTTS(t voice.TTS) {
 func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
 	b.stopAliases = aliases
 	b.enableStopAliases = enabled
+}
+
+// SetStateStore configures persistent state for this bot.
+// key is used as the prefix for state keys (e.g. "bot:mybot").
+func (b *Bot) SetStateStore(store *state.Store, key string) {
+	b.stateStore = store
+	b.stateKey = key
+
+	// Restore chatID from persisted state
+	var chatID int64
+	if store.Get(key+":chatid", &chatID) && chatID != 0 {
+		b.SetChatID(chatID)
+		log.Infof("telegram", "restored chat ID %d from state", chatID)
+	}
 }
 
 // SetSecondary marks this bot as a secondary bot in the given pool.
@@ -262,8 +280,15 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 
 	// Remember chat ID for notifications (cache bust alerts, etc.)
 	b.chatMu.Lock()
+	changed := b.chatID != msg.Chat.Id
 	b.chatID = msg.Chat.Id
 	b.chatMu.Unlock()
+
+	if changed && b.stateStore != nil {
+		if err := b.stateStore.Set(b.stateKey+":chatid", msg.Chat.Id); err != nil {
+			log.Errorf("telegram", "persist chat ID: %v", err)
+		}
+	}
 
 	// Get text from message or caption (photos use caption)
 	text := msg.Text
