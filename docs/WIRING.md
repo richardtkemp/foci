@@ -95,6 +95,24 @@ The core of the system. Two entry points:
 
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
 
+### Cache Stability Invariant
+
+**The conversation history sent to the Anthropic API MUST be a strict append-only extension of the previous request.** New messages must only ever appear at the end — never inserted in the middle.
+
+Anthropic's prompt cache is prefix-matched. If any message shifts position (because an injected message was inserted before it), all cached tokens after that point are invalidated. A single cache bust can cost $1+ in re-tokenization.
+
+**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex (`turnLock(sessionKey)`) before doing any work. This serializes all turns on the same session — concurrent callers (heartbeat, tmux watch, scheduled wakes, exec auto-background, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
+
+**Concurrent callers that are serialized by the turn lock:**
+- Telegram bot worker (user messages)
+- Heartbeat goroutine (`[HEARTBEAT]`)
+- Tmux watch callback (`[TMUX WATCH]`, fires from `go func()`)
+- Scheduled wakes (`[SCHEDULED WAKE]`, fires from `go func()`)
+- Exec auto-background (`[EXEC RESULT]`, fires when long commands complete)
+- HTTP `/send` endpoint
+
+**Different sessions run concurrently** — the lock is per-session, not global. Branch sessions and parent sessions have different keys and do not block each other.
+
 ## Message Metadata
 
 Before metadata is added, **prompt rules** (`[[prompt_rules]]` in config) run regex find/replace on the raw user message. Rules run in sequence. This happens before duplication (`DuplicateMessages`), before metadata prefix, and after STT transcription.

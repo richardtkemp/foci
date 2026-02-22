@@ -80,6 +80,8 @@ type Agent struct {
 	PromptRules        []CompiledPromptRule    // compiled regex rules for inbound message transformation
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
+	turnLocksMu     sync.Mutex
+	turnLocks       map[string]*sync.Mutex // per-session turn serialization
 	metaMu          sync.Mutex
 	meta            map[string]*sessionMeta // per-session metadata
 	manaCacheMu     sync.Mutex
@@ -402,6 +404,23 @@ func (a *Agent) collectWarnings() string {
 	return block
 }
 
+// turnLock returns a per-session mutex that serializes HandleMessage calls.
+// This prevents concurrent turns on the same session from interleaving messages
+// in the session file, which would invalidate Anthropic's prefix-matched prompt cache.
+func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
+	a.turnLocksMu.Lock()
+	defer a.turnLocksMu.Unlock()
+	if a.turnLocks == nil {
+		a.turnLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := a.turnLocks[sessionKey]
+	if !ok {
+		mu = &sync.Mutex{}
+		a.turnLocks[sessionKey] = mu
+	}
+	return mu
+}
+
 // HandleMessage processes a text-only user message. Delegates to HandleMessageWithImages.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
 	return a.HandleMessageWithImages(ctx, sessionKey, userMessage, nil)
@@ -409,8 +428,23 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 
 // HandleMessageWithImages processes a user message with optional image attachments.
 func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, userMessage string, images []ImageData) (string, error) {
+	// Serialize turns on the same session. Without this, concurrent callers
+	// (heartbeat, tmux watch, scheduled wakes, exec auto-background) could
+	// load the same session state, run concurrent turns, and interleave their
+	// messages in the session file. This would break Anthropic's prefix-matched
+	// prompt cache — any insertion in the middle of conversation history
+	// invalidates all cached tokens after the insertion point.
+	sessionLock := a.turnLock(sessionKey)
+	sessionLock.Lock()
+	defer sessionLock.Unlock()
+
 	atomic.AddInt32(&a.processing, 1)
 	defer atomic.AddInt32(&a.processing, -1)
+
+	// Check if context was cancelled while waiting for the turn lock
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 
 	// Load existing messages
 	messages, err := a.Sessions.LoadFull(sessionKey)
