@@ -585,7 +585,18 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent tool registry
 	registry := tools.NewRegistry()
-	registry.Register(tools.NewExecTool(p.store))
+
+	// Exec auto-background: deliver results when long commands complete
+	execWakeFn := func(command string, result string) {
+		log.Infof("exec_wake", "command completed: %s", command)
+		resp, err := ag.HandleMessage(p.ctx, sessionKey, result)
+		if err != nil {
+			log.Errorf("exec_wake", "error: %v", err)
+		} else {
+			log.Debugf("exec_wake", "response length: %d", len(resp))
+		}
+	}
+	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, execWakeFn))
 
 	// Tmux wake function: inject a message into the agent session on inactivity
 	tmuxWakeFn := func(tmuxSession string, window int, threshold time.Duration) {

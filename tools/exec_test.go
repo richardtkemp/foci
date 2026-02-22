@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clod/secrets"
 )
 
 func TestExecEcho(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo hello world",
@@ -29,7 +30,7 @@ func TestExecEcho(t *testing.T) {
 }
 
 func TestExecWithTimeout(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -46,7 +47,7 @@ func TestExecWithTimeout(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 60",
@@ -64,7 +65,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecFailedCommand(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "false",
@@ -80,7 +81,7 @@ func TestExecFailedCommand(t *testing.T) {
 }
 
 func TestExecStderr(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo stderr_msg >&2",
@@ -96,7 +97,7 @@ func TestExecStderr(t *testing.T) {
 }
 
 func TestExecInvalidParams(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
 	if err == nil {
 		t.Fatal("expected error for invalid params")
@@ -104,7 +105,7 @@ func TestExecInvalidParams(t *testing.T) {
 }
 
 func TestExecMultilineOutput(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "printf 'line1\nline2\nline3'",
@@ -122,7 +123,7 @@ func TestExecMultilineOutput(t *testing.T) {
 }
 
 func TestExecBackgroundMode(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":    "echo bg",
@@ -150,7 +151,7 @@ token = "secret-value-12345"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store)
+	tool := NewExecTool(store, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo {{secret:custom.token}}",
@@ -183,7 +184,7 @@ key = "value"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store)
+	tool := NewExecTool(store, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "cat secrets.toml",
@@ -199,7 +200,7 @@ key = "value"
 }
 
 func TestExecOutputTruncation(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	// Generate output >100k chars
 	params, _ := json.Marshal(map[string]interface{}{
@@ -220,7 +221,7 @@ func TestExecOutputTruncation(t *testing.T) {
 }
 
 func TestExecNilStoreWithTemplate(t *testing.T) {
-	tool := NewExecTool(nil)
+	tool := NewExecTool(nil, 0, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo '{{secret:test.key}}'",
@@ -233,5 +234,61 @@ func TestExecNilStoreWithTemplate(t *testing.T) {
 	// With nil store, template syntax should pass through literally
 	if !strings.Contains(result, "{{secret:test.key}}") {
 		t.Errorf("result = %q, want template passed through", result)
+	}
+}
+
+func TestExecAutoBackgroundFastCommand(t *testing.T) {
+	// A fast command should complete before the threshold
+	var called bool
+	tool := NewExecTool(nil, 5, func(cmd string, result string) {
+		called = true
+	})
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo fast",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "fast") {
+		t.Errorf("result = %q, want 'fast'", result)
+	}
+	if called {
+		t.Error("onComplete should not be called for fast commands")
+	}
+}
+
+func TestExecAutoBackgroundSlowCommand(t *testing.T) {
+	// A slow command should auto-background after 1 second
+	completeCh := make(chan string, 1)
+	tool := NewExecTool(nil, 1, func(cmd string, result string) {
+		completeCh <- result
+	})
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "sleep 2 && echo done",
+		"timeout": 10,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should get the auto-background message
+	if !strings.Contains(result, "still running") {
+		t.Errorf("expected auto-background message, got %q", result)
+	}
+
+	// Wait for the command to complete
+	select {
+	case completed := <-completeCh:
+		if !strings.Contains(completed, "done") {
+			t.Errorf("completed result = %q, want 'done'", completed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for auto-backgrounded command")
 	}
 }
