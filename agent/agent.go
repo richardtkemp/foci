@@ -76,10 +76,14 @@ type Agent struct {
 	ToolResultTempDir  string                  // where to write large tool results
 	Warnings           *WarningQueue           // nil disables warning injection into session
 	StateStore         *state.Store            // nil disables state persistence
+	UsageClient        *anthropic.UsageClient  // nil disables mana metadata
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
 	meta            map[string]*sessionMeta // per-session metadata
+	manaCacheMu     sync.Mutex
+	manaCached      string
+	manaCacheTime   time.Time
 	replyMu           sync.Mutex
 	replyFunc         ReplyFunc        // optional: set per-turn for intermediate replies
 	voiceReplyFunc    VoiceReplyFunc   // optional: set per-turn for voice note delivery
@@ -208,6 +212,33 @@ func (a *Agent) RestoreVoiceMode(sessionKey string) {
 	}
 }
 
+// manaString returns a cached mana percentage string (e.g. "75%").
+// Returns empty string if UsageClient is nil or on error.
+func (a *Agent) manaString() string {
+	if a.UsageClient == nil {
+		return ""
+	}
+
+	a.manaCacheMu.Lock()
+	defer a.manaCacheMu.Unlock()
+
+	// Cache for 5 minutes
+	if time.Since(a.manaCacheTime) < 5*time.Minute && a.manaCached != "" {
+		return a.manaCached
+	}
+
+	usage, err := a.UsageClient.GetUsage(context.Background())
+	if err != nil {
+		log.Debugf("agent", "mana fetch: %v", err)
+		return a.manaCached // return stale on error
+	}
+
+	mana := anthropic.FormatMana(usage)
+	a.manaCached = mana
+	a.manaCacheTime = time.Now()
+	return mana
+}
+
 func (a *Agent) getSessionMeta(key string) *sessionMeta {
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()
@@ -223,7 +254,7 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 }
 
 // buildMetaPrefix creates the metadata line prepended to user messages.
-func buildMetaPrefix(now time.Time, model string, sm *sessionMeta) string {
+func buildMetaPrefix(now time.Time, model string, mana string, sm *sessionMeta) string {
 	gap := "none"
 	if !sm.lastMessageTime.IsZero() {
 		gap = formatGap(now.Sub(sm.lastMessageTime))
@@ -234,15 +265,21 @@ func buildMetaPrefix(now time.Time, model string, sm *sessionMeta) string {
 		voiceFlag = " voice=on"
 	}
 
-	if sm.prevCost == 0 && sm.prevInput == 0 {
-		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s", now.UTC().Format(time.RFC3339), gap, voiceFlag, model)
+	manaFlag := ""
+	if mana != "" {
+		manaFlag = " mana=" + mana
 	}
 
-	return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d",
+	if sm.prevCost == 0 && sm.prevInput == 0 {
+		// First message in session — no previous turn data
+		return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s%s", now.UTC().Format(time.RFC3339), gap, voiceFlag, model, manaFlag)
+	}
+
+	return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
 		now.UTC().Format(time.RFC3339), gap, voiceFlag, model,
 		sm.prevCost,
-		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite)
+		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite,
+		manaFlag)
 }
 
 // formatGap formats a duration as human-readable (e.g., "3h12m", "2d4h", "38s").
@@ -397,7 +434,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// Build metadata prefix and prepend to user message
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	metaPrefix := buildMetaPrefix(now, turnModel, sm)
+	mana := a.manaString()
+	metaPrefix := buildMetaPrefix(now, turnModel, mana, sm)
 	reminderBlock := a.collectReminders()
 	warningBlock := a.collectWarnings()
 	msgBody := userMessage

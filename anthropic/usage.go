@@ -184,6 +184,22 @@ func FormatUsage(usage *UsageResponse) string {
 	return strings.Join(parts, ", ")
 }
 
+// FormatMana returns a compact mana percentage string from usage data.
+// Mana = 100 - utilization (5-hour window). Returns "" if unavailable.
+func FormatMana(usage *UsageResponse) string {
+	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
+		return ""
+	}
+	mana := 100 - *usage.FiveHour.Utilization
+	if mana < 0 {
+		mana = 0
+	}
+	if mana < 1 {
+		return fmt.Sprintf("%.1f%%", mana)
+	}
+	return fmt.Sprintf("%.0f%%", mana)
+}
+
 // parseResetTime converts ISO timestamp to human-readable time
 // Returns formats like "1am", "3:30pm", "in 2h", or "" if parsing fails
 func parseResetTime(isoTime string) string {
