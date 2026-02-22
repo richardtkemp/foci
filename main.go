@@ -299,8 +299,10 @@ func main() {
 	// Start all bots
 	botMgr.StartAll(ctx)
 
-	// Send startup notifications to users via Telegram
-	botMgr.SendStartupNotifications()
+	// Send startup notifications to users via Telegram (if enabled)
+	if cfg.Telegram.EnableStartupNotify {
+		botMgr.SendStartupNotifications()
+	}
 
 	// Start all heartbeats
 	for _, id := range agentOrder {
@@ -858,7 +860,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if p.ttsProvider != nil {
 			primaryBot.SetTTS(p.ttsProvider)
 		}
-		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases)
+		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 
 		// Wire cache bust alerts to this agent's bot
 		if ag.CacheBustDetect {
@@ -885,7 +887,7 @@ func setupAgent(p setupParams) *agentInstance {
 					if p.ttsProvider != nil {
 						mbBot.SetTTS(p.ttsProvider)
 					}
-					mbBot.SetStopAliases(p.cfg.Telegram.StopAliases)
+					mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 					p.botMgr.AddMultiball(acfg.ID, mbBot)
 					log.Infof("main", "agent %q: multiball bot ready", acfg.ID)
 				}
@@ -912,7 +914,7 @@ func setupAgent(p setupParams) *agentInstance {
 				if p.ttsProvider != nil {
 					secBot.SetTTS(p.ttsProvider)
 				}
-				secBot.SetStopAliases(p.cfg.Telegram.StopAliases)
+				secBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 				p.botMgr.AddMultiball(acfg.ID, secBot)
 			}
 			if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {

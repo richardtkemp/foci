@@ -238,8 +238,8 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 func TestReceiveMessage_StopAlias(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	// Set stop aliases
-	b.SetStopAliases([]string{"stop", "wait", "hold"})
+	// Set stop aliases with enabled=true
+	b.SetStopAliases([]string{"stop", "wait", "hold"}, true)
 
 	// Simulate an active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -262,8 +262,8 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	// No stop aliases set (defaults to stop, wait) - but we can test with empty
-	b.SetStopAliases([]string{})
+	// Aliases disabled — even with aliases configured, they shouldn't work
+	b.SetStopAliases([]string{"wait", "hold"}, false)
 
 	// Simulate an active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -271,7 +271,7 @@ func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
 	b.turnCancel = cancel
 	b.turnMu.Unlock()
 
-	// /wait should NOT trigger stop when aliases is empty
+	// /wait should NOT trigger stop when aliases are disabled
 	msg := makeMsg(111, "owner", "/wait")
 	b.receiveMessage(context.Background(), msg)
 

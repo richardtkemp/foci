@@ -549,6 +549,54 @@ foo = "bar"
 	}
 }
 
+func TestLoadTelegramToggleDefaults(t *testing.T) {
+	// When not set, both toggles default to true
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Telegram.EnableStopAliases {
+		t.Error("EnableStopAliases should default to true")
+	}
+	if !cfg.Telegram.EnableStartupNotify {
+		t.Error("EnableStartupNotify should default to true")
+	}
+}
+
+func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
+	// When explicitly set to false, they stay false
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+
+[telegram]
+enable_stop_aliases = false
+enable_startup_notify = false
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Telegram.EnableStopAliases {
+		t.Error("EnableStopAliases should be false when explicitly set")
+	}
+	if cfg.Telegram.EnableStartupNotify {
+		t.Error("EnableStartupNotify should be false when explicitly set")
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	_, err := Load("/nonexistent/path/clod.toml")
 	if err == nil {

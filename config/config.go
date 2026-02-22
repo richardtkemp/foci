@@ -36,11 +36,13 @@ type TelegramBotConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken      string                       `toml:"bot_token"` // legacy single-bot token
-	AllowedUsers  []string                     `toml:"allowed_users"`
-	SecondaryBots []string                     `toml:"secondary_bots"` // legacy: tokens for secondary bots (multiball)
-	Bots          map[string]TelegramBotConfig `toml:"bots"`           // named bots for multi-agent
-	StopAliases   []string                     `toml:"stop_aliases"`   // aliases for /stop command (e.g., ["stop", "wait"])
+	BotToken            string                       `toml:"bot_token"` // legacy single-bot token
+	AllowedUsers        []string                     `toml:"allowed_users"`
+	SecondaryBots       []string                     `toml:"secondary_bots"`        // legacy: tokens for secondary bots (multiball)
+	Bots                map[string]TelegramBotConfig `toml:"bots"`                  // named bots for multi-agent
+	StopAliases         []string                     `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
+	EnableStopAliases   bool                         `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
+	EnableStartupNotify bool                         `toml:"enable_startup_notify"` // send notification on startup (default true)
 }
 
 type SessionsConfig struct {
@@ -227,6 +229,16 @@ func Load(path string) (*Config, error) {
 	}
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
+	}
+
+	// Bool defaults: default to true unless explicitly set to false in config.
+	// We use md.IsDefined because Go's zero value for bool is false,
+	// so we can't distinguish "not set" from "set to false" otherwise.
+	if !md.IsDefined("telegram", "enable_stop_aliases") {
+		cfg.Telegram.EnableStopAliases = true
+	}
+	if !md.IsDefined("telegram", "enable_startup_notify") {
+		cfg.Telegram.EnableStartupNotify = true
 	}
 
 	return &cfg, nil
