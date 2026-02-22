@@ -385,23 +385,19 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	return string(out), err
 }
 
-// tuiNoisePatterns matches dynamic TUI elements that change constantly without
-// indicating meaningful activity: elapsed timers, clocks, spinner characters,
-// token/percentage counters, and progress indicators.
+// tuiNoisePatterns matches dynamic TUI elements that change without indicating
+// meaningful activity. Only clocks and elapsed timers are filtered — spinners,
+// token counts, percentages, and cost changes ARE signals of active work.
 var tuiNoisePatterns = regexp.MustCompile(strings.Join([]string{
-	`\d+[hm]\s*\d+[ms]`,                       // elapsed timers: "1m 3s", "2h 30m"
-	`\d+:\d{2}(:\d{2})?(\s*[AP]M)?`,           // clocks: "14:30", "2:30:00 PM"
-	`\d[\d,]*\s*tokens?`,                       // token counts: "88,447 tokens"
-	`\d+\.?\d*%`,                               // percentages: "44%", "88.5%"
-	`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⣾⣽⣻⢿⡿⣟⣯⣷⡀⡁⡂⡃⡄⡅⡆⡇⡈⡉⡊⡋⡌⡍⡎⡏◐◓◑◒⣀⣤⣶⣿|/\-\\]`, // spinner chars
-	`\$\d+\.\d+`,                               // cost displays: "$0.0430"
-	`\d+\.\d+s`,                                // durations: "3.2s", "0.5s"
+	`\d+[hm]\s*\d+[ms]`,             // elapsed timers: "1m 3s", "2h 30m"
+	`\d+:\d{2}(:\d{2})?(\s*[AP]M)?`, // clocks: "14:30", "2:30:00 PM"
+	`\d+\.\d+s`,                      // durations: "3.2s", "0.5s"
 }, "|"))
 
 // normalizePaneContent strips TUI noise from pane output so that only
-// meaningful content changes are detected by the watch monitor. This prevents
-// status bar clocks, elapsed timers, spinners, token counters, and progress
-// indicators from resetting the inactivity timer.
+// meaningful content changes are detected by the watch monitor. Only strips
+// clocks and timers — spinners, token counts, and percentages are kept as
+// they indicate active work.
 func normalizePaneContent(content string) string {
 	return tuiNoisePatterns.ReplaceAllString(content, "")
 }

@@ -776,52 +776,46 @@ func TestNormalizePaneContent_Clocks(t *testing.T) {
 	}
 }
 
-func TestNormalizePaneContent_TokenCounts(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"Context: 88,447 tokens used", "Context:  used"},
-		{"Used 1500 tokens", "Used "},
-		{"12 tokens left", " left"},
+func TestNormalizePaneContent_TokenCountsPreserved(t *testing.T) {
+	// Token counts indicate active work — should NOT be stripped
+	tests := []string{
+		"Context: 88,447 tokens used",
+		"Used 1500 tokens",
+		"12 tokens left",
 	}
 	for _, tt := range tests {
-		got := normalizePaneContent(tt.input)
-		if got != tt.want {
-			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		got := normalizePaneContent(tt)
+		if got != tt {
+			t.Errorf("normalizePaneContent(%q) = %q, want unchanged (tokens indicate activity)", tt, got)
 		}
 	}
 }
 
-func TestNormalizePaneContent_Percentages(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"44% used", " used"},
-		{"Context: 88.5% full", "Context:  full"},
-		{"Progress: 100%", "Progress: "},
+func TestNormalizePaneContent_PercentagesPreserved(t *testing.T) {
+	// Percentages indicate active work — should NOT be stripped
+	tests := []string{
+		"44% used",
+		"Context: 88.5% full",
+		"Progress: 100%",
 	}
 	for _, tt := range tests {
-		got := normalizePaneContent(tt.input)
-		if got != tt.want {
-			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		got := normalizePaneContent(tt)
+		if got != tt {
+			t.Errorf("normalizePaneContent(%q) = %q, want unchanged (percentages indicate activity)", tt, got)
 		}
 	}
 }
 
-func TestNormalizePaneContent_Costs(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"Cost: $0.0430", "Cost: "},
-		{"Total $12.50 spent", "Total  spent"},
+func TestNormalizePaneContent_CostsPreserved(t *testing.T) {
+	// Cost changes indicate active work — should NOT be stripped
+	tests := []string{
+		"Cost: $0.0430",
+		"Total $12.50 spent",
 	}
 	for _, tt := range tests {
-		got := normalizePaneContent(tt.input)
-		if got != tt.want {
-			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		got := normalizePaneContent(tt)
+		if got != tt {
+			t.Errorf("normalizePaneContent(%q) = %q, want unchanged (costs indicate activity)", tt, got)
 		}
 	}
 }
@@ -842,14 +836,14 @@ func TestNormalizePaneContent_Durations(t *testing.T) {
 	}
 }
 
-func TestNormalizePaneContent_Spinners(t *testing.T) {
-	// Braille spinners used by many TUI apps
+func TestNormalizePaneContent_SpinnersPreserved(t *testing.T) {
+	// Spinners indicate active work — should NOT be stripped
 	input1 := "⠋ Loading..."
 	input2 := "⠙ Loading..."
 	norm1 := normalizePaneContent(input1)
 	norm2 := normalizePaneContent(input2)
-	if norm1 != norm2 {
-		t.Errorf("spinner frames should normalize to same: %q vs %q", norm1, norm2)
+	if norm1 == norm2 {
+		t.Errorf("spinner frames should be preserved (different frames = activity): %q vs %q", norm1, norm2)
 	}
 }
 
@@ -875,39 +869,39 @@ func TestNormalizePaneContent_MixedLine(t *testing.T) {
 	// A realistic TUI status bar line
 	input := "⠙ Thinking  Claude 3.5 | 44% context | 12,543 tokens | 2m 30s | $0.0430"
 	got := normalizePaneContent(input)
-	// All dynamic parts should be stripped; static text remains
-	if strings.Contains(got, "44%") {
-		t.Errorf("percentage not stripped: %q", got)
+	// Only clocks/timers should be stripped; spinners, tokens, percentages, costs preserved
+	if !strings.Contains(got, "44%") {
+		t.Errorf("percentage should be preserved (indicates activity): %q", got)
 	}
-	if strings.Contains(got, "12,543 tokens") {
-		t.Errorf("token count not stripped: %q", got)
+	if !strings.Contains(got, "12,543 tokens") {
+		t.Errorf("token count should be preserved (indicates activity): %q", got)
 	}
 	if strings.Contains(got, "2m 30s") {
-		t.Errorf("elapsed timer not stripped: %q", got)
+		t.Errorf("elapsed timer should be stripped: %q", got)
 	}
-	if strings.Contains(got, "$0.0430") {
-		t.Errorf("cost not stripped: %q", got)
+	if !strings.Contains(got, "$0.0430") {
+		t.Errorf("cost should be preserved (indicates activity): %q", got)
 	}
 }
 
 func TestNormalizePaneContent_StableHash(t *testing.T) {
-	// Two snapshots that differ only in TUI noise should normalize
-	// to identical strings (and thus hash the same).
+	// Two snapshots that differ only in clocks/timers should normalize
+	// to identical strings. Spinners/tokens/percentages are NOT noise.
 	snap1 := `$ opencode
 OpenCode v0.1 | claude-3-5-sonnet
-⠋ Thinking... | 44% context | 12,543 tokens | 1m 3s | $0.0200
+Thinking... | 1m 3s
 > How do I fix the bug?`
 
 	snap2 := `$ opencode
 OpenCode v0.1 | claude-3-5-sonnet
-⠹ Thinking... | 48% context | 14,221 tokens | 2m 54s | $0.0430
+Thinking... | 2m 54s
 > How do I fix the bug?`
 
 	norm1 := normalizePaneContent(snap1)
 	norm2 := normalizePaneContent(snap2)
 
 	if norm1 != norm2 {
-		t.Errorf("snapshots with only TUI noise differences should normalize equally:\n  snap1: %q\n  snap2: %q", norm1, norm2)
+		t.Errorf("snapshots differing only in timers should normalize equally:\n  snap1: %q\n  snap2: %q", norm1, norm2)
 	}
 }
 
