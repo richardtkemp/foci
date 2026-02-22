@@ -12,13 +12,13 @@ import (
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
-	client            *anthropic.Client
-	sessions          *session.Store
-	model             string
-	threshold         float64 // fraction of context window (e.g. 0.8)
-	maxTokens         int
-	minMessages       int
-	Scratchpad        *memory.Scratchpad // nil disables scratchpad injection
+	client      *anthropic.Client
+	sessions    *session.Store
+	model       string
+	threshold   float64 // fraction of context window (e.g. 0.8)
+	maxTokens   int
+	minMessages int
+	Scratchpad  *memory.Scratchpad // nil disables scratchpad injection
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -106,10 +106,24 @@ const DefaultSummaryPrompt = "Please provide a concise summary of our entire con
 // DefaultHandoffMessage is the default message injected after compaction.
 const DefaultHandoffMessage = "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
 
+// CompactSystemPrompt is a minimal system prompt used during compaction.
+// This avoids sending the full workspace system (~1000+ chars) on every compaction call.
+// The summary prompt in the user message already contains all instructions needed.
+const CompactSystemPrompt = "You are a helpful assistant."
+
+// CompactSystem returns a minimal system prompt for compaction API calls.
+// This saves tokens by not sending the full workspace system during compaction.
+func CompactSystem() []anthropic.SystemBlock {
+	return []anthropic.SystemBlock{
+		{Type: "text", Text: CompactSystemPrompt},
+	}
+}
+
 // Compact summarizes a session's history and replaces it.
 // summaryPrompt and handoffMessage are read from config at call time; empty
 // values fall back to package defaults.
-func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) error {
+// compaction now uses a minimal internal system prompt via CompactSystem() to save tokens.
+func (c *Compactor) Compact(ctx context.Context, sessionKey string, summaryPrompt, handoffMessage string) error {
 	if summaryPrompt == "" {
 		summaryPrompt = DefaultSummaryPrompt
 	}
@@ -128,6 +142,11 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 
 	log.Infof("compaction", "compacting session %s (%d messages)", sessionKey, len(messages))
 
+	// Use minimal system prompt for compaction — the summary prompt in the user
+	// message already contains all instructions needed. This saves ~1000+ tokens
+	// by not sending the full workspace system on every compaction call.
+	compactSystem := CompactSystem()
+
 	// Ask model to summarize the conversation
 	summaryMessages := make([]anthropic.Message, len(messages))
 	copy(summaryMessages, messages)
@@ -139,7 +158,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	resp, err := c.client.SendMessage(ctx, &anthropic.MessageRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
-		System:    system,
+		System:    compactSystem,
 		Messages:  summaryMessages,
 	})
 	if err != nil {

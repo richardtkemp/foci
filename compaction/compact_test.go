@@ -17,8 +17,8 @@ import (
 
 func TestEstimateTokens(t *testing.T) {
 	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("hello world")},      // 11 chars / 4 = 2
-		{Role: "assistant", Content: anthropic.TextContent("hi there!")},    // 9 chars / 4 = 2
+		{Role: "user", Content: anthropic.TextContent("hello world")},    // 11 chars / 4 = 2
+		{Role: "assistant", Content: anthropic.TextContent("hi there!")}, // 9 chars / 4 = 2
 	}
 
 	tokens := estimateTokens(msgs)
@@ -128,7 +128,7 @@ func TestCompactBasic(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	err := c.Compact(context.Background(), sessionKey, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestCompactTooFewMessages(t *testing.T) {
 	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("hello")})
 
 	c := NewCompactor(nil, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	err := c.Compact(context.Background(), sessionKey, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
 
-	err = c.Compact(context.Background(), sessionKey, nil, "", "")
+	err = c.Compact(context.Background(), sessionKey, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
 
-	err = c.Compact(context.Background(), sessionKey, nil, "", "")
+	err = c.Compact(context.Background(), sessionKey, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestCompactAPIError(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	err := c.Compact(context.Background(), sessionKey, "", "")
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -363,7 +363,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "custom summary prompt", "custom handoff msg")
+	err := c.Compact(context.Background(), sessionKey, "custom summary prompt", "custom handoff msg")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	// Empty strings should fall back to defaults
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	err := c.Compact(context.Background(), sessionKey, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -426,5 +426,18 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	handoff := anthropic.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, DefaultHandoffMessage) {
 		t.Errorf("handoff = %q, want default handoff", handoff)
+	}
+}
+
+func TestCompactSystem(t *testing.T) {
+	system := CompactSystem()
+	if len(system) != 1 {
+		t.Fatalf("CompactSystem returned %d blocks, want 1", len(system))
+	}
+	if system[0].Type != "text" {
+		t.Errorf("system[0].Type = %q, want text", system[0].Type)
+	}
+	if system[0].Text != CompactSystemPrompt {
+		t.Errorf("system[0].Text = %q, want %q", system[0].Text, CompactSystemPrompt)
 	}
 }
