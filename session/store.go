@@ -8,9 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"clod/anthropic"
 )
+
+// SessionMeta is stored as the first line in a session file to preserve metadata
+// like the original creation time (important for compaction continuity).
+type SessionMeta struct {
+	Type      string `json:"type"`       // "session_meta"
+	CreatedAt string `json:"created_at"` // RFC3339 timestamp
+}
 
 // Store is a JSONL-backed session store.
 type Store struct {
@@ -66,8 +74,10 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 		}
 
 		// Skip branch metadata lines
-		var probe struct{ Type string `json:"type"` }
-		if json.Unmarshal(line, &probe) == nil && probe.Type == "branch_meta" {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line, &probe) == nil && (probe.Type == "branch_meta" || probe.Type == "session_meta") {
 			continue
 		}
 
@@ -99,11 +109,32 @@ func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
+	// Check if file exists - if not, write session metadata first
+	exists := false
+	if _, err := os.Stat(path); err == nil {
+		exists = true
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}
 	defer f.Close()
+
+	// Write session metadata on new files
+	if !exists {
+		meta := SessionMeta{
+			Type:      "session_meta",
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		metaData, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("marshal session meta: %w", err)
+		}
+		if _, err := f.Write(append(metaData, '\n')); err != nil {
+			return fmt.Errorf("write session meta: %w", err)
+		}
+	}
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -153,11 +184,29 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
+	// Get existing creation time to preserve through compaction
+	createdAt := s.getStoredCreatedAt(key)
+
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create session file: %w", err)
 	}
 	defer f.Close()
+
+	// Write session metadata to preserve creation time
+	if createdAt != "" {
+		meta := SessionMeta{
+			Type:      "session_meta",
+			CreatedAt: createdAt,
+		}
+		metaData, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("marshal session meta: %w", err)
+		}
+		if _, err := f.Write(append(metaData, '\n')); err != nil {
+			return fmt.Errorf("write session meta: %w", err)
+		}
+	}
 
 	for _, msg := range msgs {
 		data, err := json.Marshal(msg)
@@ -169,6 +218,30 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 		}
 	}
 	return nil
+}
+
+// getStoredCreatedAt reads the stored creation time from an existing session file.
+func (s *Store) getStoredCreatedAt(key string) string {
+	path := s.keyToPath(key)
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var meta SessionMeta
+		if err := json.Unmarshal(line, &meta); err == nil && meta.Type == "session_meta" && meta.CreatedAt != "" {
+			return meta.CreatedAt
+		}
+		break
+	}
+	return ""
 }
 
 // MessageCount returns the number of messages in a session.
@@ -183,23 +256,42 @@ func (s *Store) MessageCount(key string) (int, error) {
 // CreatedAt returns the creation time of a session file as an RFC3339 string.
 // Returns "n/a" if the file doesn't exist.
 func (s *Store) CreatedAt(key string) string {
-	return s.fileTime(key, true)
+	// First try to read stored creation time from file
+	path := s.keyToPath(key)
+	f, err := os.Open(path)
+	if err != nil {
+		return "n/a"
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		// Check if first line is session metadata
+		var meta SessionMeta
+		if err := json.Unmarshal(line, &meta); err == nil && meta.Type == "session_meta" && meta.CreatedAt != "" {
+			return meta.CreatedAt
+		}
+		break // Only check first line
+	}
+	// Fall back to file modification time
+	return s.fileTime(key)
 }
 
 // LastActivity returns the last modification time of a session file as an RFC3339 string.
 // Returns "n/a" if the file doesn't exist.
 func (s *Store) LastActivity(key string) string {
-	return s.fileTime(key, false)
+	return s.fileTime(key)
 }
 
-func (s *Store) fileTime(key string, birth bool) string {
+func (s *Store) fileTime(key string) string {
 	path := s.keyToPath(key)
 	info, err := os.Stat(path)
 	if err != nil {
 		return "n/a"
 	}
-	// On Linux, birth time isn't always available; use ModTime for both.
-	// For CreatedAt, this is approximate but good enough for diagnostics.
-	_ = birth
 	return info.ModTime().UTC().Format("2006-01-02T15:04:05Z")
 }
