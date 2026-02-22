@@ -739,3 +739,195 @@ func TestTmuxWatchIsolation(t *testing.T) {
 		t.Fatalf("agent B unwatch should still work: %v", err)
 	}
 }
+
+// --- TUI noise filter ---
+
+func TestNormalizePaneContent_ElapsedTimers(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Running 1m 3s", "Running "},
+		{"Elapsed: 2h 30m", "Elapsed: "},
+		{"Time: 0m 5s remaining", "Time:  remaining"},
+		{"took 45m 12s total", "took  total"},
+	}
+	for _, tt := range tests {
+		got := normalizePaneContent(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePaneContent_Clocks(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Status bar 14:30 ready", "Status bar  ready"},
+		{"Clock: 2:30:00 PM end", "Clock:  end"},
+		{"Time 9:05 AM left", "Time  left"},
+		{"[23:59:59]", "[]"},
+	}
+	for _, tt := range tests {
+		got := normalizePaneContent(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePaneContent_TokenCounts(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Context: 88,447 tokens used", "Context:  used"},
+		{"Used 1500 tokens", "Used "},
+		{"12 tokens left", " left"},
+	}
+	for _, tt := range tests {
+		got := normalizePaneContent(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePaneContent_Percentages(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"44% used", " used"},
+		{"Context: 88.5% full", "Context:  full"},
+		{"Progress: 100%", "Progress: "},
+	}
+	for _, tt := range tests {
+		got := normalizePaneContent(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePaneContent_Costs(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Cost: $0.0430", "Cost: "},
+		{"Total $12.50 spent", "Total  spent"},
+	}
+	for _, tt := range tests {
+		got := normalizePaneContent(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePaneContent_Durations(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Took 3.2s", "Took "},
+		{"Response in 0.5s", "Response in "},
+	}
+	for _, tt := range tests {
+		got := normalizePaneContent(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizePaneContent(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizePaneContent_Spinners(t *testing.T) {
+	// Braille spinners used by many TUI apps
+	input1 := "⠋ Loading..."
+	input2 := "⠙ Loading..."
+	norm1 := normalizePaneContent(input1)
+	norm2 := normalizePaneContent(input2)
+	if norm1 != norm2 {
+		t.Errorf("spinner frames should normalize to same: %q vs %q", norm1, norm2)
+	}
+}
+
+func TestNormalizePaneContent_PreservesContent(t *testing.T) {
+	// Meaningful content should be preserved
+	tests := []string{
+		"$ ls -la",
+		"error: file not found",
+		"Build succeeded",
+		"PASS ok clod/tools 0.004s",  // "0.004s" gets stripped but that's fine
+		"func TestFoo(t *testing.T)",
+	}
+	for _, input := range tests {
+		got := normalizePaneContent(input)
+		// Should not be empty (meaningful content preserved)
+		if strings.TrimSpace(got) == "" {
+			t.Errorf("normalizePaneContent(%q) = %q, should preserve content", input, got)
+		}
+	}
+}
+
+func TestNormalizePaneContent_MixedLine(t *testing.T) {
+	// A realistic TUI status bar line
+	input := "⠙ Thinking  Claude 3.5 | 44% context | 12,543 tokens | 2m 30s | $0.0430"
+	got := normalizePaneContent(input)
+	// All dynamic parts should be stripped; static text remains
+	if strings.Contains(got, "44%") {
+		t.Errorf("percentage not stripped: %q", got)
+	}
+	if strings.Contains(got, "12,543 tokens") {
+		t.Errorf("token count not stripped: %q", got)
+	}
+	if strings.Contains(got, "2m 30s") {
+		t.Errorf("elapsed timer not stripped: %q", got)
+	}
+	if strings.Contains(got, "$0.0430") {
+		t.Errorf("cost not stripped: %q", got)
+	}
+}
+
+func TestNormalizePaneContent_StableHash(t *testing.T) {
+	// Two snapshots that differ only in TUI noise should normalize
+	// to identical strings (and thus hash the same).
+	snap1 := `$ opencode
+OpenCode v0.1 | claude-3-5-sonnet
+⠋ Thinking... | 44% context | 12,543 tokens | 1m 3s | $0.0200
+> How do I fix the bug?`
+
+	snap2 := `$ opencode
+OpenCode v0.1 | claude-3-5-sonnet
+⠹ Thinking... | 48% context | 14,221 tokens | 2m 54s | $0.0430
+> How do I fix the bug?`
+
+	norm1 := normalizePaneContent(snap1)
+	norm2 := normalizePaneContent(snap2)
+
+	if norm1 != norm2 {
+		t.Errorf("snapshots with only TUI noise differences should normalize equally:\n  snap1: %q\n  snap2: %q", norm1, norm2)
+	}
+}
+
+func TestNormalizePaneContent_DifferentContent(t *testing.T) {
+	// Two snapshots with genuinely different content should NOT normalize
+	// to the same string.
+	snap1 := `$ opencode
+⠋ Thinking... | 44% context
+> How do I fix the bug?`
+
+	snap2 := `$ opencode
+Here's the fix for the bug:
+  change line 42 to use foo() instead of bar()`
+
+	norm1 := normalizePaneContent(snap1)
+	norm2 := normalizePaneContent(snap2)
+
+	if norm1 == norm2 {
+		t.Error("snapshots with different content should NOT normalize equally")
+	}
+}
