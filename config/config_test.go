@@ -145,6 +145,37 @@ token = "test-token"
 	if cfg.Logging.APIFile != "api.jsonl" {
 		t.Errorf("default Logging.APIFile = %q, want %q", cfg.Logging.APIFile, "api.jsonl")
 	}
+	if cfg.ManaWarnings.Name != "mana" {
+		t.Errorf("default ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "mana")
+	}
+}
+
+func TestLoadCustomManaName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+[anthropic]
+token = "test-token"
+
+[usage_warnings]
+name = "juice"
+thresholds = [50, 25, 10]
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.ManaWarnings.Name != "juice" {
+		t.Errorf("ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "juice")
+	}
+	if len(cfg.ManaWarnings.Thresholds) != 3 {
+		t.Errorf("len(Thresholds) = %d, want 3", len(cfg.ManaWarnings.Thresholds))
+	}
 }
 
 func TestLoadCustomCommands(t *testing.T) {

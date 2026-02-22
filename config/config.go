@@ -153,7 +153,7 @@ type Config struct {
 	Logging      LoggingConfig      `toml:"logging"`
 	Voice        VoiceConfig        `toml:"voice"`
 	Cache        CacheConfig        `toml:"cache"`
-	ManaWarnings ManaWarningsConfig `toml:"mana_warnings"`
+	ManaWarnings ManaWarningsConfig `toml:"usage_warnings"`
 	Skills       SkillsConfig       `toml:"skills"`
 	Tools        ToolsConfig        `toml:"tools"`
 	Commands     []CommandConfig    `toml:"commands"`
@@ -216,7 +216,7 @@ func validate(cfg *Config) error {
 	// Mana warnings thresholds
 	for i, t := range cfg.ManaWarnings.Thresholds {
 		if t < 0 || t > 100 {
-			return fmt.Errorf("[mana_warnings] thresholds[%d] = %d: must be between 0 and 100", i, t)
+			return fmt.Errorf("[usage_warnings] thresholds[%d] = %d: must be between 0 and 100", i, t)
 		}
 	}
 
