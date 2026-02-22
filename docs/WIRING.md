@@ -482,6 +482,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 2. Replaces session with 3-message compacted version (context note + summary + continuation note)
 3. Appends any scratchpad entries to preservation message
 
+**Optimization:** Compaction uses a minimal internal system prompt (`CompactSystemPrompt = "You are a helpful assistant."`) instead of the full workspace system. This saves ~1000+ tokens per compaction call since the summary prompt already contains all necessary instructions.
+
 **Configurable via `Compactor.WithConfig()`:**
 - `model` — summarization model (default: agent model)
 - `maxTokens` — max output tokens for summary (default: 4096)
