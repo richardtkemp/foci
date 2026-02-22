@@ -11,3 +11,5 @@ conversation.db-wal
 conversation.db-shm
 .gocache/
 .gopath/
+.claude/
+coverage.out
