@@ -61,6 +61,7 @@ type Bot struct {
 
 	transcriber voice.STT // nil = voice notes not supported
 	tts         voice.TTS // nil = TTS not available
+	stopAliases []string  // aliases for /stop command
 
 	queue      chan queuedMessage // receiver → agent worker
 	turnCancel context.CancelFunc // cancel the current agent turn
@@ -102,6 +103,11 @@ func (b *Bot) SetTranscriber(t voice.STT) {
 // SetTTS sets the TTS provider for outbound voice notes.
 func (b *Bot) SetTTS(t voice.TTS) {
 	b.tts = t
+}
+
+// SetStopAliases sets the aliases for the /stop command.
+func (b *Bot) SetStopAliases(aliases []string) {
+	b.stopAliases = aliases
 }
 
 // SetSecondary marks this bot as a secondary bot in the given pool.
@@ -224,6 +230,19 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 	}
 }
 
+// isStopCommand returns true if the command matches /stop or any configured alias.
+func (b *Bot) isStopCommand(cmd string) bool {
+	if cmd == "/stop" {
+		return true
+	}
+	for _, alias := range b.stopAliases {
+		if cmd == "/"+alias {
+			return true
+		}
+	}
+	return false
+}
+
 // receiveMessage handles an incoming message on the receiver goroutine.
 // Slash commands execute immediately. Agent messages are queued.
 func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
@@ -324,8 +343,8 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if text != "" && strings.HasPrefix(text, "/") {
 		cmd := strings.ToLower(strings.TrimSpace(text))
 
-		// /stop cancels the current agent turn
-		if cmd == "/stop" {
+		// /stop cancels the current agent turn (including configured aliases)
+		if b.isStopCommand(cmd) {
 			b.cancelTurn()
 			b.sendReply(msg, userID, "Stopped.")
 			return

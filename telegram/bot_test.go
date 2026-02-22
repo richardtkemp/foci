@@ -234,6 +234,52 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 	// We can't directly check this, but the cancel function was called
 }
 
+func TestReceiveMessage_StopAlias(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Set stop aliases
+	b.SetStopAliases([]string{"stop", "wait", "hold"})
+
+	// Simulate an active turn
+	_, cancel := context.WithCancel(context.Background())
+	b.turnMu.Lock()
+	b.turnCancel = cancel
+	b.turnMu.Unlock()
+
+	// Test /wait alias
+	msg := makeMsg(111, "owner", "/wait")
+	b.receiveMessage(context.Background(), msg)
+
+	if len(b.queue) != 0 {
+		t.Error("/wait should not be queued")
+	}
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 sent message for /wait, got %d", mock.sentCount())
+	}
+}
+
+func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	// No stop aliases set (defaults to stop, wait) - but we can test with empty
+	b.SetStopAliases([]string{})
+
+	// Simulate an active turn
+	_, cancel := context.WithCancel(context.Background())
+	b.turnMu.Lock()
+	b.turnCancel = cancel
+	b.turnMu.Unlock()
+
+	// /wait should NOT trigger stop when aliases is empty
+	msg := makeMsg(111, "owner", "/wait")
+	b.receiveMessage(context.Background(), msg)
+
+	// Should be queued (not recognized as stop command)
+	if len(b.queue) != 1 {
+		t.Fatalf("expected 1 queued message for unknown /wait, got %d", len(b.queue))
+	}
+}
+
 // --- Message queuing ---
 
 func TestReceiveMessage_QueueFull(t *testing.T) {

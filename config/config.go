@@ -21,8 +21,8 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	Token      string `toml:"token"`
-	OAuthToken string `toml:"oauth_token"` // OAuth access token for usage API
+	Token       string `toml:"token"`
+	OAuthToken  string `toml:"oauth_token"` // OAuth access token for usage API
 	BraveAPIKey string `toml:"brave_api_key"`
 }
 
@@ -33,20 +33,21 @@ type TelegramBotConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken      string                        `toml:"bot_token"`       // legacy single-bot token
-	AllowedUsers  []string                      `toml:"allowed_users"`
-	SecondaryBots []string                      `toml:"secondary_bots"` // legacy: tokens for secondary bots (multiball)
-	Bots          map[string]TelegramBotConfig  `toml:"bots"`           // named bots for multi-agent
+	BotToken      string                       `toml:"bot_token"` // legacy single-bot token
+	AllowedUsers  []string                     `toml:"allowed_users"`
+	SecondaryBots []string                     `toml:"secondary_bots"` // legacy: tokens for secondary bots (multiball)
+	Bots          map[string]TelegramBotConfig `toml:"bots"`           // named bots for multi-agent
+	StopAliases   []string                     `toml:"stop_aliases"`   // aliases for /stop command (e.g., ["stop", "wait"])
 }
 
 type SessionsConfig struct {
-	Dir                   string  `toml:"dir"`
-	CompactionThreshold   float64 `toml:"compaction_threshold"`   // compact at this % of context window (default 0.8)
-	CompactionModel       string  `toml:"compaction_model"`       // model to use for summarization (default: agent model)
-	CompactionMaxTokens   int     `toml:"compaction_max_tokens"`  // max output tokens for summary (default 4096)
-	CompactionMinMessages int     `toml:"compaction_min_messages"` // min messages before compacting (default 4)
-	CompactionSummaryPrompt string `toml:"compaction_summary_prompt"` // custom summary prompt
-	CompactionHandoffMsg  string  `toml:"compaction_handoff_msg"`  // handoff message after compaction
+	Dir                     string  `toml:"dir"`
+	CompactionThreshold     float64 `toml:"compaction_threshold"`      // compact at this % of context window (default 0.8)
+	CompactionModel         string  `toml:"compaction_model"`          // model to use for summarization (default: agent model)
+	CompactionMaxTokens     int     `toml:"compaction_max_tokens"`     // max output tokens for summary (default 4096)
+	CompactionMinMessages   int     `toml:"compaction_min_messages"`   // min messages before compacting (default 4)
+	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"` // custom summary prompt
+	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`    // handoff message after compaction
 }
 
 type MemorySource struct {
@@ -56,9 +57,9 @@ type MemorySource struct {
 }
 
 type MemoryConfig struct {
-	Dir                string         `toml:"dir"`                // backward compat: single directory
-	Sources            []MemorySource `toml:"sources"`            // new: multiple sources with weights
-	ReindexDebounce    string         `toml:"reindex_debounce"`   // delay before reindex (e.g., "500ms", "2s"), default "0s"
+	Dir             string         `toml:"dir"`              // backward compat: single directory
+	Sources         []MemorySource `toml:"sources"`          // new: multiple sources with weights
+	ReindexDebounce string         `toml:"reindex_debounce"` // delay before reindex (e.g., "500ms", "2s"), default "0s"
 }
 
 type HTTPConfig struct {
@@ -71,9 +72,9 @@ type LoggingConfig struct {
 	EventFile        string `toml:"event_file"`
 	APIFile          string `toml:"api_file"`
 	ConversationFile string `toml:"conversation_file"`
-	FullPayload         bool   `toml:"full_payload"`          // write full API payloads to api-payload.jsonl
-	PayloadFile         string `toml:"payload_file"`          // path to api-payload.jsonl (default: api-payload.jsonl)
-	CacheBustDetect     bool   `toml:"cache_bust_detect"`     // alert when cache_read drops >50% vs previous request
+	FullPayload      bool   `toml:"full_payload"`      // write full API payloads to api-payload.jsonl
+	PayloadFile      string `toml:"payload_file"`      // path to api-payload.jsonl (default: api-payload.jsonl)
+	CacheBustDetect  bool   `toml:"cache_bust_detect"` // alert when cache_read drops >50% vs previous request
 }
 
 type VoiceConfig struct {
@@ -111,8 +112,8 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	Agent     AgentConfig     `toml:"agent"`    // legacy: single agent
-	Agents    []AgentConfig   `toml:"agents"`   // multi-agent: array of agents
+	Agent     AgentConfig     `toml:"agent"`  // legacy: single agent
+	Agents    []AgentConfig   `toml:"agents"` // multi-agent: array of agents
 	Anthropic AnthropicConfig `toml:"anthropic"`
 	Telegram  TelegramConfig  `toml:"telegram"`
 	Sessions  SessionsConfig  `toml:"sessions"`
@@ -215,6 +216,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.TmuxRows == 0 {
 		cfg.Tools.TmuxRows = 30
+	}
+	if len(cfg.Telegram.StopAliases) == 0 {
+		cfg.Telegram.StopAliases = []string{"stop", "wait"}
 	}
 
 	return &cfg, nil
