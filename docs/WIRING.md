@@ -148,6 +148,21 @@ When the model responds with text alongside `tool_use` blocks (e.g., "Looking in
 
 The `ReplyFunc` is cleared after each turn via `defer agent.SetReplyFunc(nil)`.
 
+## Tool Call Visibility
+
+Tool calls are shown in Telegram via a send+edit pattern using `ToolCallObserver`. The first tool call in a turn sends a new message; subsequent tool calls edit that same message. The final response then edits the tool message with the answer (or falls back to a new message if too long).
+
+**Ordering with deferred replies:** When intermediate text fires between tool loops, `ReplyFunc` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
+
+**Flow (multi-loop turn):**
+1. Loop 1: API returns `[tool_use(exec)]` — `notifyToolCall` sends message A (`toolMsgID=A`)
+2. Loop 2: API returns `[text("Checking..."), tool_use(read)]`
+   - `sendIntermediate` fires `ReplyFunc` → sends message B, resets `toolMsgID=0`
+   - `notifyToolCall` sends message C (`toolMsgID=C`, fresh because reset)
+3. Final: `end_turn` response edits message C with the answer
+
+**Chat order:** A ("🔧 exec") → B ("Checking...") → C ("🔧 read" → final answer) ✓
+
 ## Thought Queue (Reminders)
 
 The agent can defer thoughts for later via the `memory_remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due.

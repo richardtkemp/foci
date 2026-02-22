@@ -707,6 +707,82 @@ func TestSendText_SendsNonEmptyMessage(t *testing.T) {
 	}
 }
 
+// --- Tool call message ordering ---
+
+func TestToolCallObserverResetsAfterReply(t *testing.T) {
+	// Simulates the processAgentMessage closure interactions to verify
+	// that intermediate text resets toolMsgID, forcing subsequent tool
+	// calls to create new messages instead of editing stale ones.
+	//
+	// Without the fix, the sequence would be:
+	//   tool("exec") → send msg#1, toolMsgID=1
+	//   reply("Let me check...") → send msg#2
+	//   tool("read") → edit msg#1 (WRONG: appears above msg#2)
+	//
+	// With the fix (toolMsgID reset in ReplyFunc):
+	//   tool("exec") → send msg#1, toolMsgID=1
+	//   reply("Let me check...") → send msg#2, toolMsgID=0
+	//   tool("read") → send msg#3 (CORRECT: appears below msg#2)
+	mock := &mockClient{}
+	b := &Bot{client: mock}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	// Simulate the ReplyFunc closure from processAgentMessage
+	replyFunc := func(text string) {
+		b.client.SendMessage(12345, text, nil)
+		toolMsgMu.Lock()
+		toolMsgID = 0
+		toolMsgMu.Unlock()
+	}
+
+	// Simulate the tool call observer closure from processAgentMessage
+	toolCallObserver := func(toolName string, params json.RawMessage) {
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+
+		text := formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, err := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			if err != nil {
+				return
+			}
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId:    12345,
+				MessageId: toolMsgID,
+				ParseMode: "HTML",
+			})
+		}
+	}
+
+	// Step 1: First tool call → sends new message (ID=1)
+	toolCallObserver("exec", json.RawMessage(`{"command":"ls"}`))
+	if mock.sentCount() != 1 {
+		t.Fatalf("after first tool call: sends=%d, want 1", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Fatalf("after first tool call: edits=%d, want 0", mock.editCount())
+	}
+
+	// Step 2: Intermediate reply fires → resets toolMsgID
+	replyFunc("Let me check...")
+	if mock.sentCount() != 2 {
+		t.Fatalf("after reply: sends=%d, want 2", mock.sentCount())
+	}
+
+	// Step 3: Second tool call → should send NEW message (not edit old one)
+	toolCallObserver("read", json.RawMessage(`{"path":"foo.txt"}`))
+	if mock.sentCount() != 3 {
+		t.Errorf("after second tool call: sends=%d, want 3 (new message, not edit)", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("after second tool call: edits=%d, want 0 (should not edit stale message)", mock.editCount())
+	}
+}
+
 // --- Tool call visibility ---
 
 func TestFormatToolCall(t *testing.T) {
