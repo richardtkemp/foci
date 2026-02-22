@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"clod/memory"
 )
@@ -105,4 +106,67 @@ func NewScratchpadClearTool(s *memory.Scratchpad) *Tool {
 			return fmt.Sprintf("Scratchpad '%s' cleared.", p.Key), nil
 		},
 	}
+}
+
+func NewScratchpadListTool(s *memory.Scratchpad) *Tool {
+	return &Tool{
+		Name:        "scratchpad_list",
+		Description: "List all scratchpad entries with their keys, sizes, and last-modified times.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {}
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			entries, err := s.List()
+			if err != nil {
+				return "", fmt.Errorf("list scratchpad: %w", err)
+			}
+			if len(entries) == 0 {
+				return "No scratchpad entries.", nil
+			}
+			var lines []string
+			now := time.Now()
+			for _, e := range entries {
+				sizeStr := formatSize(e.SizeBytes)
+				age := now.Sub(e.Updated)
+				ageStr := formatAge(age)
+				lines = append(lines, fmt.Sprintf("key: %s (%s, %s)", e.Key, sizeStr, ageStr))
+			}
+			return fmt.Sprintf("Scratchpad entries:\n%s", joinLines(lines)), nil
+		},
+	}
+}
+
+func formatSize(bytes int) string {
+	if bytes >= 1024 {
+		return fmt.Sprintf("%.1fk", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%db", bytes)
+}
+
+func formatAge(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		mins := int(d.Minutes())
+		return fmt.Sprintf("%dm ago", mins)
+	}
+	if d < 24*time.Hour {
+		hours := int(d.Hours())
+		return fmt.Sprintf("%dh ago", hours)
+	}
+	days := int(d.Hours() / 24)
+	return fmt.Sprintf("%dd ago", days)
+}
+
+func joinLines(lines []string) string {
+	result := ""
+	for i, line := range lines {
+		if i > 0 {
+			result += "\n"
+		}
+		result += "  " + line
+	}
+	return result
 }

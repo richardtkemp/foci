@@ -15,6 +15,13 @@ type ScratchpadEntry struct {
 	Updated time.Time
 }
 
+// ScratchpadListEntry is returned by List() with metadata about each key.
+type ScratchpadListEntry struct {
+	Key       string
+	SizeBytes int
+	Updated   time.Time
+}
+
 // Scratchpad stores working state that survives compaction.
 // Entries are injected back into post-compaction context.
 type Scratchpad struct {
@@ -88,6 +95,29 @@ func (s *Scratchpad) All() ([]ScratchpadEntry, error) {
 		if err := rows.Scan(&e.Key, &e.Content, &updated); err != nil {
 			return nil, err
 		}
+		e.Updated, _ = time.Parse(time.RFC3339, updated)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// List returns all scratchpad keys with their sizes and last-modified times.
+func (s *Scratchpad) List() ([]ScratchpadListEntry, error) {
+	rows, err := s.db.Query("SELECT key, content, updated FROM scratchpad ORDER BY key")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []ScratchpadListEntry
+	for rows.Next() {
+		var e ScratchpadListEntry
+		var content string
+		var updated string
+		if err := rows.Scan(&e.Key, &content, &updated); err != nil {
+			return nil, err
+		}
+		e.SizeBytes = len(content)
 		e.Updated, _ = time.Parse(time.RFC3339, updated)
 		entries = append(entries, e)
 	}
