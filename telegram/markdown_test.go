@@ -187,6 +187,42 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "| A | BB | CCC |\n|---|-------|---|\n| x | y | z |",
 			want: "<pre>| A   | BB  | CCC |\n| --- | --- | --- |\n| x   | y   | z   |</pre>",
 		},
+		// Snake case protection
+		{
+			name: "snake_case identifier protected",
+			in:   "set inject_agent_warnings to true",
+			want: "set inject_agent_warnings to true",
+		},
+		{
+			name: "snake_case in sentence",
+			in:   "Use memory_search for this",
+			want: "Use memory_search for this",
+		},
+		{
+			name: "snake_case already in code not double-wrapped",
+			in:   "use `inject_agent_warnings` here",
+			want: "use <code>inject_agent_warnings</code> here",
+		},
+		{
+			name: "intentional italic preserved",
+			in:   "this is _italic_ text",
+			want: "this is <i>italic</i> text",
+		},
+		{
+			name: "single underscore word not protected",
+			in:   "some_var is ok",
+			want: "some_var is ok",
+		},
+		{
+			name: "multiple snake_case identifiers",
+			in:   "config has cache_bust_detect and inject_agent_warnings",
+			want: "config has cache_bust_detect and inject_agent_warnings",
+		},
+		{
+			name: "snake_case with numbers",
+			in:   "use v2_api_endpoint here",
+			want: "use v2_api_endpoint here",
+		},
 	}
 
 	for _, tt := range tests {
