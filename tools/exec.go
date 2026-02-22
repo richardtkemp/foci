@@ -14,10 +14,6 @@ import (
 	"clod/secrets"
 )
 
-// ExecWakeFunc is called when an auto-backgrounded command completes.
-// It delivers the result back to the agent session.
-type ExecWakeFunc func(command string, result string)
-
 // sleepRegexp matches commands that start with "sleep" (case-insensitive).
 // This blocks bare sleep commands which block for up to 10s then silently
 // background — the worst of both worlds.
@@ -26,9 +22,9 @@ var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 // NewExecTool creates an exec tool. If store is non-nil, commands get
 // secret template resolution, output redaction, and blocked path checks.
 // autoBackgroundSecs is the threshold after which a running command is
-// auto-backgrounded (0 disables). onComplete is called when an auto-backgrounded
-// command finishes.
-func NewExecTool(store *secrets.Store, autoBackgroundSecs int, onComplete ExecWakeFunc) *Tool {
+// auto-backgrounded (0 disables). notifier delivers results when an
+// auto-backgrounded command finishes (nil disables).
+func NewExecTool(store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier) *Tool {
 	return &Tool{
 		Name:        "exec",
 		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call.",
@@ -51,12 +47,12 @@ func NewExecTool(store *secrets.Store, autoBackgroundSecs int, onComplete ExecWa
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return execCommand(ctx, params, store, autoBackgroundSecs, onComplete)
+			return execCommand(ctx, params, store, autoBackgroundSecs, notifier)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, autoBackgroundSecs int, onComplete ExecWakeFunc) (string, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier) (string, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -99,10 +95,10 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		return execDirect(ctx, cmd, p.Command, timeout, true, store)
 	}
 
-	// Auto-background: if threshold is set and onComplete is available,
+	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
-	if autoBackgroundSecs > 0 && onComplete != nil {
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, onComplete)
+	if autoBackgroundSecs > 0 && notifier != nil {
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, notifier)
 	}
 
 	return execDirect(ctx, cmd, p.Command, timeout, false, store)
@@ -130,8 +126,8 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
-// The command continues running and results are delivered via onComplete.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, onComplete ExecWakeFunc) (string, error) {
+// The command continues running and results are delivered via notifier.
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, notifier *AsyncNotifier) (string, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -173,7 +169,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			err := <-done
 			result := formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store)
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
-			onComplete(displayCmd, msg)
+			notifier.Notify(msg)
 		}()
 
 		return fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd), nil

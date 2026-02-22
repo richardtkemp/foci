@@ -240,9 +240,9 @@ func TestExecNilStoreWithTemplate(t *testing.T) {
 func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	// A fast command should complete before the threshold
 	var called bool
-	tool := NewExecTool(nil, 5, func(cmd string, result string) {
+	tool := NewExecTool(nil, 5, NewAsyncNotifier(func(msg string) {
 		called = true
-	})
+	}))
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -256,16 +256,16 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 		t.Errorf("result = %q, want 'fast'", result)
 	}
 	if called {
-		t.Error("onComplete should not be called for fast commands")
+		t.Error("notifier should not be called for fast commands")
 	}
 }
 
 func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	// A slow command should auto-background after 1 second
 	completeCh := make(chan string, 1)
-	tool := NewExecTool(nil, 1, func(cmd string, result string) {
-		completeCh <- result
-	})
+	tool := NewExecTool(nil, 1, NewAsyncNotifier(func(msg string) {
+		completeCh <- msg
+	}))
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "timeout 3 tail -f /dev/null",

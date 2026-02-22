@@ -21,7 +21,8 @@ config.Load(path)                                        ← validates values; l
 
   Per-agent loop (for each cfg.Agents[i]):
   → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap, heartbeat}
-    → tools.NewRegistry() + register all tools            ← per-agent registry
+    → tools.NewAsyncNotifier()                             ← shared by exec + tmux
+    → tools.NewRegistry() + register all tools             ← per-agent registry
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
     → skills.Load(cfg.Skills.Dirs)
     → compaction.NewCompactor(client, sessions, model, threshold)
@@ -106,14 +107,13 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 
 Anthropic's prompt cache is prefix-matched. If any message shifts position (because an injected message was inserted before it), all cached tokens after that point are invalidated. A single cache bust can cost $1+ in re-tokenization.
 
-**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex (`turnLock(sessionKey)`) before doing any work. This serializes all turns on the same session — concurrent callers (heartbeat, tmux watch, scheduled wakes, exec auto-background, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
+**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex (`turnLock(sessionKey)`) before doing any work. This serializes all turns on the same session — concurrent callers (heartbeat, `AsyncNotifier`, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
 
 **Concurrent callers that are serialized by the turn lock:**
 - Telegram bot worker (user messages)
 - Heartbeat goroutine (`[HEARTBEAT]`)
-- Tmux watch callback (`[TMUX WATCH]`, fires from `go func()`)
+- `AsyncNotifier` (`[TMUX WATCH]` inactivity, `[EXEC RESULT]` auto-background completion)
 - Scheduled wakes (`[SCHEDULED WAKE]`, fires from `go func()`)
-- Exec auto-background (`[EXEC RESULT]`, fires when long commands complete)
 - HTTP `/send` endpoint
 
 **Different sessions run concurrently** — the lock is per-session, not global. Branch sessions and parent sessions have different keys and do not block each other.
