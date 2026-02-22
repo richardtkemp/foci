@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,12 +61,11 @@ type Bot struct {
 	transcriber  voice.STT // nil = voice notes not supported
 	tts          voice.TTS // nil = TTS not available
 
-	queue        chan queuedMessage     // receiver → agent worker
-	turnCancel   context.CancelFunc     // cancel the current agent turn
-	turnMu       sync.Mutex             // protects turnCancel
-	chatID       int64                   // last known chat ID (for notifications)
-	chatMu       sync.Mutex
-	pendingQuote string                 // quote text from current update (polling goroutine only)
+	queue      chan queuedMessage     // receiver → agent worker
+	turnCancel context.CancelFunc     // cancel the current agent turn
+	turnMu     sync.Mutex             // protects turnCancel
+	chatID     int64                   // last known chat ID (for notifications)
+	chatMu     sync.Mutex
 }
 
 // NewBot creates a new Telegram bot.
@@ -169,22 +167,8 @@ func (b *Bot) Run(ctx context.Context) {
 	}
 }
 
-// updateQuoteOverlay extracts the quote field that go-telegram-bot-api v5 doesn't support.
-// Parsed from the same raw JSON as the regular []tgbotapi.Update.
-type updateQuoteOverlay struct {
-	Message *struct {
-		Quote *struct {
-			Text string `json:"text"`
-		} `json:"quote"`
-	} `json:"message"`
-}
-
 // pollUpdates runs the telegram update polling loop. Returns if the channel
 // closes, a panic occurs, or ctx is cancelled. Caller should retry on return.
-//
-// We poll manually (instead of GetUpdatesChan) so we can parse the raw JSON
-// and extract the "quote" field added in Bot API 7.0, which the v5.5.1
-// library does not support.
 func (b *Bot) pollUpdates(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -192,47 +176,22 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 		}
 	}()
 
-	config := tgbotapi.NewUpdate(0)
-	config.Timeout = 60
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	updates := b.api.GetUpdatesChan(u)
+	defer b.api.StopReceivingUpdates()
 
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		resp, err := b.api.Request(config)
-		if err != nil {
-			log.Errorf("telegram", "get updates: %v", err)
-			select {
-			case <-ctx.Done():
+		case update, ok := <-updates:
+			if !ok {
+				log.Warnf("telegram", "updates channel closed")
 				return
-			case <-time.After(3 * time.Second):
-			}
-			continue
-		}
-
-		var updates []tgbotapi.Update
-		if err := json.Unmarshal(resp.Result, &updates); err != nil {
-			log.Errorf("telegram", "unmarshal updates: %v", err)
-			continue
-		}
-
-		// Extract quote text from the same raw JSON (best-effort)
-		var overlays []updateQuoteOverlay
-		json.Unmarshal(resp.Result, &overlays)
-
-		for i, update := range updates {
-			if update.UpdateID >= config.Offset {
-				config.Offset = update.UpdateID + 1
 			}
 			if update.Message == nil {
 				continue
-			}
-
-			// Pass quote text to receiveMessage via Bot field (same goroutine)
-			b.pendingQuote = ""
-			if i < len(overlays) && overlays[i].Message != nil && overlays[i].Message.Quote != nil {
-				b.pendingQuote = overlays[i].Message.Quote.Text
 			}
 			b.receiveMessage(ctx, update.Message)
 		}
@@ -260,12 +219,8 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		text = msg.Caption
 	}
 
-	// Include quoted message context when user replies to a specific message.
-	// Prefer the specific quote text (user highlighted a portion) over the
-	// full replied-to message, which may be very long.
-	if b.pendingQuote != "" {
-		text = fmt.Sprintf("[Quoting: %s]\n\n%s", b.pendingQuote, text)
-	} else if msg.ReplyToMessage != nil {
+	// Include quoted message context when user replies to a specific message
+	if msg.ReplyToMessage != nil {
 		quoted := msg.ReplyToMessage.Text
 		if quoted == "" {
 			quoted = msg.ReplyToMessage.Caption
