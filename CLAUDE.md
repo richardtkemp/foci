@@ -28,3 +28,9 @@ go vet ./...
 ## Testing
 
 All tests are self-contained except `anthropic/cache_test.go` which needs `ANTHROPIC_API_KEY`. Run `go test ./...` — should pass in ~1s.
+
+## Standards
+
+- **Tests:** Write tests for all new functionality. Cover happy path, edge cases, and error conditions.
+- **Docs:** Update `docs/CONFIG.md` for any new config options. Update `docs/WIRING.md` for any architectural or flow changes.
+- **Config:** New behaviour should be configurable where appropriate. Add fields to the relevant config struct with TOML tags and sensible defaults.
