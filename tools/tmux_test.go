@@ -500,3 +500,242 @@ func TestTmuxWatchMissingName(t *testing.T) {
 		t.Fatal("expected error for unwatch missing name")
 	}
 }
+
+func TestTmuxInstanceIsolation(t *testing.T) {
+	tmuxAvailable(t)
+
+	toolA := NewTmuxTool(300, 30, nil)
+	toolB := NewTmuxTool(300, 30, nil)
+
+	nameA := "clod-test-iso-a"
+	nameB := "clod-test-iso-b"
+	defer tmuxCleanup(t, nameA)
+	defer tmuxCleanup(t, nameB)
+
+	// Agent A starts a session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      nameA,
+		"command":   "sleep 60",
+	})
+	if _, err := toolA.Execute(context.Background(), params); err != nil {
+		t.Fatalf("agent A start: %v", err)
+	}
+
+	// Agent B starts a session
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      nameB,
+		"command":   "sleep 60",
+	})
+	if _, err := toolB.Execute(context.Background(), params); err != nil {
+		t.Fatalf("agent B start: %v", err)
+	}
+
+	// Agent A's list should only show A's session
+	listParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "list",
+	})
+	result, err := toolA.Execute(context.Background(), listParams)
+	if err != nil {
+		t.Fatalf("agent A list: %v", err)
+	}
+	if !strings.Contains(result, nameA) {
+		t.Errorf("agent A list missing own session: %q", result)
+	}
+	if strings.Contains(result, nameB) {
+		t.Errorf("agent A list shows agent B's session: %q", result)
+	}
+
+	// Agent B's list should only show B's session
+	result, err = toolB.Execute(context.Background(), listParams)
+	if err != nil {
+		t.Fatalf("agent B list: %v", err)
+	}
+	if !strings.Contains(result, nameB) {
+		t.Errorf("agent B list missing own session: %q", result)
+	}
+	if strings.Contains(result, nameA) {
+		t.Errorf("agent B list shows agent A's session: %q", result)
+	}
+
+	// Agent B cannot read agent A's session
+	readParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "read",
+		"name":      nameA,
+	})
+	_, err = toolB.Execute(context.Background(), readParams)
+	if err == nil {
+		t.Fatal("agent B should not be able to read agent A's session")
+	}
+	if !strings.Contains(err.Error(), "not owned") {
+		t.Errorf("error = %q, want 'not owned'", err.Error())
+	}
+
+	// Agent B cannot send to agent A's session
+	sendParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      nameA,
+		"keys":      "hello",
+	})
+	_, err = toolB.Execute(context.Background(), sendParams)
+	if err == nil {
+		t.Fatal("agent B should not be able to send to agent A's session")
+	}
+	if !strings.Contains(err.Error(), "not owned") {
+		t.Errorf("error = %q, want 'not owned'", err.Error())
+	}
+
+	// Agent B cannot kill agent A's session
+	killParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "kill",
+		"name":      nameA,
+	})
+	_, err = toolB.Execute(context.Background(), killParams)
+	if err == nil {
+		t.Fatal("agent B should not be able to kill agent A's session")
+	}
+	if !strings.Contains(err.Error(), "not owned") {
+		t.Errorf("error = %q, want 'not owned'", err.Error())
+	}
+}
+
+func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
+	tmuxAvailable(t)
+
+	var wakeA, wakeB atomic.Int32
+	toolA := NewTmuxTool(300, 30, func(session string, window int, threshold time.Duration) {
+		wakeA.Add(1)
+	})
+	toolB := NewTmuxTool(300, 30, func(session string, window int, threshold time.Duration) {
+		wakeB.Add(1)
+	})
+
+	nameA := "clod-test-wakeroute-a"
+	nameB := "clod-test-wakeroute-b"
+	defer tmuxCleanup(t, nameA)
+	defer tmuxCleanup(t, nameB)
+
+	// Agent A starts and watches a session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      nameA,
+		"command":   "sleep 60",
+	})
+	if _, err := toolA.Execute(context.Background(), params); err != nil {
+		t.Fatalf("agent A start: %v", err)
+	}
+
+	// Agent B starts and watches a session
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      nameB,
+		"command":   "sleep 60",
+	})
+	if _, err := toolB.Execute(context.Background(), params); err != nil {
+		t.Fatalf("agent B start: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Agent A watches with short threshold
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              nameA,
+		"threshold_seconds": 3,
+	})
+	if _, err := toolA.Execute(context.Background(), params); err != nil {
+		t.Fatalf("agent A watch: %v", err)
+	}
+
+	// Agent B watches with short threshold
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              nameB,
+		"threshold_seconds": 3,
+	})
+	if _, err := toolB.Execute(context.Background(), params); err != nil {
+		t.Fatalf("agent B watch: %v", err)
+	}
+
+	// Wait for both wake callbacks to fire
+	deadline := time.After(10 * time.Second)
+	for wakeA.Load() == 0 || wakeB.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("wake callbacks not called: A=%d B=%d", wakeA.Load(), wakeB.Load())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	// Each agent's wake function should have been called independently
+	if wakeA.Load() < 1 {
+		t.Errorf("agent A wake not called")
+	}
+	if wakeB.Load() < 1 {
+		t.Errorf("agent B wake not called")
+	}
+
+	// Cleanup watches
+	unwatchA, _ := json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      nameA,
+	})
+	toolA.Execute(context.Background(), unwatchA)
+
+	unwatchB, _ := json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      nameB,
+	})
+	toolB.Execute(context.Background(), unwatchB)
+}
+
+func TestTmuxWatchIsolation(t *testing.T) {
+	tmuxAvailable(t)
+
+	toolA := NewTmuxTool(300, 30, nil)
+	toolB := NewTmuxTool(300, 30, nil)
+
+	name := "clod-test-watchiso"
+	defer tmuxCleanup(t, name)
+
+	// Agent A starts and watches
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := toolA.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	watchParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "watch",
+		"name":      name,
+	})
+	if _, err := toolA.Execute(context.Background(), watchParams); err != nil {
+		t.Fatalf("agent A watch: %v", err)
+	}
+
+	// Agent B should be able to watch the same session name (separate instance)
+	// This exercises that watched maps are independent
+	if _, err := toolB.Execute(context.Background(), watchParams); err != nil {
+		t.Fatalf("agent B watch should succeed on separate instance: %v", err)
+	}
+
+	// Agent A unwatch should not affect agent B
+	unwatchParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	if _, err := toolA.Execute(context.Background(), unwatchParams); err != nil {
+		t.Fatalf("agent A unwatch: %v", err)
+	}
+
+	// Agent B unwatch should still work (not already removed by A)
+	if _, err := toolB.Execute(context.Background(), unwatchParams); err != nil {
+		t.Fatalf("agent B unwatch should still work: %v", err)
+	}
+}
