@@ -465,9 +465,21 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Send typing indicator
 	b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 
-	// Set up intermediate reply delivery (deferred replies)
+	// Track tool calls for live visibility via send+edit pattern.
+	// Declared before ReplyFunc so the closure can reset toolMsgID
+	// when intermediate text is sent (fixes message ordering).
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	// Set up intermediate reply delivery (deferred replies).
+	// When intermediate text fires, reset toolMsgID so the next tool call
+	// creates a fresh message below the text instead of editing the stale
+	// earlier message (which would appear above the text in chat).
 	b.agent.SetReplyFunc(func(text string) {
 		b.sendReply(qm.msg, qm.userID, text)
+		toolMsgMu.Lock()
+		toolMsgID = 0
+		toolMsgMu.Unlock()
 	})
 	defer b.agent.SetReplyFunc(nil)
 
@@ -482,10 +494,6 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 	})
 	defer b.agent.SetActivityFunc(nil)
-
-	// Track tool calls for live visibility via send+edit pattern
-	var toolMsgID int64
-	var toolMsgMu sync.Mutex
 	b.agent.SetToolCallObserver(func(toolName string, params json.RawMessage) {
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()

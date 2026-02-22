@@ -1368,6 +1368,95 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 }
 
+func TestIntermediateTextBeforeToolCalls(t *testing.T) {
+	// Verify the agent calls sendIntermediate before notifyToolCall when the
+	// API response contains both text and tool_use blocks. This ordering is
+	// critical for Telegram message display: thinking text must appear above
+	// tool call notifications in the chat.
+	var callCount atomic.Int32
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := callCount.Add(1)
+		if n == 1 {
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "Let me check..."},
+					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Done."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "test_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "ok", nil
+		},
+	})
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// Record callback invocation order
+	var mu sync.Mutex
+	var order []string
+
+	ag.SetReplyFunc(func(text string) {
+		mu.Lock()
+		order = append(order, "reply:"+text)
+		mu.Unlock()
+	})
+	defer ag.SetReplyFunc(nil)
+
+	ag.SetToolCallObserver(func(name string, params json.RawMessage) {
+		mu.Lock()
+		order = append(order, "tool:"+name)
+		mu.Unlock()
+	})
+	defer ag.SetToolCallObserver(nil)
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:order", "Check something")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(order) < 2 {
+		t.Fatalf("expected at least 2 callbacks, got %d: %v", len(order), order)
+	}
+	if order[0] != "reply:Let me check..." {
+		t.Errorf("order[0] = %q, want reply callback first", order[0])
+	}
+	if order[1] != "tool:test_tool" {
+		t.Errorf("order[1] = %q, want tool callback second", order[1])
+	}
+}
+
 func TestConcurrentTurnSerialization(t *testing.T) {
 	// Verify that concurrent HandleMessage calls on the same session
 	// are serialized — messages never interleave. This is critical for
