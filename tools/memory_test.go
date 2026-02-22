@@ -21,7 +21,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 	sources := map[string]memory.SourceConfig{
 		"memory": {Dir: memDir, Weight: 1.0},
 	}
-	idx, err := memory.NewIndex(dbPath, sources, 0)
+	idx, err := memory.NewIndex(dbPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewIndex: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestMemorySearch(t *testing.T) {
 	sources := map[string]memory.SourceConfig{
 		"memory": {Dir: memDir, Weight: 1.0},
 	}
-	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0)
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
 	defer idx.Close()
 	idx.Reindex()
 
@@ -72,7 +72,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	sources := map[string]memory.SourceConfig{
 		"memory": {Dir: memDir, Weight: 1.0},
 	}
-	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0)
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
 	defer idx.Close()
 	idx.Reindex()
 
@@ -108,7 +108,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	sources := map[string]memory.SourceConfig{
 		"memory": {Dir: memDir, Weight: 1.0},
 	}
-	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0)
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
 	defer idx.Close()
 	idx.Reindex()
 	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")

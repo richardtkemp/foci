@@ -152,8 +152,8 @@ func main() {
 		}
 	}
 
-	var sharedMemIdx *memory.Index                         // used when no per-agent memory
-	agentMemIndices := make(map[string]*memory.Index)      // agentID → per-agent index
+	var sharedMemIdx *memory.Index                    // used when no per-agent memory
+	agentMemIndices := make(map[string]*memory.Index) // agentID → per-agent index
 	var reminderStore *memory.ReminderStore
 	var scratchpadStore *memory.Scratchpad
 
@@ -167,7 +167,7 @@ func main() {
 					continue
 				}
 				dbPath := filepath.Join(filepath.Dir(configPath), fmt.Sprintf("memory-%s.db", acfg.ID))
-				idx, err := memory.NewIndex(dbPath, combined, memDebounce)
+				idx, err := memory.NewIndex(dbPath, combined, memDebounce, cfg.Memory.ConversationWeight)
 				if err != nil {
 					log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
 				}
@@ -196,7 +196,7 @@ func main() {
 		} else {
 			// Shared index (backward compat — no agent has per-agent memory)
 			memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
-			sharedMemIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce)
+			sharedMemIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create memory index: %v", err)
 			}
@@ -669,6 +669,7 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tools.NewScratchpadWriteTool(p.scratchpadStore))
 		registry.Register(tools.NewScratchpadReadTool(p.scratchpadStore))
 		registry.Register(tools.NewScratchpadClearTool(p.scratchpadStore))
+		registry.Register(tools.NewScratchpadListTool(p.scratchpadStore))
 	}
 
 	// Per-agent workspace bootstrap

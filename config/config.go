@@ -34,7 +34,7 @@ type AgentConfig struct {
 
 type AnthropicConfig struct {
 	Token           string `toml:"token"`
-	OAuthToken      string `toml:"oauth_token"`      // OAuth access token for usage API (legacy, static)
+	OAuthToken      string `toml:"oauth_token"` // OAuth access token for usage API (legacy, static)
 	BraveAPIKey     string `toml:"brave_api_key"`
 	CredentialsFile string `toml:"credentials_file"` // path to Claude Code credentials.json (default ~/.claude/.credentials.json)
 }
@@ -72,9 +72,10 @@ type MemorySource struct {
 }
 
 type MemoryConfig struct {
-	Dir             string         `toml:"dir"`              // backward compat: single directory
-	Sources         []MemorySource `toml:"sources"`          // new: multiple sources with weights
-	ReindexDebounce string         `toml:"reindex_debounce"` // delay before reindex (e.g., "500ms", "2s"), default "0s"
+	Dir                string         `toml:"dir"`                 // backward compat: single directory
+	Sources            []MemorySource `toml:"sources"`             // new: multiple sources with weights
+	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
+	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
 }
 
 type HTTPConfig struct {
@@ -116,11 +117,11 @@ type SkillsConfig struct {
 }
 
 type ToolsConfig struct {
-	MaxResultChars     int    `toml:"max_result_chars"`      // max chars before writing result to file (default 10000)
-	TempDir            string `toml:"temp_dir"`              // where to write large tool results (default /tmp/clod-tool-results)
-	TmuxCols           int    `toml:"tmux_cols"`             // tmux window columns on start (default 300)
-	TmuxRows           int    `toml:"tmux_rows"`             // tmux window rows on start (default 30)
-	ExecAutoBackground int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec (default 10, 0 disables)
+	MaxResultChars     int    `toml:"max_result_chars"`     // max chars before writing result to file (default 10000)
+	TempDir            string `toml:"temp_dir"`             // where to write large tool results (default /tmp/clod-tool-results)
+	TmuxCols           int    `toml:"tmux_cols"`            // tmux window columns on start (default 300)
+	TmuxRows           int    `toml:"tmux_rows"`            // tmux window rows on start (default 30)
+	ExecAutoBackground int    `toml:"exec_auto_background"` // seconds before auto-backgrounding exec (default 10, 0 disables)
 }
 
 type PromptRule struct {
@@ -136,21 +137,21 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	Agent     AgentConfig     `toml:"agent"`  // legacy: single agent
-	Agents    []AgentConfig   `toml:"agents"` // multi-agent: array of agents
-	Anthropic AnthropicConfig `toml:"anthropic"`
-	Telegram  TelegramConfig  `toml:"telegram"`
-	Sessions  SessionsConfig  `toml:"sessions"`
-	Memory    MemoryConfig    `toml:"memory"`
-	HTTP      HTTPConfig      `toml:"http"`
-	Logging   LoggingConfig   `toml:"logging"`
-	Voice     VoiceConfig     `toml:"voice"`
-	Cache     CacheConfig     `toml:"cache"`
-	Skills    SkillsConfig    `toml:"skills"`
-	Tools     ToolsConfig     `toml:"tools"`
+	Agent       AgentConfig     `toml:"agent"`  // legacy: single agent
+	Agents      []AgentConfig   `toml:"agents"` // multi-agent: array of agents
+	Anthropic   AnthropicConfig `toml:"anthropic"`
+	Telegram    TelegramConfig  `toml:"telegram"`
+	Sessions    SessionsConfig  `toml:"sessions"`
+	Memory      MemoryConfig    `toml:"memory"`
+	HTTP        HTTPConfig      `toml:"http"`
+	Logging     LoggingConfig   `toml:"logging"`
+	Voice       VoiceConfig     `toml:"voice"`
+	Cache       CacheConfig     `toml:"cache"`
+	Skills      SkillsConfig    `toml:"skills"`
+	Tools       ToolsConfig     `toml:"tools"`
 	Commands    []CommandConfig `toml:"commands"`
-	PromptRules []PromptRule   `toml:"prompt_rules"`  // regex find/replace rules applied to inbound messages
-	WelcomeFile string         `toml:"welcome_file"`  // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
+	PromptRules []PromptRule    `toml:"prompt_rules"` // regex find/replace rules applied to inbound messages
+	WelcomeFile string          `toml:"welcome_file"` // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
 }
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -200,6 +201,9 @@ func validate(cfg *Config) error {
 		if src.Weight < 0 || src.Weight > 1.0 {
 			return fmt.Errorf("[memory] sources[%d] (%s) weight = %g: must be between 0.0 and 1.0", i, src.Name, src.Weight)
 		}
+	}
+	if cfg.Memory.ConversationWeight < 0 || cfg.Memory.ConversationWeight > 1.0 {
+		return fmt.Errorf("[memory] conversation_weight = %g: must be between 0.0 and 1.0", cfg.Memory.ConversationWeight)
 	}
 
 	return nil
@@ -310,6 +314,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.WelcomeFile == "" {
 		cfg.WelcomeFile = "WELCOME.md" // relative to working directory (usually $CLOD_HOME)
+	}
+	if cfg.Memory.ConversationWeight == 0 {
+		cfg.Memory.ConversationWeight = 0.1
 	}
 
 	// Bool defaults: default to true unless explicitly set to false in config.
