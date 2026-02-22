@@ -81,6 +81,8 @@ type Logger struct {
 	eventOut    io.Writer // clod.log + stderr multiwriter
 	apiFile     *os.File  // api.jsonl (nil if disabled)
 	payloadFile *os.File  // api-payload.jsonl (nil if disabled)
+	buffer      []string  // pre-Init event lines, replayed to event file on Init
+	initialized bool      // true after Init completes
 	mu          sync.Mutex
 }
 
@@ -96,16 +98,20 @@ type Config struct {
 }
 
 // Init initializes the global logger. Call once at startup.
+// Any events logged before Init are replayed to the event file so that
+// early messages (e.g. config warnings) appear in the log.
 func Init(cfg Config) error {
 	level := ParseLevel(cfg.Level)
 
 	// Event log: stderr always, plus file if configured
 	var eventOut io.Writer = os.Stderr
+	var eventFile *os.File
 	if cfg.EventFile != "" {
 		f, err := os.OpenFile(cfg.EventFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("open event log %s: %w", cfg.EventFile, err)
 		}
+		eventFile = f
 		eventOut = io.MultiWriter(os.Stderr, f)
 	}
 
@@ -130,6 +136,15 @@ func Init(cfg Config) error {
 	}
 
 	std.mu.Lock()
+	// Replay buffered pre-Init events to the event file (not stderr —
+	// they were already written there when originally logged).
+	if eventFile != nil && len(std.buffer) > 0 {
+		for _, line := range std.buffer {
+			eventFile.WriteString(line)
+		}
+	}
+	std.buffer = nil
+	std.initialized = true
 	std.level = level
 	std.eventOut = eventOut
 	std.apiFile = apiFile
@@ -174,6 +189,9 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 
 	l.mu.Lock()
 	l.eventOut.Write([]byte(line))
+	if !l.initialized {
+		l.buffer = append(l.buffer, line)
+	}
 	l.mu.Unlock()
 
 	// Fire warn hook for WARN and ERROR levels

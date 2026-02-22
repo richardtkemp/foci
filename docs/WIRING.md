@@ -5,9 +5,9 @@ How the pieces connect. Read this before touching the code.
 ## Startup Flow (`main.go`)
 
 ```
-config.Load(path)
-  → log.Init(cfg.Logging)
-  → log.InitConversation(cfg.Logging.ConversationFile)  ← SQLite
+config.Load(path)                                        ← validates values; logs to stderr + buffer
+  → log.Init(cfg.Logging)                                ← opens event file, replays buffered events
+  → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite
   → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
 
   Shared resources (created once):
@@ -269,6 +269,8 @@ Features:
 - **Path blocking:** Commands referencing `secrets.toml` or `/proc/self/environ` are refused
 
 ## Logging (`log/`)
+
+**Two-phase init:** Before `log.Init()`, events go to stderr and are buffered in memory. When `Init()` opens the event file, buffered events are replayed to it. This ensures config-load warnings (e.g. unknown keys) appear in the log file despite being emitted before the file path is known.
 
 Three outputs:
 
