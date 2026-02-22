@@ -88,7 +88,8 @@ func TestCLIIntegration(t *testing.T) {
 		wantErr bool
 	}{
 		{"send", []string{"send", "hello"}, "echo: hello", false},
-		{"wake", []string{"wake"}, "wake ok", false},
+		{"branch", []string{"branch"}, "wake ok", false},
+		{"wake alias", []string{"wake"}, "wake ok", false},
 		{"status", []string{"status"}, "status: idle", false},
 		{"ping", []string{"ping"}, "pong", false},
 		{"command", []string{"command", "/ping"}, "pong", false},
@@ -96,8 +97,10 @@ func TestCLIIntegration(t *testing.T) {
 
 		// -a flag (space-separated)
 		{"send with -a", []string{"send", "-a", "research", "hello"}, "[research] echo: hello", false},
-		{"wake with -a", []string{"wake", "-a", "research"}, "[research] wake ok", false},
-		{"wake with -a and text", []string{"wake", "-a", "research", "check news"}, "[research] wake ok", false},
+		{"branch with -a", []string{"branch", "-a", "research"}, "[research] wake ok", false},
+		{"wake alias with -a", []string{"wake", "-a", "research"}, "[research] wake ok", false},
+		{"branch with -a and text", []string{"branch", "-a", "research", "check news"}, "[research] wake ok", false},
+		{"wake alias with -a and text", []string{"wake", "-a", "research", "check news"}, "[research] wake ok", false},
 		{"status with -a", []string{"status", "-a", "research"}, "[research] status: idle", false},
 		{"eval with -a", []string{"eval", "-a", "research", "ls"}, "[research] echo: Run this command", false},
 		{"command with -a", []string{"command", "-a", "research", "/ping"}, "[research] pong", false},

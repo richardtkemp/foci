@@ -225,7 +225,7 @@ The `clod` CLI wraps the HTTP API. All subcommands accept `-a <id>` / `--agent <
 
 ```
 clod send -a research "check the news"
-clod wake -a research
+clod branch -a research
 clod status --agent=research
 clod ping -a research
 clod eval -a research "df -h"

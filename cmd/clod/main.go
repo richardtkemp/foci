@@ -34,8 +34,8 @@ func main() {
 	switch cmd {
 	case "send":
 		err = cmdSend(base, args)
-	case "wake":
-		err = cmdWake(base, args)
+	case "branch", "wake":
+		err = cmdBranch(base, args)
 	case "status":
 		err = cmdStatus(base, args)
 	case "eval":
@@ -63,7 +63,7 @@ func usage() {
 
 Commands:
   send <text>          Send a message to the agent (main session)
-  wake [text]          Trigger a wake (branch session)
+  branch [text]         Trigger a branch session (wake alias for backward compat)
   status               Query agent status
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
@@ -113,7 +113,7 @@ func cmdSend(base string, args []string) error {
 	return postJSON(base+"/send", body)
 }
 
-func cmdWake(base string, args []string) error {
+func cmdBranch(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
 	text := strings.Join(args, " ")
 	body := map[string]string{}
