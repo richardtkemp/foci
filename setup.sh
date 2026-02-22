@@ -78,7 +78,7 @@ if id "$CLOD_USER" &>/dev/null; then
     info "  User $CLOD_USER exists"
 else
     info "  Creating system user $CLOD_USER"
-    run useradd --system --home-dir "$CLOD_HOME" --create-home --shell /usr/sbin/nologin "$CLOD_USER"
+    run useradd --system --home-dir "$CLOD_HOME" --create-home --shell /bin/bash "$CLOD_USER"
 fi
 
 # ---------- 2. Build binaries from source ----------
