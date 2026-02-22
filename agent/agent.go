@@ -99,6 +99,11 @@ func (a *Agent) IsProcessing() bool {
 	return atomic.LoadInt32(&a.processing) > 0
 }
 
+// SetProcessingForTest sets the processing counter directly. Test-only.
+func (a *Agent) SetProcessingForTest(n int32) {
+	atomic.StoreInt32(&a.processing, n)
+}
+
 // SetReplyFunc sets a callback for intermediate replies during a turn.
 // The callback is called from the agent loop goroutine.
 func (a *Agent) SetReplyFunc(fn ReplyFunc) {
