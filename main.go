@@ -392,8 +392,9 @@ func main() {
 			return
 		}
 		var req struct {
-			Agent string `json:"agent"`
-			Text  string `json:"text"`
+			Agent   string `json:"agent"`
+			Session string `json:"session"`
+			Text    string `json:"text"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
@@ -406,7 +407,12 @@ func main() {
 			return
 		}
 
-		log.Infof("http", "send (agent=%s): %s", inst.id, req.Text)
+		sessionKey := inst.sessionKey
+		if req.Session != "" {
+			sessionKey = fmt.Sprintf("agent:%s:%s", inst.id, req.Session)
+		}
+
+		log.Infof("http", "send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
 
 		// Route slash commands through the command dispatcher
 		if strings.HasPrefix(req.Text, "/") {
@@ -417,7 +423,7 @@ func main() {
 			}
 		}
 
-		resp, err := inst.ag.HandleMessage(ctx, inst.sessionKey, req.Text)
+		resp, err := inst.ag.HandleMessage(ctx, sessionKey, req.Text)
 		if err != nil {
 			log.Errorf("http", "send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -734,6 +740,11 @@ func setupAgent(p setupParams) *agentInstance {
 			warningWindow = 5 * time.Minute
 		}
 		ag.Warnings = agent.NewWarningQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
+	}
+
+	// Mana threshold warnings (if thresholds configured)
+	if len(p.cfg.ManaWarnings.Thresholds) > 0 && ag.Warnings != nil {
+		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Thresholds)
 	}
 
 	// Model escalation tool (needs this agent's bootstrap)

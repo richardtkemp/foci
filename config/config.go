@@ -112,6 +112,10 @@ type CacheConfig struct {
 	Strategy string `toml:"strategy"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
 }
 
+type ManaWarningsConfig struct {
+	Thresholds []int `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
+}
+
 type SkillsConfig struct {
 	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
 }
@@ -137,21 +141,22 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	Agent       AgentConfig     `toml:"agent"`  // legacy: single agent
-	Agents      []AgentConfig   `toml:"agents"` // multi-agent: array of agents
-	Anthropic   AnthropicConfig `toml:"anthropic"`
-	Telegram    TelegramConfig  `toml:"telegram"`
-	Sessions    SessionsConfig  `toml:"sessions"`
-	Memory      MemoryConfig    `toml:"memory"`
-	HTTP        HTTPConfig      `toml:"http"`
-	Logging     LoggingConfig   `toml:"logging"`
-	Voice       VoiceConfig     `toml:"voice"`
-	Cache       CacheConfig     `toml:"cache"`
-	Skills      SkillsConfig    `toml:"skills"`
-	Tools       ToolsConfig     `toml:"tools"`
-	Commands    []CommandConfig `toml:"commands"`
-	PromptRules []PromptRule    `toml:"prompt_rules"` // regex find/replace rules applied to inbound messages
-	WelcomeFile string          `toml:"welcome_file"` // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
+	Agent        AgentConfig        `toml:"agent"`  // legacy: single agent
+	Agents       []AgentConfig      `toml:"agents"` // multi-agent: array of agents
+	Anthropic    AnthropicConfig    `toml:"anthropic"`
+	Telegram     TelegramConfig     `toml:"telegram"`
+	Sessions     SessionsConfig     `toml:"sessions"`
+	Memory       MemoryConfig       `toml:"memory"`
+	HTTP         HTTPConfig         `toml:"http"`
+	Logging      LoggingConfig      `toml:"logging"`
+	Voice        VoiceConfig        `toml:"voice"`
+	Cache        CacheConfig        `toml:"cache"`
+	ManaWarnings ManaWarningsConfig `toml:"mana_warnings"`
+	Skills       SkillsConfig       `toml:"skills"`
+	Tools        ToolsConfig        `toml:"tools"`
+	Commands     []CommandConfig    `toml:"commands"`
+	PromptRules  []PromptRule       `toml:"prompt_rules"` // regex find/replace rules applied to inbound messages
+	WelcomeFile  string             `toml:"welcome_file"` // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
 }
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -204,6 +209,13 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Memory.ConversationWeight < 0 || cfg.Memory.ConversationWeight > 1.0 {
 		return fmt.Errorf("[memory] conversation_weight = %g: must be between 0.0 and 1.0", cfg.Memory.ConversationWeight)
+	}
+
+	// Mana warnings thresholds
+	for i, t := range cfg.ManaWarnings.Thresholds {
+		if t < 0 || t > 100 {
+			return fmt.Errorf("[mana_warnings] thresholds[%d] = %d: must be between 0 and 100", i, t)
+		}
 	}
 
 	return nil
