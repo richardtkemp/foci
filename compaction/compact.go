@@ -54,7 +54,18 @@ func (c *Compactor) WithConfig(model string, maxTokens, minMessages int, summary
 	if handoffMessage != "" {
 		c.handoffMessage = handoffMessage
 	}
+	c.checkConfig()
 	return c
+}
+
+// checkConfig warns if compaction settings could exceed the context window.
+func (c *Compactor) checkConfig() {
+	limit := contextLimit(c.model)
+	triggerPoint := int(float64(limit) * c.threshold)
+	if triggerPoint+c.maxTokens > limit {
+		log.Warnf("compaction", "compaction_max_tokens (%d) + threshold trigger point (%d) exceeds context window (%d) — summary may not fit",
+			c.maxTokens, triggerPoint, limit)
+	}
 }
 
 // contextLimit returns the approximate context window for a model.
