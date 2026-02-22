@@ -304,6 +304,11 @@ func main() {
 
 	// Shared: usage client — prefer credentials file (auto-refreshing), fall back to static token
 	credFile := cfg.Anthropic.CredentialsFile
+	if strings.HasPrefix(credFile, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			credFile = filepath.Join(home, credFile[2:])
+		}
+	}
 	var usageClient *anthropic.UsageClient
 	if credFile != "" {
 		usageClient = anthropic.NewUsageClientWithFunc(func() string {
