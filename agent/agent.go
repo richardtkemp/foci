@@ -18,6 +18,7 @@ import (
 	"clod/log"
 	"clod/memory"
 	"clod/session"
+	"clod/state"
 	"clod/tools"
 	"clod/workspace"
 )
@@ -74,6 +75,7 @@ type Agent struct {
 	MaxResultChars     int                     // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir  string                  // where to write large tool results
 	Warnings           *WarningQueue           // nil disables warning injection into session
+	StateStore         *state.Store            // nil disables state persistence
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
@@ -185,6 +187,25 @@ func (a *Agent) SetVoiceMode(sessionKey string, on bool) {
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()
 	sm.voiceMode = on
+
+	if a.StateStore != nil {
+		a.StateStore.Set("voice:"+sessionKey, on)
+	}
+}
+
+// RestoreVoiceMode loads voice mode from state store if available.
+func (a *Agent) RestoreVoiceMode(sessionKey string) {
+	if a.StateStore == nil {
+		return
+	}
+	var on bool
+	if a.StateStore.Get("voice:"+sessionKey, &on) && on {
+		sm := a.getSessionMeta(sessionKey)
+		a.metaMu.Lock()
+		sm.voiceMode = on
+		a.metaMu.Unlock()
+		log.Infof("agent", "restored voice mode for %s", sessionKey)
+	}
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {

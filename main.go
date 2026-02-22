@@ -24,6 +24,7 @@ import (
 	"clod/secrets"
 	"clod/session"
 	"clod/skills"
+	"clod/state"
 	"clod/telegram"
 	"clod/tools"
 	"clod/voice"
@@ -114,6 +115,13 @@ func main() {
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
+
+	// Shared: State persistence (JSON file in sessions dir)
+	statePath := filepath.Join(cfg.Sessions.Dir, "state.json")
+	stateStore := state.New(statePath)
+	if err := stateStore.Load(); err != nil {
+		log.Errorf("main", "load state: %v", err)
+	}
 
 	// Shared: Memory FTS5 index
 	var memIdx *memory.Index
@@ -281,6 +289,7 @@ func main() {
 			client:              client,
 			sessions:            sessions,
 			store:               store,
+			stateStore:          stateStore,
 			memIdx:              memIdx,
 			reminderStore:       reminderStore,
 			scratchpadStore:     scratchpadStore,
@@ -551,6 +560,7 @@ type setupParams struct {
 	client              *anthropic.Client
 	sessions            *session.Store
 	store               *secrets.Store
+	stateStore          *state.Store
 	memIdx              *memory.Index
 	reminderStore       *memory.ReminderStore
 	scratchpadStore     *memory.Scratchpad
@@ -660,7 +670,9 @@ func setupAgent(p setupParams) *agentInstance {
 		DuplicateMessages: acfg.DuplicateMessages,
 		MaxResultChars:    p.cfg.Tools.MaxResultChars,
 		ToolResultTempDir: p.cfg.Tools.TempDir,
+		StateStore:        p.stateStore,
 	}
+	ag.RestoreVoiceMode(sessionKey)
 
 	// Warning injection queue (if enabled)
 	if p.cfg.Logging.InjectAgentWarnings {
@@ -880,6 +892,14 @@ func setupAgent(p setupParams) *agentInstance {
 		primaryBot, err := telegram.NewBot(telegramToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, sessionKey)
 		if err != nil {
 			log.Fatalf("main", "agent %q: create telegram bot: %v", acfg.ID, err)
+		}
+
+		if p.stateStore != nil {
+			botKey := "bot:" + acfg.TelegramBot
+			if botKey == "bot:" {
+				botKey = "bot:" + acfg.ID
+			}
+			primaryBot.SetStateStore(p.stateStore, botKey)
 		}
 
 		if p.sttProvider != nil {
