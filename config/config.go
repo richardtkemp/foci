@@ -99,6 +99,8 @@ type SkillsConfig struct {
 type ToolsConfig struct {
 	MaxResultChars int    `toml:"max_result_chars"` // max chars before writing result to file (default 10000)
 	TempDir        string `toml:"temp_dir"`         // where to write large tool results (default /tmp/clod-tool-results)
+	TmuxCols       int    `toml:"tmux_cols"`        // tmux window columns on start (default 300)
+	TmuxRows       int    `toml:"tmux_rows"`        // tmux window rows on start (default 30)
 }
 
 type CommandConfig struct {
@@ -207,6 +209,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.TempDir == "" {
 		cfg.Tools.TempDir = "/tmp/clod-tool-results"
+	}
+	if cfg.Tools.TmuxCols == 0 {
+		cfg.Tools.TmuxCols = 300
+	}
+	if cfg.Tools.TmuxRows == 0 {
+		cfg.Tools.TmuxRows = 30
 	}
 
 	return &cfg, nil

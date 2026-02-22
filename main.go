@@ -541,7 +541,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent tool registry
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewExecTool(p.store))
-	registry.Register(tools.NewTmuxTool())
+	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows))
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())

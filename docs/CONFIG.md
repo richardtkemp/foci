@@ -10,9 +10,9 @@ Secrets are loaded from `secrets.toml` in the same directory as the config file.
 
 ---
 
-## `[agent]`
+## `[agent]` / `[[agents]]`
 
-Core agent settings.
+Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` for multiple agents. When both are present, `[[agents]]` takes precedence.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -23,6 +23,8 @@ Core agent settings.
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `fork_prompt` | string | `""` | Prompt injected into multiball branch sessions to inform the agent of the fork. Empty disables. |
+| `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
+| `multiball_bot` | string | `""` | References a key in `[telegram.bots]` map. Used for multiball (branch) sessions. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
@@ -30,6 +32,21 @@ Default `system_files` order (most-stable first for cache efficiency):
 ```
 
 Missing files are silently skipped. The last file gets the cache breakpoint marker.
+
+Multi-agent example:
+```toml
+[[agents]]
+id = "main"
+model = "claude-sonnet-4-5"
+workspace = "/home/clod/character"
+telegram_bot = "primary"
+
+[[agents]]
+id = "research"
+model = "claude-haiku-4-5"
+workspace = "/home/clod/character"
+telegram_bot = "secondary"
+```
 
 ---
 
@@ -40,6 +57,7 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `token` | string | `""` | Anthropic API key. Overridden by `secrets.toml` `[anthropic] token`. |
+| `oauth_token` | string | `""` | OAuth access token for the usage API. Overridden by `secrets.toml` `[anthropic] oauth_token`. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
 
 ---
@@ -50,9 +68,33 @@ Telegram bot configuration.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `bot_token` | string | `""` | Telegram bot token. Overridden by `secrets.toml` `[telegram] bot_token`. |
+| `bot_token` | string | `""` | Legacy single-bot token. Overridden by `secrets.toml` `[telegram] bot_token`. |
 | `allowed_users` | string[] | `[]` | Telegram user IDs allowed to interact with the bot. |
-| `secondary_bots` | string[] | `[]` | Tokens for secondary bots (multiball feature). |
+| `secondary_bots` | string[] | `[]` | Legacy: tokens for secondary bots (multiball feature). |
+
+### `[telegram.bots.<name>]`
+
+Named bot configuration for multi-agent setups. Each bot is referenced by name from `[agent] telegram_bot` or `multiball_bot`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `token_secret` | string | `""` | Key in `secrets.toml` to resolve the bot token (e.g. `"telegram.primary"`). |
+
+Example:
+```toml
+[telegram.bots.primary]
+token_secret = "telegram.primary"
+
+[telegram.bots.secondary]
+token_secret = "telegram.secondary"
+```
+
+With `secrets.toml`:
+```toml
+[telegram]
+primary = "123456:ABC..."
+secondary = "789012:DEF..."
+```
 
 ---
 
@@ -64,8 +106,23 @@ Session storage and compaction.
 |-----|------|---------|-------------|
 | `dir` | string | `""` | Directory for JSONL session files. |
 | `compaction_threshold` | float | `0.8` | Trigger compaction when context usage exceeds this fraction (0.0–1.0). |
+| `compaction_model` | string | agent model | Model to use for summarization. Defaults to the agent's own model. |
+| `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
+| `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
+| `compaction_summary_prompt` | string | see below | Prompt sent to the model to generate the summary. |
+| `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
+
+Default `compaction_summary_prompt`:
+```
+Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history.
+```
+
+Default `compaction_handoff_msg`:
+```
+[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]
+```
 
 ---
 
@@ -75,9 +132,33 @@ Memory system (FTS5 search over markdown files + conversation history).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `""` | Directory containing memory markdown files. Also enables `memory_search`, `memory_remind`, and scratchpad tools. |
+| `dir` | string | `""` | Legacy: single directory containing memory markdown files. Enables `memory_search`, `memory_remind`, and scratchpad tools. |
+| `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format (`500ms`, `2s`). |
 
 When set, creates SQLite databases alongside the config file: `memory.db`, `reminders.db`, `scratchpad.db`.
+
+### `[[memory.sources]]`
+
+Multiple memory sources with weighted relevance. When specified, `dir` is ignored.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | required | Unique identifier (e.g. `"canonical"`, `"code"`, `"docs"`). |
+| `dir` | string | required | Directory path to index. |
+| `weight` | float | `1.0` | Weight multiplier for search ranking (0.0–1.0). Higher = more relevant. |
+
+Example:
+```toml
+[[memory.sources]]
+name = "canonical"
+dir = "/home/clod/character/memory"
+weight = 1.0
+
+[[memory.sources]]
+name = "docs"
+dir = "/home/clod/project/docs"
+weight = 0.5
+```
 
 ---
 
@@ -104,9 +185,9 @@ Logging and diagnostics.
 | `event_file` | string | `"clod.log"` | Path to event log file. |
 | `api_file` | string | `"api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. |
 | `conversation_file` | string | `"conversation.db"` | Path to conversation SQLite log. |
-| `full_payload` | bool | `false` | Log full API request/response bodies. |
+| `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. |
-| `cache_bust_detect` | bool | `false` | Alert when `cache_read` drops >50% vs previous request (indicates prefix changed). |
+| `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
 
 ---
 
@@ -116,12 +197,12 @@ Voice support (speech-to-text and text-to-speech).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `stt_endpoint` | string | Groq | OpenAI-compatible Whisper endpoint for speech-to-text. |
+| `stt_endpoint` | string | `"https://api.groq.com/openai/v1/audio/transcriptions"` | OpenAI-compatible Whisper endpoint for speech-to-text. |
 | `stt_model` | string | `"whisper-large-v3"` | Whisper model name. |
 | `tts_provider` | string | `""` | TTS provider: `"edge-tts"` or `"openai"`. Empty disables TTS. |
 | `tts_endpoint` | string | `""` | API endpoint for OpenAI TTS provider. |
 | `tts_model` | string | `""` | Model name for OpenAI TTS (e.g. `"tts-1-mini"`). |
-| `tts_voice` | string | `"alloy"` | Voice name (provider-specific). |
+| `tts_voice` | string | `""` | Voice name (provider-specific). Defaults to `"alloy"` for OpenAI provider. |
 
 STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`).
 
@@ -136,6 +217,19 @@ Prompt caching strategy.
 | `strategy` | string | `"auto"` | `"auto"`: top-level `cache_control` on the request body — Anthropic automatically caches the optimal prefix. `"explicit"`: manual breakpoints on last system block + second-to-last message (legacy). |
 
 `auto` is recommended. It requires no breakpoint management and handles growing conversations automatically. `explicit` gives fine-grained control but is fragile (breakpoints can accumulate or shift if not carefully managed).
+
+---
+
+## `[tools]`
+
+Tool behavior settings.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `max_result_chars` | int | `10000` | Max characters in a tool result before writing to a temp file and returning a truncated preview. |
+| `temp_dir` | string | `"/tmp/clod-tool-results"` | Directory for large tool result files. |
+| `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
+| `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 
 ---
 
@@ -180,9 +274,12 @@ Credentials file. Lives alongside `clod.toml`. Should have restricted permission
 ```toml
 [anthropic]
 token = "sk-ant-..."
+oauth_token = "sk-ant-oat01-..."
 
 [telegram]
 bot_token = "123456:ABC..."
+primary = "123456:ABC..."
+secondary = "789012:DEF..."
 
 [brave]
 api_key = "BSA..."
@@ -194,7 +291,7 @@ api_key = "gsk_..."
 api_key = "sk-or-..."
 ```
 
-All secrets override their corresponding `clod.toml` values. Secondary bot tokens can also be provided as a comma-separated string under `[telegram] secondary_bots`.
+All secrets override their corresponding `clod.toml` values.
 
 ---
 
@@ -243,12 +340,16 @@ system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "M
 [telegram]
 allowed_users = ["123456789"]
 
+[telegram.bots.primary]
+token_secret = "telegram.primary"
+
 [sessions]
 dir = "/home/clod/sessions"
 compaction_threshold = 0.8
 
 [memory]
 dir = "/home/clod/character/memory"
+reindex_debounce = "500ms"
 
 [http]
 port = 18791
@@ -264,12 +365,16 @@ payload_file = "/home/clod/api-payload.jsonl"
 cache_bust_detect = true
 
 [voice]
-stt_endpoint = "https://api.groq.com/openai/v1"
+stt_endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
 stt_model = "whisper-large-v3"
 tts_provider = "openai"
 tts_endpoint = "https://openrouter.ai/api/v1"
 tts_model = "openai/tts-1-mini"
 tts_voice = "alloy"
+
+[tools]
+tmux_cols = 300
+tmux_rows = 30
 
 [skills]
 dirs = ["/home/clod/skills"]

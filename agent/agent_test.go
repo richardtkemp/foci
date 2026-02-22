@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"clod/anthropic"
+	"clod/compaction"
+	"clod/memory"
 	"clod/session"
 	"clod/tools"
 	"clod/workspace"
@@ -1152,5 +1155,190 @@ func TestVoiceReplyFunc(t *testing.T) {
 	if received != nil {
 		t.Error("should not deliver after clearing voice reply func")
 	}
+}
+
+func TestAgentCompactionIntegration(t *testing.T) {
+	// compactionMockServer creates a mock that returns a canned summary for
+	// compaction requests (detected by "concise summary" in the last message)
+	// and normal end_turn responses otherwise. Turn highTokenTurn gets
+	// InputTokens=170000 to exceed the 160k threshold (0.8 * 200k).
+	compactionMockServer := func(turnCount *atomic.Int32, highTokenTurn int32) *httptest.Server {
+		return mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+			lastMsg := req.Messages[len(req.Messages)-1]
+			if strings.Contains(anthropic.TextOf(lastMsg.Content), "concise summary") {
+				return &anthropic.MessageResponse{
+					ID:         "msg_summary",
+					Type:       "message",
+					Role:       "assistant",
+					Content:    anthropic.TextContent("This is the compacted summary of the conversation."),
+					StopReason: "end_turn",
+					Usage:      anthropic.Usage{InputTokens: 500, OutputTokens: 100},
+				}
+			}
+
+			n := turnCount.Add(1)
+			inputTokens := 1000
+			if n == highTokenTurn {
+				inputTokens = 170_000
+			}
+			return &anthropic.MessageResponse{
+				ID:         fmt.Sprintf("msg_%d", n),
+				Type:       "message",
+				Role:       "assistant",
+				Content:    anthropic.TextContent(fmt.Sprintf("Response %d", n)),
+				StopReason: "end_turn",
+				Usage:      anthropic.Usage{InputTokens: inputTokens, OutputTokens: 50},
+			}
+		})
+	}
+
+	t.Run("basic", func(t *testing.T) {
+		var turnCount atomic.Int32
+		server := compactionMockServer(&turnCount, 5)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+		}
+
+		sessionKey := "agent:test:compact"
+
+		// Phase 1: 4 turns with low tokens — no compaction
+		for i := 1; i <= 4; i++ {
+			resp, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i))
+			if err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+			if resp != fmt.Sprintf("Response %d", i) {
+				t.Errorf("Turn %d: response = %q", i, resp)
+			}
+		}
+
+		msgs, _ := store.Load(sessionKey)
+		if len(msgs) != 8 {
+			t.Fatalf("after 4 turns: %d messages, want 8", len(msgs))
+		}
+
+		// Phase 2: Turn 5 — high tokens triggers compaction
+		resp, err := ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
+		if err != nil {
+			t.Fatalf("Turn 5: %v", err)
+		}
+		if resp != "Response 5" {
+			t.Errorf("Turn 5: response = %q", resp)
+		}
+
+		// After compaction, session should have exactly 3 messages
+		msgs, _ = store.Load(sessionKey)
+		if len(msgs) != 3 {
+			t.Fatalf("after compaction: %d messages, want 3", len(msgs))
+		}
+
+		// msg[0]: marker
+		if !strings.Contains(anthropic.TextOf(msgs[0].Content), "compacted") {
+			t.Errorf("msg[0] should contain 'compacted': %q", anthropic.TextOf(msgs[0].Content))
+		}
+		// msg[1]: summary from mock
+		if !strings.Contains(anthropic.TextOf(msgs[1].Content), "compacted summary") {
+			t.Errorf("msg[1] should contain summary: %q", anthropic.TextOf(msgs[1].Content))
+		}
+		// msg[2]: handoff
+		if !strings.Contains(anthropic.TextOf(msgs[2].Content), "Compaction complete") {
+			t.Errorf("msg[2] should contain handoff: %q", anthropic.TextOf(msgs[2].Content))
+		}
+
+		// Phase 3: Turn 6 — post-compaction continuity
+		resp, err = ag.HandleMessage(context.Background(), sessionKey, "Turn 6")
+		if err != nil {
+			t.Fatalf("Turn 6: %v", err)
+		}
+		if resp != "Response 6" {
+			t.Errorf("Turn 6: response = %q", resp)
+		}
+
+		// 3 compacted + user turn 6 + assistant turn 6 = 5
+		msgs, _ = store.Load(sessionKey)
+		if len(msgs) != 5 {
+			t.Fatalf("after Turn 6: %d messages, want 5", len(msgs))
+		}
+	})
+
+	t.Run("scratchpad", func(t *testing.T) {
+		var turnCount atomic.Int32
+		server := compactionMockServer(&turnCount, 5)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+		// Set up scratchpad with entries
+		scratchpad, err := memory.NewScratchpad(filepath.Join(t.TempDir(), "scratchpad.db"))
+		if err != nil {
+			t.Fatalf("create scratchpad: %v", err)
+		}
+		defer scratchpad.Close()
+
+		if err := scratchpad.Write("current_task", "implementing feature X"); err != nil {
+			t.Fatalf("write scratchpad: %v", err)
+		}
+		if err := scratchpad.Write("blockers", "need API key for auth"); err != nil {
+			t.Fatalf("write scratchpad: %v", err)
+		}
+
+		compactor.Scratchpad = scratchpad
+
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+		}
+
+		sessionKey := "agent:test:compactsp"
+
+		// Build up 4 turns then trigger compaction on turn 5
+		for i := 1; i <= 5; i++ {
+			if _, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i)); err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+		}
+
+		msgs, _ := store.Load(sessionKey)
+		if len(msgs) != 3 {
+			t.Fatalf("after compaction: %d messages, want 3", len(msgs))
+		}
+
+		// Verify handoff message contains scratchpad data
+		handoff := anthropic.TextOf(msgs[2].Content)
+		if !strings.Contains(handoff, "scratchpad") {
+			t.Errorf("handoff should mention scratchpad: %q", handoff)
+		}
+		if !strings.Contains(handoff, "current_task") {
+			t.Errorf("handoff should contain key 'current_task': %q", handoff)
+		}
+		if !strings.Contains(handoff, "implementing feature X") {
+			t.Errorf("handoff should contain scratchpad value: %q", handoff)
+		}
+		if !strings.Contains(handoff, "blockers") {
+			t.Errorf("handoff should contain key 'blockers': %q", handoff)
+		}
+		if !strings.Contains(handoff, "need API key for auth") {
+			t.Errorf("handoff should contain scratchpad value: %q", handoff)
+		}
+	})
 }
 

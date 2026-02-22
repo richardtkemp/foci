@@ -34,7 +34,9 @@ var (
 	watchedSess = make(map[string]*watchedSession)
 )
 
-func NewTmuxTool() *Tool {
+// NewTmuxTool creates a tmux tool. cols and rows set the default window size
+// applied via resize-window after session creation.
+func NewTmuxTool(cols, rows int) *Tool {
 	return &Tool{
 		Name:        "tmux",
 		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns.",
@@ -82,12 +84,12 @@ func NewTmuxTool() *Tool {
 			"required": ["operation"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return tmuxExecute(ctx, params)
+			return tmuxExecute(ctx, params, cols, rows)
 		},
 	}
 }
 
-func tmuxExecute(ctx context.Context, params json.RawMessage) (string, error) {
+func tmuxExecute(ctx context.Context, params json.RawMessage, cols, rows int) (string, error) {
 	var p struct {
 		Operation        string `json:"operation"`
 		Name             string `json:"name"`
@@ -105,7 +107,7 @@ func tmuxExecute(ctx context.Context, params json.RawMessage) (string, error) {
 
 	switch p.Operation {
 	case "start":
-		return tmuxStart(ctx, p.Name, p.Command, p.Workdir)
+		return tmuxStart(ctx, p.Name, p.Command, p.Workdir, cols, rows)
 	case "send":
 		enter := true
 		if p.Enter != nil {
@@ -139,7 +141,7 @@ func tmuxExecute(ctx context.Context, params json.RawMessage) (string, error) {
 	}
 }
 
-func tmuxStart(ctx context.Context, name, command, workdir string) (string, error) {
+func tmuxStart(ctx context.Context, name, command, workdir string, cols, rows int) (string, error) {
 	if name == "" {
 		n := atomic.AddUint64(&tmuxCounter, 1)
 		name = fmt.Sprintf("clod-%d", n)
@@ -153,12 +155,21 @@ func tmuxStart(ctx context.Context, name, command, workdir string) (string, erro
 		args = append(args, command)
 	}
 
-	log.Debugf("tmux", "start: name=%s command=%q workdir=%q", name, command, workdir)
+	log.Debugf("tmux", "start: name=%s command=%q workdir=%q cols=%d rows=%d", name, command, workdir, cols, rows)
 
 	out, err := runTmux(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("tmux new-session: %s %w", strings.TrimSpace(out), err)
 	}
+
+	// Resize window so output isn't truncated to a small default terminal size.
+	if cols > 0 && rows > 0 {
+		out, err = runTmux(ctx, "resize-window", "-t", name, "-x", fmt.Sprintf("%d", cols), "-y", fmt.Sprintf("%d", rows))
+		if err != nil {
+			log.Warnf("tmux", "resize-window: %s %v", strings.TrimSpace(out), err)
+		}
+	}
+
 	return fmt.Sprintf("Session started: %s", name), nil
 }
 
