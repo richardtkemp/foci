@@ -6,19 +6,19 @@ import (
 )
 
 func TestManaWatcherNewNilForEmpty(t *testing.T) {
-	mw := NewManaWatcher(nil)
+	mw := NewManaWatcher("", nil)
 	if mw != nil {
 		t.Error("expected nil for empty thresholds")
 	}
 
-	mw = NewManaWatcher([]int{})
+	mw = NewManaWatcher("", []int{})
 	if mw != nil {
 		t.Error("expected nil for empty slice")
 	}
 }
 
 func TestManaWatcherThresholdsSortedDescending(t *testing.T) {
-	mw := NewManaWatcher([]int{10, 50, 25, 5})
+	mw := NewManaWatcher("", []int{10, 50, 25, 5})
 	if mw.thresholds[0] != 50 {
 		t.Errorf("first threshold = %d, want 50", mw.thresholds[0])
 	}
@@ -34,7 +34,7 @@ func TestManaWatcherThresholdsSortedDescending(t *testing.T) {
 }
 
 func TestManaWatcherFiresAtThreshold(t *testing.T) {
-	mw := NewManaWatcher([]int{50, 25, 10, 5})
+	mw := NewManaWatcher("", []int{50, 25, 10, 5})
 
 	var warned string
 	mw.CheckAndWarn("25%", func(w string) {
@@ -51,7 +51,7 @@ func TestManaWatcherFiresAtThreshold(t *testing.T) {
 }
 
 func TestManaWatcherFiresOnlyOnce(t *testing.T) {
-	mw := NewManaWatcher([]int{50})
+	mw := NewManaWatcher("", []int{50})
 
 	var count int
 	mw.CheckAndWarn("25%", func(w string) {
@@ -68,7 +68,7 @@ func TestManaWatcherFiresOnlyOnce(t *testing.T) {
 }
 
 func TestManaWatcherDoesNotFireAboveThreshold(t *testing.T) {
-	mw := NewManaWatcher([]int{50, 25})
+	mw := NewManaWatcher("", []int{50, 25})
 
 	var warned string
 	mw.CheckAndWarn("75%", func(w string) {
@@ -89,7 +89,7 @@ func TestManaWatcherNilSafe(t *testing.T) {
 }
 
 func TestManaWatcherEmptyManaString(t *testing.T) {
-	mw := NewManaWatcher([]int{50})
+	mw := NewManaWatcher("", []int{50})
 
 	var called bool
 	mw.CheckAndWarn("", func(w string) {
@@ -102,7 +102,7 @@ func TestManaWatcherEmptyManaString(t *testing.T) {
 }
 
 func TestManaWatcherParseError(t *testing.T) {
-	mw := NewManaWatcher([]int{50})
+	mw := NewManaWatcher("", []int{50})
 
 	var called bool
 	mw.CheckAndWarn("invalid", func(w string) {
@@ -118,6 +118,7 @@ func TestManaWatcherResetsAtMidnight(t *testing.T) {
 	// Create watcher with lastReset set to yesterday
 	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
 	mw := &ManaWatcher{
+		name:       "mana",
 		thresholds: []int{50},
 		firedToday: map[int]bool{50: true},
 		lastReset:  yesterday,
@@ -130,5 +131,25 @@ func TestManaWatcherResetsAtMidnight(t *testing.T) {
 
 	if warned == "" {
 		t.Error("expected warning after midnight reset")
+	}
+}
+
+func TestManaWatcherCustomName(t *testing.T) {
+	mw := NewManaWatcher("juice", []int{50})
+
+	var warned string
+	mw.CheckAndWarn("25%", func(w string) {
+		warned = w
+	})
+
+	if warned != "low juice: 25% remaining (threshold: 50%)" {
+		t.Errorf("warning = %q, want %q", warned, "low juice: 25% remaining (threshold: 50%)")
+	}
+}
+
+func TestManaWatcherEmptyNameDefaultsToMana(t *testing.T) {
+	mw := NewManaWatcher("", []int{50})
+	if mw.name != "mana" {
+		t.Errorf("name = %q, want %q", mw.name, "mana")
 	}
 }

@@ -1,0 +1,57 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+)
+
+// turnCallbacksKey is the context key for TurnCallbacks.
+type turnCallbacksKey struct{}
+
+// TurnCallbacks holds per-turn callbacks scoped to a context.
+// Using context avoids cross-turn races from mutable Agent fields.
+type TurnCallbacks struct {
+	ReplyFunc        ReplyFunc
+	VoiceReplyFunc   VoiceReplyFunc
+	ToolCallObserver ToolCallObserver
+	ActivityFunc     func()
+}
+
+// WithTurnCallbacks attaches TurnCallbacks to a context.
+func WithTurnCallbacks(ctx context.Context, cb *TurnCallbacks) context.Context {
+	return context.WithValue(ctx, turnCallbacksKey{}, cb)
+}
+
+// TurnCallbacksFromContext extracts TurnCallbacks from context (nil if absent).
+func TurnCallbacksFromContext(ctx context.Context) *TurnCallbacks {
+	cb, _ := ctx.Value(turnCallbacksKey{}).(*TurnCallbacks)
+	return cb
+}
+
+// sendIntermediateCtx sends an intermediate reply via context callbacks.
+func sendIntermediateCtx(ctx context.Context, text string) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ReplyFunc != nil && text != "" {
+		cb.ReplyFunc(text)
+	}
+}
+
+// signalActivityCtx calls the activity callback via context.
+func signalActivityCtx(ctx context.Context) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ActivityFunc != nil {
+		cb.ActivityFunc()
+	}
+}
+
+// notifyToolCallCtx calls the tool call observer via context.
+func notifyToolCallCtx(ctx context.Context, name string, params json.RawMessage) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ToolCallObserver != nil {
+		cb.ToolCallObserver(name, params)
+	}
+}
+
+// sendVoiceCtx sends a voice note via context callbacks.
+func sendVoiceCtx(ctx context.Context, data []byte) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.VoiceReplyFunc != nil && len(data) > 0 {
+		cb.VoiceReplyFunc(data)
+	}
+}

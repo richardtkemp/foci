@@ -471,55 +471,54 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	var toolMsgID int64
 	var toolMsgMu sync.Mutex
 
-	// Set up intermediate reply delivery (deferred replies).
-	// When intermediate text fires, reset toolMsgID so the next tool call
-	// creates a fresh message below the text instead of editing the stale
-	// earlier message (which would appear above the text in chat).
-	b.agent.SetReplyFunc(func(text string) {
-		b.sendReply(qm.msg, qm.userID, text)
-		toolMsgMu.Lock()
-		toolMsgID = 0
-		toolMsgMu.Unlock()
-	})
-	defer b.agent.SetReplyFunc(nil)
+	// Per-turn callbacks scoped to context -- no cross-turn races.
+	cb := &agent.TurnCallbacks{
+		// Intermediate reply delivery (deferred replies).
+		// When intermediate text fires, reset toolMsgID so the next tool call
+		// creates a fresh message below the text instead of editing the stale
+		// earlier message (which would appear above the text in chat).
+		ReplyFunc: func(text string) {
+			b.sendReply(qm.msg, qm.userID, text)
+			toolMsgMu.Lock()
+			toolMsgID = 0
+			toolMsgMu.Unlock()
+		},
+		// Voice reply delivery (for TTS tool)
+		VoiceReplyFunc: func(oggData []byte) {
+			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, oggData)
+		},
+		// Refresh typing indicator when tools complete
+		ActivityFunc: func() {
+			b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+		},
+		// Tool call visibility via send+edit pattern
+		ToolCallObserver: func(toolName string, params json.RawMessage) {
+			toolMsgMu.Lock()
+			defer toolMsgMu.Unlock()
 
-	// Set up voice reply delivery (for TTS tool)
-	b.agent.SetVoiceReplyFunc(func(oggData []byte) {
-		b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, oggData)
-	})
-	defer b.agent.SetVoiceReplyFunc(nil)
-
-	// Refresh typing indicator when tools complete, so user sees continuous activity
-	b.agent.SetActivityFunc(func() {
-		b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
-	})
-	defer b.agent.SetActivityFunc(nil)
-	b.agent.SetToolCallObserver(func(toolName string, params json.RawMessage) {
-		toolMsgMu.Lock()
-		defer toolMsgMu.Unlock()
-
-		text := formatToolCall(toolName, params)
-		if toolMsgID == 0 {
-			// First tool call: send a new message
-			sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
-			if err != nil {
-				log.Debugf("telegram", "send tool call msg: %v", err)
-				return
+			text := formatToolCall(toolName, params)
+			if toolMsgID == 0 {
+				// First tool call: send a new message
+				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				if err != nil {
+					log.Debugf("telegram", "send tool call msg: %v", err)
+					return
+				}
+				toolMsgID = sent.MessageId
+			} else {
+				// Subsequent tool calls: edit the existing message
+				_, _, err := b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+					ChatId:    qm.msg.Chat.Id,
+					MessageId: toolMsgID,
+					ParseMode: "HTML",
+				})
+				if err != nil {
+					log.Debugf("telegram", "edit tool call msg: %v", err)
+				}
 			}
-			toolMsgID = sent.MessageId
-		} else {
-			// Subsequent tool calls: edit the existing message
-			_, _, err := b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-				ChatId:    qm.msg.Chat.Id,
-				MessageId: toolMsgID,
-				ParseMode: "HTML",
-			})
-			if err != nil {
-				log.Debugf("telegram", "edit tool call msg: %v", err)
-			}
-		}
-	})
-	defer b.agent.SetToolCallObserver(nil)
+		},
+	}
+	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 
 	var response string
 	var err error

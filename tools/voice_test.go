@@ -26,19 +26,17 @@ func TestTTSToolSuccess(t *testing.T) {
 	tts := &mockTTS{data: audioData}
 
 	var delivered []byte
-	voiceReplyFn := func() VoiceReplyFunc {
-		return func(data []byte) {
-			delivered = data
-		}
-	}
+	ctx := WithVoiceReplyFunc(context.Background(), func(data []byte) {
+		delivered = data
+	})
 
-	tool := NewTTSTool(tts, voiceReplyFn)
+	tool := NewTTSTool(tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "Hello world",
 	})
 
-	result, err := tool.Execute(context.Background(), params)
+	result, err := tool.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +56,7 @@ func TestTTSToolSuccess(t *testing.T) {
 
 func TestTTSToolEmptyText(t *testing.T) {
 	tts := &mockTTS{data: []byte("audio")}
-	tool := NewTTSTool(tts, func() VoiceReplyFunc { return nil })
+	tool := NewTTSTool(tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "",
@@ -75,7 +73,7 @@ func TestTTSToolEmptyText(t *testing.T) {
 
 func TestTTSToolSynthesizeError(t *testing.T) {
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
-	tool := NewTTSTool(tts, func() VoiceReplyFunc { return nil })
+	tool := NewTTSTool(tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -92,7 +90,7 @@ func TestTTSToolSynthesizeError(t *testing.T) {
 
 func TestTTSToolNoDeliveryChannel(t *testing.T) {
 	tts := &mockTTS{data: []byte("audio")}
-	tool := NewTTSTool(tts, func() VoiceReplyFunc { return nil })
+	tool := NewTTSTool(tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -109,7 +107,7 @@ func TestTTSToolNoDeliveryChannel(t *testing.T) {
 
 func TestTTSToolName(t *testing.T) {
 	tts := &mockTTS{}
-	tool := NewTTSTool(tts, func() VoiceReplyFunc { return nil })
+	tool := NewTTSTool(tts)
 	if tool.Name != "tts" {
 		t.Errorf("name = %q, want %q", tool.Name, "tts")
 	}
