@@ -289,6 +289,41 @@ func TestNewUsageClientWithFunc(t *testing.T) {
 	}
 }
 
+func TestFormatManaNil(t *testing.T) {
+	if got := FormatMana(nil); got != "" {
+		t.Errorf("FormatMana(nil) = %q, want empty", got)
+	}
+}
+
+func TestFormatManaNoFiveHour(t *testing.T) {
+	if got := FormatMana(&UsageResponse{}); got != "" {
+		t.Errorf("FormatMana(empty) = %q, want empty", got)
+	}
+}
+
+func TestFormatManaValues(t *testing.T) {
+	tests := []struct {
+		util float64
+		want string
+	}{
+		{0, "100%"},
+		{25, "75%"},
+		{50, "50%"},
+		{99.5, "0.5%"},
+		{100, "0.0%"},
+		{110, "0.0%"}, // clamped to 0
+	}
+	for _, tt := range tests {
+		util := tt.util
+		got := FormatMana(&UsageResponse{
+			FiveHour: &UsageWindow{Utilization: &util},
+		})
+		if got != tt.want {
+			t.Errorf("FormatMana(util=%.1f) = %q, want %q", tt.util, got, tt.want)
+		}
+	}
+}
+
 func TestGetUsageAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

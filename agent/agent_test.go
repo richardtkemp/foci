@@ -756,7 +756,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 
 	// First message — no previous turn data
 	sm := &sessionMeta{}
-	prefix := buildMetaPrefix(now, "claude-haiku-4-5", sm)
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "", sm)
 	if !strings.Contains(prefix, "time=2026-02-21T05:30:00Z") {
 		t.Errorf("missing timestamp in prefix: %q", prefix)
 	}
@@ -778,7 +778,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 	sm.prevCacheRead = 18000
 	sm.prevCacheWrite = 200
 
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "", sm)
 	if !strings.Contains(prefix, "gap=3h12m") {
 		t.Errorf("missing gap in prefix: %q", prefix)
 	}
@@ -871,16 +871,41 @@ func TestBuildMetaPrefix_VoiceMode(t *testing.T) {
 
 	// Without voice mode
 	sm := &sessionMeta{}
-	prefix := buildMetaPrefix(now, "claude-haiku-4-5", sm)
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "", sm)
 	if strings.Contains(prefix, "voice=on") {
 		t.Errorf("should not contain voice=on when voice mode off: %q", prefix)
 	}
 
 	// With voice mode
 	sm.voiceMode = true
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "", sm)
 	if !strings.Contains(prefix, "voice=on") {
 		t.Errorf("should contain voice=on when voice mode on: %q", prefix)
+	}
+}
+
+func TestBuildMetaPrefix_Mana(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+
+	// Without mana
+	sm := &sessionMeta{}
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "", sm)
+	if strings.Contains(prefix, "mana=") {
+		t.Errorf("should not contain mana when empty: %q", prefix)
+	}
+
+	// With mana (first message)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "75%", sm)
+	if !strings.Contains(prefix, "mana=75%") {
+		t.Errorf("should contain mana=75%%: %q", prefix)
+	}
+
+	// With mana (subsequent message with cost data)
+	sm.prevCost = 0.01
+	sm.prevInput = 100
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "50%", sm)
+	if !strings.Contains(prefix, "mana=50%") {
+		t.Errorf("should contain mana=50%% in subsequent message: %q", prefix)
 	}
 }
 
