@@ -502,10 +502,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `maxTokens` — max output tokens for summary (default: 4096)
 - `minMessages` — min messages before compacting (default: 4)
 
-**Stored on the Compactor:**
-- `SystemPrompt` — extra system prompt appended only during the compaction API call (not on regular turns). Move compaction instructions here to save ~1500 tokens per regular API call.
-
-**Passed to `Compact()` at call time:**
+**Passed to `Compact()` at call time** (not stored on the Compactor):
 - `summaryPrompt` — custom summary prompt (empty uses `DefaultSummaryPrompt`)
 - `handoffMessage` — message after compaction completes (empty uses `DefaultHandoffMessage`)
 

@@ -63,7 +63,6 @@ type SessionsConfig struct {
 	CompactionMinMessages   int     `toml:"compaction_min_messages"`   // min messages before compacting (default 4)
 	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"` // custom summary prompt
 	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`    // handoff message after compaction
-	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`  // extra system prompt injected only during compaction (saves tokens on regular turns)
 }
 
 type MemorySource struct {
