@@ -16,14 +16,14 @@ import (
 // - `code` -> <code>code</code> (inline code)
 // - ```lang\ncode\n``` -> <pre><code>code</code></pre> (code block)
 // - [text](url) -> <a href="url">text</a> (links)
-// - > blockquote -> <blockquote>blockquote</blockquote>
+// - > blockquote -> <blockquote>blockquote</blockquote> (multiline)
 // - # Heading -> <b>Heading</b> (bold, Telegram has no headings)
 // - ||spoiler|| -> <tg-spoiler>spoiler</tg-spoiler> (Telegram spoiler)
-// - Tables -> <pre> block
+// - | tables | -> <pre> block
+// - --- / *** / ___ -> em-dash horizontal rule
+// - - item / * item -> bullet lists
+// - 1. item -> ordered lists
 func ConvertToTelegramHTML(text string) string {
-	// HTML escaping for literal < > & characters (but not in tags we create)
-	// For now, assume agent doesn't output raw HTML - just markdown
-
 	// Convert markdown formatting in order of precedence
 	// Code blocks first (preserve everything inside)
 	var codeBlocks []string
@@ -37,6 +37,10 @@ func ConvertToTelegramHTML(text string) string {
 		codeBlocks = append(codeBlocks, "<pre><code>"+inner+"</code></pre>")
 		return "[CODEBLOCK" + string(rune('0'+idx)) + "]"
 	})
+
+	// Tables: detect blocks of lines containing | with a separator row (---).
+	// Extract early to protect | chars from other conversions.
+	text = convertTables(text, &codeBlocks)
 
 	// Inline code
 	var inlineCodes []string
@@ -73,8 +77,17 @@ func ConvertToTelegramHTML(text string) string {
 	// Headings: # Text -> <b>Text</b>
 	text = regexp.MustCompile(`(?m)^#+\s+(.+)$`).ReplaceAllString(text, "<b>$1</b>")
 
-	// Blockquotes: > text (preserve line structure)
-	text = regexp.MustCompile(`(?m)^> (.+)$`).ReplaceAllString(text, "<blockquote>$1</blockquote>")
+	// Horizontal rules: ---, ***, ___ (3+ chars on a line by themselves)
+	text = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`).ReplaceAllString(text, "————————————————")
+
+	// Bullet lists: - item or * item at start of line
+	text = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`).ReplaceAllString(text, "  • $1")
+
+	// Ordered lists: 1. item — indent to align with bullets
+	text = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`).ReplaceAllString(text, "  $1. $2")
+
+	// Multiline blockquotes: consecutive > lines merged into single <blockquote>
+	text = convertBlockquotes(text)
 
 	// Restore code blocks and inline codes
 	for i, code := range codeBlocks {
@@ -85,6 +98,88 @@ func ConvertToTelegramHTML(text string) string {
 	}
 
 	return text
+}
+
+// convertTables finds markdown table blocks and converts them to <pre> blocks.
+// A table is identified by consecutive lines containing | characters where at
+// least one line matches the separator pattern (e.g. |---|---|).
+func convertTables(text string, codeBlocks *[]string) string {
+	lines := strings.Split(text, "\n")
+	sepRe := regexp.MustCompile(`^\|?\s*[-:]+[-|\s:]*$`)
+
+	var result []string
+	i := 0
+	for i < len(lines) {
+		// Check if this could be the start of a table (line with |)
+		if strings.Contains(lines[i], "|") {
+			// Look ahead to find a table block
+			tableStart := i
+			tableEnd := i
+			hasSep := false
+
+			for j := i; j < len(lines); j++ {
+				line := strings.TrimSpace(lines[j])
+				if !strings.Contains(line, "|") && line != "" {
+					break
+				}
+				if line == "" {
+					break
+				}
+				if sepRe.MatchString(line) {
+					hasSep = true
+				}
+				tableEnd = j + 1
+			}
+
+			// Need at least a header + separator + data row, with a separator
+			if hasSep && tableEnd-tableStart >= 2 {
+				// Extract table lines and wrap in <pre>
+				var tableContent strings.Builder
+				for k := tableStart; k < tableEnd; k++ {
+					if k > tableStart {
+						tableContent.WriteString("\n")
+					}
+					tableContent.WriteString(htmlEscape(lines[k]))
+				}
+				idx := len(*codeBlocks)
+				*codeBlocks = append(*codeBlocks, "<pre>"+tableContent.String()+"</pre>")
+				result = append(result, "[CODEBLOCK"+string(rune('0'+idx))+"]")
+				i = tableEnd
+				continue
+			}
+		}
+		result = append(result, lines[i])
+		i++
+	}
+	return strings.Join(result, "\n")
+}
+
+// convertBlockquotes merges consecutive > lines into single <blockquote> tags.
+func convertBlockquotes(text string) string {
+	lines := strings.Split(text, "\n")
+	bqRe := regexp.MustCompile(`^> ?(.*)$`)
+
+	var result []string
+	i := 0
+	for i < len(lines) {
+		if m := bqRe.FindStringSubmatch(lines[i]); m != nil {
+			// Start of a blockquote — collect consecutive > lines
+			var bqLines []string
+			for i < len(lines) {
+				if m := bqRe.FindStringSubmatch(lines[i]); m != nil {
+					bqLines = append(bqLines, m[1])
+					i++
+				} else {
+					break
+				}
+			}
+			result = append(result, "<blockquote>"+strings.Join(bqLines, "\n")+"</blockquote>")
+		} else {
+			result = append(result, lines[i])
+			i++
+		}
+	}
+	return strings.Join(result, "\n")
 }
 
 // htmlEscape escapes HTML special characters
