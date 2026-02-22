@@ -219,6 +219,17 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *tgbotapi.Message) {
 		text = msg.Caption
 	}
 
+	// Include quoted message context when user replies to a specific message
+	if msg.ReplyToMessage != nil {
+		quoted := msg.ReplyToMessage.Text
+		if quoted == "" {
+			quoted = msg.ReplyToMessage.Caption
+		}
+		if quoted != "" {
+			text = fmt.Sprintf("[Replying to: %s]\n\n%s", quoted, text)
+		}
+	}
+
 	// Handle voice notes: download, transcribe, tag with [voice]
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileID); err != nil {
