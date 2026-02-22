@@ -15,7 +15,7 @@ import (
 // mockClient implements botClient for testing.
 type mockClient struct {
 	mu    sync.Mutex
-	sends int              // counts SendMessage calls
+	sends int               // counts SendMessage calls
 	files map[string]string // fileId → filePath for GetFile mock
 }
 
@@ -555,5 +555,52 @@ func TestIsImageMIME(t *testing.T) {
 		if got := isImageMIME(tt.mime); got != tt.want {
 			t.Errorf("isImageMIME(%q) = %v, want %v", tt.mime, got, tt.want)
 		}
+	}
+}
+
+// --- SendText ---
+
+func TestSendText_SkipsEmptyMessage(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Set a chat ID so the bot can send
+	b.SetChatID(12345)
+
+	// Empty string should be silently skipped
+	if err := b.SendText(""); err != nil {
+		t.Errorf("SendText(\"\") error = %v, want nil", err)
+	}
+	if mock.sentCount() != 0 {
+		t.Errorf("sentCount = %d, want 0 for empty string", mock.sentCount())
+	}
+}
+
+func TestSendText_SkipsWhitespaceOnlyMessage(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Set a chat ID so the bot can send
+	b.SetChatID(12345)
+
+	// Whitespace-only should be silently skipped
+	if err := b.SendText("   "); err != nil {
+		t.Errorf("SendText(\"   \") error = %v, want nil", err)
+	}
+	if mock.sentCount() != 0 {
+		t.Errorf("sentCount = %d, want 0 for whitespace-only", mock.sentCount())
+	}
+}
+
+func TestSendText_SendsNonEmptyMessage(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Set a chat ID so the bot can send
+	b.SetChatID(12345)
+
+	// Non-empty message should be sent
+	if err := b.SendText("hello"); err != nil {
+		t.Errorf("SendText(\"hello\") error = %v, want nil", err)
+	}
+	if mock.sentCount() != 1 {
+		t.Errorf("sentCount = %d, want 1 for non-empty message", mock.sentCount())
 	}
 }

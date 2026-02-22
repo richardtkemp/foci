@@ -54,18 +54,18 @@ type Bot struct {
 	lastMsgStore *command.LastMessageStore // for // repeat command
 	allowedUsers map[string]bool
 	sessionKey   string
-	sessionMu    sync.RWMutex        // protects sessionKey (mutable for secondary bots)
-	isSecondary  bool                // true for secondary bots (multiball)
-	pool         *Pool               // back-reference to pool (secondary bots only)
-	botToken     string              // for building file download URLs
+	sessionMu    sync.RWMutex // protects sessionKey (mutable for secondary bots)
+	isSecondary  bool         // true for secondary bots (multiball)
+	pool         *Pool        // back-reference to pool (secondary bots only)
+	botToken     string       // for building file download URLs
 
-	transcriber  voice.STT // nil = voice notes not supported
-	tts          voice.TTS // nil = TTS not available
+	transcriber voice.STT // nil = voice notes not supported
+	tts         voice.TTS // nil = TTS not available
 
-	queue      chan queuedMessage     // receiver → agent worker
-	turnCancel context.CancelFunc     // cancel the current agent turn
-	turnMu     sync.Mutex             // protects turnCancel
-	chatID     int64                   // last known chat ID (for notifications)
+	queue      chan queuedMessage // receiver → agent worker
+	turnCancel context.CancelFunc // cancel the current agent turn
+	turnMu     sync.Mutex         // protects turnCancel
+	chatID     int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
 }
 
@@ -525,7 +525,12 @@ func (b *Bot) SendNotification(text string) {
 
 // SendText sends a text message to the last known chat with HTML support.
 // Returns an error if no chat ID is available.
+// Silently skips empty or whitespace-only messages.
 func (b *Bot) SendText(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
 	// Convert standard markdown to Telegram HTML
 	text = ConvertToTelegramHTML(text)
 
