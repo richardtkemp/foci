@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
+
+	tomlParser "github.com/BurntSushi/toml"
 )
 
 func TestLoadFullConfig(t *testing.T) {
@@ -485,6 +488,64 @@ scout = { token_secret = "telegram.scout" }
 	mbToken := cfg.ResolveBotToken(cfg.Agents[0].MultiballBot, secrets)
 	if mbToken != "token-secondary" {
 		t.Errorf("multiball token = %q, want token-secondary", mbToken)
+	}
+}
+
+func TestUnknownKeysDetected(t *testing.T) {
+	tomlData := `
+[agent]
+id = "main"
+bogus_field = "oops"
+
+[unknown_section]
+foo = "bar"
+some_key = "value"
+`
+	var cfg Config
+	md, err := tomlParser.Decode(tomlData, &cfg)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	keys := UnknownKeys(md)
+	if len(keys) == 0 {
+		t.Fatal("expected unknown keys, got none")
+	}
+
+	sort.Strings(keys)
+	expected := []string{"agent.bogus_field", "unknown_section", "unknown_section.foo", "unknown_section.some_key"}
+	sort.Strings(expected)
+
+	if len(keys) != len(expected) {
+		t.Fatalf("unknown keys = %v, want %v", keys, expected)
+	}
+	for i, k := range keys {
+		if k != expected[i] {
+			t.Errorf("keys[%d] = %q, want %q", i, k, expected[i])
+		}
+	}
+}
+
+func TestLoadWarnsUnknownKeys(t *testing.T) {
+	// Load should succeed even with unknown keys (just warns)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+
+	toml := `
+[agent]
+id = "main"
+
+[unknown_section]
+foo = "bar"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Agent.ID != "main" {
+		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
 	}
 }
 

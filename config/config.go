@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+
+	"clod/log"
 
 	"github.com/BurntSushi/toml"
 )
@@ -135,9 +138,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+
+	// Check for unknown config keys and warn about them
+	checkUnknownKeys(path, md)
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
@@ -252,4 +259,26 @@ func ParseFlags() string {
 	path := flag.String("config", "clod.toml", "path to config file")
 	flag.Parse()
 	return *path
+}
+
+// UnknownKeys returns the list of unrecognised key names from the TOML metadata.
+// Exported for testing; Load() calls this internally and logs warnings.
+func UnknownKeys(md toml.MetaData) []string {
+	undecoded := md.Undecoded()
+	if len(undecoded) == 0 {
+		return nil
+	}
+	keys := make([]string, len(undecoded))
+	for i, key := range undecoded {
+		keys[i] = strings.Join(key, ".")
+	}
+	return keys
+}
+
+func checkUnknownKeys(path string, md toml.MetaData) {
+	keys := UnknownKeys(md)
+	if len(keys) == 0 {
+		return
+	}
+	log.Warnf("config", "unknown config keys in %s: %v", path, keys)
 }
