@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func tmuxCleanup(t *testing.T, name string) {
 
 func TestTmuxStartAndList(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-start"
 	defer tmuxCleanup(t, name)
@@ -58,7 +59,7 @@ func TestTmuxStartAndList(t *testing.T) {
 
 func TestTmuxSendAndRead(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-sendread"
 	defer tmuxCleanup(t, name)
@@ -103,7 +104,7 @@ func TestTmuxSendAndRead(t *testing.T) {
 
 func TestTmuxReadDefault(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-readdefault"
 	defer tmuxCleanup(t, name)
@@ -131,7 +132,7 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-kill"
 	defer tmuxCleanup(t, name)
@@ -173,7 +174,7 @@ func TestTmuxKill(t *testing.T) {
 }
 
 func TestTmuxInvalidOperation(t *testing.T) {
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "restart",
@@ -189,7 +190,7 @@ func TestTmuxInvalidOperation(t *testing.T) {
 
 func TestTmuxStartNoName(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -210,7 +211,7 @@ func TestTmuxStartNoName(t *testing.T) {
 
 func TestTmuxSendNoEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-noenter"
 	defer tmuxCleanup(t, name)
@@ -242,7 +243,7 @@ func TestTmuxSendNoEnter(t *testing.T) {
 }
 
 func TestTmuxMissingName(t *testing.T) {
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	for _, op := range []string{"send", "read", "kill"} {
 		params, _ := json.Marshal(map[string]interface{}{
@@ -257,7 +258,7 @@ func TestTmuxMissingName(t *testing.T) {
 
 func TestTmuxStartWithWorkdir(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-workdir"
 	defer tmuxCleanup(t, name)
@@ -310,7 +311,7 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 
 func TestTmuxWatchUnwatch(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-watch"
 	defer tmuxCleanup(t, name)
@@ -357,7 +358,7 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	tmuxAvailable(t)
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	name := "clod-test-watch-dup"
 	defer tmuxCleanup(t, name)
@@ -400,7 +401,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 }
 
 func TestTmuxUnwatchNotWatched(t *testing.T) {
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "unwatch",
@@ -416,8 +417,72 @@ func TestTmuxUnwatchNotWatched(t *testing.T) {
 	}
 }
 
+func TestTmuxWatchWakeCallback(t *testing.T) {
+	tmuxAvailable(t)
+
+	var wakeCalled atomic.Int32
+	var wakeSession string
+	var wakeWindow int
+	wakeFn := func(session string, window int, threshold time.Duration) {
+		wakeCalled.Add(1)
+		wakeSession = session
+		wakeWindow = window
+	}
+
+	tool := NewTmuxTool(300, 30, wakeFn)
+
+	name := "clod-test-wake"
+	defer tmuxCleanup(t, name)
+
+	// Start a session that does nothing (sleep)
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Watch with very short threshold (3 seconds)
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 3,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Wait for the wake callback to fire (threshold 3s + poll interval 2s)
+	deadline := time.After(10 * time.Second)
+	for wakeCalled.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("wake callback not called within timeout")
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	if wakeSession != name {
+		t.Errorf("wake session = %q, want %q", wakeSession, name)
+	}
+	if wakeWindow != 0 {
+		t.Errorf("wake window = %d, want 0", wakeWindow)
+	}
+
+	// Cleanup
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	tool.Execute(context.Background(), params)
+}
+
 func TestTmuxWatchMissingName(t *testing.T) {
-	tool := NewTmuxTool(300, 30)
+	tool := NewTmuxTool(300, 30, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "watch",

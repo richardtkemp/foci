@@ -569,10 +569,27 @@ func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 	sessionKey := fmt.Sprintf("agent:%s:main", acfg.ID)
 
+	// Declare ag early so closures (tmux wake, etc.) can capture it.
+	// Assigned later in this function.
+	var ag *agent.Agent
+
 	// Per-agent tool registry
 	registry := tools.NewRegistry()
 	registry.Register(tools.NewExecTool(p.store))
-	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows))
+
+	// Tmux wake function: inject a message into the agent session on inactivity
+	tmuxWakeFn := func(tmuxSession string, window int, threshold time.Duration) {
+		msg := fmt.Sprintf("[TMUX WATCH] Session %s:%d has been inactive for %v", tmuxSession, window, threshold)
+		go func() {
+			resp, err := ag.HandleMessage(p.ctx, sessionKey, msg)
+			if err != nil {
+				log.Errorf("tmux_wake", "error: %v", err)
+			} else {
+				log.Debugf("tmux_wake", "response: %s", resp)
+			}
+		}()
+	}
+	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, tmuxWakeFn))
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
@@ -629,7 +646,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}))
 
 	// Per-agent agent struct
-	ag := &agent.Agent{
+	ag = &agent.Agent{
 		Client:            p.client,
 		Sessions:          p.sessions,
 		Tools:             registry,

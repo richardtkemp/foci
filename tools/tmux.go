@@ -17,6 +17,9 @@ import (
 
 var tmuxCounter uint64
 
+// TmuxWakeFunc is called when a watched tmux session exceeds its inactivity threshold.
+type TmuxWakeFunc func(session string, window int, threshold time.Duration)
+
 // watchedSession tracks a tmux session being monitored for inactivity
 type watchedSession struct {
 	session       string
@@ -24,19 +27,23 @@ type watchedSession struct {
 	threshold     time.Duration
 	lastContent   [16]byte // md5 hash
 	lastActivity  time.Time
+	onWake        TmuxWakeFunc
 	ctx           context.Context
 	cancel        context.CancelFunc
 	done          chan struct{}
 }
 
 var (
-	watchedMu   sync.Mutex
-	watchedSess = make(map[string]*watchedSession)
+	watchedMu      sync.Mutex
+	watchedSess    = make(map[string]*watchedSession)
+	tmuxWakeFunc   TmuxWakeFunc // package-level wake function
 )
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
-// applied via resize-window after session creation.
-func NewTmuxTool(cols, rows int) *Tool {
+// applied via resize-window after session creation. onWake is called when a
+// watched session exceeds its inactivity threshold (nil disables wake).
+func NewTmuxTool(cols, rows int, onWake TmuxWakeFunc) *Tool {
+	tmuxWakeFunc = onWake
 	return &Tool{
 		Name:        "tmux",
 		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns.",
@@ -280,6 +287,7 @@ func tmuxWatch(ctx context.Context, name string, window, thresholdSeconds int) (
 		window:       window,
 		threshold:    time.Duration(thresholdSeconds) * time.Second,
 		lastActivity: time.Now(),
+		onWake:       tmuxWakeFunc,
 		ctx:          monCtx,
 		cancel:       cancel,
 		done:         make(chan struct{}),
@@ -342,8 +350,10 @@ func tmuxWatchMonitor(ws *watchedSession) {
 			} else {
 				// Content unchanged; check if threshold exceeded
 				if time.Since(ws.lastActivity) > ws.threshold {
-					// Send wake message to the session (just log for now)
 					log.Infof("tmux", "watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
+					if ws.onWake != nil {
+						ws.onWake(ws.session, ws.window, ws.threshold)
+					}
 
 					// Reset activity timer to avoid repeated alerts
 					ws.lastActivity = time.Now()
