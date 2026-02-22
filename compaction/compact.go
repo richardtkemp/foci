@@ -18,27 +18,23 @@ type Compactor struct {
 	threshold         float64 // fraction of context window (e.g. 0.8)
 	maxTokens         int
 	minMessages       int
-	summaryPrompt     string
-	handoffMessage    string
 	Scratchpad        *memory.Scratchpad // nil disables scratchpad injection
 }
 
 // NewCompactor creates a new Compactor with defaults.
 func NewCompactor(client *anthropic.Client, sessions *session.Store, model string, threshold float64) *Compactor {
 	return &Compactor{
-		client:         client,
-		sessions:       sessions,
-		model:          model,
-		threshold:      threshold,
-		maxTokens:      4096,
-		minMessages:    4,
-		summaryPrompt:  "Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history.",
-		handoffMessage: "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]",
+		client:      client,
+		sessions:    sessions,
+		model:       model,
+		threshold:   threshold,
+		maxTokens:   4096,
+		minMessages: 4,
 	}
 }
 
 // WithConfig updates compactor settings from configuration.
-func (c *Compactor) WithConfig(model string, maxTokens, minMessages int, summaryPrompt, handoffMessage string) *Compactor {
+func (c *Compactor) WithConfig(model string, maxTokens, minMessages int) *Compactor {
 	if model != "" {
 		c.model = model
 	}
@@ -47,12 +43,6 @@ func (c *Compactor) WithConfig(model string, maxTokens, minMessages int, summary
 	}
 	if minMessages > 0 {
 		c.minMessages = minMessages
-	}
-	if summaryPrompt != "" {
-		c.summaryPrompt = summaryPrompt
-	}
-	if handoffMessage != "" {
-		c.handoffMessage = handoffMessage
 	}
 	c.checkConfig()
 	return c
@@ -110,8 +100,23 @@ func (c *Compactor) ShouldCompact(messages []anthropic.Message, lastUsage *anthr
 	return estimateTokens(messages) > threshold
 }
 
+// DefaultSummaryPrompt is the default prompt used when no custom prompt is provided.
+const DefaultSummaryPrompt = "Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history."
+
+// DefaultHandoffMessage is the default message injected after compaction.
+const DefaultHandoffMessage = "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
+
 // Compact summarizes a session's history and replaces it.
-func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock) error {
+// summaryPrompt and handoffMessage are read from config at call time; empty
+// values fall back to package defaults.
+func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) error {
+	if summaryPrompt == "" {
+		summaryPrompt = DefaultSummaryPrompt
+	}
+	if handoffMessage == "" {
+		handoffMessage = DefaultHandoffMessage
+	}
+
 	messages, err := c.sessions.LoadFull(sessionKey)
 	if err != nil {
 		return fmt.Errorf("load session for compaction: %w", err)
@@ -128,7 +133,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	copy(summaryMessages, messages)
 	summaryMessages = append(summaryMessages, anthropic.Message{
 		Role:    "user",
-		Content: anthropic.TextContent(c.summaryPrompt),
+		Content: anthropic.TextContent(summaryPrompt),
 	})
 
 	resp, err := c.client.SendMessage(ctx, &anthropic.MessageRequest{
@@ -144,7 +149,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	summary := anthropic.TextOf(resp.Content)
 
 	// Collect scratchpad contents to preserve through compaction
-	handoff := c.handoffMessage
+	handoff := handoffMessage
 	if c.Scratchpad != nil {
 		if entries, err := c.Scratchpad.All(); err == nil && len(entries) > 0 {
 			handoff += "\n\n[scratchpad — working state preserved through compaction]"

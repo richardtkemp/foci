@@ -483,8 +483,10 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `model` — summarization model (default: agent model)
 - `maxTokens` — max output tokens for summary (default: 4096)
 - `minMessages` — min messages before compacting (default: 4)
-- `summaryPrompt` — custom summary prompt
-- `handoffMessage` — message after compaction completes
+
+**Passed to `Compact()` at call time** (not stored on the Compactor):
+- `summaryPrompt` — custom summary prompt (empty uses `DefaultSummaryPrompt`)
+- `handoffMessage` — message after compaction completes (empty uses `DefaultHandoffMessage`)
 
 ## Testing
 

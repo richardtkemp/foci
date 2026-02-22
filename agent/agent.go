@@ -67,17 +67,19 @@ type Agent struct {
 	Reminders *memory.ReminderStore // nil disables reminder injection
 	Model     string
 
-	ExtraSystemBlocks  []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
-	CacheStrategy      string                  // "auto" (top-level) or "explicit" (manual breakpoints)
-	CacheBustDetect    bool                    // detect cache busts (cache_read drop >50%)
-	CacheBustAlert     CacheBustFunc           // callback for cache bust alerts
-	DuplicateMessages  bool                    // send user text twice per API call (improves instruction following)
-	MaxResultChars     int                     // max chars for tool result before writing to file (0 disables)
-	ToolResultTempDir  string                  // where to write large tool results
-	Warnings           *WarningQueue           // nil disables warning injection into session
-	StateStore         *state.Store            // nil disables state persistence
-	UsageClient        *anthropic.UsageClient  // nil disables mana metadata
-	PromptRules        []CompiledPromptRule    // compiled regex rules for inbound message transformation
+	ExtraSystemBlocks      []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
+	CacheStrategy          string                  // "auto" (top-level) or "explicit" (manual breakpoints)
+	CacheBustDetect        bool                    // detect cache busts (cache_read drop >50%)
+	CacheBustAlert         CacheBustFunc           // callback for cache bust alerts
+	DuplicateMessages      bool                    // send user text twice per API call (improves instruction following)
+	MaxResultChars         int                     // max chars for tool result before writing to file (0 disables)
+	ToolResultTempDir      string                  // where to write large tool results
+	Warnings               *WarningQueue           // nil disables warning injection into session
+	StateStore             *state.Store            // nil disables state persistence
+	UsageClient            *anthropic.UsageClient  // nil disables mana metadata
+	PromptRules            []CompiledPromptRule    // compiled regex rules for inbound message transformation
+	CompactionSummaryPrompt string                 // passed to Compactor.Compact(); empty uses default
+	CompactionHandoffMsg    string                 // passed to Compactor.Compact(); empty uses default
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	turnLocksMu     sync.Mutex
@@ -650,7 +652,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			// Check if compaction is needed
 			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
-				if err := a.Compactor.Compact(ctx, sessionKey, system); err != nil {
+				if err := a.Compactor.Compact(ctx, sessionKey, system, a.CompactionSummaryPrompt, a.CompactionHandoffMsg); err != nil {
 					log.Errorf("agent", "compaction failed: %v", err)
 				}
 				// Reload system prompt — compaction may have changed memory files

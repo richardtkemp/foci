@@ -204,12 +204,6 @@ func Load(path string) (*Config, error) {
 	if cfg.Sessions.CompactionMinMessages == 0 {
 		cfg.Sessions.CompactionMinMessages = 4
 	}
-	if cfg.Sessions.CompactionSummaryPrompt == "" {
-		cfg.Sessions.CompactionSummaryPrompt = "Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history."
-	}
-	if cfg.Sessions.CompactionHandoffMsg == "" {
-		cfg.Sessions.CompactionHandoffMsg = "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
-	}
 	if cfg.HTTP.Port == 0 {
 		cfg.HTTP.Port = 18791
 	}
