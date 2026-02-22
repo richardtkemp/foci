@@ -47,6 +47,10 @@ type sessionMeta struct {
 // the agent continues working (e.g., "Looking into this...").
 type ReplyFunc func(text string)
 
+// ToolCallObserver is called before each tool execution.
+// Used by the Telegram bot to show which tools the agent is calling.
+type ToolCallObserver func(toolName string, params json.RawMessage)
+
 // CacheBustFunc is called when a cache bust is detected (cache_read drops
 // significantly compared to the previous request).
 // session is the session key, prevRead is what we had, curRead is what we got.
@@ -74,10 +78,11 @@ type Agent struct {
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	metaMu          sync.Mutex
 	meta            map[string]*sessionMeta // per-session metadata
-	replyMu         sync.Mutex
-	replyFunc       ReplyFunc      // optional: set per-turn for intermediate replies
-	voiceReplyFunc  VoiceReplyFunc // optional: set per-turn for voice note delivery
-	activityFunc    func()         // optional: called when tool completes (typing indicator refresh)
+	replyMu           sync.Mutex
+	replyFunc         ReplyFunc        // optional: set per-turn for intermediate replies
+	voiceReplyFunc    VoiceReplyFunc   // optional: set per-turn for voice note delivery
+	activityFunc      func()           // optional: called when tool completes (typing indicator refresh)
+	toolCallObserver  ToolCallObserver // optional: set per-turn for tool call visibility
 }
 
 // IsProcessing returns true if the agent is currently handling a message.
@@ -118,6 +123,24 @@ func (a *Agent) GetVoiceReplyFunc() VoiceReplyFunc {
 	a.replyMu.Lock()
 	defer a.replyMu.Unlock()
 	return a.voiceReplyFunc
+}
+
+// SetToolCallObserver sets a callback fired before each tool execution.
+// Used by the Telegram bot to show tool call info.
+func (a *Agent) SetToolCallObserver(fn ToolCallObserver) {
+	a.replyMu.Lock()
+	defer a.replyMu.Unlock()
+	a.toolCallObserver = fn
+}
+
+// notifyToolCall calls the tool call observer if set.
+func (a *Agent) notifyToolCall(name string, params json.RawMessage) {
+	a.replyMu.Lock()
+	fn := a.toolCallObserver
+	a.replyMu.Unlock()
+	if fn != nil {
+		fn(name, params)
+	}
 }
 
 // SetActivityFunc sets a callback fired after each tool completes.
@@ -564,6 +587,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			}
 
 			log.Debugf("agent", "tool_use: %s", block.Name)
+			a.notifyToolCall(block.Name, block.Input)
 			result, err := tool.Execute(ctx, block.Input)
 			if ctx.Err() != nil {
 				return "", ctx.Err()
