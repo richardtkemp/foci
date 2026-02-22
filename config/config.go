@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"clod/log"
 
@@ -152,17 +153,69 @@ type Config struct {
 	WelcomeFile string         `toml:"welcome_file"`  // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
 }
 
+// validate checks semantic validity of config values after parsing and defaults.
+// Returns an error describing the first invalid value found.
+func validate(cfg *Config) error {
+	// Sessions
+	if cfg.Sessions.CompactionThreshold < 0 || cfg.Sessions.CompactionThreshold > 1.0 {
+		return fmt.Errorf("[sessions] compaction_threshold = %g: must be between 0.0 and 1.0", cfg.Sessions.CompactionThreshold)
+	}
+	if cfg.Sessions.CompactionMaxTokens < 0 {
+		return fmt.Errorf("[sessions] compaction_max_tokens = %d: must not be negative", cfg.Sessions.CompactionMaxTokens)
+	}
+	if cfg.Sessions.CompactionMinMessages < 0 {
+		return fmt.Errorf("[sessions] compaction_min_messages = %d: must not be negative", cfg.Sessions.CompactionMinMessages)
+	}
+
+	// HTTP
+	if cfg.HTTP.Port < 1 || cfg.HTTP.Port > 65535 {
+		return fmt.Errorf("[http] port = %d: must be between 1 and 65535", cfg.HTTP.Port)
+	}
+
+	// Logging
+	validLevels := map[string]bool{"DEBUG": true, "INFO": true, "WARN": true, "ERROR": true}
+	levelUpper := strings.ToUpper(strings.TrimSpace(cfg.Logging.Level))
+	if !validLevels[levelUpper] {
+		return fmt.Errorf("[logging] level = %q: must be one of DEBUG, INFO, WARN, ERROR", cfg.Logging.Level)
+	}
+	if _, err := time.ParseDuration(cfg.Logging.WarningWindowDuration); err != nil {
+		return fmt.Errorf("[logging] warning_window_duration = %q: %w", cfg.Logging.WarningWindowDuration, err)
+	}
+
+	// Cache
+	validStrategies := map[string]bool{"auto": true, "explicit": true}
+	if !validStrategies[cfg.Cache.Strategy] {
+		return fmt.Errorf("[cache] strategy = %q: must be \"auto\" or \"explicit\"", cfg.Cache.Strategy)
+	}
+
+	// Agents
+	for i, acfg := range cfg.Agents {
+		if _, err := time.ParseDuration(acfg.HeartbeatInterval); err != nil {
+			return fmt.Errorf("agent[%d] (%s) heartbeat_interval = %q: %w", i, acfg.ID, acfg.HeartbeatInterval, err)
+		}
+	}
+
+	// Memory sources
+	for i, src := range cfg.Memory.Sources {
+		if src.Weight < 0 || src.Weight > 1.0 {
+			return fmt.Errorf("[memory] sources[%d] (%s) weight = %g: must be between 0.0 and 1.0", i, src.Name, src.Weight)
+		}
+	}
+
+	return nil
+}
+
 // Load reads config from the given TOML file path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
 
 	var cfg Config
 	md, err := toml.Decode(string(data), &cfg)
 	if err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
 	// Check for unknown config keys and warn about them
@@ -267,6 +320,10 @@ func Load(path string) (*Config, error) {
 	}
 	if !md.IsDefined("telegram", "enable_startup_notify") {
 		cfg.Telegram.EnableStartupNotify = true
+	}
+
+	if err := validate(&cfg); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &cfg, nil

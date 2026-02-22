@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+// resetGlobal restores the global logger to its initial state for test isolation.
+func resetGlobal() {
+	std.mu.Lock()
+	std.level = INFO
+	std.eventOut = os.Stderr
+	std.apiFile = nil
+	std.payloadFile = nil
+	std.buffer = nil
+	std.initialized = false
+	std.mu.Unlock()
+}
+
 func TestParseLevel(t *testing.T) {
 	tests := []struct {
 		input string
@@ -210,6 +222,9 @@ func TestAPILogDisabled(t *testing.T) {
 }
 
 func TestInitWithFiles(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
 	dir := t.TempDir()
 	eventPath := filepath.Join(dir, "clod.log")
 	apiPath := filepath.Join(dir, "api.jsonl")
@@ -325,5 +340,118 @@ func TestMultipleAPIEntries(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) != 3 {
 		t.Errorf("got %d lines, want 3", len(lines))
+	}
+}
+
+func TestPreInitBufferReplay(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	eventPath := filepath.Join(dir, "clod.log")
+
+	// Log before Init — should go to stderr (captured by SetOutput)
+	// and be buffered for replay.
+	var stderrBuf bytes.Buffer
+	SetOutput(&stderrBuf)
+
+	Warnf("config", "unknown key: foo.bar")
+	Infof("startup", "loading config from clod.toml")
+
+	// Verify buffer has two entries
+	std.mu.Lock()
+	bufLen := len(std.buffer)
+	std.mu.Unlock()
+	if bufLen != 2 {
+		t.Fatalf("buffer len = %d, want 2", bufLen)
+	}
+
+	// Verify stderr got the messages
+	if !strings.Contains(stderrBuf.String(), "unknown key: foo.bar") {
+		t.Errorf("stderr missing pre-Init warning: %q", stderrBuf.String())
+	}
+
+	// Now Init — should replay buffered events to the event file
+	err := Init(Config{
+		Level:     "DEBUG",
+		EventFile: eventPath,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	// Event file should contain the replayed pre-Init messages
+	data, err := os.ReadFile(eventPath)
+	if err != nil {
+		t.Fatalf("read event log: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "unknown key: foo.bar") {
+		t.Errorf("event file missing replayed warning: %s", content)
+	}
+	if !strings.Contains(content, "loading config from clod.toml") {
+		t.Errorf("event file missing replayed info: %s", content)
+	}
+
+	// Buffer should be cleared after Init
+	std.mu.Lock()
+	bufLen = len(std.buffer)
+	std.mu.Unlock()
+	if bufLen != 0 {
+		t.Errorf("buffer should be cleared after Init, got %d entries", bufLen)
+	}
+
+	// Post-Init messages should NOT be buffered
+	Infof("test", "post-init message")
+	std.mu.Lock()
+	bufLen = len(std.buffer)
+	std.mu.Unlock()
+	if bufLen != 0 {
+		t.Errorf("buffer should stay empty after Init, got %d entries", bufLen)
+	}
+}
+
+func TestPreInitBufferNoFile(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// Log before Init
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	Warnf("test", "pre-init warning")
+
+	// Init without an event file — buffer is cleared but not replayed
+	err := Init(Config{Level: "INFO"})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	std.mu.Lock()
+	bufLen := len(std.buffer)
+	std.mu.Unlock()
+	if bufLen != 0 {
+		t.Errorf("buffer should be cleared after Init, got %d entries", bufLen)
+	}
+}
+
+func TestPreInitFilteredByLevel(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// Default level is INFO, so DEBUG should not be buffered
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	Debugf("test", "debug before init")
+	Infof("test", "info before init")
+
+	std.mu.Lock()
+	bufLen := len(std.buffer)
+	std.mu.Unlock()
+	if bufLen != 1 {
+		t.Fatalf("buffer len = %d, want 1 (DEBUG filtered by INFO level)", bufLen)
 	}
 }

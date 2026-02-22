@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	tomlParser "github.com/BurntSushi/toml"
@@ -594,6 +595,176 @@ enable_startup_notify = false
 	}
 	if cfg.Telegram.EnableStartupNotify {
 		t.Error("EnableStartupNotify should be false when explicitly set")
+	}
+}
+
+func TestValidateCompactionThreshold(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{
+			"threshold too high",
+			"[agent]\nid = \"test\"\n[sessions]\ncompaction_threshold = 1.5",
+			"compaction_threshold = 1.5",
+		},
+		{
+			"threshold negative",
+			"[agent]\nid = \"test\"\n[sessions]\ncompaction_threshold = -0.1",
+			"compaction_threshold = -0.1",
+		},
+		{
+			"threshold valid",
+			"[agent]\nid = \"test\"\n[sessions]\ncompaction_threshold = 0.7",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "clod.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateHTTPPort(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{
+			"port too high",
+			"[agent]\nid = \"test\"\n[http]\nport = 70000",
+			"port = 70000",
+		},
+		{
+			"port zero",
+			// port 0 gets defaulted to 18791, so it should pass
+			"[agent]\nid = \"test\"\n[http]\nport = 0",
+			"",
+		},
+		{
+			"port valid",
+			"[agent]\nid = \"test\"\n[http]\nport = 8080",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "clod.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateLoggingLevel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid logging level")
+	}
+	if !strings.Contains(err.Error(), "BOGUS") {
+		t.Errorf("error = %q, want mention of BOGUS", err.Error())
+	}
+}
+
+func TestValidateCacheStrategy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid cache strategy")
+	}
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("error = %q, want mention of invalid", err.Error())
+	}
+}
+
+func TestValidateHeartbeatInterval(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	os.WriteFile(path, []byte("[agent]\nid = \"test\"\nheartbeat_interval = \"not-a-duration\""), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid heartbeat_interval")
+	}
+	if !strings.Contains(err.Error(), "heartbeat_interval") {
+		t.Errorf("error = %q, want mention of heartbeat_interval", err.Error())
+	}
+}
+
+func TestValidateWarningWindowDuration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid warning_window_duration")
+	}
+	if !strings.Contains(err.Error(), "warning_window_duration") {
+		t.Errorf("error = %q, want mention of warning_window_duration", err.Error())
+	}
+}
+
+func TestValidateMemorySourceWeight(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+
+[[memory.sources]]
+name = "bad"
+dir = "/tmp"
+weight = 2.0
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for weight > 1.0")
+	}
+	if !strings.Contains(err.Error(), "weight") {
+		t.Errorf("error = %q, want mention of weight", err.Error())
 	}
 }
 
