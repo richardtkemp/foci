@@ -691,8 +691,6 @@ func setupAgent(p setupParams) *agentInstance {
 		p.cfg.Sessions.CompactionModel,
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
-		p.cfg.Sessions.CompactionSummaryPrompt,
-		p.cfg.Sessions.CompactionHandoffMsg,
 	)
 	compactor.Scratchpad = p.scratchpadStore
 
@@ -707,22 +705,24 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
-		Client:            p.client,
-		Sessions:          p.sessions,
-		Tools:             registry,
-		Bootstrap:         bootstrap,
-		Compactor:         compactor,
-		Reminders:         p.reminderStore,
-		Model:             acfg.Model,
-		ExtraSystemBlocks: extraSystemBlocks,
-		CacheStrategy:     p.cfg.Cache.Strategy,
-		CacheBustDetect:   p.cfg.Logging.CacheBustDetect,
-		DuplicateMessages: acfg.DuplicateMessages,
-		MaxResultChars:    p.cfg.Tools.MaxResultChars,
-		ToolResultTempDir: p.cfg.Tools.TempDir,
-		StateStore:        p.stateStore,
-		UsageClient:       p.usageClient,
-		PromptRules:       agent.CompilePromptRules(p.cfg.PromptRules),
+		Client:                  p.client,
+		Sessions:                p.sessions,
+		Tools:                   registry,
+		Bootstrap:               bootstrap,
+		Compactor:               compactor,
+		Reminders:               p.reminderStore,
+		Model:                   acfg.Model,
+		ExtraSystemBlocks:       extraSystemBlocks,
+		CacheStrategy:           p.cfg.Cache.Strategy,
+		CacheBustDetect:         p.cfg.Logging.CacheBustDetect,
+		DuplicateMessages:       acfg.DuplicateMessages,
+		MaxResultChars:          p.cfg.Tools.MaxResultChars,
+		ToolResultTempDir:       p.cfg.Tools.TempDir,
+		StateStore:              p.stateStore,
+		UsageClient:             p.usageClient,
+		PromptRules:             agent.CompilePromptRules(p.cfg.PromptRules),
+		CompactionSummaryPrompt: p.cfg.Sessions.CompactionSummaryPrompt,
+		CompactionHandoffMsg:    p.cfg.Sessions.CompactionHandoffMsg,
 	}
 	ag.RestoreVoiceMode(sessionKey)
 

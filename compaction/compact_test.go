@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -127,7 +128,7 @@ func TestCompactBasic(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil)
+	err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestCompactTooFewMessages(t *testing.T) {
 	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("hello")})
 
 	c := NewCompactor(nil, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil)
+	err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -212,7 +213,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
 
-	err = c.Compact(context.Background(), sessionKey, nil)
+	err = c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -259,7 +260,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
 
-	err = c.Compact(context.Background(), sessionKey, nil)
+	err = c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -289,7 +290,7 @@ func TestCompactAPIError(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil)
+	err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -306,7 +307,7 @@ func TestCompactAPIError(t *testing.T) {
 
 func TestWithConfigOverrides(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
-	c.WithConfig("claude-sonnet-4-5", 2048, 8, "custom prompt", "custom handoff")
+	c.WithConfig("claude-sonnet-4-5", 2048, 8)
 
 	if c.model != "claude-sonnet-4-5" {
 		t.Errorf("model = %q", c.model)
@@ -317,18 +318,12 @@ func TestWithConfigOverrides(t *testing.T) {
 	if c.minMessages != 8 {
 		t.Errorf("minMessages = %d", c.minMessages)
 	}
-	if c.summaryPrompt != "custom prompt" {
-		t.Errorf("summaryPrompt = %q", c.summaryPrompt)
-	}
-	if c.handoffMessage != "custom handoff" {
-		t.Errorf("handoffMessage = %q", c.handoffMessage)
-	}
 }
 
 func TestWithConfigEmptyValues(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
 	original := *c
-	c.WithConfig("", 0, 0, "", "")
+	c.WithConfig("", 0, 0)
 
 	// Empty/zero values should not override
 	if c.model != original.model {
@@ -339,5 +334,97 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	}
 	if c.minMessages != original.minMessages {
 		t.Errorf("minMessages changed to %d", c.minMessages)
+	}
+}
+
+func TestCompactCustomPrompts(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	err := c.Compact(context.Background(), sessionKey, nil, "custom summary prompt", "custom handoff msg")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Verify the custom summary prompt was sent to the API
+	if !strings.Contains(string(capturedBody), "custom summary prompt") {
+		t.Errorf("API request body should contain custom summary prompt")
+	}
+
+	// Verify custom handoff message in resulting messages
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+	handoff := anthropic.TextOf(msgs[2].Content)
+	if !strings.Contains(handoff, "custom handoff msg") {
+		t.Errorf("handoff = %q, want custom handoff msg", handoff)
+	}
+}
+
+func TestCompactDefaultPrompts(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	// Empty strings should fall back to defaults
+	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Verify the default summary prompt was sent
+	if !strings.Contains(string(capturedBody), DefaultSummaryPrompt) {
+		t.Errorf("API request body should contain default summary prompt")
+	}
+
+	// Verify default handoff message
+	msgs, _ := store.Load(sessionKey)
+	handoff := anthropic.TextOf(msgs[2].Content)
+	if !strings.Contains(handoff, DefaultHandoffMessage) {
+		t.Errorf("handoff = %q, want default handoff", handoff)
 	}
 }
