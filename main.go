@@ -745,7 +745,7 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 		ag.ExtraSystemBlocks = newExtraSystemBlocks
-		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills", newSkillRegistry.Len())
+		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: clod.toml config changes require a service restart to take effect.", newSkillRegistry.Len())
 		return msg, nil
 	}))
 
