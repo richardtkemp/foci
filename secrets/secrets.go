@@ -19,6 +19,7 @@ var defaultBlockedPaths = []string{
 // Store holds secrets loaded from secrets.toml.
 // Values are stored as flat keys: "anthropic.token", "custom.github_token", etc.
 type Store struct {
+	path         string
 	values       map[string]string
 	blockedPaths []string
 }
@@ -26,6 +27,7 @@ type Store struct {
 // Load reads secrets from a TOML file. Returns an empty store (not error) if the file doesn't exist.
 func Load(path string) (*Store, error) {
 	s := &Store{
+		path:         path,
 		values:       make(map[string]string),
 		blockedPaths: append([]string{}, defaultBlockedPaths...),
 	}
@@ -70,6 +72,62 @@ func (s *Store) Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Set adds or updates a secret value by its flat key (e.g. "section.key").
+func (s *Store) Set(name, value string) {
+	s.values[name] = value
+}
+
+// Remove deletes a secret by its flat key. Returns true if found.
+func (s *Store) Remove(name string) bool {
+	if _, ok := s.values[name]; !ok {
+		return false
+	}
+	delete(s.values, name)
+	return true
+}
+
+// Save writes the current secrets back to the TOML file.
+func (s *Store) Save() error {
+	// Rebuild section map from flat keys
+	sections := make(map[string]map[string]string)
+	for flat, val := range s.values {
+		parts := strings.SplitN(flat, ".", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		sec, key := parts[0], parts[1]
+		if sections[sec] == nil {
+			sections[sec] = make(map[string]string)
+		}
+		sections[sec][key] = val
+	}
+
+	var buf strings.Builder
+	// Sort sections for deterministic output
+	secNames := make([]string, 0, len(sections))
+	for sec := range sections {
+		secNames = append(secNames, sec)
+	}
+	sort.Strings(secNames)
+
+	for i, sec := range secNames {
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		fmt.Fprintf(&buf, "[%s]\n", sec)
+		keys := make([]string, 0, len(sections[sec]))
+		for k := range sections[sec] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&buf, "%s = %q\n", k, sections[sec][k])
+		}
+	}
+
+	return os.WriteFile(s.path, []byte(buf.String()), 0600)
 }
 
 var templateRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_.]+)\}\}`)

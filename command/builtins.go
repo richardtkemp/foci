@@ -672,3 +672,89 @@ func formatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%ds", s)
 }
+
+// SecretsStore is the interface needed by the /secrets command.
+type SecretsStore interface {
+	Names() []string
+	Set(name, value string)
+	Remove(name string) bool
+	Save() error
+}
+
+// NewSecretsCommand creates the /secrets slash command for managing secrets.
+// CLI-only — must be registered with SkipToolExport=true.
+func NewSecretsCommand(store SecretsStore) *Command {
+	return &Command{
+		Name:           "secrets",
+		Description:    "Manage secrets (list/set/remove)",
+		SkipToolExport: true,
+		Execute: func(ctx context.Context, args string) (string, error) {
+			parts := strings.Fields(args)
+			if len(parts) == 0 {
+				return "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key>", nil
+			}
+
+			switch parts[0] {
+			case "list":
+				names := store.Names()
+				if len(names) == 0 {
+					return "No secrets configured.", nil
+				}
+				// Group by section
+				sections := make(map[string][]string)
+				var order []string
+				for _, name := range names {
+					p := strings.SplitN(name, ".", 2)
+					sec := p[0]
+					key := name
+					if len(p) == 2 {
+						key = p[1]
+					}
+					if _, seen := sections[sec]; !seen {
+						order = append(order, sec)
+					}
+					sections[sec] = append(sections[sec], key)
+				}
+				var lines []string
+				for _, sec := range order {
+					lines = append(lines, fmt.Sprintf("[%s]", sec))
+					for _, key := range sections[sec] {
+						lines = append(lines, fmt.Sprintf("  %s", key))
+					}
+				}
+				return strings.Join(lines, "\n"), nil
+
+			case "set":
+				if len(parts) < 3 {
+					return "Usage: /secrets set <section.key> <value>", nil
+				}
+				name := parts[1]
+				if !strings.Contains(name, ".") {
+					return "Key must be in section.key format (e.g. custom.api_key)", nil
+				}
+				value := strings.Join(parts[2:], " ")
+				store.Set(name, value)
+				if err := store.Save(); err != nil {
+					return "", fmt.Errorf("save secrets: %w", err)
+				}
+				return fmt.Sprintf("Secret %s set.", name), nil
+
+			case "remove":
+				if len(parts) < 2 {
+					return "Usage: /secrets remove <section.key>", nil
+				}
+				name := parts[1]
+				if !store.Remove(name) {
+					return fmt.Sprintf("Secret %s not found.", name), nil
+				}
+				if err := store.Save(); err != nil {
+					return "", fmt.Errorf("save secrets: %w", err)
+				}
+				return fmt.Sprintf("Secret %s removed.", name), nil
+
+			default:
+				return "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key>", nil
+			}
+		},
+	}
+}

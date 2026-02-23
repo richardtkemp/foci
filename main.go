@@ -1047,6 +1047,7 @@ func setupAgent(p setupParams) *agentInstance {
 		},
 	})
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
+	cmds.Register(command.NewSecretsCommand(p.store))
 
 	// Auto-expose all slash commands as tools
 	for _, cmd := range cmds.All() {
