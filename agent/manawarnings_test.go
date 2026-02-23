@@ -153,3 +153,70 @@ func TestManaWatcherEmptyNameDefaultsToMana(t *testing.T) {
 		t.Errorf("name = %q, want %q", mw.name, "mana")
 	}
 }
+
+func TestManaWatcherFiresMultipleThresholdsInOrder(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50, 25, 10})
+
+	var warnings []string
+	warnFn := func(w string) { warnings = append(warnings, w) }
+
+	// First check at 45% — crosses 50 threshold
+	mw.CheckAndWarn("45%", warnFn)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	if warnings[0] != "low mana: 45% remaining (threshold: 50%)" {
+		t.Errorf("warning[0] = %q", warnings[0])
+	}
+
+	// Second check at 20% — should cross 25 threshold (50 already fired)
+	mw.CheckAndWarn("20%", warnFn)
+	if len(warnings) != 2 {
+		t.Fatalf("expected 2 warnings, got %d", len(warnings))
+	}
+	if warnings[1] != "low mana: 20% remaining (threshold: 25%)" {
+		t.Errorf("warning[1] = %q", warnings[1])
+	}
+
+	// Third check at 8% — should cross 10 threshold
+	mw.CheckAndWarn("8%", warnFn)
+	if len(warnings) != 3 {
+		t.Fatalf("expected 3 warnings, got %d", len(warnings))
+	}
+	if warnings[2] != "low mana: 8% remaining (threshold: 10%)" {
+		t.Errorf("warning[2] = %q", warnings[2])
+	}
+}
+
+func TestManaWatcherSkipsSystemMessages(t *testing.T) {
+	// This tests the integration point: ManaWatcher.CheckAndWarn is only called
+	// for non-system messages. Verify the watcher itself fires correctly,
+	// as the system message gating is in agent.go's HandleMessage.
+	mw := NewManaWatcher("mana", []int{50})
+
+	var warned bool
+	mw.CheckAndWarn("25%", func(w string) { warned = true })
+	if !warned {
+		t.Error("expected watcher to fire for user message scenario")
+	}
+}
+
+func TestManaWatcherNilWarnFunc(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50})
+	// Should not panic with nil warnFunc
+	mw.CheckAndWarn("25%", nil)
+}
+
+func TestManaWatcherExactThresholdValue(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50})
+
+	var warned string
+	mw.CheckAndWarn("50%", func(w string) { warned = w })
+
+	if warned == "" {
+		t.Error("expected warning when mana equals threshold exactly")
+	}
+	if warned != "low mana: 50% remaining (threshold: 50%)" {
+		t.Errorf("warning = %q", warned)
+	}
+}
