@@ -1479,7 +1479,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 
-		var notified []int
+		var notified []string
 		ag := &Agent{
 			Client:    client,
 			Sessions:  store,
@@ -1487,8 +1487,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			Bootstrap: bootstrap,
 			Compactor: compactor,
 			Model:     "claude-haiku-4-5",
-			CompactionNotifyFunc: func(session string, oldCount int) {
-				notified = append(notified, oldCount)
+			CompactionNotifyFunc: func(session string, msg string) {
+				notified = append(notified, msg)
 			},
 		}
 
@@ -1501,12 +1501,14 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			}
 		}
 
-		if len(notified) != 1 {
-			t.Fatalf("expected 1 notification, got %d", len(notified))
+		if len(notified) != 2 {
+			t.Fatalf("expected 2 notifications (start + end), got %d", len(notified))
 		}
-		// 10 messages in session before compaction (5 user + 5 assistant)
-		if notified[0] != 10 {
-			t.Errorf("notified oldCount = %d, want 10", notified[0])
+		if !strings.Contains(notified[0], "Compacting") {
+			t.Errorf("start notification = %q, want to contain 'Compacting'", notified[0])
+		}
+		if !strings.Contains(notified[1], "10 messages") {
+			t.Errorf("end notification = %q, want to contain '10 messages'", notified[1])
 		}
 	})
 
@@ -1520,7 +1522,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 
-		var notified []int
+		var notified []string
 		ag := &Agent{
 			Client:    client,
 			Sessions:  store,
@@ -1528,8 +1530,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			Bootstrap: bootstrap,
 			Compactor: compactor,
 			Model:     "claude-haiku-4-5",
-			CompactionNotifyFunc: func(session string, oldCount int) {
-				notified = append(notified, oldCount)
+			CompactionNotifyFunc: func(session string, msg string) {
+				notified = append(notified, msg)
 			},
 		}
 

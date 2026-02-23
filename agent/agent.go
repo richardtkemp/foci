@@ -78,7 +78,7 @@ type Agent struct {
 	ManaWatcher             *ManaWatcher            // nil disables mana threshold warnings
 	ManaWarnFunc            func(string)            // callback for mana threshold warnings (e.g. Telegram notification)
 	MaxTokensWarnFunc       func(string)            // callback when stop_reason=max_tokens (response truncated)
-	CompactionNotifyFunc    func(string, int)       // callback when compaction occurs (session, old message count)
+	CompactionNotifyFunc    func(string, string)     // callback for compaction notifications (session key, message)
 	Redact                  func(string) string     // redact secrets from tool output; nil disables
 	StateStore              *state.Store            // nil disables state persistence
 	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
@@ -710,10 +710,13 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 					return anthropic.TextOf(resp.Content), nil
 				}
 				oldCount := len(messages)
+				if a.CompactionNotifyFunc != nil {
+					a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
+				}
 				if err := a.Compactor.Compact(ctx, sessionKey, system, a.CompactionSummaryPrompt, a.CompactionHandoffMsg); err != nil {
 					log.Errorf("agent", "compaction failed: %v", err)
 				} else if a.CompactionNotifyFunc != nil {
-					a.CompactionNotifyFunc(sessionKey, oldCount)
+					a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
 				}
 				// Reload system prompt — compaction may have changed memory files
 				a.Bootstrap.Reload()
