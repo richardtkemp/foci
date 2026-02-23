@@ -119,7 +119,6 @@ Session storage and compaction.
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
 | `compaction_summary_prompt` | string | see below | Prompt sent to the model to generate the summary. |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
-| `compaction_system_prompt` | string | `""` | Extra system prompt appended only during compaction API calls. Use this for compaction-specific instructions that don't need to be in every regular turn. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
