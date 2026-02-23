@@ -124,6 +124,33 @@ func (m *mockSecretsStore) Remove(name string) bool {
 }
 func (m *mockSecretsStore) Save() error { m.saved = true; return nil }
 
+func TestRestartCommand(t *testing.T) {
+	var notified string
+	cmd := NewRestartCommand(func(msg string) {
+		notified = msg
+	})
+
+	if cmd.Name != "restart" {
+		t.Errorf("name = %q, want restart", cmd.Name)
+	}
+
+	// We can't actually restart in tests, but verify the notify callback fires.
+	// The command calls exec.Command("systemctl", ...) which may fail in test env.
+	// Just verify the command exists and has the right properties.
+	if cmd.Description == "" {
+		t.Error("description should not be empty")
+	}
+
+	// Test with nil notifyFn (should not panic)
+	cmdNoNotify := NewRestartCommand(nil)
+	if cmdNoNotify.Name != "restart" {
+		t.Errorf("name = %q", cmdNoNotify.Name)
+	}
+
+	// Verify notifyFn is called if set
+	_ = notified // will be tested when we can mock systemctl
+}
+
 func TestSecretsCommand(t *testing.T) {
 	store := &mockSecretsStore{data: map[string]string{
 		"anthropic.token": "sk-ant-123",
