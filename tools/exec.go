@@ -24,7 +24,8 @@ var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 // autoBackgroundSecs is the threshold after which a running command is
 // auto-backgrounded (0 disables). notifier delivers results when an
 // auto-backgrounded command finishes (nil disables).
-func NewExecTool(store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier) *Tool {
+// workDir sets the default working directory for commands (empty = process cwd).
+func NewExecTool(store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) *Tool {
 	return &Tool{
 		Name:        "exec",
 		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call.",
@@ -47,12 +48,12 @@ func NewExecTool(store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNo
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return execCommand(ctx, params, store, autoBackgroundSecs, notifier)
+			return execCommand(ctx, params, store, autoBackgroundSecs, notifier, workDir)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier) (string, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) (string, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -92,24 +93,25 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	// For explicit background mode, use the original direct approach
 	if p.Background {
-		return execDirect(ctx, cmd, p.Command, timeout, true, store)
+		return execDirect(ctx, cmd, p.Command, timeout, true, store, workDir)
 	}
 
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, notifier)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, notifier, workDir)
 	}
 
-	return execDirect(ctx, cmd, p.Command, timeout, false, store)
+	return execDirect(ctx, cmd, p.Command, timeout, false, store, workDir)
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store) (string, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, workDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
+	proc.Dir = workDir
 
 	if background {
 		proc.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -127,11 +129,12 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, notifier *AsyncNotifier) (string, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, notifier *AsyncNotifier, workDir string) (string, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
 	proc := exec.CommandContext(cmdCtx, "sh", "-c", cmd)
+	proc.Dir = workDir
 	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	proc.Cancel = func() error {
 		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)

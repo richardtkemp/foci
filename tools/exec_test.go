@@ -13,7 +13,7 @@ import (
 )
 
 func TestExecEcho(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo hello world",
@@ -29,8 +29,29 @@ func TestExecEcho(t *testing.T) {
 	}
 }
 
+func TestExecWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	tool := NewExecTool(nil, 0, nil, dir)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "pwd",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Resolve symlinks (macOS /tmp -> /private/tmp, etc.)
+	want, _ := filepath.EvalSymlinks(dir)
+	got := strings.TrimSpace(result)
+	if got != want {
+		t.Errorf("workdir: got %q, want %q", got, want)
+	}
+}
+
 func TestExecWithTimeout(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -47,7 +68,7 @@ func TestExecWithTimeout(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "read -t 60 < /dev/null",
@@ -65,7 +86,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecFailedCommand(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "false",
@@ -81,7 +102,7 @@ func TestExecFailedCommand(t *testing.T) {
 }
 
 func TestExecStderr(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo stderr_msg >&2",
@@ -97,7 +118,7 @@ func TestExecStderr(t *testing.T) {
 }
 
 func TestExecInvalidParams(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
 	if err == nil {
 		t.Fatal("expected error for invalid params")
@@ -105,7 +126,7 @@ func TestExecInvalidParams(t *testing.T) {
 }
 
 func TestExecMultilineOutput(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "printf 'line1\nline2\nline3'",
@@ -123,7 +144,7 @@ func TestExecMultilineOutput(t *testing.T) {
 }
 
 func TestExecBackgroundMode(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":    "echo bg",
@@ -151,7 +172,7 @@ token = "secret-value-12345"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store, 0, nil)
+	tool := NewExecTool(store, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo {{secret:custom.token}}",
@@ -184,7 +205,7 @@ key = "value"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store, 0, nil)
+	tool := NewExecTool(store, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "cat secrets.toml",
@@ -200,7 +221,7 @@ key = "value"
 }
 
 func TestExecOutputTruncation(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	// Generate output >100k chars
 	params, _ := json.Marshal(map[string]interface{}{
@@ -221,7 +242,7 @@ func TestExecOutputTruncation(t *testing.T) {
 }
 
 func TestExecNilStoreWithTemplate(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo '{{secret:test.key}}'",
@@ -242,7 +263,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	var called bool
 	tool := NewExecTool(nil, 5, NewAsyncNotifier(func(msg string) {
 		called = true
-	}))
+	}), "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -265,7 +286,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	completeCh := make(chan string, 1)
 	tool := NewExecTool(nil, 1, NewAsyncNotifier(func(msg string) {
 		completeCh <- msg
-	}))
+	}), "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "timeout 3 tail -f /dev/null",
@@ -294,7 +315,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 }
 
 func TestExecSleepBlocked(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 5",
@@ -310,7 +331,7 @@ func TestExecSleepBlocked(t *testing.T) {
 }
 
 func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 30s",
@@ -326,7 +347,7 @@ func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
 }
 
 func TestExecSleepCaseInsensitive(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "SLEEP 10",
@@ -339,7 +360,7 @@ func TestExecSleepCaseInsensitive(t *testing.T) {
 }
 
 func TestExecSleepWithLeadingWhitespaceBlocked(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "  sleep 5",
@@ -352,7 +373,7 @@ func TestExecSleepWithLeadingWhitespaceBlocked(t *testing.T) {
 }
 
 func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 5 && do_thing",
@@ -365,7 +386,7 @@ func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
 }
 
 func TestExecSleepNotBlockedInMiddle(t *testing.T) {
-	tool := NewExecTool(nil, 0, nil)
+	tool := NewExecTool(nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo 'going to sleep'",
