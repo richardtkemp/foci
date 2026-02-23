@@ -202,7 +202,7 @@ func formatResult(output string, err error, ctx context.Context, timeout time.Du
 
 	if err != nil {
 		if ctx.Err() != nil {
-			log.Warnf("exec", "command timed out after %s: %s", timeout, truncateCmd(displayCmd, 100))
+			log.Debugf("exec", "command timed out after %s: %s", timeout, truncateCmd(displayCmd, 100))
 		}
 		return result + "\nError: " + err.Error()
 	}
