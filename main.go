@@ -562,9 +562,10 @@ func main() {
 		}
 
 		var req struct {
-			Agent     string `json:"agent"`
-			Text      string `json:"text"`
-			NoCompact bool   `json:"no_compact"`
+			Agent       string `json:"agent"`
+			Text        string `json:"text"`
+			NoCompact   bool   `json:"no_compact"`
+			NoResetHook bool   `json:"no_reset_hook"`
 		}
 		// Allow empty body — treat as wake with default text
 		if r.ContentLength > 0 {
@@ -589,13 +590,21 @@ func main() {
 		branchID := fmt.Sprintf("wake-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
-		if err := sessions.CreateBranch(parentKey, branchKey); err != nil {
-			log.Errorf("wake", "branch error: %v", err)
+		var branchErr error
+		if req.NoResetHook {
+			branchErr = sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+				NoResetHook: true,
+			})
+		} else {
+			branchErr = sessions.CreateBranch(parentKey, branchKey)
+		}
+		if branchErr != nil {
+			log.Errorf("wake", "branch error: %v", branchErr)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
-		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v", branchKey, parentKey, req.Text, req.NoCompact)
+		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook)
 
 		wakeCtx := agent.WithTrigger(ctx, "wake")
 		if req.NoCompact {

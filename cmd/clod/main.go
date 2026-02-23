@@ -63,7 +63,10 @@ func usage() {
 
 Commands:
   send <text>          Send a message to the agent (main session)
-  branch [text]        Trigger a branch session (--no-compact to skip compaction)
+  branch [text]        Trigger a branch session
+                         --no-compact      Skip compaction if context limit reached
+                         --no-reset-hook   Skip pre-reset memory hook
+                         --oneshot          Quick task: no compaction, no reset hook
   status               Query agent status
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
@@ -161,11 +164,18 @@ func cmdSend(base string, args []string) error {
 func cmdBranch(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
 	noCompact := false
+	noResetHook := false
 	var filtered []string
 	for _, a := range args {
-		if a == "--no-compact" {
+		switch a {
+		case "--no-compact":
 			noCompact = true
-		} else {
+		case "--no-reset-hook":
+			noResetHook = true
+		case "--oneshot":
+			noCompact = true
+			noResetHook = true
+		default:
 			filtered = append(filtered, a)
 		}
 	}
@@ -179,6 +189,9 @@ func cmdBranch(base string, args []string) error {
 	}
 	if noCompact {
 		body["no_compact"] = true
+	}
+	if noResetHook {
+		body["no_reset_hook"] = true
 	}
 	return postJSON(base+"/wake", body)
 }
