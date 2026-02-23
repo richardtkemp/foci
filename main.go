@@ -427,6 +427,7 @@ func main() {
 
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
+			log.Warnf("http", "POST /send: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
@@ -467,6 +468,7 @@ func main() {
 		agentID := r.URL.Query().Get("agent")
 		inst, ok := resolveAgent(agentID)
 		if !ok {
+			log.Warnf("http", "GET /status: unknown agent %q", agentID)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
@@ -495,6 +497,7 @@ func main() {
 		}
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
+			log.Warnf("http", "POST /command: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
@@ -528,6 +531,7 @@ func main() {
 
 		inst, ok := resolveAgent(req.Agent)
 		if !ok {
+			log.Warnf("http", "POST /wake: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
@@ -772,6 +776,9 @@ func setupAgent(p setupParams) *agentInstance {
 		CompactionHandoffMsg:    p.cfg.Sessions.CompactionHandoffMsg,
 		MaxToolLoops:            acfg.MaxToolLoops,
 		MaxOutputTokens:         acfg.MaxOutputTokens,
+	}
+	if p.store != nil {
+		ag.Redact = p.store.Redact
 	}
 	ag.RestoreVoiceMode(sessionKey)
 	ag.SeedSessionMeta(sessionKey)

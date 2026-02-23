@@ -1894,6 +1894,148 @@ func TestSeedSessionMeta(t *testing.T) {
 	}
 }
 
+func TestToolResultRedaction(t *testing.T) {
+	var callCount atomic.Int32
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := callCount.Add(1)
+		if n == 1 {
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_001", Name: "leak_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Done."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "leak_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "output contains sk-ant-12345-secret-key here", nil
+		},
+	})
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		Redact: func(s string) string {
+			return strings.ReplaceAll(s, "sk-ant-12345-secret-key", "[REDACTED]")
+		},
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:redact", "Leak the secret")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// Verify the saved session has redacted tool result
+	msgs, _ := store.Load("agent:test:redact")
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" {
+				if strings.Contains(block.Content, "sk-ant-12345-secret-key") {
+					t.Error("tool result contains unredacted secret")
+				}
+				if !strings.Contains(block.Content, "[REDACTED]") {
+					t.Error("tool result should contain [REDACTED] marker")
+				}
+			}
+		}
+	}
+}
+
+func TestToolErrorRedaction(t *testing.T) {
+	var callCount atomic.Int32
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := callCount.Add(1)
+		if n == 1 {
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_001", Name: "err_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Done."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "err_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "", fmt.Errorf("auth failed with token sk-ant-12345-secret-key")
+		},
+	})
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		Redact: func(s string) string {
+			return strings.ReplaceAll(s, "sk-ant-12345-secret-key", "[REDACTED]")
+		},
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:redacterr", "Try the tool")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// Verify the saved session has redacted error message
+	msgs, _ := store.Load("agent:test:redacterr")
+	for _, msg := range msgs {
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" && block.IsError {
+				if strings.Contains(block.Content, "sk-ant-12345-secret-key") {
+					t.Error("tool error contains unredacted secret")
+				}
+				if !strings.Contains(block.Content, "[REDACTED]") {
+					t.Error("tool error should contain [REDACTED] marker")
+				}
+			}
+		}
+	}
+}
+
 func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
