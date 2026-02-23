@@ -135,6 +135,105 @@ func TestLoadFullNonexistent(t *testing.T) {
 	}
 }
 
+func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:opts"
+
+	s.Append(parentKey, msg("user", "hello"))
+
+	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{NoResetHook: true})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected branch meta, got nil")
+	}
+	if !meta.NoResetHook {
+		t.Error("NoResetHook should be true")
+	}
+	if meta.BranchPoint != 1 {
+		t.Errorf("BranchPoint = %d, want 1", meta.BranchPoint)
+	}
+}
+
+func TestCreateBranchWithOptionsDefault(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:default"
+
+	s.Append(parentKey, msg("user", "hello"))
+
+	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta.NoResetHook {
+		t.Error("NoResetHook should default to false")
+	}
+}
+
+func TestGetBranchMetaRegularSession(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:main:main"
+
+	s.Append(key, msg("user", "hello"))
+
+	meta, err := s.GetBranchMeta(key)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil for regular session, got %+v", meta)
+	}
+}
+
+func TestGetBranchMetaNonexistent(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	meta, err := s.GetBranchMeta("agent:ghost:main")
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta != nil {
+		t.Errorf("expected nil for nonexistent session, got %+v", meta)
+	}
+}
+
+func TestBranchMetaBackwardCompat(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:old"
+
+	s.Append(parentKey, msg("user", "hello"))
+
+	// CreateBranch (old method) doesn't set NoResetHook
+	if err := s.CreateBranch(parentKey, branchKey); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected branch meta")
+	}
+	if meta.NoResetHook {
+		t.Error("NoResetHook should be false for old-style branches")
+	}
+}
+
 func TestBranchDoesNotContaminateParent(t *testing.T) {
 	s := NewStore(t.TempDir())
 	parentKey := "agent:main:main"

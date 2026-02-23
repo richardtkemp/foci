@@ -75,6 +75,8 @@ type SessionsConfig struct {
 	CompactionNotify        *bool   `toml:"compaction_notify"`         // send Telegram notification on compaction (default true)
 	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
+	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // prompt fired before session clear (/reset or reclaim)
+	SessionResetPromptFile  string  `toml:"session_reset_prompt_file"`     // path to prompt file (inline takes precedence)
 }
 
 type MemorySource struct {
@@ -550,6 +552,9 @@ func (c *Config) ResolveAllPaths() {
 		c.Sessions.Dir = c.DataPath("sessions")
 	} else {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
+	}
+	if c.Sessions.SessionResetPromptFile != "" {
+		c.Sessions.SessionResetPromptFile = ResolvePath(c.Sessions.SessionResetPromptFile)
 	}
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {

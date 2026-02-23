@@ -14,6 +14,12 @@ type BranchMeta struct {
 	Type        string `json:"type"` // always "branch_meta"
 	ParentKey   string `json:"parent_key"`
 	BranchPoint int    `json:"branch_point"`
+	NoResetHook bool   `json:"no_reset_hook,omitempty"` // skip pre-reset memory hook
+}
+
+// BranchOptions configures optional behavior for a new branch session.
+type BranchOptions struct {
+	NoResetHook bool // skip pre-reset memory hook when this branch is reclaimed
 }
 
 // CreateBranch creates a branch session from a parent at the parent's current message count.
@@ -54,6 +60,53 @@ func (s *Store) CreateBranch(parentKey, branchKey string) error {
 	}
 
 	return nil
+}
+
+// CreateBranchWithOptions creates a branch session with additional options.
+func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts BranchOptions) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	parentMsgs, err := s.loadUnlocked(parentKey)
+	if err != nil {
+		return fmt.Errorf("load parent: %w", err)
+	}
+
+	meta := BranchMeta{
+		Type:        "branch_meta",
+		ParentKey:   parentKey,
+		BranchPoint: len(parentMsgs),
+		NoResetHook: opts.NoResetHook,
+	}
+
+	path := s.keyToPath(branchKey)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create branch dir: %w", err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create branch file: %w", err)
+	}
+	defer f.Close()
+
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshal branch meta: %w", err)
+	}
+
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("write branch meta: %w", err)
+	}
+
+	return nil
+}
+
+// GetBranchMeta returns the branch metadata for a session key, or nil if not a branch.
+func (s *Store) GetBranchMeta(key string) (*BranchMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readBranchMeta(key)
 }
 
 // LoadFull loads the full message history for a session.
