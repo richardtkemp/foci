@@ -11,6 +11,8 @@ config.Load(path)                                        ← validates values; l
   → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
 
   Shared resources (created once):
+  → configDir = filepath.Dir(configPath)                  ← base for relative paths
+  → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
   → anthropic.NewClient(token)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start

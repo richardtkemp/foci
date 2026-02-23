@@ -1065,6 +1065,59 @@ token = "test-token"
 	}
 }
 
+func TestDataPathWithDataDir(t *testing.T) {
+	cfg := &Config{DataDir: "/home/clod/data"}
+	got := cfg.DataPath("/home/clod/config", "memory.db")
+	want := "/home/clod/data/memory.db"
+	if got != want {
+		t.Errorf("DataPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDataPathWithoutDataDir(t *testing.T) {
+	cfg := &Config{DataDir: ""}
+	got := cfg.DataPath("/home/clod/config", "memory.db")
+	want := "/home/clod/config/memory.db"
+	if got != want {
+		t.Errorf("DataPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDataPathRelativeDataDirFallsBack(t *testing.T) {
+	// Relative DataDir should fall back to configDir
+	cfg := &Config{DataDir: "relative/path"}
+	got := cfg.DataPath("/home/clod/config", "state.json")
+	want := "/home/clod/config/state.json"
+	if got != want {
+		t.Errorf("DataPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDataPathLoadsFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+data_dir = "/opt/clod/data"
+
+[agent]
+id = "test"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DataDir != "/opt/clod/data" {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/opt/clod/data")
+	}
+	got := cfg.DataPath(dir, "memory.db")
+	want := "/opt/clod/data/memory.db"
+	if got != want {
+		t.Errorf("DataPath() = %q, want %q", got, want)
+	}
+}
+
 func TestValidateNewDurationFields(t *testing.T) {
 	tests := []struct {
 		name    string

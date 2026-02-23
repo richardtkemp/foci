@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -162,8 +163,9 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	Agent        AgentConfig        `toml:"agent"`  // legacy: single agent
-	Agents       []AgentConfig      `toml:"agents"` // multi-agent: array of agents
+	DataDir      string             `toml:"data_dir"` // directory for databases, sessions, state (default: same as config file)
+	Agent        AgentConfig        `toml:"agent"`    // legacy: single agent
+	Agents       []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
 	Anthropic    AnthropicConfig    `toml:"anthropic"`
 	Telegram     TelegramConfig     `toml:"telegram"`
 	Sessions     SessionsConfig     `toml:"sessions"`
@@ -492,6 +494,16 @@ func (c *Config) ResolveBotToken(botName string, secrets SecretGetter) string {
 		return v
 	}
 	return c.Telegram.BotToken
+}
+
+// DataPath resolves the path for a data file (database, state, etc.).
+// If DataDir is set and absolute, the file is placed there.
+// Otherwise, it falls back to configDir (the directory containing clod.toml).
+func (c *Config) DataPath(configDir, filename string) string {
+	if c.DataDir != "" && filepath.IsAbs(c.DataDir) {
+		return filepath.Join(c.DataDir, filename)
+	}
+	return filepath.Join(configDir, filename)
 }
 
 // ParseFlags returns the config file path from command-line flags.
