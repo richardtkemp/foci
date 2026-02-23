@@ -707,6 +707,59 @@ func TestSendText_SendsNonEmptyMessage(t *testing.T) {
 	}
 }
 
+// --- Async notifier delivery ---
+// These tests verify the contract that async-notifier turns (tmux watch,
+// exec auto-background) deliver responses via SendText, matching the
+// wiring in main.go's notifier closure.
+
+func TestAsyncNotifierDeliveryViaSendText(t *testing.T) {
+	// Simulates the async notifier delivery path in main.go:
+	// notifier calls HandleMessage → gets response → calls bot.SendText()
+	mgr := NewBotManager()
+	bot, mock := testBot([]string{"111"}, command.NewRegistry())
+	bot.SetChatID(12345)
+	mgr.AddPrimary("test-agent", bot)
+
+	// Simulate: notifier got a response from HandleMessage
+	resp := "Four undeployed commits now. Both queues empty."
+
+	// Deliver via primary bot's SendText (same as main.go closure)
+	primary := mgr.PrimaryBot("test-agent")
+	if primary == nil {
+		t.Fatal("PrimaryBot returned nil")
+	}
+	if err := primary.SendText(resp); err != nil {
+		t.Fatalf("SendText error: %v", err)
+	}
+	if mock.sentCount() != 1 {
+		t.Errorf("sentCount = %d, want 1", mock.sentCount())
+	}
+}
+
+func TestAsyncNotifierSkipsEmptyResponse(t *testing.T) {
+	// When HandleMessage returns empty string, notifier should not call SendText.
+	// This is checked in the main.go closure before calling SendText.
+	bot, mock := testBot([]string{"111"}, command.NewRegistry())
+	bot.SetChatID(12345)
+
+	// Empty response should be silently skipped by SendText
+	if err := bot.SendText(""); err != nil {
+		t.Fatalf("SendText(\"\") error: %v", err)
+	}
+	if mock.sentCount() != 0 {
+		t.Errorf("sentCount = %d, want 0 for empty response", mock.sentCount())
+	}
+}
+
+func TestAsyncNotifierNoPrimaryBot(t *testing.T) {
+	// When no primary bot is configured, PrimaryBot returns nil.
+	// The main.go closure logs a warning and skips delivery.
+	mgr := NewBotManager()
+	if bot := mgr.PrimaryBot("nonexistent"); bot != nil {
+		t.Errorf("PrimaryBot(nonexistent) = %v, want nil", bot)
+	}
+}
+
 // --- Tool call message ordering ---
 
 func TestToolCallObserverResetsAfterReply(t *testing.T) {
