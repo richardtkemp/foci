@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clod/log"
+	"clod/state"
 )
 
 var tmuxCounter uint64
@@ -33,26 +34,45 @@ type watchedSession struct {
 
 // tmuxInstance holds per-tool-instance state so each agent gets isolated tmux sessions.
 type tmuxInstance struct {
-	mu       sync.Mutex
-	watched  map[string]*watchedSession // key: "session:window"
-	owned    map[string]struct{}        // sessions created by this instance
-	notifier *AsyncNotifier
-	cols     int
-	rows     int
+	mu         sync.Mutex
+	watched    map[string]*watchedSession // key: "session:window"
+	owned      map[string]struct{}        // sessions created by this instance
+	notifier   *AsyncNotifier
+	cols       int
+	rows       int
+	stateStore *state.Store // nil = no persistence
+	stateKey   string       // key prefix for persisted owned sessions
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
 // applied via resize-window after session creation. notifier delivers messages
 // when a watched session exceeds its inactivity threshold (nil disables).
 // Each call returns an independent tool instance with its own session tracking.
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier) *Tool {
+// stateStore and stateKey enable persistence of owned sessions across restarts.
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) *Tool {
 	inst := &tmuxInstance{
-		watched:  make(map[string]*watchedSession),
-		owned:    make(map[string]struct{}),
-		notifier: notifier,
-		cols:     cols,
-		rows:     rows,
+		watched:    make(map[string]*watchedSession),
+		owned:      make(map[string]struct{}),
+		notifier:   notifier,
+		cols:       cols,
+		rows:       rows,
+		stateStore: stateStore,
+		stateKey:   stateKey,
 	}
+
+	// Restore owned sessions from persistent state
+	if stateStore != nil {
+		var owned []string
+		if stateStore.Get(stateKey, &owned) {
+			for _, name := range owned {
+				inst.owned[name] = struct{}{}
+			}
+			if len(owned) > 0 {
+				log.Debugf("tmux", "restored %d owned session(s) from state", len(owned))
+			}
+		}
+	}
+
 	return &Tool{
 		Name:        "tmux",
 		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns.",
@@ -169,6 +189,21 @@ func (inst *tmuxInstance) owns(name string) bool {
 	return ok
 }
 
+// persistOwned saves the owned sessions map to the state store.
+// Must be called with inst.mu held.
+func (inst *tmuxInstance) persistOwned() {
+	if inst.stateStore == nil {
+		return
+	}
+	owned := make([]string, 0, len(inst.owned))
+	for name := range inst.owned {
+		owned = append(owned, name)
+	}
+	if err := inst.stateStore.Set(inst.stateKey, owned); err != nil {
+		log.Warnf("tmux", "persist owned sessions: %v", err)
+	}
+}
+
 func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string) (string, error) {
 	if name == "" {
 		n := atomic.AddUint64(&tmuxCounter, 1)
@@ -200,6 +235,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir stri
 
 	inst.mu.Lock()
 	inst.owned[name] = struct{}{}
+	inst.persistOwned()
 	inst.mu.Unlock()
 
 	return fmt.Sprintf("Session started: %s", name), nil
@@ -301,6 +337,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
 		// Owned sessions no longer exist in tmux — clean up stale entries
 		inst.mu.Lock()
 		inst.owned = make(map[string]struct{})
+		inst.persistOwned()
 		inst.mu.Unlock()
 		return "No tmux sessions.", nil
 	}
@@ -324,6 +361,7 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 
 	inst.mu.Lock()
 	delete(inst.owned, name)
+	inst.persistOwned()
 	inst.mu.Unlock()
 
 	return fmt.Sprintf("Session killed: %s", name), nil
@@ -414,14 +452,14 @@ var (
 	reConsecutiveBlankLines = regexp.MustCompile(`\n{3,}`)
 
 	// Claude Code patterns
-	reCCBoxDrawing  = regexp.MustCompile(`^[─╌━═╰╯╭╮▀▁─]+$`)
-	reCCPipeBorder  = regexp.MustCompile(`^\s*│\s?`)
-	reCCPipeTrail   = regexp.MustCompile(`\s*│\s*$`)
-	reCCStatusHints = regexp.MustCompile(`(?i)(shift\+tab|ctrl\+o|esc to interrupt|esc to undo|\/help for)`)
-	reCCVersionLine = regexp.MustCompile(`^Claude Code\b.*$`)
+	reCCBoxDrawing    = regexp.MustCompile(`^[─╌━═╰╯╭╮▀▁─]+$`)
+	reCCPipeBorder    = regexp.MustCompile(`^\s*│\s?`)
+	reCCPipeTrail     = regexp.MustCompile(`\s*│\s*$`)
+	reCCStatusHints   = regexp.MustCompile(`(?i)(shift\+tab|ctrl\+o|esc to interrupt|esc to undo|\/help for)`)
+	reCCVersionLine   = regexp.MustCompile(`^Claude Code\b.*$`)
 	reCCModeIndicator = regexp.MustCompile(`^[⏵⏸]+\s*(bypass|plan mode|auto mode)\s*$`)
-	reCCDecoSymbols = regexp.MustCompile(`^[✻✢\s]+$`)
-	reCCLogoBlocks  = regexp.MustCompile(`[▟█▙▄▀▐▌░▒▓]+`)
+	reCCDecoSymbols   = regexp.MustCompile(`^[✻✢\s]+$`)
+	reCCLogoBlocks    = regexp.MustCompile(`[▟█▙▄▀▐▌░▒▓]+`)
 
 	// OpenCode patterns
 	reOCBorder      = regexp.MustCompile(`^[┃╹╻\s]+$`)
@@ -542,7 +580,7 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 var tuiNoisePatterns = regexp.MustCompile(strings.Join([]string{
 	`\d+[hm]\s*\d+[ms]`,             // elapsed timers: "1m 3s", "2h 30m"
 	`\d+:\d{2}(:\d{2})?(\s*[AP]M)?`, // clocks: "14:30", "2:30:00 PM"
-	`\d+\.\d+s`,                      // durations: "3.2s", "0.5s"
+	`\d+\.\d+s`,                     // durations: "3.2s", "0.5s"
 }, "|"))
 
 // normalizePaneContent strips TUI noise from pane output so that only

@@ -312,7 +312,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | Tool | File | What it does |
 |------|------|-------------|
 | `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, secret template resolution + output redaction |
-| `tmux` | tmux.go | Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity, unwatch |
+| `tmux` | tmux.go | Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity, unwatch. Owned sessions persist across app restarts via state store. |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
 | `edit` | files.go | Find-and-replace (old_string must be unique) |
