@@ -99,7 +99,8 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, notifier, workDir)
+		sk := SessionKeyFromContext(ctx)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, notifier, sk, workDir)
 	}
 
 	return execDirect(ctx, cmd, p.Command, timeout, false, store, workDir)
@@ -128,8 +129,8 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
-// The command continues running and results are delivered via notifier.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, notifier *AsyncNotifier, workDir string) (string, error) {
+// The command continues running and results are delivered via notifier to the originating session.
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string) (string, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -172,7 +173,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			err := <-done
 			result := formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store)
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
-			notifier.Notify(msg)
+			notifier.Notify(sessionKey, msg)
 		}()
 
 		return fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd), nil

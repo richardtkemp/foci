@@ -681,9 +681,14 @@ func setupAgent(p setupParams) *agentInstance {
 	// Async notifier: delivers results from auto-backgrounded exec commands
 	// and tmux watch inactivity alerts to the agent session.
 	// The response is delivered to Telegram via the primary bot's SendText.
-	notifier := tools.NewAsyncNotifier(func(message string) {
+	notifier := tools.NewAsyncNotifier(func(originSession, message string) {
 		go func() {
-			resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "async_notify"), sessionKey, message)
+			// Route to the originating session; fall back to main if unknown
+			target := originSession
+			if target == "" {
+				target = sessionKey
+			}
+			resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "async_notify"), target, message)
 			if err != nil {
 				log.Errorf("async_notify", "error: %v", err)
 				return

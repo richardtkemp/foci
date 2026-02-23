@@ -425,7 +425,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 
 	var wakeCalled atomic.Int32
 	var wakeMsg string
-	notifier := NewAsyncNotifier(func(msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string) {
 		wakeCalled.Add(1)
 		wakeMsg = msg
 	})
@@ -605,10 +605,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
-	toolA := NewTmuxTool(300, 30, NewAsyncNotifier(func(msg string) {
+	toolA := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeA.Add(1)
 	}), nil, "")
-	toolB := NewTmuxTool(300, 30, NewAsyncNotifier(func(msg string) {
+	toolB := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeB.Add(1)
 	}), nil, "")
 

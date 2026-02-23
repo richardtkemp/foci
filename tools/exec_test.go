@@ -261,7 +261,7 @@ func TestExecNilStoreWithTemplate(t *testing.T) {
 func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	// A fast command should complete before the threshold
 	var called bool
-	tool := NewExecTool(nil, 5, NewAsyncNotifier(func(msg string) {
+	tool := NewExecTool(nil, 5, NewAsyncNotifier(func(sk, msg string) {
 		called = true
 	}), "")
 
@@ -284,7 +284,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	// A slow command should auto-background after 1 second
 	completeCh := make(chan string, 1)
-	tool := NewExecTool(nil, 1, NewAsyncNotifier(func(msg string) {
+	tool := NewExecTool(nil, 1, NewAsyncNotifier(func(sk, msg string) {
 		completeCh <- msg
 	}), "")
 
@@ -311,6 +311,43 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for auto-backgrounded command")
+	}
+}
+
+func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
+	// Verify the session key from context reaches the notifier callback
+	type result struct {
+		sk, msg string
+	}
+	ch := make(chan result, 1)
+	tool := NewExecTool(nil, 1, NewAsyncNotifier(func(sk, msg string) {
+		ch <- result{sk, msg}
+	}), "")
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "timeout 3 tail -f /dev/null",
+		"timeout": 10,
+	})
+
+	ctx := WithSessionKey(context.Background(), "agent:test:branch-42")
+	out, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "still running") {
+		t.Fatalf("expected auto-background message, got %q", out)
+	}
+
+	select {
+	case r := <-ch:
+		if r.sk != "agent:test:branch-42" {
+			t.Errorf("session key = %q, want %q", r.sk, "agent:test:branch-42")
+		}
+		if r.msg == "" {
+			t.Error("message should not be empty")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for notifier callback")
 	}
 }
 
