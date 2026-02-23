@@ -26,6 +26,8 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
 | `multiball_bot` | string | `""` | References a key in `[telegram.bots]` map. Used for multiball (branch) sessions. |
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
+| `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
+| `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
@@ -60,6 +62,8 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens.
 | `token` | string | `""` | Anthropic API key. Overridden by `secrets.toml` `[anthropic] token`. |
 | `oauth_token` | string | `""` | OAuth access token for the usage API. Overridden by `secrets.toml` `[anthropic] oauth_token`. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
+| `http_timeout` | string | `"120s"` | HTTP timeout for Anthropic API calls. Go duration format. |
+| `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 
 ---
 
@@ -73,6 +77,8 @@ Telegram bot configuration.
 | `allowed_users` | string[] | `[]` | Telegram user IDs allowed to interact with the bot. |
 | `secondary_bots` | string[] | `[]` | Legacy: tokens for secondary bots (multiball feature). |
 | `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. Set to `"0"` to disable auto-reclaim. Go duration format (`30m`, `2h`). |
+| `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
+| `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 
 ### `[telegram.bots.<name>]`
 
@@ -137,6 +143,7 @@ Memory system (FTS5 search over markdown files + conversation history).
 | `dir` | string | `""` | Legacy: single directory containing memory markdown files. Enables `memory_search`, `memory_remind`, and scratchpad tools. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format (`500ms`, `2s`). |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
+| `search_limit` | int | `20` | Maximum number of search results to return. |
 
 When set, creates SQLite databases alongside the config file: `memory.db`, `reminders.db`, `scratchpad.db`.
 
@@ -215,6 +222,7 @@ HTTP API server.
 |-----|------|---------|-------------|
 | `port` | int | `18791` | HTTP server port. |
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
+| `graceful_shutdown_timeout` | string | `"5s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 
 Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`.
 
@@ -298,6 +306,24 @@ Tool behavior settings.
 | `temp_dir` | string | `"/tmp/clod-tool-results"` | Directory for large tool result files. |
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
+| `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec commands. `0` disables. |
+| `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |
+| `exec_max_output_chars` | int | `100000` | Max characters in exec output before truncation. |
+| `tmux_command_timeout` | string | `"5s"` | Timeout for tmux control commands. Go duration format. |
+| `web_fetch_timeout` | string | `"30s"` | HTTP timeout for web fetch operations. Go duration format. |
+| `web_fetch_max_bytes` | int | `1048576` | Max bytes to read from web fetch (1MB default). |
+| `web_fetch_max_chars` | int | `50000` | Max characters in web fetch output before truncation. |
+| `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
+
+---
+
+## `[database]`
+
+SQLite database settings.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `busy_timeout` | string | `"5s"` | SQLite busy timeout for concurrent access. Go duration format. High-load systems may need longer waits. |
 
 ---
 

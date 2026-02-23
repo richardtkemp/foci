@@ -26,6 +26,15 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
+// NewClientWithTimeout creates a client with a custom HTTP timeout.
+func NewClientWithTimeout(apiKey string, timeout time.Duration) *Client {
+	return &Client{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: timeout},
+		baseURL:    "https://api.anthropic.com",
+	}
+}
+
 // NewClientWithBase creates a client with a custom base URL (for testing).
 func NewClientWithBase(baseURL, apiKey string) *Client {
 	return &Client{
