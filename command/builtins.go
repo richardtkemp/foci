@@ -915,28 +915,54 @@ func NewAgentsCommand(listFn func() []AgentInfo) *Command {
 				return "No agents configured.", nil
 			}
 
-			var sb strings.Builder
-			sb.WriteString("🤖 Active Sessions\n")
-			for _, a := range agents {
-				status := "idle"
-				if a.Busy {
-					status = "busy"
-				}
-				detail := fmt.Sprintf("%d msgs", a.MessageCount)
-				if a.LastActivity != "" {
-					if t, err := time.Parse(time.RFC3339, a.LastActivity); err == nil {
-						ago := time.Since(t).Round(time.Second)
-						if ago < time.Minute {
-							detail += fmt.Sprintf(" | last: %ds ago", int(ago.Seconds()))
-						} else {
-							detail += fmt.Sprintf(" | last: %s ago", formatDuration(ago))
-						}
-					}
-				}
-				fmt.Fprintf(&sb, "  %-30s %-6s %-10s %s\n",
-					a.SessionKey, status, a.Model, detail)
+			// Build row data
+			type agentRow struct {
+				id, session, status, model, msgs string
 			}
-			return strings.TrimRight(sb.String(), "\n"), nil
+			rows := make([]agentRow, len(agents))
+			for i, a := range agents {
+				r := agentRow{id: a.ID}
+				if a.SessionKey == "" {
+					r.session = "—"
+					r.status = "—"
+					r.model = "—"
+					r.msgs = "—"
+				} else {
+					r.session = a.SessionKey
+					if a.Busy {
+						r.status = "busy"
+					} else {
+						r.status = "idle"
+					}
+					r.model = a.Model
+					r.msgs = fmt.Sprintf("%d", a.MessageCount)
+				}
+				rows[i] = r
+			}
+
+			// Measure column widths
+			idW, sessW, statW, modW, msgW := len("ID"), len("Session"), len("Status"), len("Model"), len("Messages")
+			for _, r := range rows {
+				if len(r.id) > idW { idW = len(r.id) }
+				if len(r.session) > sessW { sessW = len(r.session) }
+				if len(r.status) > statW { statW = len(r.status) }
+				if len(r.model) > modW { modW = len(r.model) }
+				if len(r.msgs) > msgW { msgW = len(r.msgs) }
+			}
+
+			sep := strings.Repeat("─", idW+2+sessW+2+statW+2+modW+2+msgW)
+			var sb strings.Builder
+			sb.WriteString("Agents\n\n```\n")
+			fmt.Fprintf(&sb, "%-*s  %-*s  %-*s  %-*s  %*s\n",
+				idW, "ID", sessW, "Session", statW, "Status", modW, "Model", msgW, "Messages")
+			sb.WriteString(sep + "\n")
+			for _, r := range rows {
+				fmt.Fprintf(&sb, "%-*s  %-*s  %-*s  %-*s  %*s\n",
+					idW, r.id, sessW, r.session, statW, r.status, modW, r.model, msgW, r.msgs)
+			}
+			sb.WriteString(sep + "\n")
+			sb.WriteString("```")
+			return sb.String(), nil
 		},
 	}
 }
