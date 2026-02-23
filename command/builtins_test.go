@@ -428,7 +428,12 @@ func TestScriptCommandDefaultTimeout(t *testing.T) {
 
 func TestHelpCommand(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(NewPingCommand())
+	reg.Register(NewPingCommand())                                       // category: session
+	reg.Register(NewCacheCommand("/dev/null"))                           // category: observability
+	reg.Register(NewResetCommand(func() error { return nil }))          // category: operations
+	reg.Register(NewVersionCommand(BuildInfo{Version: "1.0"}))          // category: diagnostics
+	reg.Register(&Command{Name: "custom", Description: "Custom thing"}) // no category
+	reg.Register(&Command{Name: "hidden", Description: "Hidden cmd", Hidden: true})
 	reg.Register(NewHelpCommand(reg))
 
 	cmd := reg.Get("help")
@@ -436,11 +441,38 @@ func TestHelpCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "/ping") {
-		t.Errorf("missing /ping in help output: %q", result)
+
+	// Check category headers appear
+	for _, header := range []string{"Observability", "Operations", "Diagnostics", "Session"} {
+		if !strings.Contains(result, header) {
+			t.Errorf("missing category header %q in:\n%s", header, result)
+		}
 	}
-	if !strings.Contains(result, "/help") {
-		t.Errorf("missing /help in help output: %q", result)
+	// Commands present
+	if !strings.Contains(result, "/ping") {
+		t.Errorf("missing /ping in help output:\n%s", result)
+	}
+	if !strings.Contains(result, "/cache") {
+		t.Errorf("missing /cache in help output:\n%s", result)
+	}
+	// Uncategorized goes to Other
+	if !strings.Contains(result, "Other") {
+		t.Errorf("missing Other group in help output:\n%s", result)
+	}
+	if !strings.Contains(result, "/custom") {
+		t.Errorf("missing /custom in help output:\n%s", result)
+	}
+	// Hidden should NOT appear
+	if strings.Contains(result, "/hidden") {
+		t.Errorf("hidden command should not appear in help:\n%s", result)
+	}
+	// Check category ordering: Observability before Operations before Diagnostics before Session
+	obsIdx := strings.Index(result, "Observability")
+	opsIdx := strings.Index(result, "Operations")
+	diagIdx := strings.Index(result, "Diagnostics")
+	sessIdx := strings.Index(result, "Session")
+	if obsIdx > opsIdx || opsIdx > diagIdx || diagIdx > sessIdx {
+		t.Errorf("categories not in expected order:\n%s", result)
 	}
 }
 

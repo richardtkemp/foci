@@ -178,8 +178,11 @@ func (b *Bot) SetChatID(id int64) {
 func (b *Bot) RegisterCommands() {
 	var cmds []gotgbot.BotCommand
 
-	// Add all registered commands from the registry
+	// Add all registered commands from the registry (skip hidden)
 	for _, cmd := range b.commands.All() {
+		if cmd.Hidden {
+			continue
+		}
 		desc := cmd.Description
 		if desc == "" {
 			desc = cmd.Name
