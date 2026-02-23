@@ -923,3 +923,250 @@ Here's the fix for the bug:
 		t.Error("snapshots with different content should NOT normalize equally")
 	}
 }
+
+// --- TUI detection and cleanup ---
+
+func TestDetectTUIAgent_CC(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"Claude Code marker", "some output\nClaude Code v1.2.3\nprompt here"},
+		{"bypass marker", "⏵⏵ bypass\nsome command output"},
+		{"Cooked for", "Cooked for 3.2s\nresult here"},
+		{"Crunched for", "Crunched for 1.5s\nresult here"},
+		{"Baked for", "Baked for 0.8s\nresult here"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectTUIAgent(tt.content)
+			if got != "cc" {
+				t.Errorf("detectTUIAgent() = %q, want %q", got, "cc")
+			}
+		})
+	}
+}
+
+func TestDetectTUIAgent_OC(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"OpenCode marker", "OpenCode v0.1\nclaude-3-5-sonnet\nprompt"},
+		{"GLM marker", "GLM\nsome output here"},
+		{"Build marker", "Build\nrunning tests"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectTUIAgent(tt.content)
+			if got != "oc" {
+				t.Errorf("detectTUIAgent() = %q, want %q", got, "oc")
+			}
+		})
+	}
+}
+
+func TestDetectTUIAgent_None(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"plain shell", "$ ls -la\ntotal 42\ndrwxr-xr-x 5 user user 4096 file.go"},
+		{"empty", ""},
+		{"command output", "go test ./...\nPASS\nok  clod/tools 0.004s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectTUIAgent(tt.content)
+			if got != "" {
+				t.Errorf("detectTUIAgent() = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestCleanTUIOutput_CC(t *testing.T) {
+	input := strings.Join([]string{
+		"Claude Code v1.2.3",
+		"╭──────────────────────────╮",
+		"│ Here is my response      │",
+		"│ with important content   │",
+		"╰──────────────────────────╯",
+		"─────────────────────────",
+		"✻",
+		"▟█▙",
+		"⏵⏵ bypass",
+		"shift+tab to accept",
+		"actual content line",
+		"",
+		"",
+		"",
+		"",
+		"another content line",
+	}, "\n")
+
+	got := cleanTUIOutput(input, "cc")
+
+	// Should preserve meaningful content
+	if !strings.Contains(got, "Here is my response") {
+		t.Errorf("should preserve content line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "with important content") {
+		t.Errorf("should preserve content line, got:\n%s", got)
+	}
+	if !strings.Contains(got, "actual content line") {
+		t.Errorf("should preserve actual content, got:\n%s", got)
+	}
+	if !strings.Contains(got, "another content line") {
+		t.Errorf("should preserve another content line, got:\n%s", got)
+	}
+
+	// Should strip chrome
+	if strings.Contains(got, "Claude Code v1.2.3") {
+		t.Errorf("should strip version line, got:\n%s", got)
+	}
+	if strings.Contains(got, "╭") || strings.Contains(got, "╰") {
+		t.Errorf("should strip box-drawing lines, got:\n%s", got)
+	}
+	if strings.Contains(got, "─────") {
+		t.Errorf("should strip horizontal rules, got:\n%s", got)
+	}
+	if strings.Contains(got, "✻") {
+		t.Errorf("should strip decorative symbols, got:\n%s", got)
+	}
+	if strings.Contains(got, "▟█▙") {
+		t.Errorf("should strip logo blocks, got:\n%s", got)
+	}
+	if strings.Contains(got, "⏵⏵ bypass") {
+		t.Errorf("should strip mode indicator, got:\n%s", got)
+	}
+	if strings.Contains(got, "shift+tab") {
+		t.Errorf("should strip status hints, got:\n%s", got)
+	}
+
+	// Should collapse consecutive blank lines
+	if strings.Contains(got, "\n\n\n") {
+		t.Errorf("should collapse consecutive blank lines, got:\n%s", got)
+	}
+}
+
+func TestCleanTUIOutput_OC(t *testing.T) {
+	input := strings.Join([]string{
+		"OpenCode v0.1",
+		"┃",
+		"━━━━━━━━━━━━━━━━━━━━━━━━━",
+		"MCP│server status",
+		"LSP│go initialized",
+		"Build│running...",
+		"Here is the actual response",
+		"with multiple lines",
+		"Modified Files",
+		"3 files changed",
+		"ctrl+a to select all",
+		"╹",
+	}, "\n")
+
+	got := cleanTUIOutput(input, "oc")
+
+	// Should preserve meaningful content
+	if !strings.Contains(got, "Here is the actual response") {
+		t.Errorf("should preserve content, got:\n%s", got)
+	}
+	if !strings.Contains(got, "with multiple lines") {
+		t.Errorf("should preserve content, got:\n%s", got)
+	}
+
+	// Should strip chrome
+	if strings.Contains(got, "OpenCode v0.1") {
+		t.Errorf("should strip version line, got:\n%s", got)
+	}
+	if strings.Contains(got, "━━━") {
+		t.Errorf("should strip box-drawing, got:\n%s", got)
+	}
+	if strings.Contains(got, "MCP│") {
+		t.Errorf("should strip MCP sidebar, got:\n%s", got)
+	}
+	if strings.Contains(got, "LSP│") {
+		t.Errorf("should strip LSP sidebar, got:\n%s", got)
+	}
+	if strings.Contains(got, "Build│") {
+		t.Errorf("should strip build line, got:\n%s", got)
+	}
+	if strings.Contains(got, "Modified Files") {
+		t.Errorf("should strip section header, got:\n%s", got)
+	}
+	if strings.Contains(got, "3 files changed") {
+		t.Errorf("should strip diff summary, got:\n%s", got)
+	}
+	if strings.Contains(got, "ctrl+a") {
+		t.Errorf("should strip status hints, got:\n%s", got)
+	}
+}
+
+func TestCleanTUIOutput_NoAgent(t *testing.T) {
+	input := "$ ls -la\ntotal 42\ndrwxr-xr-x 5 user user 4096 file.go"
+	got := cleanTUIOutput(input, "")
+	if got != input {
+		t.Errorf("empty agent type should return content unchanged\ngot:  %q\nwant: %q", got, input)
+	}
+}
+
+func TestTmuxReadRaw(t *testing.T) {
+	tmuxAvailable(t)
+	tool := NewTmuxTool(300, 30, nil)
+
+	name := "clod-test-readraw"
+	defer tmuxCleanup(t, name)
+
+	// Start a session that echoes CC-like content
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send some text that would trigger CC detection
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "echo Claude Code v1.0",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Read with raw=true — should contain the marker
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "read",
+		"name":      name,
+		"raw":       true,
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("read raw: %v", err)
+	}
+	if !strings.Contains(result, "Claude Code") {
+		t.Errorf("raw read should preserve all content, got:\n%s", result)
+	}
+
+	// Read with raw=false (default) — CC version line should be stripped
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "read",
+		"name":      name,
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("read cleaned: %v", err)
+	}
+	// The "Claude Code v1.0" in `echo` output will be detected and the
+	// version-line pattern may strip lines matching "Claude Code ...".
+	// The echo command itself (containing "Claude Code") triggers detection,
+	// and the output line "Claude Code v1.0" matches the version-line regex.
+	// We just verify it doesn't error — exact content depends on shell prompt.
+}
