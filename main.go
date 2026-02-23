@@ -1105,8 +1105,8 @@ func setupAgent(p setupParams) *agentInstance {
 
 		// Wire compaction notifications to Telegram (default on)
 		if p.cfg.Sessions.CompactionNotify == nil || *p.cfg.Sessions.CompactionNotify {
-			ag.CompactionNotifyFunc = func(session string, oldCount int) {
-				primaryBot.SendNotification(fmt.Sprintf("Context compacted — %d messages summarised.", oldCount))
+			ag.CompactionNotifyFunc = func(session string, msg string) {
+				primaryBot.SendNotification(msg)
 			}
 		}
 
