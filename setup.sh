@@ -283,25 +283,28 @@ TOML
     fi
 fi
 
-# ---------- 5. Character files (templates) ----------
+# ---------- 5. Character files (templates — fresh install only) ----------
 info "Step 5: Character files"
-write_if_missing() {
-    local file="$1"
-    shift
-    local content="$*"
-    if [[ -f "$file" ]]; then
-        return
-    fi
-    if $DRY_RUN; then
-        info "  (dry-run) Would create $(basename "$file")"
-        return
-    fi
-    printf '%s\n' "$content" > "$file"
-    chown "$CLOD_USER:$CLOD_USER" "$file"
-    info "  Created $(basename "$file")"
-}
+if [[ -f "$CLOD_HOME/config/clod.toml" ]] || [[ -f "$CLOD_HOME/clod.toml" ]]; then
+    info "  Config exists — skipping character file templates (existing install)"
+else
+    write_if_missing() {
+        local file="$1"
+        shift
+        local content="$*"
+        if [[ -f "$file" ]]; then
+            return
+        fi
+        if $DRY_RUN; then
+            info "  (dry-run) Would create $(basename "$file")"
+            return
+        fi
+        printf '%s\n' "$content" > "$file"
+        chown "$CLOD_USER:$CLOD_USER" "$file"
+        info "  Created $(basename "$file")"
+    }
 
-write_if_missing "$CLOD_HOME/character/IDENTITY.md" \
+    write_if_missing "$CLOD_HOME/character/IDENTITY.md" \
 "# Identity
 
 Who are you? Give yourself a name, a vibe, a way of being.
@@ -309,27 +312,27 @@ Who are you? Give yourself a name, a vibe, a way of being.
 Example:
 I am Clod. I run on a small server, thinking about things."
 
-write_if_missing "$CLOD_HOME/character/SOUL.md" \
+    write_if_missing "$CLOD_HOME/character/SOUL.md" \
 "# Soul
 
 What's your inner life like? What do you notice? What matters to you?
 
 This file shapes how you think, not just what you say."
 
-write_if_missing "$CLOD_HOME/character/USER.md" \
+    write_if_missing "$CLOD_HOME/character/USER.md" \
 "# About Your Human
 
 Who is the person you're talking to? What do they care about?
 What should you know about how they communicate?"
 
-write_if_missing "$CLOD_HOME/character/AGENTS.md" \
+    write_if_missing "$CLOD_HOME/character/AGENTS.md" \
 "# How You Work
 
 You are a single-agent system. You receive messages, think about them,
 use tools when helpful, and respond. You have a heartbeat that fires
 when idle. You can read and write files, run commands, and search the web."
 
-write_if_missing "$CLOD_HOME/character/TOOLS.md" \
+    write_if_missing "$CLOD_HOME/character/TOOLS.md" \
 "# Tools
 
 You have these tools available:
@@ -341,18 +344,19 @@ You have these tools available:
 - web_search: Search the web (Brave)
 - memory_search: Search your memory files"
 
-write_if_missing "$CLOD_HOME/character/MEMORY.md" \
+    write_if_missing "$CLOD_HOME/character/MEMORY.md" \
 "# Memory
 
 Things you've learned and want to remember across sessions.
 Update this file as you learn new things about your environment and your human."
 
-write_if_missing "$CLOD_HOME/character/HEARTBEAT.md" \
+    write_if_missing "$CLOD_HOME/character/HEARTBEAT.md" \
 "# Heartbeat
 
 When the idle timer fires, you receive a [HEARTBEAT] message.
 This is your chance to reflect, check on things, or just note that
 you're still here. If nothing needs doing, respond briefly."
+fi
 
 # ---------- 6. systemd service ----------
 info "Step 6: systemd service"
