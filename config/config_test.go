@@ -584,6 +584,33 @@ foo = "bar"
 	}
 }
 
+func TestAgentTTSRateRecognized(t *testing.T) {
+	tomlData := `
+[[agents]]
+id = "clutch"
+tts_rate = 1.3
+`
+	var cfg Config
+	md, err := tomlParser.Decode(tomlData, &cfg)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	keys := UnknownKeys(md)
+	for _, k := range keys {
+		if strings.Contains(k, "tts_rate") {
+			t.Errorf("tts_rate should not be flagged as unknown, got: %v", keys)
+		}
+	}
+
+	if len(cfg.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(cfg.Agents))
+	}
+	if cfg.Agents[0].TTSRate != 1.3 {
+		t.Errorf("TTSRate = %v, want 1.3", cfg.Agents[0].TTSRate)
+	}
+}
+
 func TestLoadTelegramToggleDefaults(t *testing.T) {
 	// When not set, both toggles default to true
 	dir := t.TempDir()

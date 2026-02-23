@@ -243,6 +243,47 @@ func TestRateToEdgeTTS(t *testing.T) {
 	}
 }
 
+func TestWithRate_EdgeTTS(t *testing.T) {
+	orig := &EdgeTTS{Voice: "en-US-AndrewNeural", Rate: 1.0}
+	overridden := WithRate(orig, 1.5)
+
+	edge, ok := overridden.(*EdgeTTS)
+	if !ok {
+		t.Fatal("expected *EdgeTTS")
+	}
+	if edge.Rate != 1.5 {
+		t.Errorf("rate = %v, want 1.5", edge.Rate)
+	}
+	// Original unchanged
+	if orig.Rate != 1.0 {
+		t.Errorf("original rate changed to %v", orig.Rate)
+	}
+}
+
+func TestWithRate_OpenAITTS(t *testing.T) {
+	orig := &OpenAITTS{Model: "tts-1", Speed: 1.0}
+	overridden := WithRate(orig, 2.0)
+
+	oai, ok := overridden.(*OpenAITTS)
+	if !ok {
+		t.Fatal("expected *OpenAITTS")
+	}
+	if oai.Speed != 2.0 {
+		t.Errorf("speed = %v, want 2.0", oai.Speed)
+	}
+	if orig.Speed != 1.0 {
+		t.Errorf("original speed changed to %v", orig.Speed)
+	}
+}
+
+func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
+	orig := &EdgeTTS{Rate: 1.3}
+	result := WithRate(orig, 0)
+	if result != orig {
+		t.Error("zero rate should return original provider")
+	}
+}
+
 // Verify interface compliance at compile time.
 var _ STT = (*WhisperSTT)(nil)
 var _ TTS = (*EdgeTTS)(nil)

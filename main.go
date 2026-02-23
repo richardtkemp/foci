@@ -1151,7 +1151,7 @@ func setupAgent(p setupParams) *agentInstance {
 			primaryBot.SetTranscriber(p.sttProvider)
 		}
 		if p.ttsProvider != nil {
-			primaryBot.SetTTS(p.ttsProvider)
+			primaryBot.SetTTS(voice.WithRate(p.ttsProvider, acfg.TTSRate))
 		}
 		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 
