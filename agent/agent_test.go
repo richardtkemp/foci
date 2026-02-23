@@ -1793,3 +1793,133 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 	}
 }
 
+func TestParseMetaTime(t *testing.T) {
+	tests := []struct {
+		name    string
+		text    string
+		wantOK  bool
+		wantStr string // RFC3339 string of expected time
+	}{
+		{
+			name:    "valid meta with gap",
+			text:    "[meta] time=2026-02-23T15:43:13Z gap=3h12m model=claude-haiku-4-5",
+			wantOK:  true,
+			wantStr: "2026-02-23T15:43:13Z",
+		},
+		{
+			name:    "valid meta first message",
+			text:    "[meta] time=2026-01-01T00:00:00Z gap=none model=claude-haiku-4-5",
+			wantOK:  true,
+			wantStr: "2026-01-01T00:00:00Z",
+		},
+		{
+			name:   "no meta prefix",
+			text:   "hello world",
+			wantOK: false,
+		},
+		{
+			name:   "meta prefix but no time field",
+			text:   "[meta] gap=none model=claude-haiku-4-5",
+			wantOK: false,
+		},
+		{
+			name:   "invalid time format",
+			text:   "[meta] time=not-a-time gap=none",
+			wantOK: false,
+		},
+		{
+			name:   "empty string",
+			text:   "",
+			wantOK: false,
+		},
+		{
+			name:   "restart marker (not meta)",
+			text:   "[System restarted at 2026-02-23T15:43:13Z]",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseMetaTime(tt.text)
+			if ok != tt.wantOK {
+				t.Fatalf("parseMetaTime(%q) ok = %v, want %v", tt.text, ok, tt.wantOK)
+			}
+			if ok && got.Format(time.RFC3339) != tt.wantStr {
+				t.Errorf("parseMetaTime(%q) = %v, want %v", tt.text, got.Format(time.RFC3339), tt.wantStr)
+			}
+		})
+	}
+}
+
+func TestSeedSessionMeta(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
+
+	sessionKey := "agent:test:seed"
+
+	// Seed with empty session — should not panic
+	ag.SeedSessionMeta(sessionKey)
+	sm := ag.getSessionMeta(sessionKey)
+	if !sm.lastMessageTime.IsZero() {
+		t.Error("lastMessageTime should be zero for empty session")
+	}
+
+	// Add some messages with meta headers
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "user",
+		Content: anthropic.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
+	})
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "assistant",
+		Content: anthropic.TextContent("Hi there!"),
+	})
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "user",
+		Content: anthropic.TextContent("[meta] time=2026-02-23T12:30:00Z gap=2h30m model=claude-haiku-4-5\nHow are you?"),
+	})
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "assistant",
+		Content: anthropic.TextContent("Good!"),
+	})
+
+	// Seed from a fresh agent (simulating restart)
+	ag2 := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
+	ag2.SeedSessionMeta(sessionKey)
+
+	sm2 := ag2.getSessionMeta(sessionKey)
+	expected := time.Date(2026, 2, 23, 12, 30, 0, 0, time.UTC)
+	if !sm2.lastMessageTime.Equal(expected) {
+		t.Errorf("lastMessageTime = %v, want %v", sm2.lastMessageTime, expected)
+	}
+}
+
+func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
+
+	sessionKey := "agent:test:seedskip"
+
+	// First message has meta, second user message is a restart marker (no meta)
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "user",
+		Content: anthropic.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
+	})
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "assistant",
+		Content: anthropic.TextContent("Hi!"),
+	})
+	store.Append(sessionKey, anthropic.Message{
+		Role:    "user",
+		Content: anthropic.TextContent("[System restarted at 2026-02-23T11:00:00Z]"),
+	})
+
+	ag.SeedSessionMeta(sessionKey)
+
+	sm := ag.getSessionMeta(sessionKey)
+	expected := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	if !sm.lastMessageTime.Equal(expected) {
+		t.Errorf("lastMessageTime = %v, want %v (should skip restart marker and find first meta)", sm.lastMessageTime, expected)
+	}
+}
+

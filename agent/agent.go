@@ -224,6 +224,48 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 	return m
 }
 
+// SeedSessionMeta loads the session history and extracts the last user message's
+// [meta] time= timestamp to seed lastMessageTime. This ensures the first turn
+// after a restart shows a correct gap instead of gap=none.
+func (a *Agent) SeedSessionMeta(key string) {
+	msgs, err := a.Sessions.Load(key)
+	if err != nil || len(msgs) == 0 {
+		return
+	}
+	// Walk backwards to find last user message with a meta timestamp
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		text := anthropic.TextOf(msgs[i].Content)
+		if t, ok := parseMetaTime(text); ok {
+			sm := a.getSessionMeta(key)
+			sm.lastMessageTime = t
+			return
+		}
+	}
+}
+
+// parseMetaTime extracts the timestamp from a [meta] time=... header line.
+func parseMetaTime(text string) (time.Time, bool) {
+	if !strings.HasPrefix(text, "[meta] ") {
+		return time.Time{}, false
+	}
+	idx := strings.Index(text, "time=")
+	if idx < 0 {
+		return time.Time{}, false
+	}
+	s := text[idx+5:]
+	if sp := strings.IndexByte(s, ' '); sp > 0 {
+		s = s[:sp]
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
 // buildMetaPrefix creates the metadata line prepended to user messages.
 func buildMetaPrefix(now time.Time, model string, mana string, sm *sessionMeta) string {
 	gap := "none"

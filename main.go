@@ -128,6 +128,13 @@ func main() {
 		log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
 	}
 
+	// Inject restart markers into recently active sessions
+	if n, err := sessions.InjectRestartMarkers(session.RestartMarkerMaxAge); err != nil {
+		log.Warnf("main", "restart markers: %v", err)
+	} else if n > 0 {
+		log.Infof("main", "injected restart markers into %d active session(s)", n)
+	}
+
 	// Shared: State persistence (JSON file in data dir)
 	statePath := cfg.DataPath("state.json")
 	stateStore := state.New(statePath)
@@ -767,6 +774,7 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxOutputTokens:         acfg.MaxOutputTokens,
 	}
 	ag.RestoreVoiceMode(sessionKey)
+	ag.SeedSessionMeta(sessionKey)
 
 	// Warning injection queue (if enabled)
 	if p.cfg.Logging.InjectAgentWarnings {

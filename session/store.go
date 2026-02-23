@@ -312,6 +312,58 @@ func (s *Store) RepairOrphans() (int, error) {
 	return repaired, nil
 }
 
+// RestartMarkerMaxAge is the maximum age of a session file to receive a restart marker.
+// Only sessions modified within this window are considered "active" at restart time.
+const RestartMarkerMaxAge = 1 * time.Hour
+
+// InjectRestartMarkers appends a restart marker to all active session files
+// (those modified within maxAge of now). This gives the agent visibility that
+// a service restart occurred. Returns the number of marked sessions.
+func (s *Store) InjectRestartMarkers(maxAge time.Duration) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	marked := 0
+
+	err := filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+
+		// Only mark recently active sessions
+		if now.Sub(info.ModTime()) > maxAge {
+			return nil
+		}
+
+		// Convert file path back to session key
+		rel, err := filepath.Rel(s.dir, path)
+		if err != nil {
+			return nil
+		}
+		rel = strings.TrimSuffix(rel, ".jsonl")
+		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+
+		marker := anthropic.Message{
+			Role:    "user",
+			Content: anthropic.TextContent("[System restarted at " + now.UTC().Format(time.RFC3339) + "]"),
+		}
+		if err := s.appendUnlocked(key, marker); err != nil {
+			return fmt.Errorf("mark %s: %w", key, err)
+		}
+		marked++
+		return nil
+	})
+
+	if err != nil && !os.IsNotExist(err) {
+		return marked, err
+	}
+	return marked, nil
+}
+
 // MessageCount returns the number of messages in a session.
 func (s *Store) MessageCount(key string) (int, error) {
 	msgs, err := s.Load(key)

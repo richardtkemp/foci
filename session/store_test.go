@@ -483,3 +483,113 @@ func TestRepairOrphansEmptyDir(t *testing.T) {
 		t.Errorf("repaired = %d, want 0", n)
 	}
 }
+
+// --- InjectRestartMarkers tests ---
+
+func TestInjectRestartMarkersRecentFile(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	// Create a session (file will have recent mtime)
+	s.Append(key, msg("user", "hello"))
+	s.Append(key, msg("assistant", "hi"))
+
+	n, err := s.InjectRestartMarkers(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("InjectRestartMarkers: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("marked = %d, want 1", n)
+	}
+
+	msgs, err := s.Load(key)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3", len(msgs))
+	}
+
+	marker := msgs[2]
+	if marker.Role != "user" {
+		t.Errorf("marker role = %q, want user", marker.Role)
+	}
+	text := anthropic.TextOf(marker.Content)
+	if !strings.Contains(text, "[System restarted at ") {
+		t.Errorf("marker text = %q, want restart marker", text)
+	}
+}
+
+func TestInjectRestartMarkersOldFile(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:main"
+
+	s.Append(key, msg("user", "hello"))
+
+	// Set mtime to 2 hours ago
+	path := s.keyToPath(key)
+	oldTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	n, err := s.InjectRestartMarkers(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("InjectRestartMarkers: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("marked = %d, want 0 (file too old)", n)
+	}
+
+	msgs, _ := s.Load(key)
+	if len(msgs) != 1 {
+		t.Errorf("len = %d, want 1 (unchanged)", len(msgs))
+	}
+}
+
+func TestInjectRestartMarkersEmptyDir(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	n, err := s.InjectRestartMarkers(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("InjectRestartMarkers: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("marked = %d, want 0", n)
+	}
+}
+
+func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	// Recent session
+	recent := "agent:test:main"
+	s.Append(recent, msg("user", "hello"))
+
+	// Old session
+	old := "agent:test:cron:daily"
+	s.Append(old, msg("user", "wake"))
+	oldPath := s.keyToPath(old)
+	oldTime := time.Now().Add(-2 * time.Hour)
+	os.Chtimes(oldPath, oldTime, oldTime)
+
+	n, err := s.InjectRestartMarkers(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("InjectRestartMarkers: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("marked = %d, want 1 (only recent)", n)
+	}
+
+	// Recent should have marker
+	msgs, _ := s.Load(recent)
+	if len(msgs) != 2 {
+		t.Errorf("recent len = %d, want 2", len(msgs))
+	}
+
+	// Old should be unchanged
+	msgs, _ = s.Load(old)
+	if len(msgs) != 1 {
+		t.Errorf("old len = %d, want 1", len(msgs))
+	}
+}
