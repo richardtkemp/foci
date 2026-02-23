@@ -421,27 +421,17 @@ Credentials are loaded once at startup into process memory. Built-in integration
 
 ### Architecture
 
-**`secrets.toml`** — separate from main config, `0600` permissions, read once at startup.
+**`secrets.toml`** — separate from main config, protected by OS-level group permissions. See [docs/SECRETS.md](docs/SECRETS.md) for full details.
 
-```toml
-# secrets.toml — loaded at startup, never accessible to agent
+**OS-level protection (primary):**
 
-[anthropic]
-token = "sk-ant-oat01-..."
+- `secrets.toml` owned by `root:clod-secrets`, mode `0660`
+- Main clod process has `clod-secrets` as a supplementary group (via systemd `SupplementaryGroups`)
+- All child processes (exec tool, tmux tool, script commands) have supplementary groups dropped — they run with only the primary `clod` group
+- The OS kernel denies access regardless of how the path is specified (encoding tricks, globs, interpreter string construction all fail)
+- Requires `AmbientCapabilities=CAP_SETGID` in the systemd unit for `setgroups()` to work
 
-[telegram]
-bot_token = "8351531463:AAH..."
-
-[brave]
-api_key = "BSA..."
-
-# Ad-hoc secrets for exec template references
-[custom]
-github_token = "ghp_..."
-openrouter_key = "sk-or-v1-..."
-```
-
-**Three layers:**
+**Defence-in-depth layers:**
 
 1. **Built-in integrations** — Anthropic client, Telegram bot, etc. receive credentials via Go structs at init. Agent calls tools; tools use credentials internally. Zero exposure.
 
@@ -451,10 +441,11 @@ openrouter_key = "sk-or-v1-..."
    ```
    Clod resolves `{{secret:NAME}}` before spawning the subprocess. The agent sees the template, never the value. Unresolved references are an error (not silently passed through).
 
-3. **Output redaction** — Exec tool output is scanned for known secret patterns and redacted before returning to the agent. Defence in depth — catches accidental leaks from `env`, error messages, config dumps, etc.
+3. **Output redaction** — Exec tool output is scanned for known secret patterns and redacted before returning to the agent. Catches accidental leaks from `env`, error messages, config dumps, etc.
 
-### Blocked paths
-The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path matching a configurable blocklist. Not adversarial defence — the agent isn't hostile, just careless.
+4. **Blocked paths** — The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path matching a configurable blocklist. String-match check as additional layer.
+
+5. **Startup security checks** — At startup, verifies file ownership, permissions, and group membership. Warns if misconfigured (does not block startup). Disable with `skip_security_checks = true`.
 
 ### What the agent knows
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
