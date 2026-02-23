@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,6 +98,33 @@ func (b *Bootstrap) Reload() {
 	b.cached = blocks
 	b.cachedWithSec = nil // invalidate cached blocks with secrets
 	b.mu.Unlock()
+}
+
+// CheckSizes reports per-file and total system prompt size warnings.
+// Returns a list of warning strings (empty if all within thresholds).
+// A zero threshold disables that check.
+func (b *Bootstrap) CheckSizes(maxFileChars, maxTotalChars int) []string {
+	b.mu.RLock()
+	blocks := b.cached
+	b.mu.RUnlock()
+
+	var warnings []string
+	total := 0
+	for i, block := range blocks {
+		size := len(block.Text)
+		total += size
+		if maxFileChars > 0 && size > maxFileChars {
+			name := "unknown"
+			if i < len(b.fileOrder) {
+				name = b.fileOrder[i]
+			}
+			warnings = append(warnings, fmt.Sprintf("system prompt file %s is %d chars (threshold: %d)", name, size, maxFileChars))
+		}
+	}
+	if maxTotalChars > 0 && total > maxTotalChars {
+		warnings = append(warnings, fmt.Sprintf("total system prompt is %d chars (threshold: %d)", total, maxTotalChars))
+	}
+	return warnings
 }
 
 // loadFromDisk reads workspace files and builds system blocks.

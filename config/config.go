@@ -73,6 +73,8 @@ type SessionsConfig struct {
 	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`    // handoff message after compaction
 	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`  // extra system prompt injected only during compaction (saves tokens on regular turns)
 	CompactionNotify        *bool   `toml:"compaction_notify"`         // send Telegram notification on compaction (default true)
+	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
+	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 }
 
 type MemorySource struct {

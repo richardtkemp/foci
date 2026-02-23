@@ -120,6 +120,8 @@ Session storage and compaction.
 | `compaction_summary_prompt` | string | see below | Prompt sent to the model to generate the summary. |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
+| `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
+| `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 

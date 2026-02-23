@@ -268,3 +268,49 @@ func TestReloadInvalidatesSecretCache(t *testing.T) {
 		t.Errorf("block counts differ: %d vs %d", len(blocks1), len(blocks2))
 	}
 }
+
+func TestCheckSizes(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a small file and a large file
+	os.WriteFile(filepath.Join(dir, "SMALL.md"), []byte("small"), 0644)
+	os.WriteFile(filepath.Join(dir, "BIG.md"), make([]byte, 25000), 0644)
+
+	b := NewBootstrap(dir, []string{"SMALL.md", "BIG.md"})
+
+	// No warnings with high thresholds
+	warnings := b.CheckSizes(100000, 200000)
+	if len(warnings) != 0 {
+		t.Errorf("expected 0 warnings with high thresholds, got %d: %v", len(warnings), warnings)
+	}
+
+	// Per-file warning
+	warnings = b.CheckSizes(20000, 200000)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 per-file warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "BIG.md") {
+		t.Errorf("warning should mention BIG.md: %s", warnings[0])
+	}
+
+	// Total warning
+	warnings = b.CheckSizes(100000, 10000)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 total warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "total") {
+		t.Errorf("warning should mention 'total': %s", warnings[0])
+	}
+
+	// Both warnings
+	warnings = b.CheckSizes(20000, 10000)
+	if len(warnings) != 2 {
+		t.Errorf("expected 2 warnings, got %d: %v", len(warnings), warnings)
+	}
+
+	// Zero thresholds disable checks
+	warnings = b.CheckSizes(0, 0)
+	if len(warnings) != 0 {
+		t.Errorf("expected 0 warnings with zero thresholds, got %d", len(warnings))
+	}
+}
