@@ -153,8 +153,8 @@ func TestParseResetTimeMinutes(t *testing.T) {
 func TestParseResetTimeHours(t *testing.T) {
 	future := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339Nano)
 	result := parseResetTime(future)
-	if !strings.HasPrefix(result, "in ") || !strings.HasSuffix(result, "h") {
-		t.Errorf("parseResetTime(3h) = %q, want 'in Xh'", result)
+	if !strings.HasPrefix(result, "in ") || !strings.Contains(result, "h") {
+		t.Errorf("parseResetTime(3h) = %q, want 'in Xh' or 'in Xh Ym'", result)
 	}
 }
 
@@ -323,8 +323,8 @@ func TestFormatManaResetWithTime(t *testing.T) {
 			ResetsAt:    &future,
 		},
 	})
-	if !strings.HasPrefix(got, "in ") || !strings.HasSuffix(got, "h") {
-		t.Errorf("FormatManaReset(2h) = %q, want 'in Xh'", got)
+	if !strings.HasPrefix(got, "in ") || !strings.Contains(got, "h") {
+		t.Errorf("FormatManaReset(2h) = %q, want 'in Xh' or 'in Xh Ym'", got)
 	}
 }
 
