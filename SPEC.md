@@ -135,27 +135,29 @@ Tools:
 
 Stored in SQLite, scoped per-agent via `agent_id` column. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
 
-### Model Escalation
+### Spawn (Model Escalation + Self-Fork)
 
-No dedicated mechanism. Use `request_model` — which is just a synchronous subagent call with a custom prompt, no tools, and no cache writing:
+The `spawn` tool is a unified sub-call mechanism with three context modes:
 
 ```
-request_model("opus", "Evaluate whether this cache-sharing architecture has a subtle correctness bug: [full context here]")
+spawn(prompt="Evaluate this architecture", model="opus", context="none")
+spawn(prompt="Research this topic thoroughly", context="inherit")
 ```
 
-The agent constructs a self-contained prompt with all necessary context. Opus (or whatever model) gets a one-shot cold call, responds, and the result comes back as a tool result. The session stays on its original model with its warm cache intact.
+**Context modes:**
 
-This is syntactic sugar over the subagent system — same dispatch path, just synchronous and tool-less.
+- **`none`** — just the prompt, no system context, no tools. One-shot cold call. Cheapest option for simple questions.
+- **`full`** — character files + prompt, no tools. One-shot call with full personality context. Good for tasks that need "you" without tool access.
+- **`inherit`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. The result is returned when the branch completes.
 
-### Subagent Prompt Weight
+**Inherit mode details:**
+- Creates a branch session: `agent:AGENTID:spawn:spawn-TIMESTAMP`
+- Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
+- Recursive inherit spawns are blocked — a spawned session can use `none`/`full` but not `inherit`
+- Concurrent inherit spawns are limited by `max_concurrent_spawns` (default 3)
+- Runs as a full agent turn with all tools available
 
-Subagents (including `request_model`) accept a prompt weight that controls how much system context they inherit:
-
-- **`full`** — character files (identity, soul, agents, tools, memory) + parent's payload. Default for background tasks that need to "be you."
-- **`light`** — minimal system prompt + parent's payload. Default for `request_model`. You're asking a question, not spawning a personality.
-- **`none`** — parent's payload only. Zero overhead. Parent is 100% responsible for context.
-
-This keeps model escalation cheap — an Opus consultation with `light` or `none` prompt is just the question + context the agent packs, not 15k tokens of character files.
+**Model resolution:** Short names (`opus`, `sonnet`, `haiku`) resolve to full model IDs. Empty model defaults to the parent's model. Model is ignored for inherit mode (inherits parent model).
 
 ### Thought Queue
 
@@ -182,7 +184,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
-- `request_model` — escalate to a heavier model for the next turn
+- `spawn` — sub-call to a model (none/full: one-shot, inherit: branch session with full tools)
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
@@ -726,7 +728,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Multiball — `/multiball` forks to secondary Telegram bot, tested and working
 - Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
 - Telegram bot (text messages, DM only)
-- Tools: exec, read, write, edit, web_fetch, web_search, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), request_model, schedule_wake, tts, todo
+- Tools: exec, read, write, edit, web_fetch, web_search, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), spawn (none/full/inherit), schedule_wake, tts, todo
 - Workspace bootstrap (markdown files → system prompt, configurable file order)
 - Skills framework (YAML frontmatter, command dispatch, script execution)
 - Heartbeat (configurable interval)
@@ -757,7 +759,6 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 
 ### 🔶 Phase 2 — Next
 
-- **Sub-agents** — agent-initiated branch sessions for delegated tasks
 - **Inter-agent messaging** — agents communicating with each other
 - **File attachments** — send/receive files via Telegram
 - **Compaction pre-save prompt** — "save important context" before compacting

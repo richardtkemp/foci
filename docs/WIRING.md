@@ -341,7 +341,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_write` | scratchpad.go | Write working notes (key + content); survives compaction |
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
-| `request_model` | model.go | Synchronous one-shot call to a different model. Sends prompt, returns response as tool result. Supports prompt weight: full (character files), light (minimal), none. Session's own model/cache unaffected. |
+| `spawn` | spawn.go | Unified sub-call: three context modes. `none`: one-shot, no system prompt. `full`: one-shot with character files. `inherit` (default): branch session with full tool access — a headless self-fork. Inherit creates branch `agent:ID:spawn:spawn-TIMESTAMP`, runs HandleMessage, returns result. Recursive inherit blocked via context key. Concurrent inherit limited by `max_concurrent_spawns` (default 3). |
 | `schedule_wake` | schedule.go | Schedule message injection at specified time or delay. One-shot, auto-cleaned after firing. |
 | `tts` | voice.go | Convert text to speech via TTS provider (Edge TTS or OpenAI). Sends audio as Telegram voice note. Configurable rate/speed via `tts_rate`. |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
