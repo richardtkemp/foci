@@ -612,7 +612,11 @@ func main() {
 	// already processing. With heartbeats stopped and HTTP closed, no new
 	// turns will be initiated. We defer cancel() until AFTER this loop so
 	// that in-flight turns (including exec subprocesses) aren't killed.
-	gracefulShutdown(agents)
+	shutdownTimeout, _ := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout)
+	if shutdownTimeout == 0 {
+		shutdownTimeout = 30 * time.Second
+	}
+	gracefulShutdown(agents, shutdownTimeout)
 
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
 	cancel()
@@ -1133,27 +1137,31 @@ func sessionMessageCount(sessions *session.Store, key string) int {
 	return n
 }
 
-// gracefulShutdown waits up to 5 seconds for all in-flight agent turns to complete.
-// This allows exec subprocesses and API calls to finish naturally before the
-// context is cancelled.
-func gracefulShutdown(agents map[string]*agentInstance) {
-	const maxWaitTicks = 50
+// gracefulShutdown waits for all in-flight agent turns to complete, up to the
+// configured timeout. This allows exec subprocesses and API calls to finish
+// naturally before the context is cancelled.
+func gracefulShutdown(agents map[string]*agentInstance, timeout time.Duration) {
 	const tickInterval = 100 * time.Millisecond
+	deadline := time.After(timeout)
 
-	for i := 0; i < maxWaitTicks; i++ {
-		anyBusy := false
-		for _, inst := range agents {
+	for {
+		var busy []string
+		for id, inst := range agents {
 			if inst.ag.IsProcessing() {
-				anyBusy = true
-				break
+				busy = append(busy, id)
 			}
 		}
-		if !anyBusy {
+		if len(busy) == 0 {
 			return
 		}
-		time.Sleep(tickInterval)
+		select {
+		case <-deadline:
+			log.Warnf("main", "graceful shutdown timed out after %s — agents still processing: %s", timeout, strings.Join(busy, ", "))
+			return
+		default:
+			time.Sleep(tickInterval)
+		}
 	}
-	log.Warnf("main", "graceful shutdown timed out — some agents still processing")
 }
 
 // injectWelcomeFile checks for a welcome/changelog file written by setup.sh
