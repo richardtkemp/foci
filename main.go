@@ -873,7 +873,11 @@ func setupAgent(p setupParams) *agentInstance {
 		if percent == "" {
 			return fmt.Sprintf("%s: unknown", manaName), nil
 		}
-		return fmt.Sprintf("%s: %s remaining", manaName, percent), nil
+		result := fmt.Sprintf("%s: %s remaining", manaName, percent)
+		if reset := anthropic.FormatManaReset(usage); reset != "" {
+			result += fmt.Sprintf(" (resets %s)", reset)
+		}
+		return result, nil
 	}))
 
 	// /reload command
