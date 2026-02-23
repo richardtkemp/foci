@@ -18,7 +18,7 @@ func testScratchpadTools(t *testing.T) (*Tool, *Tool, *Tool) {
 		t.Fatalf("NewScratchpad: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return NewScratchpadWriteTool(s), NewScratchpadReadTool(s), NewScratchpadClearTool(s)
+	return NewScratchpadWriteTool(s, "test"), NewScratchpadReadTool(s, "test"), NewScratchpadClearTool(s, "test")
 }
 
 func testScratchpadToolsWithList(t *testing.T) (*Tool, *Tool, *Tool, *Tool) {
@@ -29,7 +29,7 @@ func testScratchpadToolsWithList(t *testing.T) (*Tool, *Tool, *Tool, *Tool) {
 		t.Fatalf("NewScratchpad: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return NewScratchpadWriteTool(s), NewScratchpadReadTool(s), NewScratchpadClearTool(s), NewScratchpadListTool(s)
+	return NewScratchpadWriteTool(s, "test"), NewScratchpadReadTool(s, "test"), NewScratchpadClearTool(s, "test"), NewScratchpadListTool(s, "test")
 }
 
 func TestScratchpadToolWriteRead(t *testing.T) {

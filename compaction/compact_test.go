@@ -211,8 +211,8 @@ func TestCompactWithScratchpad(t *testing.T) {
 	}
 	defer sp.Close()
 
-	sp.Write("plan", "Step 1: refactor\nStep 2: test")
-	sp.Write("notes", "important detail")
+	sp.Write("test", "plan", "Step 1: refactor\nStep 2: test")
+	sp.Write("test", "notes", "important detail")
 
 	// Add enough messages
 	for i := 0; i < 3; i++ {
@@ -222,6 +222,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
+	c.AgentID = "test"
 
 	err = c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
@@ -269,6 +270,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
+	c.AgentID = "test"
 
 	err = c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {

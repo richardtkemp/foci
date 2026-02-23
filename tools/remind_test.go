@@ -18,7 +18,7 @@ func testRemindTool(t *testing.T) *Tool {
 		t.Fatalf("NewReminderStore: %v", err)
 	}
 	t.Cleanup(func() { rs.Close() })
-	return NewMemoryRemindTool(rs)
+	return NewMemoryRemindTool(rs, "test")
 }
 
 func TestMemoryRemind(t *testing.T) {

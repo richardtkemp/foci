@@ -21,15 +21,16 @@ var tmuxCounter uint64
 
 // watchedSession tracks a tmux session being monitored for inactivity
 type watchedSession struct {
-	session      string
-	window       int
-	threshold    time.Duration
-	lastContent  [16]byte // md5 hash
-	lastActivity time.Time
-	notifier     *AsyncNotifier
-	ctx          context.Context
-	cancel       context.CancelFunc
-	done         chan struct{}
+	session         string
+	window          int
+	threshold       time.Duration
+	lastContent     [16]byte // md5 hash
+	lastActivity    time.Time
+	notifier        *AsyncNotifier
+	agentSessionKey string // agent session that started the watch (for async delivery)
+	ctx             context.Context
+	cancel          context.CancelFunc
+	done            chan struct{}
 }
 
 // tmuxInstance holds per-tool-instance state so each agent gets isolated tmux sessions.
@@ -386,14 +387,15 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 
 	monCtx, cancel := context.WithCancel(context.Background())
 	ws := &watchedSession{
-		session:      name,
-		window:       window,
-		threshold:    time.Duration(thresholdSeconds) * time.Second,
-		lastActivity: time.Now(),
-		notifier:     inst.notifier,
-		ctx:          monCtx,
-		cancel:       cancel,
-		done:         make(chan struct{}),
+		session:         name,
+		window:          window,
+		threshold:       time.Duration(thresholdSeconds) * time.Second,
+		lastActivity:    time.Now(),
+		notifier:        inst.notifier,
+		agentSessionKey: SessionKeyFromContext(ctx),
+		ctx:             monCtx,
+		cancel:          cancel,
+		done:            make(chan struct{}),
 	}
 	inst.watched[key] = ws
 	inst.mu.Unlock()
@@ -622,7 +624,7 @@ func tmuxWatchMonitor(ws *watchedSession) {
 				if time.Since(ws.lastActivity) > ws.threshold {
 					log.Infof("tmux", "watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
 					msg := fmt.Sprintf("[TMUX WATCH] Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold)
-					ws.notifier.Notify(msg)
+					ws.notifier.Notify(ws.agentSessionKey, msg)
 
 					// Reset activity timer to avoid repeated alerts
 					ws.lastActivity = time.Now()
