@@ -394,6 +394,100 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 }
 
+func TestCompactSystemPromptInjected(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.SystemPrompt = "You are summarizing a conversation. Preserve key decisions and action items."
+
+	regularSystem := []anthropic.SystemBlock{
+		{Type: "text", Text: "You are Clod, a helpful agent."},
+	}
+
+	err := c.Compact(context.Background(), sessionKey, regularSystem, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	body := string(capturedBody)
+
+	if !strings.Contains(body, "You are summarizing a conversation") {
+		t.Error("API request should contain compaction system prompt")
+	}
+	if !strings.Contains(body, "You are Clod") {
+		t.Error("API request should preserve regular system prompt")
+	}
+}
+
+func TestCompactSystemPromptNotInjectedWhenEmpty(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+	regularSystem := []anthropic.SystemBlock{
+		{Type: "text", Text: "Regular prompt only."},
+	}
+
+	err := c.Compact(context.Background(), sessionKey, regularSystem, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	var req anthropic.MessageRequest
+	json.Unmarshal(capturedBody, &req)
+
+	if len(req.System) != 1 {
+		t.Errorf("expected 1 system block (no extra injected), got %d", len(req.System))
+	}
+	if req.System[0].Text != "Regular prompt only." {
+		t.Errorf("system[0] = %q, want regular prompt", req.System[0].Text)
+	}
+}
+
 func TestCompactDefaultPrompts(t *testing.T) {
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
