@@ -1142,6 +1142,52 @@ id = "test"
 	}
 }
 
+func TestSessionResetPromptConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+
+[sessions]
+session_reset_prompt = "Save your memories now."
+session_reset_prompt_file = "/tmp/reset-prompt.md"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.SessionResetPrompt != "Save your memories now." {
+		t.Errorf("SessionResetPrompt = %q", cfg.Sessions.SessionResetPrompt)
+	}
+	if cfg.Sessions.SessionResetPromptFile != "/tmp/reset-prompt.md" {
+		t.Errorf("SessionResetPromptFile = %q", cfg.Sessions.SessionResetPromptFile)
+	}
+}
+
+func TestSessionResetPromptDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[agent]
+id = "test"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Sessions.SessionResetPrompt != "" {
+		t.Errorf("SessionResetPrompt should default to empty, got %q", cfg.Sessions.SessionResetPrompt)
+	}
+	if cfg.Sessions.SessionResetPromptFile != "" {
+		t.Errorf("SessionResetPromptFile should default to empty, got %q", cfg.Sessions.SessionResetPromptFile)
+	}
+}
+
 func TestResolveAllPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 
