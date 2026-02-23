@@ -16,10 +16,12 @@ import (
 
 // mockClient implements botClient for testing.
 type mockClient struct {
-	mu    sync.Mutex
-	sends int               // counts SendMessage calls
-	edits int               // counts EditMessageText calls
-	files map[string]string // fileId → filePath for GetFile mock
+	mu          sync.Mutex
+	sends       int               // counts SendMessage calls
+	edits       int               // counts EditMessageText calls
+	files       map[string]string // fileId → filePath for GetFile mock
+	setCmds     []gotgbot.BotCommand // last SetMyCommands call
+	setCmdsErr  error                // error to return from SetMyCommands
 }
 
 func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
@@ -59,6 +61,16 @@ func (m *mockClient) GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot
 		return nil, fmt.Errorf("file not found: %s", fileId)
 	}
 	return &gotgbot.File{FileId: fileId, FilePath: fp}, nil
+}
+
+func (m *mockClient) SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.SetMyCommandsOpts) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.setCmds = commands
+	if m.setCmdsErr != nil {
+		return false, m.setCmdsErr
+	}
+	return true, nil
 }
 
 func (m *mockClient) sentCount() int {
@@ -870,4 +882,71 @@ func TestFormatToolCall_LongParams(t *testing.T) {
 	if !strings.Contains(text, "...") {
 		t.Errorf("long params should be truncated: %q", text)
 	}
+}
+
+// --- RegisterCommands ---
+
+func TestRegisterCommands(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "help", Description: "List available commands"})
+	cmds.Register(&command.Command{Name: "ping", Description: "Check bot health"})
+	cmds.Register(&command.Command{Name: "status", Description: "Show agent status"})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	b.RegisterCommands()
+
+	if mock.setCmds == nil {
+		t.Fatal("SetMyCommands was not called")
+	}
+
+	// 3 registry commands + 2 special (stop, done)
+	if len(mock.setCmds) != 5 {
+		t.Fatalf("expected 5 commands, got %d", len(mock.setCmds))
+	}
+
+	// Registry commands should come first, sorted by name
+	names := make([]string, len(mock.setCmds))
+	for i, c := range mock.setCmds {
+		names[i] = c.Command
+	}
+	// help, ping, status (sorted), then stop, done
+	wantOrder := []string{"help", "ping", "status", "stop", "done"}
+	for i, want := range wantOrder {
+		if names[i] != want {
+			t.Errorf("command[%d] = %q, want %q", i, names[i], want)
+		}
+	}
+
+	// Verify descriptions
+	for _, c := range mock.setCmds {
+		if c.Description == "" {
+			t.Errorf("command %q has empty description", c.Command)
+		}
+	}
+}
+
+func TestRegisterCommands_EmptyDescription(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "test", Description: ""})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	b.RegisterCommands()
+
+	// Should fall back to command name as description
+	for _, c := range mock.setCmds {
+		if c.Command == "test" && c.Description != "test" {
+			t.Errorf("expected description fallback to name, got %q", c.Description)
+		}
+	}
+}
+
+func TestRegisterCommands_APIError(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "help", Description: "List commands"})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	mock.setCmdsErr = fmt.Errorf("telegram API error")
+
+	// Should not panic — just logs a warning
+	b.RegisterCommands()
 }
