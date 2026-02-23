@@ -223,15 +223,23 @@ func TestOpenAITTS_SpeedOmittedWhenZero(t *testing.T) {
 	}
 }
 
-func TestEdgeTTS_RateArgs(t *testing.T) {
-	e := &EdgeTTS{
-		Voice: "en-US-AndrewNeural",
-		Rate:  "+20%",
+func TestRateToEdgeTTS(t *testing.T) {
+	tests := []struct {
+		rate float64
+		want string
+	}{
+		{1.3, "+30%"},
+		{1.0, "+0%"},
+		{0.8, "-20%"},
+		{1.5, "+50%"},
+		{0.5, "-50%"},
+		{2.0, "+100%"},
 	}
-	// We can't easily test the full Synthesize (needs edge-tts binary),
-	// but we verify the struct fields are set correctly
-	if e.Rate != "+20%" {
-		t.Errorf("Rate = %q, want %q", e.Rate, "+20%")
+	for _, tt := range tests {
+		got := rateToEdgeTTS(tt.rate)
+		if got != tt.want {
+			t.Errorf("rateToEdgeTTS(%.1f) = %q, want %q", tt.rate, got, tt.want)
+		}
 	}
 }
 

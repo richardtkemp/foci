@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -292,7 +291,7 @@ func main() {
 			Voice: cfg.Voice.TTSVoice,
 			Rate:  cfg.Voice.TTSRate,
 		}
-		log.Infof("main", "voice TTS enabled (edge-tts, voice=%s rate=%s)", cfg.Voice.TTSVoice, cfg.Voice.TTSRate)
+		log.Infof("main", "voice TTS enabled (edge-tts, voice=%s rate=%.2f)", cfg.Voice.TTSVoice, cfg.Voice.TTSRate)
 	case "openai":
 		ttsEndpoint := cfg.Voice.TTSEndpoint
 		if ttsEndpoint == "" {
@@ -306,22 +305,14 @@ func main() {
 		if ttsVoice == "" {
 			ttsVoice = "alloy"
 		}
-		var ttsSpeed float64
-		if cfg.Voice.TTSRate != "" {
-			if v, err := strconv.ParseFloat(cfg.Voice.TTSRate, 64); err == nil {
-				ttsSpeed = v
-			} else {
-				log.Warnf("main", "invalid tts_rate %q for openai provider (expected float like 1.5): %v", cfg.Voice.TTSRate, err)
-			}
-		}
 		ttsProvider = &voice.OpenAITTS{
 			Endpoint: ttsEndpoint,
 			APIKey:   openrouterKey,
 			Model:    ttsModel,
 			Voice:    ttsVoice,
-			Speed:    ttsSpeed,
+			Speed:    cfg.Voice.TTSRate,
 		}
-		log.Infof("main", "voice TTS enabled (openai, %s, voice=%s speed=%.2f)", ttsModel, ttsVoice, ttsSpeed)
+		log.Infof("main", "voice TTS enabled (openai, %s, voice=%s rate=%.2f)", ttsModel, ttsVoice, cfg.Voice.TTSRate)
 	default:
 		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
 	}

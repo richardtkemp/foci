@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -81,9 +82,9 @@ func (w *WhisperSTT) Transcribe(ctx context.Context, audioData []byte, filename 
 
 // EdgeTTS uses the edge-tts CLI (free, no API key).
 type EdgeTTS struct {
-	Command string // binary name, default "edge-tts"
-	Voice   string // e.g. "en-US-AndrewNeural"
-	Rate    string // e.g. "+20%", "-10%", "+0%" (default: no --rate flag)
+	Command string  // binary name, default "edge-tts"
+	Voice   string  // e.g. "en-US-AndrewNeural"
+	Rate    float64 // speed multiplier: 1.3 = +30%, 0.8 = -20% (0 means omit --rate)
 }
 
 func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
@@ -104,8 +105,8 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	if e.Voice != "" {
 		args = append([]string{"--voice", e.Voice}, args...)
 	}
-	if e.Rate != "" {
-		args = append(args, "--rate", e.Rate)
+	if e.Rate != 0 {
+		args = append(args, "--rate", rateToEdgeTTS(e.Rate))
 	}
 
 	ttsCmd := exec.CommandContext(ctx, cmd, args...)
@@ -119,6 +120,15 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// rateToEdgeTTS converts a speed multiplier (e.g. 1.3) to edge-tts --rate format (e.g. "+30%").
+func rateToEdgeTTS(rate float64) string {
+	pct := math.Round((rate - 1.0) * 100)
+	if pct >= 0 {
+		return fmt.Sprintf("+%d%%", int(pct))
+	}
+	return fmt.Sprintf("%d%%", int(pct))
 }
 
 // OpenAITTS uses an OpenAI-compatible TTS API (OpenRouter, Groq, OpenAI).
