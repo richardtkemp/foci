@@ -33,6 +33,7 @@ type AgentConfig struct {
 	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
 	MaxToolLoops      int               `toml:"max_tool_loops"`     // max tool iterations per turn (default 25)
 	MaxOutputTokens   int               `toml:"max_output_tokens"`  // max tokens in model response (default 8192)
+	TTSRate           float64           `toml:"tts_rate"`           // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 }
 
 type AnthropicConfig struct {

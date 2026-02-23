@@ -23,6 +23,26 @@ type TTS interface {
 	Synthesize(ctx context.Context, text string) ([]byte, error)
 }
 
+// WithRate returns a copy of the TTS provider with the given speech rate.
+// If the provider doesn't support rate overrides, it returns itself unchanged.
+func WithRate(t TTS, rate float64) TTS {
+	if rate == 0 {
+		return t
+	}
+	switch p := t.(type) {
+	case *EdgeTTS:
+		cp := *p
+		cp.Rate = rate
+		return &cp
+	case *OpenAITTS:
+		cp := *p
+		cp.Speed = rate
+		return &cp
+	default:
+		return t
+	}
+}
+
 // --- STT implementations ---
 
 // WhisperSTT sends audio to an OpenAI-compatible Whisper API.
