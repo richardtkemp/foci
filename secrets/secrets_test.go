@@ -285,3 +285,67 @@ my_key = "value123"
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestSetAndSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	s.Set("custom.api_key", "sk-test-123")
+	s.Set("anthropic.token", "sk-ant-456")
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Reload and verify
+	s2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after save: %v", err)
+	}
+
+	v, ok := s2.Get("custom.api_key")
+	if !ok || v != "sk-test-123" {
+		t.Errorf("custom.api_key = %q, ok=%v", v, ok)
+	}
+	v, ok = s2.Get("anthropic.token")
+	if !ok || v != "sk-ant-456" {
+		t.Errorf("anthropic.token = %q, ok=%v", v, ok)
+	}
+}
+
+func TestRemove(t *testing.T) {
+	path := writeSecrets(t, `
+[custom]
+key1 = "val1"
+key2 = "val2"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !s.Remove("custom.key1") {
+		t.Error("Remove should return true for existing key")
+	}
+	if s.Remove("custom.nonexistent") {
+		t.Error("Remove should return false for missing key")
+	}
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after save: %v", err)
+	}
+	if _, ok := s2.Get("custom.key1"); ok {
+		t.Error("key1 should be removed")
+	}
+	if _, ok := s2.Get("custom.key2"); !ok {
+		t.Error("key2 should still exist")
+	}
+}

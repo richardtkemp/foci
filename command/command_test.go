@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -97,5 +98,102 @@ func TestAll(t *testing.T) {
 	}
 	if all[0].Name != "alpha" {
 		t.Errorf("first = %s, want alpha (sorted)", all[0].Name)
+	}
+}
+
+// mockSecretsStore implements SecretsStore for testing.
+type mockSecretsStore struct {
+	data  map[string]string
+	saved bool
+}
+
+func (m *mockSecretsStore) Names() []string {
+	names := make([]string, 0, len(m.data))
+	for k := range m.data {
+		names = append(names, k)
+	}
+	return names
+}
+func (m *mockSecretsStore) Set(name, value string) { m.data[name] = value }
+func (m *mockSecretsStore) Remove(name string) bool {
+	if _, ok := m.data[name]; !ok {
+		return false
+	}
+	delete(m.data, name)
+	return true
+}
+func (m *mockSecretsStore) Save() error { m.saved = true; return nil }
+
+func TestSecretsCommand(t *testing.T) {
+	store := &mockSecretsStore{data: map[string]string{
+		"anthropic.token": "sk-ant-123",
+		"custom.api_key":  "key-456",
+	}}
+	cmd := NewSecretsCommand(store)
+
+	if cmd.SkipToolExport != true {
+		t.Error("secrets command must have SkipToolExport=true")
+	}
+
+	// List
+	result, err := cmd.Execute(context.Background(), "list")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(result, "[anthropic]") || !strings.Contains(result, "token") {
+		t.Errorf("list result = %q, want anthropic section with token", result)
+	}
+	// Secret values must never appear
+	if strings.Contains(result, "sk-ant-123") || strings.Contains(result, "key-456") {
+		t.Error("list should not display secret values")
+	}
+
+	// Set
+	result, err = cmd.Execute(context.Background(), "set custom.new_key my-secret-value")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !strings.Contains(result, "set") {
+		t.Errorf("set result = %q", result)
+	}
+	if store.data["custom.new_key"] != "my-secret-value" {
+		t.Errorf("key not set: %v", store.data)
+	}
+	if !store.saved {
+		t.Error("Save should have been called")
+	}
+
+	// Remove
+	store.saved = false
+	result, err = cmd.Execute(context.Background(), "remove custom.api_key")
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if !strings.Contains(result, "removed") {
+		t.Errorf("remove result = %q", result)
+	}
+	if _, ok := store.data["custom.api_key"]; ok {
+		t.Error("key should be removed")
+	}
+	if !store.saved {
+		t.Error("Save should have been called")
+	}
+
+	// Remove nonexistent
+	result, err = cmd.Execute(context.Background(), "remove nonexistent.key")
+	if err != nil {
+		t.Fatalf("remove nonexistent: %v", err)
+	}
+	if !strings.Contains(result, "not found") {
+		t.Errorf("remove nonexistent result = %q", result)
+	}
+
+	// Usage (no args)
+	result, err = cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("no args: %v", err)
+	}
+	if !strings.Contains(result, "Usage") {
+		t.Errorf("empty args result = %q, want usage", result)
 	}
 }
