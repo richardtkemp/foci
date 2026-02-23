@@ -391,7 +391,44 @@ Miscellaneous top-level config keys (not in any section).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `data_dir` | string | `""` | Directory for databases, sessions, and state files (`memory.db`, `reminders.db`, `scratchpad.db`, `state.json`, etc.). When empty (default), data files are stored in the same directory as the config file (backward compatible). Must be an absolute path when set. |
 | `welcome_file` | string | `"WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Written by `setup.sh` on update (not fresh install). |
+
+---
+
+## Recommended Directory Layout
+
+For new installs, `setup.sh` creates this structure:
+
+```
+/home/clod/
+  config/            — clod.toml, secrets.toml
+  data/              — *.db, sessions/, .clod-commit, state.json, WELCOME.md
+  logs/              — clod.log, api.jsonl, api-payload.jsonl
+  shared/            — skills/, scripts/
+  character/         — agent workspace (IDENTITY.md, SOUL.md, memory/, etc.)
+```
+
+The key config fields that wire this up:
+
+```toml
+data_dir = "/home/clod/data"
+
+[sessions]
+dir = "/home/clod/data/sessions"
+
+[logging]
+event_file = "/home/clod/logs/clod.log"
+api_file = "/home/clod/logs/api.jsonl"
+conversation_file = "/home/clod/data/conversation.db"
+
+[skills]
+dirs = ["/home/clod/shared/skills"]
+
+welcome_file = "/home/clod/data/WELCOME.md"
+```
+
+Existing flat-layout installs continue to work unchanged. To migrate, run `scripts/migrate-homedir.sh`.
 
 ---
 

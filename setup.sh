@@ -91,12 +91,21 @@ fi
 # Capture the currently-deployed commit hash (for changelog on update)
 OLD_COMMIT=""
 IS_UPDATE=false
-COMMIT_FILE="$CLOD_HOME/.clod-commit"
+COMMIT_FILE="$CLOD_HOME/data/.clod-commit"
 if [[ -f "$INSTALL_DIR/clodgw" ]]; then
     IS_UPDATE=true
+    # Check new location first, fall back to legacy
     if [[ -f "$COMMIT_FILE" ]]; then
         OLD_COMMIT="$(cat "$COMMIT_FILE" 2>/dev/null || true)"
+    elif [[ -f "$CLOD_HOME/.clod-commit" ]]; then
+        OLD_COMMIT="$(cat "$CLOD_HOME/.clod-commit" 2>/dev/null || true)"
     fi
+fi
+
+# Ensure data dir exists early (needed for commit file and welcome file)
+if ! $DRY_RUN; then
+    mkdir -p "$CLOD_HOME/data"
+    chown "$CLOD_USER:$CLOD_USER" "$CLOD_HOME/data" 2>/dev/null || true
 fi
 
 # Ensure Go env vars are set (sudo strips HOME and caches)
@@ -131,7 +140,7 @@ info "  Installed clodgw and clod to $INSTALL_DIR"
 
 # Write changelog (WELCOME.md) on update — not fresh install
 if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]]; then
-    WELCOME_FILE="$CLOD_HOME/WELCOME.md"
+    WELCOME_FILE="$CLOD_HOME/data/WELCOME.md"
     if ! $DRY_RUN; then
         {
             echo "# Clod Updated"
@@ -163,7 +172,7 @@ fi
 
 # ---------- 3. Directories ----------
 info "Step 3: Directories"
-for dir in "$CLOD_HOME/sessions" "$CLOD_HOME/character" "$CLOD_HOME/character/memory"; do
+for dir in "$CLOD_HOME/config" "$CLOD_HOME/data" "$CLOD_HOME/data/sessions" "$CLOD_HOME/logs" "$CLOD_HOME/shared/skills" "$CLOD_HOME/character" "$CLOD_HOME/character/memory"; do
     run mkdir -p "$dir"
     run chown "$CLOD_USER:$CLOD_USER" "$dir"
 done
@@ -171,7 +180,7 @@ info "  Directories ready"
 
 # ---------- 4. Config ----------
 info "Step 4: Config"
-if [[ -f "$CLOD_HOME/clod.toml" ]]; then
+if [[ -f "$CLOD_HOME/config/clod.toml" ]] || [[ -f "$CLOD_HOME/clod.toml" ]]; then
     info "  Config exists, not touching it"
 else
     # Resolve credentials: env vars → interactive prompts → error
@@ -217,7 +226,9 @@ else
             info "  (dry-run) Would write config using env vars"
         fi
     else
-        cat > "$CLOD_HOME/clod.toml" << TOML
+        cat > "$CLOD_HOME/config/clod.toml" << TOML
+data_dir = "$CLOD_HOME/data"
+
 [agent]
 id = "main"
 model = "$AGENT_MODEL"
@@ -228,7 +239,7 @@ heartbeat_interval = "45m"
 allowed_users = ["$TELEGRAM_USER"]
 
 [sessions]
-dir = "$CLOD_HOME/sessions"
+dir = "$CLOD_HOME/data/sessions"
 compaction_threshold = 0.8
 
 [memory]
@@ -240,26 +251,31 @@ bind = "127.0.0.1"
 
 [logging]
 level = "INFO"
-event_file = "$CLOD_HOME/clod.log"
-api_file = "$CLOD_HOME/api.jsonl"
-conversation_file = "$CLOD_HOME/conversation.db"
+event_file = "$CLOD_HOME/logs/clod.log"
+api_file = "$CLOD_HOME/logs/api.jsonl"
+conversation_file = "$CLOD_HOME/data/conversation.db"
+
+[skills]
+dirs = ["$CLOD_HOME/shared/skills"]
+
+welcome_file = "$CLOD_HOME/data/WELCOME.md"
 TOML
-        chown "$CLOD_USER:$CLOD_USER" "$CLOD_HOME/clod.toml"
-        chmod 640 "$CLOD_HOME/clod.toml"
+        chown "$CLOD_USER:$CLOD_USER" "$CLOD_HOME/config/clod.toml"
+        chmod 640 "$CLOD_HOME/config/clod.toml"
 
         # Secrets in separate file (restricted permissions)
-        cat > "$CLOD_HOME/secrets.toml" << TOML
+        cat > "$CLOD_HOME/config/secrets.toml" << TOML
 [anthropic]
 token = "$ANTHROPIC_TOKEN"
 
 [telegram]
 bot_token = "$TELEGRAM_TOKEN"
 TOML
-        chown "$CLOD_USER:$CLOD_USER" "$CLOD_HOME/secrets.toml"
-        chmod 600 "$CLOD_HOME/secrets.toml"
+        chown "$CLOD_USER:$CLOD_USER" "$CLOD_HOME/config/secrets.toml"
+        chmod 600 "$CLOD_HOME/config/secrets.toml"
 
-        info "  Config written to $CLOD_HOME/clod.toml"
-        info "  Secrets written to $CLOD_HOME/secrets.toml (mode 600)"
+        info "  Config written to $CLOD_HOME/config/clod.toml"
+        info "  Secrets written to $CLOD_HOME/config/secrets.toml (mode 600)"
     fi
 fi
 
@@ -355,7 +371,7 @@ Type=simple
 User=$CLOD_USER
 WorkingDirectory=$CLOD_HOME
 Environment="PATH=$CLOD_HOME/bin:$CLOD_HOME/.local/bin:$CLOD_HOME/.cargo/bin:$CLOD_HOME/.npm-global/bin:$CLOD_HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$INSTALL_DIR/clodgw -config $CLOD_HOME/clod.toml
+ExecStart=$INSTALL_DIR/clodgw -config $CLOD_HOME/config/clod.toml
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

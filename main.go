@@ -128,8 +128,9 @@ func main() {
 		log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
 	}
 
-	// Shared: State persistence (JSON file in sessions dir)
-	statePath := filepath.Join(cfg.Sessions.Dir, "state.json")
+	// Shared: State persistence (JSON file in data dir)
+	configDir := filepath.Dir(configPath)
+	statePath := cfg.DataPath(configDir, "state.json")
 	stateStore := state.New(statePath)
 	if err := stateStore.Load(); err != nil {
 		log.Errorf("main", "load state: %v", err)
@@ -178,7 +179,7 @@ func main() {
 				if len(combined) == 0 {
 					continue
 				}
-				dbPath := filepath.Join(filepath.Dir(configPath), fmt.Sprintf("memory-%s.db", acfg.ID))
+				dbPath := cfg.DataPath(configDir, fmt.Sprintf("memory-%s.db", acfg.ID))
 				idx, err := memory.NewIndex(dbPath, combined, memDebounce, cfg.Memory.ConversationWeight)
 				if err != nil {
 					log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
@@ -207,7 +208,7 @@ func main() {
 			}
 		} else {
 			// Shared index (backward compat — no agent has per-agent memory)
-			memDbPath := filepath.Join(filepath.Dir(configPath), "memory.db")
+			memDbPath := cfg.DataPath(configDir, "memory.db")
 			sharedMemIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create memory index: %v", err)
@@ -226,7 +227,7 @@ func main() {
 		}
 
 		// Reminder store (shared across agents)
-		reminderDbPath := filepath.Join(filepath.Dir(configPath), "reminders.db")
+		reminderDbPath := cfg.DataPath(configDir, "reminders.db")
 		reminderStore, err = memory.NewReminderStore(reminderDbPath)
 		if err != nil {
 			log.Fatalf("main", "create reminder store: %v", err)
@@ -234,7 +235,7 @@ func main() {
 		defer reminderStore.Close()
 
 		// Scratchpad (shared across agents)
-		scratchpadDbPath := filepath.Join(filepath.Dir(configPath), "scratchpad.db")
+		scratchpadDbPath := cfg.DataPath(configDir, "scratchpad.db")
 		scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
 		if err != nil {
 			log.Fatalf("main", "create scratchpad: %v", err)
