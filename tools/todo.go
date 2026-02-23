@@ -13,13 +13,13 @@ import (
 func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
 		Name:        "todo",
-		Description: "Manage a persistent todo list. Supports adding, listing, completing, and removing items. Items have priority (high/medium/low) and survive restarts.",
+		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, and removing items. Items have priority (high/medium/low) and survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["add", "list", "complete", "remove"],
+					"enum": ["add", "list", "search", "complete", "remove"],
 					"description": "The operation to perform"
 				},
 				"text": {
@@ -39,6 +39,10 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					"type": "string",
 					"enum": ["open", "done"],
 					"description": "Filter by status (used with 'list', default: all)"
+				},
+				"query": {
+					"type": "string",
+					"description": "Search query (required for 'search', case-insensitive substring match)"
 				}
 			},
 			"required": ["action"]
@@ -50,6 +54,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Priority string `json:"priority"`
 				ID       int64  `json:"id"`
 				Status   string `json:"status"`
+				Query    string `json:"query"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
@@ -91,6 +96,27 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				}
 				return strings.Join(lines, "\n"), nil
 
+			case "search":
+				if p.Query == "" {
+					return "", fmt.Errorf("query is required for search")
+				}
+				items, err := store.Search(agentID, p.Query)
+				if err != nil {
+					return "", fmt.Errorf("search todos: %w", err)
+				}
+				if len(items) == 0 {
+					return fmt.Sprintf("No todos matching %q.", p.Query), nil
+				}
+				var lines []string
+				for _, item := range items {
+					marker := "[ ]"
+					if item.Status == "done" {
+						marker = "[x]"
+					}
+					lines = append(lines, fmt.Sprintf("#%d %s [%s] %s", item.ID, marker, item.Priority, item.Text))
+				}
+				return strings.Join(lines, "\n"), nil
+
 			case "complete":
 				if p.ID == 0 {
 					return "", fmt.Errorf("id is required for complete")
@@ -110,7 +136,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return fmt.Sprintf("Removed todo #%d.", p.ID), nil
 
 			default:
-				return "", fmt.Errorf("unknown action: %s (use add, list, complete, or remove)", p.Action)
+				return "", fmt.Errorf("unknown action: %s (use add, list, search, complete, or remove)", p.Action)
 			}
 		},
 	}
