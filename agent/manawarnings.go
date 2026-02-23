@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"clod/state"
 )
 
 type ManaWatcher struct {
@@ -14,6 +16,12 @@ type ManaWatcher struct {
 	firedToday map[int]bool
 	mu         sync.Mutex
 	lastReset  time.Time
+	store      *state.Store
+}
+
+type manaWatcherState struct {
+	FiredToday map[int]bool
+	LastReset  time.Time
 }
 
 func NewManaWatcher(name string, thresholds []int) *ManaWatcher {
@@ -33,6 +41,50 @@ func NewManaWatcher(name string, thresholds []int) *ManaWatcher {
 		firedToday: make(map[int]bool),
 		lastReset:  time.Now().Truncate(24 * time.Hour),
 	}
+}
+
+func (m *ManaWatcher) SetStore(store *state.Store) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.store = store
+}
+
+func (m *ManaWatcher) Restore() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.store == nil {
+		return
+	}
+
+	key := "mana:" + m.name
+	var state manaWatcherState
+	if !m.store.Get(key, &state) {
+		return
+	}
+
+	today := time.Now().Truncate(24 * time.Hour)
+	if state.LastReset.Truncate(24 * time.Hour).Equal(today) {
+		m.firedToday = state.FiredToday
+		if m.firedToday == nil {
+			m.firedToday = make(map[int]bool)
+		}
+	}
+}
+
+func (m *ManaWatcher) saveFiredState() {
+	if m.store == nil {
+		return
+	}
+	key := "mana:" + m.name
+	state := manaWatcherState{
+		FiredToday: m.firedToday,
+		LastReset:  m.lastReset,
+	}
+	m.store.Set(key, state)
 }
 
 func (m *ManaWatcher) CheckAndWarn(manaStr string, warnFunc func(string)) {
@@ -59,6 +111,7 @@ func (m *ManaWatcher) CheckAndWarn(manaStr string, warnFunc func(string)) {
 	for _, threshold := range m.thresholds {
 		if mana <= threshold && !m.firedToday[threshold] {
 			m.firedToday[threshold] = true
+			m.saveFiredState()
 			warnFunc(m.formatWarning(mana, threshold))
 			return
 		}

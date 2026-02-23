@@ -758,6 +758,8 @@ func setupAgent(p setupParams) *agentInstance {
 	// Mana threshold warnings (if thresholds configured)
 	if len(p.cfg.ManaWarnings.Thresholds) > 0 {
 		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, p.cfg.ManaWarnings.Thresholds)
+		ag.ManaWatcher.SetStore(p.stateStore)
+		ag.ManaWatcher.Restore()
 	}
 
 	// Model escalation tool (needs this agent's bootstrap)
