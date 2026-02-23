@@ -109,9 +109,13 @@ if ! $DRY_RUN; then
 fi
 
 # Ensure Go env vars are set (sudo strips HOME and caches)
-export GOPATH="${GOPATH:-$SCRIPT_DIR/.gopath}"
+# Default to /var/cache/go — keeps build artifacts out of home dirs and repos
+export GOPATH="${GOPATH:-/var/cache/go}"
 export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
-export GOCACHE="${GOCACHE:-$SCRIPT_DIR/.gocache}"
+export GOCACHE="${GOCACHE:-/var/cache/go-build}"
+if ! $DRY_RUN; then
+    mkdir -p "$GOPATH" "$GOCACHE" 2>/dev/null || true
+fi
 export GOFLAGS="${GOFLAGS:--buildvcs=false}"
 
 # Build info for ldflags
