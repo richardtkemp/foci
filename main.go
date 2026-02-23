@@ -744,6 +744,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent workspace bootstrap
 	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
 	bootstrap.SetSecretNames(p.store.Names())
+	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 
 	// Per-agent skills
 	skillRegistry := skills.Load(p.cfg.Skills.Dirs)
@@ -970,6 +971,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// /reload command
 	cmds.Register(command.NewReloadCommand(func() (string, error) {
 		bootstrap.Reload()
+		checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 		newSkillRegistry := skills.Load(p.cfg.Skills.Dirs)
 		var newExtraSystemBlocks []anthropic.SystemBlock
 		if newSkillRegistry.Len() > 0 {
@@ -1187,6 +1189,21 @@ func setupAgent(p setupParams) *agentInstance {
 		sessionKey: sessionKey,
 		heartbeat:  hb,
 		agentCfg:   acfg,
+	}
+}
+
+// checkSystemPromptSizes logs warnings if system prompt files exceed thresholds.
+func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, sess config.SessionsConfig, agentID string) {
+	maxFile := sess.MaxSystemPromptFile
+	if maxFile == 0 {
+		maxFile = 20000
+	}
+	maxTotal := sess.MaxSystemPromptTotal
+	if maxTotal == 0 {
+		maxTotal = 80000
+	}
+	for _, w := range bootstrap.CheckSizes(maxFile, maxTotal) {
+		log.Warnf(agentID, "%s", w)
 	}
 }
 
