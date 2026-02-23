@@ -22,6 +22,10 @@ func mockGateway() *httptest.Server {
 			Text    string `json:"text"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
+		if req.Agent == "nonexistent" {
+			http.Error(w, "unknown agent: \"nonexistent\"", http.StatusBadRequest)
+			return
+		}
 		resp := "echo: " + req.Text
 		if req.Agent != "" {
 			resp = "[" + req.Agent + "] " + resp
@@ -39,6 +43,10 @@ func mockGateway() *httptest.Server {
 			Text  string `json:"text"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
+		if req.Agent == "nonexistent" {
+			http.Error(w, "unknown agent: \"nonexistent\"", http.StatusBadRequest)
+			return
+		}
 		resp := "wake ok"
 		if req.Agent != "" {
 			resp = "[" + req.Agent + "] " + resp
@@ -132,6 +140,10 @@ func TestCLIIntegration(t *testing.T) {
 
 		// Flag after positional args
 		{"send flag after text", []string{"send", "hello", "-a", "research"}, "[research] echo: hello", false},
+
+		// Error cases: unknown agent returns HTTP 400, exit non-zero
+		{"send unknown agent", []string{"send", "-a", "nonexistent", "hello"}, "unknown agent", true},
+		{"branch unknown agent", []string{"branch", "-a", "nonexistent"}, "unknown agent", true},
 	}
 
 	// Build the CLI binary once
@@ -158,6 +170,57 @@ func TestCLIIntegration(t *testing.T) {
 			}
 			if !strings.Contains(output, tt.want) {
 				t.Errorf("output %q does not contain %q", output, tt.want)
+			}
+		})
+	}
+}
+
+func TestPrintResponseError(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantErr    string
+	}{
+		{
+			name:       "400 unknown agent",
+			statusCode: http.StatusBadRequest,
+			body:       "unknown agent: \"nonexistent\"\n",
+			wantErr:    "HTTP 400: unknown agent: \"nonexistent\"",
+		},
+		{
+			name:       "404 not found",
+			statusCode: http.StatusNotFound,
+			body:       "unknown command\n",
+			wantErr:    "HTTP 404: unknown command",
+		},
+		{
+			name:       "500 internal error",
+			statusCode: http.StatusInternalServerError,
+			body:       "internal error\n",
+			wantErr:    "HTTP 500: internal error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, strings.TrimSuffix(tt.body, "\n"), tt.statusCode)
+			}))
+			defer server.Close()
+
+			resp, err := http.Get(server.URL)
+			if err != nil {
+				t.Fatalf("GET: %v", err)
+			}
+			defer resp.Body.Close()
+
+			err = printResponse(resp)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if err.Error() != tt.wantErr {
+				t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
 			}
 		})
 	}
