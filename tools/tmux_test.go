@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -480,6 +481,85 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		"name":      name,
 	})
 	tool.Execute(context.Background(), params)
+}
+
+func TestTmuxWatchDeadSession(t *testing.T) {
+	tmuxAvailable(t)
+
+	var msgs []string
+	var mu sync.Mutex
+	notifier := NewAsyncNotifier(func(sk, msg string) {
+		mu.Lock()
+		msgs = append(msgs, msg)
+		mu.Unlock()
+	})
+
+	tool := NewTmuxTool(300, 30, notifier, nil, "")
+
+	name := "clod-test-dead"
+	defer tmuxCleanup(t, name)
+
+	// Start a session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Watch it
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 60, // long threshold — we're testing death, not inactivity
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Kill the tmux session externally
+	exec.Command("tmux", "kill-session", "-t", name).Run()
+	time.Sleep(100 * time.Millisecond)
+
+	// Wait for the monitor to detect the dead session (poll interval is 2s)
+	deadline := time.After(10 * time.Second)
+	for {
+		mu.Lock()
+		got := len(msgs)
+		mu.Unlock()
+		if got > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("no notification received for dead session within timeout")
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	mu.Lock()
+	msg := msgs[0]
+	mu.Unlock()
+
+	if !strings.Contains(msg, "no longer exists") {
+		t.Errorf("message = %q, want to contain 'no longer exists'", msg)
+	}
+	if !strings.Contains(msg, name) {
+		t.Errorf("message = %q, want to contain session name %q", msg, name)
+	}
+
+	// The watch entry should have been cleaned up — unwatching should fail
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error unwatching already-cleaned-up session")
+	}
 }
 
 func TestTmuxWatchMissingName(t *testing.T) {
