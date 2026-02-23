@@ -922,3 +922,57 @@ func TestContextCommandCustomThreshold(t *testing.T) {
 		t.Errorf("expected 'at/above threshold' with 50%% threshold:\n%s", result)
 	}
 }
+
+func TestSecretsListTable(t *testing.T) {
+	store := &mockSecretsStore{
+		data: map[string]string{
+			"anthropic.token":      "x",
+			"telegram.clutch":      "x",
+			"telegram.clutchling":  "x",
+			"telegram.scout":       "x",
+			"brave.api_key":        "x",
+		},
+	}
+
+	cmd := NewSecretsCommand(store)
+	result, err := cmd.Execute(context.Background(), "list")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Header with count
+	if !strings.Contains(result, "Secrets (5 keys)") {
+		t.Errorf("missing header in:\n%s", result)
+	}
+	// Code block
+	if !strings.Contains(result, "```") {
+		t.Errorf("expected code block in:\n%s", result)
+	}
+	// Table headers
+	if !strings.Contains(result, "Section") || !strings.Contains(result, "Key") {
+		t.Errorf("missing table headers in:\n%s", result)
+	}
+	// Separator
+	if !strings.Contains(result, "─") {
+		t.Errorf("missing separator in:\n%s", result)
+	}
+	// Section grouping — "telegram" should appear once, not three times
+	if strings.Count(result, "telegram") != 1 {
+		t.Errorf("section 'telegram' should appear once (not repeated for each key):\n%s", result)
+	}
+	// All keys present
+	for _, key := range []string{"token", "clutch", "clutchling", "scout", "api_key"} {
+		if !strings.Contains(result, key) {
+			t.Errorf("missing key %q in:\n%s", key, result)
+		}
+	}
+}
+
+func TestSecretsListEmpty(t *testing.T) {
+	store := &mockSecretsStore{data: map[string]string{}}
+	cmd := NewSecretsCommand(store)
+	result, _ := cmd.Execute(context.Background(), "list")
+	if result != "No secrets configured." {
+		t.Errorf("result = %q", result)
+	}
+}
