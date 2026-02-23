@@ -127,6 +127,19 @@ func (s *TodoStore) Remove(agentID string, id int64) error {
 	return nil
 }
 
+// Search returns todo items matching a case-insensitive substring query.
+func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
+	rows, err := s.db.Query(
+		`SELECT id, text, status, priority, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
+		agentID, query,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTodos(rows)
+}
+
 // Close closes the underlying database.
 func (s *TodoStore) Close() error {
 	return s.db.Close()

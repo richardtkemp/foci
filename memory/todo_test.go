@@ -189,6 +189,42 @@ func TestTodoCrossAgentRemove(t *testing.T) {
 	}
 }
 
+func TestTodoSearch(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Buy milk from store", "high")
+	store.Add("agent1", "Fix login bug", "medium")
+	store.Add("agent1", "Buy groceries", "low")
+	store.Add("agent2", "Buy something for agent2", "medium")
+
+	// Case-insensitive substring match
+	items, err := store.Search("agent1", "buy")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 matches, got %d", len(items))
+	}
+
+	// No matches
+	items, err = store.Search("agent1", "deploy")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 matches, got %d", len(items))
+	}
+
+	// Agent isolation — agent2's item should not appear
+	items, err = store.Search("agent1", "agent2")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 matches (agent isolation), got %d", len(items))
+	}
+}
+
 func newTestTodoStore(t *testing.T) *TodoStore {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "todo_test.db")
