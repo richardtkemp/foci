@@ -10,8 +10,10 @@ import (
 type Command struct {
 	Name           string
 	Description    string
+	Category       string // grouping for /help (e.g. "observability", "operations")
 	Execute        func(ctx context.Context, args string) (string, error)
 	SkipToolExport bool // if true, not exposed as an agent tool
+	Hidden         bool // if true, excluded from /help and BotFather registration
 }
 
 // Registry holds registered slash commands and dispatches them.

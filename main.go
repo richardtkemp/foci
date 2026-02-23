@@ -1039,6 +1039,8 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(&command.Command{
 		Name:        "mb",
 		Description: "Fork session to a secondary bot (alias for /multiball)",
+		Category:    "session",
+		Hidden:      true,
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return forkFn()
 		},

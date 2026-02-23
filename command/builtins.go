@@ -51,7 +51,8 @@ func NewRepeatCommand(store *LastMessageStore) *Command {
 	return &Command{
 		Name:           "repeat",
 		Description:    "Repeat your last message (command: //)",
-		SkipToolExport: true, // not exposed as a tool
+		SkipToolExport: true,
+		Hidden:         true,
 		Execute: func(ctx context.Context, args string) (string, error) {
 			userID, ok := ctx.Value(LastMessageUserKey{}).(string)
 			if !ok || userID == "" {
@@ -102,6 +103,7 @@ func NewPingCommand() *Command {
 	return &Command{
 		Name:        "ping",
 		Description: "Liveness check",
+		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return fmt.Sprintf("pong %s", time.Now().UTC().Format(time.RFC3339)), nil
 		},
@@ -113,6 +115,7 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 	return &Command{
 		Name:        "status",
 		Description: "Dashboard overview",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			info := statusFn()
 
@@ -204,6 +207,7 @@ func NewCacheCommand(apiLogPath string) *Command {
 	return &Command{
 		Name:        "cache",
 		Description: "Last 5 API calls with cache breakdown",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			entries := readAPILog(apiLogPath)
 			if len(entries) == 0 {
@@ -238,6 +242,7 @@ func NewLastCommand(apiLogPath string) *Command {
 	return &Command{
 		Name:        "last",
 		Description: "Last API request details",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			entries := readAPILog(apiLogPath)
 			if len(entries) == 0 {
@@ -258,6 +263,7 @@ func NewCostCommand(apiLogPath string) *Command {
 	return &Command{
 		Name:        "cost",
 		Description: "API cost summary",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			entries := readAPILog(apiLogPath)
 			if len(entries) == 0 {
@@ -325,6 +331,7 @@ func NewResetCommand(resetFn func() error) *Command {
 	return &Command{
 		Name:        "reset",
 		Description: "Clear session history",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if err := resetFn(); err != nil {
 				return "", err
@@ -340,6 +347,7 @@ func NewModelCommand(getModel func() string, setModel func(string)) *Command {
 	return &Command{
 		Name:        "model",
 		Description: "Show or switch model",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if args == "" {
 				return fmt.Sprintf("Current model: %s", getModel()), nil
@@ -361,6 +369,7 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 	return &Command{
 		Name:        "tools",
 		Description: "List registered tools",
+		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			tools := listFn()
 			if len(tools) == 0 {
@@ -381,6 +390,7 @@ func NewConfigCommand(configFn func() string) *Command {
 	return &Command{
 		Name:        "config",
 		Description: "Show running config (secrets redacted)",
+		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return configFn(), nil
 		},
@@ -392,6 +402,7 @@ func NewLogCommand(eventLogPath string) *Command {
 	return &Command{
 		Name:        "log",
 		Description: "Recent event log lines",
+		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			n := 20
 			if args != "" {
@@ -409,6 +420,7 @@ func NewErrorsCommand(eventLogPath string) *Command {
 	return &Command{
 		Name:        "errors",
 		Description: "Recent error/warning log lines",
+		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			n := 10
 			if args != "" {
@@ -428,12 +440,56 @@ func NewHelpCommand(registry *Registry) *Command {
 	return &Command{
 		Name:        "help",
 		Description: "List available commands",
+		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			var sb strings.Builder
-			for _, cmd := range registry.All() {
-				fmt.Fprintf(&sb, "/%s — %s\n", cmd.Name, cmd.Description)
+			// Collect visible commands grouped by category.
+			type group struct {
+				emoji string
+				label string
+				cmds  []*Command
 			}
-			return sb.String(), nil
+			categoryOrder := []string{"observability", "operations", "diagnostics", "session"}
+			categoryMeta := map[string]group{
+				"observability": {emoji: "📊", label: "Observability"},
+				"operations":    {emoji: "⚙️", label: "Operations"},
+				"diagnostics":   {emoji: "🔍", label: "Diagnostics"},
+				"session":       {emoji: "💬", label: "Session"},
+			}
+			groups := make(map[string][]*Command)
+			var other []*Command
+
+			for _, cmd := range registry.All() {
+				if cmd.Hidden {
+					continue
+				}
+				if cmd.Category != "" {
+					groups[cmd.Category] = append(groups[cmd.Category], cmd)
+				} else {
+					other = append(other, cmd)
+				}
+			}
+
+			var sb strings.Builder
+			for _, cat := range categoryOrder {
+				cmds := groups[cat]
+				if len(cmds) == 0 {
+					continue
+				}
+				meta := categoryMeta[cat]
+				fmt.Fprintf(&sb, "%s %s\n", meta.emoji, meta.label)
+				for _, cmd := range cmds {
+					fmt.Fprintf(&sb, "  /%s — %s\n", cmd.Name, cmd.Description)
+				}
+				sb.WriteByte('\n')
+			}
+			if len(other) > 0 {
+				sb.WriteString("📦 Other\n")
+				for _, cmd := range other {
+					fmt.Fprintf(&sb, "  /%s — %s\n", cmd.Name, cmd.Description)
+				}
+				sb.WriteByte('\n')
+			}
+			return strings.TrimRight(sb.String(), "\n"), nil
 		},
 	}
 }
@@ -451,6 +507,7 @@ func NewVersionCommand(info BuildInfo) *Command {
 	return &Command{
 		Name:        "version",
 		Description: "Build version info",
+		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return fmt.Sprintf("version: %s\ngo: %s\ncommit: %s\nbuilt: %s",
 				info.Version, info.GoVersion, info.GitCommit, info.BuildTime), nil
@@ -463,6 +520,7 @@ func NewVoiceCommand(getVoice func() bool, setVoice func(bool)) *Command {
 	return &Command{
 		Name:        "voice",
 		Description: "Toggle voice mode (replies sent as voice notes)",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			current := getVoice()
 			setVoice(!current)
@@ -480,6 +538,7 @@ func NewMultiballCommand(forkFn func() (string, error)) *Command {
 	return &Command{
 		Name:        "multiball",
 		Description: "Fork session to a secondary bot",
+		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return forkFn()
 		},
@@ -492,6 +551,7 @@ func NewUsageCommand(usageFn func(context.Context) (string, error)) *Command {
 	return &Command{
 		Name:        "usage",
 		Description: "Check Claude subscription usage and rate limits",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return usageFn(ctx)
 		},
@@ -504,6 +564,7 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 	return &Command{
 		Name:        name,
 		Description: "Check current " + name + " (quota remaining)",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return manaFn(ctx)
 		},
@@ -523,6 +584,7 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 	return &Command{
 		Name:        "context",
 		Description: "Context size and compaction threshold",
+		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			info := infoFn()
 
@@ -576,6 +638,7 @@ func NewReloadCommand(reloadFn func() (string, error)) *Command {
 	return &Command{
 		Name:        "reload",
 		Description: "Reload config, skills, and system prompt from disk",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return reloadFn()
 		},
@@ -706,6 +769,7 @@ func NewRestartCommand(notifyFn func(string)) *Command {
 	return &Command{
 		Name:        "restart",
 		Description: "Restart the clod service",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if notifyFn != nil {
 				notifyFn("Restarting...")
@@ -735,6 +799,7 @@ func NewSecretsCommand(store SecretsStore) *Command {
 	return &Command{
 		Name:           "secrets",
 		Description:    "Manage secrets (list/set/remove)",
+		Category:       "operations",
 		SkipToolExport: true,
 		Execute: func(ctx context.Context, args string) (string, error) {
 			parts := strings.Fields(args)
