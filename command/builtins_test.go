@@ -119,11 +119,6 @@ func TestCacheCommand(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Summary line + 5 detail lines = 6 lines
-	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) != 6 {
-		t.Errorf("got %d lines, want 6:\n%s", len(lines), result)
-	}
 	// Summary line with avg hit rate
 	if !strings.Contains(result, "Cache — last 5 calls") {
 		t.Errorf("missing summary header in:\n%s", result)
@@ -131,9 +126,15 @@ func TestCacheCommand(t *testing.T) {
 	if !strings.Contains(result, "avg") && !strings.Contains(result, "% hit") {
 		t.Errorf("missing avg hit rate in:\n%s", result)
 	}
-	// Comma-formatted numbers
-	if !strings.Contains(result, "cR=") {
-		t.Errorf("missing cR= in:\n%s", result)
+	// Code block table format
+	if !strings.Contains(result, "```") {
+		t.Errorf("expected code block in:\n%s", result)
+	}
+	if !strings.Contains(result, "Time") || !strings.Contains(result, "CacheRead") || !strings.Contains(result, "Hit%") {
+		t.Errorf("missing table headers in:\n%s", result)
+	}
+	if !strings.Contains(result, "─") {
+		t.Errorf("missing separator line in:\n%s", result)
 	}
 }
 
