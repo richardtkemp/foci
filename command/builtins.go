@@ -483,6 +483,66 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 	}
 }
 
+// ContextInfo holds data for the /context command.
+type ContextInfo struct {
+	SessionKey       string
+	Model            string
+	CompactionThresh float64
+	ContextLimit     int
+}
+
+// NewContextCommand returns a /context command showing context size breakdown.
+func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
+	return &Command{
+		Name:        "context",
+		Description: "Context size and compaction threshold",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			info := infoFn()
+
+			// Get last API call for this session
+			entries := readAPILog(apiLogPath)
+			var lastInput, lastCacheRead, lastCacheWrite int
+			for i := len(entries) - 1; i >= 0; i-- {
+				if entries[i].Session == info.SessionKey {
+					lastInput = entries[i].Input
+					lastCacheRead = entries[i].CacheRead
+					lastCacheWrite = entries[i].CacheWrite
+					break
+				}
+			}
+
+			totalTokens := lastInput + lastCacheRead + lastCacheWrite
+			if totalTokens == 0 {
+				return "No API calls yet for this session.", nil
+			}
+
+			threshTokens := int(float64(info.ContextLimit) * info.CompactionThresh)
+			percentUsed := float64(totalTokens) / float64(info.ContextLimit) * 100
+			percentThresh := info.CompactionThresh * 100
+
+			var status string
+			if totalTokens >= threshTokens {
+				status = "at/above threshold"
+			} else {
+				remaining := threshTokens - totalTokens
+				status = fmt.Sprintf("%d tokens until threshold", remaining)
+			}
+
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "model: %s\n", info.Model)
+			fmt.Fprintf(&sb, "context: %d / %d tokens (%.1f%%)\n", totalTokens, info.ContextLimit, percentUsed)
+			fmt.Fprintf(&sb, "breakdown:\n")
+			fmt.Fprintf(&sb, "  input: %d\n", lastInput)
+			fmt.Fprintf(&sb, "  cache_read: %d\n", lastCacheRead)
+			fmt.Fprintf(&sb, "  cache_write: %d\n", lastCacheWrite)
+			fmt.Fprintf(&sb, "compaction: at %.0f%% (%d tokens)\n", percentThresh, threshTokens)
+			fmt.Fprintf(&sb, "status: %s", status)
+
+			return sb.String(), nil
+		},
+	}
+}
+
 // NewReloadCommand returns a /reload command that reloads config and system files.
 // reloadFn is a callback that performs the reload (avoids import coupling).
 func NewReloadCommand(reloadFn func() (string, error)) *Command {
