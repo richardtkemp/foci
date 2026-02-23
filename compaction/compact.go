@@ -19,6 +19,7 @@ type Compactor struct {
 	maxTokens   int
 	minMessages int
 	Scratchpad  *memory.Scratchpad // nil disables scratchpad injection
+	AgentID     string             // agent ID for per-agent scratchpad queries
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -156,7 +157,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	// Collect scratchpad contents to preserve through compaction
 	handoff := handoffMessage
 	if c.Scratchpad != nil {
-		if entries, err := c.Scratchpad.All(); err == nil && len(entries) > 0 {
+		if entries, err := c.Scratchpad.All(c.AgentID); err == nil && len(entries) > 0 {
 			handoff += "\n\n[scratchpad — working state preserved through compaction]"
 			for _, e := range entries {
 				handoff += fmt.Sprintf("\n--- %s ---\n%s", e.Key, e.Content)

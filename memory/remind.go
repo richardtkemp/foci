@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"clod/log"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -39,19 +41,61 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS reminders (
-		id      INTEGER PRIMARY KEY AUTOINCREMENT,
-		text    TEXT    NOT NULL,
-		due_at  TEXT    NOT NULL,
-		due_tag TEXT    NOT NULL,
-		created TEXT    NOT NULL
-	)`)
-	if err != nil {
+	if err := migrateReminders(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("create reminders table: %w", err)
+		return nil, fmt.Errorf("migrate reminders: %w", err)
 	}
 
 	return &ReminderStore{db: db}, nil
+}
+
+// migrateReminders handles schema evolution for the reminders table.
+func migrateReminders(db *sql.DB) error {
+	// Check if table exists
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='reminders'").Scan(&name)
+	if err == sql.ErrNoRows {
+		// Fresh install
+		_, err := db.Exec(`CREATE TABLE reminders (
+			id       INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_id TEXT    NOT NULL DEFAULT '',
+			text     TEXT    NOT NULL,
+			due_at   TEXT    NOT NULL,
+			due_tag  TEXT    NOT NULL,
+			created  TEXT    NOT NULL
+		)`)
+		return err
+	}
+
+	// Table exists — check if agent_id column is present
+	var hasAgentID bool
+	rows, err := db.Query("PRAGMA table_info(reminders)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var cname, ctype string
+		var notnull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &cname, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if cname == "agent_id" {
+			hasAgentID = true
+		}
+	}
+
+	if hasAgentID {
+		return nil // already migrated
+	}
+
+	// Add agent_id column with default empty string (migrates existing rows)
+	log.Infof("reminders", "migrating reminders table to add agent_id column")
+	_, err = db.Exec(`ALTER TABLE reminders ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 // Add creates a new reminder. The when parameter is resolved to a concrete time:
@@ -59,24 +103,24 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 //   - "tomorrow" → midnight tomorrow UTC
 //   - "next_session" → now (surfaced at next message)
 //   - YYYY-MM-DD → that date at midnight UTC
-func (rs *ReminderStore) Add(text, when string) error {
+func (rs *ReminderStore) Add(agentID, text, when string) error {
 	dueAt := resolveWhen(when)
 	now := time.Now().UTC()
 
 	_, err := rs.db.Exec(
-		"INSERT INTO reminders (text, due_at, due_tag, created) VALUES (?, ?, ?, ?)",
-		text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339),
+		"INSERT INTO reminders (agent_id, text, due_at, due_tag, created) VALUES (?, ?, ?, ?, ?)",
+		agentID, text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339),
 	)
 	return err
 }
 
-// Due returns all reminders that are due (due_at <= now).
-func (rs *ReminderStore) Due() ([]Reminder, error) {
+// Due returns all reminders for the given agent that are due (due_at <= now).
+func (rs *ReminderStore) Due(agentID string) ([]Reminder, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	rows, err := rs.db.Query(
-		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE due_at <= ? ORDER BY due_at",
-		now,
+		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND due_at <= ? ORDER BY due_at",
+		agentID, now,
 	)
 	if err != nil {
 		return nil, err
@@ -103,10 +147,10 @@ func (rs *ReminderStore) Dismiss(id int64) error {
 	return err
 }
 
-// DismissAll removes all due reminders.
-func (rs *ReminderStore) DismissAll() error {
+// DismissAll removes all due reminders for the given agent.
+func (rs *ReminderStore) DismissAll(agentID string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := rs.db.Exec("DELETE FROM reminders WHERE due_at <= ?", now)
+	_, err := rs.db.Exec("DELETE FROM reminders WHERE agent_id = ? AND due_at <= ?", agentID, now)
 	return err
 }
 

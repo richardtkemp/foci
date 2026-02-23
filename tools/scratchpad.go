@@ -9,7 +9,7 @@ import (
 	"clod/memory"
 )
 
-func NewScratchpadWriteTool(s *memory.Scratchpad) *Tool {
+func NewScratchpadWriteTool(s *memory.Scratchpad, agentID string) *Tool {
 	return &Tool{
 		Name:        "scratchpad_write",
 		Description: "Write working notes to the scratchpad. Scratchpad entries survive compaction — use this for working state during investigations that you don't want to lose. Clear entries when done.",
@@ -38,7 +38,7 @@ func NewScratchpadWriteTool(s *memory.Scratchpad) *Tool {
 			if p.Key == "" {
 				return "", fmt.Errorf("key is required")
 			}
-			if err := s.Write(p.Key, p.Content); err != nil {
+			if err := s.Write(agentID, p.Key, p.Content); err != nil {
 				return "", fmt.Errorf("write scratchpad: %w", err)
 			}
 			return fmt.Sprintf("Scratchpad '%s' written.", p.Key), nil
@@ -46,7 +46,7 @@ func NewScratchpadWriteTool(s *memory.Scratchpad) *Tool {
 	}
 }
 
-func NewScratchpadReadTool(s *memory.Scratchpad) *Tool {
+func NewScratchpadReadTool(s *memory.Scratchpad, agentID string) *Tool {
 	return &Tool{
 		Name:        "scratchpad_read",
 		Description: "Read a scratchpad entry by key. Returns the stored content, or empty if the key doesn't exist.",
@@ -67,7 +67,7 @@ func NewScratchpadReadTool(s *memory.Scratchpad) *Tool {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
 			}
-			content, err := s.Read(p.Key)
+			content, err := s.Read(agentID, p.Key)
 			if err != nil {
 				return "", fmt.Errorf("read scratchpad: %w", err)
 			}
@@ -79,7 +79,7 @@ func NewScratchpadReadTool(s *memory.Scratchpad) *Tool {
 	}
 }
 
-func NewScratchpadClearTool(s *memory.Scratchpad) *Tool {
+func NewScratchpadClearTool(s *memory.Scratchpad, agentID string) *Tool {
 	return &Tool{
 		Name:        "scratchpad_clear",
 		Description: "Clear a scratchpad entry. Use this when you're done with working state to keep the scratchpad tidy.",
@@ -100,7 +100,7 @@ func NewScratchpadClearTool(s *memory.Scratchpad) *Tool {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
 			}
-			if err := s.Clear(p.Key); err != nil {
+			if err := s.Clear(agentID, p.Key); err != nil {
 				return "", fmt.Errorf("clear scratchpad: %w", err)
 			}
 			return fmt.Sprintf("Scratchpad '%s' cleared.", p.Key), nil
@@ -108,7 +108,7 @@ func NewScratchpadClearTool(s *memory.Scratchpad) *Tool {
 	}
 }
 
-func NewScratchpadListTool(s *memory.Scratchpad) *Tool {
+func NewScratchpadListTool(s *memory.Scratchpad, agentID string) *Tool {
 	return &Tool{
 		Name:        "scratchpad_list",
 		Description: "List all scratchpad entries with their keys, sizes, and last-modified times.",
@@ -117,7 +117,7 @@ func NewScratchpadListTool(s *memory.Scratchpad) *Tool {
 			"properties": {}
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			entries, err := s.List()
+			entries, err := s.List(agentID)
 			if err != nil {
 				return "", fmt.Errorf("list scratchpad: %w", err)
 			}

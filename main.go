@@ -717,13 +717,13 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tools.NewMemorySearchTool(p.memIdx))
 	}
 	if p.reminderStore != nil {
-		registry.Register(tools.NewMemoryRemindTool(p.reminderStore))
+		registry.Register(tools.NewMemoryRemindTool(p.reminderStore, acfg.ID))
 	}
 	if p.scratchpadStore != nil {
-		registry.Register(tools.NewScratchpadWriteTool(p.scratchpadStore))
-		registry.Register(tools.NewScratchpadReadTool(p.scratchpadStore))
-		registry.Register(tools.NewScratchpadClearTool(p.scratchpadStore))
-		registry.Register(tools.NewScratchpadListTool(p.scratchpadStore))
+		registry.Register(tools.NewScratchpadWriteTool(p.scratchpadStore, acfg.ID))
+		registry.Register(tools.NewScratchpadReadTool(p.scratchpadStore, acfg.ID))
+		registry.Register(tools.NewScratchpadClearTool(p.scratchpadStore, acfg.ID))
+		registry.Register(tools.NewScratchpadListTool(p.scratchpadStore, acfg.ID))
 	}
 	if p.todoStore != nil {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
@@ -751,6 +751,7 @@ func setupAgent(p setupParams) *agentInstance {
 		p.cfg.Sessions.CompactionMinMessages,
 	)
 	compactor.Scratchpad = p.scratchpadStore
+	compactor.AgentID = acfg.ID
 
 	// Per-agent send_telegram tool (closure captures this agent's bot)
 	registry.Register(tools.NewSendTelegramTool(func() tools.TelegramSender {
@@ -776,6 +777,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Bootstrap:               bootstrap,
 		Compactor:               compactor,
 		Reminders:               p.reminderStore,
+		AgentID:                 acfg.ID,
 		Model:                   acfg.Model,
 		ExtraSystemBlocks:       extraSystemBlocks,
 		CacheStrategy:           p.cfg.Cache.Strategy,
