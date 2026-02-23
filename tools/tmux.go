@@ -263,7 +263,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if enter {
 		// Brief pause so TUI apps (Claude Code, OpenCode) can process
 		// the pasted input before receiving Enter (#26b).
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		out, err = runTmux(ctx, "send-keys", "-t", name, "Enter")
 		if err != nil {
 			return "", fmt.Errorf("tmux send-keys Enter: %s %w", strings.TrimSpace(out), err)
