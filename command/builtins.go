@@ -84,11 +84,17 @@ type apiEntry struct {
 
 // StatusInfo holds data for the /status command.
 type StatusInfo struct {
-	SessionKey   string
-	MessageCount int
-	Model        string
-	Uptime       time.Duration
-	AgentBusy    bool
+	AgentID          string
+	SessionKey       string
+	MessageCount     int
+	Model            string
+	Uptime           time.Duration
+	StartTime        time.Time
+	AgentBusy        bool
+	CreatedAt        string
+	LastActivity     string
+	ContextLimit     int     // model context window
+	CompactThreshold float64 // e.g. 0.8
 }
 
 // NewPingCommand returns a /ping command.
@@ -102,12 +108,11 @@ func NewPingCommand() *Command {
 	}
 }
 
-// NewStatusCommand returns a /status command.
-// statusFn is called to gather current status; it avoids coupling to internal packages.
+// NewStatusCommand returns a /status command showing a dashboard overview.
 func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 	return &Command{
 		Name:        "status",
-		Description: "Session status overview",
+		Description: "Dashboard overview",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			info := statusFn()
 
@@ -116,26 +121,82 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 				status = "processing"
 			}
 
-			// Sum tokens from api.jsonl for this session
+			// Compute session cost and context from API log
 			entries := readAPILog(apiLogPath)
-			var totalIn, totalOut, totalCacheRead, totalCacheWrite int
-			var totalCost float64
+			var sessionCost float64
+			var sessionCalls int
+			var contextTokens int
 			for _, e := range entries {
 				if e.Session == info.SessionKey {
-					totalIn += e.Input
-					totalOut += e.Output
-					totalCacheRead += e.CacheRead
-					totalCacheWrite += e.CacheWrite
-					totalCost += e.CostUSD
+					sessionCost += e.CostUSD
+					sessionCalls++
+					contextTokens = e.Input + e.CacheRead + e.CacheWrite
 				}
 			}
 
-			return fmt.Sprintf("session: %s\nmodel: %s\nmessages: %d\nstatus: %s\nuptime: %s\ntokens: in=%d out=%d cache_read=%d cache_write=%d\ncost: $%.4f",
-				info.SessionKey, info.Model, info.MessageCount, status,
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "🤖 %s — %s\n", info.AgentID, info.Model)
+			sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+			// Session
+			created := info.CreatedAt
+			if t, err := time.Parse(time.RFC3339, created); err == nil {
+				created = t.Format("15:04 UTC")
+			}
+			active := info.LastActivity
+			if t, err := time.Parse(time.RFC3339, active); err == nil {
+				active = t.Format("15:04 UTC")
+			}
+			fmt.Fprintf(&sb, "📊 Session: %s\n", info.SessionKey)
+			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", info.MessageCount, status)
+			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
+
+			// Uptime
+			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s (started %s)\n",
 				formatDuration(info.Uptime),
-				totalIn, totalOut, totalCacheRead, totalCacheWrite, totalCost), nil
+				info.StartTime.UTC().Format("15:04:05Z"))
+
+			// Context
+			if contextTokens > 0 && info.ContextLimit > 0 {
+				pct := float64(contextTokens) / float64(info.ContextLimit) * 100
+				threshTokens := int(float64(info.ContextLimit) * info.CompactThreshold)
+				remaining := threshTokens - contextTokens
+				if remaining < 0 {
+					remaining = 0
+				}
+				fmt.Fprintf(&sb, "\n📈 Context: %s / %s tokens (%.1f%%)\n",
+					formatCommas(contextTokens), formatCommas(info.ContextLimit), pct)
+				fmt.Fprintf(&sb, "   Compaction at %.0f%% — %sk tokens remaining\n",
+					info.CompactThreshold*100, formatCommas(remaining/1000))
+			}
+
+			// Cost
+			if sessionCalls > 0 {
+				fmt.Fprintf(&sb, "\n💰 Session cost: $%.2f eq. (%d calls)", sessionCost, sessionCalls)
+			}
+
+			return strings.TrimRight(sb.String(), "\n"), nil
 		},
 	}
+}
+
+// formatCommas formats an integer with comma separators (e.g. 32793 → "32,793").
+func formatCommas(n int) string {
+	s := strconv.Itoa(n)
+	if n < 0 {
+		return "-" + formatCommas(-n)
+	}
+	if len(s) <= 3 {
+		return s
+	}
+	var result strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result.WriteByte(',')
+		}
+		result.WriteRune(c)
+	}
+	return result.String()
 }
 
 // NewCacheCommand returns a /cache command showing recent cache hit/miss breakdown.
@@ -289,27 +350,6 @@ func NewModelCommand(getModel func() string, setModel func(string)) *Command {
 	}
 }
 
-// SessionInfo holds data for the /session command.
-type SessionInfo struct {
-	SessionKey   string
-	MessageCount int
-	CreatedAt    string
-	LastActivity string
-}
-
-// NewSessionCommand returns a /session command showing raw session metadata.
-func NewSessionCommand(infoFn func() SessionInfo) *Command {
-	return &Command{
-		Name:        "session",
-		Description: "Session metadata",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			info := infoFn()
-			return fmt.Sprintf("key: %s\nmessages: %d\ncreated: %s\nlast_activity: %s",
-				info.SessionKey, info.MessageCount, info.CreatedAt, info.LastActivity), nil
-		},
-	}
-}
-
 // ToolInfo holds data for a single tool in the /tools listing.
 type ToolInfo struct {
 	Name        string
@@ -442,19 +482,6 @@ func NewMultiballCommand(forkFn func() (string, error)) *Command {
 		Description: "Fork session to a secondary bot",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return forkFn()
-		},
-	}
-}
-
-// NewUptimeCommand returns a /uptime command.
-func NewUptimeCommand(startTime time.Time) *Command {
-	return &Command{
-		Name:        "uptime",
-		Description: "Process uptime",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return fmt.Sprintf("uptime: %s\nstarted: %s",
-				formatDuration(time.Since(startTime)),
-				startTime.Format(time.RFC3339)), nil
 		},
 	}
 }
