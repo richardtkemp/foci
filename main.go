@@ -1070,6 +1070,11 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 
+		// Wire max_tokens warnings to Telegram
+		ag.MaxTokensWarnFunc = func(warn string) {
+			primaryBot.SendNotification("⚠️ " + warn)
+		}
+
 		p.botMgr.AddPrimary(acfg.ID, primaryBot)
 
 		// Multiball bot (if configured)

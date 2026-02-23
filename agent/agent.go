@@ -76,6 +76,7 @@ type Agent struct {
 	Warnings                *WarningQueue           // nil disables warning injection into session
 	ManaWatcher             *ManaWatcher            // nil disables mana threshold warnings
 	ManaWarnFunc            func(string)            // callback for mana threshold warnings (e.g. Telegram notification)
+	MaxTokensWarnFunc       func(string)            // callback when stop_reason=max_tokens (response truncated)
 	Redact                  func(string) string     // redact secrets from tool output; nil disables
 	StateStore              *state.Store            // nil disables state persistence
 	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
@@ -665,6 +666,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		if a.CacheBustDetect && a.CacheBustAlert != nil && sm.prevCacheRead > 0 {
 			if resp.Usage.CacheReadInputTokens < sm.prevCacheRead/2 {
 				a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
+			}
+		}
+
+		// Warn on max_tokens — response was truncated mid-thought
+		if resp.StopReason == "max_tokens" {
+			warn := fmt.Sprintf("stop_reason=max_tokens on %s (output=%d, limit=%d)", sessionKey, resp.Usage.OutputTokens, maxOutput)
+			log.Warnf("agent", "%s", warn)
+			if a.MaxTokensWarnFunc != nil {
+				a.MaxTokensWarnFunc(warn)
 			}
 		}
 
