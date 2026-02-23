@@ -1034,9 +1034,13 @@ func NewSecretsCommand(store SecretsStore) *Command {
 				if len(names) == 0 {
 					return "No secrets configured.", nil
 				}
-				// Group by section
-				sections := make(map[string][]string)
-				var order []string
+				// Group by section, preserving insertion order
+				type secGroup struct {
+					name string
+					keys []string
+				}
+				var groups []secGroup
+				groupIdx := make(map[string]int)
 				for _, name := range names {
 					p := strings.SplitN(name, ".", 2)
 					sec := p[0]
@@ -1044,19 +1048,41 @@ func NewSecretsCommand(store SecretsStore) *Command {
 					if len(p) == 2 {
 						key = p[1]
 					}
-					if _, seen := sections[sec]; !seen {
-						order = append(order, sec)
-					}
-					sections[sec] = append(sections[sec], key)
-				}
-				var lines []string
-				for _, sec := range order {
-					lines = append(lines, fmt.Sprintf("[%s]", sec))
-					for _, key := range sections[sec] {
-						lines = append(lines, fmt.Sprintf("  %s", key))
+					if idx, ok := groupIdx[sec]; ok {
+						groups[idx].keys = append(groups[idx].keys, key)
+					} else {
+						groupIdx[sec] = len(groups)
+						groups = append(groups, secGroup{name: sec, keys: []string{key}})
 					}
 				}
-				return strings.Join(lines, "\n"), nil
+
+				// Measure column widths
+				secW := len("Section")
+				keyW := len("Key")
+				for _, g := range groups {
+					if len(g.name) > secW { secW = len(g.name) }
+					for _, k := range g.keys {
+						if len(k) > keyW { keyW = len(k) }
+					}
+				}
+
+				sep := strings.Repeat("─", secW+2+keyW)
+				var sb strings.Builder
+				fmt.Fprintf(&sb, "Secrets (%d keys)\n\n```\n", len(names))
+				fmt.Fprintf(&sb, "%-*s  %-*s\n", secW, "Section", keyW, "Key")
+				sb.WriteString(sep + "\n")
+				for _, g := range groups {
+					for i, k := range g.keys {
+						sec := g.name
+						if i > 0 {
+							sec = "" // don't repeat section name
+						}
+						fmt.Fprintf(&sb, "%-*s  %s\n", secW, sec, k)
+					}
+				}
+				sb.WriteString(sep + "\n")
+				sb.WriteString("```")
+				return sb.String(), nil
 
 			case "set":
 				if len(parts) < 3 {

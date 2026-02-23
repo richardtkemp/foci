@@ -167,7 +167,7 @@ func TestSecretsCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if !strings.Contains(result, "[anthropic]") || !strings.Contains(result, "token") {
+	if !strings.Contains(result, "anthropic") || !strings.Contains(result, "token") {
 		t.Errorf("list result = %q, want anthropic section with token", result)
 	}
 	// Secret values must never appear
