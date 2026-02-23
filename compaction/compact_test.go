@@ -17,8 +17,8 @@ import (
 
 func TestEstimateTokens(t *testing.T) {
 	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("hello world")},      // 11 chars / 4 = 2
-		{Role: "assistant", Content: anthropic.TextContent("hi there!")},    // 9 chars / 4 = 2
+		{Role: "user", Content: anthropic.TextContent("hello world")},    // 11 chars / 4 = 2
+		{Role: "assistant", Content: anthropic.TextContent("hi there!")}, // 9 chars / 4 = 2
 	}
 
 	tokens := estimateTokens(msgs)
@@ -40,6 +40,16 @@ func TestContextLimit(t *testing.T) {
 		limit := contextLimit(model)
 		if limit != 200_000 {
 			t.Errorf("contextLimit(%q) = %d, want 200000", model, limit)
+		}
+	}
+}
+
+func TestContextLimitExported(t *testing.T) {
+	models := []string{"claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-6", "unknown-model"}
+	for _, model := range models {
+		limit := ContextLimit(model)
+		if limit != 200_000 {
+			t.Errorf("ContextLimit(%q) = %d, want 200000", model, limit)
 		}
 	}
 }

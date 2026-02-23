@@ -817,6 +817,14 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
+	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, func() command.ContextInfo {
+		return command.ContextInfo{
+			SessionKey:       sessionKey,
+			Model:            ag.Model,
+			CompactionThresh: p.cfg.Sessions.CompactionThreshold,
+			ContextLimit:     compaction.ContextLimit(ag.Model),
+		}
+	}))
 	cmds.Register(command.NewResetCommand(func() error {
 		if ag.IsProcessing() {
 			return fmt.Errorf("agent is processing — send /stop first, then /reset")

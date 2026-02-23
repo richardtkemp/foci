@@ -12,13 +12,13 @@ import (
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
-	client            *anthropic.Client
-	sessions          *session.Store
-	model             string
-	threshold         float64 // fraction of context window (e.g. 0.8)
-	maxTokens         int
-	minMessages       int
-	Scratchpad        *memory.Scratchpad // nil disables scratchpad injection
+	client      *anthropic.Client
+	sessions    *session.Store
+	model       string
+	threshold   float64 // fraction of context window (e.g. 0.8)
+	maxTokens   int
+	minMessages int
+	Scratchpad  *memory.Scratchpad // nil disables scratchpad injection
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -70,6 +70,11 @@ func contextLimit(model string) int {
 	default:
 		return 200_000
 	}
+}
+
+// ContextLimit returns the approximate context window for a model (exported).
+func ContextLimit(model string) int {
+	return contextLimit(model)
 }
 
 // estimateTokens gives a rough token estimate for messages.

@@ -584,3 +584,141 @@ func TestManaCommandDescription(t *testing.T) {
 		t.Errorf("Description should contain 'juice', got %q", cmd.Description)
 	}
 }
+
+func TestContextCommand(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "agent:main:main", Input: 50000, CacheRead: 30000, CacheWrite: 10000},
+		{Timestamp: now.Add(time.Minute), Session: "agent:main:main", Input: 60000, CacheRead: 40000, CacheWrite: 5000},
+		{Timestamp: now, Session: "other:session", Input: 100000, CacheRead: 0, CacheWrite: 0},
+	})
+
+	cmd := NewContextCommand(path, func() ContextInfo {
+		return ContextInfo{
+			SessionKey:       "agent:main:main",
+			Model:            "claude-sonnet-4-5",
+			CompactionThresh: 0.8,
+			ContextLimit:     200000,
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	checks := []string{
+		"claude-sonnet-4-5",
+		"105000",       // 60000 + 40000 + 5000 = 105000 tokens
+		"200000",       // context limit
+		"52.5%",        // 105000 / 200000 = 52.5%
+		"input: 60000", // last input
+		"cache_read: 40000",
+		"cache_write: 5000",
+		"80%",                          // compaction threshold
+		"160000",                       // threshold tokens (200000 * 0.8)
+		"55000 tokens until threshold", // 160000 - 105000
+	}
+	for _, check := range checks {
+		if !strings.Contains(result, check) {
+			t.Errorf("missing %q in:\n%s", check, result)
+		}
+	}
+}
+
+func TestContextCommandAtThreshold(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "agent:main:main", Input: 150000, CacheRead: 20000, CacheWrite: 0},
+	})
+
+	cmd := NewContextCommand(path, func() ContextInfo {
+		return ContextInfo{
+			SessionKey:       "agent:main:main",
+			Model:            "claude-haiku-4-5",
+			CompactionThresh: 0.8,
+			ContextLimit:     200000,
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// 170000 tokens is 85%, above 80% threshold
+	if !strings.Contains(result, "at/above threshold") {
+		t.Errorf("expected 'at/above threshold' in:\n%s", result)
+	}
+}
+
+func TestContextCommandNoApiCalls(t *testing.T) {
+	path := writeAPILog(t, nil)
+
+	cmd := NewContextCommand(path, func() ContextInfo {
+		return ContextInfo{
+			SessionKey:       "agent:main:main",
+			Model:            "claude-haiku-4-5",
+			CompactionThresh: 0.8,
+			ContextLimit:     200000,
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if result != "No API calls yet for this session." {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestContextCommandOtherSession(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "other:session", Input: 50000, CacheRead: 0, CacheWrite: 0},
+	})
+
+	cmd := NewContextCommand(path, func() ContextInfo {
+		return ContextInfo{
+			SessionKey:       "agent:main:main",
+			Model:            "claude-haiku-4-5",
+			CompactionThresh: 0.8,
+			ContextLimit:     200000,
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// No entries for this session
+	if result != "No API calls yet for this session." {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestContextCommandCustomThreshold(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "agent:main:main", Input: 100000, CacheRead: 0, CacheWrite: 0},
+	})
+
+	cmd := NewContextCommand(path, func() ContextInfo {
+		return ContextInfo{
+			SessionKey:       "agent:main:main",
+			Model:            "claude-sonnet-4-5",
+			CompactionThresh: 0.5,
+			ContextLimit:     200000,
+		}
+	})
+
+	result, _ := cmd.Execute(context.Background(), "")
+
+	// 100000 tokens is 50%, at threshold
+	if !strings.Contains(result, "at/above threshold") {
+		t.Errorf("expected 'at/above threshold' with 50%% threshold:\n%s", result)
+	}
+}
