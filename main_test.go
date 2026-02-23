@@ -18,7 +18,7 @@ func TestGracefulShutdown_AllIdle(t *testing.T) {
 		"b": {id: "b", ag: &agent.Agent{}},
 	}
 	start := time.Now()
-	gracefulShutdown(agents)
+	gracefulShutdown(agents, 5*time.Second)
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
 		t.Errorf("shutdown took %v, expected near-instant when all idle", elapsed)
 	}
@@ -39,7 +39,7 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 	}()
 
 	start := time.Now()
-	gracefulShutdown(agents)
+	gracefulShutdown(agents, 5*time.Second)
 	elapsed := time.Since(start)
 
 	if elapsed < 250*time.Millisecond {
@@ -51,10 +51,6 @@ func TestGracefulShutdown_WaitsForProcessing(t *testing.T) {
 }
 
 func TestGracefulShutdown_TimesOut(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping 5s timeout test in short mode")
-	}
-
 	ag := &agent.Agent{}
 	ag.SetProcessingForTest(1) // never cleared — simulates stuck agent
 
@@ -63,12 +59,11 @@ func TestGracefulShutdown_TimesOut(t *testing.T) {
 	}
 
 	start := time.Now()
-	gracefulShutdown(agents)
+	gracefulShutdown(agents, 500*time.Millisecond)
 	elapsed := time.Since(start)
 
-	// Should time out after ~5s (50 * 100ms)
-	if elapsed < 4*time.Second || elapsed > 7*time.Second {
-		t.Errorf("shutdown took %v, expected ~5s timeout", elapsed)
+	if elapsed < 400*time.Millisecond || elapsed > 2*time.Second {
+		t.Errorf("shutdown took %v, expected ~500ms timeout", elapsed)
 	}
 
 	ag.SetProcessingForTest(0)

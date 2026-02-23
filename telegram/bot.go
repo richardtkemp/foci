@@ -519,6 +519,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		},
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
+	turnCtx = agent.WithTrigger(turnCtx, "telegram")
 
 	var response string
 	var err error

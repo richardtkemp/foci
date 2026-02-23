@@ -84,6 +84,9 @@ type Agent struct {
 	MaxOutputTokens         int                     // max tokens in model response (default 8192)
 
 	processing    int32 // atomic: number of in-flight HandleMessage calls
+	turnDetailsMu sync.Mutex
+	turnDetails   map[uint64]*TurnDetail // keyed by unique turn ID
+	turnIDCounter uint64                 // atomic: monotonic turn ID
 	turnLocksMu   sync.Mutex
 	turnLocks     map[string]*sync.Mutex // per-session turn serialization
 	metaMu        sync.Mutex
@@ -93,9 +96,47 @@ type Agent struct {
 	manaCacheTime time.Time
 }
 
+// TurnDetail describes one in-flight turn for shutdown diagnostics.
+type TurnDetail struct {
+	SessionKey string
+	Trigger    string // "user", "heartbeat", "wake", "scheduled_wake", "telegram", "async_notify"
+	ToolName   string // currently executing tool, or empty
+	StartTime  time.Time
+}
+
 // IsProcessing returns true if the agent is currently handling a message.
 func (a *Agent) IsProcessing() bool {
 	return atomic.LoadInt32(&a.processing) > 0
+}
+
+// ProcessingDetails returns detail for every in-flight turn.
+func (a *Agent) ProcessingDetails() []TurnDetail {
+	a.turnDetailsMu.Lock()
+	defer a.turnDetailsMu.Unlock()
+	out := make([]TurnDetail, 0, len(a.turnDetails))
+	for _, d := range a.turnDetails {
+		out = append(out, *d)
+	}
+	return out
+}
+
+// registerTurn adds a TurnDetail and returns its ID and pointer (for tool tracking).
+func (a *Agent) registerTurn(d *TurnDetail) uint64 {
+	id := atomic.AddUint64(&a.turnIDCounter, 1)
+	a.turnDetailsMu.Lock()
+	if a.turnDetails == nil {
+		a.turnDetails = make(map[uint64]*TurnDetail)
+	}
+	a.turnDetails[id] = d
+	a.turnDetailsMu.Unlock()
+	return id
+}
+
+// unregisterTurn removes a TurnDetail by ID.
+func (a *Agent) unregisterTurn(id uint64) {
+	a.turnDetailsMu.Lock()
+	delete(a.turnDetails, id)
+	a.turnDetailsMu.Unlock()
 }
 
 // SetProcessingForTest sets the processing counter directly. Test-only.
@@ -373,6 +414,14 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	atomic.AddInt32(&a.processing, 1)
 	defer atomic.AddInt32(&a.processing, -1)
 
+	td := &TurnDetail{
+		SessionKey: sessionKey,
+		Trigger:    TriggerFromContext(ctx),
+		StartTime:  time.Now(),
+	}
+	turnID := a.registerTurn(td)
+	defer a.unregisterTurn(turnID)
+
 	// Check if context was cancelled while waiting for the turn lock
 	if ctx.Err() != nil {
 		return "", ctx.Err()
@@ -645,7 +694,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			log.Debugf("agent", "tool_use: %s", block.Name)
 			notifyToolCallCtx(ctx, block.Name, block.Input)
+			td.ToolName = block.Name
 			result, err := tool.Execute(toolCtx, block.Input)
+			td.ToolName = ""
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
