@@ -45,6 +45,10 @@ func InitConversation(path string) error {
 		db.Close()
 		return fmt.Errorf("set WAL mode: %w", err)
 	}
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return fmt.Errorf("set busy timeout: %w", err)
+	}
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS messages (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,

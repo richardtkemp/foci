@@ -139,3 +139,20 @@ func TestScratchpadMultipleKeys(t *testing.T) {
 		t.Errorf("task2 should remain, got %q", c2)
 	}
 }
+
+func TestScratchpadBusyTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := NewScratchpad(dbPath)
+	if err != nil {
+		t.Fatalf("NewScratchpad: %v", err)
+	}
+	defer s.Close()
+
+	var timeout int
+	if err := s.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
+}
