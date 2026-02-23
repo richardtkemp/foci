@@ -8,15 +8,23 @@
 #
 # Dry-run by default. Pass --execute to apply changes.
 #
-# Usage: sudo ./scripts/rename-agent-id.sh [--execute] [-h|--help]
+# Usage: sudo ./scripts/rename-agent-id.sh <old-id> <new-id> [--execute] [-h|--help]
+#
+# Environment overrides (optional):
+#   CLOD_USER     — system user (default: clod)
+#   CLOD_HOME     — home directory (default: /home/clod)
+#   CLOD_DATA_DIR — data directory (default: $CLOD_HOME/data)
+#   CLOD_CONFIG   — config file path (default: $CLOD_HOME/config/clod.toml)
+#   CLOD_SRC      — source directory for go build (default: /home/rich/git/clod)
+#   CLOD_BIN      — binary install path (default: /usr/local/bin/clodgw)
 set -euo pipefail
 
-OLD_ID="main"
-NEW_ID="clutch"
-CLOD_USER="clod"
-CLOD_HOME="/home/clod"
-DATA_DIR="$CLOD_HOME/data"
-CONFIG_FILE="$CLOD_HOME/config/clod.toml"
+CLOD_USER="${CLOD_USER:-clod}"
+CLOD_HOME="${CLOD_HOME:-/home/clod}"
+CLOD_DATA_DIR="${CLOD_DATA_DIR:-$CLOD_HOME/data}"
+CLOD_CONFIG="${CLOD_CONFIG:-$CLOD_HOME/config/clod.toml}"
+CLOD_SRC="${CLOD_SRC:-/home/rich/git/clod}"
+CLOD_BIN="${CLOD_BIN:-/usr/local/bin/clodgw}"
 LOG_FILE="$CLOD_HOME/logs/migration.log"
 
 # ============================================================================
@@ -33,14 +41,15 @@ if [[ "${_DETACHED:-}" != "1" ]]; then
     # --- Outer invocation: parse args, detach, exit ---
 
     EXECUTE=false
+    POSITIONAL=()
     for arg in "$@"; do
         case "$arg" in
             --execute) EXECUTE=true ;;
             -h|--help)
                 cat <<EOF
-Usage: sudo $0 [--execute] [-h|--help]
+Usage: sudo $0 <old-id> <new-id> [--execute] [-h|--help]
 
-Renames agent ID from "$OLD_ID" to "$NEW_ID" across all stored state:
+Renames an agent ID across all stored state:
 
    1. Detach from calling process (survives clod shutdown)
    2. Stop clod service (blocking)
@@ -57,15 +66,41 @@ Renames agent ID from "$OLD_ID" to "$NEW_ID" across all stored state:
 Dry-run by default — shows what would change without doing it.
 All output logged to: $LOG_FILE
 
+Arguments:
+  <old-id>    Current agent ID to rename from
+  <new-id>    New agent ID to rename to
+
 Options:
   --execute   Actually apply changes (default: dry-run)
   -h, --help  Show this help
+
+Environment overrides:
+  CLOD_USER, CLOD_HOME, CLOD_DATA_DIR, CLOD_CONFIG, CLOD_SRC, CLOD_BIN
+
+Example:
+  sudo $0 main clutch              # dry-run
+  sudo $0 main clutch --execute    # apply changes
 EOF
                 exit 0
                 ;;
-            *) echo "Unknown option: $arg" >&2; exit 1 ;;
+            -*) echo "Unknown option: $arg" >&2; exit 1 ;;
+            *) POSITIONAL+=("$arg") ;;
         esac
     done
+
+    if [[ ${#POSITIONAL[@]} -lt 2 ]]; then
+        echo "Error: requires <old-id> and <new-id> arguments." >&2
+        echo "Usage: sudo $0 <old-id> <new-id> [--execute]" >&2
+        exit 1
+    fi
+
+    OLD_ID="${POSITIONAL[0]}"
+    NEW_ID="${POSITIONAL[1]}"
+
+    if [[ "$OLD_ID" == "$NEW_ID" ]]; then
+        echo "Error: old-id and new-id are the same: $OLD_ID" >&2
+        exit 1
+    fi
 
     if [[ $EUID -ne 0 ]]; then
         echo "Error: must be run as root (sudo)." >&2
@@ -77,8 +112,8 @@ EOF
         echo "Error: user $CLOD_USER does not exist." >&2
         exit 1
     fi
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        echo "Error: config not found: $CONFIG_FILE" >&2
+    if [[ ! -f "$CLOD_CONFIG" ]]; then
+        echo "Error: config not found: $CLOD_CONFIG" >&2
         exit 1
     fi
 
@@ -93,12 +128,14 @@ EOF
 
     if $EXECUTE; then
         echo "Migration launched (detached PID $DETACHED_PID)."
+        echo "Renaming agent: $OLD_ID → $NEW_ID"
         echo "clod will stop, migrate, then restart."
         echo "Log file: $LOG_FILE"
         echo ""
         echo "After restart, read $LOG_FILE for results."
     else
         echo "Dry-run launched (detached PID $DETACHED_PID)."
+        echo "Renaming agent: $OLD_ID → $NEW_ID"
         echo "Log file: $LOG_FILE"
         echo ""
         echo "NOTE: dry-run still detaches but does NOT stop clod."
@@ -113,11 +150,17 @@ fi
 # ============================================================================
 
 EXECUTE=false
+POSITIONAL=()
 for arg in "$@"; do
     case "$arg" in
         --execute) EXECUTE=true ;;
+        -*) ;;
+        *) POSITIONAL+=("$arg") ;;
     esac
 done
+
+OLD_ID="${POSITIONAL[0]}"
+NEW_ID="${POSITIONAL[1]}"
 
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 info()  { echo "[$(ts)] [+] $*"; }
@@ -165,8 +208,8 @@ echo ""
 # --- 2. Rename session directory ---
 
 info "Step 2: Rename session directory"
-SESSION_OLD="$DATA_DIR/sessions/agent/$OLD_ID"
-SESSION_NEW="$DATA_DIR/sessions/agent/$NEW_ID"
+SESSION_OLD="$CLOD_DATA_DIR/sessions/agent/$OLD_ID"
+SESSION_NEW="$CLOD_DATA_DIR/sessions/agent/$NEW_ID"
 
 if [[ -d "$SESSION_OLD" ]]; then
     if [[ -d "$SESSION_NEW" ]]; then
@@ -185,11 +228,11 @@ echo ""
 info "Step 3: Rename memory database files"
 for ext in "" "-shm" "-wal"; do
     if [[ "$ext" == "" ]]; then
-        MEM_OLD="$DATA_DIR/memory-${OLD_ID}.db"
-        MEM_NEW="$DATA_DIR/memory-${NEW_ID}.db"
+        MEM_OLD="$CLOD_DATA_DIR/memory-${OLD_ID}.db"
+        MEM_NEW="$CLOD_DATA_DIR/memory-${NEW_ID}.db"
     else
-        MEM_OLD="$DATA_DIR/memory-${OLD_ID}.db${ext}"
-        MEM_NEW="$DATA_DIR/memory-${NEW_ID}.db${ext}"
+        MEM_OLD="$CLOD_DATA_DIR/memory-${OLD_ID}.db${ext}"
+        MEM_NEW="$CLOD_DATA_DIR/memory-${NEW_ID}.db${ext}"
     fi
 
     if [[ -f "$MEM_OLD" ]]; then
@@ -209,96 +252,65 @@ echo ""
 
 # --- 4. Update state.json ---
 
-info "Step 4: Update state.json keys"
-STATE_FILE="$DATA_DIR/state.json"
+update_state_json() {
+    local file="$1"
+    local label="$2"
 
-if [[ -f "$STATE_FILE" ]]; then
-    MATCHING_KEYS=$(python3 -c "
+    if [[ ! -f "$file" ]]; then
+        warn "  Not found: $file — skipping."
+        return
+    fi
+
+    local matching
+    matching=$(python3 -c "
 import json
-with open('$STATE_FILE') as f:
+with open('$file') as f:
     data = json.load(f)
 keys = [k for k in data if '$OLD_ID' in k]
 for k in keys:
     print(k)
 " 2>/dev/null || true)
 
-    if [[ -n "$MATCHING_KEYS" ]]; then
+    if [[ -n "$matching" ]]; then
         while IFS= read -r key; do
-            new_key="${key//$OLD_ID/$NEW_ID}"
+            local new_key="${key//$OLD_ID/$NEW_ID}"
             info "  Key: \"$key\" → \"$new_key\""
-        done <<< "$MATCHING_KEYS"
+        done <<< "$matching"
 
         if $EXECUTE; then
             python3 -c "
 import json
-with open('$STATE_FILE') as f:
+with open('$file') as f:
     data = json.load(f)
 new_data = {}
 for k, v in data.items():
     new_key = k.replace('$OLD_ID', '$NEW_ID')
     new_data[new_key] = v
-with open('$STATE_FILE', 'w') as f:
+with open('$file', 'w') as f:
     json.dump(new_data, f, indent=2)
     f.write('\n')
 "
-            info "  state.json updated."
+            info "  $label updated."
         fi
     else
         info "  No keys contain \"$OLD_ID\" — skipping."
     fi
-else
-    warn "  Not found: $STATE_FILE — skipping."
-fi
+}
+
+info "Step 4: Update data/state.json keys"
+update_state_json "$CLOD_DATA_DIR/state.json" "state.json"
 echo ""
 
 # --- 5. Update sessions/state.json (second state file) ---
 
-info "Step 5: Update sessions/state.json keys"
-SESSION_STATE_FILE="$DATA_DIR/sessions/state.json"
-
-if [[ -f "$SESSION_STATE_FILE" ]]; then
-    MATCHING_KEYS2=$(python3 -c "
-import json
-with open('$SESSION_STATE_FILE') as f:
-    data = json.load(f)
-keys = [k for k in data if '$OLD_ID' in k]
-for k in keys:
-    print(k)
-" 2>/dev/null || true)
-
-    if [[ -n "$MATCHING_KEYS2" ]]; then
-        while IFS= read -r key; do
-            new_key="${key//$OLD_ID/$NEW_ID}"
-            info "  Key: \"$key\" → \"$new_key\""
-        done <<< "$MATCHING_KEYS2"
-
-        if $EXECUTE; then
-            python3 -c "
-import json
-with open('$SESSION_STATE_FILE') as f:
-    data = json.load(f)
-new_data = {}
-for k, v in data.items():
-    new_key = k.replace('$OLD_ID', '$NEW_ID')
-    new_data[new_key] = v
-with open('$SESSION_STATE_FILE', 'w') as f:
-    json.dump(new_data, f, indent=2)
-    f.write('\n')
-"
-            info "  sessions/state.json updated."
-        fi
-    else
-        info "  No keys contain \"$OLD_ID\" — skipping."
-    fi
-else
-    warn "  Not found: $SESSION_STATE_FILE — skipping."
-fi
+info "Step 5: Update data/sessions/state.json keys"
+update_state_json "$CLOD_DATA_DIR/sessions/state.json" "sessions/state.json"
 echo ""
 
 # --- 6. Update conversation.db ---
 
 info "Step 6: Update conversation.db session references"
-CONV_DB="$DATA_DIR/conversation.db"
+CONV_DB="$CLOD_DATA_DIR/conversation.db"
 
 if [[ -f "$CONV_DB" ]]; then
     COUNT=$(sqlite3 "$CONV_DB" "SELECT COUNT(*) FROM messages WHERE session LIKE 'agent:${OLD_ID}:%';" 2>/dev/null || echo "0")
@@ -320,14 +332,14 @@ echo ""
 # --- 7. Update clod.toml ---
 
 info "Step 7: Update agent ID in clod.toml"
-if grep -q "id = \"$OLD_ID\"" "$CONFIG_FILE"; then
+if grep -q "id = \"$OLD_ID\"" "$CLOD_CONFIG"; then
     info "  id = \"$OLD_ID\" → id = \"$NEW_ID\""
     if $EXECUTE; then
-        sed -i "s/^id = \"$OLD_ID\"/id = \"$NEW_ID\"/" "$CONFIG_FILE"
+        sed -i "s/^id = \"$OLD_ID\"/id = \"$NEW_ID\"/" "$CLOD_CONFIG"
         info "  clod.toml updated."
     fi
 else
-    warn "  No 'id = \"$OLD_ID\"' found in $CONFIG_FILE — skipping."
+    warn "  No 'id = \"$OLD_ID\"' found in $CLOD_CONFIG — skipping."
 fi
 echo ""
 
@@ -335,17 +347,14 @@ echo ""
 
 info "Step 8: Fix file ownership"
 if $EXECUTE; then
-    chown -R "$CLOD_USER:$CLOD_USER" "$DATA_DIR"
-    info "  Ownership set on $DATA_DIR"
+    chown -R "$CLOD_USER:$CLOD_USER" "$CLOD_DATA_DIR"
+    info "  Ownership set on $CLOD_DATA_DIR"
 else
-    echo "[$(ts)]   (dry-run) chown -R $CLOD_USER:$CLOD_USER $DATA_DIR"
+    echo "[$(ts)]   (dry-run) chown -R $CLOD_USER:$CLOD_USER $CLOD_DATA_DIR"
 fi
 echo ""
 
 # --- 9. Build binary ---
-
-CLOD_SRC="/home/rich/git/clod"
-CLOD_BIN="/usr/local/bin/clodgw"
 
 info "Step 9: Build clod binary"
 if $EXECUTE; then
