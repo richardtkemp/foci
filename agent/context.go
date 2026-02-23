@@ -8,6 +8,20 @@ import (
 // turnCallbacksKey is the context key for TurnCallbacks.
 type turnCallbacksKey struct{}
 
+// triggerKey is the context key for the turn trigger type.
+type triggerKey struct{}
+
+// WithTrigger attaches a trigger label (e.g. "user", "heartbeat") to a context.
+func WithTrigger(ctx context.Context, trigger string) context.Context {
+	return context.WithValue(ctx, triggerKey{}, trigger)
+}
+
+// TriggerFromContext extracts the trigger label from context (empty if absent).
+func TriggerFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(triggerKey{}).(string)
+	return s
+}
+
 // TurnCallbacks holds per-turn callbacks scoped to a context.
 // Using context avoids cross-turn races from mutable Agent fields.
 type TurnCallbacks struct {

@@ -74,7 +74,7 @@ func (h *Heartbeat) Stop() {
 func (h *Heartbeat) fire(ctx context.Context) {
 	log.Infof("heartbeat", "firing for session %s", h.sessionKey)
 
-	resp, err := h.agent.HandleMessage(ctx, h.sessionKey, "[HEARTBEAT] The idle timer has fired. Check HEARTBEAT.md for instructions on what to do during idle time.")
+	resp, err := h.agent.HandleMessage(WithTrigger(ctx, "heartbeat"), h.sessionKey, "[HEARTBEAT] The idle timer has fired. Check HEARTBEAT.md for instructions on what to do during idle time.")
 	if err != nil {
 		log.Errorf("heartbeat", "error: %v", err)
 		return

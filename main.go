@@ -440,7 +440,7 @@ func main() {
 			}
 		}
 
-		resp, err := inst.ag.HandleMessage(ctx, sessionKey, req.Text)
+		resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "user"), sessionKey, req.Text)
 		if err != nil {
 			log.Errorf("http", "send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -541,7 +541,7 @@ func main() {
 
 		log.Infof("wake", "branch %s from %s, text=%q", branchKey, parentKey, req.Text)
 
-		resp, err := inst.ag.HandleMessage(ctx, branchKey, req.Text)
+		resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "wake"), branchKey, req.Text)
 		if err != nil {
 			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -661,7 +661,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// The response is delivered to Telegram via the primary bot's SendText.
 	notifier := tools.NewAsyncNotifier(func(message string) {
 		go func() {
-			resp, err := ag.HandleMessage(p.ctx, sessionKey, message)
+			resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "async_notify"), sessionKey, message)
 			if err != nil {
 				log.Errorf("async_notify", "error: %v", err)
 				return
@@ -794,7 +794,7 @@ func setupAgent(p setupParams) *agentInstance {
 			select {
 			case <-time.After(delay):
 				log.Infof("schedule_wake", "firing wake after %v for agent %s: %q", delay, acfg.ID, message)
-				resp, err := ag.HandleMessage(p.ctx, sessionKey, "[SCHEDULED WAKE]\n"+message)
+				resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "scheduled_wake"), sessionKey, "[SCHEDULED WAKE]\n"+message)
 				if err != nil {
 					log.Errorf("schedule_wake", "error: %v", err)
 				} else {
@@ -1145,18 +1145,39 @@ func gracefulShutdown(agents map[string]*agentInstance, timeout time.Duration) {
 	deadline := time.After(timeout)
 
 	for {
-		var busy []string
-		for id, inst := range agents {
+		var anyBusy bool
+		for _, inst := range agents {
 			if inst.ag.IsProcessing() {
-				busy = append(busy, id)
+				anyBusy = true
+				break
 			}
 		}
-		if len(busy) == 0 {
+		if !anyBusy {
 			return
 		}
 		select {
 		case <-deadline:
-			log.Warnf("main", "graceful shutdown timed out after %s — agents still processing: %s", timeout, strings.Join(busy, ", "))
+			var parts []string
+			now := time.Now()
+			for id, inst := range agents {
+				for _, d := range inst.ag.ProcessingDetails() {
+					s := fmt.Sprintf("%s(session=%s", id, d.SessionKey)
+					if d.ToolName != "" {
+						s += fmt.Sprintf(", tool=%s", d.ToolName)
+					}
+					if d.Trigger != "" {
+						s += fmt.Sprintf(", trigger=%s", d.Trigger)
+					}
+					s += fmt.Sprintf(", elapsed=%s)", now.Sub(d.StartTime).Truncate(time.Second))
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) == 0 {
+				// Shouldn't happen, but be safe
+				log.Warnf("main", "graceful shutdown timed out after %s — agents still processing (no detail available)", timeout)
+			} else {
+				log.Warnf("main", "graceful shutdown timed out after %s — blocking: %s", timeout, strings.Join(parts, ", "))
+			}
 			return
 		default:
 			time.Sleep(tickInterval)

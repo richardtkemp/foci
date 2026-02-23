@@ -503,6 +503,93 @@ func TestIsProcessing(t *testing.T) {
 	}
 }
 
+func TestProcessingDetails(t *testing.T) {
+	// ProcessingDetails should capture session key, trigger, and timing
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":           "msg_1",
+			"type":         "message",
+			"role":         "assistant",
+			"model":        "claude-haiku-4-5",
+			"content":      []map[string]interface{}{{"type": "text", "text": "ok"}},
+			"stop_reason":  "end_turn",
+			"usage":        map[string]int{"input_tokens": 10, "output_tokens": 5},
+			"cache_read":   0,
+			"cache_create": 0,
+		})
+	}))
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// Before turn
+	if details := ag.ProcessingDetails(); len(details) != 0 {
+		t.Fatalf("expected 0 details before turn, got %d", len(details))
+	}
+
+	// During turn — run HandleMessage in goroutine, check details mid-flight
+	started := make(chan struct{})
+	origHandler := server.Config.Handler
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		time.Sleep(200 * time.Millisecond) // hold the turn open
+		origHandler.ServeHTTP(w, r)
+	})
+
+	done := make(chan struct{})
+	go func() {
+		ctx := WithTrigger(context.Background(), "heartbeat")
+		ag.HandleMessage(ctx, "agent:test:detail", "check")
+		close(done)
+	}()
+
+	<-started
+	time.Sleep(50 * time.Millisecond) // let HandleMessageWithImages register
+
+	details := ag.ProcessingDetails()
+	if len(details) != 1 {
+		t.Fatalf("expected 1 detail during turn, got %d", len(details))
+	}
+	d := details[0]
+	if d.SessionKey != "agent:test:detail" {
+		t.Errorf("session key = %q", d.SessionKey)
+	}
+	if d.Trigger != "heartbeat" {
+		t.Errorf("trigger = %q, want heartbeat", d.Trigger)
+	}
+	if d.StartTime.IsZero() {
+		t.Error("start time should not be zero")
+	}
+
+	<-done
+
+	// After turn
+	if details := ag.ProcessingDetails(); len(details) != 0 {
+		t.Fatalf("expected 0 details after turn, got %d", len(details))
+	}
+}
+
+func TestTriggerContext(t *testing.T) {
+	ctx := context.Background()
+	if trigger := TriggerFromContext(ctx); trigger != "" {
+		t.Errorf("expected empty trigger, got %q", trigger)
+	}
+
+	ctx = WithTrigger(ctx, "user")
+	if trigger := TriggerFromContext(ctx); trigger != "user" {
+		t.Errorf("expected 'user', got %q", trigger)
+	}
+}
+
 func TestDeferredReply(t *testing.T) {
 	// Verify that text in tool_use responses is sent via ReplyFunc
 	var callCount atomic.Int32
