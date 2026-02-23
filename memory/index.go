@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"clod/log"
+
 	"github.com/fsnotify/fsnotify"
 	_ "modernc.org/sqlite"
 )
@@ -133,10 +135,12 @@ func (idx *Index) IndexConversation(text, session string) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	idx.db.Exec(
+	if _, err := idx.db.Exec(
 		"INSERT INTO memory_fts (content, path, source) VALUES (?, ?, 'conversation')",
 		text, session,
-	)
+	); err != nil {
+		log.Errorf("memory", "index conversation: %v", err)
+	}
 }
 
 // buildWeightedRankCase constructs a CASE statement for per-source weight multipliers.
@@ -230,8 +234,7 @@ func (idx *Index) handleFileEvents() {
 			if !ok {
 				return
 			}
-			// Log error but continue watching
-			_ = err // suppress lint warning if logging not available
+			log.Warnf("memory", "file watcher error: %v", err)
 		}
 	}
 }
@@ -249,7 +252,9 @@ func (idx *Index) scheduleReindex() {
 
 	// Schedule reindex after debounce delay
 	idx.reindexTimer = time.AfterFunc(idx.debounce, func() {
-		_ = idx.Reindex() // ignore errors during auto-reindex
+		if err := idx.Reindex(); err != nil {
+			log.Errorf("memory", "auto-reindex failed: %v", err)
+		}
 	})
 }
 
