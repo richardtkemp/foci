@@ -1894,6 +1894,93 @@ func TestSeedSessionMeta(t *testing.T) {
 	}
 }
 
+func TestMaxTokensWarning(t *testing.T) {
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("This response was cut off bec"),
+			StopReason: "max_tokens",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 8192},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var warnings []string
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		MaxTokensWarnFunc: func(warn string) {
+			warnings = append(warnings, warn)
+		},
+	}
+
+	resp, err := ag.HandleMessage(context.Background(), "agent:test:maxtkn", "Write a very long essay")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// Response should still be delivered
+	if resp != "This response was cut off bec" {
+		t.Errorf("response = %q", resp)
+	}
+
+	// Warning callback should have fired
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	if !strings.Contains(warnings[0], "max_tokens") {
+		t.Errorf("warning = %q, want contains 'max_tokens'", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "agent:test:maxtkn") {
+		t.Errorf("warning = %q, want contains session key", warnings[0])
+	}
+}
+
+func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Normal response."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var warnings []string
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		MaxTokensWarnFunc: func(warn string) {
+			warnings = append(warnings, warn)
+		},
+	}
+
+	ag.HandleMessage(context.Background(), "agent:test:nomax", "Hello")
+
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for end_turn, got %d: %v", len(warnings), warnings)
+	}
+}
+
 func TestToolResultRedaction(t *testing.T) {
 	var callCount atomic.Int32
 
