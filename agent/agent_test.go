@@ -590,6 +590,18 @@ func TestTriggerContext(t *testing.T) {
 	}
 }
 
+func TestNoCompactContext(t *testing.T) {
+	ctx := context.Background()
+	if NoCompactFromContext(ctx) {
+		t.Error("expected false for empty context")
+	}
+
+	ctx = WithNoCompact(ctx)
+	if !NoCompactFromContext(ctx) {
+		t.Error("expected true after WithNoCompact")
+	}
+}
+
 func TestDeferredReply(t *testing.T) {
 	// Verify that text in tool_use responses is sent via ReplyFunc
 	var callCount atomic.Int32
@@ -1495,6 +1507,66 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// 10 messages in session before compaction (5 user + 5 assistant)
 		if notified[0] != 10 {
 			t.Errorf("notified oldCount = %d, want 10", notified[0])
+		}
+	})
+
+	t.Run("no_compact", func(t *testing.T) {
+		var turnCount atomic.Int32
+		server := compactionMockServer(&turnCount, 5)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+		var notified []int
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+			CompactionNotifyFunc: func(session string, oldCount int) {
+				notified = append(notified, oldCount)
+			},
+		}
+
+		sessionKey := "agent:test:nocompact"
+
+		// 4 normal turns
+		for i := 1; i <= 4; i++ {
+			if _, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i)); err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+		}
+
+		// Turn 5 triggers compaction threshold — but with NoCompact set
+		ctx := WithNoCompact(context.Background())
+		resp, err := ag.HandleMessage(ctx, sessionKey, "Turn 5")
+		if err != nil {
+			t.Fatalf("Turn 5: %v", err)
+		}
+
+		// Should still get a response
+		if resp != "Response 5" {
+			t.Errorf("got %q, want %q", resp, "Response 5")
+		}
+
+		// Compaction should NOT have fired
+		if len(notified) != 0 {
+			t.Errorf("expected 0 notifications with no_compact, got %d", len(notified))
+		}
+
+		// Session should still have all original messages (not compacted)
+		msgs, err := store.Load(sessionKey)
+		if err != nil {
+			t.Fatalf("load session: %v", err)
+		}
+		// 5 turns × 2 messages each = 10
+		if len(msgs) != 10 {
+			t.Errorf("expected 10 messages (uncompacted), got %d", len(msgs))
 		}
 	})
 }

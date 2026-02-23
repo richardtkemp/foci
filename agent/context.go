@@ -69,3 +69,18 @@ func sendVoiceCtx(ctx context.Context, data []byte) {
 		cb.VoiceReplyFunc(data)
 	}
 }
+
+// noCompactKey is the context key for disabling compaction.
+type noCompactKey struct{}
+
+// WithNoCompact attaches a no-compact flag to a context.
+// When set, the agent loop returns instead of triggering compaction.
+func WithNoCompact(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noCompactKey{}, true)
+}
+
+// NoCompactFromContext returns true if compaction should be skipped.
+func NoCompactFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(noCompactKey{}).(bool)
+	return v
+}

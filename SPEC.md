@@ -399,9 +399,9 @@ A timer that fires when the session has been idle for a configurable duration.
 **HTTP endpoint (for cron jobs):**
 ```
 POST /wake
-{"agent": "main", "text": "morning routine"}
+{"agent": "main", "text": "morning routine", "no_compact": true}
 ```
-Injects text as a user message into a branch session.
+Injects text as a user message into a branch session. When `no_compact` is true, the session returns its result instead of triggering compaction if the context limit is reached — useful for cron jobs that inherit a large parent context and shouldn't waste mana compacting.
 
 **Tool-based scheduling:**
 The `schedule_wake` tool allows the agent to schedule messages to itself:

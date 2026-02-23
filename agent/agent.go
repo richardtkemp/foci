@@ -705,6 +705,10 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			// Check if compaction is needed
 			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
+				if NoCompactFromContext(ctx) {
+					log.Infof("agent", "compaction needed but no_compact set — stopping")
+					return anthropic.TextOf(resp.Content), nil
+				}
 				oldCount := len(messages)
 				if err := a.Compactor.Compact(ctx, sessionKey, system, a.CompactionSummaryPrompt, a.CompactionHandoffMsg); err != nil {
 					log.Errorf("agent", "compaction failed: %v", err)
