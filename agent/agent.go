@@ -76,6 +76,7 @@ type Agent struct {
 	Warnings                *WarningQueue           // nil disables warning injection into session
 	ManaWatcher             *ManaWatcher            // nil disables mana threshold warnings
 	ManaWarnFunc            func(string)            // callback for mana threshold warnings (e.g. Telegram notification)
+	Redact                  func(string) string     // redact secrets from tool output; nil disables
 	StateStore              *state.Store            // nil disables state persistence
 	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
 	PromptRules             []CompiledPromptRule    // compiled regex rules for inbound message transformation
@@ -749,8 +750,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			}
 			if err != nil {
 				log.Debugf("agent", "tool %s error: %v", block.Name, err)
+				errMsg := fmt.Sprintf("Error: %s", err)
+				if a.Redact != nil {
+					errMsg = a.Redact(errMsg)
+				}
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
-					block.ID, fmt.Sprintf("Error: %s", err), true,
+					block.ID, errMsg, true,
 				))
 				signalActivityCtx(ctx)
 				continue
@@ -758,6 +763,10 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			// Guard against oversized tool results
 			guardedResult := a.guardToolResult(block.Name, result)
+			// Redact secrets from tool output
+			if a.Redact != nil {
+				guardedResult = a.Redact(guardedResult)
+			}
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
 				block.ID, guardedResult, false,
 			))
