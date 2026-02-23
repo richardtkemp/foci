@@ -71,6 +71,7 @@ type SessionsConfig struct {
 	CompactionMinMessages   int     `toml:"compaction_min_messages"`   // min messages before compacting (default 4)
 	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"` // custom summary prompt
 	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`    // handoff message after compaction
+	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`  // extra system prompt injected only during compaction (saves tokens on regular turns)
 }
 
 type MemorySource struct {
@@ -94,7 +95,7 @@ type DatabaseConfig struct {
 type HTTPConfig struct {
 	Port                    int    `toml:"port"`
 	Bind                    string `toml:"bind"`
-	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout"` // time to wait for in-flight requests on shutdown (default "5s")
+	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout"` // time to wait for in-flight requests on shutdown (default "30s")
 }
 
 type LoggingConfig struct {
@@ -453,7 +454,7 @@ func Load(path string) (*Config, error) {
 
 	// HTTP defaults
 	if cfg.HTTP.GracefulShutdownTimeout == "" {
-		cfg.HTTP.GracefulShutdownTimeout = "5s"
+		cfg.HTTP.GracefulShutdownTimeout = "30s"
 	}
 
 	// Bool defaults: default to true unless explicitly set to false in config.
