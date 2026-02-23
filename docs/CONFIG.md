@@ -417,6 +417,7 @@ Miscellaneous top-level config keys (not in any section).
 |-----|------|---------|-------------|
 | `data_dir` | string | `""` | Directory for databases, sessions, and state files. When empty, defaults to `$HOME/data/`. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
 | `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
+| `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [docs/SECRETS.md](SECRETS.md). |
 
 ---
 
@@ -515,7 +516,7 @@ Existing flat-layout installs continue to work unchanged. To migrate, run `scrip
 
 ## `secrets.toml`
 
-Credentials file. Lives alongside `clod.toml`. Should have restricted permissions (`chmod 600`).
+Credentials file. Lives alongside `clod.toml`. Protected at the OS level by the `clod-secrets` group — see [docs/SECRETS.md](SECRETS.md) for the full security model and setup instructions.
 
 ```toml
 [anthropic]
