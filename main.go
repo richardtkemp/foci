@@ -873,11 +873,17 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewPingCommand())
 	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
 		return command.StatusInfo{
-			SessionKey:   sessionKey,
-			MessageCount: sessionMessageCount(p.sessions, sessionKey),
-			Model:        ag.Model,
-			Uptime:       time.Since(p.startTime),
-			AgentBusy:    ag.IsProcessing(),
+			AgentID:          acfg.ID,
+			SessionKey:       sessionKey,
+			MessageCount:     sessionMessageCount(p.sessions, sessionKey),
+			Model:            ag.Model,
+			Uptime:           time.Since(p.startTime),
+			StartTime:        p.startTime,
+			AgentBusy:        ag.IsProcessing(),
+			CreatedAt:        p.sessions.CreatedAt(sessionKey),
+			LastActivity:     p.sessions.LastActivity(sessionKey),
+			ContextLimit:     compaction.ContextLimit(ag.Model),
+			CompactThreshold: p.cfg.Sessions.CompactionThreshold,
 		}
 	}, p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
@@ -905,14 +911,6 @@ func setupAgent(p setupParams) *agentInstance {
 		func() string { return ag.Model },
 		func(m string) { ag.Model = m },
 	))
-	cmds.Register(command.NewSessionCommand(func() command.SessionInfo {
-		return command.SessionInfo{
-			SessionKey:   sessionKey,
-			MessageCount: sessionMessageCount(p.sessions, sessionKey),
-			CreatedAt:    p.sessions.CreatedAt(sessionKey),
-			LastActivity: p.sessions.LastActivity(sessionKey),
-		}
-	}))
 	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
 		var infos []command.ToolInfo
 		for _, t := range registry.All() {
@@ -935,7 +933,6 @@ func setupAgent(p setupParams) *agentInstance {
 		GitCommit: gitCommit,
 		BuildTime: buildTime,
 	}))
-	cmds.Register(command.NewUptimeCommand(p.startTime))
 	cmds.Register(command.NewHelpCommand(cmds))
 
 	// /usage command (shared usage client)

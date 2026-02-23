@@ -48,11 +48,17 @@ func TestStatusCommand(t *testing.T) {
 
 	cmd := NewStatusCommand(func() StatusInfo {
 		return StatusInfo{
-			SessionKey:   "agent:main:main",
-			MessageCount: 42,
-			Model:        "claude-haiku-4-5",
-			Uptime:       2*time.Hour + 30*time.Minute,
-			AgentBusy:    false,
+			AgentID:          "main",
+			SessionKey:       "agent:main:main",
+			MessageCount:     42,
+			Model:            "claude-haiku-4-5",
+			Uptime:           2*time.Hour + 30*time.Minute,
+			StartTime:        now.Add(-2*time.Hour - 30*time.Minute),
+			AgentBusy:        false,
+			CreatedAt:        "2026-02-23T13:33:00Z",
+			LastActivity:     "2026-02-23T19:58:00Z",
+			ContextLimit:     200000,
+			CompactThreshold: 0.8,
 		}
 	}, path)
 
@@ -62,14 +68,17 @@ func TestStatusCommand(t *testing.T) {
 	}
 
 	checks := []string{
+		"main",
 		"agent:main:main",
 		"claude-haiku-4-5",
 		"42",
 		"idle",
 		"2h30m",
-		"in=300",         // 100+200
-		"out=150",        // 50+100
-		"cache_read=230", // 80+150
+		"13:33 UTC",
+		"19:58 UTC",
+		"$0.00",   // session cost
+		"2 calls", // session call count
+		"200,000", // context limit
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
@@ -81,7 +90,7 @@ func TestStatusCommand(t *testing.T) {
 func TestStatusCommandBusy(t *testing.T) {
 	path := writeAPILog(t, nil)
 	cmd := NewStatusCommand(func() StatusInfo {
-		return StatusInfo{AgentBusy: true}
+		return StatusInfo{AgentID: "test", AgentBusy: true}
 	}, path)
 
 	result, _ := cmd.Execute(context.Background(), "")
@@ -258,25 +267,6 @@ func TestModelCommand(t *testing.T) {
 	}
 }
 
-func TestSessionCommand(t *testing.T) {
-	cmd := NewSessionCommand(func() SessionInfo {
-		return SessionInfo{
-			SessionKey:   "agent:main:main",
-			MessageCount: 10,
-			CreatedAt:    "2026-02-21T00:00:00Z",
-			LastActivity: "2026-02-21T04:30:00Z",
-		}
-	})
-
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "agent:main:main") {
-		t.Errorf("missing session key in:\n%s", result)
-	}
-	if !strings.Contains(result, "10") {
-		t.Errorf("missing message count in:\n%s", result)
-	}
-}
-
 func TestToolsCommand(t *testing.T) {
 	cmd := NewToolsCommand(func() []ToolInfo {
 		return []ToolInfo{
@@ -371,13 +361,23 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
-func TestUptimeCommand(t *testing.T) {
-	startTime := time.Now().Add(-1 * time.Hour)
-	cmd := NewUptimeCommand(startTime)
-
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "1h0m") {
-		t.Errorf("result = %q", result)
+func TestFormatCommas(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1000, "1,000"},
+		{32793, "32,793"},
+		{200000, "200,000"},
+		{1234567, "1,234,567"},
+	}
+	for _, tt := range tests {
+		got := formatCommas(tt.n)
+		if got != tt.want {
+			t.Errorf("formatCommas(%d) = %q, want %q", tt.n, got, tt.want)
+		}
 	}
 }
 
