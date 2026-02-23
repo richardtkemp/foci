@@ -650,7 +650,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				return "", ctx.Err()
 			}
 			if err != nil {
-				log.Warnf("agent", "tool %s error: %v", block.Name, err)
+				log.Debugf("agent", "tool %s error: %v", block.Name, err)
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
 				))
