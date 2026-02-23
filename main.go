@@ -900,8 +900,17 @@ func setupAgent(p setupParams) *agentInstance {
 		ag.ManaWatcher.Restore()
 	}
 
-	// Model escalation tool (needs this agent's bootstrap)
-	registry.Register(tools.NewRequestModelTool(p.client, bootstrap))
+	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
+	// Uses lazy getter for agent since ag is assigned later in this function.
+	spawnDeps := tools.SpawnDeps{
+		Client:     p.client,
+		Bootstrap:  bootstrap,
+		Sessions:   &sessionBranchAdapter{store: p.sessions},
+		AgentID:    acfg.ID,
+		Model:      acfg.Model,
+		MaxInherit: p.cfg.Tools.MaxConcurrentSpawns,
+	}
+	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
 
 	// TTS tool -- voice reply func is injected into tool context by the agent loop
 	if p.ttsProvider != nil {
@@ -1513,6 +1522,17 @@ func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, 
 	if _, err := ag.HandleMessage(hookCtx, sessionKey, prompt); err != nil {
 		log.Warnf("reset-hook", "hook failed for %s: %v", sessionKey, err)
 	}
+}
+
+// sessionBranchAdapter wraps session.Store to implement tools.SessionBrancher.
+type sessionBranchAdapter struct {
+	store *session.Store
+}
+
+func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, noResetHook bool) error {
+	return a.store.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+		NoResetHook: noResetHook,
+	})
 }
 
 // checkManaPrereqs returns warnings if mana detection prerequisites are missing.
