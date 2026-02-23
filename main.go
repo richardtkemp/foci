@@ -744,7 +744,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Mana threshold warnings (if thresholds configured)
-	if len(p.cfg.ManaWarnings.Thresholds) > 0 && ag.Warnings != nil {
+	if len(p.cfg.ManaWarnings.Thresholds) > 0 {
 		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, p.cfg.ManaWarnings.Thresholds)
 	}
 
@@ -996,6 +996,14 @@ func setupAgent(p setupParams) *agentInstance {
 				msg := fmt.Sprintf("⚠️ Cache bust: read dropped %d → %d on %s", prevRead, curRead, session)
 				log.Warnf("agent", "%s", msg)
 				primaryBot.SendNotification(msg)
+			}
+		}
+
+		// Wire mana threshold warnings to Telegram
+		if ag.ManaWatcher != nil {
+			ag.ManaWarnFunc = func(warn string) {
+				log.Warnf("mana", "%s", warn)
+				primaryBot.SendNotification("⚠️ " + warn)
 			}
 		}
 

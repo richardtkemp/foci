@@ -77,6 +77,7 @@ type Agent struct {
 	ToolResultTempDir       string                  // where to write large tool results
 	Warnings                *WarningQueue           // nil disables warning injection into session
 	ManaWatcher             *ManaWatcher            // nil disables mana threshold warnings
+	ManaWarnFunc            func(string)            // callback for mana threshold warnings (e.g. Telegram notification)
 	StateStore              *state.Store            // nil disables state persistence
 	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
 	PromptRules             []CompiledPromptRule    // compiled regex rules for inbound message transformation
@@ -408,12 +409,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	sm := a.getSessionMeta(sessionKey)
 	mana := a.manaString()
 
-	// Check mana thresholds and inject warning for active conversations only
+	// Check mana thresholds and notify user for active conversations only
 	// (not heartbeats or scheduled wakes)
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
 		a.ManaWatcher.CheckAndWarn(mana, func(warn string) {
-			if a.Warnings != nil {
-				a.Warnings.Push("WARN", "mana", warn)
+			if a.ManaWarnFunc != nil {
+				a.ManaWarnFunc(warn)
 			}
 		})
 	}
