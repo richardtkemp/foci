@@ -88,6 +88,15 @@ func main() {
 		log.Infof("main", "loaded %d secrets: %v", len(names), names)
 	}
 
+	// Startup security checks for secrets.toml
+	if !cfg.SkipSecurityChecks {
+		if warnings := store.CheckSecurity(); len(warnings) > 0 {
+			for _, w := range warnings {
+				log.Warnf("security", "%s", w)
+			}
+		}
+	}
+
 	// Wire child process group-dropping into the command package
 	// (so script commands also drop supplementary groups).
 	command.ChildSysProcAttr = tools.ChildSysProcAttr

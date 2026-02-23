@@ -189,9 +189,10 @@ type Config struct {
 	Environment  EnvironmentConfig  `toml:"environment"`
 	Skills       SkillsConfig       `toml:"skills"`
 	Tools        ToolsConfig        `toml:"tools"`
-	Commands     []CommandConfig    `toml:"commands"`
-	PromptRules  []PromptRule       `toml:"prompt_rules"` // regex find/replace rules applied to inbound messages
-	WelcomeFile  string             `toml:"welcome_file"` // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
+	Commands           []CommandConfig    `toml:"commands"`
+	PromptRules        []PromptRule       `toml:"prompt_rules"`        // regex find/replace rules applied to inbound messages
+	WelcomeFile        string             `toml:"welcome_file"`        // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
+	SkipSecurityChecks bool               `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 }
 
 // validate checks semantic validity of config values after parsing and defaults.

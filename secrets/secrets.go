@@ -3,9 +3,12 @@ package secrets
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/BurntSushi/toml"
 )
@@ -202,4 +205,81 @@ func (s *Store) IsBlockedCommand(cmd string) bool {
 		}
 	}
 	return false
+}
+
+// SecurityGroupName is the OS group that protects secrets.toml.
+const SecurityGroupName = "clod-secrets"
+
+// CheckSecurity verifies the OS-level protection of secrets.toml.
+// Returns a list of warning messages for any issues found.
+// Does not prevent startup — issues are advisory only.
+func (s *Store) CheckSecurity() []string {
+	if s.path == "" {
+		return nil
+	}
+
+	var warnings []string
+
+	info, err := os.Stat(s.path)
+	if os.IsNotExist(err) {
+		// No secrets file — nothing to protect
+		return nil
+	}
+	if err != nil {
+		return []string{fmt.Sprintf("cannot stat %s: %v", s.path, err)}
+	}
+
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return []string{"cannot read file ownership (unsupported platform)"}
+	}
+
+	// Check owner is root (uid 0)
+	if stat.Uid != 0 {
+		warnings = append(warnings,
+			fmt.Sprintf("secrets.toml owner is uid %d, expected root (uid 0) — run: sudo chown root:clod-secrets %s", stat.Uid, s.path))
+	}
+
+	// Check group is clod-secrets
+	grp, err := user.LookupGroup(SecurityGroupName)
+	if err != nil {
+		warnings = append(warnings,
+			fmt.Sprintf("group %q not found — run: sudo groupadd %s", SecurityGroupName, SecurityGroupName))
+	} else {
+		expectedGID, _ := strconv.ParseUint(grp.Gid, 10, 32)
+		if uint64(stat.Gid) != expectedGID {
+			warnings = append(warnings,
+				fmt.Sprintf("secrets.toml group is gid %d, expected %s (gid %s) — run: sudo chown root:%s %s",
+					stat.Gid, SecurityGroupName, grp.Gid, SecurityGroupName, s.path))
+		}
+	}
+
+	// Check permissions are 0660
+	mode := info.Mode().Perm()
+	if mode != 0660 {
+		warnings = append(warnings,
+			fmt.Sprintf("secrets.toml permissions are %04o, expected 0660 — run: sudo chmod 0660 %s", mode, s.path))
+	}
+
+	// Check process has clod-secrets in supplementary groups
+	if grp != nil {
+		expectedGID, _ := strconv.ParseUint(grp.Gid, 10, 32)
+		gids, err := syscall.Getgroups()
+		if err == nil {
+			found := false
+			for _, g := range gids {
+				if uint64(g) == expectedGID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				warnings = append(warnings,
+					fmt.Sprintf("process does not have %s in supplementary groups — add SupplementaryGroups=%s to systemd unit",
+						SecurityGroupName, SecurityGroupName))
+			}
+		}
+	}
+
+	return warnings
 }
