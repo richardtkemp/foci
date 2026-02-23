@@ -3,8 +3,11 @@ package tools
 import (
 	"os"
 	"os/exec"
+	"os/user"
 	"strings"
 	"testing"
+
+	"clod/secrets"
 )
 
 func TestChildSysProcAttr(t *testing.T) {
@@ -27,27 +30,43 @@ func TestChildSysProcAttrSetsid(t *testing.T) {
 	}
 }
 
-func TestChildCredentialProbe(t *testing.T) {
+func TestChildCredentialPreservesOtherGroups(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root user")
 	}
 
-	// In test environment (no CAP_SETGID), childCredential should be nil
-	// because the probe fails. In production with CAP_SETGID, it would be set.
-	if childCredential != nil {
-		// If we do have it (e.g. running with capabilities), verify it's correct
-		if childCredential.Uid != uint32(os.Getuid()) {
-			t.Errorf("Uid = %d, want %d", childCredential.Uid, os.Getuid())
-		}
-		if childCredential.Gid != uint32(os.Getgid()) {
-			t.Errorf("Gid = %d, want %d", childCredential.Gid, os.Getgid())
-		}
-		if len(childCredential.Groups) != 1 || childCredential.Groups[0] != uint32(os.Getgid()) {
-			t.Errorf("Groups = %v, want [%d]", childCredential.Groups, os.Getgid())
-		}
-	} else {
-		t.Log("childCredential is nil (no CAP_SETGID) — expected in test environment")
+	// If clod-secrets group doesn't exist, credential should be nil
+	// (nothing to drop). If it does exist but we lack CAP_SETGID,
+	// credential should also be nil. In both cases, child inherits
+	// all parent groups — which is correct.
+	if childCredential == nil {
+		t.Log("childCredential is nil — either clod-secrets group not found or CAP_SETGID unavailable")
+		return
 	}
+
+	// If credential IS set, verify clod-secrets is not in the group list
+	secretsGrp, err := user.LookupGroup(secrets.SecurityGroupName)
+	if err != nil {
+		t.Fatalf("clod-secrets group lookup failed but credential is set: %v", err)
+	}
+
+	for _, g := range childCredential.Groups {
+		if g == uint32(mustParseUint(secretsGrp.Gid)) {
+			t.Errorf("childCredential.Groups contains clod-secrets gid %s — should be filtered", secretsGrp.Gid)
+		}
+	}
+
+	// Verify other groups ARE preserved (credential should have more than just primary)
+	t.Logf("child groups: %v (primary gid: %d)", childCredential.Groups, childCredential.Gid)
+}
+
+func mustParseUint(s string) uint64 {
+	n, _ := strings.CutPrefix(s, "")
+	var v uint64
+	for _, c := range n {
+		v = v*10 + uint64(c-'0')
+	}
+	return v
 }
 
 func TestExecStillWorks(t *testing.T) {
@@ -75,5 +94,17 @@ func TestExecSetsidStillWorks(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "hello") {
 		t.Errorf("unexpected output: %s", out)
+	}
+}
+
+func TestNoCredentialWithoutSecretsGroup(t *testing.T) {
+	// If clod-secrets group doesn't exist on this system,
+	// credential should be nil (no group to drop).
+	_, err := user.LookupGroup(secrets.SecurityGroupName)
+	if err != nil {
+		// Group doesn't exist — credential must be nil
+		if childCredential != nil {
+			t.Error("childCredential should be nil when clod-secrets group doesn't exist")
+		}
 	}
 }

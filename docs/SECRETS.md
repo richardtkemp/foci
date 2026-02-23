@@ -47,7 +47,7 @@ Secrets are protected at the operating system level using Unix groups:
 1. **Group `clod-secrets`** — a dedicated group that owns `secrets.toml`
 2. **File ownership** — `secrets.toml` is owned by `root:clod-secrets` with permissions `0660`
 3. **Supplementary groups** — the systemd unit grants `SupplementaryGroups=clod-secrets` so the main clod process can read and write secrets
-4. **Group dropping** — all child processes spawned by the exec tool, tmux tool, and script commands have their supplementary groups stripped. They run with only the primary `clod` group, so the OS denies access to `secrets.toml`
+4. **Group dropping** — all child processes spawned by the exec tool, tmux tool, and script commands have the `clod-secrets` group removed from their supplementary group list. All other groups (e.g. `docker`, `git`, `sudo`) are preserved. The OS denies access to `secrets.toml` because the child no longer has `clod-secrets`
 5. **CAP_SETGID** — the systemd unit grants `AmbientCapabilities=CAP_SETGID` so the process can call `setgroups()` to drop groups on child processes
 
 This means even if an AI agent constructs a command to read `secrets.toml` using encoding tricks, glob patterns, interpreter string construction, or any other bypass technique, the OS kernel denies access. The protection is not bypassable from userspace.
