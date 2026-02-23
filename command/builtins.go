@@ -179,9 +179,9 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 				if remaining < 0 {
 					remaining = 0
 				}
-				fmt.Fprintf(&sb, "\n📈 Context: %s / %s tokens (%.1f%%)\n",
-					formatCommas(contextTokens), formatCommas(info.ContextLimit), pct)
-				fmt.Fprintf(&sb, "   Compaction at %.0f%% — %sk tokens remaining\n",
+				fmt.Fprintf(&sb, "\n📈 Context: %.1f%% (%s / %s tokens)\n",
+					pct, formatCommas(contextTokens), formatCommas(info.ContextLimit))
+				fmt.Fprintf(&sb, "   Compaction at %.0f%% (%sk tokens remaining)\n",
 					info.CompactThreshold*100, formatCommas(remaining/1000))
 			}
 
