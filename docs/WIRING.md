@@ -16,14 +16,15 @@ config.Load(path)                                        ← validates values; l
   → anthropic.NewClient(token)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
-  → memory: ReminderStore + Scratchpad                   ← shared across agents
+  → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
+  → memory: ReminderStore + Scratchpad + TodoStore       ← shared across agents (scoped per-agent via agent_id)
   → memory.NewIndex                                      ← shared OR per-agent (see below)
   → voice STT/TTS providers                              ← shared across agents
   → telegram.NewBotManager()
 
   Per-agent loop (for each cfg.Agents[i]):
   → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap, heartbeat}
-    → tools.NewAsyncNotifier()                             ← shared by exec + tmux
+    → tools.NewAsyncNotifier()                             ← shared by exec + tmux, routes by session key
     → tools.NewRegistry() + register all tools             ← per-agent registry
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
@@ -34,6 +35,8 @@ config.Load(path)                                        ← validates values; l
     → auto-expose all commands as tools
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
+    → agent.RestoreVoiceMode(sessionKey)
+    → agent.SeedSessionMeta(sessionKey)                    ← seed gap from session history (correct gap after restart)
     → agent.NewHeartbeat(agent, sessionKey, interval)
 
   → botMgr.StartAll(ctx)                                  ← starts all bots
@@ -77,10 +80,12 @@ The core of the system. Two entry points:
 - `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithImages`
 - `HandleMessageWithImages(ctx, sessionKey, text, images)` — full version with optional image attachments
 
-**Tool execution guarding:**
+**Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
 - If exceeded, writes full result to temp file and returns truncated message
 - Prevents large tool outputs from permanently bloating session history
+- `agent.Redact` is applied to all tool results and error messages (secret redaction)
+- Tool errors are logged as WARN in the event log
 
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
@@ -172,7 +177,7 @@ Tool calls are shown in Telegram via a send+edit pattern using `ToolCallObserver
 
 The agent can defer thoughts for later via the `memory_remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due.
 
-**Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `text`, `due_at`, `due_tag`, `created`.
+**Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 
 **Time resolution (`resolveWhen`):**
 - `next_heartbeat`, `next_session`, `now` → immediate
@@ -194,9 +199,9 @@ Hello, what should I work on?
 
 Working state that survives compaction but isn't permanent memory. The agent writes notes during investigations and clears them when done.
 
-**Storage:** `Scratchpad` in `memory/scratchpad.go`. SQLite table `scratchpad` with columns: `key` (primary key), `content`, `updated`. Stored in `scratchpad.db`.
+**Storage:** `Scratchpad` in `memory/scratchpad.go`. SQLite table `scratchpad` with columns: `agent_id`, `key` (composite primary key), `content`, `updated`. Stored in `scratchpad.db`. Scoped per-agent — each agent sees only its own entries.
 
-**Tools:** `scratchpad_write(key, content)`, `scratchpad_read(key)`, `scratchpad_clear(key)`.
+**Tools:** `scratchpad_write(key, content)`, `scratchpad_read(key)`, `scratchpad_clear(key)`. Agent ID injected at tool creation time.
 
 **Compaction survival:** When compaction fires (`compaction/compact.go`), all scratchpad entries are serialized and appended to the post-compaction handoff message as a `[scratchpad]` block. This prevents compaction from eating working state mid-investigation.
 
@@ -336,7 +341,8 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
 | `request_model` | model.go | Synchronous one-shot call to a different model. Sends prompt, returns response as tool result. Supports prompt weight: full (character files), light (minimal), none. Session's own model/cache unaffected. |
 | `schedule_wake` | schedule.go | Schedule message injection at specified time or delay. One-shot, auto-cleaned after firing. |
-| `tts` | voice.go | Convert text to speech via OpenRouter TTS API. Sends audio as Telegram voice note. Used when the agent wants to reply with voice explicitly. |
+| `tts` | voice.go | Convert text to speech via TTS provider (Edge TTS or OpenAI). Sends audio as Telegram voice note. Configurable rate/speed via `tts_rate`. |
+| `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 
 ### Tool Result Guard
 
@@ -437,11 +443,15 @@ Two paths:
 2. **TTS tool** — the agent can explicitly call `tts(text)` to send a voice note. Works regardless of voice mode.
 
 ```
-voice.TTS.Synthesize(text) → OpenRouter TTS API (openai/tts-1-mini)
+voice.TTS.Synthesize(text) → Edge TTS CLI or OpenRouter TTS API
   → raw MP3 bytes → tgbotapi.NewVoice(chatID, FileBytes{mp3})
 ```
 
-API key from `secrets.toml` under `[openrouter] api_key`. Endpoint/model/voice configurable in `[voice]` config section (defaults: `https://openrouter.ai/api/v1/audio/speech`, `openai/tts-1-mini`, `alloy`).
+Two TTS providers:
+- **Edge TTS** (default, free): Uses `edge-tts` CLI. Configurable voice and rate (`--rate "+20%"`).
+- **OpenAI** (via OpenRouter): API key from `secrets.toml` under `[openrouter] api_key`. Configurable endpoint/model/voice/speed.
+
+Speech rate configurable via `tts_rate` in `[voice]` config section. For edge-tts: percentage (e.g. `"+20%"`). For openai: float 0.25–4.0 (e.g. `"1.5"`).
 
 **Voice mode metadata:** When voice mode is on, the metadata prefix includes `voice=on`:
 ```
@@ -508,7 +518,8 @@ Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external too
 Checks token usage against threshold (default 80% of context window). When triggered:
 1. Asks model (configurable) to summarize history using configurable prompt
 2. Replaces session with 3-message compacted version (context note + summary + continuation note)
-3. Appends any scratchpad entries to preservation message
+3. Appends any scratchpad entries to preservation message (scoped to agent via `Compactor.AgentID`)
+4. If `CompactionNotifyFunc` is set, sends Telegram notification with session key and pre-compaction message count (configurable via `compaction_notify`, default true)
 
 **Configurable via `Compactor.WithConfig()`:**
 - `model` — summarization model (default: agent model)

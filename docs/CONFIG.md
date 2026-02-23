@@ -439,8 +439,9 @@ $HOME/
   data/sessions/         ← session JSONL files
   data/state.json        ← persistent state
   data/memory.db         ← memory FTS index
-  data/reminders.db      ← reminder store
-  data/scratchpad.db     ← scratchpad store
+  data/reminders.db      ← reminder store (per-agent via agent_id)
+  data/scratchpad.db     ← scratchpad store (per-agent via agent_id)
+  data/todo.db           ← todo store (per-agent via agent_id)
   data/WELCOME.md        ← welcome/changelog file
 ```
 

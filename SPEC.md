@@ -133,7 +133,7 @@ Tools:
 - `scratchpad_read()` — return current scratchpad contents
 - `scratchpad_clear()` — empty the scratchpad
 
-Stored in SQLite. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
+Stored in SQLite, scoped per-agent via `agent_id` column. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
 
 ### Model Escalation
 
@@ -166,7 +166,7 @@ memory_remind("Look into whether FTS5 supports phrase boosting", "next_heartbeat
 memory_remind("Ask Dick about the Greece decision", "tomorrow")
 ```
 
-Reminders surface as injected context at the specified time (next heartbeat, next session, specific date). Stored in SQLite alongside conversation log. Lightweight — not a full task system, just "future me should think about this."
+Reminders surface as injected context at the specified time (next heartbeat, next session, specific date). Stored in SQLite, scoped per-agent via `agent_id` column. Lightweight — not a full task system, just "future me should think about this."
 
 ### Tool System
 
@@ -185,6 +185,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `request_model` — escalate to a heavier model for the next turn
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
+- `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
 
 ### Tmux Session Monitoring
 
@@ -730,29 +731,37 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Multiball — `/multiball` forks to secondary Telegram bot, tested and working
 - Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
 - Telegram bot (text messages, DM only)
-- Tools: exec, read, write, edit, web_fetch, web_search, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), request_model, schedule_wake, tts
+- Tools: exec, read, write, edit, web_fetch, web_search, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), request_model, schedule_wake, tts, todo
 - Workspace bootstrap (markdown files → system prompt, configurable file order)
 - Skills framework (YAML frontmatter, command dispatch, script execution)
 - Heartbeat (configurable interval)
-- Compaction (threshold-based, configurable parameters)
+- Compaction (threshold-based, configurable parameters, optional Telegram notification)
 - FTS5 memory search (memory files + conversation history, weighted)
 - TOML config (single file + secrets.toml)
-- Voice outbound (Edge TTS via OpenRouter)
+- Voice outbound (Edge TTS or OpenAI, configurable speech rate via `tts_rate`)
 - Voice inbound (STT via Groq Whisper)
 - Deferred replies (multiple Telegram messages per turn)
 - Cache bust alerts (Telegram notification on large cache writes)
 - Exec template secrets (`{{secret:NAME}}`) — resolved before spawning subprocess
-- Tool output redaction — exec output scanned for known secret patterns
+- Secret redaction on all tool output — exec output, tool errors, and all tool results scanned for known secret patterns
 - Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
 - Tool result size guard (large results saved to temp file)
 - Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball
 - Cron system (system crontab, prompts loaded from disk)
 - Setup script (idempotent, builds from source, installs as systemd service)
 - Repair interrupted tool calls on session load
+- Restart markers — on startup, appends `[System restarted]` to recently active sessions (within 1 hour)
+- Gap calculation seeded from session history on restart (correct `gap=` on first post-restart message)
+- Environment block — system-generated runtime context injected as first system prompt block (`[environment]` config)
+- BotFather slash command registration on startup (Telegram `setMyCommands`)
+- Todo tool — native todo management with SQLite persistence, per-agent scoping, priority ordering
+- Per-agent scratchpad and reminders — `agent_id` column in shared databases, schema migration
+- Async exec/tmux result routing — per-notification session key (results route to correct session, not hardcoded main)
+- max_tokens warning — log WARN + Telegram notification when stop_reason=max_tokens
+- Tool call errors logged as WARNING in event log
 
 ### 🔶 Phase 2 — Next
 
-- **Multi-agent support** — multiple `[[agents]]` with separate configs, sessions, Telegram bots, workspaces
 - **Sub-agents** — agent-initiated branch sessions for delegated tasks
 - **Inter-agent messaging** — agents communicating with each other
 - **File attachments** — send/receive files via Telegram

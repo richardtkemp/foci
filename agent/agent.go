@@ -764,7 +764,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				return "", ctx.Err()
 			}
 			if err != nil {
-				log.Debugf("agent", "tool %s error: %v", block.Name, err)
+				log.Warnf("agent", "tool %s error: %v", block.Name, err)
 				errMsg := fmt.Sprintf("Error: %s", err)
 				if a.Redact != nil {
 					errMsg = a.Redact(errMsg)
