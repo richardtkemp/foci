@@ -185,19 +185,30 @@ func TestCostCommandToday(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Total line
+	// Total line (header before code block)
 	if !strings.Contains(result, "$0.08") {
 		t.Errorf("expected today's total in:\n%s", result)
 	}
 	if !strings.Contains(result, "2 calls") {
 		t.Errorf("expected 2 calls in:\n%s", result)
 	}
+	// Code block table format
+	if !strings.Contains(result, "```") {
+		t.Errorf("expected code block in:\n%s", result)
+	}
+	if !strings.Contains(result, "Session") || !strings.Contains(result, "Cost") || !strings.Contains(result, "Calls") {
+		t.Errorf("missing table headers in:\n%s", result)
+	}
+	if !strings.Contains(result, "─") {
+		t.Errorf("missing separator line in:\n%s", result)
+	}
 	// Per-session breakdown
 	if !strings.Contains(result, "session-a") || !strings.Contains(result, "session-b") {
 		t.Errorf("missing session breakdown in:\n%s", result)
 	}
-	if !strings.Contains(result, "By session:") {
-		t.Errorf("missing 'By session:' header in:\n%s", result)
+	// Total row
+	if !strings.Contains(result, "Total") {
+		t.Errorf("missing Total row in:\n%s", result)
 	}
 }
 
@@ -224,6 +235,38 @@ func TestCostCommandSession(t *testing.T) {
 	bIdx := strings.Index(result, "session-b")
 	if aIdx > bIdx {
 		t.Errorf("expected session-a before session-b (sorted by cost desc):\n%s", result)
+	}
+}
+
+func TestCostCommandTop10Limit(t *testing.T) {
+	now := time.Now().UTC()
+	var entries []apiEntry
+	for i := 0; i < 12; i++ {
+		entries = append(entries, apiEntry{
+			Timestamp: now,
+			Session:   fmt.Sprintf("session-%02d", i),
+			CostUSD:   float64(12-i) * 0.01,
+		})
+	}
+	path := writeAPILog(t, entries)
+
+	cmd := NewCostCommand(path)
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show top 10 + "+2 more"
+	if !strings.Contains(result, "+2 more") {
+		t.Errorf("missing '+2 more' overflow indicator in:\n%s", result)
+	}
+	// session-00 (highest cost) should be present
+	if !strings.Contains(result, "session-00") {
+		t.Errorf("missing top session in:\n%s", result)
+	}
+	// session-10 and session-11 (lowest cost) should be truncated
+	if strings.Contains(result, "session-10") || strings.Contains(result, "session-11") {
+		t.Errorf("low-cost sessions should be truncated:\n%s", result)
 	}
 }
 
