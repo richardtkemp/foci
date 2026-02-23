@@ -63,6 +63,7 @@ type Agent struct {
 	Bootstrap *workspace.Bootstrap
 	Compactor *compaction.Compactor // nil disables auto-compaction
 	Reminders *memory.ReminderStore // nil disables reminder injection
+	AgentID   string                // unique agent identifier (for per-agent DB queries)
 	Model     string
 
 	EnvironmentBlock        string                  // pre-built environment context block (prepended first in system prompt)
@@ -381,7 +382,7 @@ func (a *Agent) collectReminders() string {
 		return ""
 	}
 
-	reminders, err := a.Reminders.Due()
+	reminders, err := a.Reminders.Due(a.AgentID)
 	if err != nil {
 		log.Errorf("agent", "fetch reminders: %v", err)
 		return ""
@@ -397,7 +398,7 @@ func (a *Agent) collectReminders() string {
 	}
 
 	// Auto-dismiss surfaced reminders
-	if err := a.Reminders.DismissAll(); err != nil {
+	if err := a.Reminders.DismissAll(a.AgentID); err != nil {
 		log.Errorf("agent", "dismiss reminders: %v", err)
 	}
 

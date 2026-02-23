@@ -1405,14 +1405,15 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 		defer scratchpad.Close()
 
-		if err := scratchpad.Write("current_task", "implementing feature X"); err != nil {
+		if err := scratchpad.Write("test", "current_task", "implementing feature X"); err != nil {
 			t.Fatalf("write scratchpad: %v", err)
 		}
-		if err := scratchpad.Write("blockers", "need API key for auth"); err != nil {
+		if err := scratchpad.Write("test", "blockers", "need API key for auth"); err != nil {
 			t.Fatalf("write scratchpad: %v", err)
 		}
 
 		compactor.Scratchpad = scratchpad
+		compactor.AgentID = "test"
 
 		ag := &Agent{
 			Client:    client,

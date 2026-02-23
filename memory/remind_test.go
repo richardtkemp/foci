@@ -20,11 +20,11 @@ func testReminderStore(t *testing.T) *ReminderStore {
 func TestReminderAddAndDue(t *testing.T) {
 	rs := testReminderStore(t)
 
-	if err := rs.Add("check logs", "now"); err != nil {
+	if err := rs.Add("test", "check logs", "now"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	reminders, err := rs.Due()
+	reminders, err := rs.Due("test")
 	if err != nil {
 		t.Fatalf("Due: %v", err)
 	}
@@ -42,11 +42,11 @@ func TestReminderAddAndDue(t *testing.T) {
 func TestReminderNextHeartbeat(t *testing.T) {
 	rs := testReminderStore(t)
 
-	if err := rs.Add("think about caching", "next_heartbeat"); err != nil {
+	if err := rs.Add("test", "think about caching", "next_heartbeat"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	reminders, err := rs.Due()
+	reminders, err := rs.Due("test")
 	if err != nil {
 		t.Fatalf("Due: %v", err)
 	}
@@ -61,12 +61,12 @@ func TestReminderNextHeartbeat(t *testing.T) {
 func TestReminderTomorrow(t *testing.T) {
 	rs := testReminderStore(t)
 
-	if err := rs.Add("ask about Greece", "tomorrow"); err != nil {
+	if err := rs.Add("test", "ask about Greece", "tomorrow"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
 	// Should NOT be due now (it's tomorrow)
-	reminders, err := rs.Due()
+	reminders, err := rs.Due("test")
 	if err != nil {
 		t.Fatalf("Due: %v", err)
 	}
@@ -79,12 +79,12 @@ func TestReminderFutureDate(t *testing.T) {
 	rs := testReminderStore(t)
 
 	futureDate := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
-	if err := rs.Add("weekly review", futureDate); err != nil {
+	if err := rs.Add("test", "weekly review", futureDate); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
 	// Should NOT be due now
-	reminders, err := rs.Due()
+	reminders, err := rs.Due("test")
 	if err != nil {
 		t.Fatalf("Due: %v", err)
 	}
@@ -96,10 +96,10 @@ func TestReminderFutureDate(t *testing.T) {
 func TestReminderDismiss(t *testing.T) {
 	rs := testReminderStore(t)
 
-	rs.Add("reminder 1", "now")
-	rs.Add("reminder 2", "now")
+	rs.Add("test", "reminder 1", "now")
+	rs.Add("test", "reminder 2", "now")
 
-	reminders, _ := rs.Due()
+	reminders, _ := rs.Due("test")
 	if len(reminders) != 2 {
 		t.Fatalf("expected 2 reminders, got %d", len(reminders))
 	}
@@ -109,7 +109,7 @@ func TestReminderDismiss(t *testing.T) {
 		t.Fatalf("Dismiss: %v", err)
 	}
 
-	reminders, _ = rs.Due()
+	reminders, _ = rs.Due("test")
 	if len(reminders) != 1 {
 		t.Fatalf("expected 1 reminder after dismiss, got %d", len(reminders))
 	}
@@ -121,17 +121,17 @@ func TestReminderDismiss(t *testing.T) {
 func TestReminderDismissAll(t *testing.T) {
 	rs := testReminderStore(t)
 
-	rs.Add("r1", "now")
-	rs.Add("r2", "now")
-	rs.Add("r3", "tomorrow") // not due
+	rs.Add("test", "r1", "now")
+	rs.Add("test", "r2", "now")
+	rs.Add("test", "r3", "tomorrow") // not due
 
-	if err := rs.DismissAll(); err != nil {
+	if err := rs.DismissAll("test"); err != nil {
 		t.Fatalf("DismissAll: %v", err)
 	}
 
 	// Due ones dismissed, tomorrow one still there
 	// (check by querying all — not just due)
-	reminders, _ := rs.Due()
+	reminders, _ := rs.Due("test")
 	if len(reminders) != 0 {
 		t.Fatalf("expected 0 due after DismissAll, got %d", len(reminders))
 	}
@@ -165,11 +165,11 @@ func TestResolveWhen(t *testing.T) {
 func TestReminderMultiple(t *testing.T) {
 	rs := testReminderStore(t)
 
-	rs.Add("first", "now")
-	rs.Add("second", "now")
-	rs.Add("third", "now")
+	rs.Add("test", "first", "now")
+	rs.Add("test", "second", "now")
+	rs.Add("test", "third", "now")
 
-	reminders, err := rs.Due()
+	reminders, err := rs.Due("test")
 	if err != nil {
 		t.Fatalf("Due: %v", err)
 	}
