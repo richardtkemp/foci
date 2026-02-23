@@ -458,7 +458,11 @@ func main() {
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
-		result, _ := inst.cmds.Dispatch(context.Background(), "/status")
+		result, ok := inst.cmds.Dispatch(context.Background(), "/status")
+		if !ok {
+			http.Error(w, "status command not available", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": result})
 	})
@@ -1105,7 +1109,11 @@ func setupAgent(p setupParams) *agentInstance {
 }
 
 func sessionMessageCount(sessions *session.Store, key string) int {
-	n, _ := sessions.MessageCount(key)
+	n, err := sessions.MessageCount(key)
+	if err != nil {
+		log.Warnf("main", "message count for %s: %v", key, err)
+		return 0
+	}
 	return n
 }
 

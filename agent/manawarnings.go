@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"clod/log"
 	"clod/state"
 )
 
@@ -84,7 +85,9 @@ func (m *ManaWatcher) saveFiredState() {
 		FiredToday: m.firedToday,
 		LastReset:  m.lastReset,
 	}
-	m.store.Set(key, state)
+	if err := m.store.Set(key, state); err != nil {
+		log.Errorf("mana", "persist fired state: %v", err)
+	}
 }
 
 func (m *ManaWatcher) CheckAndWarn(manaStr string, warnFunc func(string)) {
