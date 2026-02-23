@@ -271,44 +271,58 @@ func NewCostCommand(apiLogPath string) *Command {
 			}
 
 			scope := strings.ToLower(strings.TrimSpace(args))
-			if scope == "" {
-				scope = "today"
-			}
 
 			switch scope {
-			case "today":
+			case "", "today", "session":
+				// Default: today's total with per-session breakdown
 				today := time.Now().UTC().Format("2006-01-02")
 				var total float64
 				var count int
+				costs := make(map[string]float64)
+				counts := make(map[string]int)
 				for _, e := range entries {
 					if e.Timestamp.Format("2006-01-02") == today {
 						total += e.CostUSD
 						count++
+						costs[e.Session] += e.CostUSD
+						counts[e.Session]++
 					}
 				}
-				return fmt.Sprintf("Today: $%.4f (%d API calls)", total, count), nil
 
-			case "session":
-				costs := make(map[string]float64)
-				counts := make(map[string]int)
-				for _, e := range entries {
-					costs[e.Session] += e.CostUSD
-					counts[e.Session]++
-				}
 				var b strings.Builder
-				var grandTotal float64
-				for session, cost := range costs {
-					fmt.Fprintf(&b, "%s: $%.4f (%d calls)\n", session, cost, counts[session])
-					grandTotal += cost
+				fmt.Fprintf(&b, "💰 Today: $%.2f eq. (%s calls)\n", total, formatCommas(count))
+
+				if len(costs) > 0 {
+					// Sort sessions by cost descending
+					type sessionCost struct {
+						name  string
+						cost  float64
+						calls int
+					}
+					sorted := make([]sessionCost, 0, len(costs))
+					for s, c := range costs {
+						sorted = append(sorted, sessionCost{s, c, counts[s]})
+					}
+					for i := 0; i < len(sorted)-1; i++ {
+						for j := i + 1; j < len(sorted); j++ {
+							if sorted[j].cost > sorted[i].cost {
+								sorted[i], sorted[j] = sorted[j], sorted[i]
+							}
+						}
+					}
+					b.WriteString("\nBy session:\n")
+					for _, sc := range sorted {
+						fmt.Fprintf(&b, "  %-30s $%.2f  (%s calls)\n",
+							sc.name, sc.cost, formatCommas(sc.calls))
+					}
 				}
-				fmt.Fprintf(&b, "total: $%.4f", grandTotal)
-				return b.String(), nil
+				return strings.TrimRight(b.String(), "\n"), nil
 
 			default:
 				// Try parsing as number of days
 				days, err := strconv.Atoi(scope)
 				if err != nil {
-					return "Usage: /cost [today|session|<days>]", nil
+					return "Usage: /cost [today|<days>]", nil
 				}
 				cutoff := time.Now().UTC().AddDate(0, 0, -days)
 				var total float64

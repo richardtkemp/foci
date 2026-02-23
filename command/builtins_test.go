@@ -166,9 +166,9 @@ func TestCostCommandToday(t *testing.T) {
 	now := time.Now().UTC()
 	yesterday := now.AddDate(0, 0, -1)
 	path := writeAPILog(t, []apiEntry{
-		{Timestamp: yesterday, CostUSD: 0.100},
-		{Timestamp: now, CostUSD: 0.050},
-		{Timestamp: now, CostUSD: 0.025},
+		{Timestamp: yesterday, Session: "old-session", CostUSD: 0.100},
+		{Timestamp: now, Session: "session-a", CostUSD: 0.050},
+		{Timestamp: now, Session: "session-b", CostUSD: 0.025},
 	})
 
 	cmd := NewCostCommand(path)
@@ -177,11 +177,19 @@ func TestCostCommandToday(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "$0.0750") {
-		t.Errorf("expected today's cost $0.0750 in:\n%s", result)
+	// Total line
+	if !strings.Contains(result, "$0.08") {
+		t.Errorf("expected today's total in:\n%s", result)
 	}
-	if !strings.Contains(result, "2 API calls") {
-		t.Errorf("expected 2 API calls in:\n%s", result)
+	if !strings.Contains(result, "2 calls") {
+		t.Errorf("expected 2 calls in:\n%s", result)
+	}
+	// Per-session breakdown
+	if !strings.Contains(result, "session-a") || !strings.Contains(result, "session-b") {
+		t.Errorf("missing session breakdown in:\n%s", result)
+	}
+	if !strings.Contains(result, "By session:") {
+		t.Errorf("missing 'By session:' header in:\n%s", result)
 	}
 }
 
@@ -194,6 +202,7 @@ func TestCostCommandSession(t *testing.T) {
 	})
 
 	cmd := NewCostCommand(path)
+	// "session" is an alias for default output now
 	result, err := cmd.Execute(context.Background(), "session")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -202,8 +211,11 @@ func TestCostCommandSession(t *testing.T) {
 	if !strings.Contains(result, "session-a") || !strings.Contains(result, "session-b") {
 		t.Errorf("missing sessions in:\n%s", result)
 	}
-	if !strings.Contains(result, "total: $0.0600") {
-		t.Errorf("missing total in:\n%s", result)
+	// session-a should appear first (higher total cost: 0.04 > 0.02)
+	aIdx := strings.Index(result, "session-a")
+	bIdx := strings.Index(result, "session-b")
+	if aIdx > bIdx {
+		t.Errorf("expected session-a before session-b (sorted by cost desc):\n%s", result)
 	}
 }
 
