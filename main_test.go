@@ -355,3 +355,52 @@ func TestCheckManaPrereqs_EmptyCredFile(t *testing.T) {
 		}
 	}
 }
+
+// ========== resolveResetPrompt tests ==========
+
+func TestResolveResetPrompt_Default(t *testing.T) {
+	cfg := &config.Config{}
+	prompt := resolveResetPrompt(cfg)
+	if prompt != config.DefaultSessionResetPrompt {
+		t.Errorf("expected default prompt, got %q", prompt)
+	}
+	if prompt == "" {
+		t.Error("default prompt should not be empty")
+	}
+}
+
+func TestResolveResetPrompt_InlineOverridesDefault(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Sessions.SessionResetPrompt = "custom prompt"
+	prompt := resolveResetPrompt(cfg)
+	if prompt != "custom prompt" {
+		t.Errorf("expected inline prompt, got %q", prompt)
+	}
+}
+
+func TestResolveResetPrompt_FileOverridesDefault(t *testing.T) {
+	dir := t.TempDir()
+	promptFile := filepath.Join(dir, "reset.md")
+	os.WriteFile(promptFile, []byte("file prompt content"), 0644)
+
+	cfg := &config.Config{}
+	cfg.Sessions.SessionResetPromptFile = promptFile
+	prompt := resolveResetPrompt(cfg)
+	if prompt != "file prompt content" {
+		t.Errorf("expected file prompt, got %q", prompt)
+	}
+}
+
+func TestResolveResetPrompt_InlineTakesPrecedenceOverFile(t *testing.T) {
+	dir := t.TempDir()
+	promptFile := filepath.Join(dir, "reset.md")
+	os.WriteFile(promptFile, []byte("file prompt"), 0644)
+
+	cfg := &config.Config{}
+	cfg.Sessions.SessionResetPrompt = "inline prompt"
+	cfg.Sessions.SessionResetPromptFile = promptFile
+	prompt := resolveResetPrompt(cfg)
+	if prompt != "inline prompt" {
+		t.Errorf("expected inline to win, got %q", prompt)
+	}
+}
