@@ -791,6 +791,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
+	registry.Register(tools.NewHTTPRequestTool(p.store))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}

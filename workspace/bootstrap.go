@@ -85,7 +85,7 @@ func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 
 // buildSecretsBlock creates a system block listing available secrets
 func buildSecretsBlock(names []string) anthropic.SystemBlock {
-	text := "Available secrets for {{secret:NAME}} templates: " + strings.Join(names, ", ")
+	text := "Available secrets for {{secret:NAME}} templates in http_request headers/body (preferred) or exec commands: " + strings.Join(names, ", ")
 	return anthropic.SystemBlock{
 		Type: "text",
 		Text: text,
