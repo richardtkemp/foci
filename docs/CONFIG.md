@@ -543,9 +543,25 @@ api_key = "gsk_..."
 
 [openrouter]
 api_key = "sk-or-..."
+
+[custom]
+github_token = "ghp_..."
+allowed_hosts = ["api.github.com"]
 ```
 
 All secrets override their corresponding `clod.toml` values.
+
+### `allowed_hosts`
+
+Each section can include an `allowed_hosts` array restricting which hosts that section's secrets can be sent to via the `http_request` tool. Secrets without `allowed_hosts` can only be used in exec commands (deprecated).
+
+```toml
+[myapi]
+token = "sk-..."
+allowed_hosts = ["api.example.com", "api.backup.example.com"]
+```
+
+Host matching is case-insensitive (per RFC 4343). Ports are ignored — `api.example.com:8443` matches `api.example.com`. See [docs/SECRETS.md](SECRETS.md) for the full security model.
 
 ---
 

@@ -298,8 +298,9 @@ github_token = "ghp_..."
 Stored as flat keys: `anthropic.token`, `custom.github_token`, etc. Overrides `clod.toml` credentials at startup.
 
 Features:
-- **Template resolution:** `{{secret:custom.github_token}}` in exec commands → replaced with actual value before execution
-- **Output redaction:** Secret values in command output → `[REDACTED]` (skips values < 4 chars)
+- **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body or exec commands → replaced with actual value before sending/execution
+- **Domain locking:** `allowed_hosts` per section restricts which hosts a secret can be sent to via `http_request`. `secrets.FindSecretRefs()` extracts template refs; `store.CheckHostAllowed()` validates the target URL (userinfo-safe via `url.Parse().Hostname()`)
+- **Output redaction:** Secret values in command/response output → `[REDACTED]` (skips values < 4 chars)
 - **Path blocking:** Commands referencing `secrets.toml` or `/proc/self/environ` are refused
 
 ## Logging (`log/`)
@@ -327,7 +328,8 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 
 | Tool | File | What it does |
 |------|------|-------------|
-| `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, secret template resolution + output redaction |
+| `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, secret template resolution + output redaction. `{{secret:}}` in exec is deprecated — warns on use. |
+| `http_request` | http.go | Domain-locked HTTP requests. Secrets in headers/body validated against per-section `allowed_hosts` before sending. Cross-domain redirects blocked when secrets present. Response redacted. Uses `secrets.FindSecretRefs()` to collect refs, `store.CheckHostAllowed()` to validate. |
 | `tmux` | tmux.go | Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity, unwatch. Owned sessions persist across app restarts via state store. |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |

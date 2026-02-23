@@ -30,13 +30,77 @@ Keys use `section.key` format. The `[anthropic]` and `[telegram]` sections are u
 
 ### Referencing secrets
 
-Use `{{secret:section.key}}` in exec commands:
+Use `{{secret:section.key}}` in `http_request` headers/body (preferred) or exec commands:
 
 ```
 curl -H "Authorization: Bearer {{secret:custom.github_token}}" https://api.github.com/user
 ```
 
-Templates are resolved before the command is executed. The secret value never appears in the agent's context — only the template string.
+Templates are resolved before the request is sent or command is executed. The secret value never appears in the agent's context — only the template string.
+
+## Domain-Locked Secrets (`http_request`)
+
+The `http_request` tool provides secure API calls with secrets that are domain-locked — each secret can only be sent to explicitly allowed hosts.
+
+### `allowed_hosts` format
+
+Add an `allowed_hosts` array to any section in `secrets.toml`:
+
+```toml
+[github]
+token = "ghp_..."
+allowed_hosts = ["api.github.com"]
+
+[custom]
+api_key = "sk-..."
+allowed_hosts = ["api.example.com", "api.backup.example.com"]
+
+[legacy]
+old_key = "val"
+# No allowed_hosts — can only be used in exec (deprecated)
+```
+
+### Agent usage
+
+The agent uses `http_request` to make API calls with secrets:
+
+```json
+{
+  "url": "https://api.github.com/user",
+  "method": "GET",
+  "headers": {
+    "Authorization": "Bearer {{secret:github.token}}"
+  }
+}
+```
+
+### Security guarantees
+
+- **No shell** — secrets are resolved in-process, never passed to `sh -c`. Shell encoding attacks are impossible.
+- **Host validation** — before sending, each secret's target URL is checked against `allowed_hosts`. Requests to unlisted hosts are rejected.
+- **Userinfo defense** — URLs like `https://api.example.com@evil.com/steal` are detected. The tool uses `url.Parse().Hostname()` which returns `evil.com`, not `api.example.com`.
+- **Redirect blocking** — when secrets are present, cross-domain redirects are blocked. A server at `api.example.com` cannot redirect to `evil.com` to capture credentials.
+- **Response redaction** — secret values in the response body are replaced with `[REDACTED]`, preventing the agent from seeing raw credentials echoed back.
+- **Case-insensitive host matching** — per RFC 4343, host comparison is case-insensitive.
+
+### Migration from exec
+
+Secrets in exec commands (`{{secret:NAME}}` in shell commands) are deprecated. A warning is logged when used. Migrate API calls to `http_request`:
+
+**Before (exec, deprecated):**
+```
+curl -H "Authorization: Bearer {{secret:custom.api_key}}" https://api.example.com/data
+```
+
+**After (http_request, preferred):**
+```json
+{
+  "url": "https://api.example.com/data",
+  "headers": { "Authorization": "Bearer {{secret:custom.api_key}}" }
+}
+```
+
+Add `allowed_hosts` to the secret's section in `secrets.toml`. Secrets without `allowed_hosts` cannot be used in `http_request`.
 
 ## Security Model
 
