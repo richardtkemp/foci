@@ -1175,7 +1175,14 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 
 	// Session Structure
 	b.WriteString("\n## Session Structure\n")
-	b.WriteString("Your context is assembled from: this environment block, character files (identity, soul, etc.), a secrets list, a skills list, and the conversation history. ")
+	b.WriteString("Your context is assembled from: this environment block, character files, a secrets list, and the conversation history.\n")
+	sysFiles := acfg.SystemFiles
+	if len(sysFiles) == 0 {
+		sysFiles = workspace.DefaultFileOrder
+	}
+	b.WriteString("Character files (in order): ")
+	b.WriteString(strings.Join(sysFiles, ", "))
+	b.WriteString("\n")
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
