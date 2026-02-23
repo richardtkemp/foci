@@ -838,6 +838,23 @@ func NewAgentsCommand(listFn func() []AgentInfo) *Command {
 	}
 }
 
+// NewCompactCommand creates a /compact command that triggers manual session compaction.
+// compactFn performs the compaction and returns the old message count, or an error.
+func NewCompactCommand(compactFn func(ctx context.Context) (int, error)) *Command {
+	return &Command{
+		Name:        "compact",
+		Description: "Trigger manual context compaction",
+		Category:    "operations",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			oldCount, err := compactFn(ctx)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Context compacted — %d messages summarised.", oldCount), nil
+		},
+	}
+}
+
 // NewRestartCommand creates a /restart command that restarts the clod service.
 // notifyFn is called before the restart to send a notification (e.g., Telegram).
 func NewRestartCommand(notifyFn func(string)) *Command {

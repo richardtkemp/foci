@@ -582,6 +582,37 @@ func TestAgentsCommand(t *testing.T) {
 	}
 }
 
+func TestCompactCommand(t *testing.T) {
+	cmd := NewCompactCommand(func(ctx context.Context) (int, error) {
+		return 42, nil
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "42 messages") {
+		t.Errorf("expected message count in result: %q", result)
+	}
+	if cmd.Category != "operations" {
+		t.Errorf("category = %q, want operations", cmd.Category)
+	}
+}
+
+func TestCompactCommandError(t *testing.T) {
+	cmd := NewCompactCommand(func(ctx context.Context) (int, error) {
+		return 0, fmt.Errorf("too few messages to compact (3)")
+	})
+
+	_, err := cmd.Execute(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "too few") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestAgentsCommandEmpty(t *testing.T) {
 	cmd := NewAgentsCommand(func() []AgentInfo { return nil })
 	result, _ := cmd.Execute(context.Background(), "")

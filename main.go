@@ -1066,6 +1066,27 @@ func setupAgent(p setupParams) *agentInstance {
 		},
 	})
 	cmds.Register(command.NewAgentsCommand(p.agentListFn))
+	cmds.Register(command.NewCompactCommand(func(ctx context.Context) (int, error) {
+		if ag.Compactor == nil {
+			return 0, fmt.Errorf("compaction is not configured")
+		}
+		mc, _ := p.sessions.MessageCount(sessionKey)
+		if mc < 5 {
+			return 0, fmt.Errorf("too few messages to compact (%d)", mc)
+		}
+		if ag.CompactionNotifyFunc != nil {
+			ag.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
+		}
+		system := bootstrap.SystemBlocks()
+		if err := ag.Compactor.Compact(ctx, sessionKey, system, ag.CompactionSummaryPrompt, ag.CompactionHandoffMsg); err != nil {
+			return 0, fmt.Errorf("compaction failed: %w", err)
+		}
+		if ag.CompactionNotifyFunc != nil {
+			ag.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
+		}
+		bootstrap.Reload()
+		return mc, nil
+	}))
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
 	cmds.Register(command.NewSecretsCommand(p.store))
 	cmds.Register(command.NewRestartCommand(nil))
