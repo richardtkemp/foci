@@ -673,6 +673,27 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+// NewRestartCommand creates a /restart command that restarts the clod service.
+// notifyFn is called before the restart to send a notification (e.g., Telegram).
+func NewRestartCommand(notifyFn func(string)) *Command {
+	return &Command{
+		Name:        "restart",
+		Description: "Restart the clod service",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			if notifyFn != nil {
+				notifyFn("Restarting...")
+			}
+
+			cmd := exec.Command("systemctl", "restart", "clod")
+			if err := cmd.Start(); err != nil {
+				return "", fmt.Errorf("restart failed: %w", err)
+			}
+			// Don't wait — process will be killed by systemd
+			return "Restarting...", nil
+		},
+	}
+}
+
 // SecretsStore is the interface needed by the /secrets command.
 type SecretsStore interface {
 	Names() []string
