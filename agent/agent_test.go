@@ -1455,6 +1455,47 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("handoff should contain scratchpad value: %q", handoff)
 		}
 	})
+
+	t.Run("notify", func(t *testing.T) {
+		var turnCount atomic.Int32
+		server := compactionMockServer(&turnCount, 5)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+		var notified []int
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+			CompactionNotifyFunc: func(session string, oldCount int) {
+				notified = append(notified, oldCount)
+			},
+		}
+
+		sessionKey := "agent:test:compactnotify"
+
+		// 4 turns, then turn 5 triggers compaction
+		for i := 1; i <= 5; i++ {
+			if _, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i)); err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+		}
+
+		if len(notified) != 1 {
+			t.Fatalf("expected 1 notification, got %d", len(notified))
+		}
+		// 10 messages in session before compaction (5 user + 5 assistant)
+		if notified[0] != 10 {
+			t.Errorf("notified oldCount = %d, want 10", notified[0])
+		}
+	})
 }
 
 func TestIntermediateTextBeforeToolCalls(t *testing.T) {
