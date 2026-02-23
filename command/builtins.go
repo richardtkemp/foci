@@ -244,20 +244,58 @@ func NewCacheCommand(apiLogPath string) *Command {
 				avgHit = float64(totalCacheRead) / float64(totalInput) * 100
 			}
 
-			var b strings.Builder
-			fmt.Fprintf(&b, "Cache — last %d calls (avg %.1f%% hit)\n", len(recent), avgHit)
-			for _, e := range recent {
+			// Pre-compute per-row values for column width measurement
+			type cacheRow struct {
+				time     string
+				input    string
+				cRead    string
+				cWrite   string
+				cost     string
+				hitPct   string
+			}
+			rows := make([]cacheRow, len(recent))
+			for i, e := range recent {
 				hitRate := 0.0
 				inp := e.Input + e.CacheRead + e.CacheWrite
 				if inp > 0 {
 					hitRate = float64(e.CacheRead) / float64(inp) * 100
 				}
-				fmt.Fprintf(&b, "  %s  in=%s cR=%s cW=%s  $%.4f (%.0f%%)\n",
-					e.Timestamp.Format("15:04:05"),
-					formatCommas(e.Input), formatCommas(e.CacheRead), formatCommas(e.CacheWrite),
-					e.CostUSD, hitRate)
+				rows[i] = cacheRow{
+					time:   e.Timestamp.Format("15:04:05"),
+					input:  formatCommas(e.Input),
+					cRead:  formatCommas(e.CacheRead),
+					cWrite: formatCommas(e.CacheWrite),
+					cost:   fmt.Sprintf("$%.3f", e.CostUSD),
+					hitPct: fmt.Sprintf("%.0f%%", hitRate),
+				}
 			}
-			return strings.TrimRight(b.String(), "\n"), nil
+
+			// Measure column widths
+			inW, crW, cwW, costW, hitW := len("Input"), len("CacheRead"), len("CacheWrite"), len("Cost"), len("Hit%")
+			for _, r := range rows {
+				if len(r.input) > inW { inW = len(r.input) }
+				if len(r.cRead) > crW { crW = len(r.cRead) }
+				if len(r.cWrite) > cwW { cwW = len(r.cWrite) }
+				if len(r.cost) > costW { costW = len(r.cost) }
+				if len(r.hitPct) > hitW { hitW = len(r.hitPct) }
+			}
+
+			var b strings.Builder
+			fmt.Fprintf(&b, "Cache — last %d calls (avg %.1f%% hit)\n", len(recent), avgHit)
+
+			// time column is fixed 8 chars
+			sep := strings.Repeat("─", 8+2+inW+2+crW+2+cwW+2+costW+2+hitW)
+			b.WriteString("\n```\n")
+			fmt.Fprintf(&b, "%-8s  %*s  %*s  %*s  %*s  %*s\n",
+				"Time", inW, "Input", crW, "CacheRead", cwW, "CacheWrite", costW, "Cost", hitW, "Hit%")
+			b.WriteString(sep + "\n")
+			for _, r := range rows {
+				fmt.Fprintf(&b, "%-8s  %*s  %*s  %*s  %*s  %*s\n",
+					r.time, inW, r.input, crW, r.cRead, cwW, r.cWrite, costW, r.cost, hitW, r.hitPct)
+			}
+			b.WriteString(sep + "\n")
+			b.WriteString("```")
+			return b.String(), nil
 		},
 	}
 }
