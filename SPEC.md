@@ -381,6 +381,8 @@ compaction_max_tokens = 4096             # max output tokens for summary
 compaction_min_messages = 4              # min messages before compacting
 compaction_summary_prompt = "..."        # custom summary prompt
 compaction_handoff_msg = "..."           # message after compaction
+session_reset_prompt = "..."             # prompt before session clear (memory formation)
+session_reset_prompt_file = ""           # or path to prompt file (overrides inline)
 ```
 
 All parameters have sensible defaults. Customize only what you need.
@@ -505,6 +507,8 @@ No tool call should prevent the system from responding to interrupts. If it does
 ### Session reset guard
 
 `/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — clod has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
+
+**Pre-reset memory hook:** Before clearing the session, if `session_reset_prompt` is configured, the agent gets one final turn to save important context to memory files. The hook has a 60-second timeout and is non-fatal — if it fails, the reset proceeds. Branch sessions can opt out via `NoResetHook` in their branch metadata (set via `--no-reset-hook` or `--oneshot` CLI flags). The same hook fires on multiball TTL reclaim.
 
 If automatic resets are added later: never reset an active session. A session is "active" if the agent is processing a turn OR the last message was received less than N minutes ago. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow — that's the failure to avoid.
 

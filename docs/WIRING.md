@@ -510,8 +510,23 @@ Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external too
 ## Heartbeat & Wake
 
 - **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into main session. Resets on any activity.
-- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch. Supports `no_compact` flag — when set, the agent returns its response instead of triggering compaction if context limit is reached.
+- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both.
 - **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing.
+
+## Session Reset Hook
+
+Before a session is cleared (`/reset` or multiball TTL reclaim), the agent gets one final turn to save context. Configured via `session_reset_prompt` or `session_reset_prompt_file` in `[sessions]`.
+
+Flow (`fireResetHook` in `main.go`):
+1. Resolve prompt from config (inline takes precedence over file; file read at fire-time)
+2. If empty, skip — no hook configured
+3. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip
+4. `HandleMessage(ctx, sessionKey, prompt)` with 60s timeout, trigger `"reset_hook"`, NoCompact
+5. Non-fatal: if hook fails, log warning and proceed with reset
+
+Entry points:
+- `/reset` command → `fireResetHook` → `Clear` → `Reload`
+- `Pool.Acquire` (TTL reclaim) → `Pool.ReclaimHook` → `fireResetHook` → clear session key
 
 ## Compaction (`compaction/compact.go`)
 
