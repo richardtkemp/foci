@@ -335,13 +335,66 @@ func NewCostCommand(apiLogPath string) *Command {
 							}
 						}
 					}
-					b.WriteString("\nBy session:\n")
-					for _, sc := range sorted {
-						fmt.Fprintf(&b, "  %-30s $%.2f  (%s calls)\n",
-							sc.name, sc.cost, formatCommas(sc.calls))
+
+					// Limit to top 10
+					shown := sorted
+					extra := 0
+					if len(sorted) > 10 {
+						shown = sorted[:10]
+						extra = len(sorted) - 10
 					}
+
+					// Measure column widths
+					nameW := len("Session")
+					costW := len("Cost")
+					callsW := len("Calls")
+					for _, sc := range shown {
+						if len(sc.name) > nameW {
+							nameW = len(sc.name)
+						}
+						cs := fmt.Sprintf("$%.2f", sc.cost)
+						if len(cs) > costW {
+							costW = len(cs)
+						}
+						cc := formatCommas(sc.calls)
+						if len(cc) > callsW {
+							callsW = len(cc)
+						}
+					}
+					// Total row widths
+					ts := fmt.Sprintf("$%.2f", total)
+					if len(ts) > costW {
+						costW = len(ts)
+					}
+					tc := formatCommas(count)
+					if len(tc) > callsW {
+						callsW = len(tc)
+					}
+					if len("Total") > nameW {
+						nameW = len("Total")
+					}
+
+					sep := strings.Repeat("─", nameW+2+costW+2+callsW)
+					b.WriteString("\n```\n")
+					fmt.Fprintf(&b, "%-*s  %*s  %*s\n", nameW, "Session", costW, "Cost", callsW, "Calls")
+					b.WriteString(sep + "\n")
+					for _, sc := range shown {
+						fmt.Fprintf(&b, "%-*s  %*s  %*s\n",
+							nameW, sc.name,
+							costW, fmt.Sprintf("$%.2f", sc.cost),
+							callsW, formatCommas(sc.calls))
+					}
+					if extra > 0 {
+						fmt.Fprintf(&b, "  +%d more\n", extra)
+					}
+					b.WriteString(sep + "\n")
+					fmt.Fprintf(&b, "%-*s  %*s  %*s\n",
+						nameW, "Total",
+						costW, fmt.Sprintf("$%.2f", total),
+						callsW, formatCommas(count))
+					b.WriteString("```")
 				}
-				return strings.TrimRight(b.String(), "\n"), nil
+				return b.String(), nil
 
 			default:
 				// Try parsing as number of days
