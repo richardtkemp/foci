@@ -30,9 +30,6 @@ type ImageData struct {
 	Data      []byte // raw bytes (base64-encoded when building content blocks)
 }
 
-const maxToolLoops = 25
-const defaultMaxTokens = 8192
-
 // sessionMeta tracks per-session state for metadata injection.
 type sessionMeta struct {
 	lastMessageTime time.Time
@@ -83,6 +80,8 @@ type Agent struct {
 	PromptRules             []CompiledPromptRule    // compiled regex rules for inbound message transformation
 	CompactionSummaryPrompt string                  // passed to Compactor.Compact(); empty uses default
 	CompactionHandoffMsg    string                  // passed to Compactor.Compact(); empty uses default
+	MaxToolLoops            int                     // max tool iterations per turn (default 25)
+	MaxOutputTokens         int                     // max tokens in model response (default 8192)
 
 	processing    int32 // atomic: number of in-flight HandleMessage calls
 	turnLocksMu   sync.Mutex
@@ -484,7 +483,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 	toolDefs := a.Tools.ToolDefs()
 
-	for i := 0; i < maxToolLoops; i++ {
+	maxLoops := a.MaxToolLoops
+	if maxLoops <= 0 {
+		maxLoops = 25 // default
+	}
+	maxOutput := a.MaxOutputTokens
+	if maxOutput <= 0 {
+		maxOutput = 8192 // default
+	}
+	for i := 0; i < maxLoops; i++ {
 		var reqMessages []anthropic.Message
 		if useAutoCache {
 			reqMessages = messages
@@ -493,7 +500,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 		req := &anthropic.MessageRequest{
 			Model:     turnModel,
-			MaxTokens: defaultMaxTokens,
+			MaxTokens: maxOutput,
 			System:    system,
 			Messages:  reqMessages,
 			Tools:     toolDefs,
