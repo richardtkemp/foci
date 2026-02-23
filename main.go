@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -1139,7 +1138,6 @@ func setupAgent(p setupParams) *agentInstance {
 // buildEnvironmentBlock generates the environment system block content
 // from config values known at startup.
 func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config) string {
-	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	logDir := filepath.Dir(cfg.Logging.EventFile)
 
 	var b strings.Builder
@@ -1150,18 +1148,18 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("## Workspace\n")
 	fmt.Fprintf(&b, "- Workspace: %s\n", acfg.Workspace)
 	fmt.Fprintf(&b, "- Agent ID: %s\n", acfg.ID)
-	gitURL := gitRemoteURL(acfg.Workspace)
-	fmt.Fprintf(&b, "- Git repo: %s\n", gitURL)
+	b.WriteString("- Platform: clod (https://github.com/richardtkemp/clod)\n")
+	if cfg.Environment.DocsPath != "" {
+		fmt.Fprintf(&b, "- Platform docs: %s\n", cfg.Environment.DocsPath)
+	}
+	if acfg.TelegramBot != "" {
+		b.WriteString("- Messaging: Telegram\n")
+	}
 
 	// Paths
 	b.WriteString("\n## Paths\n")
 	fmt.Fprintf(&b, "- Config: %s\n", configPath)
-	fmt.Fprintf(&b, "- Secrets: %s (restricted permissions — use {{secret:NAME}} syntax to reference)\n", secretsPath)
 	fmt.Fprintf(&b, "- Logs: %s\n", logDir)
-
-	// Time
-	b.WriteString("\n## Time\n")
-	b.WriteString("Current time is provided in the [meta] header of each message. Do not assume a fixed time.\n")
 
 	// Message Metadata
 	b.WriteString("\n## Message Metadata\n")
@@ -1187,16 +1185,6 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
 	return b.String()
-}
-
-// gitRemoteURL runs `git remote get-url origin` in the given directory.
-// Returns the URL string, or "not a git repo" on any error.
-func gitRemoteURL(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
-	if err != nil {
-		return "not a git repo"
-	}
-	return strings.TrimSpace(string(out))
 }
 
 func sessionMessageCount(sessions *session.Store, key string) int {

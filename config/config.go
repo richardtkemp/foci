@@ -133,7 +133,8 @@ type ManaWarningsConfig struct {
 }
 
 type EnvironmentConfig struct {
-	Enabled bool `toml:"enabled"` // inject environment block as first system block (default true)
+	Enabled  bool   `toml:"enabled"`   // inject environment block as first system block (default true)
+	DocsPath string `toml:"docs_path"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
 type SkillsConfig struct {
@@ -546,6 +547,9 @@ func (c *Config) ResolveAllPaths() {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
+	if c.Environment.DocsPath != "" {
+		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)
+	}
 }
 
 // ParseFlags returns the config file path from command-line flags.
