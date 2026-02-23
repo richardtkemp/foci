@@ -349,3 +349,51 @@ key2 = "val2"
 		t.Error("key2 should still exist")
 	}
 }
+
+func TestCheckSecurityMissingFile(t *testing.T) {
+	s, _ := Load("/nonexistent/secrets.toml")
+	warnings := s.CheckSecurity()
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for missing file, got: %v", warnings)
+	}
+}
+
+func TestCheckSecurityEmptyPath(t *testing.T) {
+	s := &Store{path: ""}
+	warnings := s.CheckSecurity()
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings for empty path, got: %v", warnings)
+	}
+}
+
+func TestCheckSecurityBadPermissions(t *testing.T) {
+	// Create a file with wrong permissions (not 0660)
+	path := writeSecrets(t, `[custom]
+key = "val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	warnings := s.CheckSecurity()
+	// Should get warnings about owner (not root), group, and permissions
+	if len(warnings) == 0 {
+		t.Error("expected warnings for non-root owned file with wrong permissions")
+	}
+
+	// Check that warnings mention specific issues
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "owner") && !strings.Contains(joined, "uid") {
+		t.Errorf("expected owner warning in: %s", joined)
+	}
+	if !strings.Contains(joined, "permission") || !strings.Contains(joined, "0660") {
+		t.Errorf("expected permissions warning in: %s", joined)
+	}
+}
+
+func TestCheckSecurityGroupName(t *testing.T) {
+	if SecurityGroupName != "clod-secrets" {
+		t.Errorf("SecurityGroupName = %q, want clod-secrets", SecurityGroupName)
+	}
+}
