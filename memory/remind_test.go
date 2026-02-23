@@ -139,7 +139,7 @@ func TestReminderDismissAll(t *testing.T) {
 
 func TestResolveWhen(t *testing.T) {
 	tests := []struct {
-		when string
+		when  string
 		check func(t time.Time) bool
 		desc  string
 	}{
@@ -182,5 +182,22 @@ func TestReminderMultiple(t *testing.T) {
 		if r.ID == 0 {
 			t.Errorf("reminder %d has zero ID", i)
 		}
+	}
+}
+
+func TestReminderStoreBusyTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	rs, err := NewReminderStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	defer rs.Close()
+
+	var timeout int
+	if err := rs.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", timeout)
 	}
 }

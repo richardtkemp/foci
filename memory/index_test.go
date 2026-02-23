@@ -368,3 +368,15 @@ func TestBackwardCompatSingleDir(t *testing.T) {
 		t.Errorf("source = %q, want 'memory'", results[0].Source)
 	}
 }
+
+func TestIndexBusyTimeout(t *testing.T) {
+	idx, _ := testIndex(t)
+
+	var timeout int
+	if err := idx.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
+}

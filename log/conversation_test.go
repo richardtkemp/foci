@@ -63,7 +63,7 @@ func TestConversationLog(t *testing.T) {
 
 	type row struct {
 		ts, direction, userID, username, text, parseMode, session, errMsg string
-		chatID                                                           int64
+		chatID                                                            int64
 	}
 
 	var results []row
@@ -136,4 +136,21 @@ func TestConversationNoopWhenUninitialized(t *testing.T) {
 		ChatID:    1,
 		Text:      "hello",
 	})
+}
+
+func TestConversationBusyTimeout(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
+
+	if err := InitConversation(dbPath); err != nil {
+		t.Fatalf("InitConversation: %v", err)
+	}
+	defer CloseConversation()
+
+	var timeout int
+	if err := convLog.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
 }
