@@ -1,5 +1,11 @@
 #!/bin/bash
 # rename-agent-id.sh — Rename an agent's ID across all stored state.
+#
+# Designed to be called FROM the agent (via exec). The script detaches itself
+# into a background process (setsid), then stops clod (killing the caller),
+# runs the migration, and starts clod again. All output goes to a log file
+# the agent can read after restart.
+#
 # Dry-run by default. Pass --execute to apply changes.
 #
 # Usage: sudo ./scripts/rename-agent-id.sh [--execute] [-h|--help]
@@ -7,99 +13,149 @@ set -euo pipefail
 
 OLD_ID="main"
 NEW_ID="clutch"
-EXECUTE=false
 CLOD_USER="clod"
 CLOD_HOME="/home/clod"
 DATA_DIR="$CLOD_HOME/data"
 CONFIG_FILE="$CLOD_HOME/config/clod.toml"
+LOG_FILE="/tmp/rename-agent-id.log"
 
-# Colors (disabled if not a terminal)
-if [[ -t 1 ]]; then
-    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-else
-    RED=''; GREEN=''; YELLOW=''; BLUE=''; NC=''
-fi
+# ============================================================================
+# DETACH LOGIC
+#
+# When the agent calls this script, it runs inside clod's process tree.
+# `systemctl stop clod` will kill the caller. To survive:
+#   1. Outer invocation (no _DETACHED env) re-execs itself via setsid/nohup
+#   2. Inner invocation (_DETACHED=1) does the actual work
+#   3. Outer prints the log path and exits immediately
+# ============================================================================
 
-info()  { echo -e "${GREEN}[+]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
-error() { echo -e "${RED}[x]${NC} $*" >&2; }
-dry()   { echo -e "${BLUE}  (dry-run)${NC} $*"; }
+if [[ "${_DETACHED:-}" != "1" ]]; then
+    # --- Outer invocation: parse args, detach, exit ---
 
-usage() {
-    cat <<EOF
+    EXECUTE=false
+    for arg in "$@"; do
+        case "$arg" in
+            --execute) EXECUTE=true ;;
+            -h|--help)
+                cat <<EOF
 Usage: sudo $0 [--execute] [-h|--help]
 
 Renames agent ID from "$OLD_ID" to "$NEW_ID" across all stored state:
 
-  1. Stop clod service
-  2. Rename session directory:       data/sessions/agent/$OLD_ID/ → …/$NEW_ID/
-  3. Rename memory database:         data/memory-$OLD_ID.db → data/memory-$NEW_ID.db
-  4. Update state.json keys:         tmux:$OLD_ID, voice:agent:$OLD_ID:*, bot:$OLD_ID
-  5. Update conversation.db:         session column (agent:$OLD_ID:… → agent:$NEW_ID:…)
-  6. Update clod.toml:               id = "$OLD_ID" → id = "$NEW_ID"
-  7. Start clod service
+  1. Detach from calling process (survives clod shutdown)
+  2. Stop clod service (blocking)
+  3. Rename session directory
+  4. Rename memory database files
+  5. Update state.json keys
+  6. Update conversation.db session references
+  7. Update clod.toml agent ID
+  8. Fix file ownership
+  9. Start clod service
 
 Dry-run by default — shows what would change without doing it.
+All output logged to: $LOG_FILE
 
 Options:
   --execute   Actually apply changes (default: dry-run)
   -h, --help  Show this help
 EOF
-    exit 0
-}
+                exit 0
+                ;;
+            *) echo "Unknown option: $arg" >&2; exit 1 ;;
+        esac
+    done
 
+    if [[ $EUID -ne 0 ]]; then
+        echo "Error: must be run as root (sudo)." >&2
+        exit 1
+    fi
+
+    # Pre-flight checks before detaching
+    if ! id "$CLOD_USER" &>/dev/null; then
+        echo "Error: user $CLOD_USER does not exist." >&2
+        exit 1
+    fi
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        echo "Error: config not found: $CONFIG_FILE" >&2
+        exit 1
+    fi
+
+    # Clear previous log
+    > "$LOG_FILE"
+
+    # Re-exec detached: new session leader, all FDs redirected to log file
+    _DETACHED=1 nohup setsid bash "$0" "$@" >> "$LOG_FILE" 2>&1 &
+    DETACHED_PID=$!
+    disown "$DETACHED_PID" 2>/dev/null || true
+
+    if $EXECUTE; then
+        echo "Migration launched (detached PID $DETACHED_PID)."
+        echo "clod will stop, migrate, then restart."
+        echo "Log file: $LOG_FILE"
+        echo ""
+        echo "After restart, read $LOG_FILE for results."
+    else
+        echo "Dry-run launched (detached PID $DETACHED_PID)."
+        echo "Log file: $LOG_FILE"
+        echo ""
+        echo "NOTE: dry-run still detaches but does NOT stop clod."
+        echo "After it finishes, read $LOG_FILE for what would change."
+    fi
+    exit 0
+fi
+
+# ============================================================================
+# INNER (DETACHED) INVOCATION — does the actual work
+# All output goes to $LOG_FILE via the redirect in the nohup line above.
+# ============================================================================
+
+EXECUTE=false
 for arg in "$@"; do
     case "$arg" in
         --execute) EXECUTE=true ;;
-        -h|--help) usage ;;
-        *) error "Unknown option: $arg"; usage ;;
     esac
 done
+
+ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+info()  { echo "[$(ts)] [+] $*"; }
+warn()  { echo "[$(ts)] [!] $*"; }
+error() { echo "[$(ts)] [x] $*"; }
 
 run() {
     if $EXECUTE; then
         "$@"
     else
-        dry "$*"
+        echo "[$(ts)]   (dry-run) $*"
     fi
 }
 
-# --- Pre-checks ---
-
-if [[ $EUID -ne 0 ]]; then
-    error "This script must be run as root (sudo)."
-    exit 1
-fi
-
-if ! id "$CLOD_USER" &>/dev/null; then
-    error "User $CLOD_USER does not exist."
-    exit 1
-fi
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    error "Config file not found: $CONFIG_FILE"
-    exit 1
-fi
-
+info "=== rename-agent-id: $OLD_ID → $NEW_ID ==="
 if $EXECUTE; then
     info "EXECUTE mode — changes will be applied."
 else
-    info "DRY-RUN mode — no changes will be made. Pass --execute to apply."
+    info "DRY-RUN mode — no changes will be made."
 fi
 echo ""
 
 # --- 1. Stop service ---
 
 info "Step 1: Stop clod service"
-if systemctl is-active --quiet clod 2>/dev/null; then
-    run systemctl stop clod
-    if $EXECUTE; then
-        # Wait for clean shutdown
-        sleep 2
+if $EXECUTE; then
+    if systemctl is-active --quiet clod 2>/dev/null; then
+        info "  Stopping clod (blocking)..."
+        systemctl stop clod
+        # Wait for process to fully exit
+        sleep 3
+        if systemctl is-active --quiet clod 2>/dev/null; then
+            error "  Service still running after stop! Aborting."
+            exit 1
+        fi
         info "  Service stopped."
+    else
+        info "  Service not running."
     fi
 else
-    info "  Service not running, skipping."
+    info "  (dry-run) would stop clod service"
 fi
 echo ""
 
@@ -125,8 +181,6 @@ echo ""
 
 info "Step 3: Rename memory database files"
 for ext in "" "-shm" "-wal"; do
-    MEM_OLD="$DATA_DIR/memory-${OLD_ID}${ext}.db"
-    # Handle the base .db and .db-shm/.db-wal naming
     if [[ "$ext" == "" ]]; then
         MEM_OLD="$DATA_DIR/memory-${OLD_ID}.db"
         MEM_NEW="$DATA_DIR/memory-${NEW_ID}.db"
@@ -156,9 +210,8 @@ info "Step 4: Update state.json keys"
 STATE_FILE="$DATA_DIR/state.json"
 
 if [[ -f "$STATE_FILE" ]]; then
-    # Show current keys containing the old ID
     MATCHING_KEYS=$(python3 -c "
-import json, sys
+import json
 with open('$STATE_FILE') as f:
     data = json.load(f)
 keys = [k for k in data if '$OLD_ID' in k]
@@ -233,34 +286,36 @@ echo ""
 
 # --- 7. Fix ownership ---
 
+info "Step 7: Fix file ownership"
 if $EXECUTE; then
-    info "Step 7: Fix file ownership"
     chown -R "$CLOD_USER:$CLOD_USER" "$DATA_DIR"
     info "  Ownership set on $DATA_DIR"
 else
-    info "Step 7: Fix file ownership"
-    dry "chown -R $CLOD_USER:$CLOD_USER $DATA_DIR"
+    echo "[$(ts)]   (dry-run) chown -R $CLOD_USER:$CLOD_USER $DATA_DIR"
 fi
 echo ""
 
 # --- 8. Start service ---
 
 info "Step 8: Start clod service"
-run systemctl start clod
 if $EXECUTE; then
-    sleep 1
+    systemctl start clod
+    sleep 2
     if systemctl is-active --quiet clod 2>/dev/null; then
         info "  Service started successfully."
     else
         error "  Service failed to start! Check: journalctl -u clod -n 20"
+        exit 1
     fi
+else
+    echo "[$(ts)]   (dry-run) would start clod service"
 fi
 echo ""
 
-# --- Summary ---
+# --- Done ---
 
 if $EXECUTE; then
-    info "Migration complete: agent \"$OLD_ID\" → \"$NEW_ID\""
+    info "=== Migration complete: agent \"$OLD_ID\" → \"$NEW_ID\" ==="
 else
-    info "Dry-run complete. Run with --execute to apply changes."
+    info "=== Dry-run complete. Run with --execute to apply. ==="
 fi
