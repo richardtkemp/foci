@@ -1173,6 +1173,12 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("- **prev_tokens** — token breakdown: in (new input), out (output), cR (cache read), cW (cache write)\n")
 	b.WriteString("- **mana** — remaining API quota percentage\n")
 
+	// Session Structure
+	b.WriteString("\n## Session Structure\n")
+	b.WriteString("Your context is assembled from: this environment block, character files (identity, soul, etc.), a secrets list, a skills list, and the conversation history. ")
+	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
+	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
+
 	return b.String()
 }
 
