@@ -525,6 +525,7 @@ func ResolvePath(p string) string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
+		log.Warnf("config", "resolve home dir for %q: %v", p, err)
 		return p
 	}
 	return filepath.Join(home, p)

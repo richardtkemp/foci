@@ -493,7 +493,9 @@ func main() {
 		if strings.HasPrefix(req.Text, "/") {
 			if result, ok := inst.cmds.Dispatch(ctx, req.Text); ok {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"response": result})
+				if err := json.NewEncoder(w).Encode(map[string]string{"response": result}); err != nil {
+					log.Errorf("http", "encode response: %v", err)
+				}
 				return
 			}
 		}
@@ -506,7 +508,9 @@ func main() {
 		}
 		inst.heartbeat.Reset()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": resp})
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
+			log.Errorf("http", "encode response: %v", err)
+		}
 	})
 
 	// GET /status — return agent status
@@ -528,7 +532,9 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": result})
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": result}); err != nil {
+			log.Errorf("http", "encode response: %v", err)
+		}
 	})
 
 	// POST /command — dispatch any slash command
@@ -557,7 +563,9 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": result})
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": result}); err != nil {
+			log.Errorf("http", "encode response: %v", err)
+		}
 	})
 
 	// POST /wake — branch session for cron/external triggers
@@ -626,7 +634,9 @@ func main() {
 		inst.heartbeat.Reset()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"response": resp})
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
+			log.Errorf("http", "encode response: %v", err)
+		}
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
@@ -1264,6 +1274,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent heartbeat
 	interval, err := time.ParseDuration(acfg.HeartbeatInterval)
 	if err != nil {
+		log.Warnf("main", "agent %q: invalid heartbeat_interval %q, using default 45m", acfg.ID, acfg.HeartbeatInterval)
 		interval = 45 * time.Minute
 	}
 	hb := agent.NewHeartbeat(ag, sessionKey, interval)

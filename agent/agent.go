@@ -168,7 +168,9 @@ func (a *Agent) SetVoiceMode(sessionKey string, on bool) {
 	sm.voiceMode = on
 
 	if a.StateStore != nil {
-		a.StateStore.Set("voice:"+sessionKey, on)
+		if err := a.StateStore.Set("voice:"+sessionKey, on); err != nil {
+			log.Errorf("agent", "persist voice mode: %v", err)
+		}
 	}
 }
 

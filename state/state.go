@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"clod/log"
 )
 
 // Store provides thread-safe JSON file-backed key-value persistence.
@@ -54,6 +56,7 @@ func (s *Store) Get(key string, v interface{}) bool {
 		return false
 	}
 	if err := json.Unmarshal(raw, v); err != nil {
+		log.Warnf("state", "unmarshal key %q: %v", key, err)
 		return false
 	}
 	return true
