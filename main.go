@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -736,11 +737,18 @@ func setupAgent(p setupParams) *agentInstance {
 		return bot
 	}))
 
+	// Per-agent environment block
+	var envBlock string
+	if p.cfg.Environment.Enabled {
+		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg)
+	}
+
 	// Per-agent agent struct
 	ag = &agent.Agent{
 		Client:                  p.client,
 		Sessions:                p.sessions,
 		Tools:                   registry,
+		EnvironmentBlock:        envBlock,
 		Bootstrap:               bootstrap,
 		Compactor:               compactor,
 		Reminders:               p.reminderStore,
@@ -1126,6 +1134,56 @@ func setupAgent(p setupParams) *agentInstance {
 		heartbeat:  hb,
 		agentCfg:   acfg,
 	}
+}
+
+// buildEnvironmentBlock generates the environment system block content
+// from config values known at startup.
+func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config) string {
+	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	logDir := filepath.Dir(cfg.Logging.EventFile)
+
+	var b strings.Builder
+	b.WriteString("# Environment\n\n")
+	b.WriteString("You are running on **clod**, an AI agent platform.\n\n")
+
+	// Workspace
+	b.WriteString("## Workspace\n")
+	fmt.Fprintf(&b, "- Workspace: %s\n", acfg.Workspace)
+	fmt.Fprintf(&b, "- Agent ID: %s\n", acfg.ID)
+	gitURL := gitRemoteURL(acfg.Workspace)
+	fmt.Fprintf(&b, "- Git repo: %s\n", gitURL)
+
+	// Paths
+	b.WriteString("\n## Paths\n")
+	fmt.Fprintf(&b, "- Config: %s\n", configPath)
+	fmt.Fprintf(&b, "- Secrets: %s (restricted permissions — use {{secret:NAME}} syntax to reference)\n", secretsPath)
+	fmt.Fprintf(&b, "- Logs: %s\n", logDir)
+
+	// Time
+	b.WriteString("\n## Time\n")
+	b.WriteString("Current time is provided in the [meta] header of each message. Do not assume a fixed time.\n")
+
+	// Message Metadata
+	b.WriteString("\n## Message Metadata\n")
+	b.WriteString("Every inbound message includes a `[meta]` header with:\n")
+	b.WriteString("- **time** — UTC timestamp\n")
+	b.WriteString("- **gap** — time since last message\n")
+	b.WriteString("- **model** — current model\n")
+	b.WriteString("- **prev_cost** — USD equivalent cost of previous turn\n")
+	b.WriteString("- **prev_tokens** — token breakdown: in (new input), out (output), cR (cache read), cW (cache write)\n")
+	b.WriteString("- **mana** — remaining API quota percentage\n")
+
+	return b.String()
+}
+
+// gitRemoteURL runs `git remote get-url origin` in the given directory.
+// Returns the URL string, or "not a git repo" on any error.
+func gitRemoteURL(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "not a git repo"
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func sessionMessageCount(sessions *session.Store, key string) int {

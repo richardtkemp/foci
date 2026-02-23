@@ -65,6 +65,7 @@ type Agent struct {
 	Reminders *memory.ReminderStore // nil disables reminder injection
 	Model     string
 
+	EnvironmentBlock        string                  // pre-built environment context block (prepended first in system prompt)
 	ExtraSystemBlocks       []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy           string                  // "auto" (top-level) or "explicit" (manual breakpoints)
 	CacheBustDetect         bool                    // detect cache busts (cache_read drop >50%)
@@ -509,6 +510,10 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}()
 
 	system := a.Bootstrap.SystemBlocks()
+	if a.EnvironmentBlock != "" {
+		envBlock := anthropic.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
+		system = append([]anthropic.SystemBlock{envBlock}, system...)
+	}
 	useAutoCache := a.CacheStrategy == "auto"
 
 	if useAutoCache {
