@@ -546,6 +546,50 @@ func TestMultiballCommandError(t *testing.T) {
 	}
 }
 
+func TestAgentsCommand(t *testing.T) {
+	cmd := NewAgentsCommand(func() []AgentInfo {
+		return []AgentInfo{
+			{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", Busy: false, MessageCount: 31, LastActivity: time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)},
+			{ID: "scout", SessionKey: "agent:scout:main", Model: "haiku-4", Busy: true, MessageCount: 12},
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result, "Active Sessions") {
+		t.Errorf("missing header in:\n%s", result)
+	}
+	if !strings.Contains(result, "agent:main:main") {
+		t.Errorf("missing main session in:\n%s", result)
+	}
+	if !strings.Contains(result, "agent:scout:main") {
+		t.Errorf("missing scout session in:\n%s", result)
+	}
+	if !strings.Contains(result, "idle") {
+		t.Errorf("missing idle status in:\n%s", result)
+	}
+	if !strings.Contains(result, "busy") {
+		t.Errorf("missing busy status in:\n%s", result)
+	}
+	if !strings.Contains(result, "31 msgs") {
+		t.Errorf("missing message count in:\n%s", result)
+	}
+	if !strings.Contains(result, "ago") {
+		t.Errorf("missing last activity in:\n%s", result)
+	}
+}
+
+func TestAgentsCommandEmpty(t *testing.T) {
+	cmd := NewAgentsCommand(func() []AgentInfo { return nil })
+	result, _ := cmd.Execute(context.Background(), "")
+	if result != "No agents configured." {
+		t.Errorf("result = %q", result)
+	}
+}
+
 func TestVoiceCommand(t *testing.T) {
 	voiceOn := false
 	cmd := NewVoiceCommand(
