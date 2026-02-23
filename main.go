@@ -681,7 +681,7 @@ func setupAgent(p setupParams) *agentInstance {
 		}()
 	})
 	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
-	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier))
+	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID))
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
