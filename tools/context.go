@@ -31,3 +31,18 @@ func SessionKeyFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(sessionKeyCtxKey{}).(string)
 	return s
 }
+
+// spawnInheritKey is the context key for marking a spawn-inherit session.
+type spawnInheritKey struct{}
+
+// WithSpawnInherit marks a context as running inside a spawn inherit session.
+// The spawn tool checks this and rejects nested inherit calls.
+func WithSpawnInherit(ctx context.Context) context.Context {
+	return context.WithValue(ctx, spawnInheritKey{}, true)
+}
+
+// IsSpawnInherit returns true if the context is inside a spawn inherit session.
+func IsSpawnInherit(ctx context.Context) bool {
+	v, _ := ctx.Value(spawnInheritKey{}).(bool)
+	return v
+}

@@ -164,7 +164,8 @@ type ToolsConfig struct {
 	WebFetchTimeout    string `toml:"web_fetch_timeout"`     // HTTP timeout for web fetch (default "30s")
 	WebFetchMaxBytes   int    `toml:"web_fetch_max_bytes"`   // max bytes to read from web fetch (default 1048576 = 1MB)
 	WebFetchMaxChars   int    `toml:"web_fetch_max_chars"`   // max chars in web fetch output before truncation (default 50000)
-	WebSearchTimeout   string `toml:"web_search_timeout"`    // HTTP timeout for web search (default "15s")
+	WebSearchTimeout    string `toml:"web_search_timeout"`     // HTTP timeout for web search (default "15s")
+	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn inherit sessions per agent (default 3)
 }
 
 type PromptRule struct {
@@ -454,6 +455,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.WebSearchTimeout == "" {
 		cfg.Tools.WebSearchTimeout = "15s"
+	}
+	if cfg.Tools.MaxConcurrentSpawns == 0 {
+		cfg.Tools.MaxConcurrentSpawns = 3
 	}
 
 	// Telegram defaults
