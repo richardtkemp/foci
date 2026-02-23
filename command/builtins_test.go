@@ -119,13 +119,21 @@ func TestCacheCommand(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Should show last 5 only
+	// Summary line + 5 detail lines = 6 lines
 	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) != 5 {
-		t.Errorf("got %d lines, want 5:\n%s", len(lines), result)
+	if len(lines) != 6 {
+		t.Errorf("got %d lines, want 6:\n%s", len(lines), result)
 	}
-	if !strings.Contains(result, "hit)") {
-		t.Errorf("missing hit rate in:\n%s", result)
+	// Summary line with avg hit rate
+	if !strings.Contains(result, "Cache — last 5 calls") {
+		t.Errorf("missing summary header in:\n%s", result)
+	}
+	if !strings.Contains(result, "avg") && !strings.Contains(result, "% hit") {
+		t.Errorf("missing avg hit rate in:\n%s", result)
+	}
+	// Comma-formatted numbers
+	if !strings.Contains(result, "cR=") {
+		t.Errorf("missing cR= in:\n%s", result)
 	}
 }
 

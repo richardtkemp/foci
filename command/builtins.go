@@ -221,15 +221,28 @@ func NewCacheCommand(apiLogPath string) *Command {
 			}
 			recent := entries[start:]
 
+			// Compute average hit rate across recent entries
+			var totalCacheRead, totalInput int
+			for _, e := range recent {
+				totalCacheRead += e.CacheRead
+				totalInput += e.Input + e.CacheRead + e.CacheWrite
+			}
+			avgHit := 0.0
+			if totalInput > 0 {
+				avgHit = float64(totalCacheRead) / float64(totalInput) * 100
+			}
+
 			var b strings.Builder
+			fmt.Fprintf(&b, "Cache — last %d calls (avg %.1f%% hit)\n", len(recent), avgHit)
 			for _, e := range recent {
 				hitRate := 0.0
-				totalInput := e.Input + e.CacheRead + e.CacheWrite
-				if totalInput > 0 {
-					hitRate = float64(e.CacheRead) / float64(totalInput) * 100
+				inp := e.Input + e.CacheRead + e.CacheWrite
+				if inp > 0 {
+					hitRate = float64(e.CacheRead) / float64(inp) * 100
 				}
-				fmt.Fprintf(&b, "%s  in=%d read=%d write=%d cost=$%.4f (%.0f%% hit)\n",
-					e.Timestamp.Format("15:04:05"), e.Input, e.CacheRead, e.CacheWrite,
+				fmt.Fprintf(&b, "  %s  in=%s cR=%s cW=%s  $%.4f (%.0f%%)\n",
+					e.Timestamp.Format("15:04:05"),
+					formatCommas(e.Input), formatCommas(e.CacheRead), formatCommas(e.CacheWrite),
 					e.CostUSD, hitRate)
 			}
 			return strings.TrimRight(b.String(), "\n"), nil
