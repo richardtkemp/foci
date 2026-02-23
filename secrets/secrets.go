@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/user"
 	"regexp"
@@ -24,6 +25,7 @@ var defaultBlockedPaths = []string{
 type Store struct {
 	path         string
 	values       map[string]string
+	allowedHosts map[string][]string // section name → allowed hosts
 	blockedPaths []string
 }
 
@@ -32,6 +34,7 @@ func Load(path string) (*Store, error) {
 	s := &Store{
 		path:         path,
 		values:       make(map[string]string),
+		allowedHosts: make(map[string][]string),
 		blockedPaths: append([]string{}, defaultBlockedPaths...),
 	}
 
@@ -46,7 +49,7 @@ func Load(path string) (*Store, error) {
 		return nil, fmt.Errorf("read secrets: %w", err)
 	}
 
-	var raw map[string]map[string]string
+	var raw map[string]map[string]interface{}
 	if err := toml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse secrets: %w", err)
 	}
@@ -54,7 +57,23 @@ func Load(path string) (*Store, error) {
 	// Flatten: [section] key = value → "section.key" = value
 	for section, pairs := range raw {
 		for key, value := range pairs {
-			s.values[section+"."+key] = value
+			switch v := value.(type) {
+			case string:
+				s.values[section+"."+key] = v
+			case []interface{}:
+				if key == "allowed_hosts" {
+					hosts := make([]string, 0, len(v))
+					for _, h := range v {
+						if hs, ok := h.(string); ok {
+							hosts = append(hosts, hs)
+						}
+					}
+					s.allowedHosts[section] = hosts
+				}
+				// silently skip other array keys
+			default:
+				// silently skip unknown types
+			}
 		}
 	}
 
@@ -107,10 +126,19 @@ func (s *Store) Save() error {
 		sections[sec][key] = val
 	}
 
+	// Collect all sections (values + allowedHosts may have different keys)
+	allSections := make(map[string]bool)
+	for sec := range sections {
+		allSections[sec] = true
+	}
+	for sec := range s.allowedHosts {
+		allSections[sec] = true
+	}
+
 	var buf strings.Builder
 	// Sort sections for deterministic output
-	secNames := make([]string, 0, len(sections))
-	for sec := range sections {
+	secNames := make([]string, 0, len(allSections))
+	for sec := range allSections {
 		secNames = append(secNames, sec)
 	}
 	sort.Strings(secNames)
@@ -120,13 +148,25 @@ func (s *Store) Save() error {
 			buf.WriteByte('\n')
 		}
 		fmt.Fprintf(&buf, "[%s]\n", sec)
-		keys := make([]string, 0, len(sections[sec]))
-		for k := range sections[sec] {
-			keys = append(keys, k)
+		if pairs, ok := sections[sec]; ok {
+			keys := make([]string, 0, len(pairs))
+			for k := range pairs {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
+			}
 		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			fmt.Fprintf(&buf, "%s = %q\n", k, sections[sec][k])
+		if hosts, ok := s.allowedHosts[sec]; ok && len(hosts) > 0 {
+			buf.WriteString("allowed_hosts = [")
+			for j, h := range hosts {
+				if j > 0 {
+					buf.WriteString(", ")
+				}
+				fmt.Fprintf(&buf, "%q", h)
+			}
+			buf.WriteString("]\n")
 		}
 	}
 
@@ -134,6 +174,67 @@ func (s *Store) Save() error {
 }
 
 var templateRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_.]+)\}\}`)
+
+// FindSecretRefs returns all secret names referenced by {{secret:NAME}} templates in text.
+// Returns nil if no templates are found.
+func FindSecretRefs(text string) []string {
+	matches := templateRe.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(matches))
+	var names []string
+	for _, m := range matches {
+		name := m[1]
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// AllowedHosts returns the allowed_hosts list for the section of the given
+// secret name. For example, "anthropic.token" returns allowedHosts["anthropic"].
+// Returns nil if no allowed_hosts are configured for that section.
+func (s *Store) AllowedHosts(name string) []string {
+	parts := strings.SplitN(name, ".", 2)
+	if len(parts) < 2 {
+		return nil
+	}
+	return s.allowedHosts[parts[0]]
+}
+
+// CheckHostAllowed verifies that the target URL's host is in the allowed_hosts
+// list for the given secret. Returns an error if:
+// - the secret has no allowed_hosts configured
+// - the URL cannot be parsed
+// - the host is not in the allowed list
+//
+// Uses url.Parse().Hostname() which strips userinfo and port, defending against
+// userinfo injection attacks (e.g. https://api.example.com@evil.com/steal).
+// Host comparison is case-insensitive per RFC 4343.
+func (s *Store) CheckHostAllowed(secretName, targetURL string) error {
+	hosts := s.AllowedHosts(secretName)
+	if len(hosts) == 0 {
+		return fmt.Errorf("secret %q has no allowed_hosts configured — add allowed_hosts to the [%s] section in secrets.toml",
+			secretName, strings.SplitN(secretName, ".", 2)[0])
+	}
+
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", targetURL, err)
+	}
+
+	hostname := parsed.Hostname() // strips userinfo and port
+	for _, allowed := range hosts {
+		if strings.EqualFold(hostname, allowed) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("host %q not in allowed_hosts for secret %q (allowed: %v)", hostname, secretName, hosts)
+}
 
 // Resolve expands all {{secret:NAME}} templates in text with their values.
 // Returns an error if any template references an unknown secret.

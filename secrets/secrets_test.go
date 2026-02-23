@@ -350,6 +350,179 @@ key2 = "val2"
 	}
 }
 
+func TestLoadWithAllowedHosts(t *testing.T) {
+	path := writeSecrets(t, `
+[anthropic]
+token = "sk-ant-test"
+allowed_hosts = ["api.anthropic.com", "api.example.com"]
+
+[custom]
+github_token = "ghp_test123"
+
+[locked]
+api_key = "sk-locked-456"
+allowed_hosts = ["api.locked.com"]
+`)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Values should still load correctly
+	v, ok := s.Get("anthropic.token")
+	if !ok || v != "sk-ant-test" {
+		t.Errorf("anthropic.token = %q, ok=%v", v, ok)
+	}
+	v, ok = s.Get("custom.github_token")
+	if !ok || v != "ghp_test123" {
+		t.Errorf("custom.github_token = %q, ok=%v", v, ok)
+	}
+	v, ok = s.Get("locked.api_key")
+	if !ok || v != "sk-locked-456" {
+		t.Errorf("locked.api_key = %q, ok=%v", v, ok)
+	}
+
+	// AllowedHosts should return correct lists
+	hosts := s.AllowedHosts("anthropic.token")
+	if len(hosts) != 2 || hosts[0] != "api.anthropic.com" || hosts[1] != "api.example.com" {
+		t.Errorf("AllowedHosts(anthropic.token) = %v", hosts)
+	}
+
+	hosts = s.AllowedHosts("locked.api_key")
+	if len(hosts) != 1 || hosts[0] != "api.locked.com" {
+		t.Errorf("AllowedHosts(locked.api_key) = %v", hosts)
+	}
+
+	// Legacy section without allowed_hosts returns nil
+	hosts = s.AllowedHosts("custom.github_token")
+	if hosts != nil {
+		t.Errorf("AllowedHosts(custom.github_token) = %v, want nil", hosts)
+	}
+}
+
+func TestCheckHostAllowed(t *testing.T) {
+	path := writeSecrets(t, `
+[myapi]
+token = "sk-test"
+allowed_hosts = ["api.example.com", "api.backup.com"]
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Allowed host
+	if err := s.CheckHostAllowed("myapi.token", "https://api.example.com/v1/data"); err != nil {
+		t.Errorf("expected allowed, got: %v", err)
+	}
+
+	// Blocked host
+	if err := s.CheckHostAllowed("myapi.token", "https://evil.com/steal"); err == nil {
+		t.Error("expected error for blocked host")
+	}
+
+	// Userinfo attack: hostname should be evil.com, not api.example.com
+	if err := s.CheckHostAllowed("myapi.token", "https://api.example.com@evil.com/steal"); err == nil {
+		t.Error("expected error for userinfo attack URL")
+	}
+
+	// Port handling — hostname should strip port
+	if err := s.CheckHostAllowed("myapi.token", "https://api.example.com:8443/v1/data"); err != nil {
+		t.Errorf("expected allowed with port, got: %v", err)
+	}
+
+	// Case-insensitive comparison (RFC 4343)
+	if err := s.CheckHostAllowed("myapi.token", "https://API.EXAMPLE.COM/v1/data"); err != nil {
+		t.Errorf("expected case-insensitive match, got: %v", err)
+	}
+}
+
+func TestCheckHostAllowedNoHosts(t *testing.T) {
+	path := writeSecrets(t, `
+[legacy]
+token = "sk-legacy"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	err = s.CheckHostAllowed("legacy.token", "https://api.example.com/data")
+	if err == nil {
+		t.Error("expected error for secret without allowed_hosts")
+	}
+	if !strings.Contains(err.Error(), "no allowed_hosts") {
+		t.Errorf("error should mention no allowed_hosts: %v", err)
+	}
+}
+
+func TestFindSecretRefs(t *testing.T) {
+	// No templates
+	refs := FindSecretRefs("no templates here")
+	if refs != nil {
+		t.Errorf("expected nil, got %v", refs)
+	}
+
+	// Single template
+	refs = FindSecretRefs("Bearer {{secret:custom.github_token}}")
+	if len(refs) != 1 || refs[0] != "custom.github_token" {
+		t.Errorf("expected [custom.github_token], got %v", refs)
+	}
+
+	// Multiple templates (including duplicates)
+	refs = FindSecretRefs("{{secret:a.key}} and {{secret:b.key}} and {{secret:a.key}}")
+	if len(refs) != 2 {
+		t.Errorf("expected 2 unique refs, got %v", refs)
+	}
+}
+
+func TestSavePreservesAllowedHosts(t *testing.T) {
+	path := writeSecrets(t, `
+[myapi]
+token = "sk-test"
+allowed_hosts = ["api.example.com", "api.backup.com"]
+
+[legacy]
+key = "val123"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Reload and verify
+	s2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after save: %v", err)
+	}
+
+	// Values preserved
+	v, ok := s2.Get("myapi.token")
+	if !ok || v != "sk-test" {
+		t.Errorf("myapi.token = %q, ok=%v", v, ok)
+	}
+	v, ok = s2.Get("legacy.key")
+	if !ok || v != "val123" {
+		t.Errorf("legacy.key = %q, ok=%v", v, ok)
+	}
+
+	// AllowedHosts preserved
+	hosts := s2.AllowedHosts("myapi.token")
+	if len(hosts) != 2 || hosts[0] != "api.example.com" || hosts[1] != "api.backup.com" {
+		t.Errorf("AllowedHosts after save = %v", hosts)
+	}
+
+	// Legacy section still has no allowed_hosts
+	if s2.AllowedHosts("legacy.key") != nil {
+		t.Error("legacy section should have no allowed_hosts")
+	}
+}
+
 func TestCheckSecurityMissingFile(t *testing.T) {
 	s, _ := Load("/nonexistent/secrets.toml")
 	warnings := s.CheckSecurity()
