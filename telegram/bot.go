@@ -680,14 +680,14 @@ func (b *Bot) SendNotification(text string) {
 }
 
 // SendStartupNotification sends a startup notification to the last known chat.
-// Logs a warning if no chat ID is available (first startup without prior messages).
+// Skips silently if no chat ID is available (expected on first run or fresh state).
 func (b *Bot) SendStartupNotification(agentID string) {
 	b.chatMu.Lock()
 	chatID := b.chatID
 	b.chatMu.Unlock()
 
 	if chatID == 0 {
-		log.Warnf("telegram", "no chat ID for startup notification (first run?)")
+		log.Debugf("telegram", "no chat ID for startup notification (no prior messages)")
 		return
 	}
 
