@@ -63,7 +63,7 @@ func usage() {
 
 Commands:
   send <text>          Send a message to the agent (main session)
-  branch [text]        Trigger a branch session (wake alias for backward compat)
+  branch [text]        Trigger a branch session (--no-compact to skip compaction)
   status               Query agent status
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
@@ -160,13 +160,25 @@ func cmdSend(base string, args []string) error {
 
 func cmdBranch(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
-	text := strings.Join(args, " ")
-	body := map[string]string{}
+	noCompact := false
+	var filtered []string
+	for _, a := range args {
+		if a == "--no-compact" {
+			noCompact = true
+		} else {
+			filtered = append(filtered, a)
+		}
+	}
+	text := strings.Join(filtered, " ")
+	body := map[string]interface{}{}
 	if agent != "" {
 		body["agent"] = agent
 	}
 	if text != "" {
 		body["text"] = text
+	}
+	if noCompact {
+		body["no_compact"] = true
 	}
 	return postJSON(base+"/wake", body)
 }

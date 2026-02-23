@@ -39,8 +39,9 @@ func mockGateway() *httptest.Server {
 
 	mux.HandleFunc("/wake", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Agent string `json:"agent"`
-			Text  string `json:"text"`
+			Agent     string `json:"agent"`
+			Text      string `json:"text"`
+			NoCompact bool   `json:"no_compact"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
@@ -48,6 +49,9 @@ func mockGateway() *httptest.Server {
 			return
 		}
 		resp := "wake ok"
+		if req.NoCompact {
+			resp = "wake ok (no_compact)"
+		}
 		if req.Agent != "" {
 			resp = "[" + req.Agent + "] " + resp
 		}
@@ -140,6 +144,11 @@ func TestCLIIntegration(t *testing.T) {
 
 		// Flag after positional args
 		{"send flag after text", []string{"send", "hello", "-a", "research"}, "[research] echo: hello", false},
+
+		// --no-compact flag for branch
+		{"branch with --no-compact", []string{"branch", "--no-compact"}, "wake ok (no_compact)", false},
+		{"branch with --no-compact and text", []string{"branch", "--no-compact", "morning check"}, "wake ok (no_compact)", false},
+		{"branch with -a and --no-compact", []string{"branch", "-a", "research", "--no-compact"}, "[research] wake ok (no_compact)", false},
 
 		// Error cases: unknown agent returns HTTP 400, exit non-zero
 		{"send unknown agent", []string{"send", "-a", "nonexistent", "hello"}, "unknown agent", true},

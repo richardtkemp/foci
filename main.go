@@ -530,8 +530,9 @@ func main() {
 		}
 
 		var req struct {
-			Agent string `json:"agent"`
-			Text  string `json:"text"`
+			Agent     string `json:"agent"`
+			Text      string `json:"text"`
+			NoCompact bool   `json:"no_compact"`
 		}
 		// Allow empty body — treat as wake with default text
 		if r.ContentLength > 0 {
@@ -562,9 +563,13 @@ func main() {
 			return
 		}
 
-		log.Infof("wake", "branch %s from %s, text=%q", branchKey, parentKey, req.Text)
+		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v", branchKey, parentKey, req.Text, req.NoCompact)
 
-		resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "wake"), branchKey, req.Text)
+		wakeCtx := agent.WithTrigger(ctx, "wake")
+		if req.NoCompact {
+			wakeCtx = agent.WithNoCompact(wakeCtx)
+		}
+		resp, err := inst.ag.HandleMessage(wakeCtx, branchKey, req.Text)
 		if err != nil {
 			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)

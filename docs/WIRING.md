@@ -501,7 +501,7 @@ Endpoints for external integration (used by `clod` CLI). All endpoints accept an
 - `POST /send` — `{"agent": "clutch", "text": "..."}` — message to agent session
 - `GET /status?agent=clutch` — dispatches `/status` for the specified agent
 - `POST /command` — `{"agent": "clutch", "command": "/ping"}` — dispatches slash command
-- `POST /wake` — `{"agent": "clutch", "text": "morning routine"}` — branch session for cron
+- `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true}` — branch session for cron (no_compact skips compaction)
 
 ## CLI Tool (`cmd/clod/`)
 
@@ -510,7 +510,7 @@ Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external too
 ## Heartbeat & Wake
 
 - **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into main session. Resets on any activity.
-- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch.
+- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch. Supports `no_compact` flag — when set, the agent returns its response instead of triggering compaction if context limit is reached.
 - **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing.
 
 ## Compaction (`compaction/compact.go`)
