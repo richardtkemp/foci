@@ -81,6 +81,22 @@ else
     run useradd --system --home-dir "$CLOD_HOME" --create-home --shell /bin/bash "$CLOD_USER"
 fi
 
+# ---------- 1b. Secrets group ----------
+info "Step 1b: Secrets group (clod-secrets)"
+SECRETS_GROUP="clod-secrets"
+if getent group "$SECRETS_GROUP" &>/dev/null; then
+    info "  Group $SECRETS_GROUP exists"
+else
+    info "  Creating group $SECRETS_GROUP"
+    run groupadd "$SECRETS_GROUP"
+fi
+if id -nG "$CLOD_USER" 2>/dev/null | grep -qw "$SECRETS_GROUP"; then
+    info "  $CLOD_USER is a member of $SECRETS_GROUP"
+else
+    info "  Adding $CLOD_USER to $SECRETS_GROUP"
+    run usermod -aG "$SECRETS_GROUP" "$CLOD_USER"
+fi
+
 # ---------- 2. Build binaries from source ----------
 info "Step 2: Build binaries from source"
 if ! command -v go &>/dev/null; then
@@ -275,11 +291,25 @@ token = "$ANTHROPIC_TOKEN"
 [telegram]
 bot_token = "$TELEGRAM_TOKEN"
 TOML
-        chown "$CLOD_USER:$CLOD_USER" "$CLOD_HOME/config/secrets.toml"
-        chmod 600 "$CLOD_HOME/config/secrets.toml"
+        chown "root:$SECRETS_GROUP" "$CLOD_HOME/config/secrets.toml"
+        chmod 0660 "$CLOD_HOME/config/secrets.toml"
 
         info "  Config written to $CLOD_HOME/config/clod.toml"
-        info "  Secrets written to $CLOD_HOME/config/secrets.toml (mode 600)"
+        info "  Secrets written to $CLOD_HOME/config/secrets.toml (root:$SECRETS_GROUP, mode 0660)"
+    fi
+fi
+
+# ---------- 4b. Harden existing secrets.toml ----------
+SECRETS_FILE="$CLOD_HOME/config/secrets.toml"
+if [[ -f "$SECRETS_FILE" ]]; then
+    CURRENT_OWNER="$(stat -c '%u:%G' "$SECRETS_FILE" 2>/dev/null || true)"
+    CURRENT_PERMS="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || true)"
+    if [[ "$CURRENT_OWNER" != "0:$SECRETS_GROUP" ]] || [[ "$CURRENT_PERMS" != "660" ]]; then
+        info "  Hardening secrets.toml (chown root:$SECRETS_GROUP, chmod 0660)"
+        run chown "root:$SECRETS_GROUP" "$SECRETS_FILE"
+        run chmod 0660 "$SECRETS_FILE"
+    else
+        info "  secrets.toml already hardened (root:$SECRETS_GROUP, 0660)"
     fi
 fi
 
@@ -364,7 +394,27 @@ if ! command -v systemctl &>/dev/null; then
     warn "  systemctl not found, skipping service setup"
 elif [[ -f "$SERVICE_FILE" ]]; then
     info "  Service file exists"
-    # On update: daemon-reload in case binary changed
+    # Ensure SupplementaryGroups and AmbientCapabilities are present
+    NEEDS_UPDATE=false
+    if ! grep -q "SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE" 2>/dev/null; then
+        NEEDS_UPDATE=true
+    fi
+    if ! grep -q "AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null; then
+        NEEDS_UPDATE=true
+    fi
+    if $NEEDS_UPDATE; then
+        info "  Updating service file (adding SupplementaryGroups and AmbientCapabilities)"
+        if ! $DRY_RUN; then
+            # Add SupplementaryGroups after User= if missing
+            if ! grep -q "SupplementaryGroups=" "$SERVICE_FILE"; then
+                sed -i "/^User=/a SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE"
+            fi
+            # Add AmbientCapabilities after SupplementaryGroups= if missing
+            if ! grep -q "AmbientCapabilities=" "$SERVICE_FILE"; then
+                sed -i "/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE"
+            fi
+        fi
+    fi
     run systemctl daemon-reload
 else
     info "  Installing service"
@@ -377,6 +427,8 @@ After=network.target
 [Service]
 Type=simple
 User=$CLOD_USER
+SupplementaryGroups=$SECRETS_GROUP
+AmbientCapabilities=CAP_SETGID
 WorkingDirectory=$CLOD_HOME
 Environment="PATH=$CLOD_HOME/bin:$CLOD_HOME/.local/bin:$CLOD_HOME/.cargo/bin:$CLOD_HOME/.npm-global/bin:$CLOD_HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=$INSTALL_DIR/clodgw -config $CLOD_HOME/config/clod.toml
