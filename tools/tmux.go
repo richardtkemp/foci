@@ -401,7 +401,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	inst.mu.Unlock()
 
 	// Start monitoring goroutine
-	go tmuxWatchMonitor(ws)
+	go tmuxWatchMonitor(ws, inst, key)
 
 	return fmt.Sprintf("Watching session %s (window %d) for inactivity (threshold: %ds)", name, window, thresholdSeconds), nil
 }
@@ -593,7 +593,7 @@ func normalizePaneContent(content string) string {
 	return tuiNoisePatterns.ReplaceAllString(content, "")
 }
 
-func tmuxWatchMonitor(ws *watchedSession) {
+func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 	defer close(ws.done)
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -606,8 +606,15 @@ func tmuxWatchMonitor(ws *watchedSession) {
 			out, err := runTmux(context.Background(), "capture-pane", "-t",
 				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
 			if err != nil {
-				log.Debugf("tmux", "watch monitor read error: %v", err)
-				return // session probably doesn't exist, stop watching
+				// Session is dead — notify and clean up
+				log.Infof("tmux", "watch: session %s no longer exists, auto-unwatching", ws.session)
+				msg := fmt.Sprintf("[TMUX WATCH] Session %s no longer exists — auto-unwatched", ws.session)
+				ws.notifier.Notify(ws.agentSessionKey, msg)
+
+				inst.mu.Lock()
+				delete(inst.watched, key)
+				inst.mu.Unlock()
+				return
 			}
 
 			// Normalize pane content to filter out TUI noise (status bar
