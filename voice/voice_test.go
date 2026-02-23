@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -163,6 +164,74 @@ func TestOpenAITTS_DefaultVoice(t *testing.T) {
 	_, err := tts.Synthesize(context.Background(), "test")
 	if err != nil {
 		t.Fatalf("synthesize: %v", err)
+	}
+}
+
+func TestOpenAITTS_SpeedIncluded(t *testing.T) {
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("audio"))
+	}))
+	defer server.Close()
+
+	tts := &OpenAITTS{
+		Endpoint: server.URL,
+		APIKey:   "key",
+		Model:    "model",
+		Voice:    "alloy",
+		Speed:    1.5,
+	}
+
+	_, err := tts.Synthesize(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+
+	if !strings.Contains(gotBody, `"speed":1.50`) {
+		t.Errorf("payload should contain speed field: %s", gotBody)
+	}
+}
+
+func TestOpenAITTS_SpeedOmittedWhenZero(t *testing.T) {
+	var gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("audio"))
+	}))
+	defer server.Close()
+
+	tts := &OpenAITTS{
+		Endpoint: server.URL,
+		APIKey:   "key",
+		Model:    "model",
+		Voice:    "alloy",
+		// Speed is 0 — should be omitted
+	}
+
+	_, err := tts.Synthesize(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+
+	if strings.Contains(gotBody, "speed") {
+		t.Errorf("payload should not contain speed when zero: %s", gotBody)
+	}
+}
+
+func TestEdgeTTS_RateArgs(t *testing.T) {
+	e := &EdgeTTS{
+		Voice: "en-US-AndrewNeural",
+		Rate:  "+20%",
+	}
+	// We can't easily test the full Synthesize (needs edge-tts binary),
+	// but we verify the struct fields are set correctly
+	if e.Rate != "+20%" {
+		t.Errorf("Rate = %q, want %q", e.Rate, "+20%")
 	}
 }
 

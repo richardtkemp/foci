@@ -83,6 +83,7 @@ func (w *WhisperSTT) Transcribe(ctx context.Context, audioData []byte, filename 
 type EdgeTTS struct {
 	Command string // binary name, default "edge-tts"
 	Voice   string // e.g. "en-US-AndrewNeural"
+	Rate    string // e.g. "+20%", "-10%", "+0%" (default: no --rate flag)
 }
 
 func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
@@ -103,6 +104,9 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	if e.Voice != "" {
 		args = append([]string{"--voice", e.Voice}, args...)
 	}
+	if e.Rate != "" {
+		args = append(args, "--rate", e.Rate)
+	}
 
 	ttsCmd := exec.CommandContext(ctx, cmd, args...)
 	if output, err := ttsCmd.CombinedOutput(); err != nil {
@@ -119,10 +123,11 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 
 // OpenAITTS uses an OpenAI-compatible TTS API (OpenRouter, Groq, OpenAI).
 type OpenAITTS struct {
-	Endpoint string // e.g. "https://openrouter.ai/api/v1/audio/speech"
-	APIKey   string // Bearer token
-	Model    string // e.g. "openai/tts-1-mini"
-	Voice    string // e.g. "alloy"
+	Endpoint string  // e.g. "https://openrouter.ai/api/v1/audio/speech"
+	APIKey   string  // Bearer token
+	Model    string  // e.g. "openai/tts-1-mini"
+	Voice    string  // e.g. "alloy"
+	Speed    float64 // 0.25–4.0 (default 1.0, 0 means omit)
 }
 
 func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
@@ -131,7 +136,12 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		voice = "alloy"
 	}
 
-	payload := fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q}`, o.Model, text, voice)
+	var payload string
+	if o.Speed > 0 {
+		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q,"speed":%.2f}`, o.Model, text, voice, o.Speed)
+	} else {
+		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q}`, o.Model, text, voice)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", o.Endpoint, strings.NewReader(payload))
 	if err != nil {

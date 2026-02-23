@@ -122,6 +122,7 @@ type VoiceConfig struct {
 	TTSEndpoint string `toml:"tts_endpoint"` // for openai provider
 	TTSModel    string `toml:"tts_model"`    // for openai provider, e.g. "openai/tts-1-mini"
 	TTSVoice    string `toml:"tts_voice"`    // voice name (provider-specific)
+	TTSRate     string `toml:"tts_rate"`     // speech rate: edge-tts "+20%"/"-10%", openai "0.25"-"4.0"
 }
 
 type CacheConfig struct {

@@ -280,6 +280,7 @@ Voice support (speech-to-text and text-to-speech).
 | `tts_endpoint` | string | `""` | API endpoint for OpenAI TTS provider. |
 | `tts_model` | string | `""` | Model name for OpenAI TTS (e.g. `"tts-1-mini"`). |
 | `tts_voice` | string | `""` | Voice name (provider-specific). Defaults to `"alloy"` for OpenAI provider. |
+| `tts_rate` | string | `""` | Speech rate. For edge-tts: `"+20%"`, `"-10%"`, etc. For openai: `"1.5"` (float 0.25–4.0). Empty uses provider default. |
 
 STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`).
 
@@ -613,6 +614,7 @@ tts_provider = "openai"
 tts_endpoint = "https://openrouter.ai/api/v1"
 tts_model = "openai/tts-1-mini"
 tts_voice = "alloy"
+tts_rate = "1.2"
 
 [tools]
 tmux_cols = 300
