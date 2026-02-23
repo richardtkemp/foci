@@ -950,3 +950,25 @@ func TestRegisterCommands_APIError(t *testing.T) {
 	// Should not panic — just logs a warning
 	b.RegisterCommands()
 }
+
+// --- SendNotification guard ---
+
+func TestSendNotification_EmptyTextSkipped(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.SetChatID(12345)
+
+	// Empty text should not send
+	b.SendNotification("")
+	b.SendNotification("   ")
+	b.SendNotification("\n\t")
+
+	if mock.sentCount() != 0 {
+		t.Errorf("sends = %d, want 0 (empty text should be skipped)", mock.sentCount())
+	}
+
+	// Non-empty text should send
+	b.SendNotification("test alert")
+	if mock.sentCount() != 1 {
+		t.Errorf("sends = %d, want 1", mock.sentCount())
+	}
+}

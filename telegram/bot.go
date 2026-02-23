@@ -664,7 +664,13 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 
 // SendNotification sends a plain text notification to the last known chat.
 // Used for system alerts (cache bust, etc.) — not an agent turn, no tokens spent.
+// Silently skips empty or whitespace-only messages.
 func (b *Bot) SendNotification(text string) {
+	if strings.TrimSpace(text) == "" {
+		log.Debugf("telegram", "skipping empty notification")
+		return
+	}
+
 	b.chatMu.Lock()
 	chatID := b.chatID
 	b.chatMu.Unlock()
