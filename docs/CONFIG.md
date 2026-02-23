@@ -72,6 +72,7 @@ Telegram bot configuration.
 | `bot_token` | string | `""` | Legacy single-bot token. Overridden by `secrets.toml` `[telegram] bot_token`. |
 | `allowed_users` | string[] | `[]` | Telegram user IDs allowed to interact with the bot. |
 | `secondary_bots` | string[] | `[]` | Legacy: tokens for secondary bots (multiball feature). |
+| `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. Set to `"0"` to disable auto-reclaim. Go duration format (`30m`, `2h`). |
 
 ### `[telegram.bots.<name>]`
 

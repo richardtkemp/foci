@@ -111,7 +111,12 @@ func main() {
 	}
 
 	// Shared: Anthropic client
-	client := anthropic.NewClient(anthropicToken)
+	httpTimeout, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout)
+	if err != nil {
+		log.Warnf("main", "invalid anthropic.http_timeout, using default: %v", err)
+		httpTimeout = 120 * time.Second
+	}
+	client := anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
@@ -747,6 +752,8 @@ func setupAgent(p setupParams) *agentInstance {
 		PromptRules:             agent.CompilePromptRules(p.cfg.PromptRules),
 		CompactionSummaryPrompt: p.cfg.Sessions.CompactionSummaryPrompt,
 		CompactionHandoffMsg:    p.cfg.Sessions.CompactionHandoffMsg,
+		MaxToolLoops:            acfg.MaxToolLoops,
+		MaxOutputTokens:         acfg.MaxOutputTokens,
 	}
 	ag.RestoreVoiceMode(sessionKey)
 
@@ -1085,6 +1092,15 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 			if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
 				log.Infof("main", "agent %q: %d multiball bots ready", acfg.ID, pool.Size())
+			}
+		}
+
+		// Configure session TTL for multiball pool (auto-reclaim stale sessions)
+		if pool := p.botMgr.Pool(acfg.ID); pool != nil {
+			ttl, _ := time.ParseDuration(p.cfg.Telegram.MultiballSessionTTL) // validated earlier
+			if ttl > 0 {
+				pool.SetSessionTTL(ttl, p.sessions)
+				log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
 			}
 		}
 	}

@@ -30,13 +30,17 @@ type AgentConfig struct {
 	TelegramBot       string            `toml:"telegram_bot"`       // references key in [telegram.bots] map
 	MultiballBot      string            `toml:"multiball_bot"`      // references key in [telegram.bots] map (optional)
 	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
+	MaxToolLoops      int               `toml:"max_tool_loops"`     // max tool iterations per turn (default 25)
+	MaxOutputTokens   int               `toml:"max_output_tokens"`  // max tokens in model response (default 8192)
 }
 
 type AnthropicConfig struct {
 	Token           string `toml:"token"`
 	OAuthToken      string `toml:"oauth_token"` // OAuth access token for usage API (legacy, static)
 	BraveAPIKey     string `toml:"brave_api_key"`
-	CredentialsFile string `toml:"credentials_file"` // path to Claude Code credentials.json (default ~/.claude/.credentials.json)
+	CredentialsFile string `toml:"credentials_file"`  // path to Claude Code credentials.json (default ~/.claude/.credentials.json)
+	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "120s")
+	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
 }
 
 // TelegramBotConfig defines a named Telegram bot in the [telegram.bots] map.
@@ -52,7 +56,10 @@ type TelegramConfig struct {
 	Bots                map[string]TelegramBotConfig `toml:"bots"`                  // named bots for multi-agent
 	StopAliases         []string                     `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases   bool                         `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
-	EnableStartupNotify bool                         `toml:"enable_startup_notify"` // send notification on startup (default true)
+	EnableStartupNotify  bool                         `toml:"enable_startup_notify"`  // send notification on startup (default true)
+	MultiballSessionTTL  string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
+	MessageQueueSize     int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
+	LongPollTimeout      string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 }
 
 type SessionsConfig struct {
@@ -76,11 +83,17 @@ type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`             // new: multiple sources with weights
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
+	SearchLimit        int            `toml:"search_limit"`        // max search results to return (default 20)
+}
+
+type DatabaseConfig struct {
+	BusyTimeout string `toml:"busy_timeout"` // SQLite busy timeout for concurrent access (default "5s")
 }
 
 type HTTPConfig struct {
-	Port int    `toml:"port"`
-	Bind string `toml:"bind"`
+	Port                    int    `toml:"port"`
+	Bind                    string `toml:"bind"`
+	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout"` // time to wait for in-flight requests on shutdown (default "5s")
 }
 
 type LoggingConfig struct {
@@ -122,11 +135,18 @@ type SkillsConfig struct {
 }
 
 type ToolsConfig struct {
-	MaxResultChars     int    `toml:"max_result_chars"`     // max chars before writing result to file (default 10000)
-	TempDir            string `toml:"temp_dir"`             // where to write large tool results (default /tmp/clod-tool-results)
-	TmuxCols           int    `toml:"tmux_cols"`            // tmux window columns on start (default 300)
-	TmuxRows           int    `toml:"tmux_rows"`            // tmux window rows on start (default 30)
-	ExecAutoBackground int    `toml:"exec_auto_background"` // seconds before auto-backgrounding exec (default 10, 0 disables)
+	MaxResultChars     int    `toml:"max_result_chars"`      // max chars before writing result to file (default 10000)
+	TempDir            string `toml:"temp_dir"`              // where to write large tool results (default /tmp/clod-tool-results)
+	TmuxCols           int    `toml:"tmux_cols"`             // tmux window columns on start (default 300)
+	TmuxRows           int    `toml:"tmux_rows"`             // tmux window rows on start (default 30)
+	ExecAutoBackground int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec (default 10, 0 disables)
+	ExecDefaultTimeout int    `toml:"exec_default_timeout"`  // default timeout for exec commands in seconds (default 30)
+	ExecMaxOutputChars int    `toml:"exec_max_output_chars"` // max chars in exec output before truncation (default 100000)
+	TmuxCommandTimeout string `toml:"tmux_command_timeout"`  // timeout for tmux control commands (default "5s")
+	WebFetchTimeout    string `toml:"web_fetch_timeout"`     // HTTP timeout for web fetch (default "30s")
+	WebFetchMaxBytes   int    `toml:"web_fetch_max_bytes"`   // max bytes to read from web fetch (default 1048576 = 1MB)
+	WebFetchMaxChars   int    `toml:"web_fetch_max_chars"`   // max chars in web fetch output before truncation (default 50000)
+	WebSearchTimeout   string `toml:"web_search_timeout"`    // HTTP timeout for web search (default "15s")
 }
 
 type PromptRule struct {
@@ -148,6 +168,7 @@ type Config struct {
 	Telegram     TelegramConfig     `toml:"telegram"`
 	Sessions     SessionsConfig     `toml:"sessions"`
 	Memory       MemoryConfig       `toml:"memory"`
+	Database     DatabaseConfig     `toml:"database"`
 	HTTP         HTTPConfig         `toml:"http"`
 	Logging      LoggingConfig      `toml:"logging"`
 	Voice        VoiceConfig        `toml:"voice"`
@@ -219,6 +240,43 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	// Database
+	if _, err := time.ParseDuration(cfg.Database.BusyTimeout); err != nil {
+		return fmt.Errorf("[database] busy_timeout = %q: %w", cfg.Database.BusyTimeout, err)
+	}
+
+	// Anthropic
+	if _, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout); err != nil {
+		return fmt.Errorf("[anthropic] http_timeout = %q: %w", cfg.Anthropic.HTTPTimeout, err)
+	}
+	if _, err := time.ParseDuration(cfg.Anthropic.UsageAPITimeout); err != nil {
+		return fmt.Errorf("[anthropic] usage_api_timeout = %q: %w", cfg.Anthropic.UsageAPITimeout, err)
+	}
+
+	// Tools
+	if _, err := time.ParseDuration(cfg.Tools.TmuxCommandTimeout); err != nil {
+		return fmt.Errorf("[tools] tmux_command_timeout = %q: %w", cfg.Tools.TmuxCommandTimeout, err)
+	}
+	if _, err := time.ParseDuration(cfg.Tools.WebFetchTimeout); err != nil {
+		return fmt.Errorf("[tools] web_fetch_timeout = %q: %w", cfg.Tools.WebFetchTimeout, err)
+	}
+	if _, err := time.ParseDuration(cfg.Tools.WebSearchTimeout); err != nil {
+		return fmt.Errorf("[tools] web_search_timeout = %q: %w", cfg.Tools.WebSearchTimeout, err)
+	}
+
+	// Telegram
+	if _, err := time.ParseDuration(cfg.Telegram.LongPollTimeout); err != nil {
+		return fmt.Errorf("[telegram] long_poll_timeout = %q: %w", cfg.Telegram.LongPollTimeout, err)
+	}
+	if _, err := time.ParseDuration(cfg.Telegram.MultiballSessionTTL); err != nil {
+		return fmt.Errorf("[telegram] multiball_session_ttl = %q: %w", cfg.Telegram.MultiballSessionTTL, err)
+	}
+
+	// HTTP
+	if _, err := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout); err != nil {
+		return fmt.Errorf("[http] graceful_shutdown_timeout = %q: %w", cfg.HTTP.GracefulShutdownTimeout, err)
+	}
+
 	return nil
 }
 
@@ -250,6 +308,12 @@ func Load(path string) (*Config, error) {
 		}
 		if cfg.Agents[i].HeartbeatInterval == "" {
 			cfg.Agents[i].HeartbeatInterval = "45m"
+		}
+		if cfg.Agents[i].MaxToolLoops == 0 {
+			cfg.Agents[i].MaxToolLoops = 25
+		}
+		if cfg.Agents[i].MaxOutputTokens == 0 {
+			cfg.Agents[i].MaxOutputTokens = 8192
 		}
 	}
 
@@ -333,6 +397,61 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Memory.ConversationWeight == 0 {
 		cfg.Memory.ConversationWeight = 0.1
+	}
+	if cfg.Memory.SearchLimit == 0 {
+		cfg.Memory.SearchLimit = 20
+	}
+
+	// Database defaults
+	if cfg.Database.BusyTimeout == "" {
+		cfg.Database.BusyTimeout = "5s"
+	}
+
+	// Anthropic defaults
+	if cfg.Anthropic.HTTPTimeout == "" {
+		cfg.Anthropic.HTTPTimeout = "120s"
+	}
+	if cfg.Anthropic.UsageAPITimeout == "" {
+		cfg.Anthropic.UsageAPITimeout = "10s"
+	}
+
+	// Tools defaults
+	if cfg.Tools.ExecDefaultTimeout == 0 {
+		cfg.Tools.ExecDefaultTimeout = 30
+	}
+	if cfg.Tools.ExecMaxOutputChars == 0 {
+		cfg.Tools.ExecMaxOutputChars = 100000
+	}
+	if cfg.Tools.TmuxCommandTimeout == "" {
+		cfg.Tools.TmuxCommandTimeout = "5s"
+	}
+	if cfg.Tools.WebFetchTimeout == "" {
+		cfg.Tools.WebFetchTimeout = "30s"
+	}
+	if cfg.Tools.WebFetchMaxBytes == 0 {
+		cfg.Tools.WebFetchMaxBytes = 1048576 // 1MB
+	}
+	if cfg.Tools.WebFetchMaxChars == 0 {
+		cfg.Tools.WebFetchMaxChars = 50000
+	}
+	if cfg.Tools.WebSearchTimeout == "" {
+		cfg.Tools.WebSearchTimeout = "15s"
+	}
+
+	// Telegram defaults
+	if cfg.Telegram.MessageQueueSize == 0 {
+		cfg.Telegram.MessageQueueSize = 64
+	}
+	if cfg.Telegram.LongPollTimeout == "" {
+		cfg.Telegram.LongPollTimeout = "65s"
+	}
+	if cfg.Telegram.MultiballSessionTTL == "" {
+		cfg.Telegram.MultiballSessionTTL = "60m"
+	}
+
+	// HTTP defaults
+	if cfg.HTTP.GracefulShutdownTimeout == "" {
+		cfg.HTTP.GracefulShutdownTimeout = "5s"
 	}
 
 	// Bool defaults: default to true unless explicitly set to false in config.

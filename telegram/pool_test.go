@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"testing"
+	"time"
 
 	"clod/command"
 )
@@ -107,5 +108,199 @@ func TestPool_Empty(t *testing.T) {
 	_, ok := pool.Acquire()
 	if ok {
 		t.Fatal("should not acquire from empty pool")
+	}
+}
+
+// mockSessionChecker implements SessionActivityChecker for testing.
+type mockSessionChecker struct {
+	activities map[string]string // session key → RFC3339 timestamp or "n/a"
+}
+
+func (m *mockSessionChecker) LastActivity(key string) string {
+	if v, ok := m.activities[key]; ok {
+		return v
+	}
+	return "n/a"
+}
+
+func TestPool_TTLReclaimsStaleBot(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	pool.Add(bot1)
+
+	// Acquire and assign a session
+	b, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("acquire failed")
+	}
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	// All bots busy, no TTL configured — should fail
+	_, ok = pool.Acquire()
+	if ok {
+		t.Fatal("should not acquire when all busy (no TTL)")
+	}
+
+	// Configure TTL with a stale session (last activity 2 hours ago)
+	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": staleTime,
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	// Now acquire should auto-reclaim the stale bot
+	b2, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("should reclaim stale bot")
+	}
+	if b2 != bot1 {
+		t.Fatal("should reclaim the same bot")
+	}
+}
+
+func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	pool.Add(bot1)
+
+	// Acquire and assign a session
+	b, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("acquire failed")
+	}
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	// Configure TTL with an active session (last activity 5 minutes ago)
+	recentTime := time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": recentTime,
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	// Should NOT reclaim — session is still active
+	_, ok = pool.Acquire()
+	if ok {
+		t.Fatal("should not reclaim active bot")
+	}
+
+	// Bot should still have its session
+	if bot1.SessionKey() != "agent:main:multiball:mb-1" {
+		t.Fatalf("session key should be unchanged, got %q", bot1.SessionKey())
+	}
+}
+
+func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	pool.Add(bot1)
+
+	b, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("acquire failed")
+	}
+	b.SetSessionKey("agent:main:multiball:mb-gone")
+
+	// Session doesn't exist in the store (returns "n/a")
+	checker := &mockSessionChecker{
+		activities: map[string]string{}, // empty — session not found
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	// Should reclaim — session file doesn't exist
+	b2, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("should reclaim phantom session bot")
+	}
+	if b2 != bot1 {
+		t.Fatal("should reclaim the same bot")
+	}
+}
+
+func TestPool_AllBotsBusyWithTTL(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	bot2 := testSecondaryBot("bot2")
+	pool.Add(bot1)
+	pool.Add(bot2)
+
+	// Acquire both
+	b1, _ := pool.Acquire()
+	b1.SetSessionKey("agent:main:multiball:mb-1")
+	b2, _ := pool.Acquire()
+	b2.SetSessionKey("agent:main:multiball:mb-2")
+
+	// Both sessions are active (recent activity)
+	recentTime := time.Now().Add(-10 * time.Minute).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": recentTime,
+			"agent:main:multiball:mb-2": recentTime,
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	// Should fail — both actively in use
+	_, ok := pool.Acquire()
+	if ok {
+		t.Fatal("should not acquire when all bots actively in use")
+	}
+}
+
+func TestPool_ZeroTTLDisablesReclaim(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	pool.Add(bot1)
+
+	b, _ := pool.Acquire()
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	// TTL=0 means no auto-reclaim even with a checker
+	staleTime := time.Now().Add(-24 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": staleTime,
+		},
+	}
+	pool.SetSessionTTL(0, checker) // disabled
+
+	_, ok := pool.Acquire()
+	if ok {
+		t.Fatal("TTL=0 should not reclaim")
+	}
+}
+
+func TestPool_MixedStaleAndActive(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	bot2 := testSecondaryBot("bot2")
+	pool.Add(bot1)
+	pool.Add(bot2)
+
+	// Acquire both
+	b1, _ := pool.Acquire()
+	b1.SetSessionKey("agent:main:multiball:mb-1")
+	b2, _ := pool.Acquire()
+	b2.SetSessionKey("agent:main:multiball:mb-2")
+
+	// bot1's session is stale, bot2's is active
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z"),
+			"agent:main:multiball:mb-2": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z"),
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	// Should reclaim bot1 (stale), not bot2 (active)
+	acquired, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("should reclaim stale bot1")
+	}
+	if acquired != bot1 {
+		t.Fatal("should reclaim bot1 (stale), not bot2 (active)")
 	}
 }
