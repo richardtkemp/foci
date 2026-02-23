@@ -296,6 +296,25 @@ Prompt caching strategy.
 
 ---
 
+## `[environment]`
+
+Environment block injected as the first system prompt block, providing the agent with runtime context (workspace, paths, git repo, message metadata format).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | Inject environment block as the first system block. Set to `false` to disable. |
+
+When enabled, a text block is programmatically built at startup and prepended before character files. It contains:
+
+- **Workspace** — workspace path, agent ID, git remote URL (or "not a git repo")
+- **Paths** — config file, secrets file, log directory
+- **Time** — note that current time comes from `[meta]` headers
+- **Message Metadata** — documents the `[meta]` header fields (time, gap, model, prev_cost, prev_tokens, mana)
+
+The block is built once per agent at startup from config values — no runtime overhead. It does not include secrets, character identity, or skill lists (those have their own blocks).
+
+---
+
 ## `[tools]`
 
 Tool behavior settings.

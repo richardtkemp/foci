@@ -26,9 +26,10 @@ config.Load(path)                                        ← validates values; l
     → tools.NewAsyncNotifier()                             ← shared by exec + tmux
     → tools.NewRegistry() + register all tools             ← per-agent registry
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
+    → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
     → skills.Load(cfg.Skills.Dirs)
     → compaction.NewCompactor(client, sessions, model, threshold)
-    → agent.Agent{Client, Sessions, Tools, Bootstrap, ...}
+    → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
     → command.NewRegistry() + register built-ins + custom scripts + skill commands
     → auto-expose all commands as tools
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
@@ -87,8 +88,10 @@ The core of the system. Two entry points:
 3. build content blocks: image block(s) first, then text block (with metadata)
 4. append user message
 5. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
-5. tools.ToolDefs()                       ← registry → []ToolDef
-6. LOOP (max 25 iterations):
+   prepend EnvironmentBlock if set        ← runtime context block
+   append ExtraSystemBlocks               ← skills, etc.
+6. tools.ToolDefs()                       ← registry → []ToolDef
+7. LOOP (max 25 iterations):
    a. logCacheDebug(system, messages, model)  ← warns if system < min threshold
    b. client.SendMessage(system, messages, tools)
    c. log event + log API entry
@@ -96,9 +99,9 @@ The core of the system. Two entry points:
    e. if stop_reason == "tool_use":
       - execute each tool via registry (check ctx.Err() between calls)
       - append assistant msg + tool_result msg
-      - goto 6a
-7. sessions.AppendAll(sessionKey, newMessages)
-8. if compactor.ShouldCompact(messages, usage) → compactor.Compact(sessionKey)
+      - goto 7a
+8. sessions.AppendAll(sessionKey, newMessages)
+9. if compactor.ShouldCompact(messages, usage) → compactor.Compact(sessionKey)
 ```
 
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
@@ -220,16 +223,24 @@ agent:main:cron:morning   → {dir}/agent/main/cron/morning.jsonl
 
 **Branching:** Branch files start with a `{"type":"branch_meta",...}` line containing `parent_key` and `branch_point`. `LoadFull()` reads parent[:branch_point] + branch's own messages. This is what makes cache sharing work — the API sees the same prefix bytes.
 
-## System Prompt Assembly (`workspace/bootstrap.go`)
+## System Prompt Assembly (`workspace/bootstrap.go`, `agent/agent.go`)
 
-Reads markdown files from workspace dir in order:
+System blocks are assembled in this order:
+
+1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, git repo URL, config/secrets/log paths, and message metadata docs. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessageWithImages`. Omitted when `[environment] enabled = false` (empty string).
+
+2. **Character files** (`workspace/bootstrap.go`) — reads markdown files from workspace dir in order:
 ```
 IDENTITY.md → SOUL.md → COHERENCE.md → AGENTS.md → TOOLS.md → USER.md → MEMORY.md → HEARTBEAT.md
 ```
 
-Each becomes a `SystemBlock{type:"text", text:content}`. The **last** block gets `cache_control: {type: "ephemeral"}`. Order matters: most-stable files first maximizes cache prefix reuse.
+Each becomes a `SystemBlock{type:"text", text:content}`. Missing/empty files are silently skipped.
 
-Missing/empty files are silently skipped.
+3. **Secrets block** — appended by `Bootstrap.SystemBlocks()` if secret names are available. Lists available `{{secret:NAME}}` template keys.
+
+4. **Extra system blocks** — skills list and other injected blocks (`agent.ExtraSystemBlocks`).
+
+The **last** block gets `cache_control: {type: "ephemeral"}`. Order matters: most-stable blocks first maximizes cache prefix reuse. The environment block is highly stable (only changes on restart), making it a good cache prefix leader.
 
 ## Anthropic API Client (`anthropic/`)
 
