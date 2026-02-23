@@ -295,6 +295,67 @@ func TestFormatManaNil(t *testing.T) {
 	}
 }
 
+func TestFormatManaResetNil(t *testing.T) {
+	if got := FormatManaReset(nil); got != "" {
+		t.Errorf("FormatManaReset(nil) = %q, want empty", got)
+	}
+}
+
+func TestFormatManaResetNoFiveHour(t *testing.T) {
+	if got := FormatManaReset(&UsageResponse{}); got != "" {
+		t.Errorf("FormatManaReset(empty) = %q, want empty", got)
+	}
+}
+
+func TestFormatManaResetNoResetsAt(t *testing.T) {
+	util := 50.0
+	if got := FormatManaReset(&UsageResponse{FiveHour: &UsageWindow{Utilization: &util}}); got != "" {
+		t.Errorf("FormatManaReset(no ResetsAt) = %q, want empty", got)
+	}
+}
+
+func TestFormatManaResetWithTime(t *testing.T) {
+	util := 50.0
+	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
+	got := FormatManaReset(&UsageResponse{
+		FiveHour: &UsageWindow{
+			Utilization: &util,
+			ResetsAt:    &future,
+		},
+	})
+	if !strings.HasPrefix(got, "in ") || !strings.HasSuffix(got, "h") {
+		t.Errorf("FormatManaReset(2h) = %q, want 'in Xh'", got)
+	}
+}
+
+func TestFormatManaResetPast(t *testing.T) {
+	util := 50.0
+	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339Nano)
+	got := FormatManaReset(&UsageResponse{
+		FiveHour: &UsageWindow{
+			Utilization: &util,
+			ResetsAt:    &past,
+		},
+	})
+	if got != "now" {
+		t.Errorf("FormatManaReset(past) = %q, want %q", got, "now")
+	}
+}
+
+func TestFormatManaResetMinutes(t *testing.T) {
+	util := 50.0
+	future := time.Now().Add(45 * time.Minute).UTC().Format(time.RFC3339Nano)
+	got := FormatManaReset(&UsageResponse{
+		FiveHour: &UsageWindow{
+			Utilization: &util,
+			ResetsAt:    &future,
+		},
+	})
+	if !strings.HasPrefix(got, "in ") || !strings.HasSuffix(got, "m") {
+		t.Errorf("FormatManaReset(45m) = %q, want 'in Xm'", got)
+	}
+}
+
 func TestFormatManaNoFiveHour(t *testing.T) {
 	if got := FormatMana(&UsageResponse{}); got != "" {
 		t.Errorf("FormatMana(empty) = %q, want empty", got)

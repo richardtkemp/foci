@@ -13,34 +13,34 @@ import (
 
 // UsageWindow represents a usage window (5-hour, 7-day, etc.)
 type UsageWindow struct {
-	Utilization *float64  `json:"utilization"`
-	ResetsAt    *string   `json:"resets_at"`
+	Utilization *float64 `json:"utilization"`
+	ResetsAt    *string  `json:"resets_at"`
 }
 
 // ExtraUsage represents overage billing information
 type ExtraUsage struct {
-	IsEnabled      bool     `json:"is_enabled"`
-	MonthlyLimit   float64  `json:"monthly_limit"`
-	UsedCredits    float64  `json:"used_credits"`
-	Utilization    *float64 `json:"utilization"`
+	IsEnabled    bool     `json:"is_enabled"`
+	MonthlyLimit float64  `json:"monthly_limit"`
+	UsedCredits  float64  `json:"used_credits"`
+	Utilization  *float64 `json:"utilization"`
 }
 
 // UsageResponse is the response from the usage API endpoint
 type UsageResponse struct {
-	FiveHour           *UsageWindow `json:"five_hour"`
-	SevenDay           *UsageWindow `json:"seven_day"`
-	SevenDayOAuthApps  *UsageWindow `json:"seven_day_oauth_apps"`
-	SevenDayOpus       *UsageWindow `json:"seven_day_opus"`
-	SevenDaySonnet     *UsageWindow `json:"seven_day_sonnet"`
-	SevenDayCowork     *UsageWindow `json:"seven_day_cowork"`
-	IguanaNecktie      *UsageWindow `json:"iguana_necktie"`
-	ExtraUsage         *ExtraUsage  `json:"extra_usage"`
+	FiveHour          *UsageWindow `json:"five_hour"`
+	SevenDay          *UsageWindow `json:"seven_day"`
+	SevenDayOAuthApps *UsageWindow `json:"seven_day_oauth_apps"`
+	SevenDayOpus      *UsageWindow `json:"seven_day_opus"`
+	SevenDaySonnet    *UsageWindow `json:"seven_day_sonnet"`
+	SevenDayCowork    *UsageWindow `json:"seven_day_cowork"`
+	IguanaNecktie     *UsageWindow `json:"iguana_necktie"`
+	ExtraUsage        *ExtraUsage  `json:"extra_usage"`
 }
 
 // UsageClient is a client for the Anthropic usage API (requires OAuth token)
 type UsageClient struct {
-	oauthToken string          // static token (legacy)
-	tokenFunc  func() string   // dynamic token getter (preferred, overrides static)
+	oauthToken string        // static token (legacy)
+	tokenFunc  func() string // dynamic token getter (preferred, overrides static)
 	httpClient *http.Client
 	baseURL    string
 }
@@ -198,6 +198,15 @@ func FormatMana(usage *UsageResponse) string {
 		return fmt.Sprintf("%.1f%%", mana)
 	}
 	return fmt.Sprintf("%.0f%%", mana)
+}
+
+// FormatManaReset returns a human-readable reset time string from usage data.
+// Returns "" if no reset time available.
+func FormatManaReset(usage *UsageResponse) string {
+	if usage == nil || usage.FiveHour == nil || usage.FiveHour.ResetsAt == nil {
+		return ""
+	}
+	return parseResetTime(*usage.FiveHour.ResetsAt)
 }
 
 // parseResetTime converts ISO timestamp to human-readable time
