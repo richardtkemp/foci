@@ -30,6 +30,7 @@ type botClient interface {
 	SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error)
 	SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error)
 	GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error)
+	SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.SetMyCommandsOpts) (bool, error)
 }
 
 // imageAttachment is a downloaded image ready for the agent.
@@ -171,10 +172,41 @@ func (b *Bot) SetChatID(id int64) {
 	b.chatMu.Unlock()
 }
 
+// RegisterCommands registers the bot's slash commands with Telegram via setMyCommands.
+// This makes commands appear as autocomplete suggestions when the user types "/" in chat.
+// Logs a warning on failure but does not return an error.
+func (b *Bot) RegisterCommands() {
+	var cmds []gotgbot.BotCommand
+
+	// Add all registered commands from the registry
+	for _, cmd := range b.commands.All() {
+		desc := cmd.Description
+		if desc == "" {
+			desc = cmd.Name
+		}
+		cmds = append(cmds, gotgbot.BotCommand{
+			Command:     cmd.Name,
+			Description: desc,
+		})
+	}
+
+	// Add special commands not in the registry
+	cmds = append(cmds, gotgbot.BotCommand{Command: "stop", Description: "Cancel the current agent turn"})
+	cmds = append(cmds, gotgbot.BotCommand{Command: "done", Description: "Detach a secondary bot from its session"})
+
+	if _, err := b.client.SetMyCommands(cmds, nil); err != nil {
+		log.Warnf("telegram", "setMyCommands: %s", b.sanitizeError(err))
+		return
+	}
+	log.Infof("telegram", "registered %d commands with BotFather", len(cmds))
+}
+
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
 // If polling fails, it recovers and retries with backoff.
 func (b *Bot) Run(ctx context.Context) {
 	log.Infof("telegram", "bot started as @%s", b.api.Username)
+
+	b.RegisterCommands()
 
 	// Agent worker — processes queued messages sequentially
 	go b.agentWorker(ctx)
