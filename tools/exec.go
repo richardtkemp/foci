@@ -77,6 +77,9 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	// Resolve secret templates
 	cmd := p.Command
 	if store != nil {
+		if secrets.FindSecretRefs(cmd) != nil {
+			log.Warnf("exec", "{{secret:}} in exec is deprecated — use http_request tool instead")
+		}
 		resolved, err := store.Resolve(cmd)
 		if err != nil {
 			return "", fmt.Errorf("resolve secrets: %w", err)
