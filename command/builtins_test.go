@@ -593,7 +593,7 @@ func TestMultiballCommandError(t *testing.T) {
 func TestAgentsCommand(t *testing.T) {
 	cmd := NewAgentsCommand(func() []AgentInfo {
 		return []AgentInfo{
-			{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", Busy: false, MessageCount: 31, LastActivity: time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339)},
+			{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", Busy: false, MessageCount: 31},
 			{ID: "scout", SessionKey: "agent:scout:main", Model: "haiku-4", Busy: true, MessageCount: 12},
 		}
 	})
@@ -603,8 +603,18 @@ func TestAgentsCommand(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Active Sessions") {
+	// Code block table format
+	if !strings.Contains(result, "Agents") {
 		t.Errorf("missing header in:\n%s", result)
+	}
+	if !strings.Contains(result, "```") {
+		t.Errorf("expected code block in:\n%s", result)
+	}
+	if !strings.Contains(result, "ID") || !strings.Contains(result, "Session") || !strings.Contains(result, "Messages") {
+		t.Errorf("missing table headers in:\n%s", result)
+	}
+	if !strings.Contains(result, "─") {
+		t.Errorf("missing separator line in:\n%s", result)
 	}
 	if !strings.Contains(result, "agent:main:main") {
 		t.Errorf("missing main session in:\n%s", result)
@@ -618,11 +628,30 @@ func TestAgentsCommand(t *testing.T) {
 	if !strings.Contains(result, "busy") {
 		t.Errorf("missing busy status in:\n%s", result)
 	}
-	if !strings.Contains(result, "31 msgs") {
-		t.Errorf("missing message count in:\n%s", result)
+}
+
+func TestAgentsCommandNoSession(t *testing.T) {
+	cmd := NewAgentsCommand(func() []AgentInfo {
+		return []AgentInfo{
+			{ID: "clutch", SessionKey: "agent:clutch:main", Model: "opus-4", MessageCount: 31},
+			{ID: "scout", SessionKey: "", Model: "", MessageCount: 0},
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "ago") {
-		t.Errorf("missing last activity in:\n%s", result)
+
+	// Agent with no session should show "—" placeholders
+	if !strings.Contains(result, "—") {
+		t.Errorf("expected dash for no-session agent in:\n%s", result)
+	}
+	if !strings.Contains(result, "clutch") {
+		t.Errorf("missing clutch agent in:\n%s", result)
+	}
+	if !strings.Contains(result, "scout") {
+		t.Errorf("missing scout agent in:\n%s", result)
 	}
 }
 
