@@ -902,3 +902,279 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadNewConfigFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+
+	toml := `
+[agent]
+id = "test"
+max_tool_loops = 50
+max_output_tokens = 16384
+
+[anthropic]
+token = "test-token"
+http_timeout = "180s"
+usage_api_timeout = "15s"
+
+[telegram]
+message_queue_size = 128
+long_poll_timeout = "70s"
+
+[http]
+graceful_shutdown_timeout = "10s"
+
+[memory]
+search_limit = 50
+
+[database]
+busy_timeout = "10s"
+
+[tools]
+exec_default_timeout = 60
+exec_max_output_chars = 200000
+tmux_command_timeout = "10s"
+web_fetch_timeout = "45s"
+web_fetch_max_bytes = 2097152
+web_fetch_max_chars = 100000
+web_search_timeout = "20s"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agent.MaxToolLoops != 50 {
+		t.Errorf("Agent.MaxToolLoops = %d, want 50", cfg.Agent.MaxToolLoops)
+	}
+	if cfg.Agent.MaxOutputTokens != 16384 {
+		t.Errorf("Agent.MaxOutputTokens = %d, want 16384", cfg.Agent.MaxOutputTokens)
+	}
+	if cfg.Anthropic.HTTPTimeout != "180s" {
+		t.Errorf("Anthropic.HTTPTimeout = %q, want 180s", cfg.Anthropic.HTTPTimeout)
+	}
+	if cfg.Anthropic.UsageAPITimeout != "15s" {
+		t.Errorf("Anthropic.UsageAPITimeout = %q, want 15s", cfg.Anthropic.UsageAPITimeout)
+	}
+	if cfg.Telegram.MessageQueueSize != 128 {
+		t.Errorf("Telegram.MessageQueueSize = %d, want 128", cfg.Telegram.MessageQueueSize)
+	}
+	if cfg.Telegram.LongPollTimeout != "70s" {
+		t.Errorf("Telegram.LongPollTimeout = %q, want 70s", cfg.Telegram.LongPollTimeout)
+	}
+	if cfg.HTTP.GracefulShutdownTimeout != "10s" {
+		t.Errorf("HTTP.GracefulShutdownTimeout = %q, want 10s", cfg.HTTP.GracefulShutdownTimeout)
+	}
+	if cfg.Memory.SearchLimit != 50 {
+		t.Errorf("Memory.SearchLimit = %d, want 50", cfg.Memory.SearchLimit)
+	}
+	if cfg.Database.BusyTimeout != "10s" {
+		t.Errorf("Database.BusyTimeout = %q, want 10s", cfg.Database.BusyTimeout)
+	}
+	if cfg.Tools.ExecDefaultTimeout != 60 {
+		t.Errorf("Tools.ExecDefaultTimeout = %d, want 60", cfg.Tools.ExecDefaultTimeout)
+	}
+	if cfg.Tools.ExecMaxOutputChars != 200000 {
+		t.Errorf("Tools.ExecMaxOutputChars = %d, want 200000", cfg.Tools.ExecMaxOutputChars)
+	}
+	if cfg.Tools.TmuxCommandTimeout != "10s" {
+		t.Errorf("Tools.TmuxCommandTimeout = %q, want 10s", cfg.Tools.TmuxCommandTimeout)
+	}
+	if cfg.Tools.WebFetchTimeout != "45s" {
+		t.Errorf("Tools.WebFetchTimeout = %q, want 45s", cfg.Tools.WebFetchTimeout)
+	}
+	if cfg.Tools.WebFetchMaxBytes != 2097152 {
+		t.Errorf("Tools.WebFetchMaxBytes = %d, want 2097152", cfg.Tools.WebFetchMaxBytes)
+	}
+	if cfg.Tools.WebFetchMaxChars != 100000 {
+		t.Errorf("Tools.WebFetchMaxChars = %d, want 100000", cfg.Tools.WebFetchMaxChars)
+	}
+	if cfg.Tools.WebSearchTimeout != "20s" {
+		t.Errorf("Tools.WebSearchTimeout = %q, want 20s", cfg.Tools.WebSearchTimeout)
+	}
+}
+
+func TestNewConfigDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+
+	toml := `
+[agent]
+id = "test"
+
+[anthropic]
+token = "test-token"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agent.MaxToolLoops != 25 {
+		t.Errorf("default Agent.MaxToolLoops = %d, want 25", cfg.Agent.MaxToolLoops)
+	}
+	if cfg.Agent.MaxOutputTokens != 8192 {
+		t.Errorf("default Agent.MaxOutputTokens = %d, want 8192", cfg.Agent.MaxOutputTokens)
+	}
+	if cfg.Anthropic.HTTPTimeout != "120s" {
+		t.Errorf("default Anthropic.HTTPTimeout = %q, want 120s", cfg.Anthropic.HTTPTimeout)
+	}
+	if cfg.Anthropic.UsageAPITimeout != "10s" {
+		t.Errorf("default Anthropic.UsageAPITimeout = %q, want 10s", cfg.Anthropic.UsageAPITimeout)
+	}
+	if cfg.Telegram.MessageQueueSize != 64 {
+		t.Errorf("default Telegram.MessageQueueSize = %d, want 64", cfg.Telegram.MessageQueueSize)
+	}
+	if cfg.Telegram.LongPollTimeout != "65s" {
+		t.Errorf("default Telegram.LongPollTimeout = %q, want 65s", cfg.Telegram.LongPollTimeout)
+	}
+	if cfg.HTTP.GracefulShutdownTimeout != "5s" {
+		t.Errorf("default HTTP.GracefulShutdownTimeout = %q, want 5s", cfg.HTTP.GracefulShutdownTimeout)
+	}
+	if cfg.Memory.SearchLimit != 20 {
+		t.Errorf("default Memory.SearchLimit = %d, want 20", cfg.Memory.SearchLimit)
+	}
+	if cfg.Database.BusyTimeout != "5s" {
+		t.Errorf("default Database.BusyTimeout = %q, want 5s", cfg.Database.BusyTimeout)
+	}
+	if cfg.Tools.ExecDefaultTimeout != 30 {
+		t.Errorf("default Tools.ExecDefaultTimeout = %d, want 30", cfg.Tools.ExecDefaultTimeout)
+	}
+	if cfg.Tools.ExecMaxOutputChars != 100000 {
+		t.Errorf("default Tools.ExecMaxOutputChars = %d, want 100000", cfg.Tools.ExecMaxOutputChars)
+	}
+	if cfg.Tools.TmuxCommandTimeout != "5s" {
+		t.Errorf("default Tools.TmuxCommandTimeout = %q, want 5s", cfg.Tools.TmuxCommandTimeout)
+	}
+	if cfg.Tools.WebFetchTimeout != "30s" {
+		t.Errorf("default Tools.WebFetchTimeout = %q, want 30s", cfg.Tools.WebFetchTimeout)
+	}
+	if cfg.Tools.WebFetchMaxBytes != 1048576 {
+		t.Errorf("default Tools.WebFetchMaxBytes = %d, want 1048576", cfg.Tools.WebFetchMaxBytes)
+	}
+	if cfg.Tools.WebFetchMaxChars != 50000 {
+		t.Errorf("default Tools.WebFetchMaxChars = %d, want 50000", cfg.Tools.WebFetchMaxChars)
+	}
+	if cfg.Tools.WebSearchTimeout != "15s" {
+		t.Errorf("default Tools.WebSearchTimeout = %q, want 15s", cfg.Tools.WebSearchTimeout)
+	}
+}
+
+func TestValidateNewDurationFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		wantErr string
+	}{
+		{
+			name: "invalid http_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+http_timeout = "invalid"
+`,
+			wantErr: "http_timeout",
+		},
+		{
+			name: "invalid database busy_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+[database]
+busy_timeout = "invalid"
+`,
+			wantErr: "busy_timeout",
+		},
+		{
+			name: "invalid telegram long_poll_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+[telegram]
+long_poll_timeout = "invalid"
+`,
+			wantErr: "long_poll_timeout",
+		},
+		{
+			name: "invalid http graceful_shutdown_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+[http]
+graceful_shutdown_timeout = "invalid"
+`,
+			wantErr: "graceful_shutdown_timeout",
+		},
+		{
+			name: "invalid tools tmux_command_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+[tools]
+tmux_command_timeout = "invalid"
+`,
+			wantErr: "tmux_command_timeout",
+		},
+		{
+			name: "invalid tools web_fetch_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+[tools]
+web_fetch_timeout = "invalid"
+`,
+			wantErr: "web_fetch_timeout",
+		},
+		{
+			name: "invalid tools web_search_timeout",
+			toml: `
+[agent]
+id = "test"
+[anthropic]
+token = "test"
+[tools]
+web_search_timeout = "invalid"
+`,
+			wantErr: "web_search_timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "clod.toml")
+			os.WriteFile(path, []byte(tt.toml), 0644)
+
+			_, err := Load(path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}
