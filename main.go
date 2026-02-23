@@ -676,7 +676,7 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}()
 	})
-	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, notifier))
+	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
 	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier))
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
@@ -709,7 +709,7 @@ func setupAgent(p setupParams) *agentInstance {
 	var extraSystemBlocks []anthropic.SystemBlock
 	if skillRegistry.Len() > 0 {
 		extraSystemBlocks = []anthropic.SystemBlock{
-			{Type: "text", Text: skillRegistry.SystemBlock()},
+			{Type: "text", Text: skillRegistry.SystemBlock(acfg.Workspace)},
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
@@ -920,7 +920,7 @@ func setupAgent(p setupParams) *agentInstance {
 		var newExtraSystemBlocks []anthropic.SystemBlock
 		if newSkillRegistry.Len() > 0 {
 			newExtraSystemBlocks = []anthropic.SystemBlock{
-				{Type: "text", Text: newSkillRegistry.SystemBlock()},
+				{Type: "text", Text: newSkillRegistry.SystemBlock(acfg.Workspace)},
 			}
 		}
 		ag.ExtraSystemBlocks = newExtraSystemBlocks

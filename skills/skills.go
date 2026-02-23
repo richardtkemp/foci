@@ -65,8 +65,10 @@ func (r *Registry) Len() int {
 
 // SystemBlock returns a formatted text block listing available skills,
 // suitable for injection into the system prompt. Returns empty string
-// if no skills are loaded.
-func (r *Registry) SystemBlock() string {
+// if no skills are loaded. workDir is the agent's workspace directory;
+// if non-empty, skill paths are shown as the shorter of absolute or
+// relative-to-workDir.
+func (r *Registry) SystemBlock(workDir string) string {
 	if len(r.skills) == 0 {
 		return ""
 	}
@@ -74,9 +76,25 @@ func (r *Registry) SystemBlock() string {
 	b.WriteString("# Available Skills\n\n")
 	b.WriteString("Use the read tool to read a skill's SKILL.md for full instructions.\n\n")
 	for _, s := range r.skills {
-		b.WriteString(fmt.Sprintf("- %s (%s): %s\n", s.Name, s.Path, s.Description))
+		b.WriteString(fmt.Sprintf("- %s (%s): %s\n", s.Name, shortPath(s.Path, workDir), s.Description))
 	}
 	return b.String()
+}
+
+// shortPath returns the shorter of absPath or its relative form from baseDir.
+// If baseDir is empty or filepath.Rel fails, absPath is returned unchanged.
+func shortPath(absPath, baseDir string) string {
+	if baseDir == "" {
+		return absPath
+	}
+	rel, err := filepath.Rel(baseDir, absPath)
+	if err != nil {
+		return absPath
+	}
+	if len(rel) < len(absPath) {
+		return rel
+	}
+	return absPath
 }
 
 // parseSkillFile reads a SKILL.md and extracts frontmatter fields.

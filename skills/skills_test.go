@@ -143,7 +143,7 @@ func TestSystemBlock(t *testing.T) {
 	writeSkillMD(t, dir, "research", "---\nname: research\ndescription: Web research\n---\n")
 
 	reg := Load([]string{dir})
-	block := reg.SystemBlock()
+	block := reg.SystemBlock("")
 
 	if !strings.Contains(block, "# Available Skills") {
 		t.Error("missing header")
@@ -161,8 +161,72 @@ func TestSystemBlock(t *testing.T) {
 
 func TestSystemBlockEmpty(t *testing.T) {
 	reg := Load([]string{})
-	if block := reg.SystemBlock(); block != "" {
+	if block := reg.SystemBlock(""); block != "" {
 		t.Errorf("expected empty string, got %q", block)
+	}
+}
+
+func TestSystemBlockShortPaths(t *testing.T) {
+	// Create skills in /tmp/.../shared/skills/reheat/
+	dir := t.TempDir() // e.g. /tmp/TestXXX/shared
+	skillsDir := filepath.Join(dir, "shared", "skills")
+	writeSkillMD(t, skillsDir, "reheat", "---\nname: reheat\ndescription: Clear cooldowns\n---\n")
+
+	reg := Load([]string{skillsDir})
+
+	// Workspace is a sibling of shared — relative path should be shorter
+	workspace := filepath.Join(dir, "workspace")
+	block := reg.SystemBlock(workspace)
+
+	absPath := filepath.Join(skillsDir, "reheat", "SKILL.md")
+	if strings.Contains(block, absPath) {
+		t.Errorf("expected relative path, but found absolute path %q in block", absPath)
+	}
+	if !strings.Contains(block, "../shared/skills/reheat/SKILL.md") {
+		t.Errorf("expected relative path ../shared/skills/reheat/SKILL.md in block:\n%s", block)
+	}
+}
+
+func TestShortPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		absPath  string
+		baseDir  string
+		expected string
+	}{
+		{
+			name:     "empty base returns abs",
+			absPath:  "/home/clod/shared/skills/reheat/SKILL.md",
+			baseDir:  "",
+			expected: "/home/clod/shared/skills/reheat/SKILL.md",
+		},
+		{
+			name:     "relative shorter",
+			absPath:  "/home/clod/shared/skills/reheat/SKILL.md",
+			baseDir:  "/home/clod/clutch",
+			expected: "../shared/skills/reheat/SKILL.md",
+		},
+		{
+			name:     "abs shorter when deep base",
+			absPath:  "/a/b",
+			baseDir:  "/x/y/z/w/v",
+			expected: "/a/b",
+		},
+		{
+			name:     "same dir",
+			absPath:  "/home/clod/workspace/SKILL.md",
+			baseDir:  "/home/clod/workspace",
+			expected: "SKILL.md",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortPath(tt.absPath, tt.baseDir)
+			if got != tt.expected {
+				t.Errorf("shortPath(%q, %q) = %q, want %q", tt.absPath, tt.baseDir, got, tt.expected)
+			}
+		})
 	}
 }
 
