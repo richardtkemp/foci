@@ -230,12 +230,17 @@ func parseResetTime(isoTime string) string {
 		return "now"
 	}
 
-	// Show relative time (in Xh, in Xm, etc)
+	// Show relative time (in Xh Ym, in Xm, etc)
 	if until < time.Minute {
 		return "in <1m"
 	}
 	if until < time.Hour {
 		return fmt.Sprintf("in %dm", int(until.Minutes()))
 	}
-	return fmt.Sprintf("in %dh", int(until.Hours()))
+	hours := int(until.Hours())
+	mins := int(until.Minutes()) % 60
+	if mins == 0 {
+		return fmt.Sprintf("in %dh", hours)
+	}
+	return fmt.Sprintf("in %dh %dm", hours, mins)
 }
