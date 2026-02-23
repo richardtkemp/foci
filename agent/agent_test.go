@@ -1098,6 +1098,65 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 	}
 }
 
+func TestDuplicateMessagesSkippedForWake(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:            client,
+		Sessions:          store,
+		Tools:             tools.NewRegistry(),
+		Bootstrap:         bootstrap,
+		Model:             "claude-haiku-4-5",
+		DuplicateMessages: true,
+	}
+
+	// Wake trigger should NOT duplicate
+	wakeCtx := WithTrigger(context.Background(), "wake")
+	ag.HandleMessage(wakeCtx, "agent:test:wake", "Do the thing")
+
+	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	text := anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 1 {
+		t.Errorf("wake trigger should not duplicate: expected 1 occurrence, got %d", count)
+	}
+
+	// Heartbeat trigger should NOT duplicate
+	hbCtx := WithTrigger(context.Background(), "heartbeat")
+	ag.HandleMessage(hbCtx, "agent:test:hb", "Check stuff")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Check stuff"); count != 1 {
+		t.Errorf("heartbeat trigger should not duplicate: expected 1 occurrence, got %d", count)
+	}
+
+	// User trigger SHOULD duplicate
+	userCtx := WithTrigger(context.Background(), "user")
+	ag.HandleMessage(userCtx, "agent:test:user", "Do the thing")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 2 {
+		t.Errorf("user trigger should duplicate: expected 2 occurrences, got %d", count)
+	}
+}
+
 func TestRepairInterruptedToolCalls(t *testing.T) {
 	t.Run("empty messages", func(t *testing.T) {
 		if got := repairInterruptedToolCalls(nil); got != nil {
