@@ -88,6 +88,10 @@ func main() {
 		log.Infof("main", "loaded %d secrets: %v", len(names), names)
 	}
 
+	// Wire child process group-dropping into the command package
+	// (so script commands also drop supplementary groups).
+	command.ChildSysProcAttr = tools.ChildSysProcAttr
+
 	// Resolve shared credentials: secrets.toml overrides clod.toml
 	anthropicToken := cfg.Anthropic.Token
 	if v, ok := store.Get("anthropic.token"); ok {

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"clod/log"
@@ -570,8 +569,8 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
 	// Setsid puts the tmux process in its own session so it (and the tmux
 	// server it may spawn) won't be killed when the parent process group
-	// is cleaned up.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// is cleaned up. Also drops supplementary groups (clod-secrets).
+	cmd.SysProcAttr = ChildSysProcAttrSetsid()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

@@ -115,10 +115,10 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	proc.Dir = workDir
 
 	if background {
-		proc.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		proc.SysProcAttr = ChildSysProcAttrSetsid()
 		proc.WaitDelay = 2 * time.Second
 	} else {
-		proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		proc.SysProcAttr = ChildSysProcAttr()
 		proc.Cancel = func() error {
 			return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 		}
@@ -136,7 +136,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 
 	proc := exec.CommandContext(cmdCtx, "sh", "-c", cmd)
 	proc.Dir = workDir
-	proc.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	proc.SysProcAttr = ChildSysProcAttr()
 	proc.Cancel = func() error {
 		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 	}
