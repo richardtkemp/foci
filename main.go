@@ -1450,8 +1450,9 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 }
 
 // resolveResetPrompt returns the session reset prompt from config.
-// Inline prompt takes precedence over file. File is read at call time
-// so edits take effect without restart. Returns "" if unconfigured.
+// Inline prompt takes precedence over file. If neither is set, returns
+// the built-in default. File is read at call time so edits take effect
+// without restart.
 func resolveResetPrompt(cfg *config.Config) string {
 	if cfg.Sessions.SessionResetPrompt != "" {
 		return cfg.Sessions.SessionResetPrompt
@@ -1464,7 +1465,7 @@ func resolveResetPrompt(cfg *config.Config) string {
 		}
 		return strings.TrimSpace(string(data))
 	}
-	return ""
+	return config.DefaultSessionResetPrompt
 }
 
 // fireResetHook sends the reset prompt to the agent before a session is cleared.

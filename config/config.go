@@ -13,6 +13,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// DefaultSessionResetPrompt is the built-in prompt sent to the agent before
+// a session is cleared, giving it a chance to persist important context.
+const DefaultSessionResetPrompt = "This session is about to be cleared. Review the conversation and save any important context, decisions, or learnings to your memory files now. Focus on information that would be valuable in future sessions. Be selective — only persist what matters."
+
 // AgentMemoryConfig holds per-agent memory sources.
 // These are combined with global [memory] sources, with agent-specific
 // sources receiving an automatic weight boost.
