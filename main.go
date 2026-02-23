@@ -351,6 +351,24 @@ func main() {
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
 	var agentOrder []string // preserve config order
 
+	// Closure for /agents command — captures agents/agentOrder, resolved at call time.
+	agentListFn := func() []command.AgentInfo {
+		var infos []command.AgentInfo
+		for _, id := range agentOrder {
+			inst := agents[id]
+			mc, _ := inst.ag.Sessions.MessageCount(inst.sessionKey)
+			infos = append(infos, command.AgentInfo{
+				ID:           id,
+				SessionKey:   inst.sessionKey,
+				Model:        inst.ag.Model,
+				Busy:         inst.ag.IsProcessing(),
+				MessageCount: mc,
+				LastActivity: inst.ag.Sessions.LastActivity(inst.sessionKey),
+			})
+		}
+		return infos
+	}
+
 	for _, acfg := range cfg.Agents {
 		// Resolve memory index: per-agent (if configured) or shared
 		agentMemIdx := sharedMemIdx
@@ -378,6 +396,7 @@ func main() {
 			botMgr:              botMgr,
 			startTime:           startTime,
 			ctx:                 ctx,
+			agentListFn:         agentListFn,
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
@@ -671,6 +690,7 @@ type setupParams struct {
 	botMgr              *telegram.BotManager
 	startTime           time.Time
 	ctx                 context.Context
+	agentListFn         func() []command.AgentInfo
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
@@ -1045,6 +1065,7 @@ func setupAgent(p setupParams) *agentInstance {
 			return forkFn()
 		},
 	})
+	cmds.Register(command.NewAgentsCommand(p.agentListFn))
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
 	cmds.Register(command.NewSecretsCommand(p.store))
 	cmds.Register(command.NewRestartCommand(nil))

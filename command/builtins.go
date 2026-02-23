@@ -790,6 +790,54 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
+// AgentInfo holds data for a single agent in the /agents listing.
+type AgentInfo struct {
+	ID           string
+	SessionKey   string
+	Model        string
+	Busy         bool
+	MessageCount int
+	LastActivity string
+}
+
+// NewAgentsCommand returns a /agents command listing active agent sessions.
+func NewAgentsCommand(listFn func() []AgentInfo) *Command {
+	return &Command{
+		Name:        "agents",
+		Description: "List active agent sessions",
+		Category:    "session",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			agents := listFn()
+			if len(agents) == 0 {
+				return "No agents configured.", nil
+			}
+
+			var sb strings.Builder
+			sb.WriteString("🤖 Active Sessions\n")
+			for _, a := range agents {
+				status := "idle"
+				if a.Busy {
+					status = "busy"
+				}
+				detail := fmt.Sprintf("%d msgs", a.MessageCount)
+				if a.LastActivity != "" {
+					if t, err := time.Parse(time.RFC3339, a.LastActivity); err == nil {
+						ago := time.Since(t).Round(time.Second)
+						if ago < time.Minute {
+							detail += fmt.Sprintf(" | last: %ds ago", int(ago.Seconds()))
+						} else {
+							detail += fmt.Sprintf(" | last: %s ago", formatDuration(ago))
+						}
+					}
+				}
+				fmt.Fprintf(&sb, "  %-30s %-6s %-10s %s\n",
+					a.SessionKey, status, a.Model, detail)
+			}
+			return strings.TrimRight(sb.String(), "\n"), nil
+		},
+	}
+}
+
 // NewRestartCommand creates a /restart command that restarts the clod service.
 // notifyFn is called before the restart to send a notification (e.g., Telegram).
 func NewRestartCommand(notifyFn func(string)) *Command {
