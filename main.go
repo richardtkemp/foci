@@ -661,7 +661,20 @@ func main() {
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// Check for welcome file (written by setup.sh on update)
-	injectWelcomeFile(cfg.WelcomeFile, agents, agentOrder, sessions)
+	// Returns the changelog content if injected, empty string otherwise.
+	if content := injectWelcomeFile(cfg.WelcomeFile, agents, agentOrder, sessions); content != "" {
+		// Fire an agent turn so the changelog is processed immediately,
+		// rather than waiting for the next user message.
+		inst := agents[agentOrder[0]]
+		go func() {
+			restartCtx := agent.WithTrigger(ctx, "restart")
+			restartCtx = agent.WithNoCompact(restartCtx)
+			msg := fmt.Sprintf("[SYSTEM UPDATE]\n%s", content)
+			if _, err := inst.ag.HandleMessage(restartCtx, inst.sessionKey, msg); err != nil {
+				log.Errorf("main", "restart turn failed: %v", err)
+			}
+		}()
+	}
 
 	// Wait for signal
 	sigCh := make(chan os.Signal, 1)
@@ -1392,34 +1405,26 @@ func gracefulShutdown(agents map[string]*agentInstance, timeout time.Duration) {
 }
 
 // injectWelcomeFile checks for a welcome/changelog file written by setup.sh
-// on update. If found, appends its contents to the most recent active session
-// for the first agent, then deletes the file.
-func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder []string, sessions *session.Store) {
+// on update. If found, returns the file contents and deletes the file.
+// Returns empty string if no file exists or file is empty.
+func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder []string, sessions *session.Store) string {
 	if path == "" || len(agentOrder) == 0 {
-		return
+		return ""
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return // file doesn't exist — normal for non-update starts
+		return "" // file doesn't exist — normal for non-update starts
 	}
 	content := strings.TrimSpace(string(data))
-	if content == "" {
-		os.Remove(path)
-		return
-	}
-
-	// Inject into the first agent's main session
-	inst := agents[agentOrder[0]]
-	msg := fmt.Sprintf("[SYSTEM UPDATE]\n%s", content)
-	sessions.AppendAll(inst.sessionKey, []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent(msg)},
-		{Role: "assistant", Content: anthropic.TextContent("Update acknowledged. I'll review the changes.")},
-	})
-	log.Infof("main", "injected welcome file into session %s", inst.sessionKey)
-
 	if err := os.Remove(path); err != nil {
 		log.Warnf("main", "remove welcome file: %v", err)
 	}
+	if content == "" {
+		return ""
+	}
+
+	log.Infof("main", "found welcome file for agent %s (%d bytes)", agentOrder[0], len(content))
+	return content
 }
 
 // AgentMemoryBoost is the weight added to agent-specific memory sources.
