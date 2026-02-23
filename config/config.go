@@ -132,6 +132,10 @@ type ManaWarningsConfig struct {
 	Thresholds []int  `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
 }
 
+type EnvironmentConfig struct {
+	Enabled bool `toml:"enabled"` // inject environment block as first system block (default true)
+}
+
 type SkillsConfig struct {
 	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
 }
@@ -177,6 +181,7 @@ type Config struct {
 	Voice        VoiceConfig        `toml:"voice"`
 	Cache        CacheConfig        `toml:"cache"`
 	ManaWarnings ManaWarningsConfig `toml:"usage_warnings"`
+	Environment  EnvironmentConfig  `toml:"environment"`
 	Skills       SkillsConfig       `toml:"skills"`
 	Tools        ToolsConfig        `toml:"tools"`
 	Commands     []CommandConfig    `toml:"commands"`
@@ -457,6 +462,9 @@ func Load(path string) (*Config, error) {
 	// Bool defaults: default to true unless explicitly set to false in config.
 	// We use md.IsDefined because Go's zero value for bool is false,
 	// so we can't distinguish "not set" from "set to false" otherwise.
+	if !md.IsDefined("environment", "enabled") {
+		cfg.Environment.Enabled = true
+	}
 	if !md.IsDefined("telegram", "enable_stop_aliases") {
 		cfg.Telegram.EnableStopAliases = true
 	}
