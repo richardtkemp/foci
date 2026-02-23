@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -358,6 +359,11 @@ func main() {
 		log.Infof("main", "usage: reading OAuth token from %s", credFile)
 	} else {
 		usageClient = anthropic.NewUsageClient(anthropicOAuthToken)
+	}
+
+	// Mana detection startup checks
+	for _, w := range checkManaPrereqs(credFile) {
+		log.Warnf("main", "%s", w)
 	}
 
 	// ========== Per-agent setup ==========
@@ -1489,4 +1495,18 @@ func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, 
 	if _, err := ag.HandleMessage(hookCtx, sessionKey, prompt); err != nil {
 		log.Warnf("reset-hook", "hook failed for %s: %v", sessionKey, err)
 	}
+}
+
+// checkManaPrereqs returns warnings if mana detection prerequisites are missing.
+func checkManaPrereqs(credFile string) []string {
+	var warnings []string
+	if _, err := exec.LookPath("claude"); err != nil {
+		warnings = append(warnings, "mana: 'claude' not found in PATH — mana detection requires Claude Code to be installed")
+	}
+	if credFile != "" {
+		if _, err := os.Stat(credFile); os.IsNotExist(err) {
+			warnings = append(warnings, fmt.Sprintf("mana: credentials file not found at %s — mana detection requires Claude Code to be running periodically to refresh the OAuth token", credFile))
+		}
+	}
+	return warnings
 }

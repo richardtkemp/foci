@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,5 +318,40 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 	}
 	if results[1].Source != "global" {
 		t.Errorf("second result source = %q, want 'global'", results[1].Source)
+	}
+}
+
+func TestCheckManaPrereqs_MissingCredFile(t *testing.T) {
+	warnings := checkManaPrereqs("/nonexistent/path/credentials.json")
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "credentials file not found") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about missing credentials file, got %v", warnings)
+	}
+}
+
+func TestCheckManaPrereqs_ExistingCredFile(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "creds.json")
+	os.WriteFile(tmp, []byte(`{}`), 0644)
+
+	warnings := checkManaPrereqs(tmp)
+	for _, w := range warnings {
+		if strings.Contains(w, "credentials file not found") {
+			t.Errorf("should not warn about existing file, got: %s", w)
+		}
+	}
+}
+
+func TestCheckManaPrereqs_EmptyCredFile(t *testing.T) {
+	// Empty path means no credentials file configured — no warning about file
+	warnings := checkManaPrereqs("")
+	for _, w := range warnings {
+		if strings.Contains(w, "credentials file") {
+			t.Errorf("should not warn about credentials file when path is empty, got: %s", w)
+		}
 	}
 }
