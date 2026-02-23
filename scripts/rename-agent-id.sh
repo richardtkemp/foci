@@ -17,7 +17,7 @@ CLOD_USER="clod"
 CLOD_HOME="/home/clod"
 DATA_DIR="$CLOD_HOME/data"
 CONFIG_FILE="$CLOD_HOME/config/clod.toml"
-LOG_FILE="/tmp/rename-agent-id.log"
+LOG_FILE="$CLOD_HOME/logs/migration.log"
 
 # ============================================================================
 # DETACH LOGIC
@@ -42,15 +42,17 @@ Usage: sudo $0 [--execute] [-h|--help]
 
 Renames agent ID from "$OLD_ID" to "$NEW_ID" across all stored state:
 
-  1. Detach from calling process (survives clod shutdown)
-  2. Stop clod service (blocking)
-  3. Rename session directory
-  4. Rename memory database files
-  5. Update state.json keys
-  6. Update conversation.db session references
-  7. Update clod.toml agent ID
-  8. Fix file ownership
-  9. Start clod service
+   1. Detach from calling process (survives clod shutdown)
+   2. Stop clod service (blocking)
+   3. Rename session directory
+   4. Rename memory database files
+   5. Update data/state.json keys
+   6. Update data/sessions/state.json keys
+   7. Update conversation.db session references
+   8. Update clod.toml agent ID
+   9. Fix file ownership
+  10. Build new binary
+  11. Start clod service
 
 Dry-run by default — shows what would change without doing it.
 All output logged to: $LOG_FILE
@@ -80,7 +82,8 @@ EOF
         exit 1
     fi
 
-    # Clear previous log
+    # Clear previous log (ensure directory exists)
+    mkdir -p "$(dirname "$LOG_FILE")"
     > "$LOG_FILE"
 
     # Re-exec detached: new session leader, all FDs redirected to log file
@@ -248,9 +251,53 @@ else
 fi
 echo ""
 
-# --- 5. Update conversation.db ---
+# --- 5. Update sessions/state.json (second state file) ---
 
-info "Step 5: Update conversation.db session references"
+info "Step 5: Update sessions/state.json keys"
+SESSION_STATE_FILE="$DATA_DIR/sessions/state.json"
+
+if [[ -f "$SESSION_STATE_FILE" ]]; then
+    MATCHING_KEYS2=$(python3 -c "
+import json
+with open('$SESSION_STATE_FILE') as f:
+    data = json.load(f)
+keys = [k for k in data if '$OLD_ID' in k]
+for k in keys:
+    print(k)
+" 2>/dev/null || true)
+
+    if [[ -n "$MATCHING_KEYS2" ]]; then
+        while IFS= read -r key; do
+            new_key="${key//$OLD_ID/$NEW_ID}"
+            info "  Key: \"$key\" → \"$new_key\""
+        done <<< "$MATCHING_KEYS2"
+
+        if $EXECUTE; then
+            python3 -c "
+import json
+with open('$SESSION_STATE_FILE') as f:
+    data = json.load(f)
+new_data = {}
+for k, v in data.items():
+    new_key = k.replace('$OLD_ID', '$NEW_ID')
+    new_data[new_key] = v
+with open('$SESSION_STATE_FILE', 'w') as f:
+    json.dump(new_data, f, indent=2)
+    f.write('\n')
+"
+            info "  sessions/state.json updated."
+        fi
+    else
+        info "  No keys contain \"$OLD_ID\" — skipping."
+    fi
+else
+    warn "  Not found: $SESSION_STATE_FILE — skipping."
+fi
+echo ""
+
+# --- 6. Update conversation.db ---
+
+info "Step 6: Update conversation.db session references"
 CONV_DB="$DATA_DIR/conversation.db"
 
 if [[ -f "$CONV_DB" ]]; then
@@ -270,9 +317,9 @@ else
 fi
 echo ""
 
-# --- 6. Update clod.toml ---
+# --- 7. Update clod.toml ---
 
-info "Step 6: Update agent ID in clod.toml"
+info "Step 7: Update agent ID in clod.toml"
 if grep -q "id = \"$OLD_ID\"" "$CONFIG_FILE"; then
     info "  id = \"$OLD_ID\" → id = \"$NEW_ID\""
     if $EXECUTE; then
@@ -284,9 +331,9 @@ else
 fi
 echo ""
 
-# --- 7. Fix ownership ---
+# --- 8. Fix ownership ---
 
-info "Step 7: Fix file ownership"
+info "Step 8: Fix file ownership"
 if $EXECUTE; then
     chown -R "$CLOD_USER:$CLOD_USER" "$DATA_DIR"
     info "  Ownership set on $DATA_DIR"
@@ -295,9 +342,29 @@ else
 fi
 echo ""
 
-# --- 8. Start service ---
+# --- 9. Build binary ---
 
-info "Step 8: Start clod service"
+CLOD_SRC="/home/rich/git/clod"
+CLOD_BIN="/usr/local/bin/clodgw"
+
+info "Step 9: Build clod binary"
+if $EXECUTE; then
+    info "  Building $CLOD_BIN from $CLOD_SRC..."
+    export GOCACHE=/var/cache/go-build
+    export GOPATH=/var/cache/go
+    if (cd "$CLOD_SRC" && go build -o "$CLOD_BIN" .); then
+        info "  Build successful."
+    else
+        error "  Build failed! Starting service with existing binary."
+    fi
+else
+    echo "[$(ts)]   (dry-run) cd $CLOD_SRC && go build -o $CLOD_BIN ."
+fi
+echo ""
+
+# --- 10. Start service ---
+
+info "Step 10: Start clod service"
 if $EXECUTE; then
     systemctl start clod
     sleep 2
