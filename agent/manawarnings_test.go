@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
+
+	"clod/state"
 )
 
 func TestManaWatcherNewNilForEmpty(t *testing.T) {
@@ -218,5 +221,168 @@ func TestManaWatcherExactThresholdValue(t *testing.T) {
 	}
 	if warned != "low mana: 50% remaining (threshold: 50%)" {
 		t.Errorf("warning = %q", warned)
+	}
+}
+
+func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	store := state.New(statePath)
+
+	mw := NewManaWatcher("mana", []int{50})
+	mw.SetStore(store)
+
+	var warned bool
+	mw.CheckAndWarn("25%", func(w string) { warned = true })
+
+	if !warned {
+		t.Fatal("expected warning to fire")
+	}
+
+	store2 := state.New(statePath)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	var savedState manaWatcherState
+	if !store2.Get("mana:mana", &savedState) {
+		t.Fatal("expected state to be saved")
+	}
+
+	if !savedState.FiredToday[50] {
+		t.Error("expected threshold 50 to be marked as fired")
+	}
+}
+
+func TestManaWatcherRestoreLoadsFiredThreshold(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	store := state.New(statePath)
+
+	today := time.Now().Truncate(24 * time.Hour)
+	initialState := manaWatcherState{
+		FiredToday: map[int]bool{50: true, 25: true},
+		LastReset:  today,
+	}
+	if err := store.Set("mana:mana", initialState); err != nil {
+		t.Fatalf("set initial state: %v", err)
+	}
+
+	store2 := state.New(statePath)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	mw := NewManaWatcher("mana", []int{50, 25})
+	mw.SetStore(store2)
+	mw.Restore()
+
+	var firedCount int
+	mw.CheckAndWarn("20%", func(w string) { firedCount++ })
+
+	if firedCount != 0 {
+		t.Errorf("expected no warning (thresholds already fired), got %d", firedCount)
+	}
+}
+
+func TestManaWatcherRestoreIgnoresStaleState(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	store := state.New(statePath)
+
+	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
+	staleState := manaWatcherState{
+		FiredToday: map[int]bool{50: true},
+		LastReset:  yesterday,
+	}
+	if err := store.Set("mana:mana", staleState); err != nil {
+		t.Fatalf("set stale state: %v", err)
+	}
+
+	store2 := state.New(statePath)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	mw := NewManaWatcher("mana", []int{50})
+	mw.SetStore(store2)
+	mw.Restore()
+
+	var warned bool
+	mw.CheckAndWarn("25%", func(w string) { warned = true })
+
+	if !warned {
+		t.Error("expected warning (stale state should be ignored)")
+	}
+}
+
+func TestManaWatcherPersistenceAfterRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+
+	store1 := state.New(statePath)
+	mw1 := NewManaWatcher("mana", []int{50, 25})
+	mw1.SetStore(store1)
+
+	mw1.CheckAndWarn("30%", func(w string) {})
+
+	store2 := state.New(statePath)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	mw2 := NewManaWatcher("mana", []int{50, 25})
+	mw2.SetStore(store2)
+	mw2.Restore()
+
+	var warned bool
+	mw2.CheckAndWarn("30%", func(w string) { warned = true })
+
+	if warned {
+		t.Error("should not warn again after restore (50 threshold already fired)")
+	}
+
+	var warned25 bool
+	mw2.CheckAndWarn("20%", func(w string) { warned25 = true })
+
+	if !warned25 {
+		t.Error("should warn for 25 threshold (not yet fired)")
+	}
+}
+
+func TestManaWatcherNilRestore(t *testing.T) {
+	var mw *ManaWatcher
+	mw.Restore()
+}
+
+func TestManaWatcherRestoreWithoutStore(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50})
+	mw.Restore()
+
+	var warned bool
+	mw.CheckAndWarn("25%", func(w string) { warned = true })
+
+	if !warned {
+		t.Error("expected warning when no store set")
+	}
+}
+
+func TestManaWatcherPersistenceCustomName(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	store := state.New(statePath)
+
+	mw := NewManaWatcher("juice", []int{50})
+	mw.SetStore(store)
+
+	mw.CheckAndWarn("25%", func(w string) {})
+
+	store2 := state.New(statePath)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	var savedState manaWatcherState
+	if !store2.Get("mana:juice", &savedState) {
+		t.Fatal("expected state to be saved with custom name key")
 	}
 }
