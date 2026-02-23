@@ -164,7 +164,7 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	DataDir      string             `toml:"data_dir"` // directory for databases, sessions, state (default: same as config file)
+	DataDir      string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
 	Agent        AgentConfig        `toml:"agent"`    // legacy: single agent
 	Agents       []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
 	Anthropic    AnthropicConfig    `toml:"anthropic"`
@@ -351,16 +351,13 @@ func Load(path string) (*Config, error) {
 		cfg.Logging.Level = "INFO"
 	}
 	if cfg.Logging.EventFile == "" {
-		cfg.Logging.EventFile = "clod.log"
+		cfg.Logging.EventFile = "logs/clod.log"
 	}
 	if cfg.Logging.APIFile == "" {
-		cfg.Logging.APIFile = "api.jsonl"
-	}
-	if cfg.Logging.ConversationFile == "" {
-		cfg.Logging.ConversationFile = "conversation.db"
+		cfg.Logging.APIFile = "logs/api.jsonl"
 	}
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
-		cfg.Logging.PayloadFile = "api-payload.jsonl"
+		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
 	}
 	if cfg.Logging.WarningMaxPerWindow == 0 && !md.IsDefined("logging", "warning_max_per_window") {
 		cfg.Logging.WarningMaxPerWindow = 3
@@ -396,7 +393,7 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
 	}
 	if cfg.WelcomeFile == "" {
-		cfg.WelcomeFile = "WELCOME.md" // relative to working directory (usually $CLOD_HOME)
+		cfg.WelcomeFile = "data/WELCOME.md"
 	}
 	if cfg.Memory.ConversationWeight == 0 {
 		cfg.Memory.ConversationWeight = 0.1
@@ -467,6 +464,8 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.EnableStartupNotify = true
 	}
 
+	cfg.ResolveAllPaths()
+
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -497,14 +496,48 @@ func (c *Config) ResolveBotToken(botName string, secrets SecretGetter) string {
 	return c.Telegram.BotToken
 }
 
-// DataPath resolves the path for a data file (database, state, etc.).
-// If DataDir is set and absolute, the file is placed there.
-// Otherwise, it falls back to configDir (the directory containing clod.toml).
-func (c *Config) DataPath(configDir, filename string) string {
-	if c.DataDir != "" && filepath.IsAbs(c.DataDir) {
-		return filepath.Join(c.DataDir, filename)
+// ResolvePath resolves a path. Absolute paths are returned as-is.
+// Relative paths are resolved against os.UserHomeDir().
+func ResolvePath(p string) string {
+	if filepath.IsAbs(p) {
+		return p
 	}
-	return filepath.Join(configDir, filename)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(home, p)
+}
+
+// DataPath resolves the path for a data file (database, state, etc.).
+// If DataDir is set, the file is placed there (resolved via ResolvePath).
+// Otherwise, defaults to $HOME/data/<filename>.
+func (c *Config) DataPath(filename string) string {
+	if c.DataDir != "" {
+		return filepath.Join(ResolvePath(c.DataDir), filename)
+	}
+	return filepath.Join(ResolvePath("data"), filename)
+}
+
+// ResolveAllPaths resolves all path config fields in one place.
+// Called at the end of Load(), before validate().
+func (c *Config) ResolveAllPaths() {
+	c.Logging.EventFile = ResolvePath(c.Logging.EventFile)
+	c.Logging.APIFile = ResolvePath(c.Logging.APIFile)
+	if c.Logging.PayloadFile != "" {
+		c.Logging.PayloadFile = ResolvePath(c.Logging.PayloadFile)
+	}
+	if c.Logging.ConversationFile == "" {
+		c.Logging.ConversationFile = c.DataPath("conversation.db")
+	} else {
+		c.Logging.ConversationFile = ResolvePath(c.Logging.ConversationFile)
+	}
+	if c.Sessions.Dir == "" {
+		c.Sessions.Dir = c.DataPath("sessions")
+	} else {
+		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
+	}
+	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 }
 
 // ParseFlags returns the config file path from command-line flags.

@@ -129,8 +129,7 @@ func main() {
 	}
 
 	// Shared: State persistence (JSON file in data dir)
-	configDir := filepath.Dir(configPath)
-	statePath := cfg.DataPath(configDir, "state.json")
+	statePath := cfg.DataPath("state.json")
 	stateStore := state.New(statePath)
 	if err := stateStore.Load(); err != nil {
 		log.Errorf("main", "load state: %v", err)
@@ -179,7 +178,7 @@ func main() {
 				if len(combined) == 0 {
 					continue
 				}
-				dbPath := cfg.DataPath(configDir, fmt.Sprintf("memory-%s.db", acfg.ID))
+				dbPath := cfg.DataPath(fmt.Sprintf("memory-%s.db", acfg.ID))
 				idx, err := memory.NewIndex(dbPath, combined, memDebounce, cfg.Memory.ConversationWeight)
 				if err != nil {
 					log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
@@ -208,7 +207,7 @@ func main() {
 			}
 		} else {
 			// Shared index (backward compat — no agent has per-agent memory)
-			memDbPath := cfg.DataPath(configDir, "memory.db")
+			memDbPath := cfg.DataPath("memory.db")
 			sharedMemIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create memory index: %v", err)
@@ -227,7 +226,7 @@ func main() {
 		}
 
 		// Reminder store (shared across agents)
-		reminderDbPath := cfg.DataPath(configDir, "reminders.db")
+		reminderDbPath := cfg.DataPath("reminders.db")
 		reminderStore, err = memory.NewReminderStore(reminderDbPath)
 		if err != nil {
 			log.Fatalf("main", "create reminder store: %v", err)
@@ -235,7 +234,7 @@ func main() {
 		defer reminderStore.Close()
 
 		// Scratchpad (shared across agents)
-		scratchpadDbPath := cfg.DataPath(configDir, "scratchpad.db")
+		scratchpadDbPath := cfg.DataPath("scratchpad.db")
 		scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
 		if err != nil {
 			log.Fatalf("main", "create scratchpad: %v", err)

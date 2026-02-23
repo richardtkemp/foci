@@ -112,7 +112,7 @@ Session storage and compaction.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `""` | Directory for JSONL session files. |
+| `dir` | string | `""` | Directory for JSONL session files. Defaults to `data/sessions/` via `data_dir`. Relative paths resolve against `$HOME`. |
 | `compaction_threshold` | float | `0.8` | Trigger compaction when context usage exceeds this fraction (0.0–1.0). |
 | `compaction_model` | string | agent model | Model to use for summarization. Defaults to the agent's own model. |
 | `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
@@ -145,7 +145,7 @@ Memory system (FTS5 search over markdown files + conversation history).
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
 
-When set, creates SQLite databases alongside the config file: `memory.db`, `reminders.db`, `scratchpad.db`.
+When set, creates SQLite databases in the data directory (`$HOME/data/` by default): `memory.db`, `reminders.db`, `scratchpad.db`.
 
 ### `[[memory.sources]]`
 
@@ -222,7 +222,7 @@ HTTP API server.
 |-----|------|---------|-------------|
 | `port` | int | `18791` | HTTP server port. |
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
-| `graceful_shutdown_timeout` | string | `"5s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
+| `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 
 Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`.
 
@@ -253,11 +253,11 @@ Logging and diagnostics.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `level` | string | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
-| `event_file` | string | `"clod.log"` | Path to event log file. |
-| `api_file` | string | `"api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. |
-| `conversation_file` | string | `"conversation.db"` | Path to conversation SQLite log. |
+| `event_file` | string | `"logs/clod.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
+| `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
+| `conversation_file` | string | `""` | Path to conversation SQLite log. Defaults to `data/conversation.db` via `data_dir`. Relative paths resolve against `$HOME`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
-| `payload_file` | string | `"api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. |
+| `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into agent conversation as system warnings before each turn. |
 | `warning_max_per_window` | int | `3` | Max identical warnings allowed per time window before suppression. Set to `0` to disable rate-limiting. |
@@ -391,8 +391,64 @@ Miscellaneous top-level config keys (not in any section).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `data_dir` | string | `""` | Directory for databases, sessions, and state files (`memory.db`, `reminders.db`, `scratchpad.db`, `state.json`, etc.). When empty (default), data files are stored in the same directory as the config file (backward compatible). Must be an absolute path when set. |
-| `welcome_file` | string | `"WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Written by `setup.sh` on update (not fresh install). |
+| `data_dir` | string | `""` | Directory for databases, sessions, and state files. When empty, defaults to `$HOME/data/`. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
+| `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
+
+---
+
+## Path Resolution
+
+All path config fields are resolved at startup:
+
+1. **Absolute paths** are used as-is
+2. **Relative paths** resolve against `$HOME` (not the config directory, not CWD)
+3. **`data_dir`** controls data file placement — DB, state, and session files resolve against it. When empty, defaults to `$HOME/data/`
+
+### Default zero-config layout
+
+With no path fields set, files auto-organize under `$HOME`:
+
+```
+$HOME/
+  logs/clod.log          ← event log
+  logs/api.jsonl         ← API call log
+  logs/api-payload.jsonl ← full payload log (if enabled)
+  data/conversation.db   ← conversation SQLite log
+  data/sessions/         ← session JSONL files
+  data/state.json        ← persistent state
+  data/memory.db         ← memory FTS index
+  data/reminders.db      ← reminder store
+  data/scratchpad.db     ← scratchpad store
+  data/WELCOME.md        ← welcome/changelog file
+```
+
+### Overriding with `data_dir`
+
+```toml
+data_dir = "/opt/clod/data"
+```
+
+All data files (`*.db`, `state.json`, `sessions/`) resolve under `/opt/clod/data/`. Log files are unaffected — they use their own paths.
+
+A relative `data_dir` resolves against `$HOME`:
+
+```toml
+data_dir = "myapp/data"   # → $HOME/myapp/data/
+```
+
+### Explicit absolute paths
+
+Any field set to an absolute path overrides all resolution:
+
+```toml
+[logging]
+event_file = "/var/log/clod/clod.log"
+api_file = "/var/log/clod/api.jsonl"
+conversation_file = "/var/data/clod/conversation.db"
+
+[sessions]
+dir = "/var/data/clod/sessions"
+```
 
 ---
 
