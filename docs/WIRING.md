@@ -508,6 +508,27 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `summaryPrompt` — custom summary prompt (empty uses `DefaultSummaryPrompt`)
 - `handoffMessage` — message after compaction completes (empty uses `DefaultHandoffMessage`)
 
+## Deployment & Migrations
+
+### setup.sh
+
+`/home/rich/git/clod/setup.sh -u clod` — builds Go binaries, installs to `/usr/local/bin`, restarts service. Allowlisted in aisudo (no approval needed). Uses `--no-block` restart to avoid deadlock when run from clod's own exec.
+
+### Migrations
+
+Numbered scripts in `migrations/` (e.g. `001-homedir-restructure.sh`). Run manually during deploys that require filesystem or config changes beyond what the binary handles.
+
+**Convention:**
+- Scripts are idempotent (safe to run twice)
+- Include `--dry-run` and `-h`/`--help`
+- Must run while clod is stopped (script handles stop/start)
+- Require root (`sudo`) for service control and file ownership
+
+**Planned integration:** `setup.sh` will check for and run pending migrations between building binaries and restarting the service. A state file tracks which migrations have been applied.
+
+**Current migrations:**
+- `001-homedir-restructure.sh` — Moves flat home dir into `config/`, `data/`, `logs/`, `shared/` layout. Updates clod.toml paths, systemd unit, and crontab.
+
 ## Testing
 
 ```
