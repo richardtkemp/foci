@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"clod/anthropic"
+	"clod/log"
 )
 
 // DefaultFileOrder is the default order for loading workspace files.
@@ -134,6 +135,9 @@ func (b *Bootstrap) loadFromDisk() []anthropic.SystemBlock {
 	for _, name := range b.fileOrder {
 		data, err := os.ReadFile(filepath.Join(b.dir, name))
 		if err != nil {
+			if !os.IsNotExist(err) {
+				log.Warnf("workspace", "read %s: %v", name, err)
+			}
 			continue // skip missing files
 		}
 		content := string(data)
