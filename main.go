@@ -175,6 +175,7 @@ func main() {
 	agentMemIndices := make(map[string]*memory.Index) // agentID → per-agent index
 	var reminderStore *memory.ReminderStore
 	var scratchpadStore *memory.Scratchpad
+	var todoStore *memory.TodoStore
 
 	memoryEnabled := len(globalMemSources) > 0 || hasPerAgentMemory
 	if memoryEnabled {
@@ -247,6 +248,14 @@ func main() {
 			log.Fatalf("main", "create scratchpad: %v", err)
 		}
 		defer scratchpadStore.Close()
+
+		// Todo list (shared across agents, agent_id scoped per-agent)
+		todoDbPath := cfg.DataPath("todo.db")
+		todoStore, err = memory.NewTodoStore(todoDbPath)
+		if err != nil {
+			log.Fatalf("main", "create todo store: %v", err)
+		}
+		defer todoStore.Close()
 	}
 
 	// Shared: Voice providers
@@ -358,6 +367,7 @@ func main() {
 			memIdx:              agentMemIdx,
 			reminderStore:       reminderStore,
 			scratchpadStore:     scratchpadStore,
+			todoStore:           todoStore,
 			sttProvider:         sttProvider,
 			ttsProvider:         ttsProvider,
 			braveKey:            braveKey,
@@ -645,6 +655,7 @@ type setupParams struct {
 	memIdx              *memory.Index
 	reminderStore       *memory.ReminderStore
 	scratchpadStore     *memory.Scratchpad
+	todoStore           *memory.TodoStore
 	sttProvider         voice.STT
 	ttsProvider         voice.TTS
 	braveKey            string
@@ -713,6 +724,9 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tools.NewScratchpadReadTool(p.scratchpadStore))
 		registry.Register(tools.NewScratchpadClearTool(p.scratchpadStore))
 		registry.Register(tools.NewScratchpadListTool(p.scratchpadStore))
+	}
+	if p.todoStore != nil {
+		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
 	}
 
 	// Per-agent workspace bootstrap
