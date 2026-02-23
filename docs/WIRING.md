@@ -227,7 +227,7 @@ agent:main:cron:morning   → {dir}/agent/main/cron/morning.jsonl
 
 System blocks are assembled in this order:
 
-1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, git repo URL, config/secrets/log paths, and message metadata docs. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessageWithImages`. Omitted when `[environment] enabled = false` (empty string).
+1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, platform URL, messaging platform, config/log paths, message metadata docs, and session structure. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessageWithImages`. Omitted when `[environment] enabled = false` (empty string).
 
 2. **Character files** (`workspace/bootstrap.go`) — reads markdown files from workspace dir in order:
 ```

@@ -47,6 +47,10 @@ Structure the output however best fits the conversation. Do not use a rigid temp
 HANDOFF NOTE: End with a brief note to yourself to let the user know compaction occurred — they may not realize context was compressed.
 """
 
+[environment]
+# enabled = true                          # inject environment block as first system block
+# docs_path = "/path/to/your/docs"        # platform docs directory (relative paths resolve against $HOME)
+
 [memory]
 dir = "/path/to/your/memory"
 
