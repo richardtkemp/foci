@@ -21,10 +21,11 @@ type botEntry struct {
 
 // Pool manages a set of secondary Telegram bots for multiball sessions.
 type Pool struct {
-	bots       []*botEntry
-	mu         sync.Mutex
-	sessionTTL time.Duration            // 0 = no auto-reclaim
-	sessions   SessionActivityChecker   // nil = no activity checking
+	bots        []*botEntry
+	mu          sync.Mutex
+	sessionTTL  time.Duration          // 0 = no auto-reclaim
+	sessions    SessionActivityChecker // nil = no activity checking
+	ReclaimHook func(sessionKey string) // called before releasing a stale session; nil = no hook
 }
 
 // NewPool creates an empty bot pool.
@@ -49,18 +50,40 @@ func (p *Pool) Add(bot *Bot) {
 	p.bots = append(p.bots, &botEntry{bot: bot})
 }
 
+// reclaimTarget pairs a bot with the session key to reclaim.
+type reclaimTarget struct {
+	bot *Bot
+	key string
+}
+
 // Acquire returns the least recently used idle bot, or false if all are busy.
 // If session TTL is configured, busy bots with stale sessions (no activity within
-// the TTL window) are auto-released first.
+// the TTL window) are auto-released first. If a ReclaimHook is set, it fires
+// (outside the lock) before releasing each stale session.
 func (p *Pool) Acquire() (*Bot, bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
-	// Auto-reclaim stale sessions before looking for idle bots
+	// Collect stale sessions while locked
+	var stale []reclaimTarget
 	if p.sessionTTL > 0 && p.sessions != nil {
-		p.reclaimStaleLocked()
+		stale = p.collectStaleLocked()
 	}
 
+	// Fire hooks outside the lock (hooks may call HandleMessage, which can take seconds)
+	if len(stale) > 0 && p.ReclaimHook != nil {
+		p.mu.Unlock()
+		for _, t := range stale {
+			p.ReclaimHook(t.key)
+		}
+		p.mu.Lock()
+	}
+
+	// Clear reclaimed bots' session keys
+	for _, t := range stale {
+		t.bot.SetSessionKey("")
+	}
+
+	// Find least-recently-used idle bot
 	var oldest *botEntry
 	for _, e := range p.bots {
 		if e.bot.SessionKey() == "" {
@@ -71,16 +94,18 @@ func (p *Pool) Acquire() (*Bot, bool) {
 	}
 
 	if oldest == nil {
+		p.mu.Unlock()
 		return nil, false
 	}
 	oldest.lastUsed = time.Now()
+	p.mu.Unlock()
 	return oldest.bot, true
 }
 
-// reclaimStaleLocked releases bots whose sessions have been inactive longer than
-// the configured TTL. Must be called with p.mu held.
-func (p *Pool) reclaimStaleLocked() {
+// collectStaleLocked identifies bots with stale sessions. Must be called with p.mu held.
+func (p *Pool) collectStaleLocked() []reclaimTarget {
 	now := time.Now()
+	var targets []reclaimTarget
 	for _, e := range p.bots {
 		sk := e.bot.SessionKey()
 		if sk == "" {
@@ -89,9 +114,8 @@ func (p *Pool) reclaimStaleLocked() {
 
 		lastStr := p.sessions.LastActivity(sk)
 		if lastStr == "n/a" {
-			// Session file doesn't exist — bot assigned to a phantom session, release it
 			log.Infof("telegram", "reclaiming multiball bot (session %s not found)", sk)
-			e.bot.SetSessionKey("")
+			targets = append(targets, reclaimTarget{bot: e.bot, key: sk})
 			continue
 		}
 
@@ -103,9 +127,10 @@ func (p *Pool) reclaimStaleLocked() {
 		if now.Sub(lastTime) > p.sessionTTL {
 			log.Infof("telegram", "reclaiming multiball bot (session %s idle for %v, TTL %v)",
 				sk, now.Sub(lastTime).Round(time.Second), p.sessionTTL)
-			e.bot.SetSessionKey("")
+			targets = append(targets, reclaimTarget{bot: e.bot, key: sk})
 		}
 	}
+	return targets
 }
 
 // Release returns a bot to the pool by clearing its session key.

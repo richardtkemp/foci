@@ -934,6 +934,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if ag.IsProcessing() {
 			return fmt.Errorf("agent is processing — send /stop first, then /reset")
 		}
+		fireResetHook(ag, p.sessions, sessionKey, p.cfg, p.ctx)
 		if err := p.sessions.Clear(sessionKey); err != nil {
 			return err
 		}
@@ -1226,6 +1227,9 @@ func setupAgent(p setupParams) *agentInstance {
 				pool.SetSessionTTL(ttl, p.sessions)
 				log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
 			}
+			pool.ReclaimHook = func(sessionKey string) {
+				fireResetHook(ag, p.sessions, sessionKey, p.cfg, p.ctx)
+			}
 		}
 	}
 
@@ -1428,4 +1432,52 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 	}
 
 	return combined
+}
+
+// resolveResetPrompt returns the session reset prompt from config.
+// Inline prompt takes precedence over file. File is read at call time
+// so edits take effect without restart. Returns "" if unconfigured.
+func resolveResetPrompt(cfg *config.Config) string {
+	if cfg.Sessions.SessionResetPrompt != "" {
+		return cfg.Sessions.SessionResetPrompt
+	}
+	if cfg.Sessions.SessionResetPromptFile != "" {
+		data, err := os.ReadFile(cfg.Sessions.SessionResetPromptFile)
+		if err != nil {
+			log.Errorf("reset-hook", "read prompt file: %v", err)
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	return ""
+}
+
+// fireResetHook sends the reset prompt to the agent before a session is cleared.
+// Checks BranchMeta.NoResetHook for branch sessions. Non-fatal: logs and returns
+// on error so the caller can proceed with the reset.
+func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, cfg *config.Config, parentCtx context.Context) {
+	prompt := resolveResetPrompt(cfg)
+	if prompt == "" {
+		return
+	}
+
+	// Check branch metadata for NoResetHook
+	meta, err := sessions.GetBranchMeta(sessionKey)
+	if err != nil {
+		log.Warnf("reset-hook", "check branch meta for %s: %v", sessionKey, err)
+	}
+	if meta != nil && meta.NoResetHook {
+		log.Debugf("reset-hook", "skipping for %s (no_reset_hook set)", sessionKey)
+		return
+	}
+
+	hookCtx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
+	defer cancel()
+	hookCtx = agent.WithTrigger(hookCtx, "reset_hook")
+	hookCtx = agent.WithNoCompact(hookCtx)
+
+	log.Infof("reset-hook", "firing reset hook for %s", sessionKey)
+	if _, err := ag.HandleMessage(hookCtx, sessionKey, prompt); err != nil {
+		log.Warnf("reset-hook", "hook failed for %s: %v", sessionKey, err)
+	}
 }

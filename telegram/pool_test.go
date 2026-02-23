@@ -304,3 +304,96 @@ func TestPool_MixedStaleAndActive(t *testing.T) {
 		t.Fatal("should reclaim bot1 (stale), not bot2 (active)")
 	}
 }
+
+func TestPool_ReclaimHookFires(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	pool.Add(bot1)
+
+	b, _ := pool.Acquire()
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": staleTime,
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	var hookedKeys []string
+	pool.ReclaimHook = func(sessionKey string) {
+		hookedKeys = append(hookedKeys, sessionKey)
+	}
+
+	// Acquire triggers reclaim, which should fire the hook first
+	b2, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("should reclaim stale bot")
+	}
+	if b2 != bot1 {
+		t.Fatal("should return the reclaimed bot")
+	}
+	if len(hookedKeys) != 1 || hookedKeys[0] != "agent:main:multiball:mb-1" {
+		t.Errorf("hook called with %v, want [agent:main:multiball:mb-1]", hookedKeys)
+	}
+}
+
+func TestPool_ReclaimHookNil(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	pool.Add(bot1)
+
+	b, _ := pool.Acquire()
+	b.SetSessionKey("agent:main:multiball:mb-1")
+
+	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": staleTime,
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	// No hook set — should not panic, just reclaim normally
+	b2, ok := pool.Acquire()
+	if !ok {
+		t.Fatal("should reclaim stale bot without hook")
+	}
+	if b2 != bot1 {
+		t.Fatal("should return reclaimed bot")
+	}
+}
+
+func TestPool_ReclaimHookMultipleBots(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	bot2 := testSecondaryBot("bot2")
+	pool.Add(bot1)
+	pool.Add(bot2)
+
+	b1, _ := pool.Acquire()
+	b1.SetSessionKey("agent:main:multiball:mb-1")
+	b2, _ := pool.Acquire()
+	b2.SetSessionKey("agent:main:multiball:mb-2")
+
+	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
+	checker := &mockSessionChecker{
+		activities: map[string]string{
+			"agent:main:multiball:mb-1": staleTime,
+			"agent:main:multiball:mb-2": staleTime,
+		},
+	}
+	pool.SetSessionTTL(1*time.Hour, checker)
+
+	var hookedKeys []string
+	pool.ReclaimHook = func(sessionKey string) {
+		hookedKeys = append(hookedKeys, sessionKey)
+	}
+
+	// Should reclaim both, hook fires for each
+	pool.Acquire()
+	if len(hookedKeys) != 2 {
+		t.Errorf("hook called %d times, want 2", len(hookedKeys))
+	}
+}
