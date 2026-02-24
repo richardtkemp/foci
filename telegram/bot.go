@@ -903,8 +903,20 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
 	if len(paramStr) > maxChars {
 		paramStr = paramStr[:maxChars] + "..."
 	}
+	// Unescape literal \n and \t within JSON string values so they render
+	// as actual newlines/tabs in the Telegram <pre> block.
+	paramStr = unescapeJSONStringLiterals(paramStr)
 	paramStr = htmlEscapeBot(paramStr)
 	return fmt.Sprintf("🔧 <b>%s</b>\n<pre>%s</pre>", htmlEscapeBot(toolName), paramStr)
+}
+
+// unescapeJSONStringLiterals replaces literal \n and \t sequences (as they
+// appear in pretty-printed JSON string values) with actual newline and tab
+// characters so they render properly inside Telegram <pre> blocks.
+func unescapeJSONStringLiterals(s string) string {
+	s = strings.ReplaceAll(s, `\n`, "\n")
+	s = strings.ReplaceAll(s, `\t`, "\t")
+	return s
 }
 
 // htmlEscapeBot escapes HTML special characters for Telegram messages.
