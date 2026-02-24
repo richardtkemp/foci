@@ -115,7 +115,7 @@ func TestInjectWelcomeFile(t *testing.T) {
 	os.WriteFile(welcomePath, []byte("# Updated\n\nNew stuff here."), 0644)
 
 	agents := map[string]*agentInstance{
-		"main": {id: "main", sessionKey: "agent:main:main"},
+		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -137,7 +137,7 @@ func TestInjectWelcomeFile(t *testing.T) {
 
 func TestInjectWelcomeFile_NoFile(t *testing.T) {
 	agents := map[string]*agentInstance{
-		"main": {id: "main", sessionKey: "agent:main:main"},
+		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -154,7 +154,7 @@ func TestInjectWelcomeFile_EmptyFile(t *testing.T) {
 	os.WriteFile(welcomePath, []byte(""), 0644)
 
 	agents := map[string]*agentInstance{
-		"main": {id: "main", sessionKey: "agent:main:main"},
+		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -183,7 +183,7 @@ func TestInjectWelcomeFile_TriggersTurnOnlyWithContent(t *testing.T) {
 	dir := t.TempDir()
 
 	agents := map[string]*agentInstance{
-		"main": {id: "main", sessionKey: "agent:main:main"},
+		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
 	}
 	agentOrder := []string{"main"}
 

@@ -57,7 +57,8 @@ type Bot struct {
 	commands     *command.Registry
 	lastMsgStore *command.LastMessageStore // for // repeat command
 	allowedUsers map[string]bool
-	sessionKey   string
+	agentID      string       // agent ID for session key derivation
+	sessionKey   string       // override session key (multiball secondary bots only)
 	sessionMu    sync.RWMutex // protects sessionKey (mutable for secondary bots)
 	isSecondary  bool         // true for secondary bots (multiball)
 	pool         *Pool        // back-reference to pool (secondary bots only)
@@ -80,7 +81,9 @@ type Bot struct {
 }
 
 // NewBot creates a new Telegram bot.
-func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, lastMsgStore *command.LastMessageStore, sessionKey string) (*Bot, error) {
+// agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
+// For secondary (multiball) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
+func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) (*Bot, error) {
 	api, err := gotgbot.NewBot(token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
@@ -98,7 +101,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 		commands:     cmds,
 		lastMsgStore: lastMsgStore,
 		allowedUsers: allowed,
-		sessionKey:   sessionKey,
+		agentID:      agentID,
 		botToken:     token,
 		queue:        make(chan queuedMessage, 64),
 	}, nil
@@ -137,6 +140,14 @@ func (b *Bot) SetStateStore(store *state.Store, key string) {
 		b.SetChatID(chatID)
 		log.Infof("telegram", "restored chat ID %d from state", chatID)
 	}
+
+	// Restore default chat from persisted state (for per-chat session routing)
+	if b.agentID != "" {
+		var defaultChat int64
+		if store.Get("agent:"+b.agentID+":default_chat", &defaultChat) && defaultChat != 0 {
+			log.Infof("telegram", "restored default chat %d for agent %s", defaultChat, b.agentID)
+		}
+	}
 }
 
 // SetSecondary marks this bot as a secondary bot in the given pool.
@@ -146,17 +157,91 @@ func (b *Bot) SetSecondary(pool *Pool) {
 }
 
 // SessionKey returns the current session key (thread-safe).
+// For primary bots, this returns the session key for the default chat.
+// For secondary bots, this returns the override session key (set by multiball).
 func (b *Bot) SessionKey() string {
 	b.sessionMu.RLock()
 	defer b.sessionMu.RUnlock()
-	return b.sessionKey
+	if b.sessionKey != "" {
+		return b.sessionKey
+	}
+	// Primary bot: derive from default chat
+	if b.agentID != "" {
+		chatID := b.defaultChatID()
+		if chatID != 0 {
+			return SessionKeyForChat(b.agentID, chatID)
+		}
+	}
+	return ""
 }
 
-// SetSessionKey changes the session key (used for multiball fork/done).
+// SessionKeyForChat returns the session key for a specific chat ID.
+// Format: agent:<agentID>:chat:<chatID>
+func SessionKeyForChat(agentID string, chatID int64) string {
+	return fmt.Sprintf("agent:%s:chat:%d", agentID, chatID)
+}
+
+// sessionKeyForMsg returns the session key for the message's chat.
+func (b *Bot) sessionKeyForMsg(chatID int64) string {
+	return SessionKeyForChat(b.agentID, chatID)
+}
+
+// SetSessionKey changes the override session key (used for multiball fork/done).
 func (b *Bot) SetSessionKey(key string) {
 	b.sessionMu.Lock()
 	defer b.sessionMu.Unlock()
 	b.sessionKey = key
+}
+
+// DefaultChatID returns the default chat ID for this agent (used for proactive messages).
+func (b *Bot) DefaultChatID() int64 {
+	return b.defaultChatID()
+}
+
+// defaultChatID reads the default chat from the state store.
+func (b *Bot) defaultChatID() int64 {
+	if b.stateStore == nil || b.agentID == "" {
+		return 0
+	}
+	var chatID int64
+	if b.stateStore.Get("agent:"+b.agentID+":default_chat", &chatID) {
+		return chatID
+	}
+	return 0
+}
+
+// setDefaultChat persists the default chat ID for this agent.
+func (b *Bot) setDefaultChat(chatID int64) {
+	if b.stateStore == nil || b.agentID == "" {
+		return
+	}
+	if err := b.stateStore.Set("agent:"+b.agentID+":default_chat", chatID); err != nil {
+		log.Errorf("telegram", "persist default chat: %v", err)
+	}
+}
+
+// recordChatUsername persists the username for a chat ID (for /sessions display).
+func (b *Bot) recordChatUsername(chatID int64, username string) {
+	if b.stateStore == nil || b.agentID == "" || username == "" {
+		return
+	}
+	key := fmt.Sprintf("agent:%s:chat:%d:username", b.agentID, chatID)
+	if err := b.stateStore.Set(key, username); err != nil {
+		log.Errorf("telegram", "persist chat username: %v", err)
+	}
+}
+
+// DefaultSessionKey returns the session key for the default chat.
+// Used by heartbeats, cron, and other proactive features.
+func (b *Bot) DefaultSessionKey() string {
+	if b.agentID == "" {
+		return ""
+	}
+	chatID := b.defaultChatID()
+	if chatID == 0 {
+		return ""
+	}
+	return SessionKeyForChat(b.agentID, chatID)
 }
 
 // Username returns the bot's Telegram username.
@@ -353,6 +438,17 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		}
 	}
 
+	// Per-chat session routing: set default chat on first message, record username
+	if !b.isSecondary && b.agentID != "" {
+		if b.defaultChatID() == 0 {
+			b.setDefaultChat(msg.Chat.Id)
+			log.Infof("telegram", "set default chat %d for agent %s", msg.Chat.Id, b.agentID)
+		}
+		if msg.From != nil {
+			b.recordChatUsername(msg.Chat.Id, msg.From.Username)
+		}
+	}
+
 	// Get text from message or caption (photos use caption)
 	text := msg.Text
 	if text == "" {
@@ -419,14 +515,18 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	}
 	log.Infof("telegram", "message from %s: %s", msg.From.Username, truncate(logText, 100))
 
-	// Log received message
+	// Log received message — use per-chat session key for primary bots
+	recvSession := b.SessionKey()
+	if !b.isSecondary && b.agentID != "" {
+		recvSession = b.sessionKeyForMsg(msg.Chat.Id)
+	}
 	log.Conversation(log.ConversationEntry{
 		Direction: "recv",
 		UserID:    userID,
 		Username:  msg.From.Username,
 		ChatID:    msg.Chat.Id,
 		Text:      logText,
-		Session:   b.SessionKey(),
+		Session:   recvSession,
 	})
 
 	// Wizard intercept — route all messages to active wizard before normal dispatch
@@ -482,8 +582,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			return
 		}
 
-		// Pass userID to command via context so repeat command can access it
+		// Pass userID and chatID to command via context
 		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
+		cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
 		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
 			log.Debugf("telegram", "command %s dispatched", text)
 			b.sendReply(msg, userID, result)
@@ -520,7 +621,16 @@ func (b *Bot) agentWorker(ctx context.Context) {
 
 // processAgentMessage handles a single agent turn with a cancellable context.
 func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
-	sk := b.SessionKey()
+	var sk string
+	if b.isSecondary {
+		// Secondary bots use their override session key
+		sk = b.SessionKey()
+	} else if b.agentID != "" {
+		// Primary bots derive session key from the message's chat ID
+		sk = b.sessionKeyForMsg(qm.msg.Chat.Id)
+	} else {
+		sk = b.SessionKey()
+	}
 	if sk == "" {
 		return // no session assigned (idle secondary bot)
 	}

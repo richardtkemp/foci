@@ -10,12 +10,13 @@ import (
 
 // Heartbeat fires when a session has been idle for a configurable duration.
 type Heartbeat struct {
-	agent      *Agent
-	sessionKey string
-	interval   time.Duration
-	timer      *time.Timer
-	mu         sync.Mutex
-	cancel     context.CancelFunc
+	agent        *Agent
+	sessionKey   string        // static session key (legacy)
+	SessionKeyFn func() string // dynamic session key resolver (overrides sessionKey)
+	interval     time.Duration
+	timer        *time.Timer
+	mu           sync.Mutex
+	cancel       context.CancelFunc
 }
 
 // NewHeartbeat creates a new heartbeat for the given session.
@@ -72,9 +73,17 @@ func (h *Heartbeat) Stop() {
 }
 
 func (h *Heartbeat) fire(ctx context.Context) {
-	log.Infof("heartbeat", "firing for session %s", h.sessionKey)
+	sk := h.sessionKey
+	if h.SessionKeyFn != nil {
+		sk = h.SessionKeyFn()
+	}
+	if sk == "" {
+		log.Debugf("heartbeat", "no session key, skipping")
+		return
+	}
+	log.Infof("heartbeat", "firing for session %s", sk)
 
-	resp, err := h.agent.HandleMessage(WithTrigger(ctx, "heartbeat"), h.sessionKey, "[HEARTBEAT] The idle timer has fired. Check HEARTBEAT.md for instructions on what to do during idle time.")
+	resp, err := h.agent.HandleMessage(WithTrigger(ctx, "heartbeat"), sk, "[HEARTBEAT] The idle timer has fired. Check HEARTBEAT.md for instructions on what to do during idle time.")
 	if err != nil {
 		log.Errorf("heartbeat", "error: %v", err)
 		return

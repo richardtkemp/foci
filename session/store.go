@@ -422,3 +422,56 @@ func (s *Store) fileTime(key string) string {
 	}
 	return info.ModTime().UTC().Format("2006-01-02T15:04:05Z")
 }
+
+// ChatSessionInfo holds metadata about a per-chat session.
+type ChatSessionInfo struct {
+	ChatID       int64
+	SessionKey   string
+	MessageCount int
+	LastActivity time.Time
+}
+
+// ListChatSessions returns all chat sessions for an agent.
+// It scans for files matching the pattern agent/<agentID>/chat/<chatID>.jsonl.
+func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
+	chatDir := filepath.Join(s.dir, "agent", agentID, "chat")
+	entries, err := os.ReadDir(chatDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read chat dir: %w", err)
+	}
+
+	var sessions []ChatSessionInfo
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".jsonl")
+
+		// Parse chat ID from filename
+		var chatID int64
+		if _, err := fmt.Sscanf(name, "%d", &chatID); err != nil {
+			continue
+		}
+
+		key := fmt.Sprintf("agent:%s:chat:%d", agentID, chatID)
+		mc, _ := s.MessageCount(key)
+
+		info, err := e.Info()
+		var lastActivity time.Time
+		if err == nil {
+			lastActivity = info.ModTime()
+		}
+
+		sessions = append(sessions, ChatSessionInfo{
+			ChatID:       chatID,
+			SessionKey:   key,
+			MessageCount: mc,
+			LastActivity: lastActivity,
+		})
+	}
+
+	return sessions, nil
+}

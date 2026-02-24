@@ -15,9 +15,12 @@ A minimal, maintainable agent platform in Go. One binary, no framework, no bloat
 
 Format: `agent:AGENTID:TYPE[:BRANCHID]`
 
-- `agent:main:main` — primary DM session
+- `agent:fotini:chat:123456789` — per-chat DM session (keyed by Telegram chat ID)
 - `agent:main:cron:morning-routine` — cron-triggered branch
 - `agent:main:subagent:research-task` — sub-agent branch
+- `agent:main:multiball:mb-1709123456` — multiball fork
+
+Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what heartbeats, cron (`clod send`/`clod branch`), and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
 
 The 4th segment (branch ID) is optional. Branch sessions inherit the parent's message prefix for cache sharing.
 
@@ -621,6 +624,11 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **Context:**
 - `/context` - character count breakdown of the full prompt. Shows each section separately: system prompt (per character file: IDENTITY.md, SOUL.md, etc.), tools schema, conversation history (user/assistant/tool messages), total. Helps diagnose what's eating context and whether cache is being used efficiently.
 
+**Sessions:**
+- `/sessions` or `/sessions list` — list all per-chat sessions for this agent. Shows chat ID, username, message count, last active time, and which is the default (★).
+- `/sessions default <chat_id>` — set a specific chat as the default session (used by heartbeats, cron, proactive features).
+- `/sessions info` — show details for the current chat's session (chat ID, default status, message count, username).
+
 **Agents:**
 - `/agents` - list active agent sessions with status, model, and message counts
 - `/agents new` - interactive wizard for creating a new agent. Walks through: agent ID, display name, emoji, model, bot token secret, character file mode. Creates workspace, appends config to clod.toml, adds crontab entries. Requires restart to activate.
@@ -775,7 +783,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Secret redaction on all tool output — exec output, tool errors, and all tool results scanned for known secret patterns
 - Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
 - Tool result size guard (large results saved to temp file)
-- Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball
+- Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball, /sessions
 - Cron system (system crontab, prompts loaded from disk)
 - Setup script (idempotent, builds from source, installs as systemd service)
 - Repair interrupted tool calls on session load
