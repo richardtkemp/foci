@@ -197,6 +197,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `memory_search` — FTS5 search over memory files + conversation history
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
 - `spawn` — sub-call to a model (none/full: one-shot, inherit: branch session with full tools)
+- `send_to_session` — inject a message into another session (cross-session communication)
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
@@ -781,7 +782,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Multiball — `/multiball` forks to secondary Telegram bot, tested and working
 - Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
 - Telegram bot (text messages, DM only)
-- Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), spawn (none/full/inherit), schedule_wake, tts, todo
+- Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, send_to_session, tmux (watch/unwatch), spawn (none/full/inherit), schedule_wake, tts, todo
 - Workspace bootstrap (markdown files → system prompt, configurable file order)
 - Skills framework (YAML frontmatter, command dispatch, script execution)
 - Heartbeat (configurable interval)

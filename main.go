@@ -1039,6 +1039,9 @@ func setupAgent(p setupParams) *agentInstance {
 		return bot
 	}))
 
+	// send_to_session tool — inject messages into other sessions
+	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier))
+
 	// Per-agent environment block
 	var envBlock string
 	if p.cfg.Environment.Enabled {
@@ -1329,15 +1332,19 @@ func setupAgent(p setupParams) *agentInstance {
 			return "", fmt.Errorf("create branch: %w", err)
 		}
 
-		// Inject fork prompt so the agent knows it's on a branch
+		// Inject fork prompt so the agent knows it's on a branch.
+		// Uses configured file if set, otherwise a sensible default.
+		var forkText string
 		if acfg.ForkPrompt != "" {
-			if fp := readPromptFile(acfg.ForkPrompt, "fork"); fp != "" {
-				p.sessions.AppendAll(branchKey, []anthropic.Message{
-					{Role: "user", Content: anthropic.TextContent(fp)},
-					{Role: "assistant", Content: anthropic.TextContent("Understood.")},
-				})
-			}
+			forkText = readPromptFile(acfg.ForkPrompt, "fork")
 		}
+		if forkText == "" {
+			forkText = "You are a branch session forked from the main session. You can communicate with other sessions using the send_to_session tool — provide the session key and your message."
+		}
+		p.sessions.Append(branchKey, anthropic.Message{
+			Role:    "user",
+			Content: anthropic.TextContent(forkText),
+		})
 
 		secBot.SetSessionKey(branchKey)
 		if primaryBot := p.botMgr.PrimaryBot(acfg.ID); primaryBot != nil {

@@ -22,7 +22,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `heartbeat_interval` | string | `"45m"` | Duration between idle heartbeats. Go duration format (`30s`, `5m`, `2h`). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
-| `fork_prompt` | string | `""` | Path to prompt file injected into multiball branch sessions. Read at fork time. Empty disables. |
+| `fork_prompt` | string | `""` | Path to prompt file injected into multiball branch sessions. Read at fork time. If empty, a built-in default is used that tells the agent it's a branch and can use `send_to_session`. |
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
 | `multiball_bot` | string | `""` | **Deprecated:** use `multiball_bots`. If set and `multiball_bots` is empty, promoted to a single-element list with a warning. |
@@ -136,7 +136,7 @@ Session storage and compaction.
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`, `fork_prompt`) are file paths, not inline strings. If the path is empty, the feature is disabled. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`, `fork_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`. `fork_prompt` is the exception: if the path is empty, a built-in default is used (the agent is told it's a branch session and can use `send_to_session`).
 
 Default `compaction_handoff_msg`:
 ```
