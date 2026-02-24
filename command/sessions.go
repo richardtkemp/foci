@@ -19,10 +19,10 @@ type SessionChatInfo struct {
 
 // SessionsDeps holds dependencies for the /sessions command.
 type SessionsDeps struct {
-	AgentID        string
-	ListFn         func() ([]SessionChatInfo, error)
-	SetDefaultFn   func(chatID int64) error
-	DefaultChatFn  func() int64
+	AgentID       string
+	ListFn        func() ([]SessionChatInfo, error)
+	SetDefaultFn  func(chatID int64) error
+	DefaultChatFn func() int64
 }
 
 // NewSessionsCommand creates the /sessions command for managing per-chat sessions.
@@ -33,13 +33,19 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			parts := strings.Fields(args)
-			subcmd := "list"
+			subcmd := ""
 			if len(parts) > 0 {
 				subcmd = strings.ToLower(parts[0])
 			}
 
 			switch subcmd {
-			case "list", "":
+			case "":
+				return "Usage: /sessions [list|default <chat_id>|info]\n\n" +
+					"  list              List all chat sessions for this agent\n" +
+					"  default <chat_id> Set the default session (used by heartbeats, cron)\n" +
+					"  info              Show details for the current chat's session", nil
+
+			case "list":
 				return sessionsListCmd(deps)
 
 			case "default":
@@ -104,10 +110,18 @@ func sessionsListCmd(deps SessionsDeps) (string, error) {
 	// Measure column widths
 	cidW, unW, msgW, actW := len("Chat ID"), len("User"), len("Msgs"), len("Active")
 	for _, r := range rows {
-		if len(r.chatID) > cidW { cidW = len(r.chatID) }
-		if len(r.username) > unW { unW = len(r.username) }
-		if len(r.msgs) > msgW { msgW = len(r.msgs) }
-		if len(r.active) > actW { actW = len(r.active) }
+		if len(r.chatID) > cidW {
+			cidW = len(r.chatID)
+		}
+		if len(r.username) > unW {
+			unW = len(r.username)
+		}
+		if len(r.msgs) > msgW {
+			msgW = len(r.msgs)
+		}
+		if len(r.active) > actW {
+			actW = len(r.active)
+		}
 	}
 
 	sep := strings.Repeat("─", cidW+2+unW+2+msgW+2+actW+4)
