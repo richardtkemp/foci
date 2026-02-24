@@ -152,24 +152,24 @@ The `spawn` tool is a unified sub-call mechanism with three context modes:
 
 ```
 spawn(prompt="Evaluate this architecture", model="opus", context="none")
-spawn(prompt="Research this topic thoroughly", context="inherit")
+spawn(prompt="Research this topic thoroughly", context="clone_current")
 ```
 
 **Context modes:**
 
 - **`none`** — just the prompt, no system context, no tools. One-shot cold call. Cheapest option for simple questions.
 - **`full`** — character files + prompt, no tools. One-shot call with full personality context. Good for tasks that need "you" without tool access.
-- **`inherit`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. Always runs asynchronously — returns an immediate acknowledgment and delivers the result via `AsyncNotifier` when complete.
+- **`clone_current`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. Always runs asynchronously — returns an immediate acknowledgment and delivers the result via `AsyncNotifier` when complete.
 
 **Inherit mode details:**
 - Creates a branch session: `agent:AGENTID:spawn:spawn-TIMESTAMP`
 - Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
-- Recursive inherit spawns are blocked — a spawned session can use `none`/`full` but not `inherit`
-- Concurrent inherit spawns are limited by `max_concurrent_spawns` (default 3)
+- Recursive clone_current spawns are blocked — a spawned session can use `none`/`character_only` but not `clone_current`
+- Concurrent clone_current spawns are limited by `max_concurrent_spawns` (default 3)
 - Runs as a full agent turn with all tools available
 - Always async: returns `"Spawn started in background."` immediately, delivers `[SPAWN RESULT]` via notifier on completion (matching the `[EXEC RESULT]`/`[HTTP RESULT]` pattern)
 
-**Model resolution:** Short names (`opus`, `sonnet`, `haiku`) resolve to full model IDs. Empty model defaults to the parent's model. Model is ignored for inherit mode (inherits parent model).
+**Model resolution:** Short names (`opus`, `sonnet`, `haiku`) resolve to full model IDs. Empty model defaults to the parent's model. Model is ignored for clone_current mode (inherits parent model).
 
 ### Thought Queue
 
@@ -196,7 +196,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
-- `spawn` — sub-call to a model (none/full: one-shot, inherit: branch session with full tools)
+- `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
 - `send_to_session` — inject a message into another session (cross-session communication)
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
@@ -782,7 +782,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Multiball — `/multiball` forks to secondary Telegram bot, tested and working
 - Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
 - Telegram bot (text messages, DM only)
-- Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, send_to_session, tmux (watch/unwatch), spawn (none/full/inherit), schedule_wake, tts, todo
+- Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, send_to_session, tmux (watch/unwatch), spawn (none/character_only/clone_current), schedule_wake, tts, todo
 - Workspace bootstrap (markdown files → system prompt, configurable file order)
 - Skills framework (YAML frontmatter, command dispatch, script execution)
 - Heartbeat (configurable interval)
