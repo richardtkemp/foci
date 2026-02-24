@@ -288,21 +288,69 @@ func generateConfigEntry(w *agentWizard, workspace string) string {
 	return sb.String()
 }
 
+// defaultCrontabTemplate is the fallback when the template file doesn't exist.
+const defaultCrontabTemplate = `# AGENT_NAME crontab entries
+*/30 * * * * clod branch --oneshot -a AGENT_NAME "$(cat /home/clod/shared/prompts/memory-formation.md)" 2>&1 >> /home/clod/logs/cron.log
+*/45 * * * * clod send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> /home/clod/logs/cron.log
+0 4 * * * clod branch --oneshot -a AGENT_NAME "$(cat /home/clod/shared/prompts/daily-memory-review.md)" 2>&1 >> /home/clod/logs/cron.log
+40 2 * * 1 clod branch --oneshot -a AGENT_NAME "$(cat /home/clod/shared/prompts/weekly-character-review.md)" 2>&1 >> /home/clod/logs/cron.log
+`
+
 // generateCrontab returns crontab entries for the new agent.
+// Reads a template from {DefaultsDir}/crontab.template if it exists,
+// otherwise uses a built-in fallback. Replaces AGENT_NAME and WORKSPACE
+// placeholders, then staggers minute values based on agent count.
 func generateCrontab(w *agentWizard, workspace string) []string {
-	// Stagger based on number of existing agents
+	// Try to read template file
+	templatePath := filepath.Join(w.deps.DefaultsDir, "crontab.template")
+	tmpl := defaultCrontabTemplate
+	if data, err := os.ReadFile(templatePath); err == nil {
+		tmpl = string(data)
+	}
+
+	// Replace placeholders
+	tmpl = strings.ReplaceAll(tmpl, "AGENT_NAME", w.id)
+	tmpl = strings.ReplaceAll(tmpl, "WORKSPACE", workspace)
+
+	// Stagger minute offsets based on number of existing agents
 	agents := w.deps.ListFn()
 	offset := len(agents) * 3
 
-	// Prompt files in the workspace/prompts/ directory
-	promptsDir := filepath.Join(workspace, "prompts")
-	heartbeatMin := offset % 60
-
-	return []string{
-		fmt.Sprintf("# %s — %s", w.id, w.display),
-		fmt.Sprintf("%d */4 * * * curl -s -X POST http://localhost:7080/wake -d '{\"agent\":\"%s\",\"prompt_file\":\"%s/HEARTBEAT.md\",\"no_compact\":true}' > /dev/null 2>&1",
-			heartbeatMin, w.id, promptsDir),
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(tmpl), "\n") {
+		line = strings.TrimRight(line, " \t")
+		if line == "" {
+			continue
+		}
+		if offset > 0 && !strings.HasPrefix(line, "#") {
+			line = staggerCrontabLine(line, offset)
+		}
+		lines = append(lines, line)
 	}
+	return lines
+}
+
+// staggerCrontabLine offsets the minute field(s) of a crontab line.
+// Handles both simple ("0") and interval ("*/30") minute fields.
+func staggerCrontabLine(line string, offset int) string {
+	fields := strings.Fields(line)
+	if len(fields) < 6 {
+		return line // not a valid crontab line
+	}
+	minute := fields[0]
+	if strings.HasPrefix(minute, "*/") {
+		// Interval field like */30 — leave interval, will naturally stagger
+		// since agents are created at different times
+		return line
+	}
+	// Absolute minute: add offset and wrap at 60
+	var min int
+	if _, err := fmt.Sscanf(minute, "%d", &min); err == nil {
+		min = (min + offset) % 60
+		fields[0] = fmt.Sprintf("%d", min)
+		return strings.Join(fields, " ")
+	}
+	return line
 }
 
 // templateSoulFile replaces placeholder comments in a SOUL.md file with actual values.

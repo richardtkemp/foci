@@ -594,23 +594,80 @@ func TestGenerateConfigEntry(t *testing.T) {
 	}
 }
 
-func TestStaggerCrontab(t *testing.T) {
-	// 0 agents → offset 0
-	w0 := &agentWizard{
+func TestGenerateCrontabFallback(t *testing.T) {
+	// No template file — uses built-in fallback
+	w := &agentWizard{
 		deps: AgentNewDeps{
-			ListFn: func() []AgentInfo { return nil },
+			DefaultsDir: filepath.Join(t.TempDir(), "nonexistent"),
+			ListFn:      func() []AgentInfo { return nil },
 		},
-		id:      "first",
-		display: "First",
+		id:      "greek-tutor",
+		display: "Greek Tutor",
 	}
-	lines0 := generateCrontab(w0, "/home/clod/first")
-	if !strings.Contains(lines0[1], "0 */4") {
-		t.Errorf("0 agents: expected minute 0, got %q", lines0[1])
-	}
+	lines := generateCrontab(w, "/home/clod/greek-tutor")
 
-	// 3 agents → offset 9
-	w3 := &agentWizard{
+	// Should contain clod send/branch commands, not curl
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "curl") {
+		t.Errorf("should not use curl, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "clod send -a greek-tutor") {
+		t.Errorf("missing clod send command:\n%s", joined)
+	}
+	if !strings.Contains(joined, "clod branch --oneshot -a greek-tutor") {
+		t.Errorf("missing clod branch command:\n%s", joined)
+	}
+	if !strings.Contains(joined, "/home/clod/greek-tutor/prompts/HEARTBEAT.md") {
+		t.Errorf("missing workspace-relative heartbeat path:\n%s", joined)
+	}
+	if !strings.Contains(joined, "cron.log") {
+		t.Errorf("missing log redirect:\n%s", joined)
+	}
+}
+
+func TestGenerateCrontabFromTemplate(t *testing.T) {
+	tmpDir := t.TempDir()
+	templateDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(templateDir, 0755)
+
+	// Write a template file
+	template := `# AGENT_NAME cron
+0 4 * * * clod branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> /home/clod/logs/cron.log
+*/30 * * * * clod send -a AGENT_NAME "[heartbeat]" 2>&1 >> /home/clod/logs/cron.log
+`
+	os.WriteFile(filepath.Join(templateDir, "crontab.template"), []byte(template), 0644)
+
+	w := &agentWizard{
 		deps: AgentNewDeps{
+			DefaultsDir: templateDir,
+			ListFn:      func() []AgentInfo { return nil },
+		},
+		id:      "helen",
+		display: "Helen",
+	}
+	lines := generateCrontab(w, "/home/clod/helen")
+	joined := strings.Join(lines, "\n")
+
+	// Placeholders should be replaced
+	if strings.Contains(joined, "AGENT_NAME") {
+		t.Errorf("AGENT_NAME not replaced:\n%s", joined)
+	}
+	if strings.Contains(joined, "WORKSPACE") {
+		t.Errorf("WORKSPACE not replaced:\n%s", joined)
+	}
+	if !strings.Contains(joined, "clod branch --oneshot -a helen") {
+		t.Errorf("missing agent name substitution:\n%s", joined)
+	}
+	if !strings.Contains(joined, "/home/clod/helen/prompts/review.md") {
+		t.Errorf("missing workspace substitution:\n%s", joined)
+	}
+}
+
+func TestGenerateCrontabStagger(t *testing.T) {
+	// 3 existing agents → offset 9 minutes
+	w := &agentWizard{
+		deps: AgentNewDeps{
+			DefaultsDir: filepath.Join(t.TempDir(), "nonexistent"),
 			ListFn: func() []AgentInfo {
 				return []AgentInfo{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 			},
@@ -618,14 +675,53 @@ func TestStaggerCrontab(t *testing.T) {
 		id:      "fourth",
 		display: "Fourth",
 	}
-	lines3 := generateCrontab(w3, "/home/clod/fourth")
-	if !strings.Contains(lines3[1], "9 */4") {
-		t.Errorf("3 agents: expected minute 9, got %q", lines3[1])
+	lines := generateCrontab(w, "/home/clod/fourth")
+
+	// The "0 4 * * *" daily entry should become "9 4 * * *"
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "daily-memory-review") {
+			if !strings.HasPrefix(line, "9 4 ") {
+				t.Errorf("expected staggered minute 9, got: %s", line)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("daily-memory-review entry not found in:\n%s", strings.Join(lines, "\n"))
 	}
 
-	// Check comment line
-	if !strings.Contains(lines3[0], "# fourth") {
-		t.Errorf("missing comment in: %q", lines3[0])
+	// Interval entries (*/30, */45) should NOT be modified
+	for _, line := range lines {
+		if strings.Contains(line, "memory-formation") && !strings.HasPrefix(line, "#") {
+			if !strings.HasPrefix(line, "*/30 ") {
+				t.Errorf("interval entry should not be staggered: %s", line)
+			}
+			break
+		}
+	}
+}
+
+func TestStaggerCrontabLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		offset int
+		want   string
+	}{
+		{"absolute minute", "0 4 * * * cmd", 9, "9 4 * * * cmd"},
+		{"wrap at 60", "55 4 * * * cmd", 9, "4 4 * * * cmd"},
+		{"interval unchanged", "*/30 * * * * cmd", 9, "*/30 * * * * cmd"},
+		{"comment unchanged", "# comment", 5, "# comment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := staggerCrontabLine(tt.line, tt.offset)
+			if got != tt.want {
+				t.Errorf("staggerCrontabLine(%q, %d) = %q, want %q", tt.line, tt.offset, got, tt.want)
+			}
+		})
 	}
 }
 
