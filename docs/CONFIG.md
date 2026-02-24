@@ -368,7 +368,7 @@ Tool behavior settings.
 | `temp_dir` | string | `"/tmp/clod-tool-results"` | Directory for large tool result files. |
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
-| `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec commands. `0` disables. |
+| `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. |
 | `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |
 | `exec_max_output_chars` | int | `100000` | Max characters in exec output before truncation. |
 | `tmux_command_timeout` | string | `"5s"` | Timeout for tmux control commands. Go duration format. |

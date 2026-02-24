@@ -184,7 +184,7 @@ Reminders surface as injected context at the specified time (next heartbeat, nex
 Tools are Go functions registered at compile time. No dynamic loading, no plugin discovery.
 
 **Alpha tools:**
-- `exec` — run shell commands (with timeout, background support)
+- `exec` — run shell commands (with timeout, background, auto-background)
 - `tmux` — manage tmux sessions (start, send keys, read pane output, list, kill)
 - `read` — read file contents
 - `write` — create/overwrite files
@@ -243,10 +243,12 @@ max_result_chars = 10000              # max chars before writing to file
 temp_dir = "/tmp/clod-tool-results"   # where to write large results
 ```
 
-**http_request — file saves and binary handling:**
+**http_request — file saves, binary handling, and auto-background:**
 - `save_to` — save response body to a specific file path (returns status + headers + path, not body)
 - `save_from_json_path` — extract a value from JSON response by dot path (e.g. `data.0.url`); if it's a `data:` URI, decodes base64 to binary. Requires `save_to`. Designed for image generation APIs that return base64 data URIs.
 - Binary content types (`image/*`, `audio/*`, `video/*`, etc.) auto-save to temp file when `save_to` is not set
+- `background` parameter — if `true`, request runs immediately in background and result is delivered asynchronously
+- Auto-background — if a request exceeds the `exec_auto_background` threshold, it auto-backgrounds and the result is delivered when complete (same mechanism as exec)
 
 **Each tool is a function with signature:**
 ```go

@@ -29,7 +29,7 @@ config.Load(path)                                        ← validates values; l
 
   Per-agent loop (for each cfg.Agents[i]):
   → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap, heartbeat}
-    → tools.NewAsyncNotifier()                             ← shared by exec + tmux, routes by session key
+    → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
@@ -141,7 +141,7 @@ Anthropic's prompt cache is prefix-matched. If any message shifts position (beca
 **Concurrent callers that are serialized by the turn lock:**
 - Telegram bot worker (user messages)
 - Heartbeat goroutine (`[HEARTBEAT]`)
-- `AsyncNotifier` (`[TMUX WATCH]` inactivity, `[EXEC RESULT]` auto-background completion)
+- `AsyncNotifier` (`[TMUX WATCH]` inactivity, `[EXEC RESULT]`/`[HTTP RESULT]` auto-background completion)
 - Scheduled wakes (`[SCHEDULED WAKE]`, fires from `go func()`)
 - HTTP `/send` endpoint
 
@@ -175,7 +175,7 @@ When the model responds with text alongside `tool_use` blocks (e.g., "Looking in
 4. Agent continues executing tools
 5. Final `end_turn` response is returned from `HandleMessage` as usual
 
-Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks. Async callers (heartbeat, tmux watch, exec auto-background, scheduled wakes) that don't set callbacks get nil — no Telegram side effects. No cross-turn state corruption.
+Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks. Async callers (heartbeat, tmux watch, exec/http_request auto-background, scheduled wakes) that don't set callbacks get nil — no Telegram side effects. No cross-turn state corruption.
 
 ## Tool Call Visibility
 
