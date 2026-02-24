@@ -1247,6 +1247,7 @@ func setupAgent(p setupParams) *agentInstance {
 			primaryBot.SetTTS(voice.WithRate(p.ttsProvider, acfg.TTSRate))
 		}
 		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
+		primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
 
 		// Wire cache bust alerts to this agent's bot
 		if ag.CacheBustDetect {
