@@ -38,6 +38,7 @@ type AgentConfig struct {
 	TTSRate             float64           `toml:"tts_rate"`              // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
+	ShowToolCalls       *bool             `toml:"show_tool_calls"`       // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
 	ImageSaveDir        string            `toml:"image_save_dir"`        // save received images to this directory (empty = disabled)
 }
 
@@ -67,6 +68,7 @@ type TelegramConfig struct {
 	MultiballSessionTTL string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
+	ShowToolCalls       bool                         `toml:"show_tool_calls"`       // show tool call messages in Telegram (default true)
 	ImageSaveDir        string                       `toml:"image_save_dir"`        // save received images to this directory (empty = disabled, per-agent overrides)
 }
 
@@ -566,6 +568,9 @@ func Load(path string) (*Config, error) {
 	}
 	if !md.IsDefined("telegram", "enable_startup_notify") {
 		cfg.Telegram.EnableStartupNotify = true
+	}
+	if !md.IsDefined("telegram", "show_tool_calls") {
+		cfg.Telegram.ShowToolCalls = true
 	}
 
 	cfg.ResolveAllPaths()

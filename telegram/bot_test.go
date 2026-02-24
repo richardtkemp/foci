@@ -975,6 +975,78 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 	}
 }
 
+func TestShowToolCalls_Enabled(t *testing.T) {
+	// When showToolCalls is true, tool call observer should send messages.
+	mock := &mockClient{}
+	b := &Bot{client: mock, showToolCalls: true}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	observer := func(toolName string, params json.RawMessage) {
+		if !b.showToolCalls {
+			return
+		}
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+		text := b.formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId: 12345, MessageId: toolMsgID, ParseMode: "HTML",
+			})
+		}
+	}
+
+	observer("exec", json.RawMessage(`{"command":"ls"}`))
+	if mock.sentCount() != 1 {
+		t.Errorf("sends=%d, want 1", mock.sentCount())
+	}
+
+	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
+	if mock.editCount() != 1 {
+		t.Errorf("edits=%d, want 1", mock.editCount())
+	}
+}
+
+func TestShowToolCalls_Disabled(t *testing.T) {
+	// When showToolCalls is false, tool call observer should be a no-op.
+	mock := &mockClient{}
+	b := &Bot{client: mock, showToolCalls: false}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	observer := func(toolName string, params json.RawMessage) {
+		if !b.showToolCalls {
+			return
+		}
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+		text := b.formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId: 12345, MessageId: toolMsgID, ParseMode: "HTML",
+			})
+		}
+	}
+
+	observer("exec", json.RawMessage(`{"command":"ls"}`))
+	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
+
+	if mock.sentCount() != 0 {
+		t.Errorf("sends=%d, want 0 (tool calls should be suppressed)", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("edits=%d, want 0 (tool calls should be suppressed)", mock.editCount())
+	}
+}
+
 // --- Tool call visibility ---
 
 func TestFormatToolCall(t *testing.T) {
