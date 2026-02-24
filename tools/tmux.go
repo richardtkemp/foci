@@ -49,7 +49,9 @@ type tmuxInstance struct {
 // when a watched session exceeds its inactivity threshold (nil disables).
 // Each call returns an independent tool instance with its own session tracking.
 // stateStore and stateKey enable persistence of owned sessions across restarts.
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) *Tool {
+// The returned cleanup function clears all watches and owned sessions (used by
+// the tmux memory monitor after kill-server).
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) (*Tool, func()) {
 	inst := &tmuxInstance{
 		watched:    make(map[string]*watchedSession),
 		owned:      make(map[string]struct{}),
@@ -126,7 +128,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
 			return inst.execute(ctx, params)
 		},
-	}
+	}, inst.ClearAll
 }
 
 func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (string, error) {
@@ -202,6 +204,23 @@ func (inst *tmuxInstance) persistOwned() {
 	if err := inst.stateStore.Set(inst.stateKey, owned); err != nil {
 		log.Warnf("tmux", "persist owned sessions: %v", err)
 	}
+}
+
+// ClearAll stops all watches and clears the owned sessions map. Called by the
+// tmux memory monitor after kill-server to reset tool instance state.
+func (inst *tmuxInstance) ClearAll() {
+	inst.mu.Lock()
+	// Cancel all watches
+	for key, ws := range inst.watched {
+		ws.cancel()
+		delete(inst.watched, key)
+	}
+	// Clear owned set
+	inst.owned = make(map[string]struct{})
+	inst.persistOwned()
+	inst.mu.Unlock()
+
+	log.Debugf("tmux", "ClearAll: cleared all watches and owned sessions")
 }
 
 func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string) (string, error) {
