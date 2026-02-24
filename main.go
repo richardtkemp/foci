@@ -42,14 +42,15 @@ var (
 
 // agentInstance holds all per-agent state.
 type agentInstance struct {
-	id         string
-	ag         *agent.Agent
-	cmds       *command.Registry
-	registry   *tools.Registry
-	bootstrap  *workspace.Bootstrap
-	sessionKey string
-	heartbeat  *agent.Heartbeat
-	agentCfg   config.AgentConfig
+	id            string
+	ag            *agent.Agent
+	cmds          *command.Registry
+	registry      *tools.Registry
+	bootstrap     *workspace.Bootstrap
+	sessionKey    string
+	heartbeat     *agent.Heartbeat
+	agentCfg      config.AgentConfig
+	tmuxClearAll  func() // clears tmux tool state (watches, owned sessions)
 }
 
 func main() {
@@ -443,6 +444,43 @@ func main() {
 		}
 	}
 
+	// Tmux memory monitor — checks RSS of tmux server, notifies/kills at thresholds
+	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
+		checkInterval, _ := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval)
+		if checkInterval > 0 {
+			tmuxMemMon := tools.NewTmuxMemoryMonitor(
+				tools.TmuxMemoryConfig{
+					CheckInterval: checkInterval,
+					WarnStr:       cfg.Tools.TmuxMemoryWarn,
+					CriticalStr:   cfg.Tools.TmuxMemoryCritical,
+					KillStr:       cfg.Tools.TmuxMemoryKill,
+				},
+				// Notification callback: send to agents without inject_agent_warnings
+				func(msg string) {
+					for _, id := range agentOrder {
+						inst := agents[id]
+						if inst.agentCfg.InjectAgentWarnings {
+							continue // agent sees warnings via injection
+						}
+						if bot := botMgr.PrimaryBot(id); bot != nil {
+							bot.SendNotification(msg)
+						}
+					}
+				},
+				// Cleanup callback: clear all tmux tool instances
+				func() {
+					for _, id := range agentOrder {
+						if fn := agents[id].tmuxClearAll; fn != nil {
+							fn()
+						}
+					}
+				},
+			)
+			tmuxMemMon.Start(ctx)
+			defer tmuxMemMon.Stop()
+		}
+	}
+
 	// Start all bots
 	botMgr.StartAll(ctx)
 
@@ -795,7 +833,8 @@ func setupAgent(p setupParams) *agentInstance {
 		}()
 	})
 	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
-	registry.Register(tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID))
+	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
+	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
@@ -1299,14 +1338,15 @@ func setupAgent(p setupParams) *agentInstance {
 	hb := agent.NewHeartbeat(ag, sessionKey, interval)
 
 	return &agentInstance{
-		id:         acfg.ID,
-		ag:         ag,
-		cmds:       cmds,
-		registry:   registry,
-		bootstrap:  bootstrap,
-		sessionKey: sessionKey,
-		heartbeat:  hb,
-		agentCfg:   acfg,
+		id:           acfg.ID,
+		ag:           ag,
+		cmds:         cmds,
+		registry:     registry,
+		bootstrap:    bootstrap,
+		sessionKey:   sessionKey,
+		heartbeat:    hb,
+		agentCfg:     acfg,
+		tmuxClearAll: tmuxClearAll,
 	}
 }
 
