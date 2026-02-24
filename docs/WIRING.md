@@ -369,6 +369,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
 | `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
 | `spawn` | spawn.go | Unified sub-call: three context modes. `none`: one-shot, no system prompt. `full`: one-shot with character files. `inherit` (default): branch session with full tool access — a headless self-fork. Inherit creates branch `agent:ID:spawn:spawn-TIMESTAMP`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive inherit blocked via context key. Concurrent inherit limited by `max_concurrent_spawns` (default 3). Notifier wired from the same `AsyncNotifier` instance used by exec/http_request. |
+| `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. multiball branches talking to main). |
 | `schedule_wake` | schedule.go | Schedule message injection at specified time or delay. One-shot, auto-cleaned after firing. |
 | `tts` | voice.go | Convert text to speech via TTS provider (Edge TTS or OpenAI). Sends audio as Telegram voice note. Configurable rate/speed via `tts_rate`. |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
