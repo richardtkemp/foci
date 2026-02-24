@@ -74,8 +74,9 @@ type Bot struct {
 	chatID     int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
 
-	stateStore   *state.Store // nil = no persistence
-	stateKey     string       // state key prefix (e.g. "bot:mybot")
+	stateStore           *state.Store // nil = no persistence
+	stateKey             string       // state key prefix (e.g. "bot:mybot")
+	toolCallPreviewChars int          // max chars for tool call preview (default 450)
 }
 
 // NewBot creates a new Telegram bot.
@@ -117,6 +118,11 @@ func (b *Bot) SetTTS(t voice.TTS) {
 func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
 	b.stopAliases = aliases
 	b.enableStopAliases = enabled
+}
+
+// SetToolCallPreviewChars sets the max characters for tool call param preview.
+func (b *Bot) SetToolCallPreviewChars(n int) {
+	b.toolCallPreviewChars = n
 }
 
 // SetStateStore configures persistent state for this bot.
@@ -531,7 +537,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			toolMsgMu.Lock()
 			defer toolMsgMu.Unlock()
 
-			text := formatToolCall(toolName, params)
+			text := b.formatToolCall(toolName, params)
 			if toolMsgID == 0 {
 				// First tool call: send a new message
 				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
@@ -883,15 +889,19 @@ func splitMessage(text string, maxLen int) []string {
 }
 
 // formatToolCall formats a tool call for display in Telegram.
-func formatToolCall(toolName string, params json.RawMessage) string {
+func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
+	maxChars := b.toolCallPreviewChars
+	if maxChars == 0 {
+		maxChars = 450
+	}
 	// Pretty-print params, truncated
 	paramStr := string(params)
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, params, "", "  ") == nil {
 		paramStr = pretty.String()
 	}
-	if len(paramStr) > 300 {
-		paramStr = paramStr[:300] + "..."
+	if len(paramStr) > maxChars {
+		paramStr = paramStr[:maxChars] + "..."
 	}
 	paramStr = htmlEscapeBot(paramStr)
 	return fmt.Sprintf("🔧 <b>%s</b>\n<pre>%s</pre>", htmlEscapeBot(toolName), paramStr)

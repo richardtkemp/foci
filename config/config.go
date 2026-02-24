@@ -167,6 +167,7 @@ type ToolsConfig struct {
 	WebFetchMaxChars   int    `toml:"web_fetch_max_chars"`   // max chars in web fetch output before truncation (default 50000)
 	WebSearchTimeout    string `toml:"web_search_timeout"`     // HTTP timeout for web search (default "15s")
 	MaxConcurrentSpawns       int    `toml:"max_concurrent_spawns"`         // max concurrent spawn inherit sessions per agent (default 3)
+	ToolCallPreviewChars      int    `toml:"tool_call_preview_chars"`       // max chars for tool call param preview in Telegram (default 450)
 	TmuxMemoryCheckInterval   string `toml:"tmux_memory_check_interval"`    // how often to check tmux RSS (default "5m", "0" disables)
 	TmuxMemoryWarn            string `toml:"tmux_memory_warn"`              // warn threshold as % of RAM or absolute (default "10%")
 	TmuxMemoryCritical        string `toml:"tmux_memory_critical"`          // critical threshold (default "20%")
@@ -477,6 +478,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.MaxConcurrentSpawns == 0 {
 		cfg.Tools.MaxConcurrentSpawns = 3
+	}
+	if cfg.Tools.ToolCallPreviewChars == 0 {
+		cfg.Tools.ToolCallPreviewChars = 450
 	}
 	if cfg.Tools.TmuxMemoryCheckInterval == "" {
 		cfg.Tools.TmuxMemoryCheckInterval = "5m"

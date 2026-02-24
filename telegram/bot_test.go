@@ -807,7 +807,7 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 
-		text := formatToolCall(toolName, params)
+		text := b.formatToolCall(toolName, params)
 		if toolMsgID == 0 {
 			sent, err := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			if err != nil {
@@ -851,7 +851,8 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 // --- Tool call visibility ---
 
 func TestFormatToolCall(t *testing.T) {
-	text := formatToolCall("exec", json.RawMessage(`{"command":"ls -la"}`))
+	b := &Bot{}
+	text := b.formatToolCall("exec", json.RawMessage(`{"command":"ls -la"}`))
 	if !strings.Contains(text, "🔧") {
 		t.Error("missing tool emoji")
 	}
@@ -864,7 +865,8 @@ func TestFormatToolCall(t *testing.T) {
 }
 
 func TestFormatToolCall_HTMLEscape(t *testing.T) {
-	text := formatToolCall("exec", json.RawMessage(`{"command":"echo <script>"}`))
+	b := &Bot{}
+	text := b.formatToolCall("exec", json.RawMessage(`{"command":"echo <script>"}`))
 	if strings.Contains(text, "<script>") {
 		t.Errorf("HTML not escaped in %q", text)
 	}
@@ -874,8 +876,9 @@ func TestFormatToolCall_HTMLEscape(t *testing.T) {
 }
 
 func TestFormatToolCall_LongParams(t *testing.T) {
+	b := &Bot{}
 	longVal := strings.Repeat("x", 500)
-	text := formatToolCall("exec", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
+	text := b.formatToolCall("exec", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
 	if len(text) > 500 {
 		// Should be truncated
 	}
