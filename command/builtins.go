@@ -1012,6 +1012,10 @@ type SecretsStore interface {
 	Set(name, value string)
 	Remove(name string) bool
 	Save() error
+	SectionAllowedHosts(section string) []string
+	AddAllowedHost(section, host string)
+	RemoveAllowedHost(section, host string) bool
+	SetAllowedHosts(section string, hosts []string)
 }
 
 // NewSecretsCommand creates the /secrets slash command for managing secrets.
@@ -1025,7 +1029,7 @@ func NewSecretsCommand(store SecretsStore) *Command {
 		Execute: func(ctx context.Context, args string) (string, error) {
 			parts := strings.Fields(args)
 			if len(parts) == 0 {
-				return "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key>", nil
+				return secretsUsage, nil
 			}
 
 			switch parts[0] {
@@ -1056,33 +1060,57 @@ func NewSecretsCommand(store SecretsStore) *Command {
 					}
 				}
 
-				// Measure column widths
-				secW := len("Section")
-				keyW := len("Key")
+				// Build hosts display per section
+				sectionHosts := make(map[string]string)
 				for _, g := range groups {
-					if len(g.name) > secW { secW = len(g.name) }
-					for _, k := range g.keys {
-						if len(k) > keyW { keyW = len(k) }
+					hosts := store.SectionAllowedHosts(g.name)
+					if len(hosts) == 0 {
+						sectionHosts[g.name] = "(none)"
+					} else {
+						sectionHosts[g.name] = strings.Join(hosts, ", ")
 					}
 				}
 
-				sep := strings.Repeat("─", secW+2+keyW)
+				// Measure column widths
+				secW := len("Section")
+				keyW := len("Key")
+				hostW := len("Allowed Hosts")
+				for _, g := range groups {
+					if len(g.name) > secW {
+						secW = len(g.name)
+					}
+					for _, k := range g.keys {
+						if len(k) > keyW {
+							keyW = len(k)
+						}
+					}
+					if hw := len(sectionHosts[g.name]); hw > hostW {
+						hostW = hw
+					}
+				}
+
+				sep := strings.Repeat("─", secW+2+keyW+2+hostW)
 				var sb strings.Builder
 				fmt.Fprintf(&sb, "Secrets (%d keys)\n\n```\n", len(names))
-				fmt.Fprintf(&sb, "%-*s  %-*s\n", secW, "Section", keyW, "Key")
+				fmt.Fprintf(&sb, "%-*s  %-*s  %s\n", secW, "Section", keyW, "Key", "Allowed Hosts")
 				sb.WriteString(sep + "\n")
 				for _, g := range groups {
 					for i, k := range g.keys {
 						sec := g.name
+						hosts := sectionHosts[g.name]
 						if i > 0 {
-							sec = "" // don't repeat section name
+							sec = ""   // don't repeat section name
+							hosts = "" // don't repeat hosts
 						}
-						fmt.Fprintf(&sb, "%-*s  %s\n", secW, sec, k)
+						fmt.Fprintf(&sb, "%-*s  %-*s  %s\n", secW, sec, keyW, k, hosts)
 					}
 				}
 				sb.WriteString(sep + "\n")
 				sb.WriteString("```")
 				return sb.String(), nil
+
+			case "hosts":
+				return secretsHostsSubcmd(store, parts[1:])
 
 			case "set":
 				if len(parts) < 3 {
@@ -1113,8 +1141,65 @@ func NewSecretsCommand(store SecretsStore) *Command {
 				return fmt.Sprintf("Secret %s removed.", name), nil
 
 			default:
-				return "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key>", nil
+				return secretsUsage, nil
 			}
 		},
+	}
+}
+
+const secretsUsage = "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key> | /secrets hosts <section> [add|remove|clear] [host]"
+
+// secretsHostsSubcmd handles /secrets hosts <section> [add|remove|clear] [host].
+func secretsHostsSubcmd(store SecretsStore, args []string) (string, error) {
+	if len(args) == 0 {
+		return "Usage: /secrets hosts <section> [add <host> | remove <host> | clear]", nil
+	}
+
+	section := args[0]
+
+	// /secrets hosts <section> — show current hosts
+	if len(args) == 1 {
+		hosts := store.SectionAllowedHosts(section)
+		if len(hosts) == 0 {
+			return fmt.Sprintf("[%s] allowed_hosts: (none)", section), nil
+		}
+		return fmt.Sprintf("[%s] allowed_hosts: %s", section, strings.Join(hosts, ", ")), nil
+	}
+
+	action := args[1]
+	switch action {
+	case "add":
+		if len(args) < 3 {
+			return "Usage: /secrets hosts <section> add <host>", nil
+		}
+		host := strings.ToLower(strings.TrimSpace(args[2]))
+		store.AddAllowedHost(section, host)
+		if err := store.Save(); err != nil {
+			return "", fmt.Errorf("save secrets: %w", err)
+		}
+		return fmt.Sprintf("Added %s to [%s] allowed_hosts.", host, section), nil
+
+	case "remove":
+		if len(args) < 3 {
+			return "Usage: /secrets hosts <section> remove <host>", nil
+		}
+		host := args[2]
+		if !store.RemoveAllowedHost(section, host) {
+			return fmt.Sprintf("Host %s not found in [%s] allowed_hosts.", host, section), nil
+		}
+		if err := store.Save(); err != nil {
+			return "", fmt.Errorf("save secrets: %w", err)
+		}
+		return fmt.Sprintf("Removed %s from [%s] allowed_hosts.", host, section), nil
+
+	case "clear":
+		store.SetAllowedHosts(section, nil)
+		if err := store.Save(); err != nil {
+			return "", fmt.Errorf("save secrets: %w", err)
+		}
+		return fmt.Sprintf("Cleared allowed_hosts for [%s].", section), nil
+
+	default:
+		return "Usage: /secrets hosts <section> [add <host> | remove <host> | clear]", nil
 	}
 }
