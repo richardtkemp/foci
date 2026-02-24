@@ -12,6 +12,7 @@ import (
 
 	"clod/log"
 	"clod/secrets"
+	"clod/secrets/bitwarden"
 )
 
 // sleepRegexp matches commands that start with "sleep" (case-insensitive).
@@ -25,7 +26,7 @@ var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 // auto-backgrounded (0 disables). notifier delivers results when an
 // auto-backgrounded command finishes (nil disables).
 // workDir sets the default working directory for commands (empty = process cwd).
-func NewExecTool(store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) *Tool {
+func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) *Tool {
 	return &Tool{
 		Name:        "exec",
 		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call.",
@@ -48,12 +49,12 @@ func NewExecTool(store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNo
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return execCommand(ctx, params, store, autoBackgroundSecs, notifier, workDir)
+			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) (string, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) (string, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -86,6 +87,13 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		}
 		cmd = resolved
 	}
+	if bwStore != nil {
+		resolved, err := bwStore.Resolve(cmd)
+		if err != nil {
+			return "", fmt.Errorf("resolve bitwarden secrets: %w", err)
+		}
+		cmd = resolved
+	}
 
 	timeout := 30 * time.Second
 	if p.Timeout > 0 {
@@ -96,21 +104,21 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	// For explicit background mode, use the original direct approach
 	if p.Background {
-		return execDirect(ctx, cmd, p.Command, timeout, true, store, workDir)
+		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir)
 	}
 
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
 		sk := SessionKeyFromContext(ctx)
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, autoBackgroundSecs, notifier, sk, workDir)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir)
 	}
 
-	return execDirect(ctx, cmd, p.Command, timeout, false, store, workDir)
+	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir)
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, workDir string) (string, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -128,12 +136,12 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	}
 
 	out, err := proc.CombinedOutput()
-	return formatResult(string(out), err, ctx, timeout, displayCmd, store), nil
+	return formatResult(string(out), err, ctx, timeout, displayCmd, store, bwStore), nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string) (string, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string) (string, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -164,7 +172,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	case err := <-done:
 		// Command finished before threshold
 		cmdCancel()
-		return formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store), nil
+		return formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
@@ -174,7 +182,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		go func() {
 			defer cmdCancel()
 			err := <-done
-			result := formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store)
+			result := formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
 			notifier.Notify(sessionKey, msg)
 		}()
@@ -192,7 +200,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 }
 
 // formatResult formats command output with error info, truncation, and redaction.
-func formatResult(output string, err error, ctx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store) string {
+func formatResult(output string, err error, ctx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) string {
 	result := output
 	const maxLen = 100_000
 	if len(result) > maxLen {
@@ -202,6 +210,9 @@ func formatResult(output string, err error, ctx context.Context, timeout time.Du
 	// Redact secrets from output
 	if store != nil {
 		result = store.Redact(result)
+	}
+	if bwStore != nil {
+		result = bwStore.Redact(result)
 	}
 
 	if err != nil {

@@ -188,6 +188,8 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
+- `bitwarden_search` — search Bitwarden vault items by name/URI/folder (metadata only, no passwords)
+- `bitwarden_unlock` — unlock a vault item (requires admin approval via aisudo/Telegram), caches for TTL
 
 ### Tmux Session Monitoring
 
@@ -462,11 +464,21 @@ Credentials are loaded once at startup into process memory. Built-in integration
 
 5. **Startup security checks** — At startup, verifies file ownership, permissions, and group membership. Warns if misconfigured (does not block startup). Disable with `skip_security_checks = true`.
 
+**Bitwarden vault integration (optional):**
+
+A dynamic secret store backed by the Bitwarden CLI, with a two-tier aisudo approval model:
+- **Metadata (list)** — `sudo -u bitwarden bw list items` is allowlisted in aisudo, runs without approval. Caches item names, URIs, folders, usernames. Refreshed on a configurable interval.
+- **Passwords (get)** — `sudo -u bitwarden bw get password <id>` requires Telegram approval via aisudo. Blocks until approved or denied. Cached with configurable TTL.
+- **Template syntax** — `{{secret:bw.ITEM_UUID}}` in http_request headers/body. Host validation uses the vault item's URI fields.
+- **Dedicated system user** — `bitwarden` user owns the CLI session state. Not root. Clod never touches the vault directly.
+
 ### What the agent knows
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
   - Available secret names are injected into the system prompt at startup so the agent can discover what's available
   - Unresolved secret references in exec commands are errors (not silently passed through)
-- How to reference them: `{{secret:NAME}}`
+- If bitwarden is enabled, the agent knows it can search the vault and request unlocks
+  - The agent never sees password values — only template references `{{secret:bw.ID}}`
+- How to reference them: `{{secret:NAME}}` (static) or `{{secret:bw.UUID}}` (bitwarden)
 - Nothing about their values
 
 ## Concurrency & Interrupts

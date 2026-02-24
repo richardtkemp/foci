@@ -9,6 +9,11 @@ config.Load(path)                                        ← validates values; l
   → log.Init(cfg.Logging)                                ← opens event file, replays buffered events
   → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite
   → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
+  → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
+    → exec session_cmd → get BW session token
+    → bwStore.Refresh() → initial metadata load (allowlisted in aisudo)
+    → start background refresh ticker (refresh_interval)
+    → bwStore.StartCleanup(cleanup_interval)
 
   Shared resources (created once):
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
@@ -25,7 +30,7 @@ config.Load(path)                                        ← validates values; l
   Per-agent loop (for each cfg.Agents[i]):
   → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap, heartbeat}
     → tools.NewAsyncNotifier()                             ← shared by exec + tmux, routes by session key
-    → tools.NewRegistry() + register all tools             ← per-agent registry
+    → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
     → skills.Load(cfg.Skills.Dirs)
@@ -59,6 +64,7 @@ main
  ├── config        (no deps)
  ├── log           → modernc.org/sqlite
  ├── secrets       → BurntSushi/toml
+ │   └── secrets/bitwarden → log
  ├── anthropic     (no deps)
  ├── session       → anthropic, log
  ├── memory        → modernc.org/sqlite, fsnotify/v4 (file watching for auto-reindex)
@@ -303,6 +309,13 @@ Features:
 - **Output redaction:** Secret values in command/response output → `[REDACTED]` (skips values < 4 chars)
 - **Path blocking:** Commands referencing `secrets.toml` or `/proc/self/environ` are refused
 
+**Bitwarden integration** (`secrets/bitwarden/`): Optional dynamic secret store. Depends only on `log` (leaf package). Two-tier aisudo model:
+- Metadata refresh: `sudo -u bitwarden bw list items` (allowlisted, auto-approved)
+- Password fetch: `sudo -u bitwarden bw get password <id>` (requires Telegram approval)
+- Template syntax: `{{secret:bw.UUID}}` — resolved in `http_request` and `exec` after regular secret resolution
+- Host validation: vault item URI fields → allowed hosts (same pattern as `allowed_hosts` in secrets.toml)
+- TTL-based caching with background cleanup goroutine
+
 ## Logging (`log/`)
 
 **Two-phase init:** Before `log.Init()`, events go to stderr and are buffered in memory. When `Init()` opens the event file, buffered events are replayed to it. This ensures config-load warnings (e.g. unknown keys) appear in the log file despite being emitted before the file path is known.
@@ -345,6 +358,8 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `schedule_wake` | schedule.go | Schedule message injection at specified time or delay. One-shot, auto-cleaned after firing. |
 | `tts` | voice.go | Convert text to speech via TTS provider (Edge TTS or OpenAI). Sends audio as Telegram voice note. Configurable rate/speed via `tts_rate`. |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
+| `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
+| `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
 
 ### Tmux Memory Monitor (`tools/tmux_memory.go`)
 
