@@ -887,6 +887,24 @@ func TestFormatToolCall_LongParams(t *testing.T) {
 	}
 }
 
+func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
+	b := &Bot{}
+	// Simulate a tool call where the JSON string value contains literal \n and \t
+	params := json.RawMessage(`{"content":"line1\nline2\n\tindented"}`)
+	text := b.formatToolCall("write", params)
+
+	// After unescaping, the <pre> block should contain actual newlines and tabs
+	if strings.Contains(text, `\n`) {
+		t.Errorf("literal \\n should be unescaped to real newline, got: %s", text)
+	}
+	if strings.Contains(text, `\t`) {
+		t.Errorf("literal \\t should be unescaped to real tab, got: %s", text)
+	}
+	if !strings.Contains(text, "line1\nline2") {
+		t.Errorf("expected real newline between line1 and line2, got: %s", text)
+	}
+}
+
 // --- RegisterCommands ---
 
 func TestRegisterCommands(t *testing.T) {
