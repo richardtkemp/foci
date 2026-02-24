@@ -951,6 +951,43 @@ func TestRegisterCommands_APIError(t *testing.T) {
 	b.RegisterCommands()
 }
 
+// --- sendReply with empty text ---
+
+func TestSendReply_EmptyTextStillSends(t *testing.T) {
+	// sendReply does NOT guard against empty text — that's the caller's
+	// responsibility. This test proves the guard in processAgentMessage is
+	// needed: without it, empty agent responses would reach sendReply and
+	// hit the Telegram API with "message text is empty".
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	msg := makeMsg(111, "owner", "hello")
+
+	b.sendReply(msg, "111", "")
+	if mock.sentCount() != 1 {
+		t.Errorf("sends = %d, want 1 (sendReply does not guard empty text)", mock.sentCount())
+	}
+}
+
+func TestEmptyResponseGuard(t *testing.T) {
+	// Verify the guard logic: empty and whitespace-only strings should be
+	// detected. This mirrors the strings.TrimSpace check in processAgentMessage.
+	cases := []struct {
+		response string
+		isEmpty  bool
+	}{
+		{"", true},
+		{"   ", true},
+		{"\n\t", true},
+		{"hello", false},
+		{" x ", false},
+	}
+	for _, tc := range cases {
+		got := strings.TrimSpace(tc.response) == ""
+		if got != tc.isEmpty {
+			t.Errorf("TrimSpace(%q)==\"\" = %v, want %v", tc.response, got, tc.isEmpty)
+		}
+	}
+}
+
 // --- SendNotification guard ---
 
 func TestSendNotification_EmptyTextSkipped(t *testing.T) {
