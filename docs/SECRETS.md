@@ -2,7 +2,7 @@
 
 ## Overview
 
-Clod stores credentials in `secrets.toml` (alongside `clod.toml`). Secrets are never injected into the agent's message context. They are resolved at tool execution time via `{{secret:NAME}}` templates and redacted from tool output.
+Clod stores credentials in `secrets.toml` (alongside `clod.toml`). Secrets are never injected into the agent's message context. They are resolved at tool execution time via `{{secret:NAME}}` templates in `http_request` headers/body, and redacted from all tool output.
 
 ## Managing Secrets
 
@@ -30,13 +30,13 @@ Keys use `section.key` format. The `[anthropic]` and `[telegram]` sections are u
 
 ### Referencing secrets
 
-Use `{{secret:section.key}}` in `http_request` headers/body (preferred) or exec commands:
+Use `{{secret:section.key}}` in `http_request` headers/body:
 
 ```
-curl -H "Authorization: Bearer {{secret:custom.github_token}}" https://api.github.com/user
+http_request with headers: {"Authorization": "Bearer {{secret:custom.github_token}}"}
 ```
 
-Templates are resolved before the request is sent or command is executed. The secret value never appears in the agent's context — only the template string.
+Templates are resolved before the request is sent. The secret value never appears in the agent's context — only the template string. Secret templates are **blocked in exec** — use `http_request` for any API call that needs credentials.
 
 ## Domain-Locked Secrets (`http_request`)
 
@@ -83,22 +83,11 @@ The agent uses `http_request` to make API calls with secrets:
 - **Response redaction** — secret values in the response body are replaced with `[REDACTED]`, preventing the agent from seeing raw credentials echoed back.
 - **Case-insensitive host matching** — per RFC 4343, host comparison is case-insensitive.
 
-### Migration from exec
+### Why not exec?
 
-Secrets in exec commands (`{{secret:NAME}}` in shell commands) are deprecated. A warning is logged when used. Migrate API calls to `http_request`:
+Regular secret templates (`{{secret:NAME}}`) are **blocked in exec** — the tool returns an error. Secrets must flow through `http_request`, which provides domain locking, redirect blocking, and response redaction. Exec commands run arbitrary shell code, making it impossible to guarantee secrets aren't leaked via pipes, subshells, or environment variables.
 
-**Before (exec, deprecated):**
-```
-curl -H "Authorization: Bearer {{secret:custom.api_key}}" https://api.example.com/data
-```
-
-**After (http_request, preferred):**
-```json
-{
-  "url": "https://api.example.com/data",
-  "headers": { "Authorization": "Bearer {{secret:custom.api_key}}" }
-}
-```
+**Exception:** Bitwarden templates (`{{secret:bw.UUID}}`) are allowed in exec because they're approval-gated via aisudo — the user must explicitly approve each password fetch via Telegram.
 
 Add `allowed_hosts` to the secret's section in `secrets.toml`. Secrets without `allowed_hosts` cannot be used in `http_request`.
 

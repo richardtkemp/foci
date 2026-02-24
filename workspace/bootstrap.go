@@ -90,7 +90,7 @@ func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 func buildSecretsBlock(names []string, hasBitwarden bool) anthropic.SystemBlock {
 	var text string
 	if len(names) > 0 {
-		text = "Available secrets for {{secret:NAME}} templates in http_request headers/body (preferred) or exec commands: " + strings.Join(names, ", ")
+		text = "Available secrets for {{secret:NAME}} templates in http_request headers/body: " + strings.Join(names, ", ")
 	}
 	if hasBitwarden {
 		if text != "" {
