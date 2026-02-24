@@ -135,6 +135,14 @@ type VoiceConfig struct {
 	TTSRate     float64 `toml:"tts_rate"`    // speech rate multiplier: 1.0 = normal, 1.3 = 30% faster, 0.8 = 20% slower
 }
 
+type BitwardenConfig struct {
+	Enabled         bool   `toml:"enabled"`
+	RefreshInterval string `toml:"refresh_interval"` // how often to refresh item metadata (default "15m")
+	SecretTTL       string `toml:"secret_ttl"`       // how long unlocked values stay cached (default "30m")
+	SessionCmd      string `toml:"session_cmd"`      // command to get BW session token (required when enabled)
+	CleanupInterval string `toml:"cleanup_interval"` // how often to purge expired values (default "1m")
+}
+
 type CacheConfig struct {
 	Strategy string `toml:"strategy"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
 }
@@ -198,6 +206,7 @@ type Config struct {
 	HTTP         HTTPConfig         `toml:"http"`
 	Logging      LoggingConfig      `toml:"logging"`
 	Voice        VoiceConfig        `toml:"voice"`
+	Bitwarden    BitwardenConfig     `toml:"bitwarden"`
 	Cache        CacheConfig        `toml:"cache"`
 	ManaWarnings ManaWarningsConfig `toml:"usage_warnings"`
 	Environment  EnvironmentConfig  `toml:"environment"`
@@ -236,6 +245,22 @@ func validate(cfg *Config) error {
 	}
 	if _, err := time.ParseDuration(cfg.Logging.WarningWindowDuration); err != nil {
 		return fmt.Errorf("[logging] warning_window_duration = %q: %w", cfg.Logging.WarningWindowDuration, err)
+	}
+
+	// Bitwarden
+	if cfg.Bitwarden.Enabled {
+		if cfg.Bitwarden.SessionCmd == "" {
+			return fmt.Errorf("[bitwarden] session_cmd is required when enabled")
+		}
+		if _, err := time.ParseDuration(cfg.Bitwarden.RefreshInterval); err != nil {
+			return fmt.Errorf("[bitwarden] refresh_interval = %q: %w", cfg.Bitwarden.RefreshInterval, err)
+		}
+		if _, err := time.ParseDuration(cfg.Bitwarden.SecretTTL); err != nil {
+			return fmt.Errorf("[bitwarden] secret_ttl = %q: %w", cfg.Bitwarden.SecretTTL, err)
+		}
+		if _, err := time.ParseDuration(cfg.Bitwarden.CleanupInterval); err != nil {
+			return fmt.Errorf("[bitwarden] cleanup_interval = %q: %w", cfg.Bitwarden.CleanupInterval, err)
+		}
 	}
 
 	// Cache
@@ -407,6 +432,17 @@ func Load(path string) (*Config, error) {
 	if cfg.Anthropic.CredentialsFile == "" {
 		cfg.Anthropic.CredentialsFile = "~/.claude/.credentials.json"
 	}
+	// Bitwarden defaults
+	if cfg.Bitwarden.RefreshInterval == "" {
+		cfg.Bitwarden.RefreshInterval = "15m"
+	}
+	if cfg.Bitwarden.SecretTTL == "" {
+		cfg.Bitwarden.SecretTTL = "30m"
+	}
+	if cfg.Bitwarden.CleanupInterval == "" {
+		cfg.Bitwarden.CleanupInterval = "1m"
+	}
+
 	if cfg.Cache.Strategy == "" {
 		cfg.Cache.Strategy = "auto"
 	}

@@ -29,6 +29,7 @@ type Bootstrap struct {
 	dir           string
 	fileOrder     []string
 	secretNames   []string // available secret names for {{secret:NAME}} templates
+	hasBitwarden  bool     // bitwarden integration is enabled
 	cached        []anthropic.SystemBlock
 	cachedWithSec []anthropic.SystemBlock // cached blocks with secrets injected
 	mu            sync.RWMutex
@@ -46,11 +47,13 @@ func NewBootstrap(dir string, fileOrder []string) *Bootstrap {
 }
 
 // SetSecretNames sets the available secret names to be injected into system blocks.
-// Names should be sorted alphabetically. Call before using SystemBlocks().
-func (b *Bootstrap) SetSecretNames(names []string) {
+// Names should be sorted alphabetically. When hasBitwarden is true, a note about
+// bitwarden availability is appended to the secrets block.
+func (b *Bootstrap) SetSecretNames(names []string, hasBitwarden bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.secretNames = names
+	b.hasBitwarden = hasBitwarden
 	b.cachedWithSec = nil // invalidate cache so it's regenerated with new secrets
 }
 
@@ -69,9 +72,9 @@ func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 	blocks := make([]anthropic.SystemBlock, len(b.cached))
 	copy(blocks, b.cached)
 
-	// Inject secrets block if we have secret names
-	if len(b.secretNames) > 0 {
-		secretsBlock := buildSecretsBlock(b.secretNames)
+	// Inject secrets block if we have secret names or bitwarden
+	if len(b.secretNames) > 0 || b.hasBitwarden {
+		secretsBlock := buildSecretsBlock(b.secretNames, b.hasBitwarden)
 		blocks = append(blocks, secretsBlock)
 	}
 
@@ -84,8 +87,17 @@ func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 }
 
 // buildSecretsBlock creates a system block listing available secrets
-func buildSecretsBlock(names []string) anthropic.SystemBlock {
-	text := "Available secrets for {{secret:NAME}} templates in http_request headers/body (preferred) or exec commands: " + strings.Join(names, ", ")
+func buildSecretsBlock(names []string, hasBitwarden bool) anthropic.SystemBlock {
+	var text string
+	if len(names) > 0 {
+		text = "Available secrets for {{secret:NAME}} templates in http_request headers/body (preferred) or exec commands: " + strings.Join(names, ", ")
+	}
+	if hasBitwarden {
+		if text != "" {
+			text += "\n\n"
+		}
+		text += "Bitwarden vault is available. Use bitwarden_search to find items, then bitwarden_unlock to unlock a specific item (requires administrator approval). Once unlocked, reference with {{secret:bw.ITEM_ID}} in http_request. Host validation uses the vault item's URI fields."
+	}
 	return anthropic.SystemBlock{
 		Type: "text",
 		Text: text,

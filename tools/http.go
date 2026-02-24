@@ -12,13 +12,14 @@ import (
 
 	"clod/log"
 	"clod/secrets"
+	"clod/secrets/bitwarden"
 )
 
 // NewHTTPRequestTool creates an http_request tool with domain-locked secret resolution.
 // Secrets referenced via {{secret:NAME}} are resolved server-side and validated
 // against per-secret allowed_hosts before the request is sent. If store is nil,
 // requests without secrets work normally but secret templates will fail.
-func NewHTTPRequestTool(store *secrets.Store) *Tool {
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers/body are resolved server-side and validated against allowed_hosts. Preferred over exec for API calls with secrets.",
@@ -52,12 +53,12 @@ func NewHTTPRequestTool(store *secrets.Store) *Tool {
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return executeHTTPRequest(ctx, params, store)
+			return executeHTTPRequest(ctx, params, store, bwStore)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store) (string, error) {
 	var p struct {
 		URL     string            `json:"url"`
 		Method  string            `json:"method"`
@@ -84,38 +85,83 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	secretRefs := secrets.FindSecretRefs(allText.String())
 	hasSecrets := len(secretRefs) > 0
 
+	// Split refs into regular (custom.key) and bitwarden (bw.UUID) groups
+	var regularRefs, bwRefs []string
+	for _, name := range secretRefs {
+		if bitwarden.IsBitwardenRef(name) {
+			bwRefs = append(bwRefs, name)
+		} else {
+			regularRefs = append(regularRefs, name)
+		}
+	}
+	hasBWSecrets := len(bwRefs) > 0
+
 	if parsed, err := url.Parse(p.URL); err == nil {
-		log.Debugf("http_request", "request %s %s secrets=%d", p.Method, parsed.Hostname(), len(secretRefs))
+		log.Debugf("http_request", "request %s %s secrets=%d (bw=%d)", p.Method, parsed.Hostname(), len(secretRefs), len(bwRefs))
 	}
 
-	// Validate each secret against allowed_hosts
-	if hasSecrets {
+	// Validate regular secrets against allowed_hosts
+	if len(regularRefs) > 0 {
 		if store == nil {
 			return "", fmt.Errorf("secrets referenced but no secret store configured")
 		}
-		for _, name := range secretRefs {
+		for _, name := range regularRefs {
 			if err := store.CheckHostAllowed(name, p.URL); err != nil {
 				return "", fmt.Errorf("secret host check: %w", err)
 			}
 		}
 	}
 
+	// Validate bitwarden secrets against vault item URIs
+	if hasBWSecrets {
+		if bwStore == nil {
+			return "", fmt.Errorf("bitwarden secrets referenced but bitwarden is not configured")
+		}
+		for _, name := range bwRefs {
+			id := bitwarden.ExtractID(name)
+			if err := bwStore.CheckHostAllowed(id, p.URL); err != nil {
+				return "", fmt.Errorf("bitwarden host check: %w", err)
+			}
+		}
+	}
+
 	// Resolve secret templates in headers and body
 	resolvedHeaders := make(map[string]string, len(p.Headers))
-	if store != nil && hasSecrets {
+	if hasSecrets {
 		for k, v := range p.Headers {
-			resolved, err := store.Resolve(v)
-			if err != nil {
-				return "", fmt.Errorf("resolve header %q: %w", k, err)
+			// Resolve regular secrets first
+			if store != nil && len(regularRefs) > 0 {
+				resolved, err := store.Resolve(v)
+				if err != nil {
+					return "", fmt.Errorf("resolve header %q: %w", k, err)
+				}
+				v = resolved
 			}
-			resolvedHeaders[k] = resolved
+			// Then resolve bitwarden secrets
+			if bwStore != nil && hasBWSecrets {
+				resolved, err := bwStore.Resolve(v)
+				if err != nil {
+					return "", fmt.Errorf("resolve bw header %q: %w", k, err)
+				}
+				v = resolved
+			}
+			resolvedHeaders[k] = v
 		}
 		if p.Body != "" {
-			resolved, err := store.Resolve(p.Body)
-			if err != nil {
-				return "", fmt.Errorf("resolve body: %w", err)
+			if store != nil && len(regularRefs) > 0 {
+				resolved, err := store.Resolve(p.Body)
+				if err != nil {
+					return "", fmt.Errorf("resolve body: %w", err)
+				}
+				p.Body = resolved
 			}
-			p.Body = resolved
+			if bwStore != nil && hasBWSecrets {
+				resolved, err := bwStore.Resolve(p.Body)
+				if err != nil {
+					return "", fmt.Errorf("resolve bw body: %w", err)
+				}
+				p.Body = resolved
+			}
 		}
 	} else {
 		for k, v := range p.Headers {
@@ -193,6 +239,9 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	// Redact secrets from response
 	if store != nil {
 		bodyStr = store.Redact(bodyStr)
+	}
+	if bwStore != nil {
+		bodyStr = bwStore.Redact(bodyStr)
 	}
 
 	// Truncate body to 50k chars

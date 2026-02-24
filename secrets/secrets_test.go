@@ -475,6 +475,12 @@ func TestFindSecretRefs(t *testing.T) {
 	if len(refs) != 2 {
 		t.Errorf("expected 2 unique refs, got %v", refs)
 	}
+
+	// UUID-style key with hyphens (bitwarden)
+	refs = FindSecretRefs("{{secret:bw.abc12345-6789-def0-1234-567890abcdef}}")
+	if len(refs) != 1 || refs[0] != "bw.abc12345-6789-def0-1234-567890abcdef" {
+		t.Errorf("expected bw UUID ref, got %v", refs)
+	}
 }
 
 func TestSavePreservesAllowedHosts(t *testing.T) {

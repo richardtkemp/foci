@@ -23,6 +23,7 @@ import (
 	"clod/log"
 	"clod/memory"
 	"clod/secrets"
+	"clod/secrets/bitwarden"
 	"clod/session"
 	"clod/skills"
 	"clod/state"
@@ -123,6 +124,47 @@ func main() {
 	openrouterKey := ""
 	if v, ok := store.Get("openrouter.api_key"); ok {
 		openrouterKey = v
+	}
+
+	// Shared: Bitwarden store (optional)
+	var bwStore *bitwarden.Store
+	if cfg.Bitwarden.Enabled {
+		// Get session token by running session_cmd
+		sessionOut, err := exec.Command("sh", "-c", cfg.Bitwarden.SessionCmd).Output()
+		if err != nil {
+			log.Fatalf("main", "bitwarden session_cmd failed: %v", err)
+		}
+		sessionToken := strings.TrimSpace(string(sessionOut))
+		if sessionToken == "" {
+			log.Fatalf("main", "bitwarden session_cmd returned empty token")
+		}
+
+		secretTTL, _ := time.ParseDuration(cfg.Bitwarden.SecretTTL)
+		bwExec := &bitwarden.DefaultExecutor{SessionToken: sessionToken}
+		bwStore = bitwarden.New(bwExec, secretTTL)
+
+		if err := bwStore.Refresh(); err != nil {
+			log.Errorf("main", "bitwarden initial refresh: %v", err)
+		} else {
+			log.Infof("main", "bitwarden: loaded %d vault items", bwStore.ItemCount())
+		}
+
+		// Background refresh ticker
+		refreshInterval, _ := time.ParseDuration(cfg.Bitwarden.RefreshInterval)
+		go func() {
+			ticker := time.NewTicker(refreshInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := bwStore.Refresh(); err != nil {
+					log.Warnf("bitwarden", "background refresh: %v", err)
+				}
+			}
+		}()
+
+		// Background cleanup of expired values
+		cleanupInterval, _ := time.ParseDuration(cfg.Bitwarden.CleanupInterval)
+		bwStore.StartCleanup(cleanupInterval)
+		defer bwStore.Close()
 	}
 
 	// Shared: Anthropic client
@@ -405,6 +447,7 @@ func main() {
 			client:              client,
 			sessions:            sessions,
 			store:               store,
+			bwStore:             bwStore,
 			stateStore:          stateStore,
 			memIdx:              agentMemIdx,
 			reminderStore:       reminderStore,
@@ -779,6 +822,7 @@ type setupParams struct {
 	client              *anthropic.Client
 	sessions            *session.Store
 	store               *secrets.Store
+	bwStore             *bitwarden.Store
 	stateStore          *state.Store
 	memIdx              *memory.Index
 	reminderStore       *memory.ReminderStore
@@ -836,14 +880,14 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}()
 	})
-	registry.Register(tools.NewExecTool(p.store, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
+	registry.Register(tools.NewExecTool(p.store, p.bwStore, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
 	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(p.store))
+	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
@@ -865,9 +909,15 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
 	}
 
+	// Bitwarden tools (if enabled)
+	if p.bwStore != nil {
+		registry.Register(tools.NewBitwardenSearchTool(p.bwStore))
+		registry.Register(tools.NewBitwardenUnlockTool(p.bwStore))
+	}
+
 	// Per-agent workspace bootstrap
 	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
-	bootstrap.SetSecretNames(p.store.Names())
+	bootstrap.SetSecretNames(p.store.Names(), p.bwStore != nil)
 	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 
 	// Per-agent skills
@@ -930,8 +980,15 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxToolLoops:            acfg.MaxToolLoops,
 		MaxOutputTokens:         acfg.MaxOutputTokens,
 	}
-	if p.store != nil {
+	if p.store != nil && p.bwStore != nil {
+		ag.Redact = func(text string) string {
+			text = p.store.Redact(text)
+			return p.bwStore.Redact(text)
+		}
+	} else if p.store != nil {
 		ag.Redact = p.store.Redact
+	} else if p.bwStore != nil {
+		ag.Redact = p.bwStore.Redact
 	}
 	ag.RestoreVoiceMode(sessionKey)
 	ag.SeedSessionMeta(sessionKey)
@@ -1203,6 +1260,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}))
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
 	cmds.Register(command.NewSecretsCommand(p.store))
+	cmds.Register(command.NewBitwardenCommand(p.bwStore, p.cfg.Bitwarden.Enabled))
 	cmds.Register(command.NewRestartCommand(nil))
 
 	// Auto-expose all slash commands as tools

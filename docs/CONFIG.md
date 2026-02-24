@@ -295,6 +295,35 @@ STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenA
 
 ---
 
+## `[bitwarden]`
+
+Bitwarden vault integration. Provides dynamic, approval-gated access to vault credentials via the `bw` CLI running as a dedicated `bitwarden` system user through aisudo.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable Bitwarden integration. Requires `session_cmd` and `bw` CLI installed. |
+| `session_cmd` | string | `""` | Shell command to obtain a BW session token (e.g. `"sudo -u bitwarden bw unlock --raw --passwordfile /path/to/pw"`). Required when enabled. |
+| `refresh_interval` | string | `"15m"` | How often to refresh vault item metadata. Go duration format. |
+| `secret_ttl` | string | `"30m"` | How long unlocked passwords stay cached before requiring re-approval. Go duration format. |
+| `cleanup_interval` | string | `"1m"` | How often to purge expired cached values. Go duration format. |
+
+Two-tier security model:
+- **`bw list items`** runs via `sudo -u bitwarden bw list items` (allowlisted in aisudo, auto-approved)
+- **`bw get password <id>`** runs via `sudo -u bitwarden bw get password` (requires Telegram approval via aisudo)
+
+Example:
+```toml
+[bitwarden]
+enabled = true
+session_cmd = "sudo -u bitwarden bw unlock --raw --passwordfile /home/bitwarden/.bw-pass"
+refresh_interval = "15m"
+secret_ttl = "30m"
+```
+
+See [docs/SECRETS.md](SECRETS.md) for the full security model and URI-based host validation.
+
+---
+
 ## `[cache]`
 
 Prompt caching strategy.

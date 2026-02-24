@@ -155,7 +155,7 @@ func TestSetSecretNames(t *testing.T) {
 	}
 
 	// Set secret names
-	b.SetSecretNames([]string{"anthropic.token", "github.pat"})
+	b.SetSecretNames([]string{"anthropic.token", "github.pat"}, false)
 
 	blocks = b.SystemBlocks()
 	// Should have 2 blocks: IDENTITY + secrets
@@ -184,7 +184,7 @@ func TestSetSecretNamesCacheInvalidation(t *testing.T) {
 	count1 := len(blocks1)
 
 	// Set secret names — should invalidate cache
-	b.SetSecretNames([]string{"my.secret"})
+	b.SetSecretNames([]string{"my.secret"}, false)
 
 	blocks2 := b.SystemBlocks()
 	count2 := len(blocks2)
@@ -200,7 +200,7 @@ func TestSecretsCacheControlOnLastBlock(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
 
 	b := NewBootstrap(dir, nil)
-	b.SetSecretNames([]string{"secret.key"})
+	b.SetSecretNames([]string{"secret.key"}, false)
 
 	blocks := b.SystemBlocks()
 	if len(blocks) != 3 {
@@ -253,7 +253,7 @@ func TestReloadInvalidatesSecretCache(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("content"), 0644)
 
 	b := NewBootstrap(dir, nil)
-	b.SetSecretNames([]string{"my.key"})
+	b.SetSecretNames([]string{"my.key"}, false)
 
 	// Build cache with secrets
 	blocks1 := b.SystemBlocks()

@@ -173,7 +173,7 @@ func (s *Store) Save() error {
 	return os.WriteFile(s.path, []byte(buf.String()), 0600)
 }
 
-var templateRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_.]+)\}\}`)
+var templateRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_.\-]+)\}\}`)
 
 // FindSecretRefs returns all secret names referenced by {{secret:NAME}} templates in text.
 // Returns nil if no templates are found.
