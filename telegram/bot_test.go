@@ -1217,3 +1217,62 @@ func TestChatUsernameRecording(t *testing.T) {
 		t.Errorf("expected alice, got %q", username)
 	}
 }
+
+// --- OnSessionKeyChange callback ---
+
+func TestSetSessionKey_FiresCallback(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	var callbackUsername, callbackKey string
+	b.OnSessionKeyChange = func(username, sessionKey string) {
+		callbackUsername = username
+		callbackKey = sessionKey
+	}
+
+	// Set a session key — callback should fire
+	b.SetSessionKey("agent:test:multiball:mb-1")
+	if callbackKey != "agent:test:multiball:mb-1" {
+		t.Errorf("callback key = %q, want %q", callbackKey, "agent:test:multiball:mb-1")
+	}
+
+	// Clear session key — callback should fire with empty
+	b.SetSessionKey("")
+	if callbackKey != "" {
+		t.Errorf("callback key = %q, want empty", callbackKey)
+	}
+	_ = callbackUsername // username is "" for test bots (no api)
+}
+
+func TestSetSessionKey_NilCallbackDoesNotPanic(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.OnSessionKeyChange = nil
+
+	// Should not panic
+	b.SetSessionKey("agent:test:multiball:mb-1")
+	b.SetSessionKey("")
+}
+
+func TestSetSessionKeyDirect_DoesNotFireCallback(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	called := false
+	b.OnSessionKeyChange = func(username, sessionKey string) {
+		called = true
+	}
+
+	b.SetSessionKeyDirect("agent:test:multiball:mb-1")
+	if called {
+		t.Error("SetSessionKeyDirect should not fire OnSessionKeyChange")
+	}
+	if sk := b.SessionKey(); sk != "agent:test:multiball:mb-1" {
+		t.Errorf("session key = %q, want %q", sk, "agent:test:multiball:mb-1")
+	}
+}
+
+func TestUsername_NilSafe(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	// testBot doesn't set b.api, so it's nil
+	if got := b.Username(); got != "" {
+		t.Errorf("Username() = %q, want empty for nil api", got)
+	}
+}

@@ -85,6 +85,8 @@ multiball_bots = ["spare1", "spare2"]  # shared pool (fallback for any agent)
 
 The user now has two (or more) parallel conversations with the same agent, each in its own Telegram chat, sharing the cached prefix. When the fork is done, `/done` in that chat detaches the bot and returns it to the pool.
 
+**Restart survival:** The `bot → session_key` mapping is persisted in the state store (`multiball:<telegram_username>` → `<session_key>`). On restart, mappings are restored if the session file still exists on disk. Stale mappings (session file deleted) are cleaned up automatically.
+
 **Why:** Sometimes you want to ask a side question without derailing the main conversation. Or run parallel investigations. Each gets its own chat window — no interleaving, no confusion.
 
 ### Voice (Telegram Voice Notes)

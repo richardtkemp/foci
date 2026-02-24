@@ -61,8 +61,9 @@ type Bot struct {
 	sessionKey   string       // override session key (multiball secondary bots only)
 	sessionMu    sync.RWMutex // protects sessionKey (mutable for secondary bots)
 	isSecondary  bool         // true for secondary bots (multiball)
-	pool         *Pool        // back-reference to pool (secondary bots only)
-	botToken     string       // for building file download URLs
+	pool                *Pool        // back-reference to pool (secondary bots only)
+	OnSessionKeyChange  func(username, sessionKey string) // fires after SetSessionKey (fork/release)
+	botToken            string       // for building file download URLs
 
 	transcriber       voice.STT // nil = voice notes not supported
 	tts               voice.TTS // nil = TTS not available
@@ -195,7 +196,21 @@ func (b *Bot) sessionKeyForMsg(chatID int64) string {
 }
 
 // SetSessionKey changes the override session key (used for multiball fork/done).
+// If OnSessionKeyChange is set, fires it outside the lock with the bot's username and new key.
 func (b *Bot) SetSessionKey(key string) {
+	b.sessionMu.Lock()
+	cb := b.OnSessionKeyChange
+	b.sessionKey = key
+	b.sessionMu.Unlock()
+
+	if cb != nil {
+		cb(b.Username(), key)
+	}
+}
+
+// SetSessionKeyDirect sets the session key without firing the OnSessionKeyChange callback.
+// Used during restoration to avoid re-persisting an already-persisted value.
+func (b *Bot) SetSessionKeyDirect(key string) {
 	b.sessionMu.Lock()
 	defer b.sessionMu.Unlock()
 	b.sessionKey = key
@@ -253,7 +268,11 @@ func (b *Bot) DefaultSessionKey() string {
 }
 
 // Username returns the bot's Telegram username.
+// Returns "" if the API client is not set (e.g. test bots).
 func (b *Bot) Username() string {
+	if b.api == nil {
+		return ""
+	}
 	return b.api.Username
 }
 

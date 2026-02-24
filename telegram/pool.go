@@ -145,6 +145,15 @@ func (p *Pool) Size() int {
 	return len(p.bots)
 }
 
+// ForEach calls fn for each bot in the pool.
+func (p *Pool) ForEach(fn func(*Bot)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.bots {
+		fn(e.bot)
+	}
+}
+
 // Available returns the number of idle bots.
 func (p *Pool) Available() int {
 	p.mu.Lock()

@@ -309,3 +309,56 @@ func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
 		t.Errorf("shared pool available = %d, want 1", mgr.SharedPool().Available())
 	}
 }
+
+// --- OnSessionKeyChange persistence integration ---
+
+func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {
+	// Verify that SetSessionKey fires the callback and the callback
+	// can persist/delete from a state store, matching the main.go wiring.
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+
+	// Simulate the callback wiring from main.go
+	persisted := map[string]string{} // key → value
+	mb.OnSessionKeyChange = func(username, sessionKey string) {
+		key := "multiball:" + username
+		if sessionKey == "" {
+			delete(persisted, key)
+		} else {
+			persisted[key] = sessionKey
+		}
+	}
+
+	// Fork: set session key
+	mb.SetSessionKey("agent:clutch:multiball:mb-123")
+	if v, ok := persisted["multiball:"]; !ok || v != "agent:clutch:multiball:mb-123" {
+		t.Errorf("persisted = %v, want multiball: → agent:clutch:multiball:mb-123", persisted)
+	}
+
+	// Done: clear session key
+	mb.SetSessionKey("")
+	if _, ok := persisted["multiball:"]; ok {
+		t.Error("persisted should be cleaned up after clear")
+	}
+}
+
+func TestMultiball_SetSessionKeyDirectSkipsCallback(t *testing.T) {
+	mb := testSecondaryBot("mb1")
+	called := false
+	mb.OnSessionKeyChange = func(username, sessionKey string) {
+		called = true
+	}
+
+	// Restoration path — should NOT fire callback
+	mb.SetSessionKeyDirect("agent:clutch:multiball:mb-456")
+	if called {
+		t.Error("SetSessionKeyDirect should not fire OnSessionKeyChange")
+	}
+	if sk := mb.SessionKey(); sk != "agent:clutch:multiball:mb-456" {
+		t.Errorf("session key = %q, want agent:clutch:multiball:mb-456", sk)
+	}
+}
