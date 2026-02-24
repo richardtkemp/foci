@@ -257,8 +257,12 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	}
 	defer resp.Body.Close()
 
-	// Read response (limit to 1MB)
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	// Read response — 10MB when saving to file, 1MB when returning to context
+	bodyLimit := int64(1024 * 1024)
+	if p.SaveTo != "" || isBinaryContentType(resp.Header.Get("Content-Type")) {
+		bodyLimit = 10 * 1024 * 1024
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}

@@ -642,3 +642,36 @@ func TestHTTPRequestTimeoutCap(t *testing.T) {
 		t.Errorf("expected timeout error, got: %v", err)
 	}
 }
+
+func TestHTTPRequestSaveToLargeBody(t *testing.T) {
+	// 2MB response — exceeds 1MB inline limit but within 10MB save_to limit
+	bigBody := strings.Repeat("x", 2*1024*1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		fmt.Fprint(w, bigBody)
+	}))
+	defer srv.Close()
+
+	savePath := filepath.Join(t.TempDir(), "big.bin")
+	tool := NewHTTPRequestTool(nil, nil, "")
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":     srv.URL,
+		"save_to": savePath,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	data, err := os.ReadFile(savePath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(data) != 2*1024*1024 {
+		t.Errorf("saved %d bytes, want %d", len(data), 2*1024*1024)
+	}
+	if !strings.Contains(result, "2097152") {
+		t.Errorf("result should mention byte count: %s", result)
+	}
+}
