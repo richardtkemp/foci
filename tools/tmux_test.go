@@ -694,6 +694,8 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 
 	nameA := "clod-test-wakeroute-a"
 	nameB := "clod-test-wakeroute-b"
+	exec.Command("tmux", "kill-session", "-t", nameA).Run()
+	exec.Command("tmux", "kill-session", "-t", nameB).Run()
 	defer tmuxCleanup(t, nameA)
 	defer tmuxCleanup(t, nameB)
 
