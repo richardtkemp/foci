@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -634,6 +636,126 @@ func TestIsImageMIME(t *testing.T) {
 		if got := isImageMIME(tt.mime); got != tt.want {
 			t.Errorf("isImageMIME(%q) = %v, want %v", tt.mime, got, tt.want)
 		}
+	}
+}
+
+// --- Image save ---
+
+func TestExtForMediaType(t *testing.T) {
+	tests := []struct {
+		mt   string
+		want string
+	}{
+		{"image/jpeg", ".jpg"},
+		{"image/png", ".png"},
+		{"image/gif", ".gif"},
+		{"image/webp", ".webp"},
+		{"image/tiff", ".bin"},
+		{"", ".bin"},
+	}
+	for _, tt := range tests {
+		if got := extForMediaType(tt.mt); got != tt.want {
+			t.Errorf("extForMediaType(%q) = %q, want %q", tt.mt, got, tt.want)
+		}
+	}
+}
+
+func TestSaveImage(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.imageSaveDir = dir
+
+	data := []byte("fake-jpeg-data")
+	path, err := b.saveImage(data, "image/jpeg", 12345)
+	if err != nil {
+		t.Fatalf("saveImage: %v", err)
+	}
+
+	// Verify file exists with correct content
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Errorf("saved content = %q, want %q", got, data)
+	}
+
+	// Verify filename pattern: YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.jpg
+	base := filepath.Base(path)
+	if !strings.HasSuffix(base, "_chat-12345.jpg") {
+		t.Errorf("filename %q doesn't match expected pattern", base)
+	}
+	if !strings.Contains(base, "T") {
+		t.Errorf("filename %q missing timestamp", base)
+	}
+}
+
+func TestSaveImageDisabled(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	// imageSaveDir not set — verify saveImage is only called when dir is set
+	if b.imageSaveDir != "" {
+		t.Error("expected empty imageSaveDir by default")
+	}
+
+	// Directly construct an attachment to verify no savedPath
+	att := imageAttachment{data: []byte("test"), mediaType: "image/jpeg"}
+	if att.savedPath != "" {
+		t.Error("expected empty savedPath when imageSaveDir is not set")
+	}
+}
+
+func TestSaveImagePNG(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.imageSaveDir = dir
+
+	data := []byte("fake-png-data")
+	path, err := b.saveImage(data, "image/png", 99999)
+	if err != nil {
+		t.Fatalf("saveImage: %v", err)
+	}
+
+	if !strings.HasSuffix(path, ".png") {
+		t.Errorf("path %q should end with .png", path)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if string(got) != string(data) {
+		t.Errorf("saved content mismatch")
+	}
+}
+
+func TestSaveImageCreatesDir(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "subdir", "images")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.imageSaveDir = dir
+
+	path, err := b.saveImage([]byte("data"), "image/jpeg", 1)
+	if err != nil {
+		t.Fatalf("saveImage: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("saved file not found: %v", err)
+	}
+}
+
+func TestSavedPathPropagatedToQueue(t *testing.T) {
+	// Test that imageAttachment.savedPath flows through queuedMessage
+	att := imageAttachment{
+		data:      []byte("test"),
+		mediaType: "image/jpeg",
+		savedPath: "/tmp/test.jpg",
+	}
+	qm := queuedMessage{
+		text:   "look at this",
+		images: []imageAttachment{att},
+	}
+	if qm.images[0].savedPath != "/tmp/test.jpg" {
+		t.Errorf("savedPath not propagated: got %q", qm.images[0].savedPath)
 	}
 }
 

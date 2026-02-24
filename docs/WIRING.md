@@ -40,6 +40,7 @@ config.Load(path)                                        ← validates values; l
     → auto-expose all commands as tools
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
+    → bot.SetImageSaveDir(acfg.ImageSaveDir || cfg.Telegram.ImageSaveDir)
     → agent.RestoreVoiceMode(defaultSessionKey())           ← deferred until default chat is known
     → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
     → agent.NewHeartbeat(agent, defaultSessionKey, interval)  ← lazy session key via SessionKeyFn

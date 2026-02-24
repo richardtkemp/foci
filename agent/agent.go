@@ -29,6 +29,7 @@ import (
 type ImageData struct {
 	MediaType string // "image/jpeg", "image/png", etc.
 	Data      []byte // raw bytes (base64-encoded when building content blocks)
+	SavedPath string // non-empty if image was persisted to disk
 }
 
 // sessionMeta tracks per-session state for metadata injection.
@@ -521,10 +522,18 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		})
 	}
 
+	// Annotate with saved image paths so the agent knows where files are
+	var imagePaths string
+	for _, img := range images {
+		if img.SavedPath != "" {
+			imagePaths += "[Image saved to: " + img.SavedPath + "]\n"
+		}
+	}
+
 	metaPrefix := buildMetaPrefix(now, turnModel, mana, sm)
 	reminderBlock := a.collectReminders()
 	warningBlock := a.collectWarnings()
-	msgBody := userMessage
+	msgBody := imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && (trigger == "" || trigger == "user") {
 		msgBody = userMessage + "\n\n" + userMessage

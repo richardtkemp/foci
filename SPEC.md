@@ -107,6 +107,10 @@ The user now has two (or more) parallel conversations with the same agent, each 
 
 Voice mode is session state, not config — it resets on session reset.
 
+### Image Persistence
+
+When `image_save_dir` is configured (global or per-agent), received images are saved to disk with a timestamped filename (`YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`). The saved path is injected into the user message text as `[Image saved to: /path/to/file.jpg]` so the agent can reference, copy, or process the file. Saving is non-fatal — errors are logged as warnings and the image is still sent to the API as usual.
+
 ### Message Metadata
 
 Each user message injected into the conversation carries metadata the agent can see. This is NOT in the system prompt (that would bust cache) — it's prepended to the user message content.

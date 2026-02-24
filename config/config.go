@@ -38,6 +38,7 @@ type AgentConfig struct {
 	TTSRate             float64           `toml:"tts_rate"`              // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
+	ImageSaveDir        string            `toml:"image_save_dir"`        // save received images to this directory (empty = disabled)
 }
 
 type AnthropicConfig struct {
@@ -66,6 +67,7 @@ type TelegramConfig struct {
 	MultiballSessionTTL string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
+	ImageSaveDir        string                       `toml:"image_save_dir"`        // save received images to this directory (empty = disabled, per-agent overrides)
 }
 
 type SessionsConfig struct {
@@ -652,6 +654,14 @@ func (c *Config) ResolveAllPaths() {
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {
 		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)
+	}
+	if c.Telegram.ImageSaveDir != "" {
+		c.Telegram.ImageSaveDir = ResolvePath(c.Telegram.ImageSaveDir)
+	}
+	for i := range c.Agents {
+		if c.Agents[i].ImageSaveDir != "" {
+			c.Agents[i].ImageSaveDir = ResolvePath(c.Agents[i].ImageSaveDir)
+		}
 	}
 }
 

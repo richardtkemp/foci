@@ -37,6 +37,7 @@ type botClient interface {
 type imageAttachment struct {
 	data      []byte
 	mediaType string
+	savedPath string // non-empty if saved to disk
 }
 
 // queuedMessage is a message waiting for the agent to process.
@@ -79,6 +80,7 @@ type Bot struct {
 	stateStore           *state.Store // nil = no persistence
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
+	imageSaveDir         string       // if non-empty, save received images to this directory
 }
 
 // NewBot creates a new Telegram bot.
@@ -127,6 +129,12 @@ func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
 // SetToolCallPreviewChars sets the max characters for tool call param preview.
 func (b *Bot) SetToolCallPreviewChars(n int) {
 	b.toolCallPreviewChars = n
+}
+
+// SetImageSaveDir configures auto-saving of received images to disk.
+// Empty string disables saving.
+func (b *Bot) SetImageSaveDir(dir string) {
+	b.imageSaveDir = dir
 }
 
 // SetStateStore configures persistent state for this bot.
@@ -527,13 +535,31 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		if data, err := b.downloadFile(photo.FileId); err != nil {
 			log.Errorf("telegram", "download photo: %s", b.sanitizeError(err))
 		} else {
-			images = append(images, imageAttachment{data: data, mediaType: "image/jpeg"})
+			att := imageAttachment{data: data, mediaType: "image/jpeg"}
+			if b.imageSaveDir != "" {
+				if path, err := b.saveImage(data, "image/jpeg", msg.Chat.Id); err != nil {
+					log.Warnf("telegram", "save image: %v", err)
+				} else {
+					att.savedPath = path
+					log.Infof("telegram", "saved image to %s", path)
+				}
+			}
+			images = append(images, att)
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
 		if data, err := b.downloadFile(msg.Document.FileId); err != nil {
 			log.Errorf("telegram", "download document: %s", b.sanitizeError(err))
 		} else {
-			images = append(images, imageAttachment{data: data, mediaType: msg.Document.MimeType})
+			att := imageAttachment{data: data, mediaType: msg.Document.MimeType}
+			if b.imageSaveDir != "" {
+				if path, err := b.saveImage(data, msg.Document.MimeType, msg.Chat.Id); err != nil {
+					log.Warnf("telegram", "save image: %v", err)
+				} else {
+					att.savedPath = path
+					log.Infof("telegram", "saved image to %s", path)
+				}
+			}
+			images = append(images, att)
 		}
 	}
 
@@ -747,7 +773,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		// Convert telegram images to agent image data
 		agentImages := make([]agent.ImageData, len(qm.images))
 		for i, img := range qm.images {
-			agentImages[i] = agent.ImageData{MediaType: img.mediaType, Data: img.data}
+			agentImages[i] = agent.ImageData{MediaType: img.mediaType, Data: img.data, SavedPath: img.savedPath}
 		}
 		response, err = b.agent.HandleMessageWithImages(turnCtx, sk, qm.text, agentImages)
 	} else {
@@ -1100,6 +1126,36 @@ func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// extForMediaType returns a file extension for the given media type.
+func extForMediaType(mt string) string {
+	switch mt {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".bin"
+	}
+}
+
+// saveImage writes image data to disk and returns the saved file path.
+func (b *Bot) saveImage(data []byte, mediaType string, chatID int64) (string, error) {
+	if err := os.MkdirAll(b.imageSaveDir, 0o755); err != nil {
+		return "", fmt.Errorf("create image dir: %w", err)
+	}
+	ext := extForMediaType(mediaType)
+	filename := fmt.Sprintf("%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), chatID, ext)
+	path := filepath.Join(b.imageSaveDir, filename)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("write image: %w", err)
+	}
+	return path, nil
 }
 
 // isImageMIME returns true if the MIME type is a supported image format.
