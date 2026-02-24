@@ -30,6 +30,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
+| `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
@@ -84,6 +85,7 @@ Telegram bot configuration.
 |-----|------|---------|-------------|
 | `bot_token` | string | `""` | Legacy single-bot token. Overridden by `secrets.toml` `[telegram] bot_token`. |
 | `allowed_users` | string[] | `[]` | Telegram user IDs allowed to interact with the bot. |
+| `enable_startup_notify` | bool | `true` | Send a startup notification when the service starts. Can be overridden per-agent with `startup_notification`. |
 | `multiball_bots` | string[] | `[]` | Shared multiball pool: references keys in `[telegram.bots]` map. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
 | `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. Set to `"0"` to disable auto-reclaim. Go duration format (`30m`, `2h`). Applies to both per-agent and shared pools. |
 | `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |

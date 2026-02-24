@@ -591,9 +591,19 @@ func main() {
 	// Start all bots
 	botMgr.StartAll(ctx)
 
-	// Send startup notifications to users via Telegram (if enabled)
-	if cfg.Telegram.EnableStartupNotify {
-		botMgr.SendStartupNotifications()
+	// Send startup notifications to users via Telegram
+	// Per-agent startup_notification overrides global enable_startup_notify
+	for _, id := range agentOrder {
+		inst := agents[id]
+		enabled := cfg.Telegram.EnableStartupNotify // global default
+		if inst.agentCfg.StartupNotification != nil {
+			enabled = *inst.agentCfg.StartupNotification // per-agent override
+		}
+		if enabled {
+			if bot := botMgr.PrimaryBot(id); bot != nil {
+				bot.SendStartupNotification(id)
+			}
+		}
 	}
 
 	// Start all heartbeats
@@ -1050,29 +1060,29 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
-		Client:                  p.client,
-		Sessions:                p.sessions,
-		Tools:                   registry,
-		EnvironmentBlock:        envBlock,
-		Bootstrap:               bootstrap,
-		Compactor:               compactor,
-		Reminders:               p.reminderStore,
-		AgentID:                 acfg.ID,
-		Model:                   acfg.Model,
-		ExtraSystemBlocks:       extraSystemBlocks,
-		CacheStrategy:           p.cfg.Cache.Strategy,
-		CacheBustDetect:         p.cfg.Logging.CacheBustDetect,
-		DuplicateMessages:       acfg.DuplicateMessages,
-		MaxResultChars:          p.cfg.Tools.MaxResultChars,
-		ToolResultTempDir:       p.cfg.Tools.TempDir,
-		StateStore:              p.stateStore,
-		UsageClient:             p.usageClient,
-		PromptRules:             agent.CompilePromptRules(p.cfg.PromptRules),
+		Client:                      p.client,
+		Sessions:                    p.sessions,
+		Tools:                       registry,
+		EnvironmentBlock:            envBlock,
+		Bootstrap:                   bootstrap,
+		Compactor:                   compactor,
+		Reminders:                   p.reminderStore,
+		AgentID:                     acfg.ID,
+		Model:                       acfg.Model,
+		ExtraSystemBlocks:           extraSystemBlocks,
+		CacheStrategy:               p.cfg.Cache.Strategy,
+		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
+		DuplicateMessages:           acfg.DuplicateMessages,
+		MaxResultChars:              p.cfg.Tools.MaxResultChars,
+		ToolResultTempDir:           p.cfg.Tools.TempDir,
+		StateStore:                  p.stateStore,
+		UsageClient:                 p.usageClient,
+		PromptRules:                 agent.CompilePromptRules(p.cfg.PromptRules),
 		CompactionSummaryPromptPath: p.cfg.Sessions.CompactionSummaryPrompt,
 		ReadPromptFile:              readPromptFile,
-		CompactionHandoffMsg:    p.cfg.Sessions.CompactionHandoffMsg,
-		MaxToolLoops:            acfg.MaxToolLoops,
-		MaxOutputTokens:         acfg.MaxOutputTokens,
+		CompactionHandoffMsg:        p.cfg.Sessions.CompactionHandoffMsg,
+		MaxToolLoops:                acfg.MaxToolLoops,
+		MaxOutputTokens:             acfg.MaxOutputTokens,
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
@@ -1602,7 +1612,7 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		heartbeat:         hb,
 		agentCfg:          acfg,
-		tmuxClearAll:       tmuxClearAll,
+		tmuxClearAll:      tmuxClearAll,
 	}
 }
 
