@@ -400,7 +400,7 @@ compaction_handoff_msg = "..."           # message after compaction
 session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
 ```
 
-All parameters have sensible defaults. Customize only what you need.
+All parameters have sensible defaults. Customize only what you need. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
 ### Heartbeat
 
