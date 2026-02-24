@@ -4,18 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // TelegramSender abstracts the telegram bot methods needed by the send_telegram tool.
 type TelegramSender interface {
+	// Default-chat methods (send to bot's last known chat).
 	SendText(text string) error
 	SendDocument(filePath string) error
 	SendVoice(filePath string) error
+
+	// Chat-targeted methods (send to a specific chat ID).
+	SendTextToChat(chatID int64, text string) error
+	SendDocumentToChat(chatID int64, filePath string) error
+	SendVoiceToChat(chatID int64, filePath string) error
 }
 
 // NewSendTelegramTool creates a tool that sends proactive messages, documents,
 // or voice notes via Telegram. The getSender callback returns the current bot
 // (nil if telegram is not configured).
+//
+// The tool extracts the chat ID from the session key (format agent:X:chat:CHATID)
+// and sends to that specific chat. Falls back to the bot's default chat when the
+// session key doesn't contain a chat ID (e.g. spawn branches, cron sessions).
 func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
@@ -55,10 +67,19 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 				return "", fmt.Errorf("telegram not configured")
 			}
 
+			// Extract chat ID from session key for targeted delivery.
+			chatID := chatIDFromSessionKey(SessionKeyFromContext(ctx))
+
 			var sent []string
 
 			if p.Text != "" {
-				if err := bot.SendText(p.Text); err != nil {
+				var err error
+				if chatID != 0 {
+					err = bot.SendTextToChat(chatID, p.Text)
+				} else {
+					err = bot.SendText(p.Text)
+				}
+				if err != nil {
 					return "", fmt.Errorf("send text: %w", err)
 				}
 				sent = append(sent, "text")
@@ -66,12 +87,24 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 
 			if p.FilePath != "" {
 				if p.AsVoice {
-					if err := bot.SendVoice(p.FilePath); err != nil {
+					var err error
+					if chatID != 0 {
+						err = bot.SendVoiceToChat(chatID, p.FilePath)
+					} else {
+						err = bot.SendVoice(p.FilePath)
+					}
+					if err != nil {
 						return "", fmt.Errorf("send voice: %w", err)
 					}
 					sent = append(sent, "voice note")
 				} else {
-					if err := bot.SendDocument(p.FilePath); err != nil {
+					var err error
+					if chatID != 0 {
+						err = bot.SendDocumentToChat(chatID, p.FilePath)
+					} else {
+						err = bot.SendDocument(p.FilePath)
+					}
+					if err != nil {
 						return "", fmt.Errorf("send document: %w", err)
 					}
 					sent = append(sent, "document")
@@ -81,6 +114,19 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 			return fmt.Sprintf("Sent: %s", joinWords(sent)), nil
 		},
 	}
+}
+
+// chatIDFromSessionKey extracts the chat ID from a session key with format
+// "agent:<name>:chat:<chatID>". Returns 0 if the key doesn't match this format.
+func chatIDFromSessionKey(key string) int64 {
+	// Match agent:X:chat:CHATID — the chat segment must be the third part.
+	parts := strings.Split(key, ":")
+	if len(parts) >= 4 && parts[2] == "chat" {
+		if id, err := strconv.ParseInt(parts[3], 10, 64); err == nil {
+			return id
+		}
+	}
+	return 0
 }
 
 func joinWords(words []string) string {
