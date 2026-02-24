@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clod/secrets"
 )
@@ -593,5 +594,51 @@ func TestDecodeDataURI(t *testing.T) {
 	_, err = decodeDataURI("data:image/png;base64")
 	if err == nil {
 		t.Error("expected error for malformed data URI")
+	}
+}
+
+func TestHTTPRequestCustomTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+
+	tool := NewHTTPRequestTool(nil, nil, "")
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":     srv.URL,
+		"timeout": 60,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "ok") {
+		t.Errorf("expected ok in result: %s", result)
+	}
+}
+
+func TestHTTPRequestTimeoutCap(t *testing.T) {
+	// A slow server that takes 2 seconds
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		fmt.Fprint(w, "slow")
+	}))
+	defer srv.Close()
+
+	tool := NewHTTPRequestTool(nil, nil, "")
+
+	// Request with 1-second timeout should fail
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":     srv.URL,
+		"timeout": 1,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "deadline exceeded") && !strings.Contains(err.Error(), "context") {
+		t.Errorf("expected timeout error, got: %v", err)
 	}
 }

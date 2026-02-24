@@ -12,12 +12,6 @@ import (
 // ScheduleWakeFn is a callback to schedule a wake event
 type ScheduleWakeFn func(delay time.Duration, message string) error
 
-// SetScheduleWakeFn is deprecated. Use NewScheduleWakeTool(fn) instead.
-// Kept for backward compatibility during transition.
-func SetScheduleWakeFn(fn ScheduleWakeFn) {
-	// no-op: callers should pass fn to NewScheduleWakeTool directly
-}
-
 // NewScheduleWakeTool creates a schedule_wake tool bound to the given wake function.
 // Each agent gets its own instance targeting its own session.
 func NewScheduleWakeTool(fn ...ScheduleWakeFn) *Tool {

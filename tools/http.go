@@ -63,6 +63,10 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				"save_from_json_path": {
 					"type": "string",
 					"description": "Dot-separated JSON path to extract from response (e.g. 'data.0.url'). If the extracted value is a data: URI (data:image/png;base64,...), it is decoded to binary. Requires save_to."
+				},
+				"timeout": {
+					"type": "integer",
+					"description": "Request timeout in seconds (default 30, max 300)"
 				}
 			},
 			"required": ["url"]
@@ -82,6 +86,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		Query   map[string]string `json:"query"`
 		SaveTo           string            `json:"save_to"`
 		SaveFromJSONPath string            `json:"save_from_json_path"`
+		Timeout          int              `json:"timeout"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
@@ -210,7 +215,15 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		bodyReader = strings.NewReader(p.Body)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	timeout := 30 * time.Second
+	if p.Timeout > 0 {
+		timeout = time.Duration(p.Timeout) * time.Second
+		if timeout > 300*time.Second {
+			timeout = 300 * time.Second
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, p.Method, reqURL, bodyReader)
@@ -224,7 +237,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	}
 
 	// Build client — block cross-domain redirects when secrets are present
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: timeout}
 	if hasSecrets {
 		originalHost := req.URL.Hostname()
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
