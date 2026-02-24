@@ -904,12 +904,23 @@ type AgentInfo struct {
 }
 
 // NewAgentsCommand returns a /agents command listing active agent sessions.
-func NewAgentsCommand(listFn func() []AgentInfo) *Command {
+// If registry and deps are non-nil, also supports "/agents new" to launch the creation wizard.
+func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *AgentNewDeps) *Command {
 	return &Command{
 		Name:        "agents",
 		Description: "List active agent sessions",
 		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
+			// /agents new — start wizard
+			if strings.TrimSpace(strings.ToLower(args)) == "new" {
+				if registry == nil || deps == nil {
+					return "Agent creation wizard is not available.", nil
+				}
+				w := newAgentWizard(*deps)
+				registry.SetWizard(w)
+				return "🧙 New Agent Wizard\n\nAgent ID (lowercase slug, e.g. `greek-tutor`):", nil
+			}
+
 			agents := listFn()
 			if len(agents) == 0 {
 				return "No agents configured.", nil

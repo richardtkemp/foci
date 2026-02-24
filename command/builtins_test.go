@@ -596,7 +596,7 @@ func TestAgentsCommand(t *testing.T) {
 			{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", Busy: false, MessageCount: 31},
 			{ID: "scout", SessionKey: "agent:scout:main", Model: "haiku-4", Busy: true, MessageCount: 12},
 		}
-	})
+	}, nil, nil)
 
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -636,7 +636,7 @@ func TestAgentsCommandNoSession(t *testing.T) {
 			{ID: "clutch", SessionKey: "agent:clutch:main", Model: "opus-4", MessageCount: 31},
 			{ID: "scout", SessionKey: "", Model: "", MessageCount: 0},
 		}
-	})
+	}, nil, nil)
 
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -687,7 +687,7 @@ func TestCompactCommandError(t *testing.T) {
 }
 
 func TestAgentsCommandEmpty(t *testing.T) {
-	cmd := NewAgentsCommand(func() []AgentInfo { return nil })
+	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, nil, nil)
 	result, _ := cmd.Execute(context.Background(), "")
 	if result != "No agents configured." {
 		t.Errorf("result = %q", result)

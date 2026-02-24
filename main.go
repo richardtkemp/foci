@@ -1236,7 +1236,14 @@ func setupAgent(p setupParams) *agentInstance {
 			return forkFn()
 		},
 	})
-	cmds.Register(command.NewAgentsCommand(p.agentListFn))
+	agentNewDeps := &command.AgentNewDeps{
+		ConfigPath:  p.configPath,
+		DefaultsDir: filepath.Join(filepath.Dir(acfg.Workspace), "shared", "defaults"),
+		HomeDir:     filepath.Dir(acfg.Workspace),
+		ListFn:      p.agentListFn,
+		SecretNames: func() []string { return p.store.Names() },
+	}
+	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
 	cmds.Register(command.NewCompactCommand(func(ctx context.Context) (int, error) {
 		if ag.Compactor == nil {
 			return 0, fmt.Errorf("compaction is not configured")

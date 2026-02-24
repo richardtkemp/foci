@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Command is a slash command that executes outside the agent pipeline.
@@ -16,9 +17,18 @@ type Command struct {
 	Hidden         bool // if true, excluded from /help and BotFather registration
 }
 
+// WizardHandler is implemented by interactive wizards that take over message routing.
+// While a wizard is active, all messages are routed to Handle() instead of normal
+// command dispatch or the agent queue.
+type WizardHandler interface {
+	Handle(text string) (response string, done bool)
+}
+
 // Registry holds registered slash commands and dispatches them.
 type Registry struct {
 	commands map[string]*Command
+	wizard   WizardHandler
+	wizardMu sync.Mutex
 }
 
 // NewRegistry creates an empty command registry.
@@ -73,4 +83,42 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 		return "Error: " + err.Error(), true
 	}
 	return result, true
+}
+
+// SetWizard activates a wizard that intercepts all messages.
+func (r *Registry) SetWizard(w WizardHandler) {
+	r.wizardMu.Lock()
+	defer r.wizardMu.Unlock()
+	r.wizard = w
+}
+
+// ClearWizard removes the active wizard.
+func (r *Registry) ClearWizard() {
+	r.wizardMu.Lock()
+	defer r.wizardMu.Unlock()
+	r.wizard = nil
+}
+
+// HandleMessage routes a message to the active wizard, if any.
+// Returns (response, true) if the wizard handled the message, or ("", false)
+// if no wizard is active. Handles /cancel and /stop to abort the wizard.
+func (r *Registry) HandleMessage(text string) (string, bool) {
+	r.wizardMu.Lock()
+	defer r.wizardMu.Unlock()
+
+	if r.wizard == nil {
+		return "", false
+	}
+
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "/cancel" || lower == "/stop" {
+		r.wizard = nil
+		return "Wizard cancelled.", true
+	}
+
+	response, done := r.wizard.Handle(text)
+	if done {
+		r.wizard = nil
+	}
+	return response, true
 }
