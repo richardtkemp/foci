@@ -483,6 +483,9 @@ func main() {
 				mbBot.SetTTS(ttsProvider)
 			}
 			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
+			if imgDir := cfg.Telegram.ImageSaveDir; imgDir != "" {
+				mbBot.SetImageSaveDir(imgDir)
+			}
 			if stateStore != nil {
 				ss := stateStore
 				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
@@ -1550,6 +1553,11 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 		primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
+		if imgDir := acfg.ImageSaveDir; imgDir != "" {
+			primaryBot.SetImageSaveDir(imgDir)
+		} else if imgDir := p.cfg.Telegram.ImageSaveDir; imgDir != "" {
+			primaryBot.SetImageSaveDir(imgDir)
+		}
 
 		// Wire cache bust alerts to this agent's bot
 		if ag.CacheBustDetect {
@@ -1611,6 +1619,11 @@ func setupAgent(p setupParams) *agentInstance {
 				mbBot.SetTTS(p.ttsProvider)
 			}
 			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
+			if imgDir := acfg.ImageSaveDir; imgDir != "" {
+				mbBot.SetImageSaveDir(imgDir)
+			} else if imgDir := p.cfg.Telegram.ImageSaveDir; imgDir != "" {
+				mbBot.SetImageSaveDir(imgDir)
+			}
 			if p.stateStore != nil {
 				ss := p.stateStore
 				mbBot.OnSessionKeyChange = func(username, sessionKey string) {

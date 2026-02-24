@@ -834,6 +834,95 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 	}
 }
 
+func TestHandleMessageWithImagesSavedPath(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Got it!"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	images := []ImageData{
+		{MediaType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
+	}
+	resp, err := ag.HandleMessageWithImages(context.Background(), "agent:test:savedpath", "What is this?", images)
+	if err != nil {
+		t.Fatalf("HandleMessageWithImages: %v", err)
+	}
+	if resp != "Got it!" {
+		t.Errorf("response = %q", resp)
+	}
+
+	// Check the text block contains the saved path annotation
+	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	textBlock := userMsg.Content[len(userMsg.Content)-1]
+	if !strings.Contains(textBlock.Text, "[Image saved to: /tmp/images/test.jpg]") {
+		t.Errorf("text block missing saved path annotation: %q", textBlock.Text)
+	}
+	if !strings.Contains(textBlock.Text, "What is this?") {
+		t.Errorf("text block missing user text: %q", textBlock.Text)
+	}
+}
+
+func TestHandleMessageWithImagesNoSavedPath(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	images := []ImageData{
+		{MediaType: "image/jpeg", Data: []byte("fake")},
+	}
+	ag.HandleMessageWithImages(context.Background(), "agent:test:nosaved", "Look", images)
+
+	// Text block should NOT contain [Image saved to:] when SavedPath is empty
+	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	textBlock := userMsg.Content[len(userMsg.Content)-1]
+	if strings.Contains(textBlock.Text, "[Image saved to:") {
+		t.Errorf("text block should not have saved path annotation when SavedPath is empty: %q", textBlock.Text)
+	}
+}
+
 func TestFormatGap(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
