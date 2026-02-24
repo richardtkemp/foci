@@ -1582,6 +1582,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 
 		var notified []string
+		warnings := NewWarningQueue(0, 0)
 		ag := &Agent{
 			Client:    client,
 			Sessions:  store,
@@ -1589,6 +1590,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			Bootstrap: bootstrap,
 			Compactor: compactor,
 			Model:     "claude-haiku-4-5",
+			Warnings:  warnings,
 			CompactionNotifyFunc: func(session string, msg string) {
 				notified = append(notified, msg)
 			},
@@ -1628,6 +1630,18 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// 5 turns × 2 messages each = 10
 		if len(msgs) != 10 {
 			t.Errorf("expected 10 messages (uncompacted), got %d", len(msgs))
+		}
+
+		// Warning should have been pushed about context capacity
+		warned := warnings.Drain()
+		if len(warned) != 1 {
+			t.Fatalf("expected 1 warning, got %d", len(warned))
+		}
+		if !strings.Contains(warned[0], "85%") {
+			t.Errorf("warning = %q, want contains '85%%'", warned[0])
+		}
+		if !strings.Contains(warned[0], "cannot compact") {
+			t.Errorf("warning = %q, want contains 'cannot compact'", warned[0])
 		}
 	})
 }
@@ -2326,4 +2340,3 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 		t.Errorf("lastMessageTime = %v, want %v (should skip restart marker and find first meta)", sm.lastMessageTime, expected)
 	}
 }
-
