@@ -28,6 +28,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
+| `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
@@ -269,11 +270,10 @@ Logging and diagnostics.
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
-| `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into agent conversation as system warnings before each turn. |
 | `warning_max_per_window` | int | `3` | Max identical warnings allowed per time window before suppression. Set to `0` to disable rate-limiting. |
 | `warning_window_duration` | string | `"5m"` | Time window for warning deduplication. Go duration format (`30s`, `5m`, `1h`). |
 
-When `inject_agent_warnings` is enabled, repeated identical warnings (e.g. polling errors every 2 seconds) are deduplicated: after `warning_max_per_window` occurrences within `warning_window_duration`, further duplicates are suppressed and summarised as "... and N more in last Xm" on the next drain. Warning messages are normalised before comparison — IP addresses, hex strings, and multi-digit numbers are replaced with placeholders so that semantically identical errors (differing only in timestamps or addresses) are grouped together.
+When `inject_agent_warnings` is enabled (per-agent), repeated identical warnings (e.g. polling errors every 2 seconds) are deduplicated: after `warning_max_per_window` occurrences within `warning_window_duration`, further duplicates are suppressed and summarised as "... and N more in last Xm" on the next drain. Warning messages are normalised before comparison — IP addresses, hex strings, and multi-digit numbers are replaced with placeholders so that semantically identical errors (differing only in timestamps or addresses) are grouped together.
 
 ---
 

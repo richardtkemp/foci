@@ -37,7 +37,8 @@ type AgentConfig struct {
 	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
 	MaxToolLoops      int               `toml:"max_tool_loops"`     // max tool iterations per turn (default 25)
 	MaxOutputTokens   int               `toml:"max_output_tokens"`  // max tokens in model response (default 8192)
-	TTSRate           float64           `toml:"tts_rate"`           // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
+	TTSRate             float64           `toml:"tts_rate"`             // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
+	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 }
 
 type AnthropicConfig struct {
@@ -116,7 +117,6 @@ type LoggingConfig struct {
 	FullPayload           bool   `toml:"full_payload"`            // write full API payloads to api-payload.jsonl
 	PayloadFile           string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
 	CacheBustDetect       bool   `toml:"cache_bust_detect"`       // alert when cache_read drops >50% vs previous request
-	InjectAgentWarnings   bool   `toml:"inject_agent_warnings"`   // inject warnings/errors into agent session (default false)
 	WarningMaxPerWindow   int    `toml:"warning_max_per_window"`  // max identical warnings per window before suppression (default 3)
 	WarningWindowDuration string `toml:"warning_window_duration"` // time window for warning dedup (default "5m")
 }
