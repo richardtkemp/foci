@@ -932,6 +932,9 @@ func TestSecretsListTable(t *testing.T) {
 			"telegram.scout":       "x",
 			"brave.api_key":        "x",
 		},
+		allowedHosts: map[string][]string{
+			"anthropic": {"api.anthropic.com"},
+		},
 	}
 
 	cmd := NewSecretsCommand(store)
@@ -949,7 +952,7 @@ func TestSecretsListTable(t *testing.T) {
 		t.Errorf("expected code block in:\n%s", result)
 	}
 	// Table headers
-	if !strings.Contains(result, "Section") || !strings.Contains(result, "Key") {
+	if !strings.Contains(result, "Section") || !strings.Contains(result, "Key") || !strings.Contains(result, "Allowed Hosts") {
 		t.Errorf("missing table headers in:\n%s", result)
 	}
 	// Separator
@@ -966,6 +969,13 @@ func TestSecretsListTable(t *testing.T) {
 			t.Errorf("missing key %q in:\n%s", key, result)
 		}
 	}
+	// Allowed hosts column
+	if !strings.Contains(result, "api.anthropic.com") {
+		t.Errorf("missing allowed host in:\n%s", result)
+	}
+	if !strings.Contains(result, "(none)") {
+		t.Errorf("missing (none) for sections without allowed_hosts in:\n%s", result)
+	}
 }
 
 func TestSecretsListEmpty(t *testing.T) {
@@ -974,5 +984,119 @@ func TestSecretsListEmpty(t *testing.T) {
 	result, _ := cmd.Execute(context.Background(), "list")
 	if result != "No secrets configured." {
 		t.Errorf("result = %q", result)
+	}
+}
+
+func TestSecretsHostsView(t *testing.T) {
+	store := &mockSecretsStore{
+		data: map[string]string{"myapi.token": "x"},
+		allowedHosts: map[string][]string{
+			"myapi": {"api.example.com", "api.backup.com"},
+		},
+	}
+	cmd := NewSecretsCommand(store)
+
+	// View hosts for a section
+	result, err := cmd.Execute(context.Background(), "hosts myapi")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "api.example.com") || !strings.Contains(result, "api.backup.com") {
+		t.Errorf("expected hosts in output: %s", result)
+	}
+
+	// View hosts for section without hosts
+	result, _ = cmd.Execute(context.Background(), "hosts legacy")
+	if !strings.Contains(result, "(none)") {
+		t.Errorf("expected (none) for section without hosts: %s", result)
+	}
+}
+
+func TestSecretsHostsAdd(t *testing.T) {
+	store := &mockSecretsStore{
+		data:         map[string]string{"myapi.token": "x"},
+		allowedHosts: map[string][]string{},
+	}
+	cmd := NewSecretsCommand(store)
+
+	result, err := cmd.Execute(context.Background(), "hosts myapi add api.new.com")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Added") {
+		t.Errorf("expected Added message: %s", result)
+	}
+	if !store.saved {
+		t.Error("expected Save() to be called")
+	}
+	hosts := store.SectionAllowedHosts("myapi")
+	if len(hosts) != 1 || hosts[0] != "api.new.com" {
+		t.Errorf("hosts = %v", hosts)
+	}
+}
+
+func TestSecretsHostsRemove(t *testing.T) {
+	store := &mockSecretsStore{
+		data: map[string]string{"myapi.token": "x"},
+		allowedHosts: map[string][]string{
+			"myapi": {"api.example.com", "api.backup.com"},
+		},
+	}
+	cmd := NewSecretsCommand(store)
+
+	result, err := cmd.Execute(context.Background(), "hosts myapi remove api.example.com")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Removed") {
+		t.Errorf("expected Removed message: %s", result)
+	}
+	hosts := store.SectionAllowedHosts("myapi")
+	if len(hosts) != 1 || hosts[0] != "api.backup.com" {
+		t.Errorf("hosts after remove = %v", hosts)
+	}
+
+	// Remove nonexistent
+	result, _ = cmd.Execute(context.Background(), "hosts myapi remove nonexistent.com")
+	if !strings.Contains(result, "not found") {
+		t.Errorf("expected not found message: %s", result)
+	}
+}
+
+func TestSecretsHostsClear(t *testing.T) {
+	store := &mockSecretsStore{
+		data: map[string]string{"myapi.token": "x"},
+		allowedHosts: map[string][]string{
+			"myapi": {"api.example.com"},
+		},
+	}
+	cmd := NewSecretsCommand(store)
+
+	result, err := cmd.Execute(context.Background(), "hosts myapi clear")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Cleared") {
+		t.Errorf("expected Cleared message: %s", result)
+	}
+	if store.SectionAllowedHosts("myapi") != nil {
+		t.Error("hosts should be nil after clear")
+	}
+}
+
+func TestSecretsHostsUsage(t *testing.T) {
+	store := &mockSecretsStore{data: map[string]string{}}
+	cmd := NewSecretsCommand(store)
+
+	// No args
+	result, _ := cmd.Execute(context.Background(), "hosts")
+	if !strings.Contains(result, "Usage") {
+		t.Errorf("expected usage: %s", result)
+	}
+
+	// Invalid action
+	result, _ = cmd.Execute(context.Background(), "hosts myapi invalid")
+	if !strings.Contains(result, "Usage") {
+		t.Errorf("expected usage for invalid action: %s", result)
 	}
 }

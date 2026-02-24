@@ -103,8 +103,9 @@ func TestAll(t *testing.T) {
 
 // mockSecretsStore implements SecretsStore for testing.
 type mockSecretsStore struct {
-	data  map[string]string
-	saved bool
+	data         map[string]string
+	allowedHosts map[string][]string
+	saved        bool
 }
 
 func (m *mockSecretsStore) Names() []string {
@@ -123,6 +124,39 @@ func (m *mockSecretsStore) Remove(name string) bool {
 	return true
 }
 func (m *mockSecretsStore) Save() error { m.saved = true; return nil }
+func (m *mockSecretsStore) SectionAllowedHosts(section string) []string {
+	if m.allowedHosts == nil {
+		return nil
+	}
+	return m.allowedHosts[section]
+}
+func (m *mockSecretsStore) AddAllowedHost(section, host string) {
+	if m.allowedHosts == nil {
+		m.allowedHosts = make(map[string][]string)
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	m.allowedHosts[section] = append(m.allowedHosts[section], host)
+}
+func (m *mockSecretsStore) RemoveAllowedHost(section, host string) bool {
+	hosts := m.allowedHosts[section]
+	for i, h := range hosts {
+		if strings.EqualFold(h, host) {
+			m.allowedHosts[section] = append(hosts[:i], hosts[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+func (m *mockSecretsStore) SetAllowedHosts(section string, hosts []string) {
+	if m.allowedHosts == nil {
+		m.allowedHosts = make(map[string][]string)
+	}
+	if len(hosts) == 0 {
+		delete(m.allowedHosts, section)
+	} else {
+		m.allowedHosts[section] = hosts
+	}
+}
 
 func TestRestartCommand(t *testing.T) {
 	var notified string
