@@ -523,6 +523,183 @@ key = "val123"
 	}
 }
 
+func TestSectionAllowedHosts(t *testing.T) {
+	path := writeSecrets(t, `
+[myapi]
+token = "sk-test"
+allowed_hosts = ["api.example.com"]
+
+[legacy]
+key = "val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	hosts := s.SectionAllowedHosts("myapi")
+	if len(hosts) != 1 || hosts[0] != "api.example.com" {
+		t.Errorf("SectionAllowedHosts(myapi) = %v", hosts)
+	}
+	if s.SectionAllowedHosts("legacy") != nil {
+		t.Error("SectionAllowedHosts(legacy) should be nil")
+	}
+	if s.SectionAllowedHosts("nonexistent") != nil {
+		t.Error("SectionAllowedHosts(nonexistent) should be nil")
+	}
+}
+
+func TestAddAllowedHost(t *testing.T) {
+	path := writeSecrets(t, `
+[myapi]
+token = "sk-test"
+allowed_hosts = ["api.example.com"]
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Add new host
+	s.AddAllowedHost("myapi", "api.backup.com")
+	hosts := s.SectionAllowedHosts("myapi")
+	if len(hosts) != 2 {
+		t.Fatalf("expected 2 hosts, got %d: %v", len(hosts), hosts)
+	}
+
+	// Add duplicate (case insensitive) — should be no-op
+	s.AddAllowedHost("myapi", "API.EXAMPLE.COM")
+	hosts = s.SectionAllowedHosts("myapi")
+	if len(hosts) != 2 {
+		t.Errorf("duplicate add should be no-op, got %d hosts: %v", len(hosts), hosts)
+	}
+
+	// Add to section with no existing hosts
+	s.AddAllowedHost("legacy", "api.new.com")
+	hosts = s.SectionAllowedHosts("legacy")
+	if len(hosts) != 1 || hosts[0] != "api.new.com" {
+		t.Errorf("SectionAllowedHosts(legacy) = %v", hosts)
+	}
+
+	// Add empty host — should be no-op
+	s.AddAllowedHost("myapi", "")
+	if len(s.SectionAllowedHosts("myapi")) != 2 {
+		t.Error("empty host should be no-op")
+	}
+
+	// Normalize to lowercase
+	s.AddAllowedHost("myapi", "API.UPPER.COM")
+	hosts = s.SectionAllowedHosts("myapi")
+	found := false
+	for _, h := range hosts {
+		if h == "api.upper.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("host should be normalized to lowercase: %v", hosts)
+	}
+}
+
+func TestRemoveAllowedHost(t *testing.T) {
+	path := writeSecrets(t, `
+[myapi]
+token = "sk-test"
+allowed_hosts = ["api.example.com", "api.backup.com"]
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Remove existing host (case insensitive)
+	if !s.RemoveAllowedHost("myapi", "API.EXAMPLE.COM") {
+		t.Error("RemoveAllowedHost should return true for existing host")
+	}
+	hosts := s.SectionAllowedHosts("myapi")
+	if len(hosts) != 1 || hosts[0] != "api.backup.com" {
+		t.Errorf("after remove: %v", hosts)
+	}
+
+	// Remove nonexistent host
+	if s.RemoveAllowedHost("myapi", "nonexistent.com") {
+		t.Error("RemoveAllowedHost should return false for missing host")
+	}
+
+	// Remove last host — section should be cleaned up
+	if !s.RemoveAllowedHost("myapi", "api.backup.com") {
+		t.Error("RemoveAllowedHost should return true")
+	}
+	if s.SectionAllowedHosts("myapi") != nil {
+		t.Error("section with no hosts should return nil")
+	}
+
+	// Remove from nonexistent section
+	if s.RemoveAllowedHost("nosection", "host.com") {
+		t.Error("RemoveAllowedHost should return false for missing section")
+	}
+}
+
+func TestSetAllowedHosts(t *testing.T) {
+	path := writeSecrets(t, `
+[myapi]
+token = "sk-test"
+allowed_hosts = ["old.com"]
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Replace hosts
+	s.SetAllowedHosts("myapi", []string{"new1.com", "new2.com"})
+	hosts := s.SectionAllowedHosts("myapi")
+	if len(hosts) != 2 || hosts[0] != "new1.com" || hosts[1] != "new2.com" {
+		t.Errorf("SetAllowedHosts: %v", hosts)
+	}
+
+	// Clear hosts
+	s.SetAllowedHosts("myapi", nil)
+	if s.SectionAllowedHosts("myapi") != nil {
+		t.Error("SetAllowedHosts(nil) should clear")
+	}
+
+	// Set on new section
+	s.SetAllowedHosts("newsec", []string{"host.com"})
+	hosts = s.SectionAllowedHosts("newsec")
+	if len(hosts) != 1 {
+		t.Errorf("SetAllowedHosts new section: %v", hosts)
+	}
+}
+
+func TestAddRemoveAllowedHostsPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	os.WriteFile(path, []byte(`
+[myapi]
+token = "sk-test"
+allowed_hosts = ["api.example.com"]
+`), 0600)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	s.AddAllowedHost("myapi", "api.new.com")
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	s2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after save: %v", err)
+	}
+	hosts := s2.SectionAllowedHosts("myapi")
+	if len(hosts) != 2 {
+		t.Errorf("expected 2 hosts after persist, got %v", hosts)
+	}
+}
+
 func TestCheckSecurityMissingFile(t *testing.T) {
 	s, _ := Load("/nonexistent/secrets.toml")
 	warnings := s.CheckSecurity()

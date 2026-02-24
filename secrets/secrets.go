@@ -205,6 +205,53 @@ func (s *Store) AllowedHosts(name string) []string {
 	return s.allowedHosts[parts[0]]
 }
 
+// SectionAllowedHosts returns the allowed_hosts for a section name directly
+// (e.g. "anthropic", "custom"). Returns nil if no hosts are configured.
+func (s *Store) SectionAllowedHosts(section string) []string {
+	return s.allowedHosts[section]
+}
+
+// SetAllowedHosts replaces the allowed_hosts list for a section.
+// Pass nil or empty to remove all allowed_hosts for the section.
+func (s *Store) SetAllowedHosts(section string, hosts []string) {
+	if len(hosts) == 0 {
+		delete(s.allowedHosts, section)
+	} else {
+		s.allowedHosts[section] = hosts
+	}
+}
+
+// AddAllowedHost adds a host to the section's allowed_hosts list.
+// Host is normalized to lowercase. No-op if already present.
+func (s *Store) AddAllowedHost(section, host string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return
+	}
+	for _, h := range s.allowedHosts[section] {
+		if strings.EqualFold(h, host) {
+			return // already present
+		}
+	}
+	s.allowedHosts[section] = append(s.allowedHosts[section], host)
+}
+
+// RemoveAllowedHost removes a host from the section's allowed_hosts list.
+// Case-insensitive comparison. Returns true if found and removed.
+func (s *Store) RemoveAllowedHost(section, host string) bool {
+	hosts := s.allowedHosts[section]
+	for i, h := range hosts {
+		if strings.EqualFold(h, host) {
+			s.allowedHosts[section] = append(hosts[:i], hosts[i+1:]...)
+			if len(s.allowedHosts[section]) == 0 {
+				delete(s.allowedHosts, section)
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // CheckHostAllowed verifies that the target URL's host is in the allowed_hosts
 // list for the given secret. Returns an error if:
 // - the secret has no allowed_hosts configured
