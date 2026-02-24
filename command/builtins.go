@@ -664,13 +664,14 @@ func NewVoiceCommand(getVoice func() bool, setVoice func(bool)) *Command {
 
 // NewMultiballCommand returns a /multiball command that forks the current session to a secondary bot.
 // forkFn does the actual branch creation, bot acquisition, and notification.
-func NewMultiballCommand(forkFn func() (string, error)) *Command {
+// The context is passed through so the fork can access the requesting chat ID.
+func NewMultiballCommand(forkFn func(ctx context.Context) (string, error)) *Command {
 	return &Command{
 		Name:        "multiball",
 		Description: "Fork session to a secondary bot",
 		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			return forkFn()
+			return forkFn(ctx)
 		},
 	}
 }

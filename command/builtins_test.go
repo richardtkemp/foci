@@ -559,7 +559,7 @@ func TestFormatDuration(t *testing.T) {
 
 func TestMultiballCommand(t *testing.T) {
 	forked := false
-	cmd := NewMultiballCommand(func() (string, error) {
+	cmd := NewMultiballCommand(func(ctx context.Context) (string, error) {
 		forked = true
 		return "Forked to @testbot (session: agent:main:multiball:mb-1)", nil
 	})
@@ -577,7 +577,7 @@ func TestMultiballCommand(t *testing.T) {
 }
 
 func TestMultiballCommandError(t *testing.T) {
-	cmd := NewMultiballCommand(func() (string, error) {
+	cmd := NewMultiballCommand(func(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no secondary bots configured")
 	})
 

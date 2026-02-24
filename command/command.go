@@ -99,6 +99,10 @@ func (r *Registry) ClearWizard() {
 	r.wizard = nil
 }
 
+// ChatIDKey is the context key for storing the Telegram chat ID.
+// Used by commands that need to know which chat issued the command (e.g. /sessions info).
+type ChatIDKey struct{}
+
 // HandleMessage routes a message to the active wizard, if any.
 // Returns (response, true) if the wizard handled the message, or ("", false)
 // if no wizard is active. Handles /cancel and /stop to abort the wizard.

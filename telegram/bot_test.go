@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"clod/command"
+	"clod/state"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -1103,5 +1104,116 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 	qm := <-b.queue
 	if qm.text != "hello from the past" {
 		t.Errorf("queued text = %q, want %q", qm.text, "hello from the past")
+	}
+}
+
+// --- Per-chat session tests ---
+
+func TestSessionKeyForChat(t *testing.T) {
+	key := SessionKeyForChat("fotini", 123456789)
+	if key != "agent:fotini:chat:123456789" {
+		t.Errorf("got %q, want %q", key, "agent:fotini:chat:123456789")
+	}
+}
+
+func TestSessionKeyForChat_DifferentChats(t *testing.T) {
+	k1 := SessionKeyForChat("fotini", 111)
+	k2 := SessionKeyForChat("fotini", 222)
+	if k1 == k2 {
+		t.Error("different chat IDs should produce different session keys")
+	}
+}
+
+func TestDefaultChatAssignment(t *testing.T) {
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.SetStateStore(ss, "bot:test")
+
+	// No default initially
+	if chatID := b.defaultChatID(); chatID != 0 {
+		t.Errorf("expected no default, got %d", chatID)
+	}
+
+	// First message sets default
+	msg := makeMsg(111, "alice", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	if chatID := b.defaultChatID(); chatID != 12345 {
+		t.Errorf("expected default 12345, got %d", chatID)
+	}
+
+	// Second message from different chat doesn't change default
+	msg2 := &gotgbot.Message{
+		From: &gotgbot.User{Id: 111, Username: "alice"},
+		Chat: gotgbot.Chat{Id: 99999},
+		Text: "hello again",
+		Date: int64(time.Now().Unix()),
+	}
+	b.receiveMessage(context.Background(), msg2)
+
+	if chatID := b.defaultChatID(); chatID != 12345 {
+		t.Errorf("expected default still 12345, got %d", chatID)
+	}
+}
+
+func TestDefaultSessionKey(t *testing.T) {
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.SetStateStore(ss, "bot:test")
+
+	// No default → empty
+	if sk := b.DefaultSessionKey(); sk != "" {
+		t.Errorf("expected empty, got %q", sk)
+	}
+
+	// Set default chat
+	b.setDefaultChat(12345)
+	if sk := b.DefaultSessionKey(); sk != "agent:test-agent:chat:12345" {
+		t.Errorf("expected agent:test-agent:chat:12345, got %q", sk)
+	}
+}
+
+func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.sessionKey = "" // primary bots don't have an override
+	b.SetStateStore(ss, "bot:test")
+	b.setDefaultChat(12345)
+
+	// SessionKey() should return the default chat session
+	if sk := b.SessionKey(); sk != "agent:test-agent:chat:12345" {
+		t.Errorf("expected default session key, got %q", sk)
+	}
+}
+
+func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.isSecondary = true
+	b.SetSessionKey("agent:test:multiball:mb-123")
+
+	if sk := b.SessionKey(); sk != "agent:test:multiball:mb-123" {
+		t.Errorf("expected override key, got %q", sk)
+	}
+}
+
+func TestChatUsernameRecording(t *testing.T) {
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.SetStateStore(ss, "bot:test")
+
+	msg := makeMsg(111, "alice", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	// Username should be persisted
+	var username string
+	if !ss.Get("agent:test-agent:chat:12345:username", &username) {
+		t.Fatal("username not persisted")
+	}
+	if username != "alice" {
+		t.Errorf("expected alice, got %q", username)
 	}
 }

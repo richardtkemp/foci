@@ -40,9 +40,9 @@ config.Load(path)                                        ← validates values; l
     → auto-expose all commands as tools
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
-    → agent.RestoreVoiceMode(sessionKey)
-    → agent.SeedSessionMeta(sessionKey)                    ← seed gap from session history (correct gap after restart)
-    → agent.NewHeartbeat(agent, sessionKey, interval)
+    → agent.RestoreVoiceMode(defaultSessionKey())           ← deferred until default chat is known
+    → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
+    → agent.NewHeartbeat(agent, defaultSessionKey, interval)  ← lazy session key via SessionKeyFn
 
   → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
   → botMgr.StartAll(ctx)                                  ← starts all bots
@@ -527,7 +527,12 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 **Bot pool** (`telegram/pool.go`): Tracks secondary bots, acquires LRU idle bot, releases on `/done`.
 
 **Bot changes** (`telegram/bot.go`):
-- `SessionKey()` / `SetSessionKey()` — thread-safe mutable session key
+- Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `agent:ID:chat:CHATID`
+- `SessionKey()` — returns override key (secondary bots) or default chat session (primary bots)
+- `SetSessionKey()` — thread-safe override (multiball fork/done)
+- `SessionKeyForChat(agentID, chatID)` — public helper for session key derivation
+- Default chat: first message sets the default; persisted in state store as `agent:ID:default_chat`
+- Username recording: persisted per chat for `/sessions list` display
 - `isSecondary` flag — enables `/done` handling, idle message rejection
 - `/done` handled as special case alongside `/stop` (bypasses command registry)
 - Idle secondary bots respond with "This bot is idle. Use /multiball..." to non-command messages
@@ -541,10 +546,10 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 Endpoints for external integration (used by `clod` CLI). All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent (backward compat).
 
-- `POST /send` — `{"agent": "clutch", "text": "..."}` — message to agent session
+- `POST /send` — `{"agent": "clutch", "text": "..."}` — message to agent's default session. Returns 412 if no default session exists yet.
 - `GET /status?agent=clutch` — dispatches `/status` for the specified agent
 - `POST /command` — `{"agent": "clutch", "command": "/ping"}` — dispatches slash command
-- `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true}` — branch session for cron (no_compact skips compaction)
+- `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true}` — branch from default session for cron. Returns 412 if no default session.
 
 ## CLI Tool (`cmd/clod/`)
 
@@ -552,9 +557,9 @@ Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external too
 
 ## Heartbeat & Wake
 
-- **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into main session. Resets on any activity.
-- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's main session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both.
-- **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing.
+- **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into the default session. Uses `SessionKeyFn` for lazy resolution. Skips silently if no default session exists yet. Resets on any activity.
+- **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both. Returns 412 if no default session.
+- **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
 
 ## Session Reset Hook
 

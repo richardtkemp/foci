@@ -43,15 +43,15 @@ var (
 
 // agentInstance holds all per-agent state.
 type agentInstance struct {
-	id            string
-	ag            *agent.Agent
-	cmds          *command.Registry
-	registry      *tools.Registry
-	bootstrap     *workspace.Bootstrap
-	sessionKey    string
-	heartbeat     *agent.Heartbeat
-	agentCfg      config.AgentConfig
-	tmuxClearAll  func() // clears tmux tool state (watches, owned sessions)
+	id                string
+	ag                *agent.Agent
+	cmds              *command.Registry
+	registry          *tools.Registry
+	bootstrap         *workspace.Bootstrap
+	defaultSessionKey func() string // resolves current default session key
+	heartbeat         *agent.Heartbeat
+	agentCfg          config.AgentConfig
+	tmuxClearAll      func() // clears tmux tool state (watches, owned sessions)
 }
 
 func main() {
@@ -420,14 +420,15 @@ func main() {
 		var infos []command.AgentInfo
 		for _, id := range agentOrder {
 			inst := agents[id]
-			mc, _ := inst.ag.Sessions.MessageCount(inst.sessionKey)
+			sk := inst.defaultSessionKey()
+			mc, _ := inst.ag.Sessions.MessageCount(sk)
 			infos = append(infos, command.AgentInfo{
 				ID:           id,
-				SessionKey:   inst.sessionKey,
+				SessionKey:   sk,
 				Model:        inst.ag.Model,
 				Busy:         inst.ag.IsProcessing(),
 				MessageCount: mc,
-				LastActivity: inst.ag.Sessions.LastActivity(inst.sessionKey),
+				LastActivity: inst.ag.Sessions.LastActivity(sk),
 			})
 		}
 		return infos
@@ -581,9 +582,14 @@ func main() {
 			return
 		}
 
-		sessionKey := inst.sessionKey
+		sessionKey := inst.defaultSessionKey()
 		if req.Session != "" {
 			sessionKey = fmt.Sprintf("agent:%s:%s", inst.id, req.Session)
+		}
+		if sessionKey == "" {
+			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
+			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+			return
 		}
 
 		log.Infof("http", "send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
@@ -699,7 +705,12 @@ func main() {
 		}
 
 		// Create a branch session for this wake call
-		parentKey := inst.sessionKey
+		parentKey := inst.defaultSessionKey()
+		if parentKey == "" {
+			log.Warnf("wake", "no default session for agent %q, skipping", inst.id)
+			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+			return
+		}
 		branchID := fmt.Sprintf("wake-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
@@ -778,10 +789,15 @@ func main() {
 		// rather than waiting for the next user message.
 		inst := agents[agentOrder[0]]
 		go func() {
+			sk := inst.defaultSessionKey()
+			if sk == "" {
+				log.Warnf("main", "no default session for welcome file injection, skipping")
+				return
+			}
 			restartCtx := agent.WithTrigger(ctx, "restart")
 			restartCtx = agent.WithNoCompact(restartCtx)
 			msg := fmt.Sprintf("[SYSTEM UPDATE]\n%s", content)
-			if _, err := inst.ag.HandleMessage(restartCtx, inst.sessionKey, msg); err != nil {
+			if _, err := inst.ag.HandleMessage(restartCtx, sk, msg); err != nil {
 				log.Errorf("main", "restart turn failed: %v", err)
 			}
 		}()
@@ -850,7 +866,19 @@ type setupParams struct {
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
-	sessionKey := fmt.Sprintf("agent:%s:main", acfg.ID)
+
+	// Default session key resolver — returns the session key for the agent's default chat.
+	// Before any Telegram message arrives, this returns "" (no default set).
+	// After the first message, it returns agent:<id>:chat:<chatID>.
+	// The resolver is set to use the primary bot's DefaultSessionKey once wired.
+	var defaultSessionKeyFn func() string
+
+	defaultSessionKey := func() string {
+		if defaultSessionKeyFn != nil {
+			return defaultSessionKeyFn()
+		}
+		return ""
+	}
 
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
 	// Assigned later in this function.
@@ -864,10 +892,10 @@ func setupAgent(p setupParams) *agentInstance {
 	// The response is delivered to Telegram via the primary bot's SendText.
 	notifier := tools.NewAsyncNotifier(func(originSession, message string) {
 		go func() {
-			// Route to the originating session; fall back to main if unknown
+			// Route to the originating session; fall back to default if unknown
 			target := originSession
 			if target == "" {
-				target = sessionKey
+				target = defaultSessionKey()
 			}
 			resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "async_notify"), target, message)
 			if err != nil {
@@ -999,8 +1027,12 @@ func setupAgent(p setupParams) *agentInstance {
 	} else if p.bwStore != nil {
 		ag.Redact = p.bwStore.Redact
 	}
-	ag.RestoreVoiceMode(sessionKey)
-	ag.SeedSessionMeta(sessionKey)
+	// Restore voice mode and seed session meta for default session (if any).
+	// These are no-ops if no default session exists yet (first startup).
+	if sk := defaultSessionKey(); sk != "" {
+		ag.RestoreVoiceMode(sk)
+		ag.SeedSessionMeta(sk)
+	}
 
 	// Warning injection queue (if enabled per-agent)
 	if acfg.InjectAgentWarnings {
@@ -1044,7 +1076,12 @@ func setupAgent(p setupParams) *agentInstance {
 			select {
 			case <-time.After(delay):
 				log.Infof("schedule_wake", "firing wake after %v for agent %s: %q", delay, acfg.ID, message)
-				resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "scheduled_wake"), sessionKey, "[SCHEDULED WAKE]\n"+message)
+				sk := defaultSessionKey()
+				if sk == "" {
+					log.Warnf("schedule_wake", "no default session for agent %s, skipping", acfg.ID)
+					return
+				}
+				resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "scheduled_wake"), sk, "[SCHEDULED WAKE]\n"+message)
 				if err != nil {
 					log.Errorf("schedule_wake", "error: %v", err)
 				} else {
@@ -1071,16 +1108,17 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds := command.NewRegistry()
 	cmds.Register(command.NewPingCommand())
 	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
+		sk := defaultSessionKey()
 		return command.StatusInfo{
 			AgentID:          acfg.ID,
-			SessionKey:       sessionKey,
-			MessageCount:     sessionMessageCount(p.sessions, sessionKey),
+			SessionKey:       sk,
+			MessageCount:     sessionMessageCount(p.sessions, sk),
 			Model:            ag.Model,
 			Uptime:           time.Since(p.startTime),
 			StartTime:        p.startTime,
 			AgentBusy:        ag.IsProcessing(),
-			CreatedAt:        p.sessions.CreatedAt(sessionKey),
-			LastActivity:     p.sessions.LastActivity(sessionKey),
+			CreatedAt:        p.sessions.CreatedAt(sk),
+			LastActivity:     p.sessions.LastActivity(sk),
 			ContextLimit:     compaction.ContextLimit(ag.Model),
 			CompactThreshold: p.cfg.Sessions.CompactionThreshold,
 		}
@@ -1090,7 +1128,7 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, func() command.ContextInfo {
 		return command.ContextInfo{
-			SessionKey:       sessionKey,
+			SessionKey:       defaultSessionKey(),
 			Model:            ag.Model,
 			CompactionThresh: p.cfg.Sessions.CompactionThreshold,
 			ContextLimit:     compaction.ContextLimit(ag.Model),
@@ -1100,8 +1138,12 @@ func setupAgent(p setupParams) *agentInstance {
 		if ag.IsProcessing() {
 			return fmt.Errorf("agent is processing — send /stop first, then /reset")
 		}
-		fireResetHook(ag, p.sessions, sessionKey, p.cfg, p.ctx)
-		if err := p.sessions.Clear(sessionKey); err != nil {
+		sk := defaultSessionKey()
+		if sk == "" {
+			return fmt.Errorf("no active session to reset")
+		}
+		fireResetHook(ag, p.sessions, sk, p.cfg, p.ctx)
+		if err := p.sessions.Clear(sk); err != nil {
 			return err
 		}
 		bootstrap.Reload()
@@ -1196,12 +1238,13 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// /voice command
 	cmds.Register(command.NewVoiceCommand(
-		func() bool { return ag.VoiceMode(sessionKey) },
-		func(on bool) { ag.SetVoiceMode(sessionKey, on) },
+		func() bool { return ag.VoiceMode(defaultSessionKey()) },
+		func(on bool) { ag.SetVoiceMode(defaultSessionKey(), on) },
 	))
 
-	// /multiball and /mb — per-agent, uses this agent's pool
-	forkFn := func() (string, error) {
+	// /multiball and /mb — per-agent, uses this agent's pool.
+	// Forks from the requesting chat's session (per-chat routing).
+	forkFn := func(ctx context.Context) (string, error) {
 		pool := p.botMgr.Pool(acfg.ID)
 		if pool == nil || pool.Size() == 0 {
 			return "", fmt.Errorf("no secondary bots configured")
@@ -1211,10 +1254,20 @@ func setupAgent(p setupParams) *agentInstance {
 			return "", fmt.Errorf("all secondary bots are busy")
 		}
 
+		// Determine parent session: use the requesting chat's session
+		parentKey := defaultSessionKey()
+		if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
+			parentKey = telegram.SessionKeyForChat(acfg.ID, chatID)
+		}
+		if parentKey == "" {
+			pool.Release(secBot)
+			return "", fmt.Errorf("no active session to fork from")
+		}
+
 		branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
 
-		if err := p.sessions.CreateBranch(sessionKey, branchKey); err != nil {
+		if err := p.sessions.CreateBranch(parentKey, branchKey); err != nil {
 			pool.Release(secBot)
 			return "", fmt.Errorf("create branch: %w", err)
 		}
@@ -1244,7 +1297,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Category:    "session",
 		Hidden:      true,
 		Execute: func(ctx context.Context, args string) (string, error) {
-			return forkFn()
+			return forkFn(ctx)
 		},
 	})
 	agentNewDeps := &command.AgentNewDeps{
@@ -1266,25 +1319,70 @@ func setupAgent(p setupParams) *agentInstance {
 		if ag.Compactor == nil {
 			return 0, fmt.Errorf("compaction is not configured")
 		}
-		mc, _ := p.sessions.MessageCount(sessionKey)
+		sk := defaultSessionKey()
+		if sk == "" {
+			return 0, fmt.Errorf("no active session to compact")
+		}
+		mc, _ := p.sessions.MessageCount(sk)
 		if mc < 5 {
 			return 0, fmt.Errorf("too few messages to compact (%d)", mc)
 		}
 		if ag.CompactionNotifyFunc != nil {
-			ag.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
+			ag.CompactionNotifyFunc(sk, "⏳ Compacting context...")
 		}
 		system := bootstrap.SystemBlocks()
 		summaryPrompt := readPromptFile(ag.CompactionSummaryPromptPath, "compaction")
-		if err := ag.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, ag.CompactionHandoffMsg); err != nil {
+		if err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, ag.CompactionHandoffMsg); err != nil {
 			return 0, fmt.Errorf("compaction failed: %w", err)
 		}
 		if ag.CompactionNotifyFunc != nil {
-			ag.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
+			ag.CompactionNotifyFunc(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
 		}
 		bootstrap.Reload()
 		return mc, nil
 	}))
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
+	cmds.Register(command.NewSessionsCommand(command.SessionsDeps{
+		AgentID: acfg.ID,
+		ListFn: func() ([]command.SessionChatInfo, error) {
+			chatSessions, err := p.sessions.ListChatSessions(acfg.ID)
+			if err != nil {
+				return nil, err
+			}
+			var result []command.SessionChatInfo
+			for _, cs := range chatSessions {
+				info := command.SessionChatInfo{
+					ChatID:       cs.ChatID,
+					MessageCount: cs.MessageCount,
+					LastActivity: cs.LastActivity,
+				}
+				// Look up username from state store
+				if p.stateStore != nil {
+					var username string
+					key := fmt.Sprintf("agent:%s:chat:%d:username", acfg.ID, cs.ChatID)
+					if p.stateStore.Get(key, &username) {
+						info.Username = username
+					}
+				}
+				result = append(result, info)
+			}
+			return result, nil
+		},
+		SetDefaultFn: func(chatID int64) error {
+			if p.stateStore == nil {
+				return fmt.Errorf("no state store configured")
+			}
+			return p.stateStore.Set("agent:"+acfg.ID+":default_chat", chatID)
+		},
+		DefaultChatFn: func() int64 {
+			if p.stateStore == nil {
+				return 0
+			}
+			var chatID int64
+			p.stateStore.Get("agent:"+acfg.ID+":default_chat", &chatID)
+			return chatID
+		},
+	}))
 	cmds.Register(command.NewSecretsCommand(p.store))
 	cmds.Register(command.NewBitwardenCommand(p.bwStore, p.cfg.Bitwarden.Enabled))
 	cmds.Register(command.NewRestartCommand(nil))
@@ -1311,7 +1409,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Create and register Telegram bots via BotManager
 	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)
 	if telegramToken != "" {
-		primaryBot, err := telegram.NewBot(telegramToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, sessionKey)
+		primaryBot, err := telegram.NewBot(telegramToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, acfg.ID)
 		if err != nil {
 			log.Fatalf("main", "agent %q: create telegram bot: %v", acfg.ID, err)
 		}
@@ -1368,7 +1466,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if acfg.MultiballBot != "" {
 			mbToken := p.cfg.ResolveBotToken(acfg.MultiballBot, p.store)
 			if mbToken != "" {
-				mbBot, err := telegram.NewBot(mbToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "")
+				mbBot, err := telegram.NewBot(mbToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
 				if err != nil {
 					log.Errorf("main", "agent %q: create multiball bot: %v", acfg.ID, err)
 				} else {
@@ -1426,24 +1524,34 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 	}
 
-	// Per-agent heartbeat
+	// Per-agent heartbeat — uses a lazy session key resolver
 	interval, err := time.ParseDuration(acfg.HeartbeatInterval)
 	if err != nil {
 		log.Warnf("main", "agent %q: invalid heartbeat_interval %q, using default 45m", acfg.ID, acfg.HeartbeatInterval)
 		interval = 45 * time.Minute
 	}
-	hb := agent.NewHeartbeat(ag, sessionKey, interval)
+	hb := agent.NewHeartbeat(ag, "", interval)
+	hb.SessionKeyFn = defaultSessionKey
+
+	// Wire the default session key function after bot creation.
+	// Must be deferred because primaryBot may not exist yet.
+	defer func() {
+		bot := p.botMgr.PrimaryBot(acfg.ID)
+		if bot != nil {
+			defaultSessionKeyFn = bot.DefaultSessionKey
+		}
+	}()
 
 	return &agentInstance{
-		id:           acfg.ID,
-		ag:           ag,
-		cmds:         cmds,
-		registry:     registry,
-		bootstrap:    bootstrap,
-		sessionKey:   sessionKey,
-		heartbeat:    hb,
-		agentCfg:     acfg,
-		tmuxClearAll: tmuxClearAll,
+		id:                acfg.ID,
+		ag:                ag,
+		cmds:              cmds,
+		registry:          registry,
+		bootstrap:         bootstrap,
+		defaultSessionKey: defaultSessionKey,
+		heartbeat:         hb,
+		agentCfg:          acfg,
+		tmuxClearAll:       tmuxClearAll,
 	}
 }
 
