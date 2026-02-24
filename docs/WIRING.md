@@ -44,11 +44,12 @@ config.Load(path)                                        ← validates values; l
     → agent.SeedSessionMeta(sessionKey)                    ← seed gap from session history (correct gap after restart)
     → agent.NewHeartbeat(agent, sessionKey, interval)
 
+  → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
   → botMgr.StartAll(ctx)                                  ← starts all bots
   → start all heartbeats
   → http.Server{"/send", "/status", "/command", "/wake"}  ← routes by agent param
   → injectWelcomeFile()                                    ← setup.sh changelog injection
-  → signal.Notify(SIGINT, SIGTERM) → shutdown
+  → block on signal → shutdown
 ```
 
 **Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, heartbeat, and Telegram bot(s). Shared resources (anthropic client, session store, voice providers) are passed to each agent.
@@ -56,6 +57,18 @@ config.Load(path)                                        ← validates values; l
 **Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single `memory.db` index (backward compat). Reminder and scratchpad stores are always shared.
 
 **Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
+
+## Shutdown Flow (`main.go`)
+
+```
+SIGTERM/SIGINT received
+  → stop all heartbeats
+  → close HTTP server
+  → gracefulShutdown(agents, timeout)    ← wait for in-flight agent turns
+  → cancel context                        ← stops Telegram poll loops, triggers update ack
+  → botMgr.Wait()                         ← block until all bots finish ack
+  → deferred closes run (SQLite DBs, log files)
+```
 
 ## Package Dependency Graph
 
@@ -342,7 +355,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | Tool | File | What it does |
 |------|------|-------------|
 | `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, secret template resolution + output redaction. `{{secret:}}` in exec is deprecated — warns on use. |
-| `http_request` | http.go | Domain-locked HTTP requests. Secrets in headers/body validated against per-section `allowed_hosts` before sending. Cross-domain redirects blocked when secrets present. Response redacted. Uses `secrets.FindSecretRefs()` to collect refs, `store.CheckHostAllowed()` to validate. |
+| `http_request` | http.go | Domain-locked HTTP requests. Secrets in headers/body validated against per-section `allowed_hosts` before sending. Cross-domain redirects blocked when secrets present. Response redacted. Binary responses (image/*, audio/*, etc.) auto-saved to temp file. `save_to` saves any response to a specific path. `save_from_json_path` extracts a value from JSON response and decodes data: URIs (base64 images from generation APIs). |
 | `tmux` | tmux.go | Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity, unwatch. Owned sessions persist across app restarts via state store. |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
@@ -443,6 +456,10 @@ Two goroutines:
 ```
 
 The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
+
+**Stale command filtering:** Slash commands older than 30s are silently dropped. Safety net for update replay after crashes — prevents stale `/reset` or `/stop` from firing on restart.
+
+**Shutdown ack:** On context cancellation, each bot's poll loop fires one final `GetUpdates` with the last processed offset. This acknowledges processed updates to Telegram, preventing replay on restart. `BotManager.Wait()` blocks main after `cancel()` to ensure all bots complete this ack before process exit.
 
 **Wizard routing (`WizardHandler`):** Interactive wizards (e.g. `/agents new`) take over message routing via `Registry.HandleMessage()`. When a wizard is active, ALL messages (including non-`/` text) are intercepted by the receiver goroutine before reaching slash command dispatch or the agent queue. `/cancel` and `/stop` abort the active wizard. The wizard is cleared automatically when it signals completion (`done=true`).
 

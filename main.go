@@ -526,6 +526,13 @@ func main() {
 		}
 	}
 
+	// Intercept SIGINT/SIGTERM before starting bots or heartbeats.
+	// Must be registered before any goroutine that could trigger a signal
+	// (e.g. /restart via Telegram), otherwise Go's default handler
+	// terminates the process with no graceful shutdown.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
 	// Start all bots
 	botMgr.StartAll(ctx)
 
@@ -781,8 +788,6 @@ func main() {
 	}
 
 	// Wait for signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
 	log.Infof("main", "shutting down...")
@@ -890,7 +895,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore))
+	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
