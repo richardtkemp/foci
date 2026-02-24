@@ -24,7 +24,8 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `fork_prompt` | string | `""` | Path to prompt file injected into multiball branch sessions. Read at fork time. Empty disables. |
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
-| `multiball_bot` | string | `""` | References a key in `[telegram.bots]` map. Used for multiball (branch) sessions. |
+| `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
+| `multiball_bot` | string | `""` | **Deprecated:** use `multiball_bots`. If set and `multiball_bots` is empty, promoted to a single-element list with a warning. |
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
@@ -44,13 +45,20 @@ id = "main"
 model = "claude-sonnet-4-5"
 workspace = "/home/clod/character"
 telegram_bot = "primary"
+multiball_bots = ["mainling"]  # per-agent multiball pool
 
 [[agents]]
 id = "research"
 model = "claude-haiku-4-5"
 workspace = "/home/clod/character"
 telegram_bot = "secondary"
+# no multiball_bots — uses shared pool only
+
+[telegram]
+multiball_bots = ["spare1"]  # shared pool (fallback for any agent)
 ```
+
+**Multiball acquisition priority:** When `/multiball` is invoked, per-agent pool is tried first. If all per-agent bots are busy (or none configured), the shared pool is used as fallback. Released bots return to whichever pool they came from.
 
 ---
 
@@ -76,14 +84,14 @@ Telegram bot configuration.
 |-----|------|---------|-------------|
 | `bot_token` | string | `""` | Legacy single-bot token. Overridden by `secrets.toml` `[telegram] bot_token`. |
 | `allowed_users` | string[] | `[]` | Telegram user IDs allowed to interact with the bot. |
-| `secondary_bots` | string[] | `[]` | Legacy: tokens for secondary bots (multiball feature). |
-| `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. Set to `"0"` to disable auto-reclaim. Go duration format (`30m`, `2h`). |
+| `multiball_bots` | string[] | `[]` | Shared multiball pool: references keys in `[telegram.bots]` map. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
+| `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. Set to `"0"` to disable auto-reclaim. Go duration format (`30m`, `2h`). Applies to both per-agent and shared pools. |
 | `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 
 ### `[telegram.bots.<name>]`
 
-Named bot configuration for multi-agent setups. Each bot is referenced by name from `[agent] telegram_bot` or `multiball_bot`.
+Named bot configuration for multi-agent setups. Each bot is referenced by name from `telegram_bot`, `multiball_bots` (per-agent), or `[telegram] multiball_bots` (shared pool).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

@@ -107,3 +107,205 @@ func TestBotManagerIsolation(t *testing.T) {
 		t.Errorf("scout pool available = %d after clutch acquire, want 1", scoutPool.Available())
 	}
 }
+
+func TestBotManagerSharedPool(t *testing.T) {
+	mgr := NewBotManager()
+
+	// No shared pool initially
+	if mgr.SharedPool() != nil {
+		t.Error("SharedPool() should be nil initially")
+	}
+
+	// Add shared bots
+	shared1, _ := testBot(nil, command.NewRegistry())
+	shared2, _ := testBot(nil, command.NewRegistry())
+	mgr.AddSharedMultiball(shared1)
+	mgr.AddSharedMultiball(shared2)
+
+	pool := mgr.SharedPool()
+	if pool == nil {
+		t.Fatal("SharedPool() = nil, want pool")
+	}
+	if pool.Size() != 2 {
+		t.Errorf("shared pool size = %d, want 2", pool.Size())
+	}
+	if !shared1.isSecondary {
+		t.Error("shared1 not marked secondary")
+	}
+	if !shared2.isSecondary {
+		t.Error("shared2 not marked secondary")
+	}
+}
+
+func TestAcquireMultiball_PerAgentOnly(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+
+	// Should acquire from per-agent pool
+	bot, ok := mgr.AcquireMultiball("clutch")
+	if !ok {
+		t.Fatal("AcquireMultiball failed")
+	}
+	if bot != mb {
+		t.Error("expected per-agent bot")
+	}
+}
+
+func TestAcquireMultiball_SharedFallback(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	// No per-agent bots, only shared
+	shared := testSecondaryBot("shared1")
+	mgr.AddSharedMultiball(shared)
+
+	bot, ok := mgr.AcquireMultiball("clutch")
+	if !ok {
+		t.Fatal("AcquireMultiball should fall back to shared pool")
+	}
+	if bot != shared {
+		t.Error("expected shared pool bot")
+	}
+}
+
+func TestAcquireMultiball_PerAgentBusyFallsToShared(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	// Per-agent bot — acquire and make busy
+	perAgent := testSecondaryBot("pa1")
+	mgr.AddMultiball("clutch", perAgent)
+	bot1, ok := mgr.AcquireMultiball("clutch")
+	if !ok {
+		t.Fatal("initial acquire failed")
+	}
+	bot1.SetSessionKey("agent:clutch:multiball:mb-1")
+
+	// Add shared bot
+	shared := testSecondaryBot("shared1")
+	mgr.AddSharedMultiball(shared)
+
+	// Should fall back to shared since per-agent is busy
+	bot2, ok := mgr.AcquireMultiball("clutch")
+	if !ok {
+		t.Fatal("AcquireMultiball should fall back to shared when per-agent is busy")
+	}
+	if bot2 != shared {
+		t.Error("expected shared pool bot as fallback")
+	}
+}
+
+func TestAcquireMultiball_BothExhausted(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	// Per-agent bot — make busy
+	perAgent := testSecondaryBot("pa1")
+	mgr.AddMultiball("clutch", perAgent)
+	bot1, _ := mgr.AcquireMultiball("clutch")
+	bot1.SetSessionKey("agent:clutch:multiball:mb-1")
+
+	// Shared bot — make busy
+	shared := testSecondaryBot("shared1")
+	mgr.AddSharedMultiball(shared)
+	bot2, _ := mgr.AcquireMultiball("clutch")
+	bot2.SetSessionKey("agent:clutch:multiball:mb-2")
+
+	// Both exhausted
+	_, ok := mgr.AcquireMultiball("clutch")
+	if ok {
+		t.Fatal("AcquireMultiball should fail when both pools are exhausted")
+	}
+}
+
+func TestAcquireMultiball_NoPools(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	// No pools at all
+	_, ok := mgr.AcquireMultiball("clutch")
+	if ok {
+		t.Fatal("AcquireMultiball should fail with no pools")
+	}
+}
+
+func TestHasMultiball(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	// No bots configured
+	if mgr.HasMultiball("clutch") {
+		t.Error("HasMultiball should be false with no pools")
+	}
+
+	// Add per-agent bot
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+	if !mgr.HasMultiball("clutch") {
+		t.Error("HasMultiball should be true with per-agent bot")
+	}
+
+	// Scout has no per-agent, but shared pool exists
+	shared := testSecondaryBot("shared1")
+	mgr.AddSharedMultiball(shared)
+	if !mgr.HasMultiball("scout") {
+		t.Error("HasMultiball should be true for any agent when shared pool exists")
+	}
+}
+
+func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	// Per-agent and shared bots
+	perAgent := testSecondaryBot("pa1")
+	mgr.AddMultiball("clutch", perAgent)
+
+	shared := testSecondaryBot("shared1")
+	mgr.AddSharedMultiball(shared)
+
+	// Acquire per-agent
+	bot1, _ := mgr.AcquireMultiball("clutch")
+	bot1.SetSessionKey("agent:clutch:multiball:mb-1")
+
+	// Acquire shared (per-agent still has one available, but let's exhaust per-agent first)
+	bot1b, _ := mgr.AcquireMultiball("clutch") // gets shared (per-agent pool was just acquired from)
+	_ = bot1b
+
+	// Actually, let's redo this test more carefully
+	// Reset: release bot1 first, then acquire both sequentially
+	mgr.Pool("clutch").Release(bot1)
+
+	// Acquire per-agent (it's idle again)
+	b1, _ := mgr.AcquireMultiball("clutch")
+	b1.SetSessionKey("agent:clutch:multiball:mb-1")
+
+	// Per-agent is now busy, next acquire gets shared
+	b2, _ := mgr.AcquireMultiball("clutch")
+	b2.SetSessionKey("agent:clutch:multiball:mb-2")
+
+	// Release per-agent bot — should return to per-agent pool
+	mgr.Pool("clutch").Release(b1)
+	if mgr.Pool("clutch").Available() != 1 {
+		t.Errorf("per-agent pool available = %d, want 1", mgr.Pool("clutch").Available())
+	}
+	if mgr.SharedPool().Available() != 0 {
+		t.Errorf("shared pool available = %d, want 0", mgr.SharedPool().Available())
+	}
+
+	// Release shared bot — should return to shared pool
+	mgr.SharedPool().Release(b2)
+	if mgr.SharedPool().Available() != 1 {
+		t.Errorf("shared pool available = %d, want 1", mgr.SharedPool().Available())
+	}
+}

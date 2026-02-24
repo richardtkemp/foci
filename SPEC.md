@@ -62,18 +62,24 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 
 ### Multi-Bot Sessions (/multiball)
 
-An agent can have multiple Telegram bots assigned — one primary, the rest secondary. Secondary bots are idle until needed.
+An agent can have multiple Telegram bots assigned — one primary, the rest secondary. Secondary bots are idle until needed. Bots can be assigned per-agent or to a shared pool that any agent can use as fallback.
 
 ```toml
+[[agents]]
+id = "clutch"
+telegram_bot = "primary"
+multiball_bots = ["clutchling", "clutchling2"]  # per-agent pool
+
 [telegram]
-bot_token = "primary-bot-token"
 allowed_users = ["5970082313"]
-secondary_bots = ["secondary-bot-token-1", "secondary-bot-token-2"]
+multiball_bots = ["spare1", "spare2"]  # shared pool (fallback for any agent)
 ```
+
+**Acquisition priority:** per-agent pool first, shared pool as fallback. Released bots return to whichever pool they came from.
 
 **`/multiball` (alias `/mb`):**
 1. Fork the current session (cache-sharing branch)
-2. Attach the fork to the least-recently-used secondary bot
+2. Acquire the least-recently-used bot (per-agent pool first, then shared pool)
 3. That bot sends the user a Telegram message: "🎱 Forked from main. What do you need?" (plain Telegram message, not an agent turn — no tokens spent)
 4. All subsequent messages to that bot route to the forked session
 
@@ -738,22 +744,24 @@ api_file = "api.jsonl"
 id = "clutch"
 model = "claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
-telegram_bot = "primary"       # references [telegram.bots.primary]
-multiball_bot = "secondary"    # optional, for /multiball
+telegram_bot = "primary"              # references [telegram.bots.primary]
+multiball_bots = ["clutchling"]       # per-agent multiball pool
 
 [[agents]]
 id = "scout"
 workspace = "/home/rich/workspace2"
 telegram_bot = "scout"
-# no multiball_bot = no /multiball for this agent
+# no multiball_bots = uses shared pool only (if configured)
 
 [telegram]
 allowed_users = ["5970082313"]
+multiball_bots = ["spare1"]           # shared pool (fallback for any agent)
 
 [telegram.bots]
 primary = { token_secret = "telegram.primary" }
-secondary = { token_secret = "telegram.secondary" }
+clutchling = { token_secret = "telegram.clutchling" }
 scout = { token_secret = "telegram.scout" }
+spare1 = { token_secret = "telegram.spare1" }
 ```
 
 Both formats supported. `[agent]` (singular) is auto-promoted to a single-element `[[agents]]` array. Bot tokens resolved from `secrets.toml` via `token_secret` reference.

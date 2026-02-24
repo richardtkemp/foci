@@ -266,7 +266,7 @@ model = "claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
 heartbeat_interval = "30m"
 telegram_bot = "primary"
-multiball_bot = "secondary"
+multiball_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
@@ -306,8 +306,8 @@ scout = { token_secret = "telegram.scout" }
 	if cfg.Agents[0].TelegramBot != "primary" {
 		t.Errorf("Agents[0].TelegramBot = %q", cfg.Agents[0].TelegramBot)
 	}
-	if cfg.Agents[0].MultiballBot != "secondary" {
-		t.Errorf("Agents[0].MultiballBot = %q", cfg.Agents[0].MultiballBot)
+	if len(cfg.Agents[0].MultiballBots) != 1 || cfg.Agents[0].MultiballBots[0] != "secondary" {
+		t.Errorf("Agents[0].MultiballBots = %v, want [secondary]", cfg.Agents[0].MultiballBots)
 	}
 
 	// Second agent — defaults applied
@@ -323,8 +323,8 @@ scout = { token_secret = "telegram.scout" }
 	if cfg.Agents[1].TelegramBot != "scout" {
 		t.Errorf("Agents[1].TelegramBot = %q", cfg.Agents[1].TelegramBot)
 	}
-	if cfg.Agents[1].MultiballBot != "" {
-		t.Errorf("Agents[1].MultiballBot = %q, want empty", cfg.Agents[1].MultiballBot)
+	if len(cfg.Agents[1].MultiballBots) != 0 {
+		t.Errorf("Agents[1].MultiballBots = %v, want empty", cfg.Agents[1].MultiballBots)
 	}
 
 	// cfg.Agent should mirror first agent
@@ -445,7 +445,7 @@ id = "clutch"
 model = "claude-sonnet-4-6"
 workspace = "/tmp/ws1"
 telegram_bot = "primary"
-multiball_bot = "secondary"
+multiball_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
@@ -484,16 +484,16 @@ scout = { token_secret = "telegram.scout" }
 			if mbKey != "agent:clutch:multiball:mb-12345" {
 				t.Errorf("clutch mbKey = %q", mbKey)
 			}
-			if acfg.MultiballBot != "secondary" {
-				t.Errorf("clutch MultiballBot = %q, want secondary", acfg.MultiballBot)
+			if len(acfg.MultiballBots) != 1 || acfg.MultiballBots[0] != "secondary" {
+				t.Errorf("clutch MultiballBots = %v, want [secondary]", acfg.MultiballBots)
 			}
 		}
 		if acfg.ID == "scout" {
 			if mainKey != "agent:scout:main" {
 				t.Errorf("scout mainKey = %q", mainKey)
 			}
-			if acfg.MultiballBot != "" {
-				t.Errorf("scout MultiballBot = %q, want empty", acfg.MultiballBot)
+			if len(acfg.MultiballBots) != 0 {
+				t.Errorf("scout MultiballBots = %v, want empty", acfg.MultiballBots)
 			}
 		}
 	}
@@ -520,7 +520,7 @@ scout = { token_secret = "telegram.scout" }
 	}
 
 	// Multiball bot should resolve differently from primary
-	mbToken := cfg.ResolveBotToken(cfg.Agents[0].MultiballBot, secrets)
+	mbToken := cfg.ResolveBotToken(cfg.Agents[0].MultiballBots[0], secrets)
 	if mbToken != "token-secondary" {
 		t.Errorf("multiball token = %q, want token-secondary", mbToken)
 	}
@@ -1307,6 +1307,143 @@ dir = "/var/sessions"
 	}
 	if cfg.WelcomeFile != "/opt/welcome.md" {
 		t.Errorf("WelcomeFile = %q, want /opt/welcome.md", cfg.WelcomeFile)
+	}
+}
+
+func TestLoadMultiballBotsPlural(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[[agents]]
+id = "clutch"
+telegram_bot = "primary"
+multiball_bots = ["mb1", "mb2"]
+
+[telegram]
+allowed_users = ["111"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+mb1 = { token_secret = "telegram.mb1" }
+mb2 = { token_secret = "telegram.mb2" }
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Agents[0].MultiballBots) != 2 {
+		t.Fatalf("MultiballBots len = %d, want 2", len(cfg.Agents[0].MultiballBots))
+	}
+	if cfg.Agents[0].MultiballBots[0] != "mb1" || cfg.Agents[0].MultiballBots[1] != "mb2" {
+		t.Errorf("MultiballBots = %v, want [mb1 mb2]", cfg.Agents[0].MultiballBots)
+	}
+}
+
+func TestLoadMultiballBotDeprecatedAlias(t *testing.T) {
+	// multiball_bot (singular) should be promoted to multiball_bots (plural) with deprecation warning
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[[agents]]
+id = "clutch"
+telegram_bot = "primary"
+multiball_bot = "secondary"
+
+[telegram]
+allowed_users = ["111"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+secondary = { token_secret = "telegram.secondary" }
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// multiball_bot should be promoted to multiball_bots
+	if len(cfg.Agents[0].MultiballBots) != 1 {
+		t.Fatalf("MultiballBots len = %d, want 1 (promoted from singular)", len(cfg.Agents[0].MultiballBots))
+	}
+	if cfg.Agents[0].MultiballBots[0] != "secondary" {
+		t.Errorf("MultiballBots[0] = %q, want secondary", cfg.Agents[0].MultiballBots[0])
+	}
+	// Original singular field should still be set
+	if cfg.Agents[0].MultiballBot != "secondary" {
+		t.Errorf("MultiballBot = %q, want secondary", cfg.Agents[0].MultiballBot)
+	}
+}
+
+func TestLoadMultiballBotPluralTakesPrecedence(t *testing.T) {
+	// If both multiball_bot and multiball_bots are set, plural wins
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[[agents]]
+id = "clutch"
+telegram_bot = "primary"
+multiball_bot = "old"
+multiball_bots = ["new1", "new2"]
+
+[telegram]
+allowed_users = ["111"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+old = { token_secret = "telegram.old" }
+new1 = { token_secret = "telegram.new1" }
+new2 = { token_secret = "telegram.new2" }
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Plural should take precedence — no promotion of singular
+	if len(cfg.Agents[0].MultiballBots) != 2 {
+		t.Fatalf("MultiballBots len = %d, want 2", len(cfg.Agents[0].MultiballBots))
+	}
+	if cfg.Agents[0].MultiballBots[0] != "new1" {
+		t.Errorf("MultiballBots[0] = %q, want new1", cfg.Agents[0].MultiballBots[0])
+	}
+}
+
+func TestLoadSharedMultiballBots(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[[agents]]
+id = "clutch"
+telegram_bot = "primary"
+
+[telegram]
+allowed_users = ["111"]
+multiball_bots = ["spare1", "spare2"]
+
+[telegram.bots]
+primary = { token_secret = "telegram.primary" }
+spare1 = { token_secret = "telegram.spare1" }
+spare2 = { token_secret = "telegram.spare2" }
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Telegram.MultiballBots) != 2 {
+		t.Fatalf("Telegram.MultiballBots len = %d, want 2", len(cfg.Telegram.MultiballBots))
+	}
+	if cfg.Telegram.MultiballBots[0] != "spare1" || cfg.Telegram.MultiballBots[1] != "spare2" {
+		t.Errorf("Telegram.MultiballBots = %v, want [spare1 spare2]", cfg.Telegram.MultiballBots)
 	}
 }
 

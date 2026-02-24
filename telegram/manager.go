@@ -8,10 +8,12 @@ import (
 )
 
 // BotManager owns all Telegram bots and provides lookups by agent ID.
-// Each agent has one primary bot and optionally a multiball pool.
+// Each agent has one primary bot and optionally a per-agent multiball pool.
+// A shared multiball pool provides fallback bots for any agent.
 type BotManager struct {
 	primary map[string]*Bot  // agentID → primary bot
-	pools   map[string]*Pool // agentID → multiball pool
+	pools   map[string]*Pool // agentID → per-agent multiball pool
+	shared  *Pool            // shared multiball pool (fallback for any agent)
 	all     []*Bot           // all bots for iteration
 	mu      sync.RWMutex
 	wg      sync.WaitGroup   // tracks running bot goroutines for graceful shutdown
@@ -55,11 +57,68 @@ func (m *BotManager) PrimaryBot(agentID string) *Bot {
 	return m.primary[agentID]
 }
 
-// Pool returns the multiball pool for an agent, or nil if not configured.
+// Pool returns the per-agent multiball pool for an agent, or nil if not configured.
 func (m *BotManager) Pool(agentID string) *Pool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.pools[agentID]
+}
+
+// AddSharedMultiball registers a bot in the shared multiball pool.
+// Creates the shared pool if it doesn't exist.
+func (m *BotManager) AddSharedMultiball(bot *Bot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.shared == nil {
+		m.shared = NewPool()
+	}
+	bot.SetSecondary(m.shared)
+	m.shared.Add(bot)
+	m.all = append(m.all, bot)
+}
+
+// SharedPool returns the shared multiball pool, or nil if not configured.
+func (m *BotManager) SharedPool() *Pool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.shared
+}
+
+// AcquireMultiball tries to acquire a multiball bot for the given agent.
+// Priority: per-agent pool first, then shared pool as fallback.
+// Returns the bot and true on success, or nil and false if no bots available.
+func (m *BotManager) AcquireMultiball(agentID string) (*Bot, bool) {
+	m.mu.RLock()
+	pool := m.pools[agentID]
+	shared := m.shared
+	m.mu.RUnlock()
+
+	// Try per-agent pool first
+	if pool != nil {
+		if bot, ok := pool.Acquire(); ok {
+			return bot, true
+		}
+	}
+
+	// Fall back to shared pool
+	if shared != nil {
+		if bot, ok := shared.Acquire(); ok {
+			return bot, true
+		}
+	}
+
+	return nil, false
+}
+
+// HasMultiball returns true if the agent has any multiball bots available
+// (either per-agent or shared).
+func (m *BotManager) HasMultiball(agentID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if pool, ok := m.pools[agentID]; ok && pool.Size() > 0 {
+		return true
+	}
+	return m.shared != nil && m.shared.Size() > 0
 }
 
 // StartAll starts all bots as goroutines. Non-blocking.

@@ -407,16 +407,13 @@ Single `clod.toml` parsed with BurntSushi/toml. Defaults applied for missing fie
 **Multi-agent config:** Two formats supported:
 
 1. **Legacy (single agent):** `[agent]` table — backward compatible, auto-promoted to single-element `Agents` slice.
-2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `model`, `workspace`, `telegram_bot`, `multiball_bot`.
+2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `model`, `workspace`, `telegram_bot`, `multiball_bots`.
 
 When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
 
 `cfg.Agent` always mirrors `cfg.Agents[0]` so legacy code paths work unchanged.
 
-**Telegram bots config:** Two formats:
-
-1. **Legacy:** `[telegram]` with `bot_token` and `secondary_bots` — single bot, tokens inline or in secrets.
-2. **Multi-agent:** `[telegram.bots]` map of named bots. Each entry has `token_secret` referencing a key in `secrets.toml`. Agents reference bots by name via `telegram_bot` and `multiball_bot` fields.
+**Telegram bots config:** `[telegram.bots]` map of named bots. Each entry has `token_secret` referencing a key in `secrets.toml`. Agents reference bots by name via `telegram_bot` and `multiball_bots` fields. The `[telegram]` section also supports `multiball_bots` for a shared pool.
 
 **Token resolution:** `Config.ResolveBotToken(botName, secrets)` checks `[telegram.bots.<name>].token_secret` → secrets store first, then falls back to legacy `telegram.bot_token`.
 
@@ -427,7 +424,7 @@ id = "clutch"
 model = "claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
 telegram_bot = "primary"
-multiball_bot = "secondary"
+multiball_bots = ["clutchling"]       # per-agent pool
 
 [[agents]]
 id = "scout"
@@ -436,11 +433,13 @@ telegram_bot = "scout"
 
 [telegram]
 allowed_users = ["5970082313"]
+multiball_bots = ["spare1"]           # shared pool (any agent)
 
 [telegram.bots]
 primary = { token_secret = "telegram.primary" }
-secondary = { token_secret = "telegram.secondary" }
+clutchling = { token_secret = "telegram.clutchling" }
 scout = { token_secret = "telegram.scout" }
+spare1 = { token_secret = "telegram.spare1" }
 ```
 
 ## Telegram Bot (`telegram/bot.go`)
@@ -503,21 +502,27 @@ Speech rate configurable via `tts_rate` in `[voice]` config section. For edge-tt
 
 The agent sees this and adjusts its style (shorter, conversational, no markdown).
 
-## Multiball (`telegram/pool.go`, `telegram/bot.go`)
+## Multiball (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
 Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix.
 
-**Config** (`secrets.toml`):
+**Config** (`clod.toml`):
 ```toml
+[[agents]]
+id = "clutch"
+multiball_bots = ["clutchling"]      # per-agent pool
+
 [telegram]
-bot_token = "primary-bot-token"
-secondary_bots = "token-1,token-2"   # comma-separated
+multiball_bots = ["spare1"]          # shared pool (fallback)
 ```
 
 **Flow:**
 ```
-/multiball → sessions.CreateBranch(main, multiball:mb-TIMESTAMP)
-           → pool.Acquire() → least-recently-used idle secondary bot
+/multiball → botMgr.AcquireMultiball(agentID)
+               → try per-agent pool first (pool.Acquire())
+               → if busy/empty, try shared pool (shared.Acquire())
+           → bot.SetAgentAndCommands(ag, cmds)  // re-wire shared bots
+           → sessions.CreateBranch(parent, multiball:mb-TIMESTAMP)
            → bot.SetSessionKey(branchKey)
            → bot.SendNotification("🎱 Forked from main.")
 ```
@@ -525,6 +530,8 @@ secondary_bots = "token-1,token-2"   # comma-separated
 Messages to the secondary bot route to the forked session. `/done` on the secondary bot detaches it and returns it to the pool.
 
 **Bot pool** (`telegram/pool.go`): Tracks secondary bots, acquires LRU idle bot, releases on `/done`.
+
+**Shared pool** (`telegram/manager.go`): `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetAgentAndCommands` at fork time.
 
 **Bot changes** (`telegram/bot.go`):
 - Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `agent:ID:chat:CHATID`
