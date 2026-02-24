@@ -29,13 +29,13 @@ var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. Use timeout to limit execution time. Reference secrets with {{secret:NAME}} syntax. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call.",
+		Description: "Run a shell command and return its output. Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated).",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"command": {
 					"type": "string",
-					"description": "Shell command to execute. Use {{secret:NAME}} to reference secrets."
+					"description": "Shell command to execute."
 				},
 				"timeout": {
 					"type": "integer",
@@ -75,18 +75,17 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		return "", fmt.Errorf("sleep is not allowed via exec — use memory_remind for timed check-ins instead")
 	}
 
-	// Resolve secret templates
+	// Block regular secret templates — secrets must not reach child processes.
+	// Bitwarden secrets (bw.*) are allowed because they're approval-gated via aisudo.
 	cmd := p.Command
-	if store != nil {
-		if secrets.FindSecretRefs(cmd) != nil {
-			log.Warnf("exec", "{{secret:}} in exec is deprecated — use http_request tool instead")
+	if refs := secrets.FindSecretRefs(cmd); refs != nil {
+		for _, ref := range refs {
+			if !bitwarden.IsBitwardenRef(ref) {
+				return "", fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool instead")
+			}
 		}
-		resolved, err := store.Resolve(cmd)
-		if err != nil {
-			return "", fmt.Errorf("resolve secrets: %w", err)
-		}
-		cmd = resolved
 	}
+	// Resolve bitwarden secret templates (approval-gated, safe for exec)
 	if bwStore != nil {
 		resolved, err := bwStore.Resolve(cmd)
 		if err != nil {

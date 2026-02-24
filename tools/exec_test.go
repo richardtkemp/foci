@@ -160,7 +160,7 @@ func TestExecBackgroundMode(t *testing.T) {
 	}
 }
 
-func TestExecSecretResolution(t *testing.T) {
+func TestExecSecretTemplatesBlocked(t *testing.T) {
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
 	os.WriteFile(secretsPath, []byte(`[custom]
@@ -178,18 +178,66 @@ token = "secret-value-12345"
 		"command": "echo {{secret:custom.token}}",
 	})
 
+	_, err = tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for secret template in exec")
+	}
+	if !strings.Contains(err.Error(), "not allowed in exec") {
+		t.Errorf("error = %q, want 'not allowed in exec'", err.Error())
+	}
+}
+
+func TestExecSecretTemplatesBlockedNoStore(t *testing.T) {
+	// Even without a store, regular secret templates should be rejected
+	tool := NewExecTool(nil, nil, 0, nil, "")
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "curl -H 'Authorization: {{secret:api.key}}' https://example.com",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for secret template in exec without store")
+	}
+	if !strings.Contains(err.Error(), "not allowed in exec") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestExecBitwardenSecretsAllowed(t *testing.T) {
+	// Bitwarden refs (bw.*) should NOT be blocked — they're approval-gated
+	tool := NewExecTool(nil, nil, 0, nil, "")
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo '{{secret:bw.aaaa-1111}}'",
+	})
+
+	// Without a bwStore, the template passes through unresolved (not blocked)
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("bitwarden refs should not be blocked in exec: %v", err)
 	}
+	// With nil bwStore, template passes through literally
+	if !strings.Contains(result, "{{secret:bw.aaaa-1111}}") {
+		t.Errorf("result = %q, want template passed through", result)
+	}
+}
 
-	// The secret value should have been resolved and then the output should contain it
-	// But it should be redacted in output
-	if strings.Contains(result, "secret-value-12345") {
-		t.Errorf("secret value should be redacted in output: %q", result)
+func TestExecMixedSecretsBlocked(t *testing.T) {
+	// A mix of regular and bitwarden refs should still be blocked
+	// (because regular refs are present)
+	tool := NewExecTool(nil, nil, 0, nil, "")
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "curl -H '{{secret:api.key}}' -H '{{secret:bw.aaaa}}' https://example.com",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error when regular secret refs are mixed with bitwarden refs")
 	}
-	if !strings.Contains(result, "[REDACTED]") {
-		t.Errorf("result should contain [REDACTED]: %q", result)
+	if !strings.Contains(err.Error(), "not allowed in exec") {
+		t.Errorf("error = %q", err.Error())
 	}
 }
 
@@ -242,19 +290,19 @@ func TestExecOutputTruncation(t *testing.T) {
 }
 
 func TestExecNilStoreWithTemplate(t *testing.T) {
+	// Even with nil store, secret templates should be blocked
 	tool := NewExecTool(nil, nil, 0, nil, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo '{{secret:test.key}}'",
 	})
 
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for secret template in exec with nil store")
 	}
-	// With nil store, template syntax should pass through literally
-	if !strings.Contains(result, "{{secret:test.key}}") {
-		t.Errorf("result = %q, want template passed through", result)
+	if !strings.Contains(err.Error(), "not allowed in exec") {
+		t.Errorf("error = %q", err.Error())
 	}
 }
 

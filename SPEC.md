@@ -771,7 +771,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Voice inbound (STT via Groq Whisper)
 - Deferred replies (multiple Telegram messages per turn)
 - Cache bust alerts (Telegram notification on large cache writes)
-- Exec template secrets (`{{secret:NAME}}`) — resolved before spawning subprocess
+- Regular secret templates blocked in exec — `{{secret:NAME}}` returns error, must use http_request. Bitwarden `{{secret:bw.*}}` still allowed (approval-gated)
 - Secret redaction on all tool output — exec output, tool errors, and all tool results scanned for known secret patterns
 - Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
 - Tool result size guard (large results saved to temp file)
