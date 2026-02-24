@@ -623,6 +623,19 @@ func main() {
 		return inst, ok
 	}
 
+	// isAgentActive checks whether a real user has interacted with the agent
+	// within the given duration. Used by --if-active gating on CLI commands.
+	isAgentActive := func(agentID string, within time.Duration) bool {
+		if stateStore == nil {
+			return true // no state store = assume active
+		}
+		var ts int64
+		if !stateStore.Get("agent:"+agentID+":last_user_activity", &ts) {
+			return false // no activity recorded = not active
+		}
+		return time.Since(time.Unix(ts, 0)) <= within
+	}
+
 	// POST /send — send message to agent session, return response
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -630,9 +643,10 @@ func main() {
 			return
 		}
 		var req struct {
-			Agent   string `json:"agent"`
-			Session string `json:"session"`
-			Text    string `json:"text"`
+			Agent    string `json:"agent"`
+			Session  string `json:"session"`
+			Text     string `json:"text"`
+			IfActive string `json:"if_active"` // Go duration — skip if no user activity within this window
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
@@ -644,6 +658,21 @@ func main() {
 			log.Warnf("http", "POST /send: unknown agent %q", req.Agent)
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
+		}
+
+		// Activity gating: skip silently if no recent user activity
+		if req.IfActive != "" {
+			dur, err := time.ParseDuration(req.IfActive)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
+				return
+			}
+			if !isAgentActive(inst.id, dur) {
+				log.Debugf("http", "POST /send: skipping (no user activity within %s for agent %s)", req.IfActive, inst.id)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
+				return
+			}
 		}
 
 		sessionKey := inst.defaultSessionKey()
@@ -749,6 +778,7 @@ func main() {
 			Text        string `json:"text"`
 			NoCompact   bool   `json:"no_compact"`
 			NoResetHook bool   `json:"no_reset_hook"`
+			IfActive    string `json:"if_active"` // Go duration — skip if no user activity within this window
 		}
 		// Allow empty body — treat as wake with default text
 		if r.ContentLength > 0 {
@@ -764,6 +794,22 @@ func main() {
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
+
+		// Activity gating: skip silently if no recent user activity
+		if req.IfActive != "" {
+			dur, err := time.ParseDuration(req.IfActive)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
+				return
+			}
+			if !isAgentActive(inst.id, dur) {
+				log.Debugf("wake", "POST /wake: skipping (no user activity within %s for agent %s)", req.IfActive, inst.id)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
+				return
+			}
+		}
+
 		if req.Text == "" {
 			req.Text = "[WAKE]"
 		}
