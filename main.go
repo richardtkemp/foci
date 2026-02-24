@@ -422,16 +422,25 @@ func main() {
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
 	}
 
-	// Wire log warnings into agent sessions (if enabled)
-	if cfg.Logging.InjectAgentWarnings {
-		log.WarnHook = func(level log.Level, component string, msg string) {
-			for _, inst := range agents {
-				if inst.ag.Warnings != nil {
-					inst.ag.Warnings.Push(level.String(), component, msg)
-				}
+	// Wire log warnings into agent sessions (any agent with inject_agent_warnings)
+	{
+		anyInjection := false
+		for _, acfg := range cfg.Agents {
+			if acfg.InjectAgentWarnings {
+				anyInjection = true
+				break
 			}
 		}
-		log.Infof("main", "warning injection into agent sessions enabled")
+		if anyInjection {
+			log.WarnHook = func(level log.Level, component string, msg string) {
+				for _, inst := range agents {
+					if inst.ag.Warnings != nil {
+						inst.ag.Warnings.Push(level.String(), component, msg)
+					}
+				}
+			}
+			log.Infof("main", "warning injection into agent sessions enabled")
+		}
 	}
 
 	// Start all bots
@@ -884,8 +893,8 @@ func setupAgent(p setupParams) *agentInstance {
 	ag.RestoreVoiceMode(sessionKey)
 	ag.SeedSessionMeta(sessionKey)
 
-	// Warning injection queue (if enabled)
-	if p.cfg.Logging.InjectAgentWarnings {
+	// Warning injection queue (if enabled per-agent)
+	if acfg.InjectAgentWarnings {
 		warningWindow, err := time.ParseDuration(p.cfg.Logging.WarningWindowDuration)
 		if err != nil {
 			warningWindow = 5 * time.Minute
