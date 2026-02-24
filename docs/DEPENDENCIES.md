@@ -8,7 +8,6 @@ Tools that clod agents can use via the `exec` tool or that clod integrates with 
 |------|---------|---------|
 | **tmux** | Session management for coding agents | `apt install tmux` |
 | **jq** | JSON processing — essential for JSONL logs and API responses | `apt install jq` |
-| **curl** | HTTP requests from exec (prefer `http_request` tool when secrets are involved) | `apt install curl` |
 | **trash-cli** | Safe file deletion (`trash` > `rm`) | `apt install trash-cli` |
 
 ## Search & Text
@@ -18,12 +17,14 @@ Tools that clod agents can use via the `exec` tool or that clod integrates with 
 | **ack** | File content search (preferred over grep for searching codebases) | `apt install ack` |
 | **mdq** | Query markdown files by heading — avoids reading entire large docs into context | `cargo install mdq` |
 
-## Coding Agents
+## Coding Agents (Supported, Optional)
+
+Clod has first-class tmux-based orchestration for coding agents. These are supported out of the box but not required.
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **Claude Code** | Complex coding, refactoring, architecture tasks | `npm install -g @anthropic-ai/claude-code` |
-| **OpenCode** | Straightforward coding tasks, cost-sensitive work | See [opencode.ai](https://opencode.ai) |
+| **Claude Code** | AI coding agent. Also required for `/usage` (rate limit detection via `claude usage`) | `npm install -g @anthropic-ai/claude-code` |
+| **OpenCode** | AI coding agent | See [opencode.ai](https://opencode.ai) |
 
 ## Voice
 
@@ -32,7 +33,7 @@ Tools that clod agents can use via the `exec` tool or that clod integrates with 
 | **edge-tts** | Text-to-speech for voice note replies | `pip install edge-tts` |
 | **ffmpeg** | Audio format conversion (OGG voice notes) | `apt install ffmpeg` |
 
-Voice transcription uses the Groq Whisper API (no local install needed).
+Voice transcription uses the Groq Whisper API — fast and free (no local install needed).
 
 ## Calendar & Scheduling
 
