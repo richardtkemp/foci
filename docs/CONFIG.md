@@ -293,21 +293,23 @@ Bitwarden vault integration. Provides dynamic, approval-gated access to vault cr
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable Bitwarden integration. Requires `session_cmd` and `bw` CLI installed. |
-| `session_cmd` | string | `""` | Shell command to obtain a BW session token (e.g. `"sudo -u bitwarden bw unlock --raw --passwordfile /path/to/pw"`). Required when enabled. |
+| `enabled` | bool | `false` | Enable Bitwarden integration. Requires `bw` CLI installed and session file configured. |
+| `session_file` | string | `"/home/bitwarden/.bw_session"` | Path to BW session token file. Read by the bitwarden user at execution time — clod never reads this file. |
 | `refresh_interval` | string | `"15m"` | How often to refresh vault item metadata. Go duration format. |
 | `secret_ttl` | string | `"30m"` | How long unlocked passwords stay cached before requiring re-approval. Go duration format. |
 | `cleanup_interval` | string | `"1m"` | How often to purge expired cached values. Go duration format. |
 
 Two-tier security model:
-- **`bw list items`** runs via `sudo -u bitwarden bw list items` (allowlisted in aisudo, auto-approved)
-- **`bw get password <id>`** runs via `sudo -u bitwarden bw get password` (requires Telegram approval via aisudo)
+- **`bw list items`** runs via `sudo -u bitwarden sh -c 'export BW_SESSION=$(cat FILE) && bw list items'` (allowlisted in aisudo, auto-approved)
+- **`bw get password <id>`** runs via the same wrapper (requires Telegram approval via aisudo)
+
+The bitwarden user reads its own session file at each invocation — clod never sees the session token. This means vault re-locks are handled gracefully (just update the session file).
 
 Example:
 ```toml
 [bitwarden]
 enabled = true
-session_cmd = "sudo -u bitwarden bw unlock --raw --passwordfile /home/bitwarden/.bw-pass"
+session_file = "/home/bitwarden/.bw_session"
 refresh_interval = "15m"
 secret_ttl = "30m"
 ```

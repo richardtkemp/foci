@@ -58,19 +58,28 @@ type Executor interface {
 //   - "list" subcommand → `sudo -u bitwarden bw list items ...` (allowlisted, auto-approved)
 //   - "get" subcommand → `sudo -u bitwarden bw get password ...` (requires Telegram approval)
 //
-// Session token is passed via --session flag.
+// The bitwarden user reads its own session file — clod never sees the session token.
 type DefaultExecutor struct {
-	SessionToken string
+	SessionFile string // path to session file (default /home/bitwarden/.bw_session)
+}
+
+// shellCommand builds the shell command string for the bitwarden user.
+// Exported for testing only.
+func (e *DefaultExecutor) ShellCommand(args ...string) string {
+	var bwParts []string
+	bwParts = append(bwParts, "bw")
+	bwParts = append(bwParts, args...)
+	bwParts = append(bwParts, "--nointeraction")
+	bwCmd := strings.Join(bwParts, " ")
+	return fmt.Sprintf("export BW_SESSION=$(cat %s) && %s", e.SessionFile, bwCmd)
 }
 
 // Run executes a bw command via aisudo as the bitwarden user.
+// The session token is read from SessionFile by the bitwarden user at execution time.
 func (e *DefaultExecutor) Run(args ...string) (string, error) {
-	// Build: sudo -u bitwarden bw <args> --session TOKEN --nointeraction
-	fullArgs := []string{"-u", "bitwarden", "bw"}
-	fullArgs = append(fullArgs, args...)
-	fullArgs = append(fullArgs, "--session", e.SessionToken, "--nointeraction")
-
-	cmd := exec.Command("sudo", fullArgs...)
+	// Wrap: sudo -u bitwarden sh -c 'export BW_SESSION=$(cat FILE) && bw ...'
+	shellCmd := e.ShellCommand(args...)
+	cmd := exec.Command("sudo", "-u", "bitwarden", "sh", "-c", shellCmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -134,7 +134,7 @@ type BitwardenConfig struct {
 	Enabled         bool   `toml:"enabled"`
 	RefreshInterval string `toml:"refresh_interval"` // how often to refresh item metadata (default "15m")
 	SecretTTL       string `toml:"secret_ttl"`       // how long unlocked values stay cached (default "30m")
-	SessionCmd      string `toml:"session_cmd"`      // command to get BW session token (required when enabled)
+	SessionFile     string `toml:"session_file"`     // path to BW session file read by bitwarden user (default "/home/bitwarden/.bw_session")
 	CleanupInterval string `toml:"cleanup_interval"` // how often to purge expired values (default "1m")
 }
 
@@ -244,9 +244,6 @@ func validate(cfg *Config) error {
 
 	// Bitwarden
 	if cfg.Bitwarden.Enabled {
-		if cfg.Bitwarden.SessionCmd == "" {
-			return fmt.Errorf("[bitwarden] session_cmd is required when enabled")
-		}
 		if _, err := time.ParseDuration(cfg.Bitwarden.RefreshInterval); err != nil {
 			return fmt.Errorf("[bitwarden] refresh_interval = %q: %w", cfg.Bitwarden.RefreshInterval, err)
 		}
@@ -431,6 +428,9 @@ func Load(path string) (*Config, error) {
 		cfg.Anthropic.CredentialsFile = "~/.claude/.credentials.json"
 	}
 	// Bitwarden defaults
+	if cfg.Bitwarden.SessionFile == "" {
+		cfg.Bitwarden.SessionFile = "/home/bitwarden/.bw_session"
+	}
 	if cfg.Bitwarden.RefreshInterval == "" {
 		cfg.Bitwarden.RefreshInterval = "15m"
 	}

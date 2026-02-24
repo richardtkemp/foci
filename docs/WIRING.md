@@ -10,7 +10,7 @@ config.Load(path)                                        ← validates values; l
   → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite
   → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
   → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
-    → exec session_cmd → get BW session token
+    → DefaultExecutor{SessionFile: cfg.SessionFile} — bitwarden user reads its own session file
     → bwStore.Refresh() → initial metadata load (allowlisted in aisudo)
     → start background refresh ticker (refresh_interval)
     → bwStore.StartCleanup(cleanup_interval)

@@ -101,7 +101,7 @@ func bitwardenSetup() (string, error) {
 			if strings.Contains(status, `"authenticated"`) || strings.Contains(status, `"locked"`) {
 				sb.WriteString("✓ bw login: authenticated\n")
 				if strings.Contains(status, `"locked"`) {
-					sb.WriteString("  Note: vault is locked — session_cmd must handle unlock\n")
+					sb.WriteString("  Note: vault is locked — unlock and save session to file\n")
 				}
 			} else if strings.Contains(status, `"unauthenticated"`) {
 				sb.WriteString("✗ bw login: NOT LOGGED IN\n")
@@ -117,8 +117,10 @@ func bitwardenSetup() (string, error) {
 	if userExists {
 		sb.WriteString("Next steps:\n")
 		sb.WriteString("  1. Ensure bitwarden user is logged in: sudo -u bitwarden bw login\n")
-		sb.WriteString("  2. Configure [bitwarden] in clod.toml with session_cmd\n")
-		sb.WriteString("  3. Set enabled = true and restart\n")
+		sb.WriteString("  2. Unlock and save session key:\n")
+		sb.WriteString("     sudo -u bitwarden bw unlock --raw | sudo -u bitwarden tee /home/bitwarden/.bw_session\n")
+		sb.WriteString("     sudo -u bitwarden chmod 600 /home/bitwarden/.bw_session\n")
+		sb.WriteString("  3. Set [bitwarden] enabled = true in clod.toml and restart\n")
 	} else {
 		sb.WriteString("Fix the issues above, then run /bitwarden setup again.\n")
 	}
@@ -137,7 +139,6 @@ func bitwardenStatus(storeInfo BitwardenStoreInfo, enabled bool) (string, error)
 		sb.WriteString("\nEnable in clod.toml:\n")
 		sb.WriteString("  [bitwarden]\n")
 		sb.WriteString("  enabled = true\n")
-		sb.WriteString("  session_cmd = \"...\"\n")
 		return sb.String(), nil
 	}
 

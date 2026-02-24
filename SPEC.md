@@ -478,7 +478,7 @@ A dynamic secret store backed by the Bitwarden CLI, with a two-tier aisudo appro
 - **Metadata (list)** — `sudo -u bitwarden bw list items` is allowlisted in aisudo, runs without approval. Caches item names, URIs, folders, usernames. Refreshed on a configurable interval.
 - **Passwords (get)** — `sudo -u bitwarden bw get password <id>` requires Telegram approval via aisudo. Blocks until approved or denied. Cached with configurable TTL.
 - **Template syntax** — `{{secret:bw.ITEM_UUID}}` in http_request headers/body. Host validation uses the vault item's URI fields.
-- **Dedicated system user** — `bitwarden` user owns the CLI session state. Not root. Clod never touches the vault directly.
+- **Dedicated system user** — `bitwarden` user owns the CLI session state and session file. Not root. Clod never reads the session token — each `bw` command reads the session file as the bitwarden user.
 
 ### What the agent knows
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"

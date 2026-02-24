@@ -129,18 +129,8 @@ func main() {
 	// Shared: Bitwarden store (optional)
 	var bwStore *bitwarden.Store
 	if cfg.Bitwarden.Enabled {
-		// Get session token by running session_cmd
-		sessionOut, err := exec.Command("sh", "-c", cfg.Bitwarden.SessionCmd).Output()
-		if err != nil {
-			log.Fatalf("main", "bitwarden session_cmd failed: %v", err)
-		}
-		sessionToken := strings.TrimSpace(string(sessionOut))
-		if sessionToken == "" {
-			log.Fatalf("main", "bitwarden session_cmd returned empty token")
-		}
-
 		secretTTL, _ := time.ParseDuration(cfg.Bitwarden.SecretTTL)
-		bwExec := &bitwarden.DefaultExecutor{SessionToken: sessionToken}
+		bwExec := &bitwarden.DefaultExecutor{SessionFile: cfg.Bitwarden.SessionFile}
 		bwStore = bitwarden.New(bwExec, secretTTL)
 
 		if err := bwStore.Refresh(); err != nil {

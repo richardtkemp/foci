@@ -550,6 +550,36 @@ func TestRefresh(t *testing.T) {
 	}
 }
 
+func TestDefaultExecutorShellCommand(t *testing.T) {
+	exec := &DefaultExecutor{SessionFile: "/home/bitwarden/.bw_session"}
+
+	// list items command
+	cmd := exec.ShellCommand("list", "items")
+	want := "export BW_SESSION=$(cat /home/bitwarden/.bw_session) && bw list items --nointeraction"
+	if cmd != want {
+		t.Errorf("list command:\n  got:  %s\n  want: %s", cmd, want)
+	}
+
+	// get password command
+	cmd = exec.ShellCommand("get", "password", "aaaa-1111")
+	want = "export BW_SESSION=$(cat /home/bitwarden/.bw_session) && bw get password aaaa-1111 --nointeraction"
+	if cmd != want {
+		t.Errorf("get command:\n  got:  %s\n  want: %s", cmd, want)
+	}
+}
+
+func TestDefaultExecutorCustomSessionFile(t *testing.T) {
+	exec := &DefaultExecutor{SessionFile: "/custom/path/.session"}
+
+	cmd := exec.ShellCommand("list", "items")
+	if !strings.Contains(cmd, "/custom/path/.session") {
+		t.Errorf("should use custom session file path: %s", cmd)
+	}
+	if strings.Contains(cmd, "--session") {
+		t.Errorf("should not use --session flag: %s", cmd)
+	}
+}
+
 func TestStartCleanupAndClose(t *testing.T) {
 	mock := &mockExecutor{listJSON: "[]"}
 	s := New(mock, 1*time.Millisecond)

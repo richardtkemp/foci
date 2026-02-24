@@ -266,7 +266,7 @@ The `bw` CLI runs as a dedicated `bitwarden` system user, not root. This user:
 ```toml
 [bitwarden]
 enabled = true
-session_cmd = "sudo -u bitwarden bw unlock --raw --passwordfile /home/bitwarden/.bw-pass"
+session_file = "/home/bitwarden/.bw_session"
 refresh_interval = "15m"
 secret_ttl = "30m"
 cleanup_interval = "1m"
@@ -284,5 +284,10 @@ See [CONFIG.md](CONFIG.md) for full option reference.
 1. Install the Bitwarden CLI: `npm install -g @bitwarden/cli` or [download](https://bitwarden.com/help/cli/)
 2. Run `/bitwarden setup` from a Telegram session — it will create the system user and check prerequisites
 3. Log in as the bitwarden user: `sudo -u bitwarden bw login`
-4. Configure `[bitwarden]` in `clod.toml` with `session_cmd` pointing to your unlock command
-5. Set `enabled = true` and restart Clod
+4. Unlock the vault and save the session key to a file:
+   ```bash
+   sudo -u bitwarden bw unlock --raw | sudo -u bitwarden tee /home/bitwarden/.bw_session
+   sudo -u bitwarden chmod 600 /home/bitwarden/.bw_session
+   ```
+   The session file is owned by `bitwarden:bitwarden`, mode `600` — only the bitwarden user can read it. Clod never reads this file; each `bw` command reads it fresh at execution time.
+5. Set `enabled = true` in `clod.toml` and restart Clod
