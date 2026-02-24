@@ -346,6 +346,12 @@ Tool behavior settings.
 | `web_fetch_max_chars` | int | `50000` | Max characters in web fetch output before truncation. |
 | `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` inherit sessions per agent. Limits how many headless self-forks can run simultaneously. |
+| `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |
+| `tmux_memory_warn` | string | `"10%"` | Warn threshold. Sends Telegram notification. Formats: `"N%"` (% of RAM), `"Nmb"`, `"Ngb"`. |
+| `tmux_memory_critical` | string | `"20%"` | Critical threshold. Sends Telegram notification with stronger message. Same formats. |
+| `tmux_memory_kill` | string | `"30%"` | Kill threshold. Kills tmux server, notifies, cleans up tool state. Same formats. |
+
+Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
 
 ---
 
