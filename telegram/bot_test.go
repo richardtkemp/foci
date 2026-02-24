@@ -108,6 +108,7 @@ func makeMsg(userID int64, username, text string) *gotgbot.Message {
 		From: &gotgbot.User{Id: userID, Username: username},
 		Chat: gotgbot.Chat{Id: 12345},
 		Text: text,
+		Date: int64(time.Now().Unix()),
 	}
 }
 
@@ -117,6 +118,7 @@ func makeMsgWithPhoto(userID int64, username, caption string) *gotgbot.Message {
 		From:    &gotgbot.User{Id: userID, Username: username},
 		Chat:    gotgbot.Chat{Id: 12345},
 		Caption: caption,
+		Date:    int64(time.Now().Unix()),
 		Photo: []gotgbot.PhotoSize{
 			{FileId: "small_id", Width: 90, Height: 90, FileSize: 1000},
 			{FileId: "large_id", Width: 800, Height: 600, FileSize: 50000},
@@ -129,6 +131,7 @@ func makeMsgWithDocument(userID int64, username, mime string) *gotgbot.Message {
 	return &gotgbot.Message{
 		From: &gotgbot.User{Id: userID, Username: username},
 		Chat: gotgbot.Chat{Id: 12345},
+		Date: int64(time.Now().Unix()),
 		Document: &gotgbot.Document{
 			FileId:   "doc_id",
 			MimeType: mime,
@@ -523,6 +526,7 @@ func makeMsgWithVoice(userID int64, username string) *gotgbot.Message {
 	return &gotgbot.Message{
 		From:  &gotgbot.User{Id: userID, Username: username},
 		Chat:  gotgbot.Chat{Id: 12345},
+		Date:  int64(time.Now().Unix()),
 		Voice: &gotgbot.Voice{FileId: "voice_id", Duration: 5},
 	}
 }
@@ -1028,5 +1032,76 @@ func TestSendNotification_EmptyTextSkipped(t *testing.T) {
 	b.SendNotification("test alert")
 	if mock.sentCount() != 1 {
 		t.Errorf("sends = %d, want 1", mock.sentCount())
+	}
+}
+
+// --- Stale command filter ---
+
+func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{
+		Name:        "ping",
+		Description: "test",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "pong", nil
+		},
+	})
+
+	b, mock := testBot([]string{"111"}, cmds)
+
+	// Fresh message (timestamp = now) — should be dispatched normally
+	msg := makeMsg(111, "owner", "/ping")
+	b.receiveMessage(context.Background(), msg)
+
+	// Command should have been dispatched and replied
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 sent message for fresh /ping, got %d", mock.sentCount())
+	}
+	if len(b.queue) != 0 {
+		t.Error("fresh slash command should not be queued")
+	}
+}
+
+func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{
+		Name:        "ping",
+		Description: "test",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "pong", nil
+		},
+	})
+
+	b, mock := testBot([]string{"111"}, cmds)
+
+	// Create a message with a stale timestamp (60 seconds ago)
+	msg := makeMsg(111, "owner", "/ping")
+	msg.Date = int64(time.Now().Add(-60 * time.Second).Unix())
+	b.receiveMessage(context.Background(), msg)
+
+	// Stale slash command should be dropped — no reply, no queue
+	if mock.sentCount() != 0 {
+		t.Errorf("stale slash command should not send a reply, got %d sends", mock.sentCount())
+	}
+	if len(b.queue) != 0 {
+		t.Error("stale slash command should not be queued")
+	}
+}
+
+func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	// Create a plain text message with a stale timestamp (60 seconds ago)
+	msg := makeMsg(111, "owner", "hello from the past")
+	msg.Date = int64(time.Now().Add(-60 * time.Second).Unix())
+	b.receiveMessage(context.Background(), msg)
+
+	// Non-slash messages should still be queued regardless of age
+	if len(b.queue) != 1 {
+		t.Fatalf("expected 1 queued message for stale non-slash message, got %d", len(b.queue))
+	}
+	qm := <-b.queue
+	if qm.text != "hello from the past" {
+		t.Errorf("queued text = %q, want %q", qm.text, "hello from the past")
 	}
 }

@@ -14,6 +14,7 @@ type BotManager struct {
 	pools   map[string]*Pool // agentID → multiball pool
 	all     []*Bot           // all bots for iteration
 	mu      sync.RWMutex
+	wg      sync.WaitGroup   // tracks running bot goroutines for graceful shutdown
 }
 
 // NewBotManager creates an empty BotManager.
@@ -62,13 +63,24 @@ func (m *BotManager) Pool(agentID string) *Pool {
 }
 
 // StartAll starts all bots as goroutines. Non-blocking.
+// Use Wait() after cancelling ctx to block until all bots have finished cleanup.
 func (m *BotManager) StartAll(ctx context.Context) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, bot := range m.all {
-		go bot.Run(ctx)
+		m.wg.Add(1)
+		go func(b *Bot) {
+			defer m.wg.Done()
+			b.Run(ctx)
+		}(bot)
 	}
 	log.Infof("telegram", "started %d bot(s)", len(m.all))
+}
+
+// Wait blocks until all bot goroutines have returned, including shutdown
+// cleanup such as acknowledging processed Telegram updates.
+func (m *BotManager) Wait() {
+	m.wg.Wait()
 }
 
 // SendStartupNotifications sends a startup notification to all primary bots.
