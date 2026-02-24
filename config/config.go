@@ -14,10 +14,6 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// DefaultSessionResetPrompt is the built-in prompt sent to the agent before
-// a session is cleared, giving it a chance to persist important context.
-const DefaultSessionResetPrompt = "This session is about to be cleared. Review the conversation and save any important context, decisions, or learnings to your memory files now. Focus on information that would be valuable in future sessions. Be selective — only persist what matters."
-
 // AgentMemoryConfig holds per-agent memory sources.
 // These are combined with global [memory] sources, with agent-specific
 // sources receiving an automatic weight boost.
@@ -32,7 +28,7 @@ type AgentConfig struct {
 	HeartbeatInterval string            `toml:"heartbeat_interval"`
 	SystemFiles       []string          `toml:"system_files"`       // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages bool              `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
-	ForkPrompt        string            `toml:"fork_prompt"`        // injected as context when a multiball session is forked
+	ForkPrompt        string            `toml:"fork_prompt"`        // path to prompt file injected as context when a multiball session is forked
 	TelegramBot       string            `toml:"telegram_bot"`       // references key in [telegram.bots] map
 	MultiballBot      string            `toml:"multiball_bot"`      // references key in [telegram.bots] map (optional)
 	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
@@ -76,14 +72,13 @@ type SessionsConfig struct {
 	CompactionModel         string  `toml:"compaction_model"`          // model to use for summarization (default: agent model)
 	CompactionMaxTokens     int     `toml:"compaction_max_tokens"`     // max output tokens for summary (default 4096)
 	CompactionMinMessages   int     `toml:"compaction_min_messages"`   // min messages before compacting (default 4)
-	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"` // custom summary prompt
+	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"` // path to summary prompt file
 	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`    // handoff message after compaction
-	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`  // extra system prompt injected only during compaction (saves tokens on regular turns)
+	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`  // path to extra system prompt file injected only during compaction
 	CompactionNotify        *bool   `toml:"compaction_notify"`         // send Telegram notification on compaction (default true)
 	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
-	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // prompt fired before session clear (/reset or reclaim)
-	SessionResetPromptFile  string  `toml:"session_reset_prompt_file"`     // path to prompt file (inline takes precedence)
+	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
 }
 
 type MemorySource struct {
@@ -382,6 +377,9 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].MaxOutputTokens == 0 {
 			cfg.Agents[i].MaxOutputTokens = 8192
 		}
+		if cfg.Agents[i].ForkPrompt != "" {
+			cfg.Agents[i].ForkPrompt = ResolvePath(cfg.Agents[i].ForkPrompt)
+		}
 	}
 
 	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
@@ -634,8 +632,14 @@ func (c *Config) ResolveAllPaths() {
 	} else {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
-	if c.Sessions.SessionResetPromptFile != "" {
-		c.Sessions.SessionResetPromptFile = ResolvePath(c.Sessions.SessionResetPromptFile)
+	if c.Sessions.SessionResetPrompt != "" {
+		c.Sessions.SessionResetPrompt = ResolvePath(c.Sessions.SessionResetPrompt)
+	}
+	if c.Sessions.CompactionSummaryPrompt != "" {
+		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)
+	}
+	if c.Sessions.CompactionSystemPrompt != "" {
+		c.Sessions.CompactionSystemPrompt = ResolvePath(c.Sessions.CompactionSystemPrompt)
 	}
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {

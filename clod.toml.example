@@ -17,35 +17,11 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID_HERE"]
 dir = "/path/to/your/sessions"
 compaction_threshold = 0.8
 
-compaction_summary_prompt = """
-You're compressing your own conversation so you can continue seamlessly after context resets. Your memory files persist independently — this summary is what stays in-context for continuity.
+# Load summary prompt from file (takes precedence over inline compaction_summary_prompt)
+# compaction_summary_prompt_file = "/home/clod/shared/prompts/compaction-summary.md"
 
-If a <previous-summary> is included, merge the new messages into it. Your output replaces the in-context history.
-
-Compress as much as possible WITHOUT losing:
-- **Goals** — what you're trying to accomplish with the user
-- **Achievements** — what was actually done (specific files, commands, values, outcomes)
-- **Reasoning** — why you made specific decisions, what alternatives you considered and rejected
-- **Opinions & preferences** — strong positions taken by either party, things explicitly ruled out
-- **Emotion & tone** — was this a focused work session? A reflective conversation? Were there moments of frustration, discovery, or significance?
-- **Character & growth** — any identity observations, relationship dynamics, or shifts in understanding
-- **Corrections** — things you got wrong and the user corrected, to prevent repeating mistakes
-- **Unfinished threads** — things explicitly deferred, left open, or promised for later
-- **Technical state** — exact file paths, error messages, config values, and anything that would be confusing without precise context
-
-You may HEAVILY compress tool results — preserve only the parts that were relevant to your reasoning and outcomes. Raw command output, build logs, and file contents should be reduced to their key findings.
-
-NATURAL DECAY (when merging with a previous summary):
-- Older content from the previous summary may be further compressed, condensed to its essence, or dropped entirely if superseded by new developments
-- You store durable information in memory files — trust that anything truly important from older context has been captured there
-- Do not accumulate indefinitely — let older detail fade to make room for recent detail
-
-RECENCY BIAS: The most recent exchanges are the most important. Capture them in granular detail — quote the user directly where possible, include specific values, describe exactly what you did and found. Earlier parts can be compressed more aggressively.
-
-Structure the output however best fits the conversation. Do not use a rigid template — let the shape of the session determine the shape of the summary.
-
-HANDOFF NOTE: End with a brief note to yourself to let the user know compaction occurred — they may not realize context was compressed.
-"""
+# Or inline (used if _file is not set or file is missing):
+# compaction_summary_prompt = "Please provide a concise summary of our entire conversation..."
 
 [environment]
 # enabled = true                          # inject environment block as first system block

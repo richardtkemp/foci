@@ -113,18 +113,15 @@ func (c *Compactor) ShouldCompact(messages []anthropic.Message, lastUsage *anthr
 	return result
 }
 
-// DefaultSummaryPrompt is the default prompt used when no custom prompt is provided.
-const DefaultSummaryPrompt = "Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history."
-
 // DefaultHandoffMessage is the default message injected after compaction.
 const DefaultHandoffMessage = "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
 
 // Compact summarizes a session's history and replaces it.
-// summaryPrompt and handoffMessage are read from config at call time; empty
-// values fall back to package defaults.
+// summaryPrompt is read from a file at call time; if empty, compaction uses a
+// minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
 func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) error {
 	if summaryPrompt == "" {
-		summaryPrompt = DefaultSummaryPrompt
+		summaryPrompt = "Provide a concise summary of the conversation so far, capturing key decisions and context. This summary will replace the conversation history."
 	}
 	if handoffMessage == "" {
 		handoffMessage = DefaultHandoffMessage

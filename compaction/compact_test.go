@@ -428,9 +428,9 @@ func TestCompactDefaultPrompts(t *testing.T) {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	// Verify the default summary prompt was sent
-	if !strings.Contains(string(capturedBody), DefaultSummaryPrompt) {
-		t.Errorf("API request body should contain default summary prompt")
+	// Verify a fallback summary prompt was sent
+	if !strings.Contains(string(capturedBody), "concise summary") {
+		t.Errorf("API request body should contain fallback summary prompt")
 	}
 
 	// Verify default handoff message

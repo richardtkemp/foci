@@ -541,10 +541,10 @@ Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external too
 
 ## Session Reset Hook
 
-Before a session is cleared (`/reset` or multiball TTL reclaim), the agent gets one final turn to save context. Configured via `session_reset_prompt` or `session_reset_prompt_file` in `[sessions]`.
+Before a session is cleared (`/reset` or multiball TTL reclaim), the agent gets one final turn to save context. Configured via `session_reset_prompt` in `[sessions]` (file path, read at fire-time).
 
 Flow (`fireResetHook` in `main.go`):
-1. Resolve prompt from config (inline takes precedence over file; file read at fire-time)
+1. Read prompt from file path in config; if empty or file missing, skip
 2. If empty, skip — no hook configured
 3. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip
 4. `HandleMessage(ctx, sessionKey, prompt)` with 60s timeout, trigger `"reset_hook"`, NoCompact
@@ -568,7 +568,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `minMessages` — min messages before compacting (default: 4)
 
 **Passed to `Compact()` at call time** (not stored on the Compactor):
-- `summaryPrompt` — custom summary prompt (empty uses `DefaultSummaryPrompt`)
+- `summaryPrompt` — loaded from file at startup/reload (empty uses a minimal fallback)
 - `handoffMessage` — message after compaction completes (empty uses `DefaultHandoffMessage`)
 
 ## Deployment & Migrations

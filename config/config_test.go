@@ -1169,7 +1169,7 @@ id = "test"
 	}
 }
 
-func TestSessionResetPromptConfig(t *testing.T) {
+func TestPromptFilePathsConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clod.toml")
 	toml := `
@@ -1177,8 +1177,9 @@ func TestSessionResetPromptConfig(t *testing.T) {
 id = "test"
 
 [sessions]
-session_reset_prompt = "Save your memories now."
-session_reset_prompt_file = "/tmp/reset-prompt.md"
+session_reset_prompt = "/home/clod/shared/prompts/reset.md"
+compaction_summary_prompt = "/home/clod/shared/prompts/compaction-summary.md"
+compaction_system_prompt = "/home/clod/shared/prompts/compaction-system.md"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -1186,15 +1187,18 @@ session_reset_prompt_file = "/tmp/reset-prompt.md"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Sessions.SessionResetPrompt != "Save your memories now." {
+	if cfg.Sessions.SessionResetPrompt != "/home/clod/shared/prompts/reset.md" {
 		t.Errorf("SessionResetPrompt = %q", cfg.Sessions.SessionResetPrompt)
 	}
-	if cfg.Sessions.SessionResetPromptFile != "/tmp/reset-prompt.md" {
-		t.Errorf("SessionResetPromptFile = %q", cfg.Sessions.SessionResetPromptFile)
+	if cfg.Sessions.CompactionSummaryPrompt != "/home/clod/shared/prompts/compaction-summary.md" {
+		t.Errorf("CompactionSummaryPrompt = %q", cfg.Sessions.CompactionSummaryPrompt)
+	}
+	if cfg.Sessions.CompactionSystemPrompt != "/home/clod/shared/prompts/compaction-system.md" {
+		t.Errorf("CompactionSystemPrompt = %q", cfg.Sessions.CompactionSystemPrompt)
 	}
 }
 
-func TestSessionResetPromptDefaults(t *testing.T) {
+func TestPromptFilePathsDefaultEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "clod.toml")
 	toml := `
@@ -1210,8 +1214,11 @@ id = "test"
 	if cfg.Sessions.SessionResetPrompt != "" {
 		t.Errorf("SessionResetPrompt should default to empty, got %q", cfg.Sessions.SessionResetPrompt)
 	}
-	if cfg.Sessions.SessionResetPromptFile != "" {
-		t.Errorf("SessionResetPromptFile should default to empty, got %q", cfg.Sessions.SessionResetPromptFile)
+	if cfg.Sessions.CompactionSummaryPrompt != "" {
+		t.Errorf("CompactionSummaryPrompt should default to empty, got %q", cfg.Sessions.CompactionSummaryPrompt)
+	}
+	if cfg.Sessions.CompactionSystemPrompt != "" {
+		t.Errorf("CompactionSystemPrompt should default to empty, got %q", cfg.Sessions.CompactionSystemPrompt)
 	}
 }
 
