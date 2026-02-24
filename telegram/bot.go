@@ -410,6 +410,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		Session:   b.SessionKey(),
 	})
 
+	// Wizard intercept — route all messages to active wizard before normal dispatch
+	if text != "" {
+		if result, ok := b.commands.HandleMessage(text); ok {
+			b.sendReply(msg, userID, result)
+			return
+		}
+	}
+
 	// Record the message for // (repeat) command
 	if text != "" && !strings.HasPrefix(text, "/") {
 		b.lastMsgStore.Record(userID, text)

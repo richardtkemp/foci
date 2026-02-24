@@ -616,6 +616,10 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **Context:**
 - `/context` - character count breakdown of the full prompt. Shows each section separately: system prompt (per character file: IDENTITY.md, SOUL.md, etc.), tools schema, conversation history (user/assistant/tool messages), total. Helps diagnose what's eating context and whether cache is being used efficiently.
 
+**Agents:**
+- `/agents` - list active agent sessions with status, model, and message counts
+- `/agents new` - interactive wizard for creating a new agent. Walks through: agent ID, display name, emoji, model, bot token secret, character file mode. Creates workspace, appends config to clod.toml, adds crontab entries. Requires restart to activate.
+
 **System:**
 - `/version` - binary version, go version, build time, git commit
 - `/uptime` - process uptime, system load, memory usage

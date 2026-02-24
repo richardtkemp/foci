@@ -434,7 +434,8 @@ scout = { token_secret = "telegram.scout" }
 
 Two goroutines:
 ```
-[receiver goroutine]   →  receive msg  →  slash command?  →  yes: execute, reply
+[receiver goroutine]   →  receive msg  →  wizard active?  →  yes: route to wizard, reply
+                                       →  slash command?  →  yes: execute, reply
                                        →  voice note?     →  download OGG, transcribe via Whisper → text
                                        →  photo/doc?      →  download image via Telegram file API
                                                            →  enqueue (buffered chan) with text + images
@@ -442,6 +443,8 @@ Two goroutines:
 ```
 
 The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
+
+**Wizard routing (`WizardHandler`):** Interactive wizards (e.g. `/agents new`) take over message routing via `Registry.HandleMessage()`. When a wizard is active, ALL messages (including non-`/` text) are intercepted by the receiver goroutine before reaching slash command dispatch or the agent queue. `/cancel` and `/stop` abort the active wizard. The wizard is cleared automatically when it signals completion (`done=true`).
 
 **Image handling:** Photos (`msg.Photo`, largest size selected) and image documents (`msg.Document` with image MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `imageAttachment` structs alongside the message text (which may come from `msg.Caption` for photos). The agent worker converts these to `agent.ImageData` and calls `HandleMessageWithImages`.
 
