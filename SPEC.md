@@ -810,6 +810,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Per-agent scratchpad and reminders — `agent_id` column in shared databases, schema migration
 - Async exec/tmux result routing — per-notification session key (results route to correct session, not hardcoded main)
 - max_tokens warning — log WARN + Telegram notification when stop_reason=max_tokens
+- Rate limit handling — API 429/529 errors detected as `*APIError`, friendly Telegram notification sent via `RateLimitFunc` callback (with estimated retry time from `Retry-After` header), clean error returned instead of raw API error
 - Tool call errors logged as WARNING in event log
 
 ### 🔶 Phase 2 — Next

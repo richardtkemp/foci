@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -150,6 +151,83 @@ func TestSendMessageAPIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "max_tokens") {
 		t.Errorf("error = %q, want body content", err.Error())
+	}
+
+	// Should be an APIError
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected *APIError")
+	}
+	if apiErr.StatusCode != 400 {
+		t.Errorf("StatusCode = %d, want 400", apiErr.StatusCode)
+	}
+	if apiErr.IsRateLimit() {
+		t.Error("400 should not be rate limit")
+	}
+}
+
+func TestSendMessageRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	_, err := client.SendMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if err == nil {
+		t.Fatal("expected error for 429 status")
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected *APIError")
+	}
+	if !apiErr.IsRateLimit() {
+		t.Error("expected IsRateLimit() == true")
+	}
+	if apiErr.StatusCode != 429 {
+		t.Errorf("StatusCode = %d, want 429", apiErr.StatusCode)
+	}
+	if apiErr.RetryAfter != "30" {
+		t.Errorf("RetryAfter = %q, want 30", apiErr.RetryAfter)
+	}
+	if apiErr.RetryAfterSeconds() != 30 {
+		t.Errorf("RetryAfterSeconds = %d, want 30", apiErr.RetryAfterSeconds())
+	}
+}
+
+func TestSendMessageOverloaded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(529)
+		w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	_, err := client.SendMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected *APIError")
+	}
+	if !apiErr.IsOverloaded() {
+		t.Error("expected IsOverloaded() == true")
+	}
+	if apiErr.IsRateLimit() {
+		t.Error("529 should not be IsRateLimit")
 	}
 }
 

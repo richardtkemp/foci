@@ -1522,6 +1522,16 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 
+		// Wire rate limit notifications to Telegram
+		ag.RateLimitFunc = func(retryAfter int) {
+			msg := "I've hit my rate limit (mana exhausted). Mana refills on a rolling window — should have capacity again soon."
+			if retryAfter > 0 {
+				mins := (retryAfter + 59) / 60
+				msg = fmt.Sprintf("I've hit my rate limit (mana exhausted). Should have capacity again in roughly %d minutes.", mins)
+			}
+			primaryBot.SendNotification("⚡ " + msg)
+		}
+
 		// Wire max_tokens warnings to Telegram
 		ag.MaxTokensWarnFunc = func(warn string) {
 			primaryBot.SendNotification("⚠️ " + warn)

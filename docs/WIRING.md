@@ -131,6 +131,8 @@ The core of the system. Two entry points:
 
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
 
+**Rate limit handling:** If `client.SendMessage` returns HTTP 429 (rate limit) or 529 (overloaded), the agent detects `*anthropic.APIError`, fires `RateLimitFunc` callback (sends friendly Telegram notification with estimated retry time from `Retry-After` header), and returns a clean `"rate limited — mana exhausted"` error instead of the raw API error.
+
 ### Cache Stability Invariant
 
 **The conversation history sent to the Anthropic API MUST be a strict append-only extension of the previous request.** New messages must only ever appear at the end — never inserted in the middle.
