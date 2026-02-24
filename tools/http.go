@@ -67,6 +67,10 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				"timeout": {
 					"type": "integer",
 					"description": "Request timeout in seconds (default 30, max 300)"
+				},
+				"max_response_bytes": {
+					"type": "integer",
+					"description": "Max response body size in bytes. Default 1MB for text, 10MB when save_to is set. Overrides both."
 				}
 			},
 			"required": ["url"]
@@ -87,6 +91,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		SaveTo           string            `json:"save_to"`
 		SaveFromJSONPath string            `json:"save_from_json_path"`
 		Timeout          int              `json:"timeout"`
+		MaxResponseBytes int64            `json:"max_response_bytes"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
@@ -261,6 +266,9 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	bodyLimit := int64(1024 * 1024)
 	if p.SaveTo != "" || isBinaryContentType(resp.Header.Get("Content-Type")) {
 		bodyLimit = 10 * 1024 * 1024
+	}
+	if p.MaxResponseBytes > 0 {
+		bodyLimit = p.MaxResponseBytes
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {

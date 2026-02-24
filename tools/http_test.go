@@ -675,3 +675,59 @@ func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 		t.Errorf("result should mention byte count: %s", result)
 	}
 }
+
+func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
+	// 500KB response, override limit to 256KB — should truncate
+	bigBody := strings.Repeat("A", 500*1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, bigBody)
+	}))
+	defer srv.Close()
+
+	tool := NewHTTPRequestTool(nil, nil, "")
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":                srv.URL,
+		"max_response_bytes": 256 * 1024,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Body in result should be at most 256KB (plus headers/truncation text)
+	if len(result) > 300*1024 {
+		t.Errorf("result too large: %d bytes", len(result))
+	}
+}
+
+func TestHTTPRequestMaxResponseBytesLargeOverride(t *testing.T) {
+	// 3MB response with save_to, override limit to 5MB
+	bigBody := strings.Repeat("B", 3*1024*1024)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		fmt.Fprint(w, bigBody)
+	}))
+	defer srv.Close()
+
+	savePath := filepath.Join(t.TempDir(), "big.bin")
+	tool := NewHTTPRequestTool(nil, nil, "")
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":                srv.URL,
+		"save_to":            savePath,
+		"max_response_bytes": 5 * 1024 * 1024,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	data, err := os.ReadFile(savePath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(data) != 3*1024*1024 {
+		t.Errorf("saved %d bytes, want %d", len(data), 3*1024*1024)
+	}
+}
