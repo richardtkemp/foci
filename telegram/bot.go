@@ -80,6 +80,7 @@ type Bot struct {
 	stateStore           *state.Store // nil = no persistence
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
+	showToolCalls        bool         // show tool call messages in Telegram (default true via setter)
 	imageSaveDir         string       // if non-empty, save received images to this directory
 }
 
@@ -129,6 +130,11 @@ func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
 // SetToolCallPreviewChars sets the max characters for tool call param preview.
 func (b *Bot) SetToolCallPreviewChars(n int) {
 	b.toolCallPreviewChars = n
+}
+
+// SetShowToolCalls controls whether tool call messages are shown in Telegram.
+func (b *Bot) SetShowToolCalls(show bool) {
+	b.showToolCalls = show
 }
 
 // SetImageSaveDir configures auto-saving of received images to disk.
@@ -737,8 +743,11 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		ActivityFunc: func() {
 			b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 		},
-		// Tool call visibility via send+edit pattern
+		// Tool call visibility via send+edit pattern (gated by showToolCalls)
 		ToolCallObserver: func(toolName string, params json.RawMessage) {
+			if !b.showToolCalls {
+				return
+			}
 			toolMsgMu.Lock()
 			defer toolMsgMu.Unlock()
 
