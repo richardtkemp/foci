@@ -39,7 +39,6 @@ type sessionMeta struct {
 	prevCacheRead   int
 	prevCacheWrite  int
 	voiceMode       bool
-	warnedCompact   bool // true after "consider compacting" warning fired
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -509,11 +508,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	sm := a.getSessionMeta(sessionKey)
 	mana := a.manaString()
 
-	// Warn once per session when message count is high and compaction is available
-	if a.Compactor != nil && len(messages) > 80 && !sm.warnedCompact {
-		log.Warnf("agent", "session %s has %d messages — consider compacting", sessionKey, len(messages))
-		sm.warnedCompact = true
-	}
 
 	// Check mana thresholds and notify user for active conversations only
 	// (not heartbeats or scheduled wakes)
