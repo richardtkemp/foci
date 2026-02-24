@@ -812,6 +812,9 @@ func main() {
 
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
 	cancel()
+
+	// Wait for Telegram bots to finish cleanup (ack processed updates)
+	botMgr.Wait()
 }
 
 // setupParams holds the shared resources needed by each agent.
@@ -1245,6 +1248,13 @@ func setupAgent(p setupParams) *agentInstance {
 		HomeDir:     filepath.Dir(acfg.Workspace),
 		ListFn:      p.agentListFn,
 		SecretNames: func() []string { return p.store.Names() },
+		BotNames: func() []string {
+			names := make([]string, 0, len(p.cfg.Telegram.Bots))
+			for name := range p.cfg.Telegram.Bots {
+				names = append(names, name)
+			}
+			return names
+		},
 	}
 	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
 	cmds.Register(command.NewCompactCommand(func(ctx context.Context) (int, error) {

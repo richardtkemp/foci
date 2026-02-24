@@ -8,12 +8,17 @@ import (
 )
 
 func testDeps(agents []AgentInfo, secrets []string) AgentNewDeps {
+	return testDepsWithBots(agents, secrets, nil)
+}
+
+func testDepsWithBots(agents []AgentInfo, secrets []string, botNames []string) AgentNewDeps {
 	return AgentNewDeps{
 		ConfigPath:  filepath.Join(os.TempDir(), "test-clod.toml"),
 		DefaultsDir: "",
 		HomeDir:     os.TempDir(),
 		ListFn:      func() []AgentInfo { return agents },
 		SecretNames: func() []string { return secrets },
+		BotNames:    func() []string { return botNames },
 	}
 }
 
@@ -113,6 +118,39 @@ func TestAgentWizardDuplicateID(t *testing.T) {
 	}
 	if w.step != 0 {
 		t.Errorf("step = %d, want 0", w.step)
+	}
+}
+
+func TestAgentWizardDuplicateBotName(t *testing.T) {
+	deps := testDepsWithBots(nil, nil, []string{"helen", "greek"})
+	w := newAgentWizard(deps)
+	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
+
+	// Advance through ID, display, emoji, model
+	w.Handle("myagent")
+	w.Handle("My Agent")
+	w.Handle("🤖")
+	w.Handle("sonnet")
+
+	// Bot name "helen" already exists in config
+	resp, done := w.Handle("telegram.helen")
+	if done {
+		t.Error("duplicate bot name should not advance wizard")
+	}
+	if !strings.Contains(resp, "already exists") {
+		t.Errorf("expected already exists error, got %q", resp)
+	}
+	if w.step != 4 {
+		t.Errorf("step = %d, want 4 (should stay on token step)", w.step)
+	}
+
+	// A different bot name should work
+	resp, done = w.Handle("telegram.newbot")
+	if done {
+		t.Error("should not be done after token step")
+	}
+	if !strings.Contains(resp, "Character files") {
+		t.Errorf("should advance to next step, got %q", resp)
 	}
 }
 
