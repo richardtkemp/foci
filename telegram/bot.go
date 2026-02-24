@@ -988,6 +988,72 @@ func (b *Bot) SendVoice(filePath string) error {
 	return nil
 }
 
+// SendTextToChat sends a text message to a specific chat ID with HTML support.
+func (b *Bot) SendTextToChat(chatID int64, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	text = ConvertToTelegramHTML(text)
+
+	for _, chunk := range splitMessage(text, 4096) {
+		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
+			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
+				return fmt.Errorf("send: %w", err)
+			}
+		}
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      text,
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendDocumentToChat sends a file as a Telegram document to a specific chat ID.
+func (b *Bot) SendDocumentToChat(chatID int64, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open document: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendDocument(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
+		return fmt.Errorf("send document: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[document %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendVoiceToChat sends a voice note from a file to a specific chat ID.
+func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open voice file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
+		return fmt.Errorf("send voice: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[voice %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
 // sendVoiceNote sends audio data as a Telegram voice note.
 func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
 	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil); err != nil {
