@@ -60,9 +60,9 @@ main
  ├── log           → modernc.org/sqlite
  ├── secrets       → BurntSushi/toml
  ├── anthropic     (no deps)
- ├── session       → anthropic
+ ├── session       → anthropic, log
  ├── memory        → modernc.org/sqlite, fsnotify/v4 (file watching for auto-reindex)
- ├── voice         (no deps — uses net/http only)
+ ├── voice         → log
  ├── skills        → log (leaf package)
  ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
@@ -72,7 +72,7 @@ main
  └── telegram      → agent, command, log, voice
 ```
 
-No circular dependencies. `config`, `log`, `secrets`, `memory`, `skills`, and `command` are leaf packages.
+No circular dependencies. `config`, `log`, `secrets`, `memory`, `skills`, and `command` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
 
 ## The Agent Loop (`agent/agent.go`)
 

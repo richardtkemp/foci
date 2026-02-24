@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"clod/log"
 )
 
 func NewWebFetchTool() *Tool {
@@ -57,6 +60,10 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	if parsed, err := url.Parse(p.URL); err == nil {
+		log.Debugf("web_fetch", "fetch url=%s", parsed.Hostname())
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -140,6 +147,8 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (stri
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("parse search results: %w", err)
 	}
+
+	log.Debugf("web_search", "search query=%q results=%d", p.Query, len(result.Web.Results))
 
 	var out strings.Builder
 	for i, r := range result.Web.Results {

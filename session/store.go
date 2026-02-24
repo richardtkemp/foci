@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"clod/anthropic"
+	"clod/log"
 )
 
 // SessionMeta is stored as the first line in a session file to preserve metadata
@@ -91,6 +92,7 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 		return nil, fmt.Errorf("scan session %s: %w", key, err)
 	}
 
+	log.Debugf("session", "session loaded key=%s messages=%d", key, len(messages))
 	return messages, nil
 }
 
@@ -123,6 +125,7 @@ func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
 
 	// Write session metadata on new files
 	if !exists {
+		log.Infof("session", "session created key=%s", key)
 		meta := SessionMeta{
 			Type:      "session_meta",
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -171,6 +174,9 @@ func (s *Store) Clear(key string) error {
 	if os.IsNotExist(err) {
 		return nil
 	}
+	if err == nil {
+		log.Infof("session", "session cleared key=%s", key)
+	}
 	return err
 }
 
@@ -217,6 +223,7 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 			return fmt.Errorf("write message: %w", err)
 		}
 	}
+	log.Infof("session", "session replaced key=%s messages=%d", key, len(msgs))
 	return nil
 }
 

@@ -132,9 +132,11 @@ func main() {
 		httpTimeout = 120 * time.Second
 	}
 	client := anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
+	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
+	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
 
 	// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts)
 	if n, err := sessions.RepairOrphans(); err != nil {
@@ -686,6 +688,8 @@ func main() {
 		}
 	})
 
+	log.Infof("http", "registered endpoints: /send, /status, /command, /wake")
+
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
 	var httpServer *http.Server
 	var httpMu sync.Mutex
@@ -1211,6 +1215,14 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		registry.Register(tools.CreateCommandWrapperTool(cmd))
 	}
+
+	// Log registered tools
+	allTools := registry.All()
+	toolNames := make([]string, len(allTools))
+	for i, t := range allTools {
+		toolNames[i] = t.Name
+	}
+	log.Infof("main", "agent %q: registered %d tools: [%s]", acfg.ID, len(toolNames), strings.Join(toolNames, ", "))
 
 	// Create and register Telegram bots via BotManager
 	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)

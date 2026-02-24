@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"clod/anthropic"
+	"clod/log"
 )
 
 // BranchMeta is stored as the first line of a branch session file.
@@ -59,6 +60,7 @@ func (s *Store) CreateBranch(parentKey, branchKey string) error {
 		return fmt.Errorf("write branch meta: %w", err)
 	}
 
+	log.Infof("session", "branch created key=%s parent=%s branch_point=%d", branchKey, parentKey, meta.BranchPoint)
 	return nil
 }
 
@@ -99,6 +101,7 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		return fmt.Errorf("write branch meta: %w", err)
 	}
 
+	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v", branchKey, parentKey, meta.BranchPoint, opts.NoResetHook)
 	return nil
 }
 
@@ -146,6 +149,7 @@ func (s *Store) LoadFull(key string) ([]anthropic.Message, error) {
 	result := make([]anthropic.Message, 0, len(prefix)+len(ownMsgs))
 	result = append(result, prefix...)
 	result = append(result, ownMsgs...)
+	log.Debugf("session", "branch loaded key=%s parent_msgs=%d own_msgs=%d total=%d", key, len(prefix), len(ownMsgs), len(result))
 	return result, nil
 }
 
