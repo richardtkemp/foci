@@ -95,15 +95,22 @@ func estimateTokens(messages []anthropic.Message) int {
 func (c *Compactor) ShouldCompact(messages []anthropic.Message, lastUsage *anthropic.Usage) bool {
 	limit := contextLimit(c.model)
 	threshold := int(float64(limit) * c.threshold)
+	estimated := estimateTokens(messages)
+
+	var result bool
+	var input int
 
 	// Use actual usage if available
 	if lastUsage != nil {
-		totalInput := lastUsage.InputTokens + lastUsage.CacheReadInputTokens + lastUsage.CacheCreationInputTokens
-		return totalInput > threshold
+		input = lastUsage.InputTokens + lastUsage.CacheReadInputTokens + lastUsage.CacheCreationInputTokens
+		result = input > threshold
+	} else {
+		input = estimated
+		result = estimated > threshold
 	}
 
-	// Fall back to estimate
-	return estimateTokens(messages) > threshold
+	log.Debugf("compaction", "should_compact: input=%d threshold=%d estimated=%d result=%v", input, threshold, estimated, result)
+	return result
 }
 
 // DefaultSummaryPrompt is the default prompt used when no custom prompt is provided.
@@ -142,6 +149,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		Content: anthropic.TextContent(summaryPrompt),
 	})
 
+	log.Debugf("compaction", "summary request: model=%s max_tokens=%d messages=%d", c.model, c.maxTokens, len(summaryMessages))
 	resp, err := c.client.SendMessage(ctx, &anthropic.MessageRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
@@ -160,6 +168,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		if entries, err := c.Scratchpad.All(c.AgentID); err != nil {
 			log.Warnf("compaction", "read scratchpad for %s: %v", sessionKey, err)
 		} else if len(entries) > 0 {
+			log.Infof("compaction", "scratchpad preserved: %d entries through compaction of %s", len(entries), sessionKey)
 			handoff += "\n\n[scratchpad — working state preserved through compaction]"
 			for _, e := range entries {
 				handoff += fmt.Sprintf("\n--- %s ---\n%s", e.Key, e.Content)

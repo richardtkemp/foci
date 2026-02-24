@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"clod/log"
 	"clod/secrets"
 )
 
@@ -82,6 +83,10 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 
 	secretRefs := secrets.FindSecretRefs(allText.String())
 	hasSecrets := len(secretRefs) > 0
+
+	if parsed, err := url.Parse(p.URL); err == nil {
+		log.Debugf("http_request", "request %s %s secrets=%d", p.Method, parsed.Hostname(), len(secretRefs))
+	}
 
 	// Validate each secret against allowed_hosts
 	if hasSecrets {
@@ -180,6 +185,10 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	}
 
 	bodyStr := string(body)
+
+	if parsed, err := url.Parse(p.URL); err == nil {
+		log.Debugf("http_request", "response %s %s status=%d body=%d", p.Method, parsed.Hostname(), resp.StatusCode, len(bodyStr))
+	}
 
 	// Redact secrets from response
 	if store != nil {

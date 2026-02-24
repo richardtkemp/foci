@@ -39,6 +39,7 @@ type sessionMeta struct {
 	prevCacheRead   int
 	prevCacheWrite  int
 	voiceMode       bool
+	warnedCompact   bool // true after "consider compacting" warning fired
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -355,6 +356,8 @@ func (a *Agent) guardToolResult(toolName string, result string) string {
 		return result
 	}
 
+	log.Warnf("agent", "tool result truncated: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, filepath)
+
 	// Return truncated result with file path
 	truncated := result[:a.MaxResultChars]
 	if len(truncated) < len(result) {
@@ -506,6 +509,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	sm := a.getSessionMeta(sessionKey)
 	mana := a.manaString()
 
+	// Warn once per session when message count is high and compaction is available
+	if a.Compactor != nil && len(messages) > 80 && !sm.warnedCompact {
+		log.Warnf("agent", "session %s has %d messages — consider compacting", sessionKey, len(messages))
+		sm.warnedCompact = true
+	}
+
 	// Check mana thresholds and notify user for active conversations only
 	// (not heartbeats or scheduled wakes)
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
@@ -614,6 +623,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 		// Debug: log cache_control placement
 		logCacheDebug(system, reqMessages, turnModel)
+
+		log.Debugf("agent", "api_request session=%s model=%s messages=%d tools=%d system_blocks=%d",
+			sessionKey, turnModel, len(reqMessages), len(toolDefs), len(system))
 
 		start := time.Now()
 		resp, err := a.Client.SendMessage(ctx, req)
@@ -765,7 +777,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				continue
 			}
 
-			log.Debugf("agent", "tool_use: %s", block.Name)
+			log.Debugf("agent", "tool_use: %s (%d bytes)", block.Name, len(block.Input))
 			notifyToolCallCtx(ctx, block.Name, block.Input)
 			td.ToolName = block.Name
 			result, err := tool.Execute(toolCtx, block.Input)

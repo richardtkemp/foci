@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"clod/log"
 )
 
 // STT transcribes audio to text.
@@ -54,6 +56,7 @@ type WhisperSTT struct {
 }
 
 func (w *WhisperSTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
+	log.Debugf("voice", "stt audio=%d bytes model=%s", len(audioData), w.Model)
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
@@ -108,6 +111,7 @@ type EdgeTTS struct {
 }
 
 func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
+	log.Debugf("voice", "tts edge-tts text=%d chars voice=%s", len(text), e.Voice)
 	cmd := e.Command
 	if cmd == "" {
 		cmd = "edge-tts"
@@ -161,6 +165,7 @@ type OpenAITTS struct {
 }
 
 func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
+	log.Debugf("voice", "tts openai text=%d chars model=%s", len(text), o.Model)
 	voice := o.Voice
 	if voice == "" {
 		voice = "alloy"
