@@ -346,6 +346,12 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `tts` | voice.go | Convert text to speech via TTS provider (Edge TTS or OpenAI). Sends audio as Telegram voice note. Configurable rate/speed via `tts_rate`. |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 
+### Tmux Memory Monitor (`tools/tmux_memory.go`)
+
+Background goroutine that checks the RSS of the tmux server process at configurable intervals. Three thresholds (warn, critical, kill) fire Telegram notifications and, at the kill threshold, run `tmux kill-server` and call `ClearAll()` on all tmux tool instances. Notifications use dedup — same threshold level won't re-fire until memory drops below it or tmux is killed.
+
+Wired in `main.go` after agent setup. Notification callback sends to agents whose `inject_agent_warnings` is false. Cleanup callback calls `tmuxClearAll` on each agent instance (stored on `agentInstance` struct).
+
 ### Tool Result Guard
 
 If a tool result exceeds `agent.MaxResultChars` (from config, default 10,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. The agent receives a truncated message with the file path and read instructions. This prevents large results from bloating session history indefinitely.

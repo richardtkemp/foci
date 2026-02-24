@@ -201,6 +201,17 @@ The `tmux` tool includes operations for monitoring pane inactivity:
 
 **Use case:** Long-running background tasks. Start a build/deploy with `tmux start`, then `watch` to be notified when it completes.
 
+### Tmux Memory Monitor
+
+Background goroutine checking the tmux server's RSS at configurable intervals. Long-running tmux sessions (especially hosting TUI apps) accumulate memory via glibc malloc fragmentation.
+
+Three thresholds (all configurable as `%` of RAM, `mb`, or `gb`):
+- **warn** (default 10%) — log WARN, send Telegram notification
+- **critical** (default 20%) — log WARN (stronger), send Telegram notification
+- **kill** (default 30%) — log ERROR, send Telegram notification, `tmux kill-server`, clean up tool state
+
+Notifications go to agents whose `inject_agent_warnings` is false. Dedup prevents spam: same threshold only fires once until memory drops below it or tmux is killed.
+
 ### Tool Result Guard
 
 When a tool returns a result exceeding a configurable character threshold (default: 10,000 chars), clod does NOT inject the full result into session history. Instead:
