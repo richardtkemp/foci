@@ -41,7 +41,7 @@ func TestSessionsListWithSessions(t *testing.T) {
 		{ChatID: 987654321, Username: "bob", MessageCount: 10, LastActivity: now.Add(-time.Hour)},
 	}
 	cmd := NewSessionsCommand(testSessionsDeps(sessions, 123456789))
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +190,27 @@ func TestSessionsUnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(result, "Usage") {
 		t.Errorf("expected usage, got %q", result)
+	}
+}
+
+func TestSessionsNoArgsShowsUsage(t *testing.T) {
+	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Usage") {
+		t.Errorf("expected usage, got %q", result)
+	}
+	if !strings.Contains(result, "list") {
+		t.Error("expected usage to mention 'list' subcommand")
+	}
+	if !strings.Contains(result, "default") {
+		t.Error("expected usage to mention 'default' subcommand")
+	}
+	if !strings.Contains(result, "info") {
+		t.Error("expected usage to mention 'info' subcommand")
 	}
 }
 
