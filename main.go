@@ -959,7 +959,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir))
+	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, p.cfg.Tools.ExecAutoBackground, notifier))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}

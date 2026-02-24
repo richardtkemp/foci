@@ -26,7 +26,9 @@ import (
 // against per-secret allowed_hosts before the request is sent. If store is nil,
 // requests without secrets work normally but secret templates will fail.
 // tempDir is used for auto-saving binary responses; if empty, os.TempDir() is used.
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string) *Tool {
+// autoBackgroundSecs is the threshold after which a running request is auto-backgrounded
+// (0 disables). notifier delivers results when an auto-backgrounded request finishes.
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers/body are resolved server-side and validated against allowed_hosts. Preferred over exec for API calls with secrets. Binary responses are auto-saved to files. Use save_to to save any response to a specific path.",
@@ -71,17 +73,21 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				"max_response_bytes": {
 					"type": "integer",
 					"description": "Max response body size in bytes. Default 1MB for text, 10MB when save_to is set. Overrides both."
+				},
+				"background": {
+					"type": "boolean",
+					"description": "If true, run the request in the background immediately and deliver the result asynchronously."
 				}
 			},
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, notifier)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string) (string, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) (string, error) {
 	var p struct {
 		URL     string            `json:"url"`
 		Method  string            `json:"method"`
@@ -92,6 +98,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		SaveFromJSONPath string            `json:"save_from_json_path"`
 		Timeout          int              `json:"timeout"`
 		MaxResponseBytes int64            `json:"max_response_bytes"`
+		Background       bool             `json:"background"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
@@ -228,9 +235,8 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
+	// Build request without timeout context — the timeout is applied later
+	// either via context.WithTimeout (auto-background path) or directly on the client.
 	req, err := http.NewRequestWithContext(ctx, p.Method, reqURL, bodyReader)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
@@ -256,33 +262,118 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		}
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	// doAndProcess performs the HTTP call and processes the response.
+	// It uses its own context (may be detached from agent turn for auto-background).
+	doAndProcess := func(reqCtx context.Context) (string, error) {
+		reqWithCtx := req.WithContext(reqCtx)
+		resp, err := client.Do(reqWithCtx)
+		if err != nil {
+			return "", fmt.Errorf("request failed: %w", err)
+		}
+		defer resp.Body.Close()
 
+		return processHTTPResponse(resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore)
+	}
+
+	displayURL := p.URL
+	if parsed, err := url.Parse(p.URL); err == nil {
+		displayURL = p.Method + " " + parsed.Hostname() + parsed.Path
+	}
+
+	// Explicit background mode: fire immediately
+	if p.Background && notifier != nil {
+		sk := SessionKeyFromContext(ctx)
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
+		go func() {
+			defer bgCancel()
+			result, err := doAndProcess(bgCtx)
+			var msg string
+			if err != nil {
+				msg = fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, err)
+			} else {
+				msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, result)
+			}
+			notifier.Notify(sk, msg)
+		}()
+		return fmt.Sprintf("Request running in background. Results will be delivered when complete.\n%s", displayURL), nil
+	}
+
+	// Auto-background: start the request and wait with a timer
+	if autoBackgroundSecs > 0 && notifier != nil {
+		sk := SessionKeyFromContext(ctx)
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
+
+		type httpResult struct {
+			output string
+			err    error
+		}
+		done := make(chan httpResult, 1)
+		go func() {
+			out, err := doAndProcess(bgCtx)
+			done <- httpResult{out, err}
+		}()
+
+		threshold := time.Duration(autoBackgroundSecs) * time.Second
+		select {
+		case r := <-done:
+			bgCancel()
+			if r.err != nil {
+				return "", r.err
+			}
+			return r.output, nil
+
+		case <-time.After(threshold):
+			log.Infof("http_request", "auto-backgrounding after %v: %s", threshold, displayURL)
+			go func() {
+				defer bgCancel()
+				r := <-done
+				var msg string
+				if r.err != nil {
+					msg = fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, r.err)
+				} else {
+					msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, r.output)
+				}
+				notifier.Notify(sk, msg)
+			}()
+			return fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL), nil
+
+		case <-ctx.Done():
+			// Agent turn cancelled — let the request continue in background
+			go func() {
+				defer bgCancel()
+				<-done
+			}()
+			return "", ctx.Err()
+		}
+	}
+
+	// No auto-background — run directly
+	return doAndProcess(ctx)
+}
+
+// processHTTPResponse reads and formats an HTTP response.
+func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (string, error) {
 	// Read response — 10MB when saving to file, 1MB when returning to context
 	bodyLimit := int64(1024 * 1024)
-	if p.SaveTo != "" || isBinaryContentType(resp.Header.Get("Content-Type")) {
+	if saveTo != "" || isBinaryContentType(resp.Header.Get("Content-Type")) {
 		bodyLimit = 10 * 1024 * 1024
 	}
-	if p.MaxResponseBytes > 0 {
-		bodyLimit = p.MaxResponseBytes
+	if maxResponseBytes > 0 {
+		bodyLimit = maxResponseBytes
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
-	if parsed, err := url.Parse(p.URL); err == nil {
-		log.Debugf("http_request", "response %s %s status=%d body=%d", p.Method, parsed.Hostname(), resp.StatusCode, len(body))
+	if parsed, err := url.Parse(reqURL); err == nil {
+		log.Debugf("http_request", "response %s %s status=%d body=%d", method, parsed.Hostname(), resp.StatusCode, len(body))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 
 	// Determine if we need to save to file
-	savePath := p.SaveTo
+	savePath := saveTo
 	if savePath == "" && isBinaryContentType(contentType) {
 		// Auto-save binary responses to temp file
 		dir := tempDir
@@ -314,10 +405,10 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		saveData := body
 
 		// Extract from JSON response if save_from_json_path is set
-		if p.SaveFromJSONPath != "" {
-			extracted, err := extractJSONPath(body, p.SaveFromJSONPath)
+		if saveFromJSONPath != "" {
+			extracted, err := extractJSONPath(body, saveFromJSONPath)
 			if err != nil {
-				return "", fmt.Errorf("extract %s from JSON: %w", p.SaveFromJSONPath, err)
+				return "", fmt.Errorf("extract %s from JSON: %w", saveFromJSONPath, err)
 			}
 			// If it's a data: URI, decode it
 			if decoded, err := decodeDataURI(extracted); err == nil {
