@@ -975,7 +975,8 @@ func setupAgent(p setupParams) *agentInstance {
 		StateStore:              p.stateStore,
 		UsageClient:             p.usageClient,
 		PromptRules:             agent.CompilePromptRules(p.cfg.PromptRules),
-		CompactionSummaryPrompt: readPromptFile(p.cfg.Sessions.CompactionSummaryPrompt, "compaction"),
+		CompactionSummaryPromptPath: p.cfg.Sessions.CompactionSummaryPrompt,
+		ReadPromptFile:              readPromptFile,
 		CompactionHandoffMsg:    p.cfg.Sessions.CompactionHandoffMsg,
 		MaxToolLoops:            acfg.MaxToolLoops,
 		MaxOutputTokens:         acfg.MaxOutputTokens,
@@ -1168,9 +1169,7 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 		ag.ExtraSystemBlocks = newExtraSystemBlocks
-		// Reload compaction summary prompt from file
-		ag.CompactionSummaryPrompt = readPromptFile(p.cfg.Sessions.CompactionSummaryPrompt, "compaction")
-		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n- compaction summary prompt\n\nNote: clod.toml config changes require a service restart to take effect.", newSkillRegistry.Len())
+		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: clod.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", newSkillRegistry.Len())
 		return msg, nil
 	}))
 
@@ -1260,7 +1259,8 @@ func setupAgent(p setupParams) *agentInstance {
 			ag.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
 		}
 		system := bootstrap.SystemBlocks()
-		if err := ag.Compactor.Compact(ctx, sessionKey, system, ag.CompactionSummaryPrompt, ag.CompactionHandoffMsg); err != nil {
+		summaryPrompt := readPromptFile(ag.CompactionSummaryPromptPath, "compaction")
+		if err := ag.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, ag.CompactionHandoffMsg); err != nil {
 			return 0, fmt.Errorf("compaction failed: %w", err)
 		}
 		if ag.CompactionNotifyFunc != nil {

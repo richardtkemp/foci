@@ -568,7 +568,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `minMessages` — min messages before compacting (default: 4)
 
 **Passed to `Compact()` at call time** (not stored on the Compactor):
-- `summaryPrompt` — loaded from file at startup/reload (empty uses a minimal fallback)
+- `summaryPrompt` — read live from file at compaction time via `ReadPromptFile` callback (empty uses a minimal fallback). Edits take effect immediately.
 - `handoffMessage` — message after compaction completes (empty uses `DefaultHandoffMessage`)
 
 ## Deployment & Migrations

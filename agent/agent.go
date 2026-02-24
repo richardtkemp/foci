@@ -83,8 +83,9 @@ type Agent struct {
 	StateStore              *state.Store            // nil disables state persistence
 	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
 	PromptRules             []CompiledPromptRule    // compiled regex rules for inbound message transformation
-	CompactionSummaryPrompt string                  // passed to Compactor.Compact(); empty uses default
-	CompactionHandoffMsg    string                  // passed to Compactor.Compact(); empty uses default
+	CompactionSummaryPromptPath string               // file path; read at compaction time via ReadPromptFile
+	CompactionHandoffMsg        string               // passed to Compactor.Compact(); empty uses default
+	ReadPromptFile              func(path, label string) string // reads prompt from file path; nil uses empty string
 	MaxToolLoops            int                     // max tool iterations per turn (default 25)
 	MaxOutputTokens         int                     // max tokens in model response (default 8192)
 
@@ -722,7 +723,11 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				if a.CompactionNotifyFunc != nil {
 					a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
 				}
-				if err := a.Compactor.Compact(ctx, sessionKey, system, a.CompactionSummaryPrompt, a.CompactionHandoffMsg); err != nil {
+				summaryPrompt := ""
+				if a.ReadPromptFile != nil {
+					summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
+				}
+				if err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
 					log.Errorf("agent", "compaction failed: %v", err)
 				} else if a.CompactionNotifyFunc != nil {
 					a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))

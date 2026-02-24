@@ -118,7 +118,7 @@ Session storage and compaction.
 | `compaction_model` | string | agent model | Model to use for summarization. Defaults to the agent's own model. |
 | `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
-| `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read at startup and `/reload`. Empty disables custom prompt (compactor uses a minimal fallback). |
+| `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). Empty disables custom prompt (compactor uses a minimal fallback). |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_system_prompt` | string | `""` | Path to extra system prompt file injected only during compaction (saves tokens on regular turns). Empty disables. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
@@ -128,7 +128,7 @@ Session storage and compaction.
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`) are file paths, not inline strings. If the path is empty, the feature is disabled. If the file can't be read, an error is logged and the feature is skipped.
+All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`, `fork_prompt`) are file paths, not inline strings. If the path is empty, the feature is disabled. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
 Default `compaction_handoff_msg`:
 ```
