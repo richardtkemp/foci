@@ -22,7 +22,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `heartbeat_interval` | string | `"45m"` | Duration between idle heartbeats. Go duration format (`30s`, `5m`, `2h`). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
-| `fork_prompt` | string | `""` | Prompt injected into multiball branch sessions to inform the agent of the fork. Empty disables. |
+| `fork_prompt` | string | `""` | Path to prompt file injected into multiball branch sessions. Read at fork time. Empty disables. |
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
 | `multiball_bot` | string | `""` | References a key in `[telegram.bots]` map. Used for multiball (branch) sessions. |
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
@@ -118,29 +118,21 @@ Session storage and compaction.
 | `compaction_model` | string | agent model | Model to use for summarization. Defaults to the agent's own model. |
 | `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
-| `compaction_summary_prompt` | string | see below | Prompt sent to the model to generate the summary. |
+| `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read at startup and `/reload`. Empty disables custom prompt (compactor uses a minimal fallback). |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
+| `compaction_system_prompt` | string | `""` | Path to extra system prompt file injected only during compaction (saves tokens on regular turns). Empty disables. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
-| `session_reset_prompt` | string | see below | Prompt sent to the agent before session clear (`/reset` or multiball reclaim). Gives the agent one final turn to save memories. Has a built-in default; set to a custom string to override. |
-| `session_reset_prompt_file` | string | `""` | Path to a file containing the reset prompt (read at fire-time). Inline `session_reset_prompt` takes precedence if both set. |
+| `session_reset_prompt` | string | `""` | Path to prompt file sent to the agent before session clear (`/reset` or multiball reclaim). Read at fire-time. Empty disables the reset hook. |
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
 | `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-Default `compaction_summary_prompt`:
-```
-Please provide a concise summary of our entire conversation so far, capturing all key decisions, context, and important details. This summary will replace the conversation history.
-```
+All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`) are file paths, not inline strings. If the path is empty, the feature is disabled. If the file can't be read, an error is logged and the feature is skipped.
 
 Default `compaction_handoff_msg`:
 ```
 [Compaction complete. The conversation continues from here. You have full access to your tools and memory.]
-```
-
-Default `session_reset_prompt`:
-```
-This session is about to be cleared. Review the conversation and save any important context, decisions, or learnings to your memory files now. Focus on information that would be valuable in future sessions. Be selective — only persist what matters.
 ```
 
 ---

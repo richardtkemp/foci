@@ -394,10 +394,10 @@ compaction_threshold = 0.8               # compact at 80% of context window
 compaction_model = ""                    # model for summarization (default: agent model)
 compaction_max_tokens = 4096             # max output tokens for summary
 compaction_min_messages = 4              # min messages before compacting
-compaction_summary_prompt = "..."        # custom summary prompt
+compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)
+compaction_system_prompt = ""            # path to extra system prompt for compaction (empty = disabled)
 compaction_handoff_msg = "..."           # message after compaction
-session_reset_prompt = "..."             # prompt before session clear (memory formation)
-session_reset_prompt_file = ""           # or path to prompt file (overrides inline)
+session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
 ```
 
 All parameters have sensible defaults. Customize only what you need.

@@ -975,7 +975,7 @@ func setupAgent(p setupParams) *agentInstance {
 		StateStore:              p.stateStore,
 		UsageClient:             p.usageClient,
 		PromptRules:             agent.CompilePromptRules(p.cfg.PromptRules),
-		CompactionSummaryPrompt: p.cfg.Sessions.CompactionSummaryPrompt,
+		CompactionSummaryPrompt: readPromptFile(p.cfg.Sessions.CompactionSummaryPrompt, "compaction"),
 		CompactionHandoffMsg:    p.cfg.Sessions.CompactionHandoffMsg,
 		MaxToolLoops:            acfg.MaxToolLoops,
 		MaxOutputTokens:         acfg.MaxOutputTokens,
@@ -1168,7 +1168,9 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 		ag.ExtraSystemBlocks = newExtraSystemBlocks
-		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: clod.toml config changes require a service restart to take effect.", newSkillRegistry.Len())
+		// Reload compaction summary prompt from file
+		ag.CompactionSummaryPrompt = readPromptFile(p.cfg.Sessions.CompactionSummaryPrompt, "compaction")
+		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n- compaction summary prompt\n\nNote: clod.toml config changes require a service restart to take effect.", newSkillRegistry.Len())
 		return msg, nil
 	}))
 
@@ -1211,11 +1213,13 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 
 		// Inject fork prompt so the agent knows it's on a branch
-		if fp := acfg.ForkPrompt; fp != "" {
-			p.sessions.AppendAll(branchKey, []anthropic.Message{
-				{Role: "user", Content: anthropic.TextContent(fp)},
-				{Role: "assistant", Content: anthropic.TextContent("Understood.")},
-			})
+		if acfg.ForkPrompt != "" {
+			if fp := readPromptFile(acfg.ForkPrompt, "fork"); fp != "" {
+				p.sessions.AppendAll(branchKey, []anthropic.Message{
+					{Role: "user", Content: anthropic.TextContent(fp)},
+					{Role: "assistant", Content: anthropic.TextContent("Understood.")},
+				})
+			}
 		}
 
 		secBot.SetSessionKey(branchKey)
@@ -1602,30 +1606,25 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 	return combined
 }
 
-// resolveResetPrompt returns the session reset prompt from config.
-// Inline prompt takes precedence over file. If neither is set, returns
-// the built-in default. File is read at call time so edits take effect
-// without restart.
-func resolveResetPrompt(cfg *config.Config) string {
-	if cfg.Sessions.SessionResetPrompt != "" {
-		return cfg.Sessions.SessionResetPrompt
+// readPromptFile reads a prompt from a file path. Returns the trimmed contents,
+// or empty string (with error logged) if the file can't be read.
+func readPromptFile(path, label string) string {
+	if path == "" {
+		return ""
 	}
-	if cfg.Sessions.SessionResetPromptFile != "" {
-		data, err := os.ReadFile(cfg.Sessions.SessionResetPromptFile)
-		if err != nil {
-			log.Errorf("reset-hook", "read prompt file: %v", err)
-			return ""
-		}
-		return strings.TrimSpace(string(data))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Errorf(label, "read prompt file %s: %v", path, err)
+		return ""
 	}
-	return config.DefaultSessionResetPrompt
+	return strings.TrimSpace(string(data))
 }
 
 // fireResetHook sends the reset prompt to the agent before a session is cleared.
 // Checks BranchMeta.NoResetHook for branch sessions. Non-fatal: logs and returns
 // on error so the caller can proceed with the reset.
 func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, cfg *config.Config, parentCtx context.Context) {
-	prompt := resolveResetPrompt(cfg)
+	prompt := readPromptFile(cfg.Sessions.SessionResetPrompt, "reset-hook")
 	if prompt == "" {
 		return
 	}
