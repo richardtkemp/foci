@@ -2340,3 +2340,118 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 		t.Errorf("lastMessageTime = %v, want %v (should skip restart marker and find first meta)", sm.lastMessageTime, expected)
 	}
 }
+
+func TestHandleMessageRateLimit(t *testing.T) {
+	// Server returns 429 with Retry-After header.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var rateLimitCalled bool
+	var rateLimitRetry int
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		RateLimitFunc: func(retryAfter int) {
+			rateLimitCalled = true
+			rateLimitRetry = retryAfter
+		},
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	if err == nil {
+		t.Fatal("expected error for rate limit")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %q, want rate limited message", err.Error())
+	}
+
+	if !rateLimitCalled {
+		t.Error("RateLimitFunc not called")
+	}
+	if rateLimitRetry != 120 {
+		t.Errorf("retryAfter = %d, want 120", rateLimitRetry)
+	}
+}
+
+func TestHandleMessageOverloaded(t *testing.T) {
+	// Server returns 529 Overloaded.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(529)
+		w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var rateLimitCalled bool
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		RateLimitFunc: func(retryAfter int) {
+			rateLimitCalled = true
+		},
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	if err == nil {
+		t.Fatal("expected error for overloaded")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %q, want rate limited message", err.Error())
+	}
+
+	if !rateLimitCalled {
+		t.Error("RateLimitFunc not called for 529")
+	}
+}
+
+func TestHandleMessageRateLimitNoCallback(t *testing.T) {
+	// 429 without RateLimitFunc — should still return friendly error, not crash.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+		// RateLimitFunc intentionally nil
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Errorf("error = %q, want rate limited message", err.Error())
+	}
+}

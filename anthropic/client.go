@@ -7,8 +7,43 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 )
+
+// APIError is returned when the API responds with a non-200 status code.
+// Use errors.As to check for this type and inspect StatusCode or RetryAfter.
+type APIError struct {
+	StatusCode int    // HTTP status code
+	Body       string // response body
+	RetryAfter string // retry-after header value (seconds or date), empty if not present
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Body)
+}
+
+// IsRateLimit returns true if this is a 429 Too Many Requests error.
+func (e *APIError) IsRateLimit() bool {
+	return e.StatusCode == http.StatusTooManyRequests
+}
+
+// IsOverloaded returns true if this is a 529 Overloaded error.
+func (e *APIError) IsOverloaded() bool {
+	return e.StatusCode == 529
+}
+
+// RetryAfterSeconds parses the retry-after header as seconds.
+// Returns 0 if not present or unparseable.
+func (e *APIError) RetryAfterSeconds() int {
+	if e.RetryAfter == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(e.RetryAfter); err == nil {
+		return secs
+	}
+	return 0
+}
 
 // Client is an Anthropic API client with prompt caching support.
 type Client struct {
@@ -73,7 +108,11 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", httpResp.StatusCode, string(respBody))
+		return nil, &APIError{
+			StatusCode: httpResp.StatusCode,
+			Body:       string(respBody),
+			RetryAfter: httpResp.Header.Get("Retry-After"),
+		}
 	}
 
 	var resp MessageResponse

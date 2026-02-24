@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -78,6 +79,7 @@ type Agent struct {
 	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
 	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
 	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
+	RateLimitFunc               func(retryAfter int)            // callback when API returns 429/529 (rate limited or overloaded)
 	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
 	Redact                      func(string) string             // redact secrets from tool output; nil disables
 	StateStore                  *state.Store                    // nil disables state persistence
@@ -628,6 +630,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		if err != nil {
 			if ctx.Err() != nil {
 				return "", ctx.Err()
+			}
+			// Detect rate limit / overloaded errors and notify via callback.
+			var apiErr *anthropic.APIError
+			if errors.As(err, &apiErr) && (apiErr.IsRateLimit() || apiErr.IsOverloaded()) {
+				log.Warnf("agent", "rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
+				if a.RateLimitFunc != nil {
+					a.RateLimitFunc(apiErr.RetryAfterSeconds())
+				}
+				return "", fmt.Errorf("rate limited — mana exhausted")
 			}
 			return "", fmt.Errorf("send message: %w", err)
 		}
