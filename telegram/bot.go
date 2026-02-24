@@ -251,6 +251,25 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 	}
 
 	var offset int64
+	// On exit, acknowledge processed updates so they aren't replayed on restart.
+	// Telegram acknowledges updates implicitly when the next getUpdates has a
+	// higher offset, so we must fire one final short-poll before returning.
+	defer func() {
+		if offset > 0 {
+			_, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
+				Offset:  offset,
+				Timeout: 0,
+				RequestOpts: &gotgbot.RequestOpts{
+					Timeout: 5 * time.Second,
+				},
+			})
+			if err != nil {
+				log.Errorf("telegram", "failed to ack updates on shutdown: %s", b.sanitizeError(err))
+			} else {
+				log.Infof("telegram", "acknowledged updates up to offset %d", offset)
+			}
+		}
+	}()
 	for {
 		if ctx.Err() != nil {
 			return
@@ -426,6 +445,15 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Slash commands bypass the agent pipeline entirely
 	if text != "" && strings.HasPrefix(text, "/") {
 		cmd := strings.ToLower(strings.TrimSpace(text))
+
+		// Skip stale slash commands (e.g. /restart replayed from the update
+		// queue after a crash). Agent messages are still delivered since the
+		// agent can reason about timeliness, but slash commands execute
+		// unconditionally so stale ones must be dropped.
+		if age := time.Since(time.Unix(int64(msg.Date), 0)); age > 30*time.Second {
+			log.Warnf("telegram", "dropping stale command %q (age=%s)", cmd, age.Truncate(time.Second))
+			return
+		}
 
 		// /stop cancels the current agent turn (including configured aliases)
 		if b.isStopCommand(cmd) {
