@@ -1113,6 +1113,7 @@ func setupAgent(p setupParams) *agentInstance {
 		AgentID:    acfg.ID,
 		Model:      acfg.Model,
 		MaxInherit: p.cfg.Tools.MaxConcurrentSpawns,
+		Notifier:   notifier,
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
 
