@@ -234,6 +234,11 @@ max_result_chars = 10000              # max chars before writing to file
 temp_dir = "/tmp/clod-tool-results"   # where to write large results
 ```
 
+**http_request — file saves and binary handling:**
+- `save_to` — save response body to a specific file path (returns status + headers + path, not body)
+- `save_from_json_path` — extract a value from JSON response by dot path (e.g. `data.0.url`); if it's a `data:` URI, decodes base64 to binary. Requires `save_to`. Designed for image generation APIs that return base64 data URIs.
+- Binary content types (`image/*`, `audio/*`, `video/*`, etc.) auto-save to temp file when `save_to` is not set
+
 **Each tool is a function with signature:**
 ```go
 type Tool struct {
@@ -755,7 +760,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Multiball — `/multiball` forks to secondary Telegram bot, tested and working
 - Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
 - Telegram bot (text messages, DM only)
-- Tools: exec, read, write, edit, web_fetch, web_search, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), spawn (none/full/inherit), schedule_wake, tts, todo
+- Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, tmux (watch/unwatch), spawn (none/full/inherit), schedule_wake, tts, todo
 - Workspace bootstrap (markdown files → system prompt, configurable file order)
 - Skills framework (YAML frontmatter, command dispatch, script execution)
 - Heartbeat (configurable interval)
