@@ -365,6 +365,39 @@ func TestPool_ReclaimHookNil(t *testing.T) {
 	}
 }
 
+func TestPool_ForEach(t *testing.T) {
+	pool := NewPool()
+	bot1 := testSecondaryBot("bot1")
+	bot2 := testSecondaryBot("bot2")
+	bot3 := testSecondaryBot("bot3")
+	pool.Add(bot1)
+	pool.Add(bot2)
+	pool.Add(bot3)
+
+	var visited []*Bot
+	pool.ForEach(func(b *Bot) {
+		visited = append(visited, b)
+	})
+
+	if len(visited) != 3 {
+		t.Fatalf("ForEach visited %d bots, want 3", len(visited))
+	}
+	if visited[0] != bot1 || visited[1] != bot2 || visited[2] != bot3 {
+		t.Error("ForEach did not visit bots in order")
+	}
+}
+
+func TestPool_ForEachEmpty(t *testing.T) {
+	pool := NewPool()
+	count := 0
+	pool.ForEach(func(b *Bot) {
+		count++
+	})
+	if count != 0 {
+		t.Errorf("ForEach on empty pool visited %d bots", count)
+	}
+}
+
 func TestPool_ReclaimHookMultipleBots(t *testing.T) {
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")

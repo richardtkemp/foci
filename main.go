@@ -483,6 +483,17 @@ func main() {
 				mbBot.SetTTS(ttsProvider)
 			}
 			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
+			if stateStore != nil {
+				ss := stateStore
+				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
+					key := "multiball:" + username
+					if sessionKey == "" {
+						ss.Delete(key)
+					} else {
+						ss.Set(key, sessionKey)
+					}
+				}
+			}
 			botMgr.AddSharedMultiball(mbBot)
 		}
 		if pool := botMgr.SharedPool(); pool != nil && pool.Size() > 0 {
@@ -569,6 +580,13 @@ func main() {
 	// terminates the process with no graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Restore multiball sessions from persisted state.
+	// For each secondary bot, check if a saved session key exists and the session
+	// file is still active. If so, restore the session key and re-wire the agent.
+	if stateStore != nil {
+		restoreMultiballSessions(botMgr, stateStore, sessions, agents, agentOrder)
+	}
 
 	// Start all bots
 	botMgr.StartAll(ctx)
@@ -1519,6 +1537,17 @@ func setupAgent(p setupParams) *agentInstance {
 				mbBot.SetTTS(p.ttsProvider)
 			}
 			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
+			if p.stateStore != nil {
+				ss := p.stateStore
+				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
+					key := "multiball:" + username
+					if sessionKey == "" {
+						ss.Delete(key)
+					} else {
+						ss.Set(key, sessionKey)
+					}
+				}
+			}
 			p.botMgr.AddMultiball(acfg.ID, mbBot)
 		}
 		if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
@@ -1796,6 +1825,87 @@ func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, noReset
 	return a.store.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		NoResetHook: noResetHook,
 	})
+}
+
+// extractAgentID extracts the agent ID from a session key.
+// Session keys have the format "agent:<id>:..." — returns the second segment.
+func extractAgentID(sessionKey string) string {
+	parts := strings.SplitN(sessionKey, ":", 3)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+// restoreMultiballSessions restores persisted multiball session mappings after restart.
+// For each secondary bot in all pools, it looks up "multiball:<username>" in stateStore.
+// If a saved session key exists and the session file is still active, the bot is restored.
+func restoreMultiballSessions(
+	botMgr *telegram.BotManager,
+	stateStore *state.Store,
+	sessions *session.Store,
+	agents map[string]*agentInstance,
+	agentOrder []string,
+) {
+	// Collect all pools to iterate
+	type poolInfo struct {
+		pool *telegram.Pool
+		name string
+	}
+	var pools []poolInfo
+	for _, id := range agentOrder {
+		if pool := botMgr.Pool(id); pool != nil {
+			pools = append(pools, poolInfo{pool: pool, name: "agent:" + id})
+		}
+	}
+	if sp := botMgr.SharedPool(); sp != nil {
+		pools = append(pools, poolInfo{pool: sp, name: "shared"})
+	}
+
+	restored := 0
+	for _, pi := range pools {
+		pi.pool.ForEach(func(bot *telegram.Bot) {
+			username := bot.Username()
+			if username == "" {
+				return
+			}
+			var savedKey string
+			if !stateStore.Get("multiball:"+username, &savedKey) || savedKey == "" {
+				return
+			}
+
+			// Validate session still exists on disk
+			if sessions.LastActivity(savedKey) == "n/a" {
+				log.Infof("main", "multiball restore: @%s session %s no longer exists, cleaning up", username, savedKey)
+				stateStore.Delete("multiball:" + username)
+				return
+			}
+
+			// Restore session key (bypass callback — already persisted)
+			bot.SetSessionKeyDirect(savedKey)
+
+			// Re-wire agent if we can identify it from the session key
+			agentID := extractAgentID(savedKey)
+			if inst, ok := agents[agentID]; ok {
+				bot.SetAgentAndCommands(inst.ag, inst.cmds)
+			}
+
+			// Copy chatID from primary bot so notifications work
+			if agentID != "" {
+				if primary := botMgr.PrimaryBot(agentID); primary != nil {
+					if chatID := primary.ChatID(); chatID != 0 {
+						bot.SetChatID(chatID)
+					}
+				}
+			}
+
+			restored++
+			log.Infof("main", "multiball restore: @%s → %s", username, savedKey)
+		})
+	}
+	if restored > 0 {
+		log.Infof("main", "restored %d multiball session(s) from state", restored)
+	}
 }
 
 // checkManaPrereqs returns warnings if mana detection prerequisites are missing.

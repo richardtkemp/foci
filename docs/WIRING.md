@@ -45,6 +45,7 @@ config.Load(path)                                        ← validates values; l
     → agent.NewHeartbeat(agent, defaultSessionKey, interval)  ← lazy session key via SessionKeyFn
 
   → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
+  → restoreMultiballSessions()                             ← restore bot→session mappings from state store
   → botMgr.StartAll(ctx)                                  ← starts all bots
   → start all heartbeats
   → http.Server{"/send", "/status", "/command", "/wake"}  ← routes by agent param
@@ -543,6 +544,8 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 - `isSecondary` flag — enables `/done` handling, idle message rejection
 - `/done` handled as special case alongside `/stop` (bypasses command registry)
 - Idle secondary bots respond with "This bot is idle. Use /multiball..." to non-command messages
+
+**Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<telegram_username>`. Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `main.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetAgentAndCommands` and gets the primary bot's chat ID for notifications.
 
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool
