@@ -128,7 +128,7 @@ func TestSpawnContextNone(t *testing.T) {
 	}
 }
 
-func TestSpawnContextFull(t *testing.T) {
+func TestSpawnContextCharacterOnly(t *testing.T) {
 	var receivedReq *anthropic.MessageRequest
 
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -155,7 +155,7 @@ func TestSpawnContextFull(t *testing.T) {
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Analyze this deeply",
 		"model":   "opus",
-		"context": "full",
+		"context": "character_only",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -176,7 +176,7 @@ func TestSpawnContextFull(t *testing.T) {
 	}
 }
 
-func TestSpawnContextInherit(t *testing.T) {
+func TestSpawnContextCloneCurrent(t *testing.T) {
 	// With a notifier, inherit returns an async ack immediately.
 	called := make(chan string, 1)
 	mockAgent := &channelSpawnAgent{
@@ -201,7 +201,7 @@ func TestSpawnContextInherit(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do the research task",
-		"context": "inherit",
+		"context": "clone_current",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -249,7 +249,7 @@ func TestSpawnContextInherit(t *testing.T) {
 	}
 }
 
-func TestSpawnContextInheritDefault(t *testing.T) {
+func TestSpawnContextCloneCurrentDefault(t *testing.T) {
 	// Inherit should be the default context mode — nil notifier = sync fallback
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
@@ -399,7 +399,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	// Inherit should be rejected
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "nested task",
-		"context": "inherit",
+		"context": "clone_current",
 	})
 	_, err := tool.Execute(ctx, params)
 	if err == nil {
@@ -430,7 +430,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 
 	params, _ = json.Marshal(map[string]string{
 		"prompt":  "full query",
-		"context": "full",
+		"context": "character_only",
 	})
 	result, err = tool.Execute(ctx, params)
 	if err != nil {
@@ -478,7 +478,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		params, _ := json.Marshal(map[string]string{
 			"prompt":  "task",
-			"context": "inherit",
+			"context": "clone_current",
 		})
 		result, err := tool.Execute(ctx, params)
 		if err != nil {
@@ -563,7 +563,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do research",
-		"context": "inherit",
+		"context": "clone_current",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -618,7 +618,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
-		"context": "inherit",
+		"context": "clone_current",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -662,7 +662,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
-		"context": "inherit",
+		"context": "clone_current",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -736,7 +736,7 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 	// No session key in context
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "task",
-		"context": "inherit",
+		"context": "clone_current",
 	})
 
 	_, err := tool.Execute(context.Background(), params)
