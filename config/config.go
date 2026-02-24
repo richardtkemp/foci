@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,7 +166,11 @@ type ToolsConfig struct {
 	WebFetchMaxBytes   int    `toml:"web_fetch_max_bytes"`   // max bytes to read from web fetch (default 1048576 = 1MB)
 	WebFetchMaxChars   int    `toml:"web_fetch_max_chars"`   // max chars in web fetch output before truncation (default 50000)
 	WebSearchTimeout    string `toml:"web_search_timeout"`     // HTTP timeout for web search (default "15s")
-	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn inherit sessions per agent (default 3)
+	MaxConcurrentSpawns       int    `toml:"max_concurrent_spawns"`         // max concurrent spawn inherit sessions per agent (default 3)
+	TmuxMemoryCheckInterval   string `toml:"tmux_memory_check_interval"`    // how often to check tmux RSS (default "5m", "0" disables)
+	TmuxMemoryWarn            string `toml:"tmux_memory_warn"`              // warn threshold as % of RAM or absolute (default "10%")
+	TmuxMemoryCritical        string `toml:"tmux_memory_critical"`          // critical threshold (default "20%")
+	TmuxMemoryKill            string `toml:"tmux_memory_kill"`              // kill threshold (default "30%")
 }
 
 type PromptRule struct {
@@ -284,6 +289,20 @@ func validate(cfg *Config) error {
 	}
 	if _, err := time.ParseDuration(cfg.Tools.WebSearchTimeout); err != nil {
 		return fmt.Errorf("[tools] web_search_timeout = %q: %w", cfg.Tools.WebSearchTimeout, err)
+	}
+	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
+		if _, err := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval); err != nil {
+			return fmt.Errorf("[tools] tmux_memory_check_interval = %q: %w", cfg.Tools.TmuxMemoryCheckInterval, err)
+		}
+	}
+	for _, kv := range []struct{ k, v string }{
+		{"tmux_memory_warn", cfg.Tools.TmuxMemoryWarn},
+		{"tmux_memory_critical", cfg.Tools.TmuxMemoryCritical},
+		{"tmux_memory_kill", cfg.Tools.TmuxMemoryKill},
+	} {
+		if err := ValidateMemoryThreshold(kv.v); err != nil {
+			return fmt.Errorf("[tools] %s = %q: %w", kv.k, kv.v, err)
+		}
 	}
 
 	// Telegram
@@ -459,6 +478,18 @@ func Load(path string) (*Config, error) {
 	if cfg.Tools.MaxConcurrentSpawns == 0 {
 		cfg.Tools.MaxConcurrentSpawns = 3
 	}
+	if cfg.Tools.TmuxMemoryCheckInterval == "" {
+		cfg.Tools.TmuxMemoryCheckInterval = "5m"
+	}
+	if cfg.Tools.TmuxMemoryWarn == "" {
+		cfg.Tools.TmuxMemoryWarn = "10%"
+	}
+	if cfg.Tools.TmuxMemoryCritical == "" {
+		cfg.Tools.TmuxMemoryCritical = "20%"
+	}
+	if cfg.Tools.TmuxMemoryKill == "" {
+		cfg.Tools.TmuxMemoryKill = "30%"
+	}
 
 	// Telegram defaults
 	if cfg.Telegram.MessageQueueSize == 0 {
@@ -599,4 +630,44 @@ func checkUnknownKeys(path string, md toml.MetaData) {
 		return
 	}
 	log.Warnf("config", "unknown config keys in %s: %v", path, keys)
+}
+
+// ValidateMemoryThreshold checks that a memory threshold string is in a valid
+// format: "N%" (percentage of RAM), "Nmb" (megabytes), or "Ngb" (gigabytes).
+func ValidateMemoryThreshold(s string) error {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return fmt.Errorf("empty threshold")
+	}
+	if strings.HasSuffix(s, "%") {
+		v, err := strconv.ParseFloat(s[:len(s)-1], 64)
+		if err != nil {
+			return fmt.Errorf("invalid percentage %q: %w", s, err)
+		}
+		if v <= 0 || v > 100 {
+			return fmt.Errorf("percentage %q must be between 0 and 100", s)
+		}
+		return nil
+	}
+	if strings.HasSuffix(s, "gb") {
+		v, err := strconv.ParseFloat(s[:len(s)-2], 64)
+		if err != nil {
+			return fmt.Errorf("invalid gigabytes %q: %w", s, err)
+		}
+		if v <= 0 {
+			return fmt.Errorf("gigabytes %q must be positive", s)
+		}
+		return nil
+	}
+	if strings.HasSuffix(s, "mb") {
+		v, err := strconv.ParseFloat(s[:len(s)-2], 64)
+		if err != nil {
+			return fmt.Errorf("invalid megabytes %q: %w", s, err)
+		}
+		if v <= 0 {
+			return fmt.Errorf("megabytes %q must be positive", s)
+		}
+		return nil
+	}
+	return fmt.Errorf("unknown format %q: use \"N%%\", \"Nmb\", or \"Ngb\"", s)
 }
