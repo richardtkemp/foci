@@ -659,6 +659,64 @@ enable_startup_notify = false
 	}
 }
 
+func TestAgentStartupNotification(t *testing.T) {
+	t.Run("defaults to nil", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		toml := `
+[[agents]]
+id = "test"
+`
+		os.WriteFile(path, []byte(toml), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].StartupNotification != nil {
+			t.Error("StartupNotification should default to nil (use global)")
+		}
+	})
+
+	t.Run("explicit true", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		toml := `
+[[agents]]
+id = "test"
+startup_notification = true
+`
+		os.WriteFile(path, []byte(toml), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].StartupNotification == nil || !*cfg.Agents[0].StartupNotification {
+			t.Error("StartupNotification should be true")
+		}
+	})
+
+	t.Run("explicit false", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		toml := `
+[[agents]]
+id = "test"
+startup_notification = false
+`
+		os.WriteFile(path, []byte(toml), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].StartupNotification == nil || *cfg.Agents[0].StartupNotification {
+			t.Error("StartupNotification should be false")
+		}
+	})
+}
+
 func TestValidateCompactionThreshold(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -22,21 +22,22 @@ type AgentMemoryConfig struct {
 }
 
 type AgentConfig struct {
-	ID                string            `toml:"id"`
-	Model             string            `toml:"model"`
-	Workspace         string            `toml:"workspace"`
-	HeartbeatInterval string            `toml:"heartbeat_interval"`
-	SystemFiles       []string          `toml:"system_files"`       // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages bool              `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
-	ForkPrompt        string            `toml:"fork_prompt"`        // path to prompt file injected as context when a multiball session is forked
-	TelegramBot       string            `toml:"telegram_bot"`       // references key in [telegram.bots] map
-	MultiballBot      string            `toml:"multiball_bot"`      // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
-	MultiballBots     []string          `toml:"multiball_bots"`     // references keys in [telegram.bots] map (optional)
-	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
-	MaxToolLoops      int               `toml:"max_tool_loops"`     // max tool iterations per turn (default 25)
-	MaxOutputTokens   int               `toml:"max_output_tokens"`  // max tokens in model response (default 8192)
-	TTSRate             float64           `toml:"tts_rate"`             // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
+	ID                  string            `toml:"id"`
+	Model               string            `toml:"model"`
+	Workspace           string            `toml:"workspace"`
+	HeartbeatInterval   string            `toml:"heartbeat_interval"`
+	SystemFiles         []string          `toml:"system_files"`          // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	DuplicateMessages   bool              `toml:"duplicate_messages"`    // send user text twice per API call (improves instruction following)
+	ForkPrompt          string            `toml:"fork_prompt"`           // path to prompt file injected as context when a multiball session is forked
+	TelegramBot         string            `toml:"telegram_bot"`          // references key in [telegram.bots] map
+	MultiballBot        string            `toml:"multiball_bot"`         // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
+	MultiballBots       []string          `toml:"multiball_bots"`        // references keys in [telegram.bots] map (optional)
+	Memory              AgentMemoryConfig `toml:"memory"`                // per-agent memory sources (combined with global [memory])
+	MaxToolLoops        int               `toml:"max_tool_loops"`        // max tool iterations per turn (default 25)
+	MaxOutputTokens     int               `toml:"max_output_tokens"`     // max tokens in model response (default 8192)
+	TTSRate             float64           `toml:"tts_rate"`              // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
+	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
 }
 
 type AnthropicConfig struct {
@@ -61,22 +62,22 @@ type TelegramConfig struct {
 	Bots                map[string]TelegramBotConfig `toml:"bots"`                  // named bots for multi-agent
 	StopAliases         []string                     `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases   bool                         `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
-	EnableStartupNotify  bool                         `toml:"enable_startup_notify"`  // send notification on startup (default true)
-	MultiballSessionTTL  string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
-	MessageQueueSize     int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
-	LongPollTimeout      string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
+	EnableStartupNotify bool                         `toml:"enable_startup_notify"` // send notification on startup (default true)
+	MultiballSessionTTL string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
+	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
+	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 }
 
 type SessionsConfig struct {
 	Dir                     string  `toml:"dir"`
-	CompactionThreshold     float64 `toml:"compaction_threshold"`      // compact at this % of context window (default 0.8)
-	CompactionModel         string  `toml:"compaction_model"`          // model to use for summarization (default: agent model)
-	CompactionMaxTokens     int     `toml:"compaction_max_tokens"`     // max output tokens for summary (default 4096)
-	CompactionMinMessages   int     `toml:"compaction_min_messages"`   // min messages before compacting (default 4)
-	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"` // path to summary prompt file
-	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`    // handoff message after compaction
-	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`  // path to extra system prompt file injected only during compaction
-	CompactionNotify        *bool   `toml:"compaction_notify"`         // send Telegram notification on compaction (default true)
+	CompactionThreshold     float64 `toml:"compaction_threshold"`          // compact at this % of context window (default 0.8)
+	CompactionModel         string  `toml:"compaction_model"`              // model to use for summarization (default: agent model)
+	CompactionMaxTokens     int     `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
+	CompactionMinMessages   int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
+	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"`     // path to summary prompt file
+	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`        // handoff message after compaction
+	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`      // path to extra system prompt file injected only during compaction
+	CompactionNotify        *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
 	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
@@ -124,11 +125,11 @@ type VoiceConfig struct {
 	STTModel    string `toml:"stt_model"`    // default: whisper-large-v3
 
 	// TTS (text-to-speech) — configurable provider
-	TTSProvider string `toml:"tts_provider"` // "edge-tts" (default) or "openai"
-	TTSEndpoint string `toml:"tts_endpoint"` // for openai provider
-	TTSModel    string `toml:"tts_model"`    // for openai provider, e.g. "openai/tts-1-mini"
-	TTSVoice    string `toml:"tts_voice"`    // voice name (provider-specific)
-	TTSRate     float64 `toml:"tts_rate"`    // speech rate multiplier: 1.0 = normal, 1.3 = 30% faster, 0.8 = 20% slower
+	TTSProvider string  `toml:"tts_provider"` // "edge-tts" (default) or "openai"
+	TTSEndpoint string  `toml:"tts_endpoint"` // for openai provider
+	TTSModel    string  `toml:"tts_model"`    // for openai provider, e.g. "openai/tts-1-mini"
+	TTSVoice    string  `toml:"tts_voice"`    // voice name (provider-specific)
+	TTSRate     float64 `toml:"tts_rate"`     // speech rate multiplier: 1.0 = normal, 1.3 = 30% faster, 0.8 = 20% slower
 }
 
 type BitwardenConfig struct {
@@ -158,24 +159,24 @@ type SkillsConfig struct {
 }
 
 type ToolsConfig struct {
-	MaxResultChars     int    `toml:"max_result_chars"`      // max chars before writing result to file (default 10000)
-	TempDir            string `toml:"temp_dir"`              // where to write large tool results (default /tmp/clod-tool-results)
-	TmuxCols           int    `toml:"tmux_cols"`             // tmux window columns on start (default 300)
-	TmuxRows           int    `toml:"tmux_rows"`             // tmux window rows on start (default 30)
-	ExecAutoBackground int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec (default 10, 0 disables)
-	ExecDefaultTimeout int    `toml:"exec_default_timeout"`  // default timeout for exec commands in seconds (default 30)
-	ExecMaxOutputChars int    `toml:"exec_max_output_chars"` // max chars in exec output before truncation (default 100000)
-	TmuxCommandTimeout string `toml:"tmux_command_timeout"`  // timeout for tmux control commands (default "5s")
-	WebFetchTimeout    string `toml:"web_fetch_timeout"`     // HTTP timeout for web fetch (default "30s")
-	WebFetchMaxBytes   int    `toml:"web_fetch_max_bytes"`   // max bytes to read from web fetch (default 1048576 = 1MB)
-	WebFetchMaxChars   int    `toml:"web_fetch_max_chars"`   // max chars in web fetch output before truncation (default 50000)
-	WebSearchTimeout    string `toml:"web_search_timeout"`     // HTTP timeout for web search (default "15s")
-	MaxConcurrentSpawns       int    `toml:"max_concurrent_spawns"`         // max concurrent spawn inherit sessions per agent (default 3)
-	ToolCallPreviewChars      int    `toml:"tool_call_preview_chars"`       // max chars for tool call param preview in Telegram (default 450)
-	TmuxMemoryCheckInterval   string `toml:"tmux_memory_check_interval"`    // how often to check tmux RSS (default "5m", "0" disables)
-	TmuxMemoryWarn            string `toml:"tmux_memory_warn"`              // warn threshold as % of RAM or absolute (default "10%")
-	TmuxMemoryCritical        string `toml:"tmux_memory_critical"`          // critical threshold (default "20%")
-	TmuxMemoryKill            string `toml:"tmux_memory_kill"`              // kill threshold (default "30%")
+	MaxResultChars          int    `toml:"max_result_chars"`           // max chars before writing result to file (default 10000)
+	TempDir                 string `toml:"temp_dir"`                   // where to write large tool results (default /tmp/clod-tool-results)
+	TmuxCols                int    `toml:"tmux_cols"`                  // tmux window columns on start (default 300)
+	TmuxRows                int    `toml:"tmux_rows"`                  // tmux window rows on start (default 30)
+	ExecAutoBackground      int    `toml:"exec_auto_background"`       // seconds before auto-backgrounding exec (default 10, 0 disables)
+	ExecDefaultTimeout      int    `toml:"exec_default_timeout"`       // default timeout for exec commands in seconds (default 30)
+	ExecMaxOutputChars      int    `toml:"exec_max_output_chars"`      // max chars in exec output before truncation (default 100000)
+	TmuxCommandTimeout      string `toml:"tmux_command_timeout"`       // timeout for tmux control commands (default "5s")
+	WebFetchTimeout         string `toml:"web_fetch_timeout"`          // HTTP timeout for web fetch (default "30s")
+	WebFetchMaxBytes        int    `toml:"web_fetch_max_bytes"`        // max bytes to read from web fetch (default 1048576 = 1MB)
+	WebFetchMaxChars        int    `toml:"web_fetch_max_chars"`        // max chars in web fetch output before truncation (default 50000)
+	WebSearchTimeout        string `toml:"web_search_timeout"`         // HTTP timeout for web search (default "15s")
+	MaxConcurrentSpawns     int    `toml:"max_concurrent_spawns"`      // max concurrent spawn inherit sessions per agent (default 3)
+	ToolCallPreviewChars    int    `toml:"tool_call_preview_chars"`    // max chars for tool call param preview in Telegram (default 450)
+	TmuxMemoryCheckInterval string `toml:"tmux_memory_check_interval"` // how often to check tmux RSS (default "5m", "0" disables)
+	TmuxMemoryWarn          string `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
+	TmuxMemoryCritical      string `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
+	TmuxMemoryKill          string `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
 }
 
 type PromptRule struct {
@@ -191,26 +192,26 @@ type CommandConfig struct {
 }
 
 type Config struct {
-	DataDir      string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
-	Agent        AgentConfig        `toml:"agent"`    // legacy: single agent
-	Agents       []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
-	Anthropic    AnthropicConfig    `toml:"anthropic"`
-	Telegram     TelegramConfig     `toml:"telegram"`
-	Sessions     SessionsConfig     `toml:"sessions"`
-	Memory       MemoryConfig       `toml:"memory"`
-	Database     DatabaseConfig     `toml:"database"`
-	HTTP         HTTPConfig         `toml:"http"`
-	Logging      LoggingConfig      `toml:"logging"`
-	Voice        VoiceConfig        `toml:"voice"`
-	Bitwarden    BitwardenConfig     `toml:"bitwarden"`
-	Cache        CacheConfig        `toml:"cache"`
-	ManaWarnings ManaWarningsConfig `toml:"usage_warnings"`
-	Environment  EnvironmentConfig  `toml:"environment"`
-	Skills       SkillsConfig       `toml:"skills"`
-	Tools        ToolsConfig        `toml:"tools"`
+	DataDir            string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
+	Agent              AgentConfig        `toml:"agent"`    // legacy: single agent
+	Agents             []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
+	Anthropic          AnthropicConfig    `toml:"anthropic"`
+	Telegram           TelegramConfig     `toml:"telegram"`
+	Sessions           SessionsConfig     `toml:"sessions"`
+	Memory             MemoryConfig       `toml:"memory"`
+	Database           DatabaseConfig     `toml:"database"`
+	HTTP               HTTPConfig         `toml:"http"`
+	Logging            LoggingConfig      `toml:"logging"`
+	Voice              VoiceConfig        `toml:"voice"`
+	Bitwarden          BitwardenConfig    `toml:"bitwarden"`
+	Cache              CacheConfig        `toml:"cache"`
+	ManaWarnings       ManaWarningsConfig `toml:"usage_warnings"`
+	Environment        EnvironmentConfig  `toml:"environment"`
+	Skills             SkillsConfig       `toml:"skills"`
+	Tools              ToolsConfig        `toml:"tools"`
 	Commands           []CommandConfig    `toml:"commands"`
-	PromptRules        []PromptRule       `toml:"prompt_rules"`        // regex find/replace rules applied to inbound messages
-	WelcomeFile        string             `toml:"welcome_file"`        // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
+	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
+	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
 	SkipSecurityChecks bool               `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 }
 

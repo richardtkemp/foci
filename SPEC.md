@@ -59,6 +59,7 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 - Send: text messages, markdown formatting, voice notes, file attachments (beta)
 - Route incoming messages to the correct agent session
 - DM only for alpha; group chat support in beta
+- Startup notification: sends "botname restarted at HH:MM:SS" to the last active chat. Controlled by global `enable_startup_notify` (default true) with per-agent override via `startup_notification`. Set to `false` for silent bots (e.g., cron-only agents).
 
 ### Multi-Bot Sessions (/multiball)
 
