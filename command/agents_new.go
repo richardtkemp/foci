@@ -17,6 +17,7 @@ type AgentNewDeps struct {
 	HomeDir     string           // base dir for workspaces (e.g. /home/clod)
 	ListFn      func() []AgentInfo
 	SecretNames func() []string // current secret names
+	BotNames    func() []string // existing bot names from [telegram.bots] config
 }
 
 // agentWizard implements WizardHandler for interactive agent creation.
@@ -120,6 +121,15 @@ func (w *agentWizard) handleToken(text string) (string, bool) {
 	// Derive bot name from the key part after "telegram."
 	parts := strings.SplitN(text, ".", 2)
 	w.botName = parts[len(parts)-1]
+
+	// Check for duplicate bot name in existing config
+	if w.deps.BotNames != nil {
+		for _, name := range w.deps.BotNames() {
+			if name == w.botName {
+				return fmt.Sprintf("Bot `%s` already exists in config (`[telegram.bots.%s]`). Choose a different secret name:", w.botName, w.botName), false
+			}
+		}
+	}
 
 	// Check if the secret exists
 	var warning string
