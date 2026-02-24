@@ -221,6 +221,11 @@ func createAgent(w *agentWizard) (string, error) {
 		if err := copyCharacterFiles(w.deps.DefaultsDir, workspace); err != nil {
 			return "", fmt.Errorf("copy defaults: %w", err)
 		}
+		// Substitute placeholders in SOUL.md with actual agent name and emoji
+		soulPath := filepath.Join(workspace, "character", "SOUL.md")
+		if err := templateSoulFile(soulPath, w.display, w.emoji); err != nil {
+			return "", fmt.Errorf("template SOUL.md: %w", err)
+		}
 		sb.WriteString("✅ Character files: copied from defaults\n")
 	case "copy":
 		sourceWorkspace := filepath.Join(w.deps.HomeDir, w.copyFrom)
@@ -298,6 +303,21 @@ func generateCrontab(w *agentWizard, workspace string) []string {
 		fmt.Sprintf("%d */4 * * * curl -s -X POST http://localhost:7080/wake -d '{\"agent\":\"%s\",\"prompt_file\":\"%s/HEARTBEAT.md\",\"no_compact\":true}' > /dev/null 2>&1",
 			heartbeatMin, w.id, promptsDir),
 	}
+}
+
+// templateSoulFile replaces placeholder comments in a SOUL.md file with actual values.
+func templateSoulFile(path, displayName, emoji string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no SOUL.md to template
+		}
+		return err
+	}
+	content := string(data)
+	content = strings.Replace(content, "<!-- your name -->", displayName, 1)
+	content = strings.Replace(content, "<!-- your symbol -->", emoji, 1)
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 // copyCharacterFiles copies default character and prompt files to a new workspace.

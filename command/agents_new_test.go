@@ -376,7 +376,7 @@ func TestCreateWorkspace(t *testing.T) {
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
 	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
-	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("soul content"), 0644)
+	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("- **Name:** <!-- your name -->\n- **Emoji:** <!-- your symbol -->\n"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft content"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "prompts", "HEARTBEAT.md"), []byte("heartbeat"), 0644)
 
@@ -421,13 +421,17 @@ func TestCreateWorkspace(t *testing.T) {
 		}
 	}
 
-	// Check character files were copied
+	// Check character files were copied and SOUL.md was templated
 	data, err := os.ReadFile(filepath.Join(workspace, "character", "SOUL.md"))
 	if err != nil {
 		t.Fatalf("read SOUL.md: %v", err)
 	}
-	if string(data) != "soul content" {
-		t.Errorf("SOUL.md = %q", string(data))
+	soulContent := string(data)
+	if !strings.Contains(soulContent, "**Name:** Test Agent") {
+		t.Errorf("SOUL.md name not substituted: %q", soulContent)
+	}
+	if !strings.Contains(soulContent, "**Emoji:** 🧪") {
+		t.Errorf("SOUL.md emoji not substituted: %q", soulContent)
 	}
 
 	// Check heartbeat prompt was copied
@@ -512,6 +516,49 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 		if len(data) != 0 {
 			t.Errorf("%s should be empty, got %q", name, string(data))
 		}
+	}
+}
+
+func TestTemplateSoulFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	soulPath := filepath.Join(tmpDir, "SOUL.md")
+
+	template := `# SOUL.md — Who I Am
+
+- **Name:** <!-- your name -->
+- **Creature:** <!-- what you are, in a sentence -->
+- **Emoji:** <!-- your symbol -->
+
+## Vibe
+`
+	os.WriteFile(soulPath, []byte(template), 0644)
+
+	if err := templateSoulFile(soulPath, "Greek Tutor", "🏛️"); err != nil {
+		t.Fatalf("templateSoulFile: %v", err)
+	}
+
+	data, err := os.ReadFile(soulPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "**Name:** Greek Tutor") {
+		t.Errorf("expected name substitution, got:\n%s", content)
+	}
+	if !strings.Contains(content, "**Emoji:** 🏛️") {
+		t.Errorf("expected emoji substitution, got:\n%s", content)
+	}
+	// Creature placeholder should remain untouched
+	if !strings.Contains(content, "<!-- what you are") {
+		t.Errorf("creature placeholder should remain, got:\n%s", content)
+	}
+}
+
+func TestTemplateSoulFileMissing(t *testing.T) {
+	// Non-existent file should not error
+	if err := templateSoulFile(filepath.Join(t.TempDir(), "nope.md"), "Name", "🔵"); err != nil {
+		t.Errorf("expected no error for missing file, got: %v", err)
 	}
 }
 
