@@ -40,6 +40,7 @@ type SpawnDeps struct {
 	AgentID    string
 	Model      string // parent's default model
 	MaxInherit int    // semaphore size (from config)
+	Notifier   *AsyncNotifier // async result delivery for inherit mode
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.
@@ -163,18 +164,13 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 }
 
 // spawnInherit creates a branch session and runs HandleMessage on it.
+// When a notifier is available, the spawn runs asynchronously in a background
+// goroutine and delivers results via the notifier. When notifier is nil, it
+// falls back to synchronous execution (for tests).
 func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent, sem chan struct{}, prompt string, timeout time.Duration) (string, error) {
 	// No-recursion guard: reject inherit calls from inside a spawn inherit session.
 	if IsSpawnInherit(ctx) {
 		return "", fmt.Errorf("nested inherit spawns not allowed — use context='none' or context='full' instead")
-	}
-
-	// Acquire semaphore slot.
-	select {
-	case sem <- struct{}{}:
-		defer func() { <-sem }()
-	case <-ctx.Done():
-		return "", ctx.Err()
 	}
 
 	parentSession := SessionKeyFromContext(ctx)
@@ -190,19 +186,64 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		return "", fmt.Errorf("spawn inherit: create branch: %w", err)
 	}
 
-	log.Infof("spawn", "inherit branch=%s parent=%s prompt=%d chars timeout=%s",
-		branchKey, parentSession, len(prompt), timeout)
-
-	// Build context for the spawned session.
-	spawnCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	spawnCtx = WithSpawnInherit(spawnCtx)
-	spawnCtx = WithSessionKey(spawnCtx, branchKey)
-
 	agent := agentFn()
 	if agent == nil {
 		return "", fmt.Errorf("spawn inherit: agent not available")
 	}
+
+	log.Infof("spawn", "inherit branch=%s parent=%s prompt=%d chars timeout=%s",
+		branchKey, parentSession, len(prompt), timeout)
+
+	// Async path: launch goroutine, return immediately.
+	if deps.Notifier != nil {
+		// Acquire semaphore slot (non-blocking check against context).
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+
+		go func() {
+			defer func() { <-sem }()
+
+			// Detached context — survives parent turn ending.
+			spawnCtx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			spawnCtx = WithSpawnInherit(spawnCtx)
+			spawnCtx = WithSessionKey(spawnCtx, branchKey)
+
+			result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
+			if err != nil {
+				msg := fmt.Sprintf("[SPAWN RESULT] Branch %s failed:\n\n%v", branchKey, err)
+				deps.Notifier.Notify(parentSession, msg)
+				return
+			}
+			if result == "" {
+				result = "(empty response)"
+			}
+			msg := fmt.Sprintf("[SPAWN RESULT] Branch %s completed:\n\n%s", branchKey, result)
+			deps.Notifier.Notify(parentSession, msg)
+		}()
+
+		promptPreview := prompt
+		if len(promptPreview) > 100 {
+			promptPreview = promptPreview[:100] + "..."
+		}
+		return fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview), nil
+	}
+
+	// Synchronous fallback (nil notifier — for tests).
+	select {
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+
+	spawnCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	spawnCtx = WithSpawnInherit(spawnCtx)
+	spawnCtx = WithSessionKey(spawnCtx, branchKey)
 
 	result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
 	if err != nil {

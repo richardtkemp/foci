@@ -159,7 +159,7 @@ spawn(prompt="Research this topic thoroughly", context="inherit")
 
 - **`none`** — just the prompt, no system context, no tools. One-shot cold call. Cheapest option for simple questions.
 - **`full`** — character files + prompt, no tools. One-shot call with full personality context. Good for tasks that need "you" without tool access.
-- **`inherit`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. The result is returned when the branch completes.
+- **`inherit`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. Always runs asynchronously — returns an immediate acknowledgment and delivers the result via `AsyncNotifier` when complete.
 
 **Inherit mode details:**
 - Creates a branch session: `agent:AGENTID:spawn:spawn-TIMESTAMP`
@@ -167,6 +167,7 @@ spawn(prompt="Research this topic thoroughly", context="inherit")
 - Recursive inherit spawns are blocked — a spawned session can use `none`/`full` but not `inherit`
 - Concurrent inherit spawns are limited by `max_concurrent_spawns` (default 3)
 - Runs as a full agent turn with all tools available
+- Always async: returns `"Spawn started in background."` immediately, delivers `[SPAWN RESULT]` via notifier on completion (matching the `[EXEC RESULT]`/`[HTTP RESULT]` pattern)
 
 **Model resolution:** Short names (`opus`, `sonnet`, `haiku`) resolve to full model IDs. Empty model defaults to the parent's model. Model is ignored for inherit mode (inherits parent model).
 
