@@ -595,6 +595,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 3. Appends any scratchpad entries to preservation message (scoped to agent via `Compactor.AgentID`)
 4. If `CompactionNotifyFunc` is set, sends Telegram notification with session key and pre-compaction message count (configurable via `compaction_notify`, default true)
 
+**Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this on the next turn and can gracefully conclude rather than hitting the context limit unexpectedly.
+
 **Configurable via `Compactor.WithConfig()`:**
 - `model` — summarization model (default: agent model)
 - `maxTokens` — max output tokens for summary (default: 4096)

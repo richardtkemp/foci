@@ -66,28 +66,28 @@ type Agent struct {
 	AgentID   string                // unique agent identifier (for per-agent DB queries)
 	Model     string
 
-	EnvironmentBlock        string                  // pre-built environment context block (prepended first in system prompt)
-	ExtraSystemBlocks       []anthropic.SystemBlock // additional system blocks (e.g. skills list), injected before cache marker
-	CacheStrategy           string                  // "auto" (top-level) or "explicit" (manual breakpoints)
-	CacheBustDetect         bool                    // detect cache busts (cache_read drop >50%)
-	CacheBustAlert          CacheBustFunc           // callback for cache bust alerts
-	DuplicateMessages       bool                    // send user text twice per API call (improves instruction following)
-	MaxResultChars          int                     // max chars for tool result before writing to file (0 disables)
-	ToolResultTempDir       string                  // where to write large tool results
-	Warnings                *WarningQueue           // nil disables warning injection into session
-	ManaWatcher             *ManaWatcher            // nil disables mana threshold warnings
-	ManaWarnFunc            func(string)            // callback for mana threshold warnings (e.g. Telegram notification)
-	MaxTokensWarnFunc       func(string)            // callback when stop_reason=max_tokens (response truncated)
-	CompactionNotifyFunc    func(string, string)     // callback for compaction notifications (session key, message)
-	Redact                  func(string) string     // redact secrets from tool output; nil disables
-	StateStore              *state.Store            // nil disables state persistence
-	UsageClient             *anthropic.UsageClient  // nil disables mana metadata
-	PromptRules             []CompiledPromptRule    // compiled regex rules for inbound message transformation
-	CompactionSummaryPromptPath string               // file path; read at compaction time via ReadPromptFile
-	CompactionHandoffMsg        string               // passed to Compactor.Compact(); empty uses default
+	EnvironmentBlock            string                          // pre-built environment context block (prepended first in system prompt)
+	ExtraSystemBlocks           []anthropic.SystemBlock         // additional system blocks (e.g. skills list), injected before cache marker
+	CacheStrategy               string                          // "auto" (top-level) or "explicit" (manual breakpoints)
+	CacheBustDetect             bool                            // detect cache busts (cache_read drop >50%)
+	CacheBustAlert              CacheBustFunc                   // callback for cache bust alerts
+	DuplicateMessages           bool                            // send user text twice per API call (improves instruction following)
+	MaxResultChars              int                             // max chars for tool result before writing to file (0 disables)
+	ToolResultTempDir           string                          // where to write large tool results
+	Warnings                    *WarningQueue                   // nil disables warning injection into session
+	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
+	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
+	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
+	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
+	Redact                      func(string) string             // redact secrets from tool output; nil disables
+	StateStore                  *state.Store                    // nil disables state persistence
+	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
+	PromptRules                 []CompiledPromptRule            // compiled regex rules for inbound message transformation
+	CompactionSummaryPromptPath string                          // file path; read at compaction time via ReadPromptFile
+	CompactionHandoffMsg        string                          // passed to Compactor.Compact(); empty uses default
 	ReadPromptFile              func(path, label string) string // reads prompt from file path; nil uses empty string
-	MaxToolLoops            int                     // max tool iterations per turn (default 25)
-	MaxOutputTokens         int                     // max tokens in model response (default 8192)
+	MaxToolLoops                int                             // max tool iterations per turn (default 25)
+	MaxOutputTokens             int                             // max tokens in model response (default 8192)
 
 	processing    int32 // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu sync.Mutex
@@ -509,7 +509,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	sm := a.getSessionMeta(sessionKey)
 	mana := a.manaString()
 
-
 	// Check mana thresholds and notify user for active conversations only
 	// (not heartbeats or scheduled wakes)
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
@@ -716,26 +715,32 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			// Check if compaction is needed
 			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
 				if NoCompactFromContext(ctx) {
-					log.Infof("agent", "compaction needed but no_compact set — stopping")
-					return anthropic.TextOf(resp.Content), nil
+					totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
+					limit := compaction.ContextLimit(a.Model)
+					percent := int(float64(totalTokens) / float64(limit) * 100)
+					log.Infof("agent", "context at %d%% capacity for no_compact session", percent)
+					if a.Warnings != nil {
+						a.Warnings.Push("WARN", "agent", fmt.Sprintf("Context at ~%d%% capacity. This session cannot compact. Consider wrapping up.", percent))
+					}
+				} else {
+					oldCount := len(messages)
+					if a.CompactionNotifyFunc != nil {
+						a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
+					}
+					summaryPrompt := ""
+					if a.ReadPromptFile != nil {
+						summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
+					}
+					if err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
+						log.Errorf("agent", "compaction failed: %v", err)
+					} else if a.CompactionNotifyFunc != nil {
+						a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+					}
+					// Reload system prompt — compaction may have changed memory files
+					a.Bootstrap.Reload()
+					// Reset cache baseline — next request will have a different prefix
+					sm.prevCacheRead = 0
 				}
-				oldCount := len(messages)
-				if a.CompactionNotifyFunc != nil {
-					a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
-				}
-				summaryPrompt := ""
-				if a.ReadPromptFile != nil {
-					summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
-				}
-				if err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
-					log.Errorf("agent", "compaction failed: %v", err)
-				} else if a.CompactionNotifyFunc != nil {
-					a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
-				}
-				// Reload system prompt — compaction may have changed memory files
-				a.Bootstrap.Reload()
-				// Reset cache baseline — next request will have a different prefix
-				sm.prevCacheRead = 0
 			}
 
 			return anthropic.TextOf(resp.Content), nil
