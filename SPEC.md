@@ -450,6 +450,14 @@ The `schedule_wake` tool allows the agent to schedule messages to itself:
 
 System crontab can trigger `/wake` endpoint for external scheduling. For agent-initiated delays, use the `schedule_wake` tool.
 
+### Activity gating
+
+Both `POST /send` and `POST /wake` accept an optional `if_active` field (Go duration string, e.g. `"8h"`). When set, the request is silently skipped (HTTP 200 with `"skipped: no recent user activity"`) if no real Telegram user has messaged the agent within the window.
+
+"Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`clod send`/`clod branch`), heartbeats, async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a heartbeat send cannot reset the activity timer.
+
+The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` on `send` and `branch` commands.
+
 ### Secrets
 
 Secrets never pass through agent context. The agent cannot read, echo, or exfiltrate credentials.

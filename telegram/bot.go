@@ -476,6 +476,12 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		}
 	}
 
+	// Record last real user activity (for --if-active gating on CLI commands).
+	// Only primary bots track this — secondary (multiball) bots don't count.
+	if !b.isSecondary && b.agentID != "" && b.stateStore != nil {
+		b.stateStore.Set("agent:"+b.agentID+":last_user_activity", time.Now().Unix())
+	}
+
 	// Get text from message or caption (photos use caption)
 	text := msg.Text
 	if text == "" {

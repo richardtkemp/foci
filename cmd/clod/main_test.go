@@ -17,9 +17,10 @@ func mockGateway() *httptest.Server {
 
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Agent   string `json:"agent"`
-			Session string `json:"session"`
-			Text    string `json:"text"`
+			Agent    string `json:"agent"`
+			Session  string `json:"session"`
+			Text     string `json:"text"`
+			IfActive string `json:"if_active"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
@@ -33,6 +34,9 @@ func mockGateway() *httptest.Server {
 		if req.Session != "" {
 			resp = "(session:" + req.Session + ") " + resp
 		}
+		if req.IfActive != "" {
+			resp = "(if_active:" + req.IfActive + ") " + resp
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
@@ -42,6 +46,7 @@ func mockGateway() *httptest.Server {
 			Agent     string `json:"agent"`
 			Text      string `json:"text"`
 			NoCompact bool   `json:"no_compact"`
+			IfActive  string `json:"if_active"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
@@ -54,6 +59,9 @@ func mockGateway() *httptest.Server {
 		}
 		if req.Agent != "" {
 			resp = "[" + req.Agent + "] " + resp
+		}
+		if req.IfActive != "" {
+			resp = "(if_active:" + req.IfActive + ") " + resp
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
@@ -150,6 +158,17 @@ func TestCLIIntegration(t *testing.T) {
 		{"branch with --no-compact and text", []string{"branch", "--no-compact", "morning check"}, "wake ok (no_compact)", false},
 		{"branch with -a and --no-compact", []string{"branch", "-a", "research", "--no-compact"}, "[research] wake ok (no_compact)", false},
 
+		// --if-active flag for send
+		{"send with --if-active", []string{"send", "--if-active", "8h", "hello"}, "(if_active:8h) echo: hello", false},
+		{"send with --if-active=", []string{"send", "--if-active=30m", "hello"}, "(if_active:30m) echo: hello", false},
+		{"send with -a and --if-active", []string{"send", "-a", "clutch", "--if-active", "4h", "hello"}, "(if_active:4h) [clutch] echo: hello", false},
+
+		// --if-active flag for branch
+		{"branch with --if-active", []string{"branch", "--if-active", "12h", "do work"}, "(if_active:12h) wake ok", false},
+		{"branch with --if-active=", []string{"branch", "--if-active=6h"}, "(if_active:6h) wake ok", false},
+		{"branch with -a and --if-active", []string{"branch", "-a", "research", "--if-active", "8h"}, "(if_active:8h) [research] wake ok", false},
+		{"branch with --if-active and --no-compact", []string{"branch", "--if-active", "8h", "--no-compact"}, "(if_active:8h) wake ok (no_compact)", false},
+
 		// Error cases: unknown agent returns HTTP 400, exit non-zero
 		{"send unknown agent", []string{"send", "-a", "nonexistent", "hello"}, "unknown agent", true},
 		{"branch unknown agent", []string{"branch", "-a", "nonexistent"}, "unknown agent", true},
@@ -230,6 +249,81 @@ func TestPrintResponseError(t *testing.T) {
 			}
 			if err.Error() != tt.wantErr {
 				t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseSendFlags(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantAgent    string
+		wantSession  string
+		wantIfActive string
+		wantRest     []string
+	}{
+		{
+			name:     "no flags",
+			args:     []string{"hello", "world"},
+			wantRest: []string{"hello", "world"},
+		},
+		{
+			name:         "--if-active with value",
+			args:         []string{"--if-active", "8h", "hello"},
+			wantIfActive: "8h",
+			wantRest:     []string{"hello"},
+		},
+		{
+			name:         "--if-active=value",
+			args:         []string{"--if-active=30m", "hello"},
+			wantIfActive: "30m",
+			wantRest:     []string{"hello"},
+		},
+		{
+			name:         "all flags together",
+			args:         []string{"-a", "clutch", "-s", "main", "--if-active", "4h", "hello"},
+			wantAgent:    "clutch",
+			wantSession:  "main",
+			wantIfActive: "4h",
+			wantRest:     []string{"hello"},
+		},
+		{
+			name:         "--if-active after text",
+			args:         []string{"hello", "--if-active", "12h"},
+			wantIfActive: "12h",
+			wantRest:     []string{"hello"},
+		},
+		{
+			name:     "--if-active without value at end",
+			args:     []string{"hello", "--if-active"},
+			wantRest: []string{"hello", "--if-active"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags, rest := parseSendFlags(tt.args)
+			if flags.agent != tt.wantAgent {
+				t.Errorf("agent = %q, want %q", flags.agent, tt.wantAgent)
+			}
+			if flags.session != tt.wantSession {
+				t.Errorf("session = %q, want %q", flags.session, tt.wantSession)
+			}
+			if flags.ifActive != tt.wantIfActive {
+				t.Errorf("ifActive = %q, want %q", flags.ifActive, tt.wantIfActive)
+			}
+			if len(rest) == 0 && len(tt.wantRest) == 0 {
+				return
+			}
+			if len(rest) != len(tt.wantRest) {
+				t.Errorf("rest = %v (len %d), want %v (len %d)", rest, len(rest), tt.wantRest, len(tt.wantRest))
+				return
+			}
+			for i := range rest {
+				if rest[i] != tt.wantRest[i] {
+					t.Errorf("rest[%d] = %q, want %q", i, rest[i], tt.wantRest[i])
+				}
 			}
 		})
 	}

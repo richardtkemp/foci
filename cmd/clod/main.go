@@ -75,6 +75,7 @@ Commands:
 Flags:
   -a, --agent <id>     Target a specific agent (default: first agent)
   -s, --session <id>   Target a specific session (default: main)
+  --if-active <dur>    Skip if no user activity within duration (e.g. 8h, 30m)
 
 Environment:
   CLOD_ADDR            Gateway address (default: %s)
@@ -105,8 +106,9 @@ func parseAgentFlag(args []string) (agentID string, rest []string) {
 }
 
 type sendFlags struct {
-	agent   string
-	session string
+	agent    string
+	session  string
+	ifActive string // Go duration for activity gating
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -137,6 +139,15 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "-s=") {
 			flags.session = args[i][len("-s="):]
 			consumed = true
+		} else if args[i] == "--if-active" {
+			if i+1 < len(args) {
+				flags.ifActive = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--if-active=") {
+			flags.ifActive = args[i][len("--if-active="):]
+			consumed = true
 		}
 		if !consumed {
 			filtered = append(filtered, args[i])
@@ -158,6 +169,9 @@ func cmdSend(base string, args []string) error {
 	if flags.session != "" {
 		body["session"] = flags.session
 	}
+	if flags.ifActive != "" {
+		body["if_active"] = flags.ifActive
+	}
 	return postJSON(base+"/send", body)
 }
 
@@ -165,18 +179,24 @@ func cmdBranch(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
 	noCompact := false
 	noResetHook := false
+	ifActive := ""
 	var filtered []string
-	for _, a := range args {
-		switch a {
-		case "--no-compact":
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--no-compact":
 			noCompact = true
-		case "--no-reset-hook":
+		case args[i] == "--no-reset-hook":
 			noResetHook = true
-		case "--oneshot":
+		case args[i] == "--oneshot":
 			noCompact = true
 			noResetHook = true
+		case args[i] == "--if-active" && i+1 < len(args):
+			ifActive = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--if-active="):
+			ifActive = args[i][len("--if-active="):]
 		default:
-			filtered = append(filtered, a)
+			filtered = append(filtered, args[i])
 		}
 	}
 	text := strings.Join(filtered, " ")
@@ -192,6 +212,9 @@ func cmdBranch(base string, args []string) error {
 	}
 	if noResetHook {
 		body["no_reset_hook"] = true
+	}
+	if ifActive != "" {
+		body["if_active"] = ifActive
 	}
 	return postJSON(base+"/wake", body)
 }
