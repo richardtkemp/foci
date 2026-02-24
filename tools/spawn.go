@@ -52,22 +52,22 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 	return &Tool{
 		Name:        "spawn",
-		Description: "Spawn a sub-call to a model. Three context modes: 'none' (just your prompt, no system context), 'full' (your prompt + character files), 'inherit' (branch session with full tool access — a headless self-fork). Use 'none'/'full' for one-shot queries to different models. Use 'inherit' to delegate complex multi-step tasks that need tools.",
+		Description: "Spawn a sub-call to a model. Three context modes: 'none' (just your prompt, no system context), 'character_only' (your prompt + character files), 'clone_current' (branch session with full tool access — a headless self-fork). Use 'none'/'character_only' for one-shot queries to different models. Use 'clone_current' to delegate complex multi-step tasks that need tools.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"prompt": {
 					"type": "string",
-					"description": "Self-contained prompt with all necessary context. For none/full: the model gets only this. For inherit: injected as the user message in the branch session."
+					"description": "Self-contained prompt with all necessary context. For none/character_only: the model gets only this (synchronous, result returned directly). For clone_current: injected as the user message in the branch session."
 				},
 				"model": {
 					"type": "string",
-					"description": "Model to use: 'opus', 'sonnet', 'haiku', or a full model ID. Empty uses the current model. Ignored for inherit mode (inherits parent model)."
+					"description": "Model to use: 'opus', 'sonnet', 'haiku', or a full model ID. Empty uses the current model. Ignored for clone_current mode (inherits parent model)."
 				},
 				"context": {
 					"type": "string",
-					"enum": ["none", "full", "inherit"],
-					"description": "Context mode. 'none': just your prompt, no system context. 'full': your prompt + character files. 'inherit' (default): branch session with full tool access."
+					"enum": ["none", "character_only", "clone_current"],
+					"description": "Context mode. 'none': just your prompt, no system context (sync). 'character_only': your prompt + character files (sync). 'clone_current' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete."
 				},
 				"timeout": {
 					"type": "integer",
@@ -90,7 +90,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return "", fmt.Errorf("prompt is required")
 			}
 			if p.Context == "" {
-				p.Context = "inherit"
+				p.Context = "clone_current"
 			}
 			if p.Timeout <= 0 {
 				p.Timeout = 120
@@ -111,18 +111,18 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			case "none":
 				return spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout)
 
-			case "full":
+			case "character_only":
 				var system []anthropic.SystemBlock
 				if deps.Bootstrap != nil {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout)
 
-			case "inherit":
+			case "clone_current":
 				return spawnInherit(ctx, deps, agentFn, sem, p.Prompt, timeout)
 
 			default:
-				return "", fmt.Errorf("invalid context: %q (use none, full, or inherit)", p.Context)
+				return "", fmt.Errorf("invalid context: %q (use none, character_only, or clone_current)", p.Context)
 			}
 		},
 	}
