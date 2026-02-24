@@ -577,6 +577,13 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		response = fmt.Sprintf("Error: %s", b.sanitizeError(err))
 	}
 
+	// Guard against empty responses (e.g. end_turn after tool use with no text).
+	// Sending an empty string to Telegram would fail with "message text is empty".
+	if strings.TrimSpace(response) == "" {
+		log.Debugf("telegram", "agent returned empty response for %s, not sending", sk)
+		return
+	}
+
 	// Voice mode: convert final reply to voice note
 	if b.agent.VoiceMode(sk) && b.tts != nil && response != "" {
 		if audioData, err := b.tts.Synthesize(turnCtx, response); err != nil {
