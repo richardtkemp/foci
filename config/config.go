@@ -30,7 +30,8 @@ type AgentConfig struct {
 	DuplicateMessages bool              `toml:"duplicate_messages"` // send user text twice per API call (improves instruction following)
 	ForkPrompt        string            `toml:"fork_prompt"`        // path to prompt file injected as context when a multiball session is forked
 	TelegramBot       string            `toml:"telegram_bot"`       // references key in [telegram.bots] map
-	MultiballBot      string            `toml:"multiball_bot"`      // references key in [telegram.bots] map (optional)
+	MultiballBot      string            `toml:"multiball_bot"`      // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
+	MultiballBots     []string          `toml:"multiball_bots"`     // references keys in [telegram.bots] map (optional)
 	Memory            AgentMemoryConfig `toml:"memory"`             // per-agent memory sources (combined with global [memory])
 	MaxToolLoops      int               `toml:"max_tool_loops"`     // max tool iterations per turn (default 25)
 	MaxOutputTokens   int               `toml:"max_output_tokens"`  // max tokens in model response (default 8192)
@@ -56,7 +57,7 @@ type TelegramBotConfig struct {
 type TelegramConfig struct {
 	BotToken            string                       `toml:"bot_token"` // legacy single-bot token
 	AllowedUsers        []string                     `toml:"allowed_users"`
-	SecondaryBots       []string                     `toml:"secondary_bots"`        // legacy: tokens for secondary bots (multiball)
+	MultiballBots       []string                     `toml:"multiball_bots"`        // shared multiball pool: references keys in [telegram.bots] map
 	Bots                map[string]TelegramBotConfig `toml:"bots"`                  // named bots for multi-agent
 	StopAliases         []string                     `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases   bool                         `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
@@ -376,6 +377,12 @@ func Load(path string) (*Config, error) {
 		}
 		if cfg.Agents[i].ForkPrompt != "" {
 			cfg.Agents[i].ForkPrompt = ResolvePath(cfg.Agents[i].ForkPrompt)
+		}
+		// Deprecated alias: multiball_bot (singular) → multiball_bots (plural)
+		if cfg.Agents[i].MultiballBot != "" && len(cfg.Agents[i].MultiballBots) == 0 {
+			log.Warnf("config", "agent %q: multiball_bot is deprecated, use multiball_bots = [\"%s\"]",
+				cfg.Agents[i].ID, cfg.Agents[i].MultiballBot)
+			cfg.Agents[i].MultiballBots = []string{cfg.Agents[i].MultiballBot}
 		}
 	}
 

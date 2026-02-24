@@ -156,6 +156,14 @@ func (b *Bot) SetSecondary(pool *Pool) {
 	b.pool = pool
 }
 
+// SetAgentAndCommands re-wires the bot to a different agent and command registry.
+// Only safe to call on idle secondary bots (no active session key) between
+// pool acquisition and setting the session key.
+func (b *Bot) SetAgentAndCommands(ag *agent.Agent, cmds *command.Registry) {
+	b.agent = ag
+	b.commands = cmds
+}
+
 // SessionKey returns the current session key (thread-safe).
 // For primary bots, this returns the session key for the default chat.
 // For secondary bots, this returns the override session key (set by multiball).

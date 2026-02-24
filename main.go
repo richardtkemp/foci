@@ -459,6 +459,52 @@ func main() {
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
 	}
 
+	// Shared multiball pool — fallback bots available to any agent.
+	// Created after all agents so we can use the first agent's instance for initial binding.
+	// Bots are re-wired to the acquiring agent at fork time via SetAgentAndCommands.
+	if len(cfg.Telegram.MultiballBots) > 0 && len(agentOrder) > 0 {
+		firstInst := agents[agentOrder[0]]
+		for _, botName := range cfg.Telegram.MultiballBots {
+			mbToken := cfg.ResolveBotToken(botName, store)
+			if mbToken == "" {
+				log.Errorf("main", "shared multiball bot %q: token not found", botName)
+				continue
+			}
+			mbBot, err := telegram.NewBot(mbToken, cfg.Telegram.AllowedUsers,
+				firstInst.ag, firstInst.cmds, command.NewLastMessageStore(), "")
+			if err != nil {
+				log.Errorf("main", "shared multiball bot %q: create: %v", botName, err)
+				continue
+			}
+			if sttProvider != nil {
+				mbBot.SetTranscriber(sttProvider)
+			}
+			if ttsProvider != nil {
+				mbBot.SetTTS(ttsProvider)
+			}
+			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
+			botMgr.AddSharedMultiball(mbBot)
+		}
+		if pool := botMgr.SharedPool(); pool != nil && pool.Size() > 0 {
+			ttl, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
+			if ttl > 0 {
+				pool.SetSessionTTL(ttl, sessions)
+			}
+			pool.ReclaimHook = func(sessionKey string) {
+				// Determine agent from session key for the reset hook
+				for _, id := range agentOrder {
+					inst := agents[id]
+					prefix := "agent:" + id + ":"
+					if strings.HasPrefix(sessionKey, prefix) {
+						fireResetHook(inst.ag, sessions, sessionKey, cfg, ctx)
+						return
+					}
+				}
+			}
+			log.Infof("main", "%d shared multiball bots ready", pool.Size())
+		}
+	}
+
 	// Wire log warnings into agent sessions (any agent with inject_agent_warnings)
 	{
 		anyInjection := false
@@ -1232,17 +1278,19 @@ func setupAgent(p setupParams) *agentInstance {
 		func(on bool) { ag.SetVoiceMode(defaultSessionKey(), on) },
 	))
 
-	// /multiball and /mb — per-agent, uses this agent's pool.
+	// /multiball and /mb — per-agent pool first, shared pool fallback.
 	// Forks from the requesting chat's session (per-chat routing).
 	forkFn := func(ctx context.Context) (string, error) {
-		pool := p.botMgr.Pool(acfg.ID)
-		if pool == nil || pool.Size() == 0 {
-			return "", fmt.Errorf("no secondary bots configured")
+		if !p.botMgr.HasMultiball(acfg.ID) {
+			return "", fmt.Errorf("no multiball bots configured")
 		}
-		secBot, ok := pool.Acquire()
+		secBot, ok := p.botMgr.AcquireMultiball(acfg.ID)
 		if !ok {
-			return "", fmt.Errorf("all secondary bots are busy")
+			return "", fmt.Errorf("all multiball bots are busy")
 		}
+
+		// Re-wire the bot to this agent (needed when acquired from shared pool)
+		secBot.SetAgentAndCommands(ag, cmds)
 
 		// Determine parent session: use the requesting chat's session
 		parentKey := defaultSessionKey()
@@ -1250,7 +1298,7 @@ func setupAgent(p setupParams) *agentInstance {
 			parentKey = telegram.SessionKeyForChat(acfg.ID, chatID)
 		}
 		if parentKey == "" {
-			pool.Release(secBot)
+			secBot.SetSessionKey("") // release back to pool
 			return "", fmt.Errorf("no active session to fork from")
 		}
 
@@ -1258,7 +1306,7 @@ func setupAgent(p setupParams) *agentInstance {
 		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
 
 		if err := p.sessions.CreateBranch(parentKey, branchKey); err != nil {
-			pool.Release(secBot)
+			secBot.SetSessionKey("") // release back to pool
 			return "", fmt.Errorf("create branch: %w", err)
 		}
 
@@ -1452,56 +1500,32 @@ func setupAgent(p setupParams) *agentInstance {
 
 		p.botMgr.AddPrimary(acfg.ID, primaryBot)
 
-		// Multiball bot (if configured)
-		if acfg.MultiballBot != "" {
-			mbToken := p.cfg.ResolveBotToken(acfg.MultiballBot, p.store)
-			if mbToken != "" {
-				mbBot, err := telegram.NewBot(mbToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
-				if err != nil {
-					log.Errorf("main", "agent %q: create multiball bot: %v", acfg.ID, err)
-				} else {
-					if p.sttProvider != nil {
-						mbBot.SetTranscriber(p.sttProvider)
-					}
-					if p.ttsProvider != nil {
-						mbBot.SetTTS(p.ttsProvider)
-					}
-					mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
-					p.botMgr.AddMultiball(acfg.ID, mbBot)
-					log.Infof("main", "agent %q: multiball bot ready", acfg.ID)
-				}
+		// Per-agent multiball bots (if configured)
+		for _, botName := range acfg.MultiballBots {
+			mbToken := p.cfg.ResolveBotToken(botName, p.store)
+			if mbToken == "" {
+				log.Errorf("main", "agent %q: multiball bot %q: token not found", acfg.ID, botName)
+				continue
 			}
-		} else {
-			// Legacy: secondary bots from [telegram] config
-			secondaryTokens := p.cfg.Telegram.SecondaryBots
-			if v, ok := p.store.Get("telegram.secondary_bots"); ok && v != "" {
-				for _, t := range strings.Split(v, ",") {
-					if t = strings.TrimSpace(t); t != "" {
-						secondaryTokens = append(secondaryTokens, t)
-					}
-				}
+			mbBot, err := telegram.NewBot(mbToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
+			if err != nil {
+				log.Errorf("main", "agent %q: create multiball bot %q: %v", acfg.ID, botName, err)
+				continue
 			}
-			for _, token := range secondaryTokens {
-				secBot, err := telegram.NewBot(token, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "")
-				if err != nil {
-					log.Errorf("main", "agent %q: create secondary bot: %v", acfg.ID, err)
-					continue
-				}
-				if p.sttProvider != nil {
-					secBot.SetTranscriber(p.sttProvider)
-				}
-				if p.ttsProvider != nil {
-					secBot.SetTTS(p.ttsProvider)
-				}
-				secBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
-				p.botMgr.AddMultiball(acfg.ID, secBot)
+			if p.sttProvider != nil {
+				mbBot.SetTranscriber(p.sttProvider)
 			}
-			if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
-				log.Infof("main", "agent %q: %d multiball bots ready", acfg.ID, pool.Size())
+			if p.ttsProvider != nil {
+				mbBot.SetTTS(p.ttsProvider)
 			}
+			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
+			p.botMgr.AddMultiball(acfg.ID, mbBot)
+		}
+		if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
+			log.Infof("main", "agent %q: %d per-agent multiball bots ready", acfg.ID, pool.Size())
 		}
 
-		// Configure session TTL for multiball pool (auto-reclaim stale sessions)
+		// Configure session TTL for per-agent multiball pool
 		if pool := p.botMgr.Pool(acfg.ID); pool != nil {
 			ttl, _ := time.ParseDuration(p.cfg.Telegram.MultiballSessionTTL) // validated earlier
 			if ttl > 0 {
