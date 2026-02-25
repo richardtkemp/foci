@@ -1245,11 +1245,57 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, func() command.ContextInfo {
+		// System prompt section sizes from workspace files
+		var sections []command.SystemSection
+		for _, s := range bootstrap.SectionSizes() {
+			sections = append(sections, command.SystemSection{Name: s.Name, Chars: s.Chars})
+		}
+		// Skills/extra system blocks character count
+		var skillsChars int
+		for _, b := range ag.ExtraSystemBlocks {
+			skillsChars += len(b.Text)
+		}
+		// Message breakdown from session
+		var mb command.MessageBreakdown
+		sk := defaultSessionKey()
+		if sk != "" {
+			if msgs, err := p.sessions.LoadFull(sk); err == nil {
+				for _, m := range msgs {
+					chars := 0
+					var hasToolResult bool
+					for _, cb := range m.Content {
+						switch cb.Type {
+						case "text":
+							chars += len(cb.Text)
+						case "tool_use":
+							chars += len(cb.Name) + len(cb.Input)
+						case "tool_result":
+							chars += len(cb.Content)
+							hasToolResult = true
+						}
+					}
+					switch {
+					case hasToolResult:
+						mb.ToolResultChars += chars
+					case m.Role == "user":
+						mb.UserChars += chars
+						mb.UserCount++
+					case m.Role == "assistant":
+						mb.AssistantChars += chars
+						mb.AssistantCount++
+					}
+				}
+			}
+		}
 		return command.ContextInfo{
-			SessionKey:       defaultSessionKey(),
+			SessionKey:       sk,
 			Model:            ag.Model,
 			CompactionThresh: p.cfg.Sessions.CompactionThreshold,
 			ContextLimit:     compaction.ContextLimit(ag.Model),
+			SystemSections:   sections,
+			EnvironmentChars: len(ag.EnvironmentBlock),
+			SkillsChars:      skillsChars,
+			Messages:         mb,
 		}
 	}))
 	cmds.Register(command.NewResetCommand(func() error {

@@ -104,6 +104,31 @@ func buildSecretsBlock(names []string, hasBitwarden bool) anthropic.SystemBlock 
 	}
 }
 
+// SectionSize is a named system prompt section with its character count.
+type SectionSize struct {
+	Name  string
+	Chars int
+}
+
+// SectionSizes returns the name and character count of each loaded workspace file block.
+// Only includes files that were actually loaded (non-empty, existing files).
+func (b *Bootstrap) SectionSizes() []SectionSize {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var sizes []SectionSize
+	fileIdx := 0
+	for _, block := range b.cached {
+		name := "unknown"
+		if fileIdx < len(b.fileOrder) {
+			name = b.fileOrder[fileIdx]
+		}
+		fileIdx++
+		sizes = append(sizes, SectionSize{Name: name, Chars: len(block.Text)})
+	}
+	return sizes
+}
+
 // Reload re-reads workspace files from disk. Call after compaction or session reset.
 func (b *Bootstrap) Reload() {
 	blocks := b.loadFromDisk()

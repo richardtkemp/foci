@@ -703,31 +703,51 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 	}
 }
 
+// SystemSection describes one section of the system prompt with its character count.
+type SystemSection struct {
+	Name  string
+	Chars int
+}
+
+// MessageBreakdown holds character counts by message role.
+type MessageBreakdown struct {
+	UserChars      int
+	AssistantChars int
+	ToolResultChars int
+	UserCount      int
+	AssistantCount int
+}
+
 // ContextInfo holds data for the /context command.
 type ContextInfo struct {
 	SessionKey       string
 	Model            string
 	CompactionThresh float64
 	ContextLimit     int
+	SystemSections   []SystemSection  // workspace file sections
+	EnvironmentChars int              // environment block chars
+	SkillsChars      int              // skills/extra system blocks chars
+	Messages         MessageBreakdown // conversation breakdown
 }
 
 // NewContextCommand returns a /context command showing context size breakdown.
 func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 	return &Command{
 		Name:        "context",
-		Description: "Context size and compaction threshold",
+		Description: "Context window breakdown: system prompt, conversation, compaction status",
 		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			info := infoFn()
 
 			// Get last API call for this session
 			entries := readAPILog(apiLogPath)
-			var lastInput, lastCacheRead, lastCacheWrite int
+			var lastInput, lastCacheRead, lastCacheWrite, lastOutput int
 			for i := len(entries) - 1; i >= 0; i-- {
 				if entries[i].Session == info.SessionKey {
 					lastInput = entries[i].Input
 					lastCacheRead = entries[i].CacheRead
 					lastCacheWrite = entries[i].CacheWrite
+					lastOutput = entries[i].Output
 					break
 				}
 			}
@@ -741,23 +761,77 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			percentUsed := float64(totalTokens) / float64(info.ContextLimit) * 100
 			percentThresh := info.CompactionThresh * 100
 
-			var status string
+			var sb strings.Builder
+
+			// Header
+			fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
+				formatCommas(totalTokens), formatCommas(info.ContextLimit), percentUsed)
+			fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
+				formatCommas(threshTokens), percentThresh)
 			if totalTokens >= threshTokens {
-				status = "at/above threshold"
+				sb.WriteString("Status: at/above threshold\n")
 			} else {
 				remaining := threshTokens - totalTokens
-				status = fmt.Sprintf("%d tokens until threshold", remaining)
+				fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", formatCommas(remaining))
 			}
 
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "model: %s\n", info.Model)
-			fmt.Fprintf(&sb, "context: %d / %d tokens (%.1f%%)\n", totalTokens, info.ContextLimit, percentUsed)
-			fmt.Fprintf(&sb, "breakdown:\n")
-			fmt.Fprintf(&sb, "  input: %d\n", lastInput)
-			fmt.Fprintf(&sb, "  cache_read: %d\n", lastCacheRead)
-			fmt.Fprintf(&sb, "  cache_write: %d\n", lastCacheWrite)
-			fmt.Fprintf(&sb, "compaction: at %.0f%% (%d tokens)\n", percentThresh, threshTokens)
-			fmt.Fprintf(&sb, "status: %s", status)
+			// System prompt breakdown (character-based estimates)
+			totalSystemChars := 0
+			for _, s := range info.SystemSections {
+				totalSystemChars += s.Chars
+			}
+			totalSystemChars += info.EnvironmentChars + info.SkillsChars
+			systemTokenEst := totalSystemChars / 4
+
+			fmt.Fprintf(&sb, "\nSystem prompt: ~%s tokens (%s chars)\n",
+				formatCommas(systemTokenEst), formatCommas(totalSystemChars))
+
+			// Find max name width for alignment
+			maxNameLen := 0
+			if info.EnvironmentChars > 0 {
+				maxNameLen = len("Environment")
+			}
+			if info.SkillsChars > 0 && len("Skills") > maxNameLen {
+				maxNameLen = len("Skills")
+			}
+			for _, s := range info.SystemSections {
+				if len(s.Name) > maxNameLen {
+					maxNameLen = len(s.Name)
+				}
+			}
+
+			if info.EnvironmentChars > 0 {
+				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, "Environment", formatCommas(info.EnvironmentChars))
+			}
+			for _, s := range info.SystemSections {
+				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, s.Name, formatCommas(s.Chars))
+			}
+			if info.SkillsChars > 0 {
+				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, "Skills", formatCommas(info.SkillsChars))
+			}
+
+			// Conversation breakdown (character-based estimates)
+			mb := info.Messages
+			totalConvChars := mb.UserChars + mb.AssistantChars + mb.ToolResultChars
+			convTokenEst := totalConvChars / 4
+
+			fmt.Fprintf(&sb, "\nConversation: ~%s tokens (%d messages)\n",
+				formatCommas(convTokenEst), mb.UserCount+mb.AssistantCount)
+			fmt.Fprintf(&sb, "  User messages     %s chars (%d msgs)\n",
+				formatCommas(mb.UserChars), mb.UserCount)
+			fmt.Fprintf(&sb, "  Assistant         %s chars (%d msgs)\n",
+				formatCommas(mb.AssistantChars), mb.AssistantCount)
+			if mb.ToolResultChars > 0 {
+				fmt.Fprintf(&sb, "  Tool results      %s chars\n",
+					formatCommas(mb.ToolResultChars))
+			}
+
+			// Token breakdown from last API call
+			fmt.Fprintf(&sb, "\nLast API call tokens:\n")
+			fmt.Fprintf(&sb, "  input:       %s\n", formatCommas(lastInput))
+			fmt.Fprintf(&sb, "  cache_read:  %s\n", formatCommas(lastCacheRead))
+			fmt.Fprintf(&sb, "  cache_write: %s\n", formatCommas(lastCacheWrite))
+			fmt.Fprintf(&sb, "  output:      %s", formatCommas(lastOutput))
 
 			return sb.String(), nil
 		},
