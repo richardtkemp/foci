@@ -35,10 +35,7 @@ func NewCompactor(client *anthropic.Client, sessions *session.Store, model strin
 }
 
 // WithConfig updates compactor settings from configuration.
-func (c *Compactor) WithConfig(model string, maxTokens, minMessages int) *Compactor {
-	if model != "" {
-		c.model = model
-	}
+func (c *Compactor) WithConfig(maxTokens, minMessages int) *Compactor {
 	if maxTokens > 0 {
 		c.maxTokens = maxTokens
 	}

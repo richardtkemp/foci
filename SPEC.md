@@ -422,7 +422,6 @@ reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
 ```toml
 [sessions]
 compaction_threshold = 0.8               # compact at 80% of context window
-compaction_model = ""                    # model for summarization (default: agent model)
 compaction_max_tokens = 4096             # max output tokens for summary
 compaction_min_messages = 4              # min messages before compacting
 compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)

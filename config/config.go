@@ -76,7 +76,6 @@ type TelegramConfig struct {
 type SessionsConfig struct {
 	Dir                     string  `toml:"dir"`
 	CompactionThreshold     float64 `toml:"compaction_threshold"`          // compact at this % of context window (default 0.8)
-	CompactionModel         string  `toml:"compaction_model"`              // model to use for summarization (default: agent model)
 	CompactionMaxTokens     int     `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
 	CompactionMinMessages   int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
 	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"`     // path to summary prompt file

@@ -319,9 +319,10 @@ func TestCompactAPIError(t *testing.T) {
 
 func TestWithConfigOverrides(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
-	c.WithConfig("claude-sonnet-4-5", 2048, 8)
+	c.WithConfig(2048, 8)
 
-	if c.model != "claude-sonnet-4-5" {
+	// Model stays as initialized (always uses agent's model)
+	if c.model != "claude-haiku-4-5" {
 		t.Errorf("model = %q", c.model)
 	}
 	if c.maxTokens != 2048 {
@@ -335,12 +336,9 @@ func TestWithConfigOverrides(t *testing.T) {
 func TestWithConfigEmptyValues(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
 	original := *c
-	c.WithConfig("", 0, 0)
+	c.WithConfig(0, 0)
 
-	// Empty/zero values should not override
-	if c.model != original.model {
-		t.Errorf("model changed to %q", c.model)
-	}
+	// Zero values should not override
 	if c.maxTokens != original.maxTokens {
 		t.Errorf("maxTokens changed to %d", c.maxTokens)
 	}

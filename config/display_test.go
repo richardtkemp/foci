@@ -205,7 +205,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ImageSaveDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	// Set optional global fields
-	cfg.Sessions.CompactionModel = "claude-haiku-4-5"
 	cfg.Sessions.CompactionSummaryPrompt = "/tmp/summary.md"
 	cfg.Sessions.CompactionHandoffMsg = "handoff"
 	cfg.Sessions.CompactionSystemPrompt = "/tmp/sys.md"
