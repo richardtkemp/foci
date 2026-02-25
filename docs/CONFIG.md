@@ -34,6 +34,15 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `show_tool_calls` | bool | `true` | Show tool call messages in Telegram. Per-agent override of global `[telegram] show_tool_calls`. Set to `false` for user-facing agents where tool visibility is confusing. |
 | `image_save_dir` | string | `""` | Save received images to this directory. Empty disables (falls back to `[telegram] image_save_dir`). Relative paths resolve against `$HOME`. Filename format: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. The agent sees `[Image saved to: /path/to/file]` in the message text. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. If set, only these users can message this agent's bot. If empty, falls back to global `[telegram] allowed_users`. |
+| `compaction_threshold` | float | nil | Per-agent compaction threshold (0.0–1.0). Nil = use global `[sessions] compaction_threshold`. |
+| `compaction_summary_prompt` | string | `""` | Per-agent compaction summary prompt path. Empty = use global. |
+| `compaction_handoff_msg` | string | `""` | Per-agent compaction handoff message. Empty = use global. |
+| `compaction_notify` | bool | nil | Per-agent compaction notification. Nil = use global. |
+| `session_reset_prompt` | string | `""` | Per-agent reset prompt path. Empty = use global `[sessions] session_reset_prompt`. |
+| `skills_dirs` | string[] | `[]` | Per-agent skill directories. Empty = use global `[skills] dirs`. |
+| `prompt_rules` | array | `[]` | Per-agent prompt rules. Empty = use global `[[prompt_rules]]`. |
+| `exec_auto_background` | int | `0` | Per-agent exec auto-background seconds. 0 = use global `[tools] exec_auto_background`. |
+| `max_concurrent_spawns` | int | `0` | Per-agent max concurrent spawns. 0 = use global `[tools] max_concurrent_spawns`. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
