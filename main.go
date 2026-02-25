@@ -517,7 +517,8 @@ func main() {
 					inst := agents[id]
 					prefix := "agent:" + id + ":"
 					if strings.HasPrefix(sessionKey, prefix) {
-						fireResetHook(inst.ag, sessions, sessionKey, cfg, ctx)
+						resetPrompt := resolveString(inst.agentCfg.SessionResetPrompt, cfg.Sessions.SessionResetPrompt)
+						fireResetHook(inst.ag, sessions, sessionKey, resetPrompt, ctx)
 						return
 					}
 				}
@@ -1040,14 +1041,20 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent secrets view: agent-specific values overlay globals
 	agentStore := p.store.ForAgent(acfg.ID)
 
-	registry.Register(tools.NewExecTool(agentStore, p.bwStore, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
+	// Per-agent exec_auto_background (0 = use global)
+	execAutoBg := p.cfg.Tools.ExecAutoBackground
+	if acfg.ExecAutoBackground != 0 {
+		execAutoBg = acfg.ExecAutoBackground
+	}
+
+	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace))
 	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, p.cfg.Tools.ExecAutoBackground, notifier))
+	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, notifier))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
@@ -1080,8 +1087,12 @@ func setupAgent(p setupParams) *agentInstance {
 	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
 	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 
-	// Per-agent skills
-	skillRegistry := skills.Load(p.cfg.Skills.Dirs)
+	// Per-agent skills (per-agent dirs override global)
+	skillsDirs := p.cfg.Skills.Dirs
+	if len(acfg.SkillsDirs) > 0 {
+		skillsDirs = acfg.SkillsDirs
+	}
+	skillRegistry := skills.Load(skillsDirs)
 	var extraSystemBlocks []anthropic.SystemBlock
 	if skillRegistry.Len() > 0 {
 		extraSystemBlocks = []anthropic.SystemBlock{
@@ -1090,8 +1101,12 @@ func setupAgent(p setupParams) *agentInstance {
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
 
-	// Per-agent compactor
-	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, p.cfg.Sessions.CompactionThreshold)
+	// Per-agent compactor (per-agent threshold overrides global)
+	compactionThreshold := p.cfg.Sessions.CompactionThreshold
+	if acfg.CompactionThreshold != nil {
+		compactionThreshold = *acfg.CompactionThreshold
+	}
+	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
@@ -1173,10 +1188,10 @@ func setupAgent(p setupParams) *agentInstance {
 		ToolResultTempDir:           p.cfg.Tools.TempDir,
 		StateStore:                  p.stateStore,
 		UsageClient:                 p.usageClient,
-		PromptRules:                 agent.CompilePromptRules(p.cfg.PromptRules),
-		CompactionSummaryPromptPath: p.cfg.Sessions.CompactionSummaryPrompt,
+		PromptRules:                 agent.CompilePromptRules(resolvePromptRules(acfg, p.cfg)),
+		CompactionSummaryPromptPath: resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
 		ReadPromptFile:              readPromptFile,
-		CompactionHandoffMsg:        p.cfg.Sessions.CompactionHandoffMsg,
+		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
 	}
@@ -1221,7 +1236,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Sessions:   &sessionBranchAdapter{store: p.sessions},
 		AgentID:    acfg.ID,
 		Model:      acfg.Model,
-		MaxInherit: p.cfg.Tools.MaxConcurrentSpawns,
+		MaxInherit: resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
 		Notifier:   notifier,
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
@@ -1284,7 +1299,7 @@ func setupAgent(p setupParams) *agentInstance {
 			CreatedAt:        p.sessions.CreatedAt(sk),
 			LastActivity:     p.sessions.LastActivity(sk),
 			ContextLimit:     compaction.ContextLimit(ag.Model),
-			CompactThreshold: p.cfg.Sessions.CompactionThreshold,
+			CompactThreshold: compactionThreshold,
 		}
 	}, p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
@@ -1336,7 +1351,7 @@ func setupAgent(p setupParams) *agentInstance {
 		return command.ContextInfo{
 			SessionKey:       sk,
 			Model:            ag.Model,
-			CompactionThresh: p.cfg.Sessions.CompactionThreshold,
+			CompactionThresh: compactionThreshold,
 			ContextLimit:     compaction.ContextLimit(ag.Model),
 			SystemSections:   sections,
 			EnvironmentChars: len(ag.EnvironmentBlock),
@@ -1352,7 +1367,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if sk == "" {
 			return fmt.Errorf("no active session to reset")
 		}
-		fireResetHook(ag, p.sessions, sk, p.cfg, p.ctx)
+		fireResetHook(ag, p.sessions, sk, resolveString(acfg.SessionResetPrompt, p.cfg.Sessions.SessionResetPrompt), p.ctx)
 		if err := p.sessions.Clear(sk); err != nil {
 			return err
 		}
@@ -1385,12 +1400,15 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewPromptsCommand(func() command.PromptsData {
 		// Configured prompts
 		var prompts []command.PromptInfo
-		prompts = append(prompts, promptInfo("compaction_summary", p.cfg.Sessions.CompactionSummaryPrompt))
-		prompts = append(prompts, promptInfo("session_reset", p.cfg.Sessions.SessionResetPrompt))
-		if p.cfg.Sessions.CompactionHandoffMsg != "" {
+		resolvedSummaryPrompt := resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt)
+		resolvedResetPrompt := resolveString(acfg.SessionResetPrompt, p.cfg.Sessions.SessionResetPrompt)
+		resolvedHandoffMsg := resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg)
+		prompts = append(prompts, promptInfo("compaction_summary", resolvedSummaryPrompt))
+		prompts = append(prompts, promptInfo("session_reset", resolvedResetPrompt))
+		if resolvedHandoffMsg != "" {
 			prompts = append(prompts, command.PromptInfo{
 				Label:  "handoff_msg",
-				Inline: p.cfg.Sessions.CompactionHandoffMsg,
+				Inline: resolvedHandoffMsg,
 			})
 		} else {
 			prompts = append(prompts, command.PromptInfo{Label: "handoff_msg"})
@@ -1482,7 +1500,7 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewReloadCommand(func() (string, error) {
 		bootstrap.Reload()
 		checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
-		newSkillRegistry := skills.Load(p.cfg.Skills.Dirs)
+		newSkillRegistry := skills.Load(skillsDirs)
 		var newExtraSystemBlocks []anthropic.SystemBlock
 		if newSkillRegistry.Len() > 0 {
 			newExtraSystemBlocks = []anthropic.SystemBlock{
@@ -1757,7 +1775,12 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 
 		// Wire compaction notifications to Telegram (default on)
-		if p.cfg.Sessions.CompactionNotify == nil || *p.cfg.Sessions.CompactionNotify {
+		// Per-agent compaction_notify overrides global
+		compactNotify := p.cfg.Sessions.CompactionNotify
+		if acfg.CompactionNotify != nil {
+			compactNotify = acfg.CompactionNotify
+		}
+		if compactNotify == nil || *compactNotify {
 			ag.CompactionNotifyFunc = func(session string, msg string) {
 				primaryBot.SendNotification(msg)
 			}
@@ -1818,8 +1841,9 @@ func setupAgent(p setupParams) *agentInstance {
 				pool.SetSessionTTL(ttl, p.sessions)
 				log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
 			}
+			resolvedResetPrompt := resolveString(acfg.SessionResetPrompt, p.cfg.Sessions.SessionResetPrompt)
 			pool.ReclaimHook = func(sessionKey string) {
-				fireResetHook(ag, p.sessions, sessionKey, p.cfg, p.ctx)
+				fireResetHook(ag, p.sessions, sessionKey, resolvedResetPrompt, p.ctx)
 			}
 		}
 	}
@@ -2031,6 +2055,30 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 
 // readPromptFile reads a prompt from a file path. Returns the trimmed contents,
 // or empty string (with error logged) if the file can't be read.
+// resolveInt returns the per-agent value if non-zero, otherwise global.
+func resolveInt(perAgent, global int) int {
+	if perAgent != 0 {
+		return perAgent
+	}
+	return global
+}
+
+// resolveString returns the per-agent value if non-empty, otherwise global.
+func resolveString(perAgent, global string) string {
+	if perAgent != "" {
+		return perAgent
+	}
+	return global
+}
+
+// resolvePromptRules returns per-agent prompt rules if set, otherwise global.
+func resolvePromptRules(acfg config.AgentConfig, cfg *config.Config) []config.PromptRule {
+	if len(acfg.PromptRules) > 0 {
+		return acfg.PromptRules
+	}
+	return cfg.PromptRules
+}
+
 func readPromptFile(path, label string) string {
 	if path == "" {
 		return ""
@@ -2055,8 +2103,8 @@ func promptInfo(label, path string) command.PromptInfo {
 // fireResetHook sends the reset prompt to the agent before a session is cleared.
 // Checks BranchMeta.NoResetHook for branch sessions. Non-fatal: logs and returns
 // on error so the caller can proceed with the reset.
-func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, cfg *config.Config, parentCtx context.Context) {
-	prompt := readPromptFile(cfg.Sessions.SessionResetPrompt, "reset-hook")
+func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, resetPromptPath string, parentCtx context.Context) {
+	prompt := readPromptFile(resetPromptPath, "reset-hook")
 	if prompt == "" {
 		return
 	}

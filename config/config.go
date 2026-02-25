@@ -41,6 +41,18 @@ type AgentConfig struct {
 	ShowToolCalls       *bool             `toml:"show_tool_calls"`       // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
 	ImageSaveDir        string            `toml:"image_save_dir"`        // save received images to this directory (empty = disabled)
 	AllowedUsers        []string          `toml:"allowed_users"`         // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
+	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
+	CompactionThreshold     *float64 `toml:"compaction_threshold"`      // compact at this % of context window
+	CompactionSummaryPrompt string   `toml:"compaction_summary_prompt"` // path to summary prompt file
+	CompactionHandoffMsg    string   `toml:"compaction_handoff_msg"`    // handoff message after compaction
+	CompactionNotify        *bool    `toml:"compaction_notify"`         // send Telegram notification on compaction
+	SessionResetPrompt      string   `toml:"session_reset_prompt"`      // path to prompt fired before session clear
+	// Per-agent skills and prompt rules (empty = use global)
+	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
+	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
+	// Per-agent tool behaviour (0 = use global [tools] value)
+	ExecAutoBackground  int `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
+	MaxConcurrentSpawns int `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
 }
 
 type AnthropicConfig struct {
