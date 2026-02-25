@@ -29,6 +29,8 @@ type AgentMemoryConfig struct {
 
 type AgentConfig struct {
 	ID                  string            `toml:"id"`
+	Name                string            `toml:"name"`              // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji               string            `toml:"emoji"`             // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
 	Model               string            `toml:"model"`
 	Workspace           string            `toml:"workspace"`
 	SystemFiles         []string          `toml:"system_files"`          // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
@@ -169,6 +171,9 @@ type VoiceConfig struct {
 	TTSModel    string  `toml:"tts_model"`    // for openai provider, e.g. "openai/tts-1-mini"
 	TTSVoice    string  `toml:"tts_voice"`    // voice name (provider-specific)
 	TTSRate     float64 `toml:"tts_rate"`     // speech rate multiplier: 1.0 = normal, 1.3 = 30% faster, 0.8 = 20% slower
+
+	// WebSocket voice endpoint
+	WSEnabled bool `toml:"ws_enabled"` // enable /voice WebSocket endpoint (default false)
 }
 
 type BitwardenConfig struct {

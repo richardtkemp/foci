@@ -19,6 +19,7 @@ Format: `agent:AGENTID:TYPE[:BRANCHID]`
 - `agent:main:cron:morning-routine` — cron-triggered branch
 - `agent:main:subagent:research-task` — sub-agent branch
 - `agent:main:multiball:mb-1709123456` — multiball fork
+- `agent:clutch:voice:1709123456` — WebSocket voice session (ephemeral, one per connection)
 
 Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`clod send`/`clod branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
 
@@ -118,6 +119,18 @@ The user now has two (or more) parallel conversations with the same agent, each 
 ```
 
 Voice mode is session state, not config — it resets on session reset.
+
+### WebSocket Voice Endpoint (`/voice`)
+
+A WebSocket endpoint for real-time two-way voice conversation with an agent. Used by the FOCI Android app.
+
+**Connection:** `GET /voice?api_key=KEY` → upgrade to WebSocket. Server sends a `connected` message with the available agent list. Client sends `select_agent` to pick an agent, server responds with `session_ready` and an ephemeral session key (`agent:ID:voice:CONN_ID`).
+
+**Audio flow:** Client sends `audio_start` → binary Opus frames → `audio_end`. Server transcribes via STT, sends `transcription`, processes with agent, sends `response_start` → `response_text` (final=true) → `audio_start` + binary MP3 chunks (4KB) + `audio_end` → `response_end`. Text input (`text` message) skips STT, same pipeline from agent call onward.
+
+**Concurrency:** Three mutexes per connection — `writeMu` (all WebSocket writes), `turnMu` (serializes agent turns), `audioMu` (recording state). TTS failures are non-fatal (text response still delivered).
+
+**Auth:** API key from `secrets.toml` as `voice.api_key`. Enabled when `[voice] ws_enabled = true` AND API key AND STT provider are all present.
 
 ### Media Persistence
 

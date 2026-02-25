@@ -47,7 +47,7 @@ config.Load(path)                                        ← validates values; l
   → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
   → restoreMultiballSessions()                             ← restore bot→session mappings from state store
   → botMgr.StartAll(ctx)                                  ← starts all bots
-  → http.Server{"/send", "/status", "/command", "/wake"}  ← routes by agent param
+  → http.Server{"/send", "/status", "/command", "/wake", "/voice (ws)"}  ← routes by agent param
   → injectWelcomeFile()                                    ← setup.sh changelog injection
   → block on signal → shutdown
 ```
@@ -81,7 +81,7 @@ main
  ├── anthropic     (no deps)
  ├── session       → anthropic, log
  ├── memory        → modernc.org/sqlite, fsnotify/v4 (file watching for auto-reindex)
- ├── voice         → log
+ ├── voice         → log, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
@@ -505,6 +505,36 @@ Speech rate configurable via `tts_rate` in `[voice]` config section. For edge-tt
 
 The agent sees this and adjusts its style (shorter, conversational, no markdown).
 
+### Voice WebSocket (`voice/ws.go`)
+
+Real-time two-way voice conversation via WebSocket at `/voice`. Used by the FOCI Android app.
+
+**Dependencies:** `voice → log, gorilla/websocket`
+
+**Connection flow:**
+```
+GET /voice?api_key=KEY → validate key → upgrade to WebSocket
+  → send connected{agents} → client sends select_agent{agent_id}
+  → create ephemeral session (agent:ID:voice:CONN_ID) → send session_ready
+```
+
+**Audio turn flow:**
+```
+audio_start → binary frames (Opus) → audio_end
+  → goroutine with turnMu lock
+  → STT.Transcribe → send transcription
+  → response_start → HandleMessage(agent, session, text) → response_text (final=true)
+  → TTS.Synthesize → audio_start + 4KB binary chunks + audio_end
+  → response_end
+```
+
+**Concurrency model (three mutexes per connection):**
+- `writeMu` — serializes all WebSocket writes (text + binary frames)
+- `turnMu` — serializes agent turns (prevents concurrent STT→agent→TTS pipelines)
+- `audioMu` — protects recording state and audio buffer
+
+**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` returns `voice.WithRate(ttsProvider, rate)`. Gate: `cfg.Voice.WSEnabled && voiceAPIKey != "" && sttProvider != nil`.
+
 ## Multiball (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
 Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix.
@@ -562,6 +592,7 @@ Endpoints for external integration (used by `clod` CLI). All endpoints accept an
 - `GET /status?agent=clutch` — dispatches `/status` for the specified agent
 - `POST /command` — `{"agent": "clutch", "command": "/ping"}` — dispatches slash command
 - `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true, "if_active": "12h"}` — branch from default session for cron. Returns 412 if no default session. Optional `if_active` / `if_inactive` for activity gating.
+- `GET /voice?api_key=KEY` — WebSocket upgrade for real-time voice conversation (see Voice WebSocket section). Enabled when `[voice] ws_enabled = true`.
 
 ## CLI Tool (`cmd/clod/`)
 
