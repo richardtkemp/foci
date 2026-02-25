@@ -825,7 +825,6 @@ func NewHelpCommand(registry *Registry) *Command {
 			type group struct {
 				emoji string
 				label string
-				cmds  []*Command
 			}
 			categoryOrder := []string{"observability", "operations", "diagnostics", "session"}
 			categoryMeta := map[string]group{

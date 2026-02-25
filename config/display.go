@@ -807,24 +807,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	return "Unset/default config options:\n\n" + table.Format(cols, tableRows)
 }
 
-func writeField(b *strings.Builder, key string, val interface{}) {
-	switch v := val.(type) {
-	case string:
-		fmt.Fprintf(b, "  %s = %q\n", key, v)
-	case bool:
-		fmt.Fprintf(b, "  %s = %v\n", key, v)
-	case int:
-		fmt.Fprintf(b, "  %s = %d\n", key, v)
-	case float64:
-		fmt.Fprintf(b, "  %s = %g\n", key, v)
-	case []string:
-		fmt.Fprintf(b, "  %s = %v\n", key, v)
-	case []int:
-		fmt.Fprintf(b, "  %s = %v\n", key, v)
-	default:
-		fmt.Fprintf(b, "  %s = %v\n", key, v)
-	}
-}
 
 func redactString(s string) string {
 	if s == "" {

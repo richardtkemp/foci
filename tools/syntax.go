@@ -53,7 +53,7 @@ func checkJSON(content []byte) error {
 func checkTOML(content []byte) error {
 	var v interface{}
 	if _, err := toml.Decode(string(content), &v); err != nil {
-		return fmt.Errorf("TOML: %w", err)
+		return fmt.Errorf("toml: %w", err)
 	}
 	return nil
 }
@@ -62,7 +62,7 @@ func checkGo(content []byte) error {
 	fset := token.NewFileSet()
 	_, err := parser.ParseFile(fset, "", content, parser.AllErrors)
 	if err != nil {
-		return fmt.Errorf("Go: %w", err)
+		return fmt.Errorf("go: %w", err)
 	}
 	return nil
 }
@@ -70,7 +70,7 @@ func checkGo(content []byte) error {
 func checkYAML(content []byte) error {
 	var v interface{}
 	if err := yaml.Unmarshal(content, &v); err != nil {
-		return fmt.Errorf("YAML: %w", err)
+		return fmt.Errorf("yaml: %w", err)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func checkXML(content []byte) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("XML: %w", err)
+			return fmt.Errorf("xml: %w", err)
 		}
 	}
 	return nil
@@ -98,7 +98,7 @@ func checkPython(content []byte) error {
 	cmd.Stdin = bytes.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Python: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("python: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -112,7 +112,7 @@ func checkShell(content []byte) error {
 	cmd.Stdin = bytes.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Shell: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("shell: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -1002,60 +1002,31 @@ func (b *Bot) SendText(text string) error {
 
 // SendDocument sends a file as a Telegram document to the last known chat.
 func (b *Bot) SendDocument(filePath string) error {
-	b.chatMu.Lock()
-	chatID := b.chatID
-	b.chatMu.Unlock()
-
-	if chatID == 0 {
-		return fmt.Errorf("no chat ID — no messages received yet")
-	}
-
-	f, err := os.Open(filePath)
+	chatID, err := b.lastChatID()
 	if err != nil {
-		return fmt.Errorf("open document: %w", err)
+		return err
 	}
-	defer f.Close()
-
-	if _, err := b.client.SendDocument(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
-		return fmt.Errorf("send document: %w", err)
-	}
-
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		ChatID:    chatID,
-		Text:      fmt.Sprintf("[document %s]", filePath),
-		Session:   b.SessionKey(),
-	})
-	return nil
+	return b.SendDocumentToChat(chatID, filePath)
 }
 
 // SendVoice sends a voice note from a file to the last known chat.
 func (b *Bot) SendVoice(filePath string) error {
+	chatID, err := b.lastChatID()
+	if err != nil {
+		return err
+	}
+	return b.SendVoiceToChat(chatID, filePath)
+}
+
+// lastChatID returns the last known chat ID, or an error if none has been set.
+func (b *Bot) lastChatID() (int64, error) {
 	b.chatMu.Lock()
 	chatID := b.chatID
 	b.chatMu.Unlock()
-
 	if chatID == 0 {
-		return fmt.Errorf("no chat ID — no messages received yet")
+		return 0, fmt.Errorf("no chat ID — no messages received yet")
 	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("open voice file: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
-		return fmt.Errorf("send voice: %w", err)
-	}
-
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		ChatID:    chatID,
-		Text:      fmt.Sprintf("[voice %s]", filePath),
-		Session:   b.SessionKey(),
-	})
-	return nil
+	return chatID, nil
 }
 
 // SendTextToChat sends a text message to a specific chat ID with HTML support.

@@ -151,7 +151,7 @@ func editFile(ctx context.Context, params json.RawMessage) (string, error) {
 	if preErr == nil {
 		// File was valid before — reject if edit breaks it
 		if postErr := checkSyntax(p.Path, []byte(newContent)); postErr != nil {
-			return "", fmt.Errorf("edit rejected — would introduce syntax error: %v. File unchanged.", postErr)
+			return "", fmt.Errorf("edit rejected — would introduce syntax error: %v", postErr)
 		}
 	}
 

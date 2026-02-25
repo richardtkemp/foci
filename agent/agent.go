@@ -660,7 +660,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				if a.RateLimitFunc != nil {
 					a.RateLimitFunc(0)
 				}
-				return "", fmt.Errorf("Anthropic API is temporarily unavailable. Try again in a few minutes.")
+				return "", fmt.Errorf("anthropic API is temporarily unavailable, try again in a few minutes")
 			}
 			return "", fmt.Errorf("send message: %w", err)
 		}
