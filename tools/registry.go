@@ -55,10 +55,29 @@ func (r *Registry) ToolDefs() []anthropic.ToolDef {
 		defs = append(defs, anthropic.ToolDef{
 			Name:        t.Name,
 			Description: t.Description,
-			InputSchema: t.Parameters,
+			InputSchema: ensureAdditionalPropertiesFalse(t.Parameters),
 			Strict:      true,
 		})
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
+}
+
+// ensureAdditionalPropertiesFalse injects "additionalProperties": false into
+// the root object of a JSON schema. Required when strict mode is enabled —
+// the API rejects object schemas without this field.
+func ensureAdditionalPropertiesFalse(schema json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(schema, &obj); err != nil {
+		return schema
+	}
+	if _, exists := obj["additionalProperties"]; exists {
+		return schema // already set
+	}
+	obj["additionalProperties"] = json.RawMessage("false")
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return schema
+	}
+	return out
 }
