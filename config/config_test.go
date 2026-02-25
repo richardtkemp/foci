@@ -1237,7 +1237,6 @@ id = "test"
 [sessions]
 session_reset_prompt = "/home/clod/shared/prompts/reset.md"
 compaction_summary_prompt = "/home/clod/shared/prompts/compaction-summary.md"
-compaction_system_prompt = "/home/clod/shared/prompts/compaction-system.md"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -1250,9 +1249,6 @@ compaction_system_prompt = "/home/clod/shared/prompts/compaction-system.md"
 	}
 	if cfg.Sessions.CompactionSummaryPrompt != "/home/clod/shared/prompts/compaction-summary.md" {
 		t.Errorf("CompactionSummaryPrompt = %q", cfg.Sessions.CompactionSummaryPrompt)
-	}
-	if cfg.Sessions.CompactionSystemPrompt != "/home/clod/shared/prompts/compaction-system.md" {
-		t.Errorf("CompactionSystemPrompt = %q", cfg.Sessions.CompactionSystemPrompt)
 	}
 }
 
@@ -1274,9 +1270,6 @@ id = "test"
 	}
 	if cfg.Sessions.CompactionSummaryPrompt != "" {
 		t.Errorf("CompactionSummaryPrompt should default to empty, got %q", cfg.Sessions.CompactionSummaryPrompt)
-	}
-	if cfg.Sessions.CompactionSystemPrompt != "" {
-		t.Errorf("CompactionSystemPrompt should default to empty, got %q", cfg.Sessions.CompactionSystemPrompt)
 	}
 }
 
