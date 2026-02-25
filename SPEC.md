@@ -875,20 +875,12 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 
 ### 🔶 Phase 2 — Next
 
-- **Inter-agent messaging** — agents communicating with each other
-- **File attachments** — send/receive files via Telegram
-- **Compaction pre-save prompt** — "save important context" before compacting
-- **Pre-session-end memory prompt** — memory save on /new or idle timeout
+- **File attachments** — receive non-image files via Telegram (sending works, receiving needs testing/implementation)
+- **Streaming** — SSE streaming for API responses. Better UX, eliminates timeout risk on long thinking turns. Low priority.
 
 ### 🔷 Enhancement — Later
 
 - Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
-- Telegram MarkdownV2/HTML rendering — upgrade from basic Markdown to MarkdownV2 or HTML for better formatting fidelity.
-- Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
-- Signal/Discord/other channels
-- Plugin/hook architecture
-- Reactions
-- Config schema validation beyond basic TOML parsing
 
 ## Testing Priority
 
