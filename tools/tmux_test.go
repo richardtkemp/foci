@@ -1751,3 +1751,82 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 		t.Errorf("persisted watches after ClearAll = %d, want 0", len(watches))
 	}
 }
+
+func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	defer cleanup1()
+
+	name := "clod-test-unwatch-restart"
+	defer tmuxCleanup(t, name)
+
+	// Start session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool1.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Watch the session
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 30,
+	})
+	if _, err := tool1.Execute(context.Background(), params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Verify watch is persisted
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) || len(watches) != 1 {
+		t.Fatal("watch should be persisted")
+	}
+
+	// Unwatch
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	if _, err := tool1.Execute(context.Background(), params); err != nil {
+		t.Fatalf("unwatch: %v", err)
+	}
+
+	// Simulate restart: create a new tool instance from the same state store
+	// (reload state from disk to mimic fresh process start)
+	store2 := state.New(stateFile)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+
+	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent")
+	defer cleanup2()
+
+	// The unwatched session should NOT be restored — verify by trying to unwatch
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	_, err := tool2.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error unwatching session that should not have been restored")
+	}
+
+	// Verify no watches in persisted state
+	var watches2 []persistedWatch
+	if store2.Get("tmux:test-agent:watches", &watches2) && len(watches2) != 0 {
+		t.Errorf("watches in state after restart = %d, want 0", len(watches2))
+	}
+}

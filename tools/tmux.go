@@ -501,18 +501,27 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (string, err
 	log.Debugf("tmux", "unwatch: name=%s", name)
 
 	inst.mu.Lock()
-	key := name + ":0" // unwatch without window removes all watches for this session
-	ws, exists := inst.watched[key]
-	if !exists {
+	// Collect all watches matching this session name (any window)
+	prefix := name + ":"
+	var toCancel []*watchedSession
+	for key, ws := range inst.watched {
+		if strings.HasPrefix(key, prefix) {
+			toCancel = append(toCancel, ws)
+			delete(inst.watched, key)
+		}
+	}
+	if len(toCancel) == 0 {
 		inst.mu.Unlock()
 		return "", fmt.Errorf("session %s is not being watched", name)
 	}
-	delete(inst.watched, key)
 	inst.persistWatches()
 	inst.mu.Unlock()
 
-	ws.cancel()
-	<-ws.done
+	// Cancel goroutines outside the lock
+	for _, ws := range toCancel {
+		ws.cancel()
+		<-ws.done
+	}
 	return fmt.Sprintf("Stopped watching session %s", name), nil
 }
 
