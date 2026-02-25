@@ -254,6 +254,95 @@ func TestSendMessageInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestCountTokensSuccess(t *testing.T) {
+	var receivedPath string
+	var receivedReq *MessageRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		var req MessageRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedReq = &req
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(CountTokensResponse{InputTokens: 4523})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	count, err := client.CountTokens(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 1024,
+		System:    []SystemBlock{{Type: "text", Text: "You are helpful."}},
+		Messages:  []Message{{Role: "user", Content: TextContent("Hello")}},
+	})
+	if err != nil {
+		t.Fatalf("CountTokens: %v", err)
+	}
+	if count != 4523 {
+		t.Errorf("count = %d, want 4523", count)
+	}
+	if receivedPath != "/v1/messages/count_tokens" {
+		t.Errorf("path = %q, want /v1/messages/count_tokens", receivedPath)
+	}
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+	if receivedReq.Model != "claude-haiku-4-5" {
+		t.Errorf("model = %q", receivedReq.Model)
+	}
+}
+
+func TestCountTokensAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"bad request"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	_, err := client.CountTokens(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 1024,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+	if err == nil {
+		t.Fatal("expected error for 400 status")
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected *APIError")
+	}
+	if apiErr.StatusCode != 400 {
+		t.Errorf("StatusCode = %d, want 400", apiErr.StatusCode)
+	}
+}
+
+func TestCountTokensInvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not json{{{"))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	_, err := client.CountTokens(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 1024,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "unmarshal response") {
+		t.Errorf("error = %q, want 'unmarshal response'", err.Error())
+	}
+}
+
 func TestNewClientDefaults(t *testing.T) {
 	client := NewClient("my-key")
 	if client.baseURL != "https://api.anthropic.com" {

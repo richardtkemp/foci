@@ -1439,6 +1439,46 @@ func setupAgent(p setupParams) *agentInstance {
 			EnvironmentChars: len(ag.EnvironmentBlock),
 			SkillsChars:      skillsChars,
 			Messages:         mb,
+			CountTokensFn: func(ctx context.Context) (int, error) {
+				// Assemble system blocks the same way the agent does
+				system := bootstrap.SystemBlocks()
+				if ag.EnvironmentBlock != "" {
+					envB := anthropic.SystemBlock{Type: "text", Text: ag.EnvironmentBlock}
+					system = append([]anthropic.SystemBlock{envB}, system...)
+				}
+				if len(ag.ExtraSystemBlocks) > 0 {
+					system = append(system, ag.ExtraSystemBlocks...)
+				}
+				// Strip cache_control — counting API doesn't need it
+				for i := range system {
+					system[i].CacheControl = nil
+				}
+				// Load messages
+				var messages []anthropic.Message
+				if sk != "" {
+					if loaded, err := p.sessions.LoadFull(sk); err == nil {
+						messages = loaded
+					}
+				}
+				if len(messages) == 0 {
+					// Need at least one message for the API
+					messages = []anthropic.Message{
+						{Role: "user", Content: anthropic.TextContent(".")},
+					}
+				}
+				maxOutput := acfg.MaxOutputTokens
+				if maxOutput <= 0 {
+					maxOutput = 8192
+				}
+				req := &anthropic.MessageRequest{
+					Model:     ag.Model,
+					MaxTokens: maxOutput,
+					System:    system,
+					Messages:  messages,
+					Tools:     registry.ToolDefs(),
+				}
+				return p.client.CountTokens(ctx, req)
+			},
 		}
 	}))
 	cmds.Register(command.NewResetCommand(func() error {

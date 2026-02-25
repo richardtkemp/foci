@@ -73,6 +73,11 @@ type Usage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
+// CountTokensResponse is the response from the /v1/messages/count_tokens endpoint.
+type CountTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
+}
+
 // MessageResponse is the response from the /v1/messages endpoint.
 type MessageResponse struct {
 	ID         string         `json:"id"`
