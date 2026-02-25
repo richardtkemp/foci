@@ -1,15 +1,18 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
+
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	readability "github.com/go-shiori/go-readability"
 
 	"clod/log"
 )
@@ -17,13 +20,17 @@ import (
 func NewWebFetchTool() *Tool {
 	return &Tool{
 		Name:        "web_fetch",
-		Description: "Fetch a URL and return its text content (HTML tags stripped).",
+		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability). Set raw=true for unprocessed HTML.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"url": {
 					"type": "string",
 					"description": "URL to fetch"
+				},
+				"raw": {
+					"type": "boolean",
+					"description": "Return raw HTML with no processing (default false)"
 				}
 			},
 			"required": ["url"]
@@ -52,18 +59,18 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 	}
 }
 
-var htmlTagRegex = regexp.MustCompile(`<[^>]*>`)
-
 func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 	var p struct {
 		URL string `json:"url"`
+		Raw bool   `json:"raw"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
-	if parsed, err := url.Parse(p.URL); err == nil {
-		log.Debugf("web_fetch", "fetch url=%s", parsed.Hostname())
+	parsed, err := url.Parse(p.URL)
+	if err == nil {
+		log.Debugf("web_fetch", "fetch url=%s raw=%v", parsed.Hostname(), p.Raw)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -84,16 +91,42 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
-	text := htmlTagRegex.ReplaceAllString(string(body), "")
-	// Collapse whitespace
-	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
-
 	const maxLen = 50_000
-	if len(text) > maxLen {
-		text = text[:maxLen] + "\n... (truncated)"
+
+	// Raw mode: return unprocessed HTML
+	if p.Raw {
+		text := string(body)
+		if len(text) > maxLen {
+			text = text[:maxLen] + "\n... (truncated)"
+		}
+		return text, nil
 	}
 
-	return text, nil
+	// Try readability extraction, then convert to markdown
+	var htmlContent string
+	article, err := readability.FromReader(bytes.NewReader(body), parsed)
+	if err == nil && strings.TrimSpace(article.Content) != "" {
+		htmlContent = article.Content
+	} else {
+		// Fallback: convert full HTML body to markdown
+		htmlContent = string(body)
+	}
+
+	md, err := htmltomarkdown.ConvertString(htmlContent)
+	if err != nil {
+		// Last resort: return raw text content from readability if available
+		if article.TextContent != "" {
+			md = article.TextContent
+		} else {
+			md = string(body)
+		}
+	}
+
+	if len(md) > maxLen {
+		md = md[:maxLen] + "\n... (truncated)"
+	}
+
+	return md, nil
 }
 
 func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (string, error) {

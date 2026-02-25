@@ -27,12 +27,96 @@ func TestWebFetchSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// HTML tags should be stripped
+	// Content should be extracted as markdown (no HTML tags)
 	if !strings.Contains(result, "Hello World") {
 		t.Errorf("result = %q, want 'Hello World'", result)
 	}
 	if strings.Contains(result, "<p>") {
 		t.Errorf("result still has HTML tags: %q", result)
+	}
+}
+
+func TestWebFetchRaw(t *testing.T) {
+	html := "<html><body><h1>Title</h1><p>Content</p></body></html>"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(html))
+	}))
+	defer server.Close()
+
+	tool := NewWebFetchTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"url": server.URL,
+		"raw": true,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Raw mode should return unprocessed HTML
+	if !strings.Contains(result, "<h1>Title</h1>") {
+		t.Errorf("raw mode should preserve HTML tags, got: %q", result)
+	}
+	if !strings.Contains(result, "<p>Content</p>") {
+		t.Errorf("raw mode should preserve HTML tags, got: %q", result)
+	}
+}
+
+func TestWebFetchReadabilityFallback(t *testing.T) {
+	// Non-article HTML — readability will likely fail to extract an article
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<div>Just some text</div>"))
+	}))
+	defer server.Close()
+
+	tool := NewWebFetchTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"url": server.URL,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should still produce output via fallback
+	if !strings.Contains(result, "Just some text") {
+		t.Errorf("fallback should extract text, got: %q", result)
+	}
+}
+
+func TestWebFetchMarkdownStructure(t *testing.T) {
+	articleHTML := `<html><head><title>Test</title></head><body>
+		<article>
+			<h1>Main Heading</h1>
+			<p>A paragraph with a <a href="https://example.com">link</a>.</p>
+			<ul><li>Item one</li><li>Item two</li></ul>
+		</article>
+	</body></html>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(articleHTML))
+	}))
+	defer server.Close()
+
+	tool := NewWebFetchTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"url": server.URL,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should contain markdown heading
+	if !strings.Contains(result, "# ") && !strings.Contains(result, "Main Heading") {
+		t.Errorf("expected markdown heading, got: %q", result)
+	}
+	// Should contain markdown link
+	if !strings.Contains(result, "[link]") {
+		t.Errorf("expected markdown link, got: %q", result)
+	}
+	// No raw HTML tags
+	if strings.Contains(result, "<h1>") || strings.Contains(result, "<p>") {
+		t.Errorf("should not contain HTML tags, got: %q", result)
 	}
 }
 
