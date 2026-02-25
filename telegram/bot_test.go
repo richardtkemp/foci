@@ -439,6 +439,135 @@ func TestSplitMessage_Empty(t *testing.T) {
 	}
 }
 
+func TestSplitMessage_PreservesCodeBlock(t *testing.T) {
+	// A <pre><code> block that exceeds maxLen — tags must be closed/reopened.
+	inner := "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n"
+	text := "<pre><code>" + inner + "</code></pre>"
+	chunks := splitMessage(text, 40)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+	for i, chunk := range chunks {
+		if !strings.HasPrefix(chunk, "<pre><code>") {
+			t.Errorf("chunk %d missing opening tags: %q", i, chunk)
+		}
+		if !strings.HasSuffix(chunk, "</code></pre>") {
+			t.Errorf("chunk %d missing closing tags: %q", i, chunk)
+		}
+		if len(chunk) > 40 {
+			t.Errorf("chunk %d exceeds maxLen: len=%d", i, len(chunk))
+		}
+	}
+}
+
+func TestSplitMessage_PreservesPreBlock(t *testing.T) {
+	// A <pre> block (table) that exceeds maxLen.
+	inner := "row1\nrow2\nrow3\nrow4\nrow5\nrow6\n"
+	text := "<pre>" + inner + "</pre>"
+	chunks := splitMessage(text, 25)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+	for i, chunk := range chunks {
+		if !strings.HasPrefix(chunk, "<pre>") {
+			t.Errorf("chunk %d missing <pre>: %q", i, chunk)
+		}
+		if !strings.HasSuffix(chunk, "</pre>") {
+			t.Errorf("chunk %d missing </pre>: %q", i, chunk)
+		}
+	}
+}
+
+func TestSplitMessage_NoTagsUnchanged(t *testing.T) {
+	// Plain text without HTML tags — same behavior as before.
+	text := "line1\nline2\nline3"
+	chunks := splitMessage(text, 10)
+	var reconstructed string
+	for _, c := range chunks {
+		reconstructed += c
+	}
+	if reconstructed != text {
+		t.Errorf("reconstruction mismatch: got %q, want %q", reconstructed, text)
+	}
+}
+
+func TestSplitMessage_ClosedTagsBeforeSplit(t *testing.T) {
+	// Tags are fully closed before the split point — no reopening needed.
+	text := "<b>bold</b>\nplain text that is long enough to need splitting"
+	chunks := splitMessage(text, 30)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+	// First chunk has balanced tags; second chunk should be plain.
+	if strings.Contains(chunks[1], "<b>") {
+		t.Errorf("second chunk should not reopen <b>: %q", chunks[1])
+	}
+}
+
+func TestSplitMessage_NestedTags(t *testing.T) {
+	// Nested <b> inside <pre> — both should be closed/reopened.
+	text := "<pre><b>" + strings.Repeat("x\n", 20) + "</b></pre>"
+	chunks := splitMessage(text, 30)
+
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+	// First chunk should close in reverse order: </b></pre>
+	if !strings.HasSuffix(chunks[0], "</b></pre>") {
+		t.Errorf("first chunk should close nested tags: %q", chunks[0])
+	}
+	// Second chunk should reopen in original order: <pre><b>
+	if !strings.HasPrefix(chunks[1], "<pre><b>") {
+		t.Errorf("second chunk should reopen nested tags: %q", chunks[1])
+	}
+}
+
+func TestOpenHTMLTags(t *testing.T) {
+	cases := []struct {
+		html string
+		want []string
+	}{
+		{"hello", nil},
+		{"<pre>text", []string{"<pre>"}},
+		{"<pre><code>text", []string{"<pre>", "<code>"}},
+		{"<pre><code>text</code></pre>", nil},
+		{"<b>bold</b> <i>open", []string{"<i>"}},
+		{`<a href="url">link`, []string{`<a href="url">`}},
+		{"<pre><code>line1\nline2\n", []string{"<pre>", "<code>"}},
+	}
+	for _, tc := range cases {
+		got := openHTMLTags(tc.html)
+		if len(got) != len(tc.want) {
+			t.Errorf("openHTMLTags(%q) = %v, want %v", tc.html, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("openHTMLTags(%q)[%d] = %q, want %q", tc.html, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+func TestClosingHTMLTag(t *testing.T) {
+	cases := []struct {
+		open, want string
+	}{
+		{"<pre>", "</pre>"},
+		{"<code>", "</code>"},
+		{"<b>", "</b>"},
+		{`<a href="url">`, "</a>"},
+	}
+	for _, tc := range cases {
+		if got := closingHTMLTag(tc.open); got != tc.want {
+			t.Errorf("closingHTMLTag(%q) = %q, want %q", tc.open, got, tc.want)
+		}
+	}
+}
+
 // --- truncate ---
 
 func TestTruncate_Short(t *testing.T) {
