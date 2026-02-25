@@ -1579,10 +1579,16 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 	log.Infof("main", "agent %q: registered %d tools: [%s]", acfg.ID, len(toolNames), strings.Join(toolNames, ", "))
 
+	// Resolve per-agent allowed users (falls back to global)
+	allowedUsers := acfg.AllowedUsers
+	if len(allowedUsers) == 0 {
+		allowedUsers = p.cfg.Telegram.AllowedUsers
+	}
+
 	// Create and register Telegram bots via BotManager
 	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)
 	if telegramToken != "" {
-		primaryBot, err := telegram.NewBot(telegramToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, acfg.ID)
+		primaryBot, err := telegram.NewBot(telegramToken, allowedUsers, ag, cmds, lastMsgStore, acfg.ID)
 		if err != nil {
 			log.Fatalf("main", "agent %q: create telegram bot: %v", acfg.ID, err)
 		}
@@ -1662,7 +1668,7 @@ func setupAgent(p setupParams) *agentInstance {
 				log.Errorf("main", "agent %q: multiball bot %q: token not found", acfg.ID, botName)
 				continue
 			}
-			mbBot, err := telegram.NewBot(mbToken, p.cfg.Telegram.AllowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
+			mbBot, err := telegram.NewBot(mbToken, allowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
 			if err != nil {
 				log.Errorf("main", "agent %q: create multiball bot %q: %v", acfg.ID, botName, err)
 				continue
