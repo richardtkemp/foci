@@ -872,6 +872,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Rate limit handling — API 429/529 errors detected as `*APIError`, friendly Telegram notification sent via `RateLimitFunc` callback (with estimated retry time from `Retry-After` header), clean error returned instead of raw API error
 - Tool call errors logged as WARNING in event log
 - Tool call visibility gating — `show_tool_calls` config (global + per-agent) controls whether tool call messages appear in Telegram. Default true (current behavior). Set false for user-facing agents where tool visibility is confusing
+- Log privacy — `messages_in_log` config (global `[logging]` + per-agent) controls whether user message content appears in the event log. Default false (privacy-first). When false, messages log at DEBUG with no content; when true, messages log at INFO with content truncated to 100 chars
 
 ### 🔶 Phase 2 — Next
 

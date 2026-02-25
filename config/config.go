@@ -46,6 +46,7 @@ type AgentConfig struct {
 	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
 	ShowToolCalls       *bool             `toml:"show_tool_calls"`       // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
+	MessagesInLog       *bool             `toml:"messages_in_log"`       // log user message content to event log (nil = use global logging.messages_in_log)
 	ImageSaveDir        string            `toml:"image_save_dir"`        // save received images to this directory (empty = disabled)
 	AllowedUsers        []string          `toml:"allowed_users"`         // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
 	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
@@ -152,6 +153,7 @@ type LoggingConfig struct {
 	RetentionPeriod       string `toml:"retention_period"`        // keep lines newer than this (default "48h")
 	RotationMaxLineSize   string `toml:"rotation_max_line_size"`  // max line size for scanner buffer (default "64MB")
 	ArchiveDir            string `toml:"archive_dir"`             // gzip archive directory (default: log_dir/archive/)
+	MessagesInLog         bool   `toml:"messages_in_log"`         // log user message content to event log (default false for privacy)
 }
 
 type VoiceConfig struct {

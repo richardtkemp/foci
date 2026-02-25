@@ -60,6 +60,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if agent.ShowToolCalls != nil {
 		add("agent", "show_tool_calls", *agent.ShowToolCalls)
 	}
+	if agent.MessagesInLog != nil {
+		add("agent", "messages_in_log", *agent.MessagesInLog)
+	}
 	if agent.ImageSaveDir != "" {
 		add("agent", "image_save_dir", agent.ImageSaveDir)
 	}
@@ -169,6 +172,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if cfg.Logging.PayloadFile != "" {
 		add("logging", "payload_file", cfg.Logging.PayloadFile)
 	}
+	add("logging", "messages_in_log", cfg.Logging.MessagesInLog)
 	add("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
 	add("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
 	add("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
@@ -397,6 +401,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if cfg.Logging.PayloadFile != "" {
 		addGlobal("logging", "payload_file", cfg.Logging.PayloadFile)
 	}
+	addGlobal("logging", "messages_in_log", cfg.Logging.MessagesInLog)
 	addGlobal("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
 	addGlobal("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
 	addGlobal("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
@@ -516,6 +521,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		}
 		if agent.ShowToolCalls != nil {
 			addAgent("show_tool_calls", *agent.ShowToolCalls)
+		}
+		if agent.MessagesInLog != nil {
+			addAgent("messages_in_log", *agent.MessagesInLog)
 		}
 		if agent.ImageSaveDir != "" {
 			addAgent("image_save_dir", agent.ImageSaveDir)
@@ -747,6 +755,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Logging fields
+	if !cfg.Logging.MessagesInLog {
+		opts = append(opts, availableOption{"logging", "messages_in_log", "false", "log user message content to event log"})
+	}
 	if !cfg.Logging.FullPayload {
 		opts = append(opts, availableOption{"logging", "full_payload", "false", "write full API payloads to file"})
 	}
