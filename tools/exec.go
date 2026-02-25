@@ -28,6 +28,7 @@ var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 // workDir sets the default working directory for commands (empty = process cwd).
 func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) *Tool {
 	return &Tool{
+		Strict:      true,
 		Name:        "exec",
 		Description: "Run a shell command and return its output. Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated).",
 		Parameters: json.RawMessage(`{

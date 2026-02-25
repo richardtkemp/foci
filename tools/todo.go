@@ -12,6 +12,7 @@ import (
 // NewTodoTool creates the todo management tool.
 func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
+		Strict:      true,
 		Name:        "todo",
 		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, and removing items. Items have priority (high/medium/low) and survive restarts.",
 		Parameters: json.RawMessage(`{
