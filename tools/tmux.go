@@ -32,16 +32,25 @@ type watchedSession struct {
 	done            chan struct{}
 }
 
+// persistedWatch is the JSON-serializable form of a watch for state persistence.
+type persistedWatch struct {
+	Session         string `json:"session"`
+	Window          int    `json:"window"`
+	ThresholdSecs   int    `json:"threshold_secs"`
+	AgentSessionKey string `json:"agent_session_key"`
+}
+
 // tmuxInstance holds per-tool-instance state so each agent gets isolated tmux sessions.
 type tmuxInstance struct {
-	mu         sync.Mutex
-	watched    map[string]*watchedSession // key: "session:window"
-	owned      map[string]struct{}        // sessions created by this instance
-	notifier   *AsyncNotifier
-	cols       int
-	rows       int
-	stateStore *state.Store // nil = no persistence
-	stateKey   string       // key prefix for persisted owned sessions
+	mu            sync.Mutex
+	watched       map[string]*watchedSession // key: "session:window"
+	owned         map[string]struct{}        // sessions created by this instance
+	notifier      *AsyncNotifier
+	cols          int
+	rows          int
+	stateStore    *state.Store // nil = no persistence
+	stateKey      string       // key prefix for persisted owned sessions
+	watchStateKey string       // key for persisted watches (stateKey + ":watches")
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
@@ -53,13 +62,14 @@ type tmuxInstance struct {
 // the tmux memory monitor after kill-server).
 func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) (*Tool, func()) {
 	inst := &tmuxInstance{
-		watched:    make(map[string]*watchedSession),
-		owned:      make(map[string]struct{}),
-		notifier:   notifier,
-		cols:       cols,
-		rows:       rows,
-		stateStore: stateStore,
-		stateKey:   stateKey,
+		watched:       make(map[string]*watchedSession),
+		owned:         make(map[string]struct{}),
+		notifier:      notifier,
+		cols:          cols,
+		rows:          rows,
+		stateStore:    stateStore,
+		stateKey:      stateKey,
+		watchStateKey: stateKey + ":watches",
 	}
 
 	// Restore owned sessions from persistent state
@@ -71,6 +81,43 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 			}
 			if len(owned) > 0 {
 				log.Debugf("tmux", "restored %d owned session(s) from state", len(owned))
+			}
+		}
+
+		// Restore watches from persistent state
+		var watches []persistedWatch
+		if stateStore.Get(inst.watchStateKey, &watches) && len(watches) > 0 && notifier != nil {
+			var restored int
+			for _, pw := range watches {
+				// Verify the tmux session still exists
+				_, err := runTmux(context.Background(), "has-session", "-t", pw.Session)
+				if err != nil {
+					continue // stale — session no longer exists
+				}
+
+				key := fmt.Sprintf("%s:%d", pw.Session, pw.Window)
+				monCtx, cancel := context.WithCancel(context.Background())
+				ws := &watchedSession{
+					session:         pw.Session,
+					window:          pw.Window,
+					threshold:       time.Duration(pw.ThresholdSecs) * time.Second,
+					lastActivity:    time.Now(),
+					notifier:        notifier,
+					agentSessionKey: pw.AgentSessionKey,
+					ctx:             monCtx,
+					cancel:          cancel,
+					done:            make(chan struct{}),
+				}
+				inst.watched[key] = ws
+				go tmuxWatchMonitor(ws, inst, key)
+				restored++
+			}
+			// Re-persist to remove stale entries
+			if restored != len(watches) {
+				inst.persistWatches()
+			}
+			if restored > 0 {
+				log.Debugf("tmux", "restored %d watch(es) from state", restored)
 			}
 		}
 	}
@@ -206,6 +253,26 @@ func (inst *tmuxInstance) persistOwned() {
 	}
 }
 
+// persistWatches saves the watched sessions map to the state store.
+// Must be called with inst.mu held.
+func (inst *tmuxInstance) persistWatches() {
+	if inst.stateStore == nil {
+		return
+	}
+	watches := make([]persistedWatch, 0, len(inst.watched))
+	for _, ws := range inst.watched {
+		watches = append(watches, persistedWatch{
+			Session:         ws.session,
+			Window:          ws.window,
+			ThresholdSecs:   int(ws.threshold / time.Second),
+			AgentSessionKey: ws.agentSessionKey,
+		})
+	}
+	if err := inst.stateStore.Set(inst.watchStateKey, watches); err != nil {
+		log.Warnf("tmux", "persist watches: %v", err)
+	}
+}
+
 // ClearAll stops all watches and clears the owned sessions map. Called by the
 // tmux memory monitor after kill-server to reset tool instance state.
 func (inst *tmuxInstance) ClearAll() {
@@ -215,6 +282,7 @@ func (inst *tmuxInstance) ClearAll() {
 		ws.cancel()
 		delete(inst.watched, key)
 	}
+	inst.persistWatches()
 	// Clear owned set
 	inst.owned = make(map[string]struct{})
 	inst.persistOwned()
@@ -416,6 +484,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		done:            make(chan struct{}),
 	}
 	inst.watched[key] = ws
+	inst.persistWatches()
 	inst.mu.Unlock()
 
 	// Start monitoring goroutine
@@ -439,6 +508,7 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (string, err
 		return "", fmt.Errorf("session %s is not being watched", name)
 	}
 	delete(inst.watched, key)
+	inst.persistWatches()
 	inst.mu.Unlock()
 
 	ws.cancel()
@@ -631,6 +701,7 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 
 				inst.mu.Lock()
 				delete(inst.watched, key)
+				inst.persistWatches()
 				inst.mu.Unlock()
 				return
 			}
