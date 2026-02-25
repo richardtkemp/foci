@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func testIndex(t *testing.T) (*Index, string) {
@@ -44,7 +45,7 @@ func TestReindex(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go programming")
+	results, err := idx.Search("Go programming", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestReindexIdempotent(t *testing.T) {
 	idx.Reindex()
 	idx.Reindex() // second reindex should not duplicate
 
-	results, err := idx.Search("unique content")
+	results, err := idx.Search("unique content", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestReindexSkipsNonMarkdown(t *testing.T) {
 
 	idx.Reindex()
 
-	results, err := idx.Search("content")
+	results, err := idx.Search("content", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestIndexConversation(t *testing.T) {
 	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
 	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main")
 
-	results, err := idx.Search("quantum")
+	results, err := idx.Search("quantum", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestMemoryWeightedHigher(t *testing.T) {
 	idx.Reindex()
 	idx.IndexConversation("Random fact about neural networks", "agent:main:main")
 
-	results, err := idx.Search("neural networks")
+	results, err := idx.Search("neural networks", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestConversationWeightConfigurable(t *testing.T) {
 
 	idx.IndexConversation("Neural networks are interesting", "agent:main:main")
 
-	results, err := idx.Search("neural")
+	results, err := idx.Search("neural", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestSearchNoMatches(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("nothing relevant here"), 0644)
 	idx.Reindex()
 
-	results, err := idx.Search("xyzzy")
+	results, err := idx.Search("xyzzy", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestSearchNoMatches(t *testing.T) {
 func TestSearchEmptyIndex(t *testing.T) {
 	idx, _ := testIndex(t)
 
-	results, err := idx.Search("anything")
+	results, err := idx.Search("anything", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -210,7 +211,7 @@ func TestSearchSubdirectories(t *testing.T) {
 
 	idx.Reindex()
 
-	results, err := idx.Search("winter")
+	results, err := idx.Search("winter", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -235,7 +236,7 @@ func TestPorterStemming(t *testing.T) {
 	idx.Reindex()
 
 	// Porter stemmer should match "program" against "programmer", "programming", "programmatic"
-	results, err := idx.Search("program")
+	results, err := idx.Search("program", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -273,7 +274,7 @@ func TestMultiSourceIndexing(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go interfaces")
+	results, err := idx.Search("Go interfaces", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -320,7 +321,7 @@ func TestWeightedRanking(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("quick brown")
+	results, err := idx.Search("quick brown", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -357,7 +358,7 @@ func TestBackwardCompatSingleDir(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("backward compatibility")
+	results, err := idx.Search("backward compatibility", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -366,6 +367,94 @@ func TestBackwardCompatSingleDir(t *testing.T) {
 	}
 	if results[0].Source != "memory" {
 		t.Errorf("source = %q, want 'memory'", results[0].Source)
+	}
+}
+
+func TestSearchRecency(t *testing.T) {
+	idx, memDir := testIndex(t)
+
+	// Create files with different mtimes
+	oldFile := filepath.Join(memDir, "old.md")
+	newFile := filepath.Join(memDir, "new.md")
+
+	os.WriteFile(oldFile, []byte("Go concurrency patterns are useful"), 0644)
+	// Set old file mtime to the past
+	oldTime := time.Now().Add(-24 * time.Hour)
+	os.Chtimes(oldFile, oldTime, oldTime)
+
+	os.WriteFile(newFile, []byte("Go concurrency channels and goroutines"), 0644)
+	// new file keeps current mtime
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	results, err := idx.Search("Go concurrency", "recency")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// Newest file should come first in recency sort
+	if results[0].Path != "new.md" {
+		t.Errorf("first result = %q, want 'new.md' (newest first)", results[0].Path)
+	}
+	if results[1].Path != "old.md" {
+		t.Errorf("second result = %q, want 'old.md'", results[1].Path)
+	}
+}
+
+func TestSearchRelevanceDefault(t *testing.T) {
+	idx, memDir := testIndex(t)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Go programming language features"), 0644)
+	idx.Reindex()
+
+	// Empty string sort should use relevance (default)
+	results, err := idx.Search("Go programming", "")
+	if err != nil {
+		t.Fatalf("Search with empty sort: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results with empty sort")
+	}
+
+	// Explicit "relevance" should also work
+	results2, err := idx.Search("Go programming", "relevance")
+	if err != nil {
+		t.Fatalf("Search with relevance sort: %v", err)
+	}
+	if len(results2) == 0 {
+		t.Fatal("expected results with relevance sort")
+	}
+}
+
+func TestMetaTablePopulated(t *testing.T) {
+	idx, memDir := testIndex(t)
+
+	testFile := filepath.Join(memDir, "meta_test.md")
+	os.WriteFile(testFile, []byte("metadata test content"), 0644)
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	var count int
+	if err := idx.db.QueryRow("SELECT COUNT(*) FROM memory_meta WHERE source = 'memory'").Scan(&count); err != nil {
+		t.Fatalf("query memory_meta: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("memory_meta count = %d, want 1", count)
+	}
+
+	var mtime float64
+	if err := idx.db.QueryRow("SELECT mtime FROM memory_meta WHERE path = 'meta_test.md'").Scan(&mtime); err != nil {
+		t.Fatalf("query mtime: %v", err)
+	}
+	if mtime <= 0 {
+		t.Errorf("mtime = %f, want > 0", mtime)
 	}
 }
 

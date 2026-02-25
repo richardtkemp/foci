@@ -129,3 +129,48 @@ func TestMemorySearchShowsSource(t *testing.T) {
 		t.Errorf("missing [conversation] source label in result: %q", result)
 	}
 }
+
+func TestMemorySearchSortParam(t *testing.T) {
+	_, memDir := testMemoryTool(t)
+
+	os.WriteFile(filepath.Join(memDir, "recent.md"), []byte("Recently added content about sorting"), 0644)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
+	defer idx.Close()
+	idx.Reindex()
+
+	tool := NewMemorySearchTool(idx)
+
+	// Test with sort=recency
+	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "recency"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with sort=recency: %v", err)
+	}
+	if !strings.Contains(result, "recent.md") {
+		t.Errorf("missing recent.md in result: %q", result)
+	}
+
+	// Test with sort=relevance (explicit)
+	params, _ = json.Marshal(map[string]string{"query": "sorting", "sort": "relevance"})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with sort=relevance: %v", err)
+	}
+	if !strings.Contains(result, "recent.md") {
+		t.Errorf("missing recent.md in result: %q", result)
+	}
+
+	// Test with no sort param (default)
+	params, _ = json.Marshal(map[string]string{"query": "sorting"})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with default sort: %v", err)
+	}
+	if !strings.Contains(result, "recent.md") {
+		t.Errorf("missing recent.md in result: %q", result)
+	}
+}
