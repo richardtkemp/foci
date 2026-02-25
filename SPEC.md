@@ -641,6 +641,17 @@ cache_bust_idle_minutes = 10  # suppress alert if session idle > N minutes (cach
 
 Default threshold: 20,000 tokens. Set to 0 to disable. Helps catch system prompt mutations, unexpected session resets, or compaction failures that silently blow up costs.
 
+### Log rotation
+
+Built-in rotation runs every `rotation_period` (default 24h). For each log file (clod.log, api.jsonl, api-payload.jsonl):
+
+1. Stream line-by-line (memory-efficient — handles multi-GB files)
+2. Lines older than `retention_period` (default 48h) → compressed to `archive/{name}-{date}.gz`
+3. Recent lines → kept in active log
+4. Logger file handles reopened atomically after swap
+
+Enabled by default (`log_rotation = true`). Disable with `log_rotation = false` if using external logrotate.
+
 ## Slash Commands
 
 Messages starting with `/` are intercepted before reaching the agent. They execute immediately - never queued behind an in-flight agent turn. This is a hard architectural constraint: commands must bypass the agent reply pipeline entirely.

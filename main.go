@@ -73,6 +73,29 @@ func main() {
 	}
 	defer log.Close()
 
+	// Log rotation
+	if cfg.Logging.LogRotation {
+		rotPeriod, _ := time.ParseDuration(cfg.Logging.RotationPeriod)
+		retPeriod, _ := time.ParseDuration(cfg.Logging.RetentionPeriod)
+		archiveDir := cfg.Logging.ArchiveDir
+		if archiveDir == "" {
+			archiveDir = filepath.Join(filepath.Dir(cfg.Logging.EventFile), "archive")
+		}
+		var files []string
+		for _, p := range []string{cfg.Logging.EventFile, cfg.Logging.APIFile, cfg.Logging.PayloadFile} {
+			if p != "" {
+				files = append(files, p)
+			}
+		}
+		stopRotation := log.StartRotation(log.RotationConfig{
+			Period:     rotPeriod,
+			Retention:  retPeriod,
+			ArchiveDir: archiveDir,
+			Files:      files,
+		})
+		defer stopRotation()
+	}
+
 	// Conversation log (SQLite)
 	if cfg.Logging.ConversationFile != "" {
 		if err := log.InitConversation(cfg.Logging.ConversationFile); err != nil {
