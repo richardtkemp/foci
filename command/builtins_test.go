@@ -1143,7 +1143,7 @@ func TestContextCommand(t *testing.T) {
 
 	checks := []string{
 		"```",               // code block wrapping
-		"105,000",           // total tokens (60000 + 40000 + 5000)
+		"~105,000",          // total tokens (60000 + 40000 + 5000), estimated
 		"200,000",           // context limit
 		"52.5%",             // 105000 / 200000
 		"160,000",           // threshold tokens (200000 * 0.8)
@@ -1156,6 +1156,7 @@ func TestContextCommand(t *testing.T) {
 		"MEMORY.md",
 		"Environment",
 		"Skills",
+		"tokens",            // all sections show tokens
 		// Conversation
 		"Conversation:",
 		"User messages",
@@ -1176,6 +1177,10 @@ func TestContextCommand(t *testing.T) {
 		if !strings.Contains(result, check) {
 			t.Errorf("missing %q in:\n%s", check, result)
 		}
+	}
+	// Should NOT contain "chars" — all counts are in tokens now
+	if strings.Contains(result, "chars") {
+		t.Errorf("should not contain 'chars', all counts should be in tokens:\n%s", result)
 	}
 }
 
@@ -1276,13 +1281,93 @@ func TestContextCommandNoSkillsOrEnv(t *testing.T) {
 
 	// Environment and Skills lines should not appear
 	if strings.Contains(result, "Environment") {
-		t.Errorf("should not show Environment when 0 chars:\n%s", result)
+		t.Errorf("should not show Environment when 0 tokens:\n%s", result)
 	}
 	if strings.Contains(result, "Skills") {
-		t.Errorf("should not show Skills when 0 chars:\n%s", result)
+		t.Errorf("should not show Skills when 0 tokens:\n%s", result)
 	}
 	if strings.Contains(result, "Tool results") {
-		t.Errorf("should not show Tool results when 0 chars:\n%s", result)
+		t.Errorf("should not show Tool results when 0 tokens:\n%s", result)
+	}
+}
+
+func TestContextCommandExactTokens(t *testing.T) {
+	path := writeAPILog(t, nil) // no API log entries needed
+
+	info := testContextInfo()
+	info.CountTokensFn = func(ctx context.Context) (*TokenCounts, error) {
+		return &TokenCounts{
+			Total:        25000,
+			System:       8000,
+			Conversation: 15000,
+			Tools:        2000,
+			Sections: []SectionTokens{
+				{Name: "Environment", Tokens: 300},
+				{Name: "IDENTITY.md", Tokens: 2500},
+				{Name: "SOUL.md", Tokens: 3200},
+				{Name: "MEMORY.md", Tokens: 1500},
+				{Name: "Skills", Tokens: 500},
+			},
+		}, nil
+	}
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	checks := []string{
+		"Context: 25,000 / 200,000 tokens", // exact, no ~
+		"System prompt: 8,000 tokens",
+		"Environment",
+		"IDENTITY.md",
+		"SOUL.md",
+		"MEMORY.md",
+		"Skills",
+		"2,500 tokens",                    // IDENTITY.md exact
+		"Tools: 2,000 tokens",
+		"Conversation: 15,000 tokens",     // exact, no ~
+		"User messages",                   // per-role still shown
+	}
+	for _, check := range checks {
+		if !strings.Contains(result, check) {
+			t.Errorf("missing %q in:\n%s", check, result)
+		}
+	}
+	// Header should NOT have ~ prefix (exact)
+	if strings.Contains(result, "~25,000") {
+		t.Errorf("exact total should not have ~ prefix:\n%s", result)
+	}
+	// Per-role conversation should have ~ (estimated)
+	if !strings.Contains(result, "~") {
+		t.Errorf("per-role estimates should have ~ prefix:\n%s", result)
+	}
+}
+
+func TestContextCommandCountingAPIError(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "agent:main:main", Input: 50000, CacheRead: 30000, CacheWrite: 10000, Output: 500},
+	})
+
+	info := testContextInfo()
+	info.CountTokensFn = func(ctx context.Context) (*TokenCounts, error) {
+		return nil, fmt.Errorf("API error")
+	}
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should fall back to estimates
+	if !strings.Contains(result, "~90,000") { // 50000 + 30000 + 10000
+		t.Errorf("expected fallback to estimated ~90,000 tokens:\n%s", result)
+	}
+	if !strings.Contains(result, "System prompt: ~") {
+		t.Errorf("expected estimated system prompt:\n%s", result)
 	}
 }
 

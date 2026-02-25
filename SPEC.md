@@ -699,7 +699,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/cost <subcommand>` - API cost from api.jsonl. No args: show usage. `today`: per-session table. `24h`: rolling 24h with per-category table. `week`: 7-day daily table. `<days>`: total for last N days.
 
 **Context:**
-- `/context` - full context window breakdown. Uses the Anthropic token counting API (`/v1/messages/count_tokens`) for exact input token counts in the header; falls back to last API call tokens if the counting call fails. Shows: total tokens vs model max with percentage and compaction threshold; system prompt section-by-section (each workspace file, environment block, skills block) with character counts; conversation breakdown by role (user, assistant, tool results) with message counts; last API call token details (input, cache_read, cache_write, output).
+- `/context` - full context window breakdown. Uses the Anthropic token counting API (`/v1/messages/count_tokens`) for exact per-component token counts: total, per-file system prompt sections, tools, and conversation. Makes parallel API calls (one per system section plus baseline/full/system-only) and caches results until context changes (message count or system prompt content). Falls back to character-based estimates (~chars/4) if the counting API fails. All counts shown as tokens (exact "N tokens" or estimated "~N tokens"). Per-role conversation breakdown (user, assistant, tool results) is always estimated. Last API call token details (input, cache_read, cache_write, output) shown separately.
 
 **Sessions:**
 - `/sessions` or `/sessions list` — list all per-chat sessions for this agent. Shows chat ID, username, message count, last active time, and which is the default (★).
