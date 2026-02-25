@@ -168,6 +168,122 @@ func TestEditFileMissing(t *testing.T) {
 	}
 }
 
+func TestEditFileSyntaxValidToValid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+	os.WriteFile(path, []byte(`{"key": "old"}`), 0644)
+
+	tool := NewEditTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       path,
+		"old_string": "old",
+		"new_string": "new",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("valid→valid edit should succeed: %v", err)
+	}
+	if !strings.Contains(result, "Edited") {
+		t.Errorf("result = %q", result)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != `{"key": "new"}` {
+		t.Errorf("file = %q", string(data))
+	}
+}
+
+func TestEditFileSyntaxValidToInvalid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+	os.WriteFile(path, []byte(`{"key": "value"}`), 0644)
+
+	tool := NewEditTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       path,
+		"old_string": `"value"}`,
+		"new_string": `"value"`,  // removes closing brace
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("valid→invalid edit should be rejected")
+	}
+	if !strings.Contains(err.Error(), "syntax error") {
+		t.Errorf("error = %q, want syntax error mention", err.Error())
+	}
+
+	// File should be unchanged
+	data, _ := os.ReadFile(path)
+	if string(data) != `{"key": "value"}` {
+		t.Errorf("file was modified despite rejection: %q", string(data))
+	}
+}
+
+func TestEditFileSyntaxInvalidToValid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+	os.WriteFile(path, []byte(`{"key": "value"`), 0644)  // missing closing brace
+
+	tool := NewEditTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       path,
+		"old_string": `"value"`,
+		"new_string": `"value"}`,  // fixes the JSON
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("invalid→valid edit should succeed: %v", err)
+	}
+	if !strings.Contains(result, "Warning") || !strings.Contains(result, "syntax errors") {
+		t.Errorf("expected warning about pre-existing syntax errors, got: %q", result)
+	}
+}
+
+func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+	os.WriteFile(path, []byte(`{"key": bad}`), 0644)  // already invalid
+
+	tool := NewEditTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       path,
+		"old_string": "bad",
+		"new_string": "worse",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("invalid→invalid edit should proceed: %v", err)
+	}
+	if !strings.Contains(result, "Warning") {
+		t.Errorf("expected warning, got: %q", result)
+	}
+}
+
+func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("hello"), 0644)
+
+	tool := NewEditTool()
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       path,
+		"old_string": "hello",
+		"new_string": "world",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("txt edit should succeed: %v", err)
+	}
+	if strings.Contains(result, "Warning") {
+		t.Errorf("no warning expected for .txt: %q", result)
+	}
+}
+
 func TestReadLargeFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.txt")
