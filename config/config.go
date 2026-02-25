@@ -136,6 +136,10 @@ type LoggingConfig struct {
 	CacheBustIdleMinutes  int    `toml:"cache_bust_idle_minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 	WarningMaxPerWindow   int    `toml:"warning_max_per_window"`  // max identical warnings per window before suppression (default 3)
 	WarningWindowDuration string `toml:"warning_window_duration"` // time window for warning dedup (default "5m")
+	LogRotation           bool   `toml:"log_rotation"`            // enable built-in log rotation (default true)
+	RotationPeriod        string `toml:"rotation_period"`         // how often to rotate (default "24h")
+	RetentionPeriod       string `toml:"retention_period"`        // keep lines newer than this (default "48h")
+	ArchiveDir            string `toml:"archive_dir"`             // gzip archive directory (default: log_dir/archive/)
 }
 
 type VoiceConfig struct {
@@ -275,6 +279,12 @@ func validate(cfg *Config) error {
 	}
 	if _, err := time.ParseDuration(cfg.Logging.WarningWindowDuration); err != nil {
 		return fmt.Errorf("[logging] warning_window_duration = %q: %w", cfg.Logging.WarningWindowDuration, err)
+	}
+	if _, err := time.ParseDuration(cfg.Logging.RotationPeriod); err != nil {
+		return fmt.Errorf("[logging] rotation_period = %q: %w", cfg.Logging.RotationPeriod, err)
+	}
+	if _, err := time.ParseDuration(cfg.Logging.RetentionPeriod); err != nil {
+		return fmt.Errorf("[logging] retention_period = %q: %w", cfg.Logging.RetentionPeriod, err)
 	}
 
 	// Bitwarden
@@ -494,6 +504,15 @@ func Load(path string) (*Config, error) {
 	if cfg.Logging.WarningWindowDuration == "" {
 		cfg.Logging.WarningWindowDuration = "5m"
 	}
+	if !md.IsDefined("logging", "log_rotation") {
+		cfg.Logging.LogRotation = true
+	}
+	if cfg.Logging.RotationPeriod == "" {
+		cfg.Logging.RotationPeriod = "24h"
+	}
+	if cfg.Logging.RetentionPeriod == "" {
+		cfg.Logging.RetentionPeriod = "48h"
+	}
 	if cfg.Anthropic.CredentialsFile == "" {
 		cfg.Anthropic.CredentialsFile = "~/.claude/.credentials.json"
 	}
@@ -694,6 +713,9 @@ func (c *Config) ResolveAllPaths() {
 	c.Logging.APIFile = ResolvePath(c.Logging.APIFile)
 	if c.Logging.PayloadFile != "" {
 		c.Logging.PayloadFile = ResolvePath(c.Logging.PayloadFile)
+	}
+	if c.Logging.ArchiveDir != "" {
+		c.Logging.ArchiveDir = ResolvePath(c.Logging.ArchiveDir)
 	}
 	if c.Logging.ConversationFile == "" {
 		c.Logging.ConversationFile = c.DataPath("conversation.db")

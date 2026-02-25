@@ -79,8 +79,12 @@ type PayloadEntry struct {
 type Logger struct {
 	level       Level
 	eventOut    io.Writer // clod.log + stderr multiwriter
+	eventFile   *os.File  // clod.log file handle (nil = stderr only)
 	apiFile     *os.File  // api.jsonl (nil if disabled)
 	payloadFile *os.File  // api-payload.jsonl (nil if disabled)
+	eventPath   string    // path to clod.log
+	apiPath     string    // path to api.jsonl
+	payloadPath string    // path to api-payload.jsonl
 	buffer      []string  // pre-Init event lines, replayed to event file on Init
 	initialized bool      // true after Init completes
 	mu          sync.Mutex
@@ -147,8 +151,12 @@ func Init(cfg Config) error {
 	std.initialized = true
 	std.level = level
 	std.eventOut = eventOut
+	std.eventFile = eventFile
 	std.apiFile = apiFile
 	std.payloadFile = payloadFile
+	std.eventPath = cfg.EventFile
+	std.apiPath = cfg.APIFile
+	std.payloadPath = cfg.PayloadFile
 	std.mu.Unlock()
 
 	return nil
@@ -158,6 +166,10 @@ func Init(cfg Config) error {
 func Close() {
 	std.mu.Lock()
 	defer std.mu.Unlock()
+	if std.eventFile != nil {
+		std.eventFile.Close()
+		std.eventFile = nil
+	}
 	if std.apiFile != nil {
 		std.apiFile.Close()
 		std.apiFile = nil
@@ -166,6 +178,57 @@ func Close() {
 		std.payloadFile.Close()
 		std.payloadFile = nil
 	}
+}
+
+// Reopen closes and reopens all log files. Used by rotation to pick up
+// the new file after the old one has been atomically replaced.
+func Reopen() error {
+	return std.reopen()
+}
+
+func (l *Logger) reopen() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Event file
+	if l.eventFile != nil {
+		l.eventFile.Close()
+		f, err := os.OpenFile(l.eventPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("reopen event log %s: %w", l.eventPath, err)
+		}
+		l.eventFile = f
+		l.eventOut = io.MultiWriter(os.Stderr, f)
+	}
+
+	// API file
+	if l.apiFile != nil {
+		l.apiFile.Close()
+		f, err := os.OpenFile(l.apiPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("reopen API log %s: %w", l.apiPath, err)
+		}
+		l.apiFile = f
+	}
+
+	// Payload file
+	if l.payloadFile != nil {
+		l.payloadFile.Close()
+		f, err := os.OpenFile(l.payloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("reopen payload log %s: %w", l.payloadPath, err)
+		}
+		l.payloadFile = f
+	}
+
+	return nil
+}
+
+// FilePaths returns the configured log file paths.
+func FilePaths() (event, api, payload string) {
+	std.mu.Lock()
+	defer std.mu.Unlock()
+	return std.eventPath, std.apiPath, std.payloadPath
 }
 
 // WarnHook is called for each WARN or ERROR log event, if set.
