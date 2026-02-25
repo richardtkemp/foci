@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +22,14 @@ import (
 	"clod/secrets"
 	"clod/secrets/bitwarden"
 )
+
+const maxUploadFileSize = 50 * 1024 * 1024 // 50MB
+
+type fileAttachment struct {
+	FieldName string `json:"field_name"`
+	FilePath  string `json:"file_path"`
+	Filename  string `json:"filename"`
+}
 
 // NewHTTPRequestTool creates an http_request tool with domain-locked secret resolution.
 // Secrets referenced via {{secret:NAME}} are resolved server-side and validated
@@ -51,7 +61,34 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				},
 				"body": {
 					"type": "string",
-					"description": "Request body. Use {{secret:NAME}} for credentials."
+					"description": "Request body. Use {{secret:NAME}} for credentials. Mutually exclusive with files."
+				},
+				"files": {
+					"type": "array",
+					"description": "File attachments for multipart/form-data upload. When files are present, the request is sent as multipart/form-data. Mutually exclusive with body.",
+					"items": {
+						"type": "object",
+						"properties": {
+							"field_name": {
+								"type": "string",
+								"description": "Form field name (e.g. 'document', 'photo', 'file')"
+							},
+							"file_path": {
+								"type": "string",
+								"description": "Path to the file to upload"
+							},
+							"filename": {
+								"type": "string",
+								"description": "Override filename sent in the multipart header (optional, defaults to basename of file_path)"
+							}
+						},
+						"required": ["field_name", "file_path"]
+					}
+				},
+				"form_fields": {
+					"type": "object",
+					"description": "Additional form fields for multipart/form-data requests. Values support {{secret:NAME}} templates. Requires files.",
+					"additionalProperties": { "type": "string" }
 				},
 				"query": {
 					"type": "object",
@@ -89,11 +126,13 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 
 func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) (string, error) {
 	var p struct {
-		URL     string            `json:"url"`
-		Method  string            `json:"method"`
-		Headers map[string]string `json:"headers"`
-		Body    string            `json:"body"`
-		Query   map[string]string `json:"query"`
+		URL        string            `json:"url"`
+		Method     string            `json:"method"`
+		Headers    map[string]string `json:"headers"`
+		Body       string            `json:"body"`
+		Files      []fileAttachment  `json:"files"`
+		FormFields map[string]string `json:"form_fields"`
+		Query      map[string]string `json:"query"`
 		SaveTo           string            `json:"save_to"`
 		SaveFromJSONPath string            `json:"save_from_json_path"`
 		Timeout          int              `json:"timeout"`
@@ -110,14 +149,24 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	if p.SaveFromJSONPath != "" && p.SaveTo == "" {
 		return "", fmt.Errorf("save_from_json_path requires save_to")
 	}
+	if p.Body != "" && len(p.Files) > 0 {
+		return "", fmt.Errorf("body and files are mutually exclusive")
+	}
+	if len(p.FormFields) > 0 && len(p.Files) == 0 {
+		return "", fmt.Errorf("form_fields requires files")
+	}
 
-	// Collect all secret refs from headers and body
+	// Collect all secret refs from headers, body, and form_fields
 	var allText strings.Builder
 	for _, v := range p.Headers {
 		allText.WriteString(v)
 		allText.WriteByte(' ')
 	}
 	allText.WriteString(p.Body)
+	for _, v := range p.FormFields {
+		allText.WriteByte(' ')
+		allText.WriteString(v)
+	}
 
 	secretRefs := secrets.FindSecretRefs(allText.String())
 	hasSecrets := len(secretRefs) > 0
@@ -221,9 +270,37 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		reqURL = parsed.String()
 	}
 
-	// Build request
+	// Resolve secrets in form_fields values
+	resolvedFormFields := make(map[string]string, len(p.FormFields))
+	for k, v := range p.FormFields {
+		if store != nil && len(regularRefs) > 0 {
+			resolved, err := store.Resolve(v)
+			if err != nil {
+				return "", fmt.Errorf("resolve form_field %q: %w", k, err)
+			}
+			v = resolved
+		}
+		if bwStore != nil && hasBWSecrets {
+			resolved, err := bwStore.Resolve(v)
+			if err != nil {
+				return "", fmt.Errorf("resolve bw form_field %q: %w", k, err)
+			}
+			v = resolved
+		}
+		resolvedFormFields[k] = v
+	}
+
+	// Build request body
 	var bodyReader io.Reader
-	if p.Body != "" {
+	var multipartContentType string
+	if len(p.Files) > 0 {
+		buf, contentType, err := buildMultipartBody(p.Files, resolvedFormFields)
+		if err != nil {
+			return "", err
+		}
+		bodyReader = buf
+		multipartContentType = contentType
+	} else if p.Body != "" {
 		bodyReader = strings.NewReader(p.Body)
 	}
 
@@ -245,6 +322,9 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	req.Header.Set("User-Agent", "Clod/1.0")
 	for k, v := range resolvedHeaders {
 		req.Header.Set(k, v)
+	}
+	if multipartContentType != "" {
+		req.Header.Set("Content-Type", multipartContentType)
 	}
 
 	// Build client — block cross-domain redirects when secrets are present
@@ -600,4 +680,66 @@ func decodeDataURI(s string) ([]byte, error) {
 	}
 	// Non-base64 data URI — return raw bytes
 	return []byte(payload), nil
+}
+
+// buildMultipartBody constructs a multipart/form-data body from file attachments
+// and form fields. Returns the buffer, Content-Type with boundary, and any error.
+func buildMultipartBody(files []fileAttachment, formFields map[string]string) (*bytes.Buffer, string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	// Write text form fields first
+	for k, v := range formFields {
+		if err := w.WriteField(k, v); err != nil {
+			return nil, "", fmt.Errorf("write form field %q: %w", k, err)
+		}
+	}
+
+	// Write file parts
+	for _, f := range files {
+		if f.FieldName == "" {
+			return nil, "", fmt.Errorf("file attachment missing field_name")
+		}
+		if f.FilePath == "" {
+			return nil, "", fmt.Errorf("file attachment missing file_path")
+		}
+
+		// Validate file exists and check size
+		info, err := os.Stat(f.FilePath)
+		if err != nil {
+			return nil, "", fmt.Errorf("file %q: %w", f.FilePath, err)
+		}
+		if info.IsDir() {
+			return nil, "", fmt.Errorf("file %q is a directory", f.FilePath)
+		}
+		if info.Size() > maxUploadFileSize {
+			return nil, "", fmt.Errorf("file %q is %d bytes, exceeds 50MB limit", f.FilePath, info.Size())
+		}
+
+		filename := f.Filename
+		if filename == "" {
+			filename = filepath.Base(f.FilePath)
+		}
+
+		part, err := w.CreateFormFile(f.FieldName, filename)
+		if err != nil {
+			return nil, "", fmt.Errorf("create form file %q: %w", f.FieldName, err)
+		}
+
+		file, err := os.Open(f.FilePath)
+		if err != nil {
+			return nil, "", fmt.Errorf("open %q: %w", f.FilePath, err)
+		}
+		_, err = io.Copy(part, file)
+		file.Close()
+		if err != nil {
+			return nil, "", fmt.Errorf("write file %q: %w", f.FilePath, err)
+		}
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	return &buf, w.FormDataContentType(), nil
 }
