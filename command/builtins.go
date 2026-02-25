@@ -662,11 +662,20 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 			if len(tools) == 0 {
 				return "No tools registered.", nil
 			}
-			var b strings.Builder
+			// Find max name width for alignment
+			maxName := 0
 			for _, t := range tools {
-				fmt.Fprintf(&b, "• %s — %s\n", t.Name, t.Description)
+				if len(t.Name) > maxName {
+					maxName = len(t.Name)
+				}
 			}
-			return strings.TrimRight(b.String(), "\n"), nil
+			var b strings.Builder
+			b.WriteString("```\n")
+			for _, t := range tools {
+				fmt.Fprintf(&b, "%-*s  %s\n", maxName, t.Name, t.Description)
+			}
+			b.WriteString("```")
+			return b.String(), nil
 		},
 	}
 }

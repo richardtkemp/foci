@@ -531,8 +531,15 @@ func TestToolsCommand(t *testing.T) {
 	})
 
 	result, _ := cmd.Execute(context.Background(), "")
+	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
+		t.Errorf("result not wrapped in code block:\n%s", result)
+	}
 	if !strings.Contains(result, "exec") || !strings.Contains(result, "read") {
 		t.Errorf("missing tools in:\n%s", result)
+	}
+	// Check alignment (both names should have same column width)
+	if !strings.Contains(result, "exec  Run commands") {
+		t.Errorf("expected aligned columns:\n%s", result)
 	}
 }
 
