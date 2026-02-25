@@ -82,7 +82,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string) error {
 
 	// Fast path: if the first line is within retention, skip the file entirely.
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB line buffer
+	scanner.Buffer(make([]byte, 64*1024*1024), 64*1024*1024) // 1MB line buffer
 	if scanner.Scan() {
 		ts, ok := parseTimestamp(path, scanner.Bytes())
 		if ok && !ts.Before(cutoff) {
@@ -122,7 +122,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string) error {
 
 	archivedLines := 0
 	scanner = bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024*1024), 64*1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
