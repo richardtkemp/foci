@@ -1245,7 +1245,7 @@ func TestTmuxReadRaw(t *testing.T) {
 		"operation": "read",
 		"name":      name,
 	})
-	result, err = tool.Execute(context.Background(), params)
+	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("read cleaned: %v", err)
 	}

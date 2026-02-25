@@ -53,6 +53,40 @@ type agentInstance struct {
 	tmuxClearAll      func() // clears tmux tool state (watches, owned sessions)
 }
 
+// checkActivityGate parses if_active/if_inactive durations, checks them against
+// isActive, and writes a skip JSON response if the gate blocks the request.
+// Returns true if the request should continue, false if it was skipped or errored.
+func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive string,
+	isActive func(string, time.Duration) bool, logTag, endpoint string) bool {
+	if ifActive != "" {
+		dur, err := time.ParseDuration(ifActive)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
+			return false
+		}
+		if !isActive(agentID, dur) {
+			log.Debugf(logTag, "POST %s: skipping (no user activity within %s for agent %s)", endpoint, ifActive, agentID)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
+			return false
+		}
+	}
+	if ifInactive != "" {
+		dur, err := time.ParseDuration(ifInactive)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
+			return false
+		}
+		if isActive(agentID, dur) {
+			log.Debugf(logTag, "POST %s: skipping (user active within %s for agent %s)", endpoint, ifInactive, agentID)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
+			return false
+		}
+	}
+	return true
+}
+
 func main() {
 	configPath := config.ParseFlags()
 
@@ -693,34 +727,8 @@ func main() {
 			return
 		}
 
-		// Activity gating: skip silently if no recent user activity
-		if req.IfActive != "" {
-			dur, err := time.ParseDuration(req.IfActive)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
-				return
-			}
-			if !isAgentActive(inst.id, dur) {
-				log.Debugf("http", "POST /send: skipping (no user activity within %s for agent %s)", req.IfActive, inst.id)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
-				return
-			}
-		}
-
-		// Inactivity gating: skip silently if user was recently active
-		if req.IfInactive != "" {
-			dur, err := time.ParseDuration(req.IfInactive)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
-				return
-			}
-			if isAgentActive(inst.id, dur) {
-				log.Debugf("http", "POST /send: skipping (user active within %s for agent %s)", req.IfInactive, inst.id)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
-				return
-			}
+		if !checkActivityGate(w, inst.id, req.IfActive, req.IfInactive, isAgentActive, "http", "/send") {
+			return
 		}
 
 		sessionKey := inst.defaultSessionKey()
@@ -867,34 +875,8 @@ func main() {
 			return
 		}
 
-		// Activity gating: skip silently if no recent user activity
-		if req.IfActive != "" {
-			dur, err := time.ParseDuration(req.IfActive)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
-				return
-			}
-			if !isAgentActive(inst.id, dur) {
-				log.Debugf("wake", "POST /wake: skipping (no user activity within %s for agent %s)", req.IfActive, inst.id)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
-				return
-			}
-		}
-
-		// Inactivity gating: skip silently if user was recently active
-		if req.IfInactive != "" {
-			dur, err := time.ParseDuration(req.IfInactive)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
-				return
-			}
-			if isAgentActive(inst.id, dur) {
-				log.Debugf("wake", "POST /wake: skipping (user active within %s for agent %s)", req.IfInactive, inst.id)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
-				return
-			}
+		if !checkActivityGate(w, inst.id, req.IfActive, req.IfInactive, isAgentActive, "wake", "/wake") {
+			return
 		}
 
 		if req.Text == "" {

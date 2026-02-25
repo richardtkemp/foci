@@ -31,7 +31,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 }
 
 func TestMemorySearch(t *testing.T) {
-	tool, memDir := testMemoryTool(t)
+	_, memDir := testMemoryTool(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Remember to buy milk\nThe sky is blue\n"), 0644)
 	os.WriteFile(filepath.Join(memDir, "todo.md"), []byte("Buy groceries\nClean house\nBuy a new book\n"), 0644)
@@ -60,12 +60,10 @@ func TestMemorySearch(t *testing.T) {
 		t.Errorf("missing todo.md in result: %q", result)
 	}
 
-	// Verify it's not using the uninitialized tool
-	_ = tool
 }
 
 func TestMemorySearchNoMatches(t *testing.T) {
-	tool, memDir := testMemoryTool(t)
+	_, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "test.md"), []byte("nothing relevant here\n"), 0644)
 
 	// Need to reindex with a fresh connection to pick up the file
@@ -76,7 +74,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	defer idx.Close()
 	idx.Reindex()
 
-	tool = NewMemorySearchTool(idx)
+	tool := NewMemorySearchTool(idx)
 	params, _ := json.Marshal(map[string]string{"query": "xyzzy"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -102,7 +100,7 @@ func TestMemorySearchEmpty(t *testing.T) {
 }
 
 func TestMemorySearchShowsSource(t *testing.T) {
-	tool, memDir := testMemoryTool(t)
+	_, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The weather is sunny today"), 0644)
 
 	sources := map[string]memory.SourceConfig{
@@ -113,7 +111,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx.Reindex()
 	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")
 
-	tool = NewMemorySearchTool(idx)
+	tool := NewMemorySearchTool(idx)
 	params, _ := json.Marshal(map[string]string{"query": "weather"})
 
 	result, err := tool.Execute(context.Background(), params)

@@ -262,7 +262,7 @@ func TestAgentWizardTokenFormat(t *testing.T) {
 	}
 
 	// Empty
-	resp, done = w.Handle("")
+	_, done = w.Handle("")
 	if done {
 		t.Error("should not advance with empty token")
 	}
@@ -760,7 +760,7 @@ func TestRegistryHandleMessage(t *testing.T) {
 	}
 
 	// After completion, wizard should be cleared
-	resp, ok = reg.HandleMessage("input 3")
+	_, ok = reg.HandleMessage("input 3")
 	if ok {
 		t.Error("wizard should be cleared after done")
 	}
