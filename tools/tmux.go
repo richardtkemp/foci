@@ -123,7 +123,6 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 	}
 
 	return &Tool{
-		Strict:      true,
 		Name:        "tmux",
 		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns.",
 		Parameters: json.RawMessage(`{
