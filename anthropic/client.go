@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,6 +35,11 @@ func (e *APIError) IsOverloaded() bool {
 	return e.StatusCode == 529
 }
 
+// IsServerError returns true if this is a 500 Internal Server Error.
+func (e *APIError) IsServerError() bool {
+	return e.StatusCode == http.StatusInternalServerError
+}
+
 // RetryAfterSeconds parses the retry-after header as seconds.
 // Returns 0 if not present or unparseable.
 func (e *APIError) RetryAfterSeconds() int {
@@ -47,9 +54,10 @@ func (e *APIError) RetryAfterSeconds() int {
 
 // Client is an Anthropic API client with prompt caching support.
 type Client struct {
-	apiKey     string
-	httpClient *http.Client
-	baseURL    string
+	apiKey         string
+	httpClient     *http.Client
+	baseURL        string
+	retryBaseDelay time.Duration // initial backoff for 500 retries; 0 = default 2s
 }
 
 // NewClient creates a new Anthropic API client.
@@ -73,19 +81,16 @@ func NewClientWithTimeout(apiKey string, timeout time.Duration) *Client {
 // NewClientWithBase creates a client with a custom base URL (for testing).
 func NewClientWithBase(baseURL, apiKey string) *Client {
 	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 120 * time.Second},
-		baseURL:    baseURL,
+		apiKey:         apiKey,
+		httpClient:     &http.Client{Timeout: 120 * time.Second},
+		baseURL:        baseURL,
+		retryBaseDelay: time.Millisecond, // fast retries for tests
 	}
 }
 
-// SendMessage sends a message request and returns the response.
-func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
+// sendOnce performs a single HTTP request to the messages API and returns the
+// parsed response, or an error. Extracted from SendMessage to support retry.
+func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -123,6 +128,47 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	return &resp, nil
+}
+
+// SendMessage sends a message request and returns the response.
+// Retries up to 3 times on HTTP 500 errors with exponential backoff (2s, 4s, 8s).
+func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	const maxRetries = 3
+	backoff := c.retryBaseDelay
+	if backoff == 0 {
+		backoff = 2 * time.Second
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			slog.Warn("anthropic: retrying after 500", "attempt", attempt, "backoff", backoff.String())
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+
+		resp, err := c.sendOnce(ctx, body)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || !apiErr.IsServerError() {
+			return nil, err // non-500 errors are not retried
+		}
+	}
+
+	return nil, lastErr
 }
 
 // CountTokens calls the /v1/messages/count_tokens endpoint to get exact

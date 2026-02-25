@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSendMessageSuccess(t *testing.T) {
@@ -228,6 +229,84 @@ func TestSendMessageOverloaded(t *testing.T) {
 	}
 	if apiErr.IsRateLimit() {
 		t.Error("529 should not be IsRateLimit")
+	}
+}
+
+func TestSendMessageServerError(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+	client.retryBaseDelay = time.Millisecond // fast retries for test
+
+	_, err := client.SendMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if attempts != 4 {
+		t.Errorf("attempts = %d, want 4 (1 initial + 3 retries)", attempts)
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected *APIError")
+	}
+	if !apiErr.IsServerError() {
+		t.Error("expected IsServerError() == true")
+	}
+	if apiErr.IsRateLimit() {
+		t.Error("500 should not be IsRateLimit")
+	}
+	if apiErr.IsOverloaded() {
+		t.Error("500 should not be IsOverloaded")
+	}
+}
+
+func TestSendMessageServerErrorRecovery(t *testing.T) {
+	// Server returns 500 twice then succeeds on third attempt.
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts <= 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MessageResponse{
+			ID:         "msg_ok",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []ContentBlock{{Type: "text", Text: "hello"}},
+			StopReason: "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+	client.retryBaseDelay = time.Millisecond
+
+	resp, err := client.SendMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempts != 3 {
+		t.Errorf("attempts = %d, want 3 (2 failures + 1 success)", attempts)
+	}
+	if resp.ID != "msg_ok" {
+		t.Errorf("resp.ID = %q, want msg_ok", resp.ID)
 	}
 }
 

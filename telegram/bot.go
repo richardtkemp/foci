@@ -864,6 +864,22 @@ func (b *Bot) cancelTurn() {
 // falling back to plain text if HTML formatting fails.
 // Logs each chunk to the conversation log.
 func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
+	// Split multi-message responses (separated by \x00) into individual messages,
+	// each converted and chunked independently so code blocks stay intact.
+	if !strings.Contains(response, "\x00") {
+		b.sendReplyPart(msg, userID, response)
+		return
+	}
+	for _, part := range strings.Split(response, "\x00") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		b.sendReplyPart(msg, userID, part)
+	}
+}
+
+func (b *Bot) sendReplyPart(msg *gotgbot.Message, userID string, response string) {
 	// Convert standard markdown to Telegram HTML
 	response = ConvertToTelegramHTML(response)
 
