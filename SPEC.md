@@ -246,21 +246,22 @@ Notifications go to agents whose `inject_agent_warnings` is false. Dedup prevent
 
 ### Tool Result Guard
 
-When a tool returns a result exceeding a configurable character threshold (default: 10,000 chars), clod does NOT inject the full result into session history. Instead:
+When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), clod does NOT inject the full result into session history. Instead:
 
 1. Write the full result to a temp file: `{temp_dir}/tool-result-{tool}-{random}.txt`
-2. Return a truncated result to the agent with instructions:
+2. Return only a guard message — no partial content is included:
    ```
-   [Result too large: 47,231 chars. Full output saved to /tmp/clod-tool-results/tool-result-exec-a1b2c3d4.txt]
-   Use `read` tool to inspect sections. First 10000 chars:
-   ...
+   Result too large (47231 chars, limit 5000). Full output saved to /tmp/clod-tool-results/tool-result-exec-a1b2c3d4.txt.
+   Use `head -n 50` to preview, or `grep`/`ack` to search for specific content.
    ```
 
-This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via `read` — it just doesn't sit in context forever.
+The tool hint is contextual: `jq` for JSON results, `mdq` for markdown, `grep`/`head`/`tail` otherwise.
+
+This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via the saved file — it just doesn't sit in context forever.
 
 ```toml
 [tools]
-max_result_chars = 10000              # max chars before writing to file
+max_result_chars = 5000               # max chars before writing to file
 temp_dir = "/tmp/clod-tool-results"   # where to write large results
 ```
 

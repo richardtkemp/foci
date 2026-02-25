@@ -333,8 +333,9 @@ func isSystemMessage(msg string) bool {
 }
 
 // guardToolResult checks if a tool result exceeds the size limit.
-// If it does, writes to a temp file and returns a truncated message with instructions.
-// If no limit is set or result is small, returns the original result.
+// If it does, writes the full output to a temp file and returns only a guard
+// message pointing to the file — no partial content is included.
+// If no limit is set or result is within the limit, returns the original result.
 func (a *Agent) guardToolResult(toolName string, result string) string {
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
@@ -343,11 +344,9 @@ func (a *Agent) guardToolResult(toolName string, result string) string {
 	// Result is too large — write to file
 	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
 		log.Warnf("agent", "create tool result temp dir: %v", err)
-		// Fall back to returning the full result if we can't write the file
 		return result
 	}
 
-	// Generate a unique filename
 	var randBytes [8]byte
 	if _, err := rand.Read(randBytes[:]); err != nil {
 		log.Warnf("agent", "generate random filename: %v", err)
@@ -361,28 +360,23 @@ func (a *Agent) guardToolResult(toolName string, result string) string {
 		return result
 	}
 
-	log.Warnf("agent", "tool result truncated: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, filepath)
+	log.Debugf("agent", "tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, filepath)
 
-	// Return truncated result with file path
-	truncated := result[:a.MaxResultChars]
-	if len(truncated) < len(result) {
-		// Find last newline to avoid cutting in the middle of a line
-		if lastNewline := truncated[:len(truncated)-200]; len(lastNewline) > 0 {
-			if idx := len(truncated) - 1; idx > 0 && truncated[idx] != '\n' {
-				if nlIdx := len(truncated) - 1; nlIdx > len(truncated)-200 {
-					for i := nlIdx; i >= nlIdx-200 && i >= 0; i-- {
-						if truncated[i] == '\n' {
-							truncated = truncated[:i+1]
-							break
-						}
-					}
-				}
-			}
-		}
+	hint := guardHint(result)
+	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", len(result), a.MaxResultChars, filepath, hint)
+}
+
+// guardHint returns a contextual suggestion for how to extract data from a
+// saved tool result file, based on content sniffing.
+func guardHint(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		return "Use `jq` to query specific fields, or `head`/`tail` to inspect sections."
 	}
-
-	msg := fmt.Sprintf("[Result too large: %d chars. Full output saved to %s]\nUse `read` tool to inspect sections. First %d chars:\n%s", len(result), filepath, a.MaxResultChars, truncated)
-	return msg
+	if len(trimmed) > 0 && trimmed[0] == '#' {
+		return "Use `mdq` to query specific sections, or `grep`/`sed` to extract what you need."
+	}
+	return "Use `head -n 50` to preview, or `grep`/`ack` to search for specific content."
 }
 
 // collectReminders returns due reminders formatted for injection into the user message.
