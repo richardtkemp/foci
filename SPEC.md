@@ -312,6 +312,12 @@ temp_dir = "/tmp/clod-tool-results"   # where to write large results
 - `background` parameter — if `true`, request runs immediately in background and result is delivered asynchronously
 - Auto-background — if a request exceeds the `exec_auto_background` threshold, it auto-backgrounds and the result is delivered when complete (same mechanism as exec)
 
+**http_request — body_file (large payload support):**
+- `body_file` — read request body from a local file path instead of inline `body`. Solves the problem of large payloads (e.g. 1.7MB base64 audio JSON) that can't be passed as inline string parameters.
+- File contents support `{{secret:NAME}}` templates (resolved before sending).
+- `body`, `body_file`, and `files` are all mutually exclusive.
+- File must exist, be readable, not be a directory, and not exceed `max_upload_file_size`.
+
 **http_request — multipart/form-data file uploads:**
 - `files` — array of file attachments. Each has `field_name` (form field name), `file_path` (local path), and optional `filename` (override, defaults to basename). When present, the request is sent as `multipart/form-data`.
 - `form_fields` — object of additional text form fields for multipart requests. Values support `{{secret:NAME}}` templates. Requires `files`.
