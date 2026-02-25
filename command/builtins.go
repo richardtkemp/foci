@@ -613,22 +613,33 @@ func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command 
 		Description: "Show or set effort level (low/medium/high)",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
+			const optionsLine = "Options: 1) low  2) medium  3) high"
 			if args == "" {
 				e := getEffort()
 				if e == "" {
-					return "Effort: not set (using API default)\nOptions: low, medium, high", nil
+					return "Effort: not set (using API default)\n" + optionsLine, nil
 				}
-				return fmt.Sprintf("Effort: %s\nOptions: low, medium, high", e), nil
+				return fmt.Sprintf("Effort: %s\n%s", e, optionsLine), nil
 			}
-			switch strings.ToLower(strings.TrimSpace(args)) {
+			arg := strings.ToLower(strings.TrimSpace(args))
+			// Accept numeric aliases
+			switch arg {
+			case "1":
+				arg = "low"
+			case "2":
+				arg = "medium"
+			case "3":
+				arg = "high"
+			}
+			switch arg {
 			case "low", "medium", "high":
-				setEffort(strings.ToLower(strings.TrimSpace(args)))
-				return fmt.Sprintf("Effort set to: %s", strings.ToLower(strings.TrimSpace(args))), nil
+				setEffort(arg)
+				return fmt.Sprintf("Effort set to: %s", arg), nil
 			case "none", "off", "":
 				setEffort("")
 				return "Effort cleared (using API default)", nil
 			default:
-				return fmt.Sprintf("Invalid effort level: %q (valid: low, medium, high)", args), nil
+				return fmt.Sprintf("Invalid effort level: %q\n%s", args, optionsLine), nil
 			}
 		},
 	}
