@@ -669,10 +669,10 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	var opts []availableOption
 
 	// Agent fields
-	if len(agent.SystemFiles) == 0 {
+	if len(agent.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
-	if agent.BranchOrientationPrompt == "" {
+	if agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
 		opts = append(opts, availableOption{"agent", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})
 	}
 	if agent.TelegramBot == "" {
@@ -681,22 +681,23 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if len(agent.MultiballBots) == 0 {
 		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "references keys in [telegram.bots] map"})
 	}
-	if agent.TTSRate == 0 {
+	if agent.TTSRate == 0 && cfg.Defaults.TTSRate == 0 {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate override"})
 	}
-	if agent.StartupNotification == nil {
+	// Only show agent override options when the global fallback isn't covering them.
+	if agent.StartupNotification == nil && !cfg.Telegram.EnableStartupNotify {
 		opts = append(opts, availableOption{"agent", "startup_notification", "(global)", "send startup notification (nil = use global)"})
 	}
-	if agent.ShowToolCalls == nil {
+	if agent.ShowToolCalls == nil && !cfg.Telegram.ShowToolCalls {
 		opts = append(opts, availableOption{"agent", "show_tool_calls", "(global)", "show tool calls in Telegram (nil = use global)"})
 	}
-	if agent.Effort == "" {
+	if agent.Effort == "" && cfg.Defaults.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
 	}
-	if agent.ImageSaveDir == "" {
+	if agent.ImageSaveDir == "" && cfg.Telegram.ImageSaveDir == "" {
 		opts = append(opts, availableOption{"agent", "image_save_dir", "\"\"", "save received images to this directory"})
 	}
-	if len(agent.AllowedUsers) == 0 {
+	if len(agent.AllowedUsers) == 0 && len(cfg.Telegram.AllowedUsers) == 0 {
 		opts = append(opts, availableOption{"agent", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
 	}
 
