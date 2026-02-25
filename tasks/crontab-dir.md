@@ -55,9 +55,15 @@ dir = "crontab"                   # relative to agent home dir, default "crontab
 - Keep last 50 backups in `~/.crontab-backups/`
 - Prune older ones on each rebuild
 
+### Validation
+Before installing, validate each non-comment, non-blank, non-env line:
+- Must have at least 6 fields (5 time fields + command)
+- Time fields should match cron patterns (digits, `*`, `/`, `-`, `,`)
+- If validation fails: log WARNING with file name and line, skip that file, install the rest
+- `crontab -` also validates at install time — if it rejects, log ERROR, restore from backup
+
 ### Error handling
-- If any `.cron` file has a syntax error, log a WARNING but still install the rest (crontab is tolerant of bad lines — they just won't fire)
-- If `crontab -` fails, log ERROR and don't delete the backup
+- If `crontab -` fails, log ERROR and restore from the auto-backup
 - If the directory doesn't exist, create it on startup (with the configured agent subdirectories)
 
 ### Bootstrap
