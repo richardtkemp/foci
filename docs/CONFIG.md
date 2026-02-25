@@ -66,6 +66,33 @@ multiball_bots = ["spare1"]  # shared pool (fallback for any agent)
 
 ---
 
+## `[defaults]`
+
+Global defaults for agent-specific fields. Agents inherit these values unless they set their own. This avoids repeating the same configuration across multiple agents.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `model` | string | `"claude-haiku-4-5"` | Default model for all agents. |
+| `heartbeat_interval` | string | `"45m"` | Default heartbeat interval. |
+| `duplicate_messages` | bool | `false` | Default duplicate_messages setting. |
+| `inject_agent_warnings` | bool | `false` | Default inject_agent_warnings setting. |
+| `max_tool_loops` | int | `25` | Default max tool iterations per turn. |
+| `max_output_tokens` | int | `8192` | Default max tokens in model response. |
+| `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |
+| `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
+
+Example:
+```toml
+[defaults]
+model = "claude-sonnet-4-5"
+max_tool_loops = 50
+system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
+```
+
+Resolution order: **agent field > `[defaults]` > hardcoded default**.
+
+---
+
 ## `[anthropic]`
 
 Anthropic API credentials. Prefer `secrets.toml` for tokens.

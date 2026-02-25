@@ -195,8 +195,22 @@ type CommandConfig struct {
 	Timeout     int    `toml:"timeout"` // seconds, default 10
 }
 
+// DefaultsConfig provides global defaults for agent-specific fields.
+// Agents inherit these unless they override them explicitly.
+type DefaultsConfig struct {
+	Model               string   `toml:"model"`                 // default model (default: claude-haiku-4-5)
+	HeartbeatInterval   string   `toml:"heartbeat_interval"`    // default heartbeat interval (default: 45m)
+	DuplicateMessages   bool     `toml:"duplicate_messages"`    // default duplicate_messages (default: false)
+	InjectAgentWarnings bool     `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
+	MaxToolLoops        int      `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
+	MaxOutputTokens     int      `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
+	TTSRate             float64  `toml:"tts_rate"`               // default TTS speech rate (default: 0 = voice config)
+	SystemFiles         []string `toml:"system_files"`          // default system file list
+}
+
 type Config struct {
 	DataDir            string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
+	Defaults           DefaultsConfig     `toml:"defaults"` // global defaults for agent-specific fields
 	Agent              AgentConfig        `toml:"agent"`    // legacy: single agent
 	Agents             []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
 	Anthropic          AnthropicConfig    `toml:"anthropic"`
@@ -361,24 +375,50 @@ func Load(path string) (*Config, error) {
 	// Check for unknown config keys and warn about them
 	checkUnknownKeys(path, md)
 
+	// Populate [defaults] section with hardcoded fallbacks
+	if cfg.Defaults.Model == "" {
+		cfg.Defaults.Model = "claude-haiku-4-5"
+	}
+	if cfg.Defaults.HeartbeatInterval == "" {
+		cfg.Defaults.HeartbeatInterval = "45m"
+	}
+	if cfg.Defaults.MaxToolLoops == 0 {
+		cfg.Defaults.MaxToolLoops = 25
+	}
+	if cfg.Defaults.MaxOutputTokens == 0 {
+		cfg.Defaults.MaxOutputTokens = 8192
+	}
+
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
 		cfg.Agents = []AgentConfig{cfg.Agent}
 	}
 
-	// Apply defaults to all agents
+	// Apply [defaults] to all agents (agent value > global default > hardcoded)
 	for i := range cfg.Agents {
 		if cfg.Agents[i].Model == "" {
-			cfg.Agents[i].Model = "claude-haiku-4-5"
+			cfg.Agents[i].Model = cfg.Defaults.Model
 		}
 		if cfg.Agents[i].HeartbeatInterval == "" {
-			cfg.Agents[i].HeartbeatInterval = "45m"
+			cfg.Agents[i].HeartbeatInterval = cfg.Defaults.HeartbeatInterval
 		}
 		if cfg.Agents[i].MaxToolLoops == 0 {
-			cfg.Agents[i].MaxToolLoops = 25
+			cfg.Agents[i].MaxToolLoops = cfg.Defaults.MaxToolLoops
 		}
 		if cfg.Agents[i].MaxOutputTokens == 0 {
-			cfg.Agents[i].MaxOutputTokens = 8192
+			cfg.Agents[i].MaxOutputTokens = cfg.Defaults.MaxOutputTokens
+		}
+		if cfg.Agents[i].TTSRate == 0 {
+			cfg.Agents[i].TTSRate = cfg.Defaults.TTSRate
+		}
+		if len(cfg.Agents[i].SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) > 0 {
+			cfg.Agents[i].SystemFiles = cfg.Defaults.SystemFiles
+		}
+		if !cfg.Agents[i].DuplicateMessages && cfg.Defaults.DuplicateMessages {
+			cfg.Agents[i].DuplicateMessages = true
+		}
+		if !cfg.Agents[i].InjectAgentWarnings && cfg.Defaults.InjectAgentWarnings {
+			cfg.Agents[i].InjectAgentWarnings = true
 		}
 		if cfg.Agents[i].ForkPrompt != "" {
 			cfg.Agents[i].ForkPrompt = ResolvePath(cfg.Agents[i].ForkPrompt)

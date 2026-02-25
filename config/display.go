@@ -51,6 +51,25 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		writeField(&b, "allowed_users", agent.AllowedUsers)
 	}
 
+	// [defaults]
+	b.WriteString("\n[defaults]\n")
+	writeField(&b, "model", cfg.Defaults.Model)
+	writeField(&b, "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
+	writeField(&b, "max_tool_loops", cfg.Defaults.MaxToolLoops)
+	writeField(&b, "max_output_tokens", cfg.Defaults.MaxOutputTokens)
+	if cfg.Defaults.DuplicateMessages {
+		writeField(&b, "duplicate_messages", cfg.Defaults.DuplicateMessages)
+	}
+	if cfg.Defaults.InjectAgentWarnings {
+		writeField(&b, "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
+	}
+	if cfg.Defaults.TTSRate != 0 {
+		writeField(&b, "tts_rate", cfg.Defaults.TTSRate)
+	}
+	if len(cfg.Defaults.SystemFiles) > 0 {
+		writeField(&b, "system_files", cfg.Defaults.SystemFiles)
+	}
+
 	// [telegram]
 	b.WriteString("\n[telegram]\n")
 	writeField(&b, "bot_token", redactString(cfg.Telegram.BotToken))
