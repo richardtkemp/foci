@@ -464,11 +464,11 @@ func TestEffortCommand(t *testing.T) {
 	if !strings.Contains(result, "not set") {
 		t.Errorf("expected 'not set', got %q", result)
 	}
-	if !strings.Contains(result, "Options: low, medium, high") {
-		t.Errorf("expected options list, got %q", result)
+	if !strings.Contains(result, "1) low") {
+		t.Errorf("expected numbered options, got %q", result)
 	}
 
-	// Set valid levels
+	// Set valid levels by name
 	for _, level := range []string{"low", "medium", "high"} {
 		result, _ = cmd.Execute(context.Background(), level)
 		if effort != level {
@@ -479,19 +479,34 @@ func TestEffortCommand(t *testing.T) {
 		}
 	}
 
+	// Set valid levels by number
+	for num, level := range map[string]string{"1": "low", "2": "medium", "3": "high"} {
+		result, _ = cmd.Execute(context.Background(), num)
+		if effort != level {
+			t.Errorf("/effort %s: expected %s, got %s", num, level, effort)
+		}
+		if !strings.Contains(result, level) {
+			t.Errorf("result = %q", result)
+		}
+	}
+
 	// Show when set
+	effort = "high"
 	result, _ = cmd.Execute(context.Background(), "")
 	if !strings.Contains(result, "high") {
 		t.Errorf("expected 'high', got %q", result)
 	}
-	if !strings.Contains(result, "Options: low, medium, high") {
-		t.Errorf("expected options list when set, got %q", result)
+	if !strings.Contains(result, "1) low") {
+		t.Errorf("expected numbered options when set, got %q", result)
 	}
 
 	// Invalid level
 	result, _ = cmd.Execute(context.Background(), "turbo")
 	if !strings.Contains(result, "Invalid") {
 		t.Errorf("expected 'Invalid', got %q", result)
+	}
+	if !strings.Contains(result, "1) low") {
+		t.Errorf("expected options in error message, got %q", result)
 	}
 	if effort != "high" {
 		t.Errorf("effort changed on invalid input: %s", effort)
