@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"clod/table"
 	"fmt"
 	"sort"
 	"strings"
@@ -545,29 +546,16 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 
 // formatTable renders config rows as an aligned columnar table.
 func formatTable(rows []configRow) string {
-	maxSec, maxKey, maxVal := 0, 0, 0
-	for _, r := range rows {
-		if len(r.Section) > maxSec {
-			maxSec = len(r.Section)
-		}
-		if len(r.Key) > maxKey {
-			maxKey = len(r.Key)
-		}
-		if len(r.Value) > maxVal {
-			maxVal = len(r.Value)
-		}
+	cols := []table.Column{
+		{Header: "SECTION"},
+		{Header: "KEY"},
+		{Header: "VALUE"},
 	}
-
-	var b strings.Builder
-	hdr := fmt.Sprintf("%-*s  %-*s  %s", maxSec, "SECTION", maxKey, "KEY", "VALUE")
-	b.WriteString(hdr)
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", len(hdr)))
-	b.WriteByte('\n')
-	for _, r := range rows {
-		fmt.Fprintf(&b, "%-*s  %-*s  %s\n", maxSec, r.Section, maxKey, r.Key, r.Value)
+	tableRows := make([][]string, len(rows))
+	for i, r := range rows {
+		tableRows[i] = []string{r.Section, r.Key, r.Value}
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return table.Format(cols, tableRows)
 }
 
 // formatValue converts a config value to its display string.
@@ -806,31 +794,17 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		return opts[i].Key < opts[j].Key
 	})
 
-	// Find max widths for alignment
-	maxSec, maxKey, maxDef := 0, 0, 0
-	for _, o := range opts {
-		if len(o.Section) > maxSec {
-			maxSec = len(o.Section)
-		}
-		if len(o.Key) > maxKey {
-			maxKey = len(o.Key)
-		}
-		if len(o.Default) > maxDef {
-			maxDef = len(o.Default)
-		}
+	cols := []table.Column{
+		{Header: "SECTION"},
+		{Header: "KEY"},
+		{Header: "DEFAULT"},
+		{Header: "DESCRIPTION"},
 	}
-
-	var b strings.Builder
-	b.WriteString("Unset/default config options:\n\n")
-	hdr := fmt.Sprintf("%-*s  %-*s  %-*s  %s", maxSec, "SECTION", maxKey, "KEY", maxDef, "DEFAULT", "DESCRIPTION")
-	b.WriteString(hdr)
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat("─", len(hdr)))
-	b.WriteByte('\n')
-	for _, o := range opts {
-		fmt.Fprintf(&b, "%-*s  %-*s  %-*s  %s\n", maxSec, o.Section, maxKey, o.Key, maxDef, o.Default, o.Description)
+	tableRows := make([][]string, len(opts))
+	for i, o := range opts {
+		tableRows[i] = []string{o.Section, o.Key, o.Default, o.Description}
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return "Unset/default config options:\n\n" + table.Format(cols, tableRows)
 }
 
 func writeField(b *strings.Builder, key string, val interface{}) {

@@ -2,6 +2,7 @@ package command
 
 import (
 	"bufio"
+	"clod/table"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -293,32 +294,20 @@ func NewCacheCommand(apiLogPath string) *Command {
 				}
 			}
 
-			// Measure column widths
-			inW, crW, cwW, costW, hitW := len("Input"), len("CacheRead"), len("CacheWrite"), len("Cost"), len("Hit%")
-			for _, r := range rows {
-				if len(r.input) > inW { inW = len(r.input) }
-				if len(r.cRead) > crW { crW = len(r.cRead) }
-				if len(r.cWrite) > cwW { cwW = len(r.cWrite) }
-				if len(r.cost) > costW { costW = len(r.cost) }
-				if len(r.hitPct) > hitW { hitW = len(r.hitPct) }
+			cols := []table.Column{
+				{Header: "Time"},
+				{Header: "Input", Align: table.AlignRight},
+				{Header: "CacheRead", Align: table.AlignRight},
+				{Header: "CacheWrite", Align: table.AlignRight},
+				{Header: "Cost", Align: table.AlignRight},
+				{Header: "Hit%", Align: table.AlignRight},
 			}
-
-			var b strings.Builder
-			fmt.Fprintf(&b, "Cache — last %d calls (avg %.1f%% hit)\n", len(recent), avgHit)
-
-			// time column is fixed 8 chars
-			sep := strings.Repeat("─", 8+2+inW+2+crW+2+cwW+2+costW+2+hitW)
-			b.WriteString("\n```\n")
-			fmt.Fprintf(&b, "%-8s  %*s  %*s  %*s  %*s  %*s\n",
-				"Time", inW, "Input", crW, "CacheRead", cwW, "CacheWrite", costW, "Cost", hitW, "Hit%")
-			b.WriteString(sep + "\n")
-			for _, r := range rows {
-				fmt.Fprintf(&b, "%-8s  %*s  %*s  %*s  %*s  %*s\n",
-					r.time, inW, r.input, crW, r.cRead, cwW, r.cWrite, costW, r.cost, hitW, r.hitPct)
+			tableRows := make([][]string, len(rows))
+			for i, r := range rows {
+				tableRows[i] = []string{r.time, r.input, r.cRead, r.cWrite, r.cost, r.hitPct}
 			}
-			b.WriteString(sep + "\n")
-			b.WriteString("```")
-			return b.String(), nil
+			return fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n```\n%s\n```",
+				len(recent), avgHit, table.Format(cols, tableRows)), nil
 		},
 	}
 }
@@ -408,55 +397,26 @@ func NewCostCommand(apiLogPath string) *Command {
 						extra = len(sorted) - 10
 					}
 
-					// Measure column widths
-					nameW := len("Session")
-					costW := len("Cost")
-					callsW := len("Calls")
+					cols := []table.Column{
+						{Header: "Session"},
+						{Header: "Cost", Align: table.AlignRight},
+						{Header: "Calls", Align: table.AlignRight},
+					}
+					tableRows := make([][]string, 0, len(shown)+1)
 					for _, sc := range shown {
-						if len(sc.name) > nameW {
-							nameW = len(sc.name)
-						}
-						cs := fmt.Sprintf("$%.2f", sc.cost)
-						if len(cs) > costW {
-							costW = len(cs)
-						}
-						cc := formatCommas(sc.calls)
-						if len(cc) > callsW {
-							callsW = len(cc)
-						}
-					}
-					// Total row widths
-					ts := fmt.Sprintf("$%.2f", total)
-					if len(ts) > costW {
-						costW = len(ts)
-					}
-					tc := formatCommas(count)
-					if len(tc) > callsW {
-						callsW = len(tc)
-					}
-					if len("Total") > nameW {
-						nameW = len("Total")
-					}
-
-					sep := strings.Repeat("─", nameW+2+costW+2+callsW)
-					b.WriteString("\n```\n")
-					fmt.Fprintf(&b, "%-*s  %*s  %*s\n", nameW, "Session", costW, "Cost", callsW, "Calls")
-					b.WriteString(sep + "\n")
-					for _, sc := range shown {
-						fmt.Fprintf(&b, "%-*s  %*s  %*s\n",
-							nameW, sc.name,
-							costW, fmt.Sprintf("$%.2f", sc.cost),
-							callsW, formatCommas(sc.calls))
+						tableRows = append(tableRows, []string{
+							sc.name,
+							fmt.Sprintf("$%.2f", sc.cost),
+							formatCommas(sc.calls),
+						})
 					}
 					if extra > 0 {
-						fmt.Fprintf(&b, "  +%d more\n", extra)
+						tableRows = append(tableRows, []string{fmt.Sprintf("  +%d more", extra), "", ""})
 					}
-					b.WriteString(sep + "\n")
-					fmt.Fprintf(&b, "%-*s  %*s  %*s\n",
-						nameW, "Total",
-						costW, fmt.Sprintf("$%.2f", total),
-						callsW, formatCommas(count))
-					b.WriteString("```")
+					tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total), formatCommas(count)})
+					b.WriteString("\n```\n")
+					b.WriteString(table.Format(cols, tableRows))
+					b.WriteString("\n```")
 				}
 				return b.String(), nil
 
@@ -699,20 +659,15 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 			if len(tools) == 0 {
 				return "No tools registered.", nil
 			}
-			// Find max name width for alignment
-			maxName := 0
-			for _, t := range tools {
-				if len(t.Name) > maxName {
-					maxName = len(t.Name)
-				}
+			cols := []table.Column{
+				{Header: "Name"},
+				{Header: "Description"},
 			}
-			var b strings.Builder
-			b.WriteString("```\n")
-			for _, t := range tools {
-				fmt.Fprintf(&b, "%-*s  %s\n", maxName, t.Name, t.Description)
+			tableRows := make([][]string, len(tools))
+			for i, t := range tools {
+				tableRows[i] = []string{t.Name, t.Description}
 			}
-			b.WriteString("```")
-			return b.String(), nil
+			return "```\n" + table.Format(cols, tableRows) + "\n```", nil
 		},
 	}
 }
@@ -1361,29 +1316,18 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 				rows[i] = r
 			}
 
-			// Measure column widths
-			idW, sessW, statW, modW, msgW := len("ID"), len("Session"), len("Status"), len("Model"), len("Messages")
-			for _, r := range rows {
-				if len(r.id) > idW { idW = len(r.id) }
-				if len(r.session) > sessW { sessW = len(r.session) }
-				if len(r.status) > statW { statW = len(r.status) }
-				if len(r.model) > modW { modW = len(r.model) }
-				if len(r.msgs) > msgW { msgW = len(r.msgs) }
+			cols := []table.Column{
+				{Header: "ID"},
+				{Header: "Session"},
+				{Header: "Status"},
+				{Header: "Model"},
+				{Header: "Messages", Align: table.AlignRight},
 			}
-
-			sep := strings.Repeat("─", idW+2+sessW+2+statW+2+modW+2+msgW)
-			var sb strings.Builder
-			sb.WriteString("Agents\n\n```\n")
-			fmt.Fprintf(&sb, "%-*s  %-*s  %-*s  %-*s  %*s\n",
-				idW, "ID", sessW, "Session", statW, "Status", modW, "Model", msgW, "Messages")
-			sb.WriteString(sep + "\n")
-			for _, r := range rows {
-				fmt.Fprintf(&sb, "%-*s  %-*s  %-*s  %-*s  %*s\n",
-					idW, r.id, sessW, r.session, statW, r.status, modW, r.model, msgW, r.msgs)
+			tableRows := make([][]string, len(rows))
+			for i, r := range rows {
+				tableRows[i] = []string{r.id, r.session, r.status, r.model, r.msgs}
 			}
-			sb.WriteString(sep + "\n")
-			sb.WriteString("```")
-			return sb.String(), nil
+			return "Agents\n\n```\n" + table.Format(cols, tableRows) + "\n```", nil
 		},
 	}
 }
@@ -1492,29 +1436,12 @@ func NewSecretsCommand(store SecretsStore) *Command {
 					}
 				}
 
-				// Measure column widths
-				secW := len("Section")
-				keyW := len("Key")
-				hostW := len("Allowed Hosts")
-				for _, g := range groups {
-					if len(g.name) > secW {
-						secW = len(g.name)
-					}
-					for _, k := range g.keys {
-						if len(k) > keyW {
-							keyW = len(k)
-						}
-					}
-					if hw := len(sectionHosts[g.name]); hw > hostW {
-						hostW = hw
-					}
+				cols := []table.Column{
+					{Header: "Section"},
+					{Header: "Key"},
+					{Header: "Allowed Hosts"},
 				}
-
-				sep := strings.Repeat("─", secW+2+keyW+2+hostW)
-				var sb strings.Builder
-				fmt.Fprintf(&sb, "Secrets (%d keys)\n\n```\n", len(names))
-				fmt.Fprintf(&sb, "%-*s  %-*s  %s\n", secW, "Section", keyW, "Key", "Allowed Hosts")
-				sb.WriteString(sep + "\n")
+				var tableRows [][]string
 				for _, g := range groups {
 					for i, k := range g.keys {
 						sec := g.name
@@ -1523,12 +1450,11 @@ func NewSecretsCommand(store SecretsStore) *Command {
 							sec = ""   // don't repeat section name
 							hosts = "" // don't repeat hosts
 						}
-						fmt.Fprintf(&sb, "%-*s  %-*s  %s\n", secW, sec, keyW, k, hosts)
+						tableRows = append(tableRows, []string{sec, k, hosts})
 					}
 				}
-				sb.WriteString(sep + "\n")
-				sb.WriteString("```")
-				return sb.String(), nil
+				return fmt.Sprintf("Secrets (%d keys)\n\n```\n%s\n```",
+					len(names), table.Format(cols, tableRows)), nil
 
 			case "hosts":
 				return secretsHostsSubcmd(store, parts[1:])

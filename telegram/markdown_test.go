@@ -2,55 +2,6 @@ package telegram
 
 import "testing"
 
-func TestDisplayWidth(t *testing.T) {
-	tests := []struct {
-		in   string
-		want int
-	}{
-		{"", 0},
-		{"a", 1},
-		{"abc", 3},
-		{"hello world", 11},
-		{"中文", 4},      // 2 wide chars * 2 = 4
-		{"日本語", 6},     // 3 wide chars * 2 = 6
-		{"한국어", 6},     // 3 Korean chars * 2 = 6
-		{"🎉", 2},       // emoji is wide
-		{"a中b", 4},     // mixed: 1 + 2 + 1 = 4
-		{"hello世界", 9}, // mixed: 5 + 4 = 9
-		{"\t", 4},      // tab expands to 4
-		{"a\tb", 5},    // a (1) + tab to 4 boundary (3 spaces) + b (1) = 5
-		{"café", 4},    // é is 1 width (NFC normalized)
-		{"e\u0301", 1}, // e + combining acute = 1 (combining mark is 0 width)
-	}
-	for _, tt := range tests {
-		got := displayWidth(tt.in)
-		if got != tt.want {
-			t.Errorf("displayWidth(%q) = %d, want %d", tt.in, got, tt.want)
-		}
-	}
-}
-
-func TestPadRight(t *testing.T) {
-	tests := []struct {
-		s       string
-		width   int
-		wantLen int // display width of result
-	}{
-		{"hello", 10, 10},
-		{"hello", 5, 5},
-		{"hello", 3, 5}, // already wider, no padding
-		{"中文", 6, 6},    // 4 + 2 spaces = 6
-		{"中文", 8, 8},    // 4 + 4 spaces = 8
-	}
-	for _, tt := range tests {
-		got := padRight(tt.s, tt.width)
-		gotWidth := displayWidth(got)
-		if gotWidth != tt.wantLen {
-			t.Errorf("padRight(%q, %d) = %q (width %d), want width %d", tt.s, tt.width, got, gotWidth, tt.wantLen)
-		}
-	}
-}
-
 func TestHTMLEscape(t *testing.T) {
 	tests := []struct {
 		in, want string
