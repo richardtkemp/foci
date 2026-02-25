@@ -1284,9 +1284,13 @@ func setupAgent(p setupParams) *agentInstance {
 		ag.Warnings = agent.NewWarningQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
 	}
 
-	// Mana threshold warnings (if thresholds configured)
-	if len(p.cfg.ManaWarnings.Thresholds) > 0 {
-		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, p.cfg.ManaWarnings.Thresholds)
+	// Mana threshold warnings (per-agent thresholds override global)
+	manaThresholds := p.cfg.ManaWarnings.Thresholds
+	if len(acfg.UsageWarnings.Thresholds) > 0 {
+		manaThresholds = acfg.UsageWarnings.Thresholds
+	}
+	if len(manaThresholds) > 0 {
+		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
 		ag.ManaWatcher.SetStore(p.stateStore)
 		ag.ManaWatcher.Restore()
 	}

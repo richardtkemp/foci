@@ -66,6 +66,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if len(agent.AllowedUsers) > 0 {
 		add("agent", "allowed_users", agent.AllowedUsers)
 	}
+	if len(agent.UsageWarnings.Thresholds) > 0 {
+		add("agent", "usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
+	}
 
 	// defaults
 	add("defaults", "model", cfg.Defaults.Model)
@@ -515,6 +518,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		if len(agent.AllowedUsers) > 0 {
 			addAgent("allowed_users", agent.AllowedUsers)
 		}
+		if len(agent.UsageWarnings.Thresholds) > 0 {
+			addAgent("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
+		}
 		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTable(agentRows)+"\n```")
 	}
 
@@ -762,7 +768,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Usage warnings
-	if len(cfg.ManaWarnings.Thresholds) == 0 {
+	if len(cfg.ManaWarnings.Thresholds) == 0 && len(agent.UsageWarnings.Thresholds) == 0 {
 		opts = append(opts, availableOption{"usage_warnings", "thresholds", "[]", "mana percentages to warn at"})
 	}
 
