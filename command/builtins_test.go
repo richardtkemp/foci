@@ -171,6 +171,23 @@ func TestLastCommand(t *testing.T) {
 	}
 }
 
+func TestCostCommandUsage(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "s", CostUSD: 0.01},
+	})
+	cmd := NewCostCommand(path)
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	for _, want := range []string{"/cost today", "/cost 24h", "/cost week", "/cost <days>"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in usage:\n%s", want, result)
+		}
+	}
+}
+
 func TestCostCommandToday(t *testing.T) {
 	now := time.Now().UTC()
 	yesterday := now.AddDate(0, 0, -1)
@@ -181,7 +198,7 @@ func TestCostCommandToday(t *testing.T) {
 	})
 
 	cmd := NewCostCommand(path)
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "today")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -252,7 +269,7 @@ func TestCostCommandTop10Limit(t *testing.T) {
 	path := writeAPILog(t, entries)
 
 	cmd := NewCostCommand(path)
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "today")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -318,11 +335,18 @@ func TestCostCommand24h(t *testing.T) {
 	if !strings.Contains(result, "$0.14") {
 		t.Errorf("expected total $0.14 in:\n%s", result)
 	}
-	// Per-category breakdown lines
-	for _, label := range []string{"Cache reads:", "Cache writes:", "Input:", "Output:"} {
+	// Code block table format
+	if !strings.Contains(result, "```") {
+		t.Errorf("expected code block in:\n%s", result)
+	}
+	// Category table headers and rows
+	for _, label := range []string{"Category", "Cache reads", "Cache writes", "Input", "Output", "Total"} {
 		if !strings.Contains(result, label) {
-			t.Errorf("missing category %q in:\n%s", label, result)
+			t.Errorf("missing %q in:\n%s", label, result)
 		}
+	}
+	if !strings.Contains(result, "─") {
+		t.Errorf("missing separator line in:\n%s", result)
 	}
 }
 
@@ -355,9 +379,18 @@ func TestCostCommandWeek(t *testing.T) {
 	if !strings.Contains(result, "$1.00") {
 		t.Errorf("expected total $1.00 in:\n%s", result)
 	}
-	// Mean/day
-	if !strings.Contains(result, "Mean/day:") {
-		t.Errorf("missing Mean/day in:\n%s", result)
+	// Code block table format
+	if !strings.Contains(result, "```") {
+		t.Errorf("expected code block in:\n%s", result)
+	}
+	// Table headers and summary rows
+	for _, want := range []string{"Date", "Cost", "Total", "Mean/day"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in:\n%s", want, result)
+		}
+	}
+	if !strings.Contains(result, "─") {
+		t.Errorf("missing separator line in:\n%s", result)
 	}
 	// Today's date should appear
 	todayStr := time.Now().UTC().Format("2006-01-02")

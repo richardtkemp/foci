@@ -359,8 +359,11 @@ func NewCostCommand(apiLogPath string) *Command {
 			scope := strings.ToLower(strings.TrimSpace(args))
 
 			switch scope {
-			case "", "today", "session":
-				// Default: today's total with per-session breakdown
+			case "":
+				return "/cost today — today's costs by session\n/cost 24h — last 24 hours with category breakdown\n/cost week — 7-day summary with daily breakdown\n/cost <days> — total for last N days", nil
+
+			case "today", "session":
+				// Today's total with per-session breakdown
 				today := time.Now().UTC().Format("2006-01-02")
 				var total float64
 				var count int
@@ -472,10 +475,32 @@ func NewCostCommand(apiLogPath string) *Command {
 				cr, cw, inp, out := categoryCosts(filtered)
 				var b strings.Builder
 				fmt.Fprintf(&b, "API cost (last 24h): $%.2f eq.\n", total)
-				fmt.Fprintf(&b, "  Cache reads:  $%.2f\n", cr)
-				fmt.Fprintf(&b, "  Cache writes: $%.2f\n", cw)
-				fmt.Fprintf(&b, "  Input:        $%.2f\n", inp)
-				fmt.Fprintf(&b, "  Output:       $%.2f", out)
+				b.WriteString("\n```\n")
+				// Category table
+				type catRow struct{ name string; cost float64 }
+				cats := []catRow{
+					{"Cache reads", cr}, {"Cache writes", cw},
+					{"Input", inp}, {"Output", out},
+				}
+				nameW := len("Category")
+				costW := len("Cost")
+				for _, c := range cats {
+					if len(c.name) > nameW { nameW = len(c.name) }
+					cs := fmt.Sprintf("$%.2f", c.cost)
+					if len(cs) > costW { costW = len(cs) }
+				}
+				ts := fmt.Sprintf("$%.2f", total)
+				if len(ts) > costW { costW = len(ts) }
+				if len("Total") > nameW { nameW = len("Total") }
+				sep := strings.Repeat("─", nameW+2+costW)
+				fmt.Fprintf(&b, "%-*s  %*s\n", nameW, "Category", costW, "Cost")
+				b.WriteString(sep + "\n")
+				for _, c := range cats {
+					fmt.Fprintf(&b, "%-*s  %*s\n", nameW, c.name, costW, fmt.Sprintf("$%.2f", c.cost))
+				}
+				b.WriteString(sep + "\n")
+				fmt.Fprintf(&b, "%-*s  %*s\n", nameW, "Total", costW, fmt.Sprintf("$%.2f", total))
+				b.WriteString("```")
 				return b.String(), nil
 
 			case "week":
@@ -499,14 +524,31 @@ func NewCostCommand(apiLogPath string) *Command {
 				mean := total / 7.0
 
 				var b strings.Builder
-				fmt.Fprintf(&b, "API cost (7-day summary):\n")
-				fmt.Fprintf(&b, "  Total:    $%.2f eq.\n", total)
-				fmt.Fprintf(&b, "  Mean/day: $%.2f\n", mean)
-				// List days newest-first
+				fmt.Fprintf(&b, "API cost (7-day summary): $%.2f eq. (mean $%.2f/day)\n", total, mean)
+				b.WriteString("\n```\n")
+				// Day table
+				dateW := len("2006-01-02")
+				costW := len("Cost")
 				for i := 0; i < 7; i++ {
 					day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
-					fmt.Fprintf(&b, "\n  %s  $%.2f", day, dayCosts[day])
+					cs := fmt.Sprintf("$%.2f", dayCosts[day])
+					if len(cs) > costW { costW = len(cs) }
 				}
+				ts := fmt.Sprintf("$%.2f", total)
+				if len(ts) > costW { costW = len(ts) }
+				ms := fmt.Sprintf("$%.2f", mean)
+				if len(ms) > costW { costW = len(ms) }
+				sep := strings.Repeat("─", dateW+2+costW)
+				fmt.Fprintf(&b, "%-*s  %*s\n", dateW, "Date", costW, "Cost")
+				b.WriteString(sep + "\n")
+				for i := 0; i < 7; i++ {
+					day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
+					fmt.Fprintf(&b, "%-*s  %*s\n", dateW, day, costW, fmt.Sprintf("$%.2f", dayCosts[day]))
+				}
+				b.WriteString(sep + "\n")
+				fmt.Fprintf(&b, "%-*s  %*s\n", dateW, "Total", costW, fmt.Sprintf("$%.2f", total))
+				fmt.Fprintf(&b, "%-*s  %*s\n", dateW, "Mean/day", costW, fmt.Sprintf("$%.2f", mean))
+				b.WriteString("```")
 				return b.String(), nil
 
 			default:
