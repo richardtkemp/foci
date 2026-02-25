@@ -12,14 +12,16 @@ import (
 
 // mockSessionAppender captures Append calls.
 type mockSessionAppender struct {
-	key string
-	msg anthropic.Message
-	err error
+	key      string
+	msg      anthropic.Message
+	err      error
+	appended bool
 }
 
 func (m *mockSessionAppender) Append(key string, msg anthropic.Message) error {
 	m.key = key
 	m.msg = msg
+	m.appended = true
 	return m.err
 }
 
@@ -112,6 +114,10 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 	}
 	if callerNotified {
 		t.Error("caller notifier should not have been called with reply_to=session")
+	}
+	// reply_to=session should NOT append — HandleMessage does that
+	if store.appended {
+		t.Error("Append should not be called for reply_to=session (HandleMessage appends)")
 	}
 }
 

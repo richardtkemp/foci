@@ -73,23 +73,26 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			// Tag the message with its origin so the recipient knows where it came from.
 			tagged := fmt.Sprintf("[Message from session %s]\n\n%s", originSession, p.Message)
 
-			msg := anthropic.Message{
-				Role:    "user",
-				Content: anthropic.TextContent(tagged),
-			}
-			if err := sessions.Append(p.SessionKey, msg); err != nil {
-				return "", fmt.Errorf("append to session %s: %w", p.SessionKey, err)
-			}
-
 			log.Infof("send_to_session", "from=%s to=%s reply_to=%s len=%d", originSession, p.SessionKey, p.ReplyTo, len(p.Message))
 
 			if p.ReplyTo == "session" {
 				// Route the response to the target session's own chat.
+				// Don't Append here — sessionNotifyFn calls HandleMessage which
+				// loads the session and appends the message itself.
 				if sessionNotifyFn != nil {
 					sessionNotifyFn(p.SessionKey, tagged)
 				}
 			} else {
 				// Default: route the response back to the caller.
+				// Append first since the notifier just triggers processing
+				// of the already-appended message.
+				msg := anthropic.Message{
+					Role:    "user",
+					Content: anthropic.TextContent(tagged),
+				}
+				if err := sessions.Append(p.SessionKey, msg); err != nil {
+					return "", fmt.Errorf("append to session %s: %w", p.SessionKey, err)
+				}
 				if notifier != nil {
 					notifier.Notify(p.SessionKey, tagged)
 				}
