@@ -268,29 +268,59 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	// Build global rows (everything except agent-specific)
 	var globalRows []configRow
-	addGlobal := func(section, key string, val interface{}) {
-		globalRows = append(globalRows, configRow{section, key, formatValue(val)})
+
+	// isDefined returns true if a key was explicitly set in the TOML file.
+	isDefined := func(path string) bool {
+		if cfg.DefinedKeys == nil {
+			return true // no metadata — assume everything is explicit
+		}
+		return cfg.DefinedKeys[path]
 	}
 
-	// defaults
-	addGlobal("defaults", "model", cfg.Defaults.Model)
-	addGlobal("defaults", "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
-	addGlobal("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
-	addGlobal("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
+	// annotate appends indicators to a value string.
+	annotate := func(val, tomlPath string, overridden bool) string {
+		if overridden {
+			val += " (overridden)"
+		}
+		if !isDefined(tomlPath) {
+			val += " (default)"
+		}
+		return val
+	}
+
+	addGlobal := func(section, key string, val interface{}) {
+		v := formatValue(val)
+		if !isDefined(section + "." + key) {
+			v += " (default)"
+		}
+		globalRows = append(globalRows, configRow{section, key, v})
+	}
+
+	// addDefault adds a defaults row with override/default annotations.
+	addDefault := func(key string, val interface{}, overridden bool) {
+		v := annotate(formatValue(val), "defaults."+key, overridden)
+		globalRows = append(globalRows, configRow{"defaults", key, v})
+	}
+
+	// defaults — compare with agent values to detect overrides.
+	addDefault("model", cfg.Defaults.Model, agent.Model != cfg.Defaults.Model)
+	addDefault("heartbeat_interval", cfg.Defaults.HeartbeatInterval, agent.HeartbeatInterval != cfg.Defaults.HeartbeatInterval)
+	addDefault("max_tool_loops", cfg.Defaults.MaxToolLoops, agent.MaxToolLoops != cfg.Defaults.MaxToolLoops)
+	addDefault("max_output_tokens", cfg.Defaults.MaxOutputTokens, agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens)
 	if cfg.Defaults.Effort != "" {
-		addGlobal("defaults", "effort", cfg.Defaults.Effort)
+		addDefault("effort", cfg.Defaults.Effort, agent.Effort != cfg.Defaults.Effort)
 	}
 	if cfg.Defaults.DuplicateMessages {
-		addGlobal("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
+		addDefault("duplicate_messages", cfg.Defaults.DuplicateMessages, false)
 	}
 	if cfg.Defaults.InjectAgentWarnings {
-		addGlobal("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
+		addDefault("inject_agent_warnings", cfg.Defaults.InjectAgentWarnings, false)
 	}
 	if cfg.Defaults.TTSRate != 0 {
-		addGlobal("defaults", "tts_rate", cfg.Defaults.TTSRate)
+		addDefault("tts_rate", cfg.Defaults.TTSRate, agent.TTSRate != cfg.Defaults.TTSRate)
 	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
-		addGlobal("defaults", "system_files", cfg.Defaults.SystemFiles)
+		addDefault("system_files", cfg.Defaults.SystemFiles, false)
 	}
 	addGlobal("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
 	if len(cfg.Telegram.AllowedUsers) > 0 {
