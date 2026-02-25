@@ -261,6 +261,236 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	return formatTable(rows)
 }
 
+// FormatConfigGrouped returns per-group config tables, each wrapped in a
+// markdown code block. The first table is "Global" config (all non-agent
+// sections), followed by one table per agent. Each table is small enough
+// to fit in a single Telegram message.
+func FormatConfigGrouped(cfg *Config) []string {
+	// Build global rows (everything except agent-specific)
+	var globalRows []configRow
+	addGlobal := func(section, key string, val interface{}) {
+		globalRows = append(globalRows, configRow{section, key, formatValue(val)})
+	}
+
+	// defaults
+	addGlobal("defaults", "model", cfg.Defaults.Model)
+	addGlobal("defaults", "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
+	addGlobal("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
+	addGlobal("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
+	if cfg.Defaults.Effort != "" {
+		addGlobal("defaults", "effort", cfg.Defaults.Effort)
+	}
+	if cfg.Defaults.DuplicateMessages {
+		addGlobal("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
+	}
+	if cfg.Defaults.InjectAgentWarnings {
+		addGlobal("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
+	}
+	if cfg.Defaults.TTSRate != 0 {
+		addGlobal("defaults", "tts_rate", cfg.Defaults.TTSRate)
+	}
+	if len(cfg.Defaults.SystemFiles) > 0 {
+		addGlobal("defaults", "system_files", cfg.Defaults.SystemFiles)
+	}
+	addGlobal("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
+	if len(cfg.Telegram.AllowedUsers) > 0 {
+		addGlobal("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
+	}
+	if len(cfg.Telegram.MultiballBots) > 0 {
+		addGlobal("telegram", "multiball_bots", cfg.Telegram.MultiballBots)
+	}
+	if len(cfg.Telegram.Bots) > 0 {
+		var names []string
+		for k := range cfg.Telegram.Bots {
+			names = append(names, k)
+		}
+		addGlobal("telegram", "bots", names)
+	}
+	if len(cfg.Telegram.StopAliases) > 0 {
+		addGlobal("telegram", "stop_aliases", cfg.Telegram.StopAliases)
+	}
+	addGlobal("telegram", "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
+	addGlobal("telegram", "enable_startup_notify", cfg.Telegram.EnableStartupNotify)
+	addGlobal("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
+	addGlobal("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
+	addGlobal("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
+	addGlobal("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
+	if cfg.Telegram.ImageSaveDir != "" {
+		addGlobal("telegram", "image_save_dir", cfg.Telegram.ImageSaveDir)
+	}
+	addGlobal("sessions", "dir", cfg.Sessions.Dir)
+	addGlobal("sessions", "compaction_threshold", cfg.Sessions.CompactionThreshold)
+	addGlobal("sessions", "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
+	addGlobal("sessions", "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
+	if cfg.Sessions.CompactionSummaryPrompt != "" {
+		addGlobal("sessions", "compaction_summary_prompt", cfg.Sessions.CompactionSummaryPrompt)
+	}
+	if cfg.Sessions.CompactionHandoffMsg != "" {
+		addGlobal("sessions", "compaction_handoff_msg", cfg.Sessions.CompactionHandoffMsg)
+	}
+	if cfg.Sessions.CompactionNotify != nil {
+		addGlobal("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
+	}
+	addGlobal("sessions", "compaction_debug", cfg.Sessions.CompactionDebug)
+	addGlobal("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
+	addGlobal("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
+	if cfg.Sessions.SessionResetPrompt != "" {
+		addGlobal("sessions", "session_reset_prompt", cfg.Sessions.SessionResetPrompt)
+	}
+	if cfg.Sessions.BranchOrientationPrompt != "" {
+		addGlobal("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
+	}
+	if cfg.Memory.Dir != "" {
+		addGlobal("memory", "dir", cfg.Memory.Dir)
+	}
+	if len(cfg.Memory.Sources) > 0 {
+		addGlobal("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
+	}
+	if cfg.Memory.ReindexDebounce != "" {
+		addGlobal("memory", "reindex_debounce", cfg.Memory.ReindexDebounce)
+	}
+	addGlobal("memory", "conversation_weight", cfg.Memory.ConversationWeight)
+	addGlobal("memory", "search_limit", cfg.Memory.SearchLimit)
+	addGlobal("logging", "level", cfg.Logging.Level)
+	addGlobal("logging", "event_file", cfg.Logging.EventFile)
+	addGlobal("logging", "api_file", cfg.Logging.APIFile)
+	addGlobal("logging", "conversation_file", cfg.Logging.ConversationFile)
+	addGlobal("logging", "full_payload", cfg.Logging.FullPayload)
+	if cfg.Logging.PayloadFile != "" {
+		addGlobal("logging", "payload_file", cfg.Logging.PayloadFile)
+	}
+	addGlobal("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
+	addGlobal("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
+	addGlobal("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
+	addGlobal("logging", "warning_window_duration", cfg.Logging.WarningWindowDuration)
+	addGlobal("logging", "log_rotation", cfg.Logging.LogRotation)
+	addGlobal("logging", "rotation_period", cfg.Logging.RotationPeriod)
+	addGlobal("logging", "retention_period", cfg.Logging.RetentionPeriod)
+	addGlobal("logging", "rotation_max_line_size", cfg.Logging.RotationMaxLineSize)
+	if cfg.Logging.ArchiveDir != "" {
+		addGlobal("logging", "archive_dir", cfg.Logging.ArchiveDir)
+	}
+	addGlobal("http", "bind", cfg.HTTP.Bind)
+	addGlobal("http", "port", cfg.HTTP.Port)
+	addGlobal("http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout)
+	addGlobal("tools", "max_result_chars", cfg.Tools.MaxResultChars)
+	addGlobal("tools", "temp_dir", cfg.Tools.TempDir)
+	addGlobal("tools", "tmux_cols", cfg.Tools.TmuxCols)
+	addGlobal("tools", "tmux_rows", cfg.Tools.TmuxRows)
+	addGlobal("tools", "exec_auto_background", cfg.Tools.ExecAutoBackground)
+	addGlobal("tools", "exec_default_timeout", cfg.Tools.ExecDefaultTimeout)
+	addGlobal("tools", "exec_max_output_chars", cfg.Tools.ExecMaxOutputChars)
+	addGlobal("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
+	addGlobal("tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
+	addGlobal("tools", "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)
+	addGlobal("tools", "web_fetch_max_chars", cfg.Tools.WebFetchMaxChars)
+	addGlobal("tools", "web_search_timeout", cfg.Tools.WebSearchTimeout)
+	addGlobal("tools", "max_concurrent_spawns", cfg.Tools.MaxConcurrentSpawns)
+	addGlobal("tools", "tool_call_preview_chars", cfg.Tools.ToolCallPreviewChars)
+	addGlobal("tools", "tmux_memory_check_interval", cfg.Tools.TmuxMemoryCheckInterval)
+	addGlobal("tools", "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)
+	addGlobal("tools", "tmux_memory_critical", cfg.Tools.TmuxMemoryCritical)
+	addGlobal("tools", "tmux_memory_kill", cfg.Tools.TmuxMemoryKill)
+	addGlobal("environment", "enabled", cfg.Environment.Enabled)
+	if cfg.Environment.DocsPath != "" {
+		addGlobal("environment", "docs_path", cfg.Environment.DocsPath)
+	}
+	if len(cfg.Skills.Dirs) > 0 {
+		addGlobal("skills", "dirs", cfg.Skills.Dirs)
+	}
+	addGlobal("cache", "strategy", cfg.Cache.Strategy)
+	addGlobal("usage_warnings", "name", cfg.ManaWarnings.Name)
+	if len(cfg.ManaWarnings.Thresholds) > 0 {
+		addGlobal("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
+	}
+	if cfg.Voice.STTEndpoint != "" {
+		addGlobal("voice", "stt_endpoint", cfg.Voice.STTEndpoint)
+	}
+	if cfg.Voice.STTModel != "" {
+		addGlobal("voice", "stt_model", cfg.Voice.STTModel)
+	}
+	if cfg.Voice.TTSProvider != "" {
+		addGlobal("voice", "tts_provider", cfg.Voice.TTSProvider)
+	}
+	if cfg.Voice.TTSEndpoint != "" {
+		addGlobal("voice", "tts_endpoint", cfg.Voice.TTSEndpoint)
+	}
+	if cfg.Voice.TTSModel != "" {
+		addGlobal("voice", "tts_model", cfg.Voice.TTSModel)
+	}
+	if cfg.Voice.TTSVoice != "" {
+		addGlobal("voice", "tts_voice", cfg.Voice.TTSVoice)
+	}
+	if cfg.Voice.TTSRate != 0 {
+		addGlobal("voice", "tts_rate", cfg.Voice.TTSRate)
+	}
+	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
+	addGlobal("anthropic", "token", redactString(cfg.Anthropic.Token))
+	addGlobal("anthropic", "oauth_token", redactString(cfg.Anthropic.OAuthToken))
+	addGlobal("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
+	addGlobal("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
+	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
+	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
+	if len(cfg.PromptRules) > 0 {
+		addGlobal("prompt_rules", fmt.Sprintf("(%d rules)", len(cfg.PromptRules)), "")
+	}
+
+	var tables []string
+	tables = append(tables, "```\nGlobal\n"+formatTable(globalRows)+"\n```")
+
+	// Per-agent tables
+	for _, agent := range cfg.Agents {
+		var agentRows []configRow
+		addAgent := func(key string, val interface{}) {
+			agentRows = append(agentRows, configRow{"agent", key, formatValue(val)})
+		}
+		addAgent("id", agent.ID)
+		addAgent("model", agent.Model)
+		addAgent("workspace", agent.Workspace)
+		addAgent("heartbeat_interval", agent.HeartbeatInterval)
+		if len(agent.SystemFiles) > 0 {
+			addAgent("system_files", agent.SystemFiles)
+		}
+		addAgent("duplicate_messages", agent.DuplicateMessages)
+		if agent.BranchOrientationPrompt != "" {
+			addAgent("branch_orientation_prompt", agent.BranchOrientationPrompt)
+		}
+		if agent.ForkPrompt != "" {
+			addAgent("fork_prompt (deprecated)", agent.ForkPrompt)
+		}
+		if agent.TelegramBot != "" {
+			addAgent("telegram_bot", agent.TelegramBot)
+		}
+		if len(agent.MultiballBots) > 0 {
+			addAgent("multiball_bots", agent.MultiballBots)
+		}
+		addAgent("max_tool_loops", agent.MaxToolLoops)
+		addAgent("max_output_tokens", agent.MaxOutputTokens)
+		if agent.Effort != "" {
+			addAgent("effort", agent.Effort)
+		}
+		if agent.TTSRate != 0 {
+			addAgent("tts_rate", agent.TTSRate)
+		}
+		addAgent("inject_agent_warnings", agent.InjectAgentWarnings)
+		if agent.StartupNotification != nil {
+			addAgent("startup_notification", *agent.StartupNotification)
+		}
+		if agent.ShowToolCalls != nil {
+			addAgent("show_tool_calls", *agent.ShowToolCalls)
+		}
+		if agent.ImageSaveDir != "" {
+			addAgent("image_save_dir", agent.ImageSaveDir)
+		}
+		if len(agent.AllowedUsers) > 0 {
+			addAgent("allowed_users", agent.AllowedUsers)
+		}
+		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTable(agentRows)+"\n```")
+	}
+
+	return tables
+}
+
 // formatTable renders config rows as an aligned columnar table.
 func formatTable(rows []configRow) string {
 	maxSec, maxKey, maxVal := 0, 0, 0
