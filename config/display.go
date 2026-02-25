@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -171,6 +172,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("logging", "log_rotation", cfg.Logging.LogRotation)
 	add("logging", "rotation_period", cfg.Logging.RotationPeriod)
 	add("logging", "retention_period", cfg.Logging.RetentionPeriod)
+	add("logging", "rotation_max_line_size", cfg.Logging.RotationMaxLineSize)
 	if cfg.Logging.ArchiveDir != "" {
 		add("logging", "archive_dir", cfg.Logging.ArchiveDir)
 	}
@@ -512,6 +514,14 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if len(opts) == 0 {
 		return "All config options are set."
 	}
+
+	// Sort by section, then key within section.
+	sort.Slice(opts, func(i, j int) bool {
+		if opts[i].Section != opts[j].Section {
+			return opts[i].Section < opts[j].Section
+		}
+		return opts[i].Key < opts[j].Key
+	})
 
 	// Find max widths for alignment
 	maxSec, maxKey, maxDef := 0, 0, 0

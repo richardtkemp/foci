@@ -13,10 +13,11 @@ import (
 
 // RotationConfig controls built-in log rotation.
 type RotationConfig struct {
-	Period     time.Duration // how often to check (default 24h)
-	Retention  time.Duration // keep lines newer than this (default 48h)
-	ArchiveDir string        // where to put .gz archives
-	Files      []string      // absolute paths of log files to rotate
+	Period      time.Duration // how often to check (default 24h)
+	Retention   time.Duration // keep lines newer than this (default 48h)
+	MaxLineSize int           // scanner buffer size in bytes (default 64MB)
+	ArchiveDir  string        // where to put .gz archives
+	Files       []string      // absolute paths of log files to rotate
 }
 
 // StartRotation starts a background goroutine that periodically rotates log files.
@@ -47,7 +48,7 @@ func StartRotation(cfg RotationConfig) func() {
 
 func rotateAll(cfg RotationConfig) {
 	for _, path := range cfg.Files {
-		if err := rotateFile(path, cfg.Retention, cfg.ArchiveDir); err != nil {
+		if err := rotateFile(path, cfg.Retention, cfg.ArchiveDir, cfg.MaxLineSize); err != nil {
 			Warnf("rotate", "rotate %s: %v", path, err)
 		}
 	}
@@ -59,7 +60,7 @@ func rotateAll(cfg RotationConfig) {
 
 // rotateFile processes a single log file: lines older than retention go to
 // a gzip archive, recent lines stay in the active file.
-func rotateFile(path string, retention time.Duration, archiveDir string) error {
+func rotateFile(path string, retention time.Duration, archiveDir string, maxLineSize int) error {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -82,7 +83,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string) error {
 
 	// Fast path: if the first line is within retention, skip the file entirely.
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024*1024), 64*1024*1024) // 1MB line buffer
+	scanner.Buffer(make([]byte, maxLineSize), maxLineSize) // 1MB line buffer
 	if scanner.Scan() {
 		ts, ok := parseTimestamp(path, scanner.Bytes())
 		if ok && !ts.Before(cutoff) {
@@ -122,7 +123,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string) error {
 
 	archivedLines := 0
 	scanner = bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024*1024), 64*1024*1024)
+	scanner.Buffer(make([]byte, maxLineSize), maxLineSize)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
