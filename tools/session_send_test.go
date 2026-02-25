@@ -30,7 +30,7 @@ func TestSendToSession(t *testing.T) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier)
+	tool := NewSendToSessionTool(store, notifier, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:test:multiball:mb-111")
 	params, _ := json.Marshal(map[string]string{
@@ -62,7 +62,7 @@ func TestSendToSession(t *testing.T) {
 		t.Errorf("expected message body, got %q", text)
 	}
 
-	// Check notifier was triggered
+	// Check notifier was triggered (default reply_to=caller)
 	d := <-delivered
 	if d.sk != "agent:test:main" {
 		t.Errorf("notifier session = %q, want agent:test:main", d.sk)
@@ -72,9 +72,72 @@ func TestSendToSession(t *testing.T) {
 	}
 }
 
+func TestSendToSessionReplyToSession(t *testing.T) {
+	store := &mockSessionAppender{}
+	callerNotified := false
+	notifier := NewAsyncNotifier(func(sk, msg string) {
+		callerNotified = true
+	})
+
+	sessionDelivered := make(chan struct{ sk, msg string }, 1)
+	sessionNotifyFn := SessionNotifyFn(func(sk, msg string) {
+		sessionDelivered <- struct{ sk, msg string }{sk, msg}
+	})
+
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn)
+
+	ctx := WithSessionKey(context.Background(), "agent:alpha:chat:111")
+	params, _ := json.Marshal(map[string]string{
+		"session_key": "agent:beta:chat:222",
+		"message":     "Tell Eleni about dinner.",
+		"reply_to":    "session",
+	})
+
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result, "reply_to=session") {
+		t.Errorf("result = %q, want reply_to=session", result)
+	}
+
+	// Check sessionNotifyFn was called, not the caller notifier
+	d := <-sessionDelivered
+	if d.sk != "agent:beta:chat:222" {
+		t.Errorf("session notify key = %q, want agent:beta:chat:222", d.sk)
+	}
+	if !strings.Contains(d.msg, "Tell Eleni about dinner.") {
+		t.Errorf("session notify msg = %q", d.msg)
+	}
+	if callerNotified {
+		t.Error("caller notifier should not have been called with reply_to=session")
+	}
+}
+
+func TestSendToSessionInvalidReplyTo(t *testing.T) {
+	store := &mockSessionAppender{}
+	tool := NewSendToSessionTool(store, nil, nil)
+
+	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	params, _ := json.Marshal(map[string]string{
+		"session_key": "agent:test:branch",
+		"message":     "hello",
+		"reply_to":    "invalid",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error for invalid reply_to")
+	}
+	if !strings.Contains(err.Error(), "reply_to must be") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
 func TestSendToSessionEmptyParams(t *testing.T) {
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil)
+	tool := NewSendToSessionTool(store, nil, nil)
 
 	// Empty session_key
 	params, _ := json.Marshal(map[string]string{
@@ -105,7 +168,7 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 
 func TestSendToSessionAppendError(t *testing.T) {
 	store := &mockSessionAppender{err: fmt.Errorf("disk full")}
-	tool := NewSendToSessionTool(store, nil)
+	tool := NewSendToSessionTool(store, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
@@ -124,7 +187,7 @@ func TestSendToSessionAppendError(t *testing.T) {
 
 func TestSendToSessionNilNotifier(t *testing.T) {
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil)
+	tool := NewSendToSessionTool(store, nil, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{

@@ -208,7 +208,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `memory_search` — FTS5 search over memory files + conversation history
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
 - `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
-- `send_to_session` — inject a message into another session (cross-session communication)
+- `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering

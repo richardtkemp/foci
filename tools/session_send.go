@@ -14,12 +14,19 @@ type SessionAppender interface {
 	Append(key string, msg anthropic.Message) error
 }
 
+// SessionNotifyFn handles routing a response back to the target session's
+// own Telegram chat, rather than the calling session.
+type SessionNotifyFn func(sessionKey, message string)
+
 // NewSendToSessionTool creates a tool that injects a user-role message into
 // another session and triggers processing via the notifier.
-func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier) *Tool {
+//
+// The sessionNotifyFn is called when reply_to="session" — it routes the
+// response to the target session's own chat instead of back to the caller.
+func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn) *Tool {
 	return &Tool{
 		Name:        "send_to_session",
-		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session.",
+		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own Telegram chat instead.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -30,6 +37,11 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier) *To
 				"message": {
 					"type": "string",
 					"description": "Message to send to the target session"
+				},
+				"reply_to": {
+					"type": "string",
+					"enum": ["caller", "session"],
+					"description": "Where the target's reply goes: 'caller' (back to this session, default) or 'session' (to the target session's own Telegram chat)"
 				}
 			},
 			"required": ["session_key", "message"]
@@ -38,6 +50,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier) *To
 			var p struct {
 				SessionKey string `json:"session_key"`
 				Message    string `json:"message"`
+				ReplyTo    string `json:"reply_to"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
@@ -47,6 +60,12 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier) *To
 			}
 			if p.Message == "" {
 				return "", fmt.Errorf("message is required")
+			}
+			if p.ReplyTo == "" {
+				p.ReplyTo = "caller"
+			}
+			if p.ReplyTo != "caller" && p.ReplyTo != "session" {
+				return "", fmt.Errorf("reply_to must be 'caller' or 'session', got %q", p.ReplyTo)
 			}
 
 			originSession := SessionKeyFromContext(ctx)
@@ -62,14 +81,21 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier) *To
 				return "", fmt.Errorf("append to session %s: %w", p.SessionKey, err)
 			}
 
-			log.Infof("send_to_session", "from=%s to=%s len=%d", originSession, p.SessionKey, len(p.Message))
+			log.Infof("send_to_session", "from=%s to=%s reply_to=%s len=%d", originSession, p.SessionKey, p.ReplyTo, len(p.Message))
 
-			// Trigger the target session to process the injected message.
-			if notifier != nil {
-				notifier.Notify(p.SessionKey, tagged)
+			if p.ReplyTo == "session" {
+				// Route the response to the target session's own chat.
+				if sessionNotifyFn != nil {
+					sessionNotifyFn(p.SessionKey, tagged)
+				}
+			} else {
+				// Default: route the response back to the caller.
+				if notifier != nil {
+					notifier.Notify(p.SessionKey, tagged)
+				}
 			}
 
-			return fmt.Sprintf("Message sent to session %s.", p.SessionKey), nil
+			return fmt.Sprintf("Message sent to session %s (reply_to=%s).", p.SessionKey, p.ReplyTo), nil
 		},
 	}
 }

@@ -405,6 +405,11 @@ func main() {
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
 	var agentOrder []string // preserve config order
 
+	// Closure for resolving agent instances by ID — resolved at call time.
+	agentResolverFn := func(agentID string) *agentInstance {
+		return agents[agentID]
+	}
+
 	// Closure for /agents command — captures agents/agentOrder, resolved at call time.
 	agentListFn := func() []command.AgentInfo {
 		var infos []command.AgentInfo
@@ -453,6 +458,7 @@ func main() {
 			startTime:           startTime,
 			ctx:                 ctx,
 			agentListFn:         agentListFn,
+			agentResolverFn:     agentResolverFn,
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
@@ -975,6 +981,7 @@ type setupParams struct {
 	startTime           time.Time
 	ctx                 context.Context
 	agentListFn         func() []command.AgentInfo
+	agentResolverFn     func(agentID string) *agentInstance
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
@@ -1099,8 +1106,45 @@ func setupAgent(p setupParams) *agentInstance {
 		return bot
 	}))
 
-	// send_to_session tool — inject messages into other sessions
-	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier))
+	// send_to_session tool — inject messages into other sessions.
+	// sessionNotifyFn handles reply_to="session": routes the target agent's
+	// response to the target session's own Telegram chat.
+	sessionNotifyFn := tools.SessionNotifyFn(func(targetSessionKey, message string) {
+		go func() {
+			// Parse agent ID from session key (agent:<id>:...)
+			parts := strings.SplitN(targetSessionKey, ":", 3)
+			if len(parts) < 2 {
+				log.Errorf("session_notify", "invalid session key: %s", targetSessionKey)
+				return
+			}
+			targetAgentID := parts[1]
+
+			inst := p.agentResolverFn(targetAgentID)
+			if inst == nil {
+				log.Errorf("session_notify", "unknown agent %q for session %s", targetAgentID, targetSessionKey)
+				return
+			}
+
+			resp, err := inst.ag.HandleMessage(agent.WithTrigger(p.ctx, "session_notify"), targetSessionKey, message)
+			if err != nil {
+				log.Errorf("session_notify", "error: %v", err)
+				return
+			}
+			if resp == "" {
+				return
+			}
+
+			bot := p.botMgr.PrimaryBot(targetAgentID)
+			if bot == nil {
+				log.Warnf("session_notify", "no primary bot for agent %s, response not delivered", targetAgentID)
+				return
+			}
+			if err := bot.SendText(resp); err != nil {
+				log.Errorf("session_notify", "telegram delivery: %v", err)
+			}
+		}()
+	})
+	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn))
 
 	// Per-agent environment block
 	var envBlock string
