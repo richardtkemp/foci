@@ -33,6 +33,16 @@ func envBool(val bool, envKey string) bool {
 	return val || os.Getenv(envKey) != ""
 }
 
+// wantsHelp returns true if args contain -h or --help.
+func wantsHelp(args []string) bool {
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
 // parseAddrFlag extracts --addr from args, returning the address and remaining args.
 func parseAddrFlag(args []string) (addr string, rest []string) {
 	for i := 0; i < len(args); i++ {
@@ -87,7 +97,11 @@ func main() {
 	case "command":
 		err = cmdCommand(base, args)
 	case "ping":
-		err = cmdCommand(base, append(args, "/ping"))
+		if wantsHelp(args) {
+			pingUsage()
+		} else {
+			err = cmdCommand(base, append(args, "/ping"))
+		}
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -270,7 +284,28 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 	return "", nil
 }
 
+func sendUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: clod send [-a agent] [-s session] [--if-active <dur>] [-mt text | -mf file] <message>
+
+Send a message to the agent's session.
+
+Flags:
+  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+  -s, --session <id>      Target session (env: CLOD_SESSION, default: main)
+  --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
+  -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
+  -mf, --message-file     Read message from file (env: CLOD_MESSAGE_FILE)
+
+Trailing args without a flag are treated as implicit --message-text.
+Cannot use both -mt and -mf.
+`)
+}
+
 func cmdSend(base string, args []string) error {
+	if wantsHelp(args) {
+		sendUsage()
+		return nil
+	}
 	flags, args := parseSendFlags(args)
 	text, err := resolveMessage(flags, args)
 	if err != nil {
@@ -292,7 +327,29 @@ func cmdSend(base string, args []string) error {
 	return postJSON(base+"/send", body)
 }
 
+func branchUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: clod branch [-a agent] [--if-active <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [-mt text | -mf file] [text]
+
+Fork a branch session from the agent's main chat.
+
+Flags:
+  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+  --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
+  --no-compact            Skip compaction if context limit reached (env: CLOD_NO_COMPACT)
+  --no-reset-hook         Skip pre-reset memory hook (env: CLOD_NO_RESET_HOOK)
+  --oneshot               Shorthand for --no-compact --no-reset-hook (env: CLOD_ONESHOT)
+  -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
+  -mf, --message-file     Read message from file (env: CLOD_MESSAGE_FILE)
+
+Aliased as 'wake'.
+`)
+}
+
 func cmdBranch(base string, args []string) error {
+	if wantsHelp(args) {
+		branchUsage()
+		return nil
+	}
 	agent, args := parseAgentFlag(args)
 	noCompact := false
 	noResetHook := false
@@ -367,7 +424,21 @@ func cmdBranch(base string, args []string) error {
 	return postJSON(base+"/wake", body)
 }
 
+func statusUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: clod status [-a agent]
+
+Query agent status (session info, model, uptime).
+
+Flags:
+  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+`)
+}
+
 func cmdStatus(base string, args []string) error {
+	if wantsHelp(args) {
+		statusUsage()
+		return nil
+	}
 	agent, _ := parseAgentFlag(args)
 	url := base + "/status"
 	if agent != "" {
@@ -381,7 +452,21 @@ func cmdStatus(base string, args []string) error {
 	return printResponse(resp)
 }
 
+func evalUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: clod eval [-a agent] <shell command>
+
+Ask the agent to run a shell command and show output.
+
+Flags:
+  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+`)
+}
+
 func cmdEval(base string, args []string) error {
+	if wantsHelp(args) {
+		evalUsage()
+		return nil
+	}
 	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
 		return fmt.Errorf("usage: clod eval [-a agent] <shell command>")
@@ -395,7 +480,21 @@ func cmdEval(base string, args []string) error {
 	return postJSON(base+"/send", body)
 }
 
+func commandUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: clod command [-a agent] </cmd> [args]
+
+Dispatch a slash command via the gateway (bypasses agent conversation).
+
+Flags:
+  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+`)
+}
+
 func cmdCommand(base string, args []string) error {
+	if wantsHelp(args) {
+		commandUsage()
+		return nil
+	}
 	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
 		return fmt.Errorf("usage: clod command [-a agent] </cmd> [args]")
@@ -409,6 +508,16 @@ func cmdCommand(base string, args []string) error {
 		body["agent"] = agent
 	}
 	return postJSON(base+"/command", body)
+}
+
+func pingUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: clod ping [-a agent]
+
+Liveness check (shorthand for 'clod command /ping').
+
+Flags:
+  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+`)
 }
 
 func postJSON(url string, body interface{}) error {
