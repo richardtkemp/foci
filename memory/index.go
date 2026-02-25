@@ -69,6 +69,17 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 		return nil, fmt.Errorf("create FTS5 table: %w", err)
 	}
 
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS memory_meta (
+		source TEXT NOT NULL,
+		path TEXT NOT NULL,
+		mtime REAL NOT NULL,
+		PRIMARY KEY (source, path)
+	)`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create memory_meta table: %w", err)
+	}
+
 	return &Index{
 		db:                 db,
 		sources:            sources,
@@ -92,6 +103,9 @@ func (idx *Index) Reindex() error {
 	for _, name := range sourceNames {
 		if _, err := idx.db.Exec("DELETE FROM memory_fts WHERE source = ?", name); err != nil {
 			return fmt.Errorf("clear entries for source %q: %w", name, err)
+		}
+		if _, err := idx.db.Exec("DELETE FROM memory_meta WHERE source = ?", name); err != nil {
+			return fmt.Errorf("clear meta for source %q: %w", name, err)
 		}
 	}
 
@@ -118,6 +132,13 @@ func (idx *Index) Reindex() error {
 				"INSERT INTO memory_fts (content, path, source) VALUES (?, ?, ?)",
 				string(data), relPath, sourceName,
 			)
+			if err != nil {
+				return err
+			}
+			_, err = idx.db.Exec(
+				"INSERT OR REPLACE INTO memory_meta (source, path, mtime) VALUES (?, ?, ?)",
+				sourceName, relPath, float64(info.ModTime().Unix()),
+			)
 			return err
 		}); err != nil {
 			return fmt.Errorf("index source %q: %w", sourceName, err)
@@ -140,6 +161,13 @@ func (idx *Index) IndexConversation(text, session string) {
 		text, session,
 	); err != nil {
 		log.Errorf("memory", "index conversation: %v", err)
+		return
+	}
+	if _, err := idx.db.Exec(
+		"INSERT OR REPLACE INTO memory_meta (source, path, mtime) VALUES ('conversation', ?, ?)",
+		session, float64(time.Now().Unix()),
+	); err != nil {
+		log.Errorf("memory", "index conversation meta: %v", err)
 	}
 }
 
@@ -158,25 +186,40 @@ func (idx *Index) buildWeightedRankCase() string {
 	return "CASE source " + strings.Join(cases, " ") + " END"
 }
 
-// Search queries the FTS5 index. Each source is weighted by its configured multiplier.
-func (idx *Index) Search(query string) ([]Result, error) {
+// Search queries the FTS5 index. sort controls result ordering:
+// "relevance" (default/empty) orders by weighted rank, "recency" orders by file mtime descending.
+func (idx *Index) Search(query string, sort string) ([]Result, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	weightedRankCase := idx.buildWeightedRankCase()
+	var sqlStr string
+	if sort == "recency" {
+		sqlStr = `
+			SELECT f.path,
+			       snippet(memory_fts, 0, '>', '<', '...', 40),
+			       f.source,
+			       COALESCE(m.mtime, 0) AS mtime
+			FROM memory_fts f
+			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
+			WHERE memory_fts MATCH ?
+			ORDER BY mtime DESC
+			LIMIT 20
+		`
+	} else {
+		weightedRankCase := idx.buildWeightedRankCase()
+		sqlStr = fmt.Sprintf(`
+			SELECT path,
+			       snippet(memory_fts, 0, '>', '<', '...', 40),
+			       source,
+			       %s AS weighted_rank
+			FROM memory_fts
+			WHERE memory_fts MATCH ?
+			ORDER BY weighted_rank
+			LIMIT 20
+		`, weightedRankCase)
+	}
 
-	sql := fmt.Sprintf(`
-		SELECT path,
-		       snippet(memory_fts, 0, '>', '<', '...', 40),
-		       source,
-		       %s AS weighted_rank
-		FROM memory_fts
-		WHERE memory_fts MATCH ?
-		ORDER BY weighted_rank
-		LIMIT 20
-	`, weightedRankCase)
-
-	rows, err := idx.db.Query(sql, query)
+	rows, err := idx.db.Query(sqlStr, query)
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}

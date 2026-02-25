@@ -315,7 +315,7 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go interfaces")
+	results, err := idx.Search("Go interfaces", "")
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

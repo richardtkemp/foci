@@ -211,7 +211,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `edit` — find-and-replace in files (with syntax validation for .json, .toml, .go)
 - `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
 - `web_search` — Brave Search API
-- `memory_search` — FTS5 search over memory files + conversation history
+- `memory_search` — FTS5 search over memory files + conversation history (sort by relevance or recency)
 - `memory_remind` — defer a thought for later (delay, tomorrow, specific date)
 - `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
 - `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat

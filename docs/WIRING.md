@@ -362,7 +362,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `edit` | files.go | Find-and-replace (old_string must be unique). Syntax validation for .json, .toml, .go: rejects edits that would break a valid file, warns if file was already invalid. |
 | `web_fetch` | web.go | HTTP GET, strip HTML tags |
 | `web_search` | web.go | Brave Search API |
-| `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x) |
+| `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency) |
 | `memory_remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due |
 | `scratchpad_write` | scratchpad.go | Write working notes (key + content); survives compaction |
 | `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
