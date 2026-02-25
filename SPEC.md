@@ -466,7 +466,7 @@ Both `POST /send` and `POST /wake` accept an optional `if_active` field (Go dura
 
 "Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`clod send`/`clod branch`), heartbeats, async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a heartbeat send cannot reset the activity timer.
 
-The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` on `send` and `branch` commands.
+The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
 ### Secrets
 
