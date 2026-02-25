@@ -16,6 +16,7 @@ These flags are accepted by all commands:
 
 | Flag | Short | Env var | Description |
 |------|-------|---------|-------------|
+| `--help` | `-h` | | Show usage for any command (e.g. `clod send -h`). |
 | `--addr <host:port>` | | `CLOD_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
 | `--agent <id>` | `-a` | `CLOD_AGENT` | Target a specific agent. Default: first configured agent. |
 | `--session <id>` | `-s` | `CLOD_SESSION` | Target session type. Default: `main`. |

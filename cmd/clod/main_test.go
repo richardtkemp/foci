@@ -705,3 +705,61 @@ func TestParseAgentFlag(t *testing.T) {
 		})
 	}
 }
+
+func TestSubcommandHelp(t *testing.T) {
+	// Each subcommand should return nil (no error) when given -h or --help,
+	// without making any HTTP requests.
+	base := "http://127.0.0.1:0" // unreachable — proves no HTTP call is made
+
+	cmds := []struct {
+		name string
+		fn   func(string, []string) error
+	}{
+		{"send", cmdSend},
+		{"branch", cmdBranch},
+		{"status", cmdStatus},
+		{"eval", cmdEval},
+		{"command", cmdCommand},
+	}
+
+	for _, cmd := range cmds {
+		for _, flag := range []string{"-h", "--help"} {
+			t.Run(cmd.name+"/"+flag, func(t *testing.T) {
+				err := cmd.fn(base, []string{flag})
+				if err != nil {
+					t.Errorf("%s %s returned error: %v", cmd.name, flag, err)
+				}
+			})
+		}
+	}
+
+	// Test wantsHelp directly for ping (handled in main switch)
+	for _, flag := range []string{"-h", "--help"} {
+		t.Run("ping/"+flag, func(t *testing.T) {
+			if !wantsHelp([]string{flag}) {
+				t.Errorf("wantsHelp(%q) = false, want true", flag)
+			}
+		})
+	}
+}
+
+func TestWantsHelp(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-h"}, true},
+		{[]string{"--help"}, true},
+		{[]string{"-a", "clutch", "-h"}, true},
+		{[]string{"--help", "extra"}, true},
+		{[]string{"hello"}, false},
+		{[]string{"-a", "clutch"}, false},
+		{nil, false},
+	}
+	for _, tt := range tests {
+		got := wantsHelp(tt.args)
+		if got != tt.want {
+			t.Errorf("wantsHelp(%v) = %v, want %v", tt.args, got, tt.want)
+		}
+	}
+}
