@@ -15,20 +15,64 @@ const defaultAddr = "127.0.0.1:18791"
 
 var client = &http.Client{Timeout: 5 * time.Minute}
 
+// Convention: every CLI flag must have a corresponding CLOD_ env var, and every
+// CLOD_ env var must have a corresponding CLI flag. Resolution order: flag > env > default.
+// When adding new flags, add the env var fallback in parseSendFlags (for send flags)
+// or cmdBranch (for branch-specific flags), and update the usage() text for both.
+
+// envDefault returns val if non-empty, otherwise falls back to the env var.
+func envDefault(val, envKey string) string {
+	if val != "" {
+		return val
+	}
+	return os.Getenv(envKey)
+}
+
+// envBool returns true if val is true, or the env var is non-empty.
+func envBool(val bool, envKey string) bool {
+	return val || os.Getenv(envKey) != ""
+}
+
+// parseAddrFlag extracts --addr from args, returning the address and remaining args.
+func parseAddrFlag(args []string) (addr string, rest []string) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--addr" && i+1 < len(args) {
+			addr = args[i+1]
+			rest = append(rest, args[:i]...)
+			rest = append(rest, args[i+2:]...)
+			return addr, rest
+		}
+		if strings.HasPrefix(args[i], "--addr=") {
+			addr = args[i][len("--addr="):]
+			rest = append(rest, args[:i]...)
+			rest = append(rest, args[i+1:]...)
+			return addr, rest
+		}
+	}
+	return "", args
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
 	}
 
-	addr := os.Getenv("CLOD_ADDR")
+	// Parse --addr from global args (before command)
+	allArgs := os.Args[1:]
+	addrFlag, allArgs := parseAddrFlag(allArgs)
+	addr := envDefault(addrFlag, "CLOD_ADDR")
 	if addr == "" {
 		addr = defaultAddr
 	}
 	base := "http://" + addr
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
+	if len(allArgs) == 0 {
+		usage()
+		os.Exit(1)
+	}
+	cmd := allArgs[0]
+	args := allArgs[1:]
 
 	var err error
 	switch cmd {
@@ -73,12 +117,23 @@ Commands:
   ping                 Shorthand for 'command /ping'
 
 Flags:
+  --addr <host:port>   Gateway address (default: %s)
   -a, --agent <id>     Target a specific agent (default: first agent)
   -s, --session <id>   Target a specific session (default: main)
   --if-active <dur>    Skip if no user activity within duration (e.g. 8h, 30m)
+  -mt, --message-text  Message text (default: trailing args)
+  -mf, --message-file  Read message from file path
 
-Environment:
-  CLOD_ADDR            Gateway address (default: %s)
+Environment (flag > env var > default):
+  CLOD_ADDR            Gateway address (--addr)
+  CLOD_AGENT           Target agent (-a)
+  CLOD_SESSION         Target session (-s)
+  CLOD_IF_ACTIVE       Activity gate duration (--if-active)
+  CLOD_MESSAGE_TEXT    Message text (-mt)
+  CLOD_MESSAGE_FILE    Message file path (-mf)
+  CLOD_NO_COMPACT      Skip compaction (--no-compact, non-empty = true)
+  CLOD_NO_RESET_HOOK   Skip reset hook (--no-reset-hook, non-empty = true)
+  CLOD_ONESHOT         Oneshot mode (--oneshot, non-empty = true)
 `, defaultAddr)
 }
 
@@ -102,13 +157,19 @@ func parseAgentFlag(args []string) (agentID string, rest []string) {
 			}
 		}
 	}
-	return "", args
+	// Env var fallback
+	if agentID == "" {
+		agentID = os.Getenv("CLOD_AGENT")
+	}
+	return agentID, args
 }
 
 type sendFlags struct {
-	agent    string
-	session  string
-	ifActive string // Go duration for activity gating
+	agent       string
+	session     string
+	ifActive    string // Go duration for activity gating
+	messageText string // explicit --message-text / -mt
+	messageFile string // explicit --message-file / -mf
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -148,20 +209,76 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--if-active=") {
 			flags.ifActive = args[i][len("--if-active="):]
 			consumed = true
+		} else if args[i] == "--message-text" || args[i] == "-mt" {
+			if i+1 < len(args) {
+				flags.messageText = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--message-text=") {
+			flags.messageText = args[i][len("--message-text="):]
+			consumed = true
+		} else if strings.HasPrefix(args[i], "-mt=") {
+			flags.messageText = args[i][len("-mt="):]
+			consumed = true
+		} else if args[i] == "--message-file" || args[i] == "-mf" {
+			if i+1 < len(args) {
+				flags.messageFile = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--message-file=") {
+			flags.messageFile = args[i][len("--message-file="):]
+			consumed = true
+		} else if strings.HasPrefix(args[i], "-mf=") {
+			flags.messageFile = args[i][len("-mf="):]
+			consumed = true
 		}
 		if !consumed {
 			filtered = append(filtered, args[i])
 		}
 	}
+	// Apply env var fallbacks (flag > env > default)
+	flags.agent = envDefault(flags.agent, "CLOD_AGENT")
+	flags.session = envDefault(flags.session, "CLOD_SESSION")
+	flags.ifActive = envDefault(flags.ifActive, "CLOD_IF_ACTIVE")
+	flags.messageText = envDefault(flags.messageText, "CLOD_MESSAGE_TEXT")
+	flags.messageFile = envDefault(flags.messageFile, "CLOD_MESSAGE_FILE")
 	return flags, filtered
+}
+
+// resolveMessage determines the message text from flags and trailing args.
+// Priority: --message-text / --message-file / trailing args (implicit -mt).
+// Returns error if both -mt and -mf are set, or if the file cannot be read.
+func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
+	if flags.messageText != "" && flags.messageFile != "" {
+		return "", fmt.Errorf("cannot specify both --message-text and --message-file")
+	}
+	if flags.messageFile != "" {
+		data, err := os.ReadFile(flags.messageFile)
+		if err != nil {
+			return "", fmt.Errorf("reading message file: %w", err)
+		}
+		return string(data), nil
+	}
+	if flags.messageText != "" {
+		return flags.messageText, nil
+	}
+	if len(trailingArgs) > 0 {
+		return strings.Join(trailingArgs, " "), nil
+	}
+	return "", nil
 }
 
 func cmdSend(base string, args []string) error {
 	flags, args := parseSendFlags(args)
-	if len(args) == 0 {
-		return fmt.Errorf("usage: clod send [-a agent] [-s session] <message text>")
+	text, err := resolveMessage(flags, args)
+	if err != nil {
+		return err
 	}
-	text := strings.Join(args, " ")
+	if text == "" {
+		return fmt.Errorf("usage: clod send [-a agent] [-s session] [-mt text | -mf file] <message text>")
+	}
 	body := map[string]string{"text": text}
 	if flags.agent != "" {
 		body["agent"] = flags.agent
@@ -180,6 +297,8 @@ func cmdBranch(base string, args []string) error {
 	noCompact := false
 	noResetHook := false
 	ifActive := ""
+	messageText := ""
+	messageFile := ""
 	var filtered []string
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -195,11 +314,40 @@ func cmdBranch(base string, args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "--if-active="):
 			ifActive = args[i][len("--if-active="):]
+		case (args[i] == "--message-text" || args[i] == "-mt") && i+1 < len(args):
+			messageText = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--message-text="):
+			messageText = args[i][len("--message-text="):]
+		case strings.HasPrefix(args[i], "-mt="):
+			messageText = args[i][len("-mt="):]
+		case (args[i] == "--message-file" || args[i] == "-mf") && i+1 < len(args):
+			messageFile = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--message-file="):
+			messageFile = args[i][len("--message-file="):]
+		case strings.HasPrefix(args[i], "-mf="):
+			messageFile = args[i][len("-mf="):]
 		default:
 			filtered = append(filtered, args[i])
 		}
 	}
-	text := strings.Join(filtered, " ")
+	// Apply env var fallbacks for branch-specific flags
+	noCompact = envBool(noCompact, "CLOD_NO_COMPACT")
+	noResetHook = envBool(noResetHook, "CLOD_NO_RESET_HOOK")
+	if envBool(false, "CLOD_ONESHOT") {
+		noCompact = true
+		noResetHook = true
+	}
+	ifActive = envDefault(ifActive, "CLOD_IF_ACTIVE")
+	messageText = envDefault(messageText, "CLOD_MESSAGE_TEXT")
+	messageFile = envDefault(messageFile, "CLOD_MESSAGE_FILE")
+
+	sf := sendFlags{messageText: messageText, messageFile: messageFile}
+	text, err := resolveMessage(sf, filtered)
+	if err != nil {
+		return err
+	}
 	body := map[string]interface{}{}
 	if agent != "" {
 		body["agent"] = agent

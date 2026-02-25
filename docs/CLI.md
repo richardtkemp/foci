@@ -14,15 +14,30 @@ All commands communicate over HTTP to the gateway at `CLOD_ADDR` (default `127.0
 
 These flags are accepted by all commands:
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--agent <id>` | `-a` | Target a specific agent. Default: first configured agent. |
+| Flag | Short | Env var | Description |
+|------|-------|---------|-------------|
+| `--addr <host:port>` | | `CLOD_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
+| `--agent <id>` | `-a` | `CLOD_AGENT` | Target a specific agent. Default: first configured agent. |
+| `--session <id>` | `-s` | `CLOD_SESSION` | Target session type. Default: `main`. |
+| `--if-active <dur>` | | `CLOD_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
+| `--message-text <text>` | `-mt` | `CLOD_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
+| `--message-file <path>` | `-mf` | `CLOD_MESSAGE_FILE` | Read message from file path. |
+| `--no-compact` | | `CLOD_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
+| `--no-reset-hook` | | `CLOD_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
+| `--oneshot` | | `CLOD_ONESHOT` | No compaction + no reset hook (branch only, non-empty = true). |
+
+**Resolution order:** explicit flag > env var > default. Every flag has a corresponding `CLOD_` env var and vice versa.
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CLOD_ADDR` | `127.0.0.1:18791` | Gateway address (host:port). |
+Setting env vars is useful for crontab entries where the same agent/session is targeted repeatedly:
+
+```crontab
+CLOD_AGENT=clutch
+CLOD_IF_ACTIVE=4h
+*/30 * * * * clod send -mf /home/clod/shared/prompts/memory-formation.md
+0 7 * * * clod branch --oneshot -mf /home/clod/shared/prompts/morning-routine.md
+```
 
 ---
 
@@ -34,7 +49,7 @@ Sends a text message to the agent's default session (or a named session). The me
 
 **Usage:**
 ```
-clod send [-a agent] [-s session] [--if-active <duration>] <message text>
+clod send [-a agent] [-s session] [--if-active <duration>] [-mt text | -mf file] [message text]
 ```
 
 **Flags:**
@@ -44,11 +59,21 @@ clod send [-a agent] [-s session] [--if-active <duration>] <message text>
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `agent:<id>:<session>`. Default: `main`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
+| `--message-text <text>` | `-mt` | Explicit message text (alternative to trailing args). |
+| `--message-file <path>` | `-mf` | Read message from file. Sends the file contents as the message. |
+
+Trailing args without a flag are treated as implicit `--message-text`. Cannot use both `-mt` and `-mf`.
 
 **Examples:**
 ```bash
 # Send a message to the default agent's main session
 clod send "check the weather forecast"
+
+# Equivalent using explicit flag
+clod send -mt "check the weather forecast"
+
+# Send file contents as the message
+clod send -mf /home/clod/shared/prompts/memory-formation.md
 
 # Send to a specific agent
 clod send -a research "summarize today's news"
@@ -58,6 +83,9 @@ clod send -a clutch -s research "continue the analysis"
 
 # Only send if user was active in the last 8 hours (for cron jobs)
 clod send --if-active 8h "daily health check"
+
+# Send file contents with activity gating
+clod send -a clutch --if-active 4h -mf tasks/review.md
 ```
 
 **Exit codes:** 0 on success, 1 on error (network failure, HTTP error).
@@ -72,7 +100,7 @@ Aliased as `wake` for backward compatibility.
 
 **Usage:**
 ```
-clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [text]
+clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -84,6 +112,8 @@ clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook]
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
 | `--no-reset-hook` | Skip the pre-reset memory hook when the branch session is reclaimed. |
 | `--oneshot` | Shorthand for `--no-compact --no-reset-hook`. For quick fire-and-forget tasks. |
+| `--message-text <text>` / `-mt` | Explicit message text (alternative to trailing args). |
+| `--message-file <path>` / `-mf` | Read message from file. Sends the file contents as the message. |
 
 **Examples:**
 ```bash
@@ -92,6 +122,9 @@ clod branch -a clutch "run your morning routine"
 
 # Quick one-shot task (no compaction, no reset hook)
 clod branch --oneshot -a clutch "check disk space and report"
+
+# Branch with message from file
+clod branch --oneshot -a scout -mf /home/clod/shared/prompts/daily-health-check.md
 
 # Only branch if user was active recently
 clod branch --if-active 12h -a clutch "daily memory review"

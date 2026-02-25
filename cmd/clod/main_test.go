@@ -169,6 +169,13 @@ func TestCLIIntegration(t *testing.T) {
 		{"branch with -a and --if-active", []string{"branch", "-a", "research", "--if-active", "8h"}, "(if_active:8h) [research] wake ok", false},
 		{"branch with --if-active and --no-compact", []string{"branch", "--if-active", "8h", "--no-compact"}, "(if_active:8h) wake ok (no_compact)", false},
 
+		// --message-text / -mt flag
+		{"send with -mt", []string{"send", "-mt", "hello from mt"}, "echo: hello from mt", false},
+		{"send with --message-text", []string{"send", "--message-text", "explicit text"}, "echo: explicit text", false},
+		{"send with -mt=value", []string{"send", "-mt=inline"}, "echo: inline", false},
+		{"send with -mt and -a", []string{"send", "-a", "research", "-mt", "flagged"}, "[research] echo: flagged", false},
+		{"branch with -mt", []string{"branch", "-mt", "branch text"}, "wake ok", false},
+
 		// Error cases: unknown agent returns HTTP 400, exit non-zero
 		{"send unknown agent", []string{"send", "-a", "nonexistent", "hello"}, "unknown agent", true},
 		{"branch unknown agent", []string{"branch", "-a", "nonexistent"}, "unknown agent", true},
@@ -198,6 +205,285 @@ func TestCLIIntegration(t *testing.T) {
 			}
 			if !strings.Contains(output, tt.want) {
 				t.Errorf("output %q does not contain %q", output, tt.want)
+			}
+		})
+	}
+}
+
+func TestCLIMessageFile(t *testing.T) {
+	server := mockGateway()
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	// Create temp file with message contents
+	msgFile := t.TempDir() + "/msg.md"
+	os.WriteFile(msgFile, []byte("hello from file"), 0644)
+
+	// Build the CLI binary
+	binPath := t.TempDir() + "/clod"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %s\n%s", err, out)
+	}
+
+	tests := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{"send -mf", []string{"send", "-mf", msgFile}, "echo: hello from file", false},
+		{"send --message-file", []string{"send", "--message-file", msgFile}, "echo: hello from file", false},
+		{"send -mf=value", []string{"send", "-mf=" + msgFile}, "echo: hello from file", false},
+		{"send -mf with -a", []string{"send", "-a", "research", "-mf", msgFile}, "[research] echo: hello from file", false},
+		{"branch -mf", []string{"branch", "-mf", msgFile}, "wake ok", false},
+		{"branch --oneshot -mf", []string{"branch", "--oneshot", "-mf", msgFile}, "wake ok (no_compact)", false},
+
+		// Error: both -mt and -mf
+		{"send -mt and -mf", []string{"send", "-mt", "text", "-mf", msgFile}, "cannot specify both", true},
+		// Error: missing file
+		{"send -mf missing", []string{"send", "-mf", "/nonexistent/file.md"}, "reading message file", true},
+		// Error: branch -mt and -mf
+		{"branch -mt and -mf", []string{"branch", "-mt", "text", "-mf", msgFile}, "cannot specify both", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, tt.args...)
+			cmd.Env = append(os.Environ(), "CLOD_ADDR="+addr)
+
+			out, err := cmd.CombinedOutput()
+			output := strings.TrimSpace(string(out))
+
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v\noutput: %s", err, output)
+			}
+			if !strings.Contains(output, tt.want) {
+				t.Errorf("output %q does not contain %q", output, tt.want)
+			}
+		})
+	}
+}
+
+func TestCLIEnvVars(t *testing.T) {
+	server := mockGateway()
+	defer server.Close()
+	addr := strings.TrimPrefix(server.URL, "http://")
+
+	// Create temp file for -mf tests
+	msgFile := t.TempDir() + "/msg.md"
+	os.WriteFile(msgFile, []byte("env file msg"), 0644)
+
+	// Build the CLI binary
+	binPath := t.TempDir() + "/clod"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %s\n%s", err, out)
+	}
+
+	tests := []struct {
+		name    string
+		args    []string
+		env     []string // extra env vars beyond CLOD_ADDR
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "CLOD_AGENT env var",
+			args: []string{"send", "hello"},
+			env:  []string{"CLOD_AGENT=research"},
+			want: "[research] echo: hello",
+		},
+		{
+			name: "flag overrides CLOD_AGENT",
+			args: []string{"send", "-a", "main", "hello"},
+			env:  []string{"CLOD_AGENT=research"},
+			want: "[main] echo: hello",
+		},
+		{
+			name: "CLOD_SESSION env var",
+			args: []string{"send", "hello"},
+			env:  []string{"CLOD_SESSION=research"},
+			want: "(session:research) echo: hello",
+		},
+		{
+			name: "CLOD_IF_ACTIVE env var for send",
+			args: []string{"send", "hello"},
+			env:  []string{"CLOD_IF_ACTIVE=8h"},
+			want: "(if_active:8h) echo: hello",
+		},
+		{
+			name: "CLOD_MESSAGE_TEXT env var",
+			args: []string{"send"},
+			env:  []string{"CLOD_MESSAGE_TEXT=from env"},
+			want: "echo: from env",
+		},
+		{
+			name: "CLOD_MESSAGE_FILE env var",
+			args: []string{"send"},
+			env:  []string{"CLOD_MESSAGE_FILE=" + msgFile},
+			want: "echo: env file msg",
+		},
+		{
+			name: "CLOD_NO_COMPACT env var",
+			args: []string{"branch"},
+			env:  []string{"CLOD_NO_COMPACT=1"},
+			want: "wake ok (no_compact)",
+		},
+		{
+			name: "CLOD_ONESHOT env var",
+			args: []string{"branch"},
+			env:  []string{"CLOD_ONESHOT=1"},
+			want: "wake ok (no_compact)",
+		},
+		{
+			name: "CLOD_IF_ACTIVE env var for branch",
+			args: []string{"branch"},
+			env:  []string{"CLOD_IF_ACTIVE=12h"},
+			want: "(if_active:12h) wake ok",
+		},
+		{
+			name: "--addr flag",
+			args: []string{"--addr", addr, "send", "hello"},
+			env:  nil, // no CLOD_ADDR
+			want: "echo: hello",
+		},
+		{
+			name: "--addr=value flag",
+			args: []string{"--addr=" + addr, "send", "hello"},
+			env:  nil,
+			want: "echo: hello",
+		},
+		{
+			name: "CLOD_AGENT env var for branch",
+			args: []string{"branch", "do work"},
+			env:  []string{"CLOD_AGENT=research"},
+			want: "[research] wake ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(binPath, tt.args...)
+			// Start with minimal env to avoid inheriting CLOD_ vars
+			env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+			if tt.env != nil {
+				env = append(env, tt.env...)
+			}
+			// Add CLOD_ADDR unless --addr is being tested
+			hasAddr := false
+			for _, e := range tt.env {
+				if strings.HasPrefix(e, "CLOD_ADDR=") {
+					hasAddr = true
+				}
+			}
+			for _, a := range tt.args {
+				if a == "--addr" || strings.HasPrefix(a, "--addr=") {
+					hasAddr = true
+				}
+			}
+			if !hasAddr {
+				env = append(env, "CLOD_ADDR="+addr)
+			}
+			cmd.Env = env
+
+			out, err := cmd.CombinedOutput()
+			output := strings.TrimSpace(string(out))
+
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v\noutput: %s", err, output)
+			}
+			if !strings.Contains(output, tt.want) {
+				t.Errorf("output %q does not contain %q", output, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveMessage(t *testing.T) {
+	// Create temp file
+	tmpFile := t.TempDir() + "/msg.txt"
+	os.WriteFile(tmpFile, []byte("file contents"), 0644)
+
+	tests := []struct {
+		name    string
+		flags   sendFlags
+		trail   []string
+		want    string
+		wantErr string
+	}{
+		{"trailing args", sendFlags{}, []string{"hello", "world"}, "hello world", ""},
+		{"explicit -mt", sendFlags{messageText: "explicit"}, nil, "explicit", ""},
+		{"explicit -mf", sendFlags{messageFile: tmpFile}, nil, "file contents", ""},
+		{"-mt overrides trailing", sendFlags{messageText: "explicit"}, []string{"trailing"}, "explicit", ""},
+		{"both -mt and -mf", sendFlags{messageText: "t", messageFile: tmpFile}, nil, "", "cannot specify both"},
+		{"missing file", sendFlags{messageFile: "/no/such/file"}, nil, "", "reading message file"},
+		{"empty", sendFlags{}, nil, "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveMessage(tt.flags, tt.trail)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("error = %q, want containing %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSendFlagsMessageFlags(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantMT      string
+		wantMF      string
+		wantRest    []string
+	}{
+		{"-mt with value", []string{"-mt", "hello"}, "hello", "", nil},
+		{"--message-text with value", []string{"--message-text", "hello"}, "hello", "", nil},
+		{"-mt=value", []string{"-mt=hello"}, "hello", "", nil},
+		{"--message-text=value", []string{"--message-text=hello"}, "hello", "", nil},
+		{"-mf with value", []string{"-mf", "/tmp/f"}, "", "/tmp/f", nil},
+		{"--message-file with value", []string{"--message-file", "/tmp/f"}, "", "/tmp/f", nil},
+		{"-mf=value", []string{"-mf=/tmp/f"}, "", "/tmp/f", nil},
+		{"--message-file=value", []string{"--message-file=/tmp/f"}, "", "/tmp/f", nil},
+		{"-mt with other flags", []string{"-a", "clutch", "-mt", "hi", "extra"}, "hi", "", []string{"extra"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags, rest := parseSendFlags(tt.args)
+			if flags.messageText != tt.wantMT {
+				t.Errorf("messageText = %q, want %q", flags.messageText, tt.wantMT)
+			}
+			if flags.messageFile != tt.wantMF {
+				t.Errorf("messageFile = %q, want %q", flags.messageFile, tt.wantMF)
+			}
+			if len(rest) == 0 && len(tt.wantRest) == 0 {
+				return
+			}
+			if len(rest) != len(tt.wantRest) {
+				t.Errorf("rest = %v, want %v", rest, tt.wantRest)
 			}
 		})
 	}
