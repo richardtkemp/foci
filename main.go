@@ -1549,21 +1549,12 @@ func setupAgent(p setupParams) *agentInstance {
 	}))
 	cmds.Register(command.NewHelpCommand(cmds))
 
-	// /usage command (shared usage client)
-	cmds.Register(command.NewUsageCommand(func(ctx context.Context) (string, error) {
-		usage, err := p.usageClient.GetUsage(ctx)
-		if err != nil {
-			return fmt.Sprintf("Error fetching usage: %v", err), nil
-		}
-		return anthropic.FormatUsage(usage), nil
-	}))
-
 	// Dynamic mana command (configurable name: /mana, /juice, /credits, etc.)
 	manaName := p.cfg.ManaWarnings.Name
 	if manaName == "" {
 		manaName = "mana"
 	}
-	cmds.Register(command.NewManaCommand(manaName, func(ctx context.Context) (string, error) {
+	manaFn := func(ctx context.Context) (string, error) {
 		usage, err := p.usageClient.GetUsage(ctx)
 		if err != nil {
 			return fmt.Sprintf("Error fetching %s: %v", manaName, err), nil
@@ -1577,7 +1568,17 @@ func setupAgent(p setupParams) *agentInstance {
 			result += fmt.Sprintf(" (resets %s)", reset)
 		}
 		return result, nil
-	}))
+	}
+	cmds.Register(command.NewManaCommand(manaName, manaFn))
+
+	// /usage — hidden alias for the mana command
+	cmds.Register(&command.Command{
+		Name:   "usage",
+		Hidden: true,
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return manaFn(ctx)
+		},
+	})
 
 	// /reload command
 	cmds.Register(command.NewReloadCommand(func() (string, error) {
