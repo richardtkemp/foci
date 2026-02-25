@@ -511,9 +511,22 @@ A dynamic secret store backed by the Bitwarden CLI, with a two-tier aisudo appro
 - **Template syntax** — `{{secret:bw.ITEM_UUID}}` in http_request headers/body. Host validation uses the vault item's URI fields.
 - **Dedicated system user** — `bitwarden` user owns the CLI session state and session file. Not root. Clod never reads the session token — each `bw` command reads the session file as the bitwarden user.
 
+**Per-agent secrets:**
+
+Secrets in `secrets.toml` are global by default. Agents can have their own overrides via `[agents.ID]` sections:
+```toml
+[custom]
+github_token = "ghp_default"
+
+[agents.fotini.custom]
+github_token = "ghp_fotini_account"
+```
+Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (exec templates, http_request, redaction, system prompt secret names).
+
 ### What the agent knows
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
   - Available secret names are injected into the system prompt at startup so the agent can discover what's available
+  - Per-agent overrides add or replace names visible to that agent
   - Unresolved secret references in exec commands are errors (not silently passed through)
 - If bitwarden is enabled, the agent knows it can search the vault and request unlocks
   - The agent never sees password values — only template references `{{secret:bw.ID}}`

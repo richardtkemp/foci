@@ -608,6 +608,27 @@ allowed_hosts = ["api.example.com", "api.backup.example.com"]
 
 Host matching is case-insensitive (per RFC 4343). Ports are ignored — `api.example.com:8443` matches `api.example.com`. See [docs/SECRETS.md](SECRETS.md) for the full security model.
 
+### Per-agent overrides
+
+Agents can have their own secret values via `[agents.ID.section]` tables. Agent-specific values override globals for the same key; keys not overridden fall back to globals. Each agent only sees its own overrides.
+
+```toml
+[custom]
+github_token = "ghp_default"
+allowed_hosts = ["api.github.com"]
+
+[agents.fotini.custom]
+github_token = "ghp_fotini_account"
+
+[agents.fotini.myapi]
+token = "sk-fotini-api"
+allowed_hosts = ["api.fotini.com"]
+```
+
+In this example, agent `fotini` sees `custom.github_token = "ghp_fotini_account"` (override) and inherits `custom.allowed_hosts` from the global section. It also gets the additional `myapi.token` secret. Other agents see the global `ghp_default` value and do not see `myapi.token`.
+
+Per-agent scoping applies to: exec `{{secret:NAME}}` templates, `http_request` secret resolution, output redaction, and system prompt secret names. Built-in credential resolution (anthropic.token, telegram bot tokens, brave API key) remains global — these are process-wide settings.
+
 ---
 
 ## Minimal Example

@@ -1037,14 +1037,17 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}()
 	})
-	registry.Register(tools.NewExecTool(p.store, p.bwStore, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
+	// Per-agent secrets view: agent-specific values overlay globals
+	agentStore := p.store.ForAgent(acfg.ID)
+
+	registry.Register(tools.NewExecTool(agentStore, p.bwStore, p.cfg.Tools.ExecAutoBackground, notifier, acfg.Workspace))
 	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, p.cfg.Tools.ExecAutoBackground, notifier))
+	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, p.cfg.Tools.ExecAutoBackground, notifier))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
@@ -1074,7 +1077,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent workspace bootstrap
 	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
-	bootstrap.SetSecretNames(p.store.Names(), p.bwStore != nil)
+	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
 	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 
 	// Per-agent skills
@@ -1180,11 +1183,11 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
-			text = p.store.Redact(text)
+			text = agentStore.Redact(text)
 			return p.bwStore.Redact(text)
 		}
 	} else if p.store != nil {
-		ag.Redact = p.store.Redact
+		ag.Redact = agentStore.Redact
 	} else if p.bwStore != nil {
 		ag.Redact = p.bwStore.Redact
 	}
@@ -1578,7 +1581,7 @@ func setupAgent(p setupParams) *agentInstance {
 		DefaultsDir: filepath.Join(filepath.Dir(acfg.Workspace), "shared", "defaults"),
 		HomeDir:     filepath.Dir(acfg.Workspace),
 		ListFn:      p.agentListFn,
-		SecretNames: func() []string { return p.store.Names() },
+		SecretNames: func() []string { return agentStore.Names() },
 		BotNames: func() []string {
 			names := make([]string, 0, len(p.cfg.Telegram.Bots))
 			for name := range p.cfg.Telegram.Bots {
