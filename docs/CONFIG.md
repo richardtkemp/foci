@@ -17,6 +17,8 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | `""` | Agent identifier. Used in session keys (`agent:ID:main`). |
+| `name` | string | `""` | Human-readable name (e.g. `"Clutch"`). Used in `/voice` WebSocket agent list. |
+| `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `model` | string | `"claude-haiku-4-5"` | Anthropic model ID for API calls. |
 | `workspace` | string | `""` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
@@ -287,7 +289,7 @@ HTTP API server.
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
 | `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 
-Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`.
+Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `GET /voice` (WebSocket, when `[voice] ws_enabled = true`).
 
 All endpoints accept an `agent` field (JSON body for POST, query param for GET) to target a specific agent by ID. When empty or omitted, the first configured agent is used. The `/send` endpoint also accepts an optional `session` field to target a specific session key (defaults to `main`).
 
@@ -349,8 +351,9 @@ Voice support (speech-to-text and text-to-speech).
 | `tts_model` | string | `""` | Model name for OpenAI TTS (e.g. `"tts-1-mini"`). |
 | `tts_voice` | string | `""` | Voice name (provider-specific). Defaults to `"alloy"` for OpenAI provider. |
 | `tts_rate` | float | `0` | Speech rate multiplier. `1.3` = 30% faster, `0.8` = 20% slower. `0` uses provider default. Translated automatically for each provider (edge-tts `--rate "+30%"`, openai `speed: 1.3`). |
+| `ws_enabled` | bool | `false` | Enable the `/voice` WebSocket endpoint for real-time two-way voice conversation (FOCI app). Requires `voice.api_key` in `secrets.toml` and a configured STT provider. |
 
-STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`).
+STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`). The `/voice` WebSocket endpoint requires an additional `voice.api_key` in `secrets.toml`.
 
 ---
 
@@ -641,6 +644,9 @@ api_key = "gsk_..."
 
 [openrouter]
 api_key = "sk-or-..."
+
+[voice]
+api_key = "your-voice-api-key"
 
 [custom]
 github_token = "ghp_..."

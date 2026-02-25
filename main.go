@@ -184,6 +184,10 @@ func main() {
 	if v, ok := store.Get("openrouter.api_key"); ok {
 		openrouterKey = v
 	}
+	voiceAPIKey := ""
+	if v, ok := store.Get("voice.api_key"); ok {
+		voiceAPIKey = v
+	}
 
 	// Shared: Bitwarden store (optional)
 	var bwStore *bitwarden.Store
@@ -952,7 +956,48 @@ func main() {
 		}
 	})
 
-	log.Infof("http", "registered endpoints: /send, /status, /command, /wake")
+	// WebSocket voice endpoint
+	endpointList := "/send, /status, /command, /wake"
+	if cfg.Voice.WSEnabled && voiceAPIKey != "" && sttProvider != nil {
+		voiceCfg := voice.HandlerConfig{
+			APIKey: voiceAPIKey,
+			ListAgents: func() []voice.AgentInfo {
+				var infos []voice.AgentInfo
+				for _, id := range agentOrder {
+					inst := agents[id]
+					infos = append(infos, voice.AgentInfo{
+						ID:    id,
+						Name:  inst.agentCfg.Name,
+						Emoji: inst.agentCfg.Emoji,
+					})
+				}
+				return infos
+			},
+			HandleMessage: func(msgCtx context.Context, agentID, sessionKey, text string) (string, error) {
+				inst, ok := agents[agentID]
+				if !ok {
+					return "", fmt.Errorf("unknown agent: %q", agentID)
+				}
+				return inst.ag.HandleMessage(agent.WithTrigger(msgCtx, "voice"), sessionKey, text)
+			},
+			STT: sttProvider,
+			AgentTTS: func(agentID string) voice.TTS {
+				if ttsProvider == nil {
+					return nil
+				}
+				inst, ok := agents[agentID]
+				if !ok {
+					return ttsProvider
+				}
+				return voice.WithRate(ttsProvider, inst.agentCfg.TTSRate)
+			},
+		}
+		mux.HandleFunc("/voice", voice.Handler(voiceCfg))
+		endpointList += ", /voice (ws)"
+		log.Infof("http", "/voice WebSocket endpoint enabled")
+	}
+
+	log.Infof("http", "registered endpoints: %s", endpointList)
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
 	var httpServer *http.Server
