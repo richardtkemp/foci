@@ -474,11 +474,13 @@ System crontab can trigger `/wake` endpoint for external scheduling. For agent-i
 
 ### Activity gating
 
-Both `POST /send` and `POST /wake` accept an optional `if_active` field (Go duration string, e.g. `"8h"`). When set, the request is silently skipped (HTTP 200 with `"skipped: no recent user activity"`) if no real Telegram user has messaged the agent within the window.
+Both `POST /send` and `POST /wake` accept optional activity gating fields:
+- `if_active` (Go duration, e.g. `"8h"`) — skip if no user activity within the window ("skipped: no recent user activity")
+- `if_inactive` (Go duration, e.g. `"30m"`) — skip if user WAS active within the window ("skipped: session recently active")
 
 "Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`clod send`/`clod branch`), async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a cron send cannot reset the activity timer.
 
-The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
+The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
 ### Secrets
 

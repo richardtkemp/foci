@@ -17,11 +17,12 @@ func mockGateway() *httptest.Server {
 
 	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Agent    string `json:"agent"`
-			Session  string `json:"session"`
-			Text     string `json:"text"`
-			IfActive string `json:"if_active"`
-			Async    bool   `json:"async"`
+			Agent      string `json:"agent"`
+			Session    string `json:"session"`
+			Text       string `json:"text"`
+			IfActive   string `json:"if_active"`
+			IfInactive string `json:"if_inactive"`
+			Async      bool   `json:"async"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
@@ -44,17 +45,21 @@ func mockGateway() *httptest.Server {
 		if req.IfActive != "" {
 			resp = "(if_active:" + req.IfActive + ") " + resp
 		}
+		if req.IfInactive != "" {
+			resp = "(if_inactive:" + req.IfInactive + ") " + resp
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
 	})
 
 	mux.HandleFunc("/wake", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Agent     string `json:"agent"`
-			Text      string `json:"text"`
-			NoCompact bool   `json:"no_compact"`
-			IfActive  string `json:"if_active"`
-			Async     bool   `json:"async"`
+			Agent      string `json:"agent"`
+			Text       string `json:"text"`
+			NoCompact  bool   `json:"no_compact"`
+			IfActive   string `json:"if_active"`
+			IfInactive string `json:"if_inactive"`
+			Async      bool   `json:"async"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
@@ -76,6 +81,9 @@ func mockGateway() *httptest.Server {
 		}
 		if req.IfActive != "" {
 			resp = "(if_active:" + req.IfActive + ") " + resp
+		}
+		if req.IfInactive != "" {
+			resp = "(if_inactive:" + req.IfInactive + ") " + resp
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"response": resp})
@@ -197,6 +205,15 @@ func TestCLIIntegration(t *testing.T) {
 		{"branch with --if-active=", []string{"branch", "--sync", "--if-active=6h"}, "(if_active:6h) wake ok", false},
 		{"branch with -a and --if-active", []string{"branch", "--sync", "-a", "research", "--if-active", "8h"}, "(if_active:8h) [research] wake ok", false},
 		{"branch with --if-active and --no-compact", []string{"branch", "--sync", "--if-active", "8h", "--no-compact"}, "(if_active:8h) wake ok (no_compact)", false},
+
+		// --if-inactive flag for send
+		{"send with --if-inactive", []string{"send", "--sync", "--if-inactive", "30m", "hello"}, "(if_inactive:30m) echo: hello", false},
+		{"send with --if-inactive=", []string{"send", "--sync", "--if-inactive=1h", "hello"}, "(if_inactive:1h) echo: hello", false},
+
+		// --if-inactive flag for branch
+		{"branch with --if-inactive", []string{"branch", "--sync", "--if-inactive", "30m", "heartbeat"}, "(if_inactive:30m) wake ok", false},
+		{"branch with --if-inactive=", []string{"branch", "--sync", "--if-inactive=45m"}, "(if_inactive:45m) wake ok", false},
+		{"branch with --if-inactive and --oneshot", []string{"branch", "--sync", "--if-inactive", "30m", "--oneshot", "check emails"}, "(if_inactive:30m) wake ok (no_compact)", false},
 
 		// --message-text / -mt flag
 		{"send with -mt", []string{"send", "--sync", "-mt", "hello from mt"}, "echo: hello from mt", false},
@@ -375,6 +392,18 @@ func TestCLIEnvVars(t *testing.T) {
 			args: []string{"branch", "--sync"},
 			env:  []string{"CLOD_IF_ACTIVE=12h"},
 			want: "(if_active:12h) wake ok",
+		},
+		{
+			name: "CLOD_IF_INACTIVE env var for send",
+			args: []string{"send", "--sync", "hello"},
+			env:  []string{"CLOD_IF_INACTIVE=30m"},
+			want: "(if_inactive:30m) echo: hello",
+		},
+		{
+			name: "CLOD_IF_INACTIVE env var for branch",
+			args: []string{"branch", "--sync"},
+			env:  []string{"CLOD_IF_INACTIVE=45m"},
+			want: "(if_inactive:45m) wake ok",
 		},
 		{
 			name: "--addr flag",
@@ -654,12 +683,13 @@ func TestPrintResponse202(t *testing.T) {
 
 func TestParseSendFlags(t *testing.T) {
 	tests := []struct {
-		name         string
-		args         []string
-		wantAgent    string
-		wantSession  string
-		wantIfActive string
-		wantRest     []string
+		name           string
+		args           []string
+		wantAgent      string
+		wantSession    string
+		wantIfActive   string
+		wantIfInactive string
+		wantRest       []string
 	}{
 		{
 			name:     "no flags",
@@ -697,6 +727,25 @@ func TestParseSendFlags(t *testing.T) {
 			args:     []string{"hello", "--if-active"},
 			wantRest: []string{"hello", "--if-active"},
 		},
+		{
+			name:           "--if-inactive with value",
+			args:           []string{"--if-inactive", "30m", "hello"},
+			wantIfInactive: "30m",
+			wantRest:       []string{"hello"},
+		},
+		{
+			name:           "--if-inactive=value",
+			args:           []string{"--if-inactive=1h", "hello"},
+			wantIfInactive: "1h",
+			wantRest:       []string{"hello"},
+		},
+		{
+			name:           "both --if-active and --if-inactive",
+			args:           []string{"--if-active", "8h", "--if-inactive", "30m", "hello"},
+			wantIfActive:   "8h",
+			wantIfInactive: "30m",
+			wantRest:       []string{"hello"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -710,6 +759,9 @@ func TestParseSendFlags(t *testing.T) {
 			}
 			if flags.ifActive != tt.wantIfActive {
 				t.Errorf("ifActive = %q, want %q", flags.ifActive, tt.wantIfActive)
+			}
+			if flags.ifInactive != tt.wantIfInactive {
+				t.Errorf("ifInactive = %q, want %q", flags.ifInactive, tt.wantIfInactive)
 			}
 			if len(rest) == 0 && len(tt.wantRest) == 0 {
 				return

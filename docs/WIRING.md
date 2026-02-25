@@ -557,14 +557,14 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 Endpoints for external integration (used by `clod` CLI). All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent (backward compat).
 
-- `POST /send` — `{"agent": "clutch", "text": "...", "if_active": "8h"}` — message to agent's default session. Returns 412 if no default session exists yet. Optional `if_active` skips silently if no real user activity within the given Go duration.
+- `POST /send` — `{"agent": "clutch", "text": "...", "if_active": "8h"}` — message to agent's default session. Returns 412 if no default session exists yet. Optional `if_active` / `if_inactive` for activity gating.
 - `GET /status?agent=clutch` — dispatches `/status` for the specified agent
 - `POST /command` — `{"agent": "clutch", "command": "/ping"}` — dispatches slash command
-- `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true, "if_active": "12h"}` — branch from default session for cron. Returns 412 if no default session. Optional `if_active` skips silently if no real user activity within the given Go duration.
+- `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true, "if_active": "12h"}` — branch from default session for cron. Returns 412 if no default session. Optional `if_active` / `if_inactive` for activity gating.
 
 ## CLI Tool (`cmd/clod/`)
 
-Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external tools. Binary name: `clod`. Commands: `send`, `branch`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`clodgw`) at `CLOD_ADDR` (default `127.0.0.1:18791`). Both `send` and `branch` support `--if-active <duration>` to skip if no real user activity within the window (e.g. `--if-active 8h`).
+Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external tools. Binary name: `clod`. Commands: `send`, `branch`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`clodgw`) at `CLOD_ADDR` (default `127.0.0.1:18791`). Both `send` and `branch` support `--if-active <duration>` (skip if inactive) and `--if-inactive <duration>` (skip if active) for activity gating.
 
 ## Wake
 

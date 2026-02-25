@@ -184,6 +184,7 @@ type sendFlags struct {
 	agent       string
 	session     string
 	ifActive    string // Go duration for activity gating
+	ifInactive  string // Go duration for inactivity gating (opposite of ifActive)
 	messageText string // explicit --message-text / -mt
 	messageFile string // explicit --message-file / -mf
 	async       bool   // fire-and-forget mode
@@ -227,6 +228,15 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--if-active=") {
 			flags.ifActive = args[i][len("--if-active="):]
 			consumed = true
+		} else if args[i] == "--if-inactive" {
+			if i+1 < len(args) {
+				flags.ifInactive = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--if-inactive=") {
+			flags.ifInactive = args[i][len("--if-inactive="):]
+			consumed = true
 		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
 				flags.messageText = args[i+1]
@@ -266,6 +276,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.agent = envDefault(flags.agent, "CLOD_AGENT")
 	flags.session = envDefault(flags.session, "CLOD_SESSION")
 	flags.ifActive = envDefault(flags.ifActive, "CLOD_IF_ACTIVE")
+	flags.ifInactive = envDefault(flags.ifInactive, "CLOD_IF_INACTIVE")
 	flags.messageText = envDefault(flags.messageText, "CLOD_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "CLOD_MESSAGE_FILE")
 	flags.async = envBool(flags.async, "CLOD_ASYNC")
@@ -297,7 +308,7 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod send [-a agent] [-s session] [--if-active <dur>] [--sync] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: clod send [-a agent] [-s session] [--if-active <dur>] [--if-inactive <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
 
@@ -309,6 +320,7 @@ Flags:
   -a, --agent <id>        Target agent (env: CLOD_AGENT)
   -s, --session <id>      Target session (env: CLOD_SESSION, default: main)
   --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
+  --if-inactive <dur>     Skip if user was active within duration (env: CLOD_IF_INACTIVE)
   --sync, --wait          Wait for the response (env: CLOD_SYNC)
   --async, --no-wait      Fire-and-forget (default) (env: CLOD_ASYNC)
   -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
@@ -347,11 +359,14 @@ func cmdSend(base string, args []string) error {
 	if flags.ifActive != "" {
 		body["if_active"] = flags.ifActive
 	}
+	if flags.ifInactive != "" {
+		body["if_inactive"] = flags.ifInactive
+	}
 	return postJSON(base+"/send", body)
 }
 
 func branchUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod branch [-a agent] [--if-active <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+	fmt.Fprintf(os.Stderr, `Usage: clod branch [-a agent] [--if-active <dur>] [--if-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 
 Fork a branch session from the agent's main chat.
 
@@ -362,6 +377,7 @@ until the response is available.
 Flags:
   -a, --agent <id>        Target agent (env: CLOD_AGENT)
   --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
+  --if-inactive <dur>     Skip if user was active within duration (env: CLOD_IF_INACTIVE)
   --no-compact            Skip compaction if context limit reached (env: CLOD_NO_COMPACT)
   --no-reset-hook         Skip pre-reset memory hook (env: CLOD_NO_RESET_HOOK)
   --oneshot               Shorthand for --no-compact --no-reset-hook (env: CLOD_ONESHOT)
@@ -386,6 +402,7 @@ func cmdBranch(base string, args []string) error {
 	asyncFlag := false
 	syncFlag := false
 	ifActive := ""
+	ifInactive := ""
 	messageText := ""
 	messageFile := ""
 	var filtered []string
@@ -410,6 +427,11 @@ func cmdBranch(base string, args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "--if-active="):
 			ifActive = args[i][len("--if-active="):]
+		case args[i] == "--if-inactive" && i+1 < len(args):
+			ifInactive = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--if-inactive="):
+			ifInactive = args[i][len("--if-inactive="):]
 		case (args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt") && i+1 < len(args):
 			messageText = args[i+1]
 			i++
@@ -438,6 +460,7 @@ func cmdBranch(base string, args []string) error {
 	asyncFlag = envBool(asyncFlag, "CLOD_ASYNC")
 	syncFlag = envBool(syncFlag, "CLOD_SYNC")
 	ifActive = envDefault(ifActive, "CLOD_IF_ACTIVE")
+	ifInactive = envDefault(ifInactive, "CLOD_IF_INACTIVE")
 	messageText = envDefault(messageText, "CLOD_MESSAGE_TEXT")
 	messageFile = envDefault(messageFile, "CLOD_MESSAGE_FILE")
 
@@ -467,6 +490,9 @@ func cmdBranch(base string, args []string) error {
 	}
 	if ifActive != "" {
 		body["if_active"] = ifActive
+	}
+	if ifInactive != "" {
+		body["if_inactive"] = ifInactive
 	}
 	if silent {
 		body["silent"] = true

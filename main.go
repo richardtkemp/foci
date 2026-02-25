@@ -673,11 +673,12 @@ func main() {
 			return
 		}
 		var req struct {
-			Agent    string `json:"agent"`
-			Session  string `json:"session"`
-			Text     string `json:"text"`
-			IfActive string `json:"if_active"` // Go duration — skip if no user activity within this window
-			Async    bool   `json:"async"`     // fire-and-forget: return 202 immediately, deliver response via Telegram
+			Agent      string `json:"agent"`
+			Session    string `json:"session"`
+			Text       string `json:"text"`
+			IfActive   string `json:"if_active"`   // Go duration — skip if no user activity within this window
+			IfInactive string `json:"if_inactive"` // Go duration — skip if user was active within this window
+			Async      bool   `json:"async"`       // fire-and-forget: return 202 immediately, deliver response via Telegram
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
@@ -702,6 +703,21 @@ func main() {
 				log.Debugf("http", "POST /send: skipping (no user activity within %s for agent %s)", req.IfActive, inst.id)
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
+				return
+			}
+		}
+
+		// Inactivity gating: skip silently if user was recently active
+		if req.IfInactive != "" {
+			dur, err := time.ParseDuration(req.IfInactive)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
+				return
+			}
+			if isAgentActive(inst.id, dur) {
+				log.Debugf("http", "POST /send: skipping (user active within %s for agent %s)", req.IfInactive, inst.id)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
 				return
 			}
 		}
@@ -830,9 +846,10 @@ func main() {
 			Text        string `json:"text"`
 			NoCompact   bool   `json:"no_compact"`
 			NoResetHook bool   `json:"no_reset_hook"`
-			IfActive    string `json:"if_active"` // Go duration — skip if no user activity within this window
-			Async       bool   `json:"async"`     // fire-and-forget: return 202 immediately, deliver response via Telegram
-			Silent      bool   `json:"silent"`    // suppress Telegram delivery of branch response (oneshot cron branches)
+			IfActive    string `json:"if_active"`   // Go duration — skip if no user activity within this window
+			IfInactive  string `json:"if_inactive"` // Go duration — skip if user was active within this window
+			Async       bool   `json:"async"`       // fire-and-forget: return 202 immediately, deliver response via Telegram
+			Silent      bool   `json:"silent"`      // suppress Telegram delivery of branch response (oneshot cron branches)
 		}
 		// Allow empty body — treat as wake with default text
 		if r.ContentLength > 0 {
@@ -860,6 +877,21 @@ func main() {
 				log.Debugf("wake", "POST /wake: skipping (no user activity within %s for agent %s)", req.IfActive, inst.id)
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
+				return
+			}
+		}
+
+		// Inactivity gating: skip silently if user was recently active
+		if req.IfInactive != "" {
+			dur, err := time.ParseDuration(req.IfInactive)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
+				return
+			}
+			if isAgentActive(inst.id, dur) {
+				log.Debugf("wake", "POST /wake: skipping (user active within %s for agent %s)", req.IfInactive, inst.id)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
 				return
 			}
 		}
