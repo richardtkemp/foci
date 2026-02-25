@@ -1183,6 +1183,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ExtraSystemBlocks:           extraSystemBlocks,
 		CacheStrategy:               p.cfg.Cache.Strategy,
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
+		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:           acfg.DuplicateMessages,
 		MaxResultChars:              p.cfg.Tools.MaxResultChars,
 		ToolResultTempDir:           p.cfg.Tools.TempDir,

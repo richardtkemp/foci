@@ -630,7 +630,8 @@ When a single API call writes more than a configurable threshold of cache tokens
 
 ```toml
 [logging]
-cache_bust_detect = true  # alert when cache_read drops >50% vs previous request
+cache_bust_detect = true   # alert when cache_read drops >50% vs previous request
+cache_bust_idle_minutes = 10  # suppress alert if session idle > N minutes (cache expired naturally)
 ```
 
 ```

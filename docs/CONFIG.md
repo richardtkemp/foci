@@ -312,6 +312,7 @@ Logging and diagnostics.
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
+| `cache_bust_idle_minutes` | int | `10` | Suppress cache bust alerts if the session was idle longer than this many minutes. Anthropic's cache TTL is 5 min, so any gap >10 min means the cache expired naturally — not a genuine bust. |
 | `warning_max_per_window` | int | `3` | Max identical warnings allowed per time window before suppression. Set to `0` to disable rate-limiting. |
 | `warning_window_duration` | string | `"5m"` | Time window for warning deduplication. Go duration format (`30s`, `5m`, `1h`). |
 

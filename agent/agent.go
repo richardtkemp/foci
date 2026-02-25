@@ -72,6 +72,7 @@ type Agent struct {
 	ExtraSystemBlocks           []anthropic.SystemBlock         // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy               string                          // "auto" (top-level) or "explicit" (manual breakpoints)
 	CacheBustDetect             bool                            // detect cache busts (cache_read drop >50%)
+	CacheBustIdleThreshold      time.Duration                   // suppress cache bust alert if session idle > this (default 10m)
 	CacheBustAlert              CacheBustFunc                   // callback for cache bust alerts
 	DuplicateMessages           bool                            // send user text twice per API call (improves instruction following)
 	MaxResultChars              int                             // max chars for tool result before writing to file (0 disables)
@@ -694,8 +695,14 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 		// Cache bust detection: cache_read dropped significantly vs previous request.
 		// Skip first request (no baseline) — prevCacheRead will be 0.
+		// Skip if session was idle longer than threshold (cache naturally expired).
 		if a.CacheBustDetect && a.CacheBustAlert != nil && sm.prevCacheRead > 0 {
-			if resp.Usage.CacheReadInputTokens < sm.prevCacheRead/2 {
+			idleThresh := a.CacheBustIdleThreshold
+			if idleThresh == 0 {
+				idleThresh = 10 * time.Minute
+			}
+			idle := !sm.lastMessageTime.IsZero() && now.Sub(sm.lastMessageTime) > idleThresh
+			if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead/2 {
 				a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
 			}
 		}
