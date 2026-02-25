@@ -35,7 +35,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 | `show_tool_calls` | bool | `true` | Show tool call messages in Telegram. Per-agent override of global `[telegram] show_tool_calls`. Set to `false` for user-facing agents where tool visibility is confusing. |
 | `messages_in_log` | bool | nil | Per-agent override of global `[logging] messages_in_log`. Nil = use global. |
-| `image_save_dir` | string | `""` | Save received images to this directory. Empty disables (falls back to `[telegram] image_save_dir`). Relative paths resolve against `$HOME`. Filename format: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. The agent sees `[Image saved to: /path/to/file]` in the message text. |
+| `image_save_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables (falls back to `[telegram] image_save_dir`). Relative paths resolve against `$HOME`. Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. If set, only these users can message this agent's bot. If empty, falls back to global `[telegram] allowed_users`. |
 | `compaction_threshold` | float | nil | Per-agent compaction threshold (0.0–1.0). Nil = use global `[sessions] compaction_threshold`. |
 | `compaction_summary_prompt` | string | `""` | Per-agent compaction summary prompt path. Empty = use global. |
@@ -137,7 +137,7 @@ Telegram bot configuration.
 | `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 | `show_tool_calls` | bool | `true` | Show tool call messages in Telegram (the send+edit pattern showing which tools the agent is calling). Per-agent `show_tool_calls` overrides this. |
-| `image_save_dir` | string | `""` | Save received images to this directory. Empty disables. Per-agent `image_save_dir` overrides this. Relative paths resolve against `$HOME`. |
+| `image_save_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables. Per-agent `image_save_dir` overrides this. Relative paths resolve against `$HOME`. See agent `image_save_dir` for filename formats. |
 
 ### `[telegram.bots.<name>]`
 

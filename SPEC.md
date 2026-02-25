@@ -119,9 +119,19 @@ The user now has two (or more) parallel conversations with the same agent, each 
 
 Voice mode is session state, not config — it resets on session reset.
 
-### Image Persistence
+### Media Persistence
 
-When `image_save_dir` is configured (global or per-agent), received images are saved to disk with a timestamped filename (`YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`). The saved path is injected into the user message text as `[Image saved to: /path/to/file.jpg]` so the agent can reference, copy, or process the file. Saving is non-fatal — errors are logged as warnings and the image is still sent to the API as usual.
+When `image_save_dir` is configured (global or per-agent), received media files are saved to disk:
+- **Images:** `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext` (jpg, png, gif, webp)
+- **Videos:** `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext` (mp4, mov, webm, mkv, avi)
+- **Video notes:** `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4` (circular video messages)
+- **Documents:** `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext` (pdf, xlsx, docx, etc.)
+
+The saved path is injected into the user message text as `[Image saved to: /path/to/file]`, `[Video saved to: /path/to/file]`, or `[Document saved to: /path/to/file]` so the agent can reference, copy, or process the file.
+
+**Size limits:** Telegram Bot API has a 20MB download limit. Files exceeding this show `[Video too large to download (N MB)]` or `[Document too large to download (N MB)]` instead of a path.
+
+Saving is non-fatal — errors are logged as warnings. Images are still sent to the API for vision processing; videos and documents are saved only (no API processing).
 
 ### Message Metadata
 
@@ -889,10 +899,10 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Tool call errors logged as WARNING in event log
 - Tool call visibility gating — `show_tool_calls` config (global + per-agent) controls whether tool call messages appear in Telegram. Default true (current behavior). Set false for user-facing agents where tool visibility is confusing
 - Log privacy — `messages_in_log` config (global `[logging]` + per-agent) controls whether user message content appears in the event log. Default false (privacy-first). When false, messages log at DEBUG with no content; when true, messages log at INFO with content truncated to 100 chars
+- Video and document support — received videos, video notes, and non-image documents are saved to `image_save_dir` with injected path markers. 20MB size limit with graceful fallback for oversized files.
 
 ### 🔶 Phase 2 — Next
 
-- **File attachments** — receive non-image files via Telegram (sending works, receiving needs testing/implementation)
 - **Streaming** — SSE streaming for API responses. Better UX, eliminates timeout risk on long thinking turns. Low priority.
 
 ### 🔷 Enhancement — Later
