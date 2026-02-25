@@ -254,6 +254,7 @@ type Config struct {
 	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
 	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
 	SkipSecurityChecks bool               `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
+	DefinedKeys        map[string]bool    `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
 }
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -406,6 +407,12 @@ func Load(path string) (*Config, error) {
 
 	// Check for unknown config keys and warn about them
 	checkUnknownKeys(path, md)
+
+	// Record which keys were explicitly set in the TOML file.
+	cfg.DefinedKeys = make(map[string]bool)
+	for _, key := range md.Keys() {
+		cfg.DefinedKeys[strings.Join(key, ".")] = true
+	}
 
 	// Populate [defaults] section with hardcoded fallbacks
 	if cfg.Defaults.Model == "" {

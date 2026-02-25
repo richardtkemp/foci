@@ -297,6 +297,65 @@ func TestFormatConfigGrouped(t *testing.T) {
 	}
 }
 
+func TestFormatConfigGroupedAnnotations(t *testing.T) {
+	cfg, _ := testConfig()
+	// Set defaults as Load() would.
+	cfg.Defaults = DefaultsConfig{
+		Model:             "claude-haiku-4-5",
+		HeartbeatInterval: "45m",
+		MaxToolLoops:      25,
+		MaxOutputTokens:   8192,
+	}
+	// Agent overrides model from the default.
+	agent := AgentConfig{
+		ID:                "test-agent",
+		Model:             "claude-sonnet-4-6",
+		Workspace:         "/home/user/workspace",
+		HeartbeatInterval: "45m",
+		MaxToolLoops:      25,
+		MaxOutputTokens:   8192,
+	}
+	cfg.Agents = []AgentConfig{agent}
+
+	// Simulate TOML metadata: model is explicitly set, heartbeat is not (hardcoded default).
+	cfg.DefinedKeys = map[string]bool{
+		"defaults":                    true,
+		"defaults.model":              true,
+		"defaults.max_tool_loops":     true,
+		"defaults.max_output_tokens":  true,
+		"telegram":                    true,
+		"telegram.bot_token":          true,
+		"telegram.allowed_users":      true,
+		"sessions":                    true,
+		"sessions.dir":                true,
+		"logging":                     true,
+		"logging.level":               true,
+		"http":                        true,
+		"http.port":                   true,
+	}
+
+	tables := FormatConfigGrouped(cfg, agent)
+	if len(tables) < 1 {
+		t.Fatal("expected at least 1 table")
+	}
+	global := tables[0]
+
+	// defaults.model is explicitly set but overridden by agent → "(overridden)"
+	if !strings.Contains(global, "claude-haiku-4-5 (overridden)") {
+		t.Errorf("expected model to show (overridden):\n%s", global)
+	}
+
+	// defaults.heartbeat_interval is NOT in DefinedKeys → "(default)"
+	if !strings.Contains(global, "45m (default)") {
+		t.Errorf("expected heartbeat_interval to show (default):\n%s", global)
+	}
+
+	// defaults.max_tool_loops is set and NOT overridden → no annotation
+	if strings.Contains(global, "25 (overridden)") || strings.Contains(global, "25 (default)") {
+		t.Errorf("max_tool_loops should have no annotation:\n%s", global)
+	}
+}
+
 func TestRedactString(t *testing.T) {
 	if redactString("secret") != "***" {
 		t.Error("non-empty string should be redacted")
