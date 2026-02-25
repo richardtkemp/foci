@@ -47,6 +47,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if agent.ImageSaveDir != "" {
 		writeField(&b, "image_save_dir", agent.ImageSaveDir)
 	}
+	if len(agent.AllowedUsers) > 0 {
+		writeField(&b, "allowed_users", agent.AllowedUsers)
+	}
 
 	// [telegram]
 	b.WriteString("\n[telegram]\n")
@@ -357,6 +360,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if agent.ImageSaveDir == "" {
 		opts = append(opts, availableOption{"agent", "image_save_dir", "\"\"", "save received images to this directory"})
+	}
+	if len(agent.AllowedUsers) == 0 {
+		opts = append(opts, availableOption{"agent", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
 	}
 
 	// Sessions fields

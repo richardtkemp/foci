@@ -40,6 +40,7 @@ type AgentConfig struct {
 	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
 	ShowToolCalls       *bool             `toml:"show_tool_calls"`       // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
 	ImageSaveDir        string            `toml:"image_save_dir"`        // save received images to this directory (empty = disabled)
+	AllowedUsers        []string          `toml:"allowed_users"`         // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
 }
 
 type AnthropicConfig struct {

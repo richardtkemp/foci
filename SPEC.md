@@ -70,10 +70,16 @@ An agent can have multiple Telegram bots assigned — one primary, the rest seco
 id = "clutch"
 telegram_bot = "primary"
 multiball_bots = ["clutchling", "clutchling2"]  # per-agent pool
+allowed_users = ["5970082313", "1234567"]       # only these users (overrides global)
+
+[[agents]]
+id = "research"
+telegram_bot = "secondary"
+# no allowed_users — falls back to global [telegram] allowed_users
 
 [telegram]
-allowed_users = ["5970082313"]
-multiball_bots = ["spare1", "spare2"]  # shared pool (fallback for any agent)
+allowed_users = ["5970082313"]                   # global default
+multiball_bots = ["spare1", "spare2"]            # shared pool (fallback for any agent)
 ```
 
 **Acquisition priority:** per-agent pool first, shared pool as fallback. Released bots return to whichever pool they came from.
