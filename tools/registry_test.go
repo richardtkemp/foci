@@ -118,6 +118,9 @@ func TestStrictToolLimit(t *testing.T) {
 
 	// Exhaustive list of tools with Strict: true.
 	// If you add Strict to a new tool, add it here.
+	// Note: strict tools share an optional-params budget (24 total across
+	// all strict tools). Tools with many optional params (tmux, todo) are
+	// intentionally excluded to stay under the limit.
 	strictTools := []string{
 		"bitwarden_search",
 		"bitwarden_unlock",
@@ -129,8 +132,6 @@ func TestStrictToolLimit(t *testing.T) {
 		"send_telegram",
 		"send_to_session",
 		"spawn",
-		"tmux",
-		"todo",
 		"write",
 	}
 
