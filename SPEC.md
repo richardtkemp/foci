@@ -647,7 +647,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/cost [today|session]` - total API cost from api.jsonl, grouped by session. Default: today.
 
 **Context:**
-- `/context` - character count breakdown of the full prompt. Shows each section separately: system prompt (per character file: IDENTITY.md, SOUL.md, etc.), tools schema, conversation history (user/assistant/tool messages), total. Helps diagnose what's eating context and whether cache is being used efficiently.
+- `/context` - full context window breakdown. Shows: total tokens vs model max with percentage and compaction threshold; system prompt section-by-section (each workspace file, environment block, skills block) with character counts; conversation breakdown by role (user, assistant, tool results) with message counts; last API call token details (input, cache_read, cache_write, output).
 
 **Sessions:**
 - `/sessions` or `/sessions list` — list all per-chat sessions for this agent. Shows chat ID, username, message count, last active time, and which is the default (★).

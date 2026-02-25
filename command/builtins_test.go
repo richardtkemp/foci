@@ -802,22 +802,39 @@ func TestManaCommandDescription(t *testing.T) {
 	}
 }
 
+func testContextInfo() ContextInfo {
+	return ContextInfo{
+		SessionKey:       "agent:main:main",
+		Model:            "claude-sonnet-4-5",
+		CompactionThresh: 0.8,
+		ContextLimit:     200000,
+		SystemSections: []SystemSection{
+			{Name: "IDENTITY.md", Chars: 2000},
+			{Name: "SOUL.md", Chars: 4000},
+			{Name: "MEMORY.md", Chars: 3000},
+		},
+		EnvironmentChars: 1200,
+		SkillsChars:      800,
+		Messages: MessageBreakdown{
+			UserChars:       8000,
+			AssistantChars:  12000,
+			ToolResultChars: 6000,
+			UserCount:       5,
+			AssistantCount:  5,
+		},
+	}
+}
+
 func TestContextCommand(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "agent:main:main", Input: 50000, CacheRead: 30000, CacheWrite: 10000},
-		{Timestamp: now.Add(time.Minute), Session: "agent:main:main", Input: 60000, CacheRead: 40000, CacheWrite: 5000},
+		{Timestamp: now.Add(time.Minute), Session: "agent:main:main", Input: 60000, CacheRead: 40000, CacheWrite: 5000, Output: 1500},
 		{Timestamp: now, Session: "other:session", Input: 100000, CacheRead: 0, CacheWrite: 0},
 	})
 
-	cmd := NewContextCommand(path, func() ContextInfo {
-		return ContextInfo{
-			SessionKey:       "agent:main:main",
-			Model:            "claude-sonnet-4-5",
-			CompactionThresh: 0.8,
-			ContextLimit:     200000,
-		}
-	})
+	info := testContextInfo()
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
 
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -825,16 +842,30 @@ func TestContextCommand(t *testing.T) {
 	}
 
 	checks := []string{
-		"claude-sonnet-4-5",
-		"105000",       // 60000 + 40000 + 5000 = 105000 tokens
-		"200000",       // context limit
-		"52.5%",        // 105000 / 200000 = 52.5%
-		"input: 60000", // last input
-		"cache_read: 40000",
-		"cache_write: 5000",
-		"80%",                          // compaction threshold
-		"160000",                       // threshold tokens (200000 * 0.8)
-		"55000 tokens until threshold", // 160000 - 105000
+		"105,000",           // total tokens (60000 + 40000 + 5000)
+		"200,000",           // context limit
+		"52.5%",             // 105000 / 200000
+		"160,000",           // threshold tokens (200000 * 0.8)
+		"80%",               // compaction threshold
+		"55,000 tokens until compaction",
+		// System prompt sections
+		"System prompt:",
+		"IDENTITY.md",
+		"SOUL.md",
+		"MEMORY.md",
+		"Environment",
+		"Skills",
+		// Conversation
+		"Conversation:",
+		"User messages",
+		"Assistant",
+		"Tool results",
+		// Last API call
+		"input:",
+		"cache_read:",
+		"cache_write:",
+		"output:",
+		"1,500", // output tokens
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
@@ -849,14 +880,10 @@ func TestContextCommandAtThreshold(t *testing.T) {
 		{Timestamp: now, Session: "agent:main:main", Input: 150000, CacheRead: 20000, CacheWrite: 0},
 	})
 
-	cmd := NewContextCommand(path, func() ContextInfo {
-		return ContextInfo{
-			SessionKey:       "agent:main:main",
-			Model:            "claude-haiku-4-5",
-			CompactionThresh: 0.8,
-			ContextLimit:     200000,
-		}
-	})
+	info := testContextInfo()
+	info.CompactionThresh = 0.8
+	info.ContextLimit = 200000
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
 
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -872,14 +899,8 @@ func TestContextCommandAtThreshold(t *testing.T) {
 func TestContextCommandNoApiCalls(t *testing.T) {
 	path := writeAPILog(t, nil)
 
-	cmd := NewContextCommand(path, func() ContextInfo {
-		return ContextInfo{
-			SessionKey:       "agent:main:main",
-			Model:            "claude-haiku-4-5",
-			CompactionThresh: 0.8,
-			ContextLimit:     200000,
-		}
-	})
+	info := testContextInfo()
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
 
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -897,14 +918,8 @@ func TestContextCommandOtherSession(t *testing.T) {
 		{Timestamp: now, Session: "other:session", Input: 50000, CacheRead: 0, CacheWrite: 0},
 	})
 
-	cmd := NewContextCommand(path, func() ContextInfo {
-		return ContextInfo{
-			SessionKey:       "agent:main:main",
-			Model:            "claude-haiku-4-5",
-			CompactionThresh: 0.8,
-			ContextLimit:     200000,
-		}
-	})
+	info := testContextInfo()
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
 
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -923,20 +938,46 @@ func TestContextCommandCustomThreshold(t *testing.T) {
 		{Timestamp: now, Session: "agent:main:main", Input: 100000, CacheRead: 0, CacheWrite: 0},
 	})
 
-	cmd := NewContextCommand(path, func() ContextInfo {
-		return ContextInfo{
-			SessionKey:       "agent:main:main",
-			Model:            "claude-sonnet-4-5",
-			CompactionThresh: 0.5,
-			ContextLimit:     200000,
-		}
-	})
+	info := testContextInfo()
+	info.Model = "claude-sonnet-4-5"
+	info.CompactionThresh = 0.5
+	info.ContextLimit = 200000
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
 
 	result, _ := cmd.Execute(context.Background(), "")
 
 	// 100000 tokens is 50%, at threshold
 	if !strings.Contains(result, "at/above threshold") {
 		t.Errorf("expected 'at/above threshold' with 50%% threshold:\n%s", result)
+	}
+}
+
+func TestContextCommandNoSkillsOrEnv(t *testing.T) {
+	now := time.Now().UTC()
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: "agent:main:main", Input: 10000, CacheRead: 5000, CacheWrite: 1000},
+	})
+
+	info := testContextInfo()
+	info.EnvironmentChars = 0
+	info.SkillsChars = 0
+	info.Messages.ToolResultChars = 0
+	cmd := NewContextCommand(path, func() ContextInfo { return info })
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Environment and Skills lines should not appear
+	if strings.Contains(result, "Environment") {
+		t.Errorf("should not show Environment when 0 chars:\n%s", result)
+	}
+	if strings.Contains(result, "Skills") {
+		t.Errorf("should not show Skills when 0 chars:\n%s", result)
+	}
+	if strings.Contains(result, "Tool results") {
+		t.Errorf("should not show Tool results when 0 chars:\n%s", result)
 	}
 }
 

@@ -314,3 +314,33 @@ func TestCheckSizes(t *testing.T) {
 		t.Errorf("expected 0 warnings with zero thresholds, got %d", len(warnings))
 	}
 }
+
+func TestSectionSizes(t *testing.T) {
+	dir := t.TempDir()
+
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644) // 10 chars
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)       // 8 chars
+	// COHERENCE.md missing — should be skipped
+
+	b := NewBootstrap(dir, nil) // default file order
+	sizes := b.SectionSizes()
+
+	if len(sizes) != 2 {
+		t.Fatalf("len = %d, want 2", len(sizes))
+	}
+	if sizes[0].Name != "IDENTITY.md" || sizes[0].Chars != 10 {
+		t.Errorf("sizes[0] = %+v, want {IDENTITY.md, 10}", sizes[0])
+	}
+	if sizes[1].Name != "SOUL.md" || sizes[1].Chars != 8 {
+		t.Errorf("sizes[1] = %+v, want {SOUL.md, 8}", sizes[1])
+	}
+}
+
+func TestSectionSizesEmpty(t *testing.T) {
+	dir := t.TempDir()
+	b := NewBootstrap(dir, nil)
+	sizes := b.SectionSizes()
+	if len(sizes) != 0 {
+		t.Errorf("expected empty sizes, got %d", len(sizes))
+	}
+}
