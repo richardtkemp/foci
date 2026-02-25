@@ -52,7 +52,7 @@ func testConfig() (*Config, AgentConfig) {
 			WarningWindowDuration: "5m",
 		},
 		Tools: ToolsConfig{
-			MaxResultChars:          5000,
+			MaxResultChars:          15000,
 			TempDir:                 "/tmp/clod-tool-results",
 			TmuxCols:                300,
 			TmuxRows:                30,
