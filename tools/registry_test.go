@@ -77,10 +77,63 @@ func TestRegistryToolDefs(t *testing.T) {
 		t.Errorf("Description = %q", defs[0].Description)
 	}
 
-	// InputSchema should be valid JSON
+	// InputSchema should be valid JSON with additionalProperties injected
 	var schema map[string]interface{}
 	if err := json.Unmarshal(defs[0].InputSchema, &schema); err != nil {
 		t.Errorf("InputSchema not valid JSON: %v", err)
+	}
+	if ap, ok := schema["additionalProperties"]; !ok {
+		t.Error("additionalProperties not injected into schema")
+	} else if ap != false {
+		t.Errorf("additionalProperties = %v, want false", ap)
+	}
+	if !defs[0].Strict {
+		t.Error("Strict should be true")
+	}
+}
+
+func TestEnsureAdditionalPropertiesFalse(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool // whether additionalProperties should be false
+	}{
+		{
+			"injects when missing",
+			`{"type":"object","properties":{"a":{"type":"string"}}}`,
+			true,
+		},
+		{
+			"preserves existing",
+			`{"type":"object","additionalProperties":{"type":"string"}}`,
+			false, // keeps the existing value
+		},
+		{
+			"invalid JSON unchanged",
+			`not json`,
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := ensureAdditionalPropertiesFalse(json.RawMessage(tt.input))
+			var obj map[string]interface{}
+			if err := json.Unmarshal(out, &obj); err != nil {
+				if tt.want {
+					t.Fatalf("result not valid JSON: %v", err)
+				}
+				return
+			}
+			ap, exists := obj["additionalProperties"]
+			if tt.want {
+				if !exists {
+					t.Fatal("additionalProperties not set")
+				}
+				if ap != false {
+					t.Errorf("additionalProperties = %v, want false", ap)
+				}
+			}
+		})
 	}
 }
 
