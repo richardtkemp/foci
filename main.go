@@ -49,7 +49,6 @@ type agentInstance struct {
 	registry          *tools.Registry
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
-	heartbeat         *agent.Heartbeat
 	agentCfg          config.AgentConfig
 	tmuxClearAll      func() // clears tmux tool state (watches, owned sessions)
 }
@@ -610,7 +609,7 @@ func main() {
 		}
 	}
 
-	// Intercept SIGINT/SIGTERM before starting bots or heartbeats.
+	// Intercept SIGINT/SIGTERM before starting bots.
 	// Must be registered before any goroutine that could trigger a signal
 	// (e.g. /restart via Telegram), otherwise Go's default handler
 	// terminates the process with no graceful shutdown.
@@ -640,11 +639,6 @@ func main() {
 				bot.SendStartupNotification(id)
 			}
 		}
-	}
-
-	// Start all heartbeats
-	for _, id := range agentOrder {
-		agents[id].heartbeat.Start(ctx)
 	}
 
 	// ========== HTTP server ==========
@@ -742,7 +736,7 @@ func main() {
 					log.Errorf("http", "async send error: %v", err)
 					return
 				}
-				inst.heartbeat.Reset()
+	
 				if resp != "" {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
 						if err := bot.SendText(resp); err != nil {
@@ -763,7 +757,6 @@ func main() {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		inst.heartbeat.Reset()
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
 			log.Errorf("http", "encode response: %v", err)
@@ -915,7 +908,7 @@ func main() {
 					log.Errorf("wake", "async error: %v", err)
 					return
 				}
-				inst.heartbeat.Reset()
+	
 				if resp != "" && !silent {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
 						if err := bot.SendText(resp); err != nil {
@@ -936,8 +929,6 @@ func main() {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-
-		inst.heartbeat.Reset()
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
@@ -1004,11 +995,6 @@ func main() {
 
 	log.Infof("main", "shutting down...")
 
-	// Stop all heartbeats first — prevents new heartbeat-triggered turns
-	for _, id := range agentOrder {
-		agents[id].heartbeat.Stop()
-	}
-
 	// Close HTTP server — prevents new HTTP-triggered turns
 	httpMu.Lock()
 	if httpServer != nil {
@@ -1018,7 +1004,7 @@ func main() {
 
 	// Wait for in-flight agent turns to complete naturally.
 	// The turn lock prevents new turns from starting on sessions that are
-	// already processing. With heartbeats stopped and HTTP closed, no new
+	// already processing. With HTTP closed, no new
 	// turns will be initiated. We defer cancel() until AFTER this loop so
 	// that in-flight turns (including exec subprocesses) aren't killed.
 	shutdownTimeout, _ := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout)
@@ -2133,15 +2119,6 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 	}
 
-	// Per-agent heartbeat — uses a lazy session key resolver
-	interval, err := time.ParseDuration(acfg.HeartbeatInterval)
-	if err != nil {
-		log.Warnf("main", "agent %q: invalid heartbeat_interval %q, using default 45m", acfg.ID, acfg.HeartbeatInterval)
-		interval = 45 * time.Minute
-	}
-	hb := agent.NewHeartbeat(ag, "", interval)
-	hb.SessionKeyFn = defaultSessionKey
-
 	// Wire the default session key function after bot creation.
 	// Must be deferred because primaryBot may not exist yet.
 	defer func() {
@@ -2158,7 +2135,6 @@ func setupAgent(p setupParams) *agentInstance {
 		registry:          registry,
 		bootstrap:         bootstrap,
 		defaultSessionKey: defaultSessionKey,
-		heartbeat:         hb,
 		agentCfg:          acfg,
 		tmuxClearAll:      tmuxClearAll,
 	}

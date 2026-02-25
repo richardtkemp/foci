@@ -19,7 +19,7 @@ func TestLoadFullConfig(t *testing.T) {
 id = "main"
 model = "claude-haiku-4-5"
 workspace = "/tmp/workspace"
-heartbeat_interval = "30m"
+
 
 [anthropic]
 token = "sk-ant-oat01-test"
@@ -60,9 +60,6 @@ api_file = "/tmp/api.jsonl"
 	}
 	if cfg.Agent.Workspace != "/tmp/workspace" {
 		t.Errorf("Agent.Workspace = %q", cfg.Agent.Workspace)
-	}
-	if cfg.Agent.HeartbeatInterval != "30m" {
-		t.Errorf("Agent.HeartbeatInterval = %q, want %q", cfg.Agent.HeartbeatInterval, "30m")
 	}
 	if cfg.Anthropic.Token != "sk-ant-oat01-test" {
 		t.Errorf("Anthropic.Token = %q", cfg.Anthropic.Token)
@@ -123,9 +120,6 @@ token = "test-token"
 
 	if cfg.Agent.Model != "claude-haiku-4-5" {
 		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "claude-haiku-4-5")
-	}
-	if cfg.Agent.HeartbeatInterval != "45m" {
-		t.Errorf("default HeartbeatInterval = %q, want %q", cfg.Agent.HeartbeatInterval, "45m")
 	}
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
@@ -264,7 +258,7 @@ func TestLoadMultiAgent(t *testing.T) {
 id = "clutch"
 model = "claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
-heartbeat_interval = "30m"
+
 telegram_bot = "primary"
 multiball_bots = ["secondary"]
 
@@ -300,9 +294,6 @@ scout = { token_secret = "telegram.scout" }
 	if cfg.Agents[0].Model != "claude-sonnet-4-6" {
 		t.Errorf("Agents[0].Model = %q", cfg.Agents[0].Model)
 	}
-	if cfg.Agents[0].HeartbeatInterval != "30m" {
-		t.Errorf("Agents[0].HeartbeatInterval = %q", cfg.Agents[0].HeartbeatInterval)
-	}
 	if cfg.Agents[0].TelegramBot != "primary" {
 		t.Errorf("Agents[0].TelegramBot = %q", cfg.Agents[0].TelegramBot)
 	}
@@ -316,9 +307,6 @@ scout = { token_secret = "telegram.scout" }
 	}
 	if cfg.Agents[1].Model != "claude-haiku-4-5" {
 		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
-	}
-	if cfg.Agents[1].HeartbeatInterval != "45m" {
-		t.Errorf("Agents[1].HeartbeatInterval = %q, want default", cfg.Agents[1].HeartbeatInterval)
 	}
 	if cfg.Agents[1].TelegramBot != "scout" {
 		t.Errorf("Agents[1].TelegramBot = %q", cfg.Agents[1].TelegramBot)
@@ -833,20 +821,6 @@ func TestValidateCacheStrategy(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid") {
 		t.Errorf("error = %q, want mention of invalid", err.Error())
-	}
-}
-
-func TestValidateHeartbeatInterval(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
-	os.WriteFile(path, []byte("[agent]\nid = \"test\"\nheartbeat_interval = \"not-a-duration\""), 0644)
-
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for invalid heartbeat_interval")
-	}
-	if !strings.Contains(err.Error(), "heartbeat_interval") {
-		t.Errorf("error = %q, want mention of heartbeat_interval", err.Error())
 	}
 }
 

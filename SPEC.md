@@ -20,7 +20,7 @@ Format: `agent:AGENTID:TYPE[:BRANCHID]`
 - `agent:main:subagent:research-task` — sub-agent branch
 - `agent:main:multiball:mb-1709123456` — multiball fork
 
-Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what heartbeats, cron (`clod send`/`clod branch`), and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
+Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`clod send`/`clod branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
 
 The 4th segment (branch ID) is optional. Branch sessions inherit the parent's message prefix for cache sharing.
 
@@ -193,11 +193,11 @@ spawn(prompt="Research this topic thoroughly", context="clone_current")
 The agent can defer thoughts for later via a `memory_remind` tool:
 
 ```
-memory_remind("Look into whether FTS5 supports phrase boosting", "next_heartbeat")
+memory_remind("Look into whether FTS5 supports phrase boosting", "2h")
 memory_remind("Ask Dick about the Greece decision", "tomorrow")
 ```
 
-Reminders surface as injected context at the specified time (next heartbeat, next session, specific date). Stored in SQLite, scoped per-agent via `agent_id` column. Lightweight — not a full task system, just "future me should think about this."
+Reminders surface as injected context at the specified time (next session, specific date, or after a delay). Stored in SQLite, scoped per-agent via `agent_id` column. Lightweight — not a full task system, just "future me should think about this."
 
 ### Tool System
 
@@ -212,7 +212,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history
-- `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
+- `memory_remind` — defer a thought for later (delay, tomorrow, specific date)
 - `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
 - `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
@@ -454,15 +454,6 @@ session_reset_prompt = ""                # path to reset prompt file (empty = di
 
 All parameters have sensible defaults. Customize only what you need. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
-### Heartbeat
-
-A timer that fires when the session has been idle for a configurable duration.
-
-- Injects a heartbeat message into the session
-- Agent processes it like any other turn (reads HEARTBEAT.md, decides what to do)
-- If agent responds with `HEARTBEAT_OK`, no action taken
-- Configurable interval (default: 45 minutes)
-
 ### Scheduled Wakes
 
 **HTTP endpoint (for cron jobs):**
@@ -485,7 +476,7 @@ System crontab can trigger `/wake` endpoint for external scheduling. For agent-i
 
 Both `POST /send` and `POST /wake` accept an optional `if_active` field (Go duration string, e.g. `"8h"`). When set, the request is silently skipped (HTTP 200 with `"skipped: no recent user activity"`) if no real Telegram user has messaged the agent within the window.
 
-"Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`clod send`/`clod branch`), heartbeats, async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a heartbeat send cannot reset the activity timer.
+"Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`clod send`/`clod branch`), async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a cron send cannot reset the activity timer.
 
 The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
@@ -773,7 +764,6 @@ Single TOML file. Flat, commented, no deep nesting.
 id = "main"
 model = "claude-haiku-4-5"
 workspace = "/home/rich/git/openclaw/workspace"
-heartbeat_interval = "45m"
 
 [anthropic]
 token = "sk-ant-oat01-..."
@@ -852,7 +842,6 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, send_to_session, tmux (watch/unwatch), spawn (none/character_only/clone_current), schedule_wake, tts, todo
 - Workspace bootstrap (markdown files → system prompt, configurable file order)
 - Skills framework (YAML frontmatter, command dispatch, script execution)
-- Heartbeat (configurable interval)
 - Compaction (threshold-based, configurable parameters, optional Telegram notification)
 - FTS5 memory search (memory files + conversation history, weighted)
 - TOML config (single file + secrets.toml)
@@ -890,7 +879,6 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 ### 🔷 Enhancement — Later
 
 - Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
-- Per-session heartbeat configuration — different session types get different heartbeats. Main: general idle heartbeat (reads heartbeat.md). Fork/multiball: cache-aware heartbeat that fires N minutes before cache TTL expires ("Cache going cold, continue or wrap up?"). Subagents: no heartbeat. Configurable per session type in TOML.
 - Telegram MarkdownV2/HTML rendering — upgrade from basic Markdown to MarkdownV2 or HTML for better formatting fidelity.
 - Memory coverage tracking — SQLite log of memory writes with session_key, msg_id_start, msg_id_end, memory_type, file_path. No content duplication (content lives in messages table). Enables auditing what's been captured vs what's uncovered: join messages against memory_log to find gaps. Slash command `/memories` to show recent writes and coverage stats.
 - Signal/Discord/other channels

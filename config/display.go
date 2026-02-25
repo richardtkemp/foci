@@ -28,7 +28,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("agent", "id", agent.ID)
 	add("agent", "model", agent.Model)
 	add("agent", "workspace", agent.Workspace)
-	add("agent", "heartbeat_interval", agent.HeartbeatInterval)
+
 	if len(agent.SystemFiles) > 0 {
 		add("agent", "system_files", agent.SystemFiles)
 	}
@@ -69,7 +69,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 
 	// defaults
 	add("defaults", "model", cfg.Defaults.Model)
-	add("defaults", "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
+
 	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
 	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
 	if cfg.Defaults.Effort != "" {
@@ -304,7 +304,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 
 	// defaults — compare with agent values to detect overrides.
 	addDefault("model", cfg.Defaults.Model, agent.Model != cfg.Defaults.Model)
-	addDefault("heartbeat_interval", cfg.Defaults.HeartbeatInterval, agent.HeartbeatInterval != cfg.Defaults.HeartbeatInterval)
+
 	addDefault("max_tool_loops", cfg.Defaults.MaxToolLoops, agent.MaxToolLoops != cfg.Defaults.MaxToolLoops)
 	addDefault("max_output_tokens", cfg.Defaults.MaxOutputTokens, agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens)
 	if cfg.Defaults.Effort != "" {
@@ -477,7 +477,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		addAgent("id", agent.ID)
 		addAgent("model", agent.Model)
 		addAgent("workspace", agent.Workspace)
-		addAgent("heartbeat_interval", agent.HeartbeatInterval)
+
 		if len(agent.SystemFiles) > 0 {
 			addAgent("system_files", agent.SystemFiles)
 		}
