@@ -528,6 +528,84 @@ func NewConfigCommand(configFn func(args string) (string, error)) *Command {
 	}
 }
 
+// PromptInfo describes one configured prompt path/value.
+type PromptInfo struct {
+	Label  string // e.g. "compaction_summary"
+	Path   string // file path, or "" if inline/default
+	Inline string // inline value (for handoff_msg)
+	Exists bool   // whether the file exists on disk
+}
+
+// PromptFile describes a prompt file found on disk.
+type PromptFile struct {
+	Dir        string // parent directory
+	Name       string // filename
+	Configured bool   // true if referenced by config
+}
+
+// PromptsData holds all data for the /prompts command.
+type PromptsData struct {
+	AgentID    string
+	Prompts    []PromptInfo
+	PromptDirs []string     // directories scanned
+	Files      []PromptFile // files found on disk
+}
+
+// NewPromptsCommand returns a /prompts command showing prompt config and files.
+func NewPromptsCommand(dataFn func() PromptsData) *Command {
+	return &Command{
+		Name:        "prompts",
+		Description: "Show configured prompts and prompt files on disk",
+		Category:    "diagnostics",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			data := dataFn()
+			var sb strings.Builder
+
+			// Configured prompts
+			fmt.Fprintf(&sb, "Configured prompts (agent: %s):\n", data.AgentID)
+
+			maxLabel := 0
+			for _, p := range data.Prompts {
+				if len(p.Label) > maxLabel {
+					maxLabel = len(p.Label)
+				}
+			}
+			for _, p := range data.Prompts {
+				if p.Inline != "" {
+					fmt.Fprintf(&sb, "  %-*s  [inline: %d chars]\n", maxLabel, p.Label, len(p.Inline))
+				} else if p.Path == "" {
+					fmt.Fprintf(&sb, "  %-*s  [default]\n", maxLabel, p.Label)
+				} else if p.Exists {
+					fmt.Fprintf(&sb, "  %-*s  %s  ✓\n", maxLabel, p.Label, p.Path)
+				} else {
+					fmt.Fprintf(&sb, "  %-*s  %s  ✗ (not found)\n", maxLabel, p.Label, p.Path)
+				}
+			}
+
+			// Files on disk
+			if len(data.Files) > 0 {
+				sb.WriteString("\nPrompt files on disk:\n")
+				currentDir := ""
+				for _, f := range data.Files {
+					if f.Dir != currentDir {
+						currentDir = f.Dir
+						fmt.Fprintf(&sb, "  %s/\n", f.Dir)
+					}
+					tag := "[cron/other]"
+					if f.Configured {
+						tag = "[configured]"
+					}
+					fmt.Fprintf(&sb, "    %-36s %s\n", f.Name, tag)
+				}
+			} else if len(data.PromptDirs) > 0 {
+				sb.WriteString("\nNo prompt files found on disk.\n")
+			}
+
+			return strings.TrimRight(sb.String(), "\n"), nil
+		},
+	}
+}
+
 // NewLogCommand returns a /log command showing recent event log lines.
 func NewLogCommand(eventLogPath string) *Command {
 	return &Command{

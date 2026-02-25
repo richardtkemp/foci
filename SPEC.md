@@ -646,6 +646,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/tools` - list registered tools with enabled/disabled status
 - `/config` - dump full running config for this agent (secrets redacted). `/config toml` for raw TOML output. `/config available` to discover unset options.
 - `/ping` - return "pong" with timestamp. Simplest possible liveness check.
+- `/prompts` - show configured prompt paths (compaction summary, session reset, handoff message, fork prompt) with existence checks, plus prompt files found on disk in workspace and shared directories.
 
 **Logs:**
 - `/log [n]` - last `n` lines from clod.log (default 20)

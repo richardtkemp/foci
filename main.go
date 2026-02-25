@@ -1334,6 +1334,62 @@ func setupAgent(p setupParams) *agentInstance {
 			return config.FormatConfig(p.cfg, acfg), nil
 		}
 	}))
+	cmds.Register(command.NewPromptsCommand(func() command.PromptsData {
+		// Configured prompts
+		var prompts []command.PromptInfo
+		prompts = append(prompts, promptInfo("compaction_summary", p.cfg.Sessions.CompactionSummaryPrompt))
+		prompts = append(prompts, promptInfo("session_reset", p.cfg.Sessions.SessionResetPrompt))
+		if p.cfg.Sessions.CompactionHandoffMsg != "" {
+			prompts = append(prompts, command.PromptInfo{
+				Label:  "handoff_msg",
+				Inline: p.cfg.Sessions.CompactionHandoffMsg,
+			})
+		} else {
+			prompts = append(prompts, command.PromptInfo{Label: "handoff_msg"})
+		}
+		prompts = append(prompts, promptInfo("fork_prompt", acfg.ForkPrompt))
+
+		// Build set of configured paths for tagging files
+		configuredPaths := make(map[string]bool)
+		for _, pi := range prompts {
+			if pi.Path != "" {
+				configuredPaths[pi.Path] = true
+			}
+		}
+
+		// Scan prompt directories
+		var promptDirs []string
+		var files []command.PromptFile
+		// Shared prompts dir (conventional location)
+		sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts")
+		// Agent workspace prompts dir
+		wsDir := filepath.Join(acfg.Workspace, "prompts")
+		for _, dir := range []string{sharedDir, wsDir} {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			promptDirs = append(promptDirs, dir)
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+					continue
+				}
+				fullPath := filepath.Join(dir, e.Name())
+				files = append(files, command.PromptFile{
+					Dir:        dir,
+					Name:       e.Name(),
+					Configured: configuredPaths[fullPath],
+				})
+			}
+		}
+
+		return command.PromptsData{
+			AgentID:    acfg.ID,
+			Prompts:    prompts,
+			PromptDirs: promptDirs,
+			Files:      files,
+		}
+	}))
 	cmds.Register(command.NewLogCommand(p.cfg.Logging.EventFile))
 	cmds.Register(command.NewErrorsCommand(p.cfg.Logging.EventFile))
 	cmds.Register(command.NewVersionCommand(command.BuildInfo{
@@ -1937,6 +1993,15 @@ func readPromptFile(path, label string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// promptInfo builds a PromptInfo for a file-path-based prompt config field.
+func promptInfo(label, path string) command.PromptInfo {
+	if path == "" {
+		return command.PromptInfo{Label: label}
+	}
+	_, err := os.Stat(path)
+	return command.PromptInfo{Label: label, Path: path, Exists: err == nil}
 }
 
 // fireResetHook sends the reset prompt to the agent before a session is cleared.
