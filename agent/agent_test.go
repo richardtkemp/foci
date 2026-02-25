@@ -2544,3 +2544,107 @@ func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 		t.Errorf("error = %q, want rate limited message", err.Error())
 	}
 }
+
+func TestCacheBustDetection(t *testing.T) {
+	callCount := 0
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		resp := &anthropic.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", callCount),
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+		}
+		if callCount == 1 {
+			// First call: high cache read to establish baseline
+			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+		} else {
+			// Second call: cache read drops to 0 — potential bust
+			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+		}
+		return resp
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var alerts []string
+	ag := &Agent{
+		Client:          client,
+		Sessions:        store,
+		Tools:           registry,
+		Bootstrap:       bootstrap,
+		Model:           "claude-haiku-4-5",
+		CacheBustDetect: true,
+		CacheBustAlert: func(session string, prevRead, curRead int) {
+			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
+		},
+	}
+
+	// First request — establishes baseline (prevCacheRead=15000)
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	// Second request — cache_read drops to 0, recent session → should alert
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d: %v", len(alerts), alerts)
+	}
+	if alerts[0] != "agent:test:main:15000→0" {
+		t.Errorf("alert = %q", alerts[0])
+	}
+}
+
+func TestCacheBustSuppressedWhenIdle(t *testing.T) {
+	callCount := 0
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		resp := &anthropic.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", callCount),
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+		}
+		if callCount == 1 {
+			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+		} else {
+			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+		}
+		return resp
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var alerts []string
+	ag := &Agent{
+		Client:                 client,
+		Sessions:               store,
+		Tools:                  registry,
+		Bootstrap:              bootstrap,
+		Model:                  "claude-haiku-4-5",
+		CacheBustDetect:        true,
+		CacheBustIdleThreshold: 1 * time.Millisecond, // very short threshold for test
+		CacheBustAlert: func(session string, prevRead, curRead int) {
+			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
+		},
+	}
+
+	// First request — establishes baseline
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	// Wait longer than the idle threshold
+	time.Sleep(5 * time.Millisecond)
+	// Second request — cache_read drops to 0, but session was idle → should NOT alert
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+
+	if len(alerts) != 0 {
+		t.Fatalf("expected 0 alerts (idle session), got %d: %v", len(alerts), alerts)
+	}
+}

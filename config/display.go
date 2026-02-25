@@ -148,6 +148,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		writeField(&b, "payload_file", cfg.Logging.PayloadFile)
 	}
 	writeField(&b, "cache_bust_detect", cfg.Logging.CacheBustDetect)
+	writeField(&b, "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
 	writeField(&b, "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
 	writeField(&b, "warning_window_duration", cfg.Logging.WarningWindowDuration)
 

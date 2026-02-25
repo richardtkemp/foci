@@ -131,6 +131,7 @@ type LoggingConfig struct {
 	FullPayload           bool   `toml:"full_payload"`            // write full API payloads to api-payload.jsonl
 	PayloadFile           string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
 	CacheBustDetect       bool   `toml:"cache_bust_detect"`       // alert when cache_read drops >50% vs previous request
+	CacheBustIdleMinutes  int    `toml:"cache_bust_idle_minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 	WarningMaxPerWindow   int    `toml:"warning_max_per_window"`  // max identical warnings per window before suppression (default 3)
 	WarningWindowDuration string `toml:"warning_window_duration"` // time window for warning dedup (default "5m")
 }
@@ -481,6 +482,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
+	}
+	if cfg.Logging.CacheBustIdleMinutes == 0 && !md.IsDefined("logging", "cache_bust_idle_minutes") {
+		cfg.Logging.CacheBustIdleMinutes = 10
 	}
 	if cfg.Logging.WarningMaxPerWindow == 0 && !md.IsDefined("logging", "warning_max_per_window") {
 		cfg.Logging.WarningMaxPerWindow = 3

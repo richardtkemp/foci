@@ -215,6 +215,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Memory.ReindexDebounce = "2s"
 	cfg.Logging.FullPayload = true
 	cfg.Logging.CacheBustDetect = true
+	cfg.Logging.CacheBustIdleMinutes = 10
 	cfg.Voice.STTEndpoint = "https://api.groq.com"
 	cfg.Voice.STTModel = "whisper-large-v3"
 	cfg.Voice.TTSProvider = "edge-tts"
