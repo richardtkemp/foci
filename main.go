@@ -1278,12 +1278,15 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		return infos
 	}))
-	cmds.Register(command.NewConfigCommand(func() string {
-		return fmt.Sprintf("[agent]\nid = %q\nmodel = %q\nworkspace = %q\n\n[sessions]\ndir = %q\n\n[memory]\ndir = %q\n\n[http]\nbind = %q\nport = %d\n\n[logging]\nlevel = %q",
-			acfg.ID, ag.Model, acfg.Workspace,
-			p.cfg.Sessions.Dir, p.cfg.Memory.Dir,
-			p.cfg.HTTP.Bind, p.cfg.HTTP.Port,
-			p.cfg.Logging.Level)
+	cmds.Register(command.NewConfigCommand(func(args string) (string, error) {
+		switch strings.TrimSpace(strings.ToLower(args)) {
+		case "toml":
+			return config.FormatConfigTOML(p.cfg, acfg), nil
+		case "available":
+			return config.FormatAvailable(p.cfg, acfg), nil
+		default:
+			return config.FormatConfig(p.cfg, acfg), nil
+		}
 	}))
 	cmds.Register(command.NewLogCommand(p.cfg.Logging.EventFile))
 	cmds.Register(command.NewErrorsCommand(p.cfg.Logging.EventFile))
