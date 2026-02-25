@@ -616,9 +616,9 @@ func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command 
 			if args == "" {
 				e := getEffort()
 				if e == "" {
-					return "Effort: (not set — using API default)", nil
+					return "Effort: not set (using API default)\nOptions: low, medium, high", nil
 				}
-				return fmt.Sprintf("Effort: %s", e), nil
+				return fmt.Sprintf("Effort: %s\nOptions: low, medium, high", e), nil
 			}
 			switch strings.ToLower(strings.TrimSpace(args)) {
 			case "low", "medium", "high":
