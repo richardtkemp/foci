@@ -55,7 +55,7 @@ func (r *Registry) ToolDefs() []anthropic.ToolDef {
 		defs = append(defs, anthropic.ToolDef{
 			Name:        t.Name,
 			Description: t.Description,
-			InputSchema: ensureAdditionalPropertiesFalse(t.Parameters),
+			InputSchema: strictifySchema(t.Parameters),
 			Strict:      true,
 		})
 	}
@@ -63,21 +63,44 @@ func (r *Registry) ToolDefs() []anthropic.ToolDef {
 	return defs
 }
 
-// ensureAdditionalPropertiesFalse injects "additionalProperties": false into
-// the root object of a JSON schema. Required when strict mode is enabled —
-// the API rejects object schemas without this field.
-func ensureAdditionalPropertiesFalse(schema json.RawMessage) json.RawMessage {
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(schema, &obj); err != nil {
+// strictifySchema recursively walks a JSON schema and injects
+// "additionalProperties": false on every object that has "properties".
+// Required for strict tool mode — the API rejects schemas where any
+// object with properties lacks this field.
+func strictifySchema(schema json.RawMessage) json.RawMessage {
+	var node interface{}
+	if err := json.Unmarshal(schema, &node); err != nil {
 		return schema
 	}
-	if _, exists := obj["additionalProperties"]; exists {
-		return schema // already set
-	}
-	obj["additionalProperties"] = json.RawMessage("false")
-	out, err := json.Marshal(obj)
+	strictifyNode(node)
+	out, err := json.Marshal(node)
 	if err != nil {
 		return schema
 	}
 	return out
+}
+
+func strictifyNode(node interface{}) {
+	obj, ok := node.(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// If this object has "properties", it's a schema object — enforce strict.
+	if _, hasProps := obj["properties"]; hasProps {
+		if _, hasAP := obj["additionalProperties"]; !hasAP {
+			obj["additionalProperties"] = false
+		}
+		// Recurse into each property's schema
+		if props, ok := obj["properties"].(map[string]interface{}); ok {
+			for _, v := range props {
+				strictifyNode(v)
+			}
+		}
+	}
+
+	// Recurse into "items" (array items schema)
+	if items, ok := obj["items"]; ok {
+		strictifyNode(items)
+	}
 }

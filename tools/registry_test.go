@@ -92,47 +92,76 @@ func TestRegistryToolDefs(t *testing.T) {
 	}
 }
 
-func TestEnsureAdditionalPropertiesFalse(t *testing.T) {
+func TestStrictifySchema(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		want  bool // whether additionalProperties should be false
+		check func(t *testing.T, obj map[string]interface{})
 	}{
 		{
-			"injects when missing",
+			"injects at root",
 			`{"type":"object","properties":{"a":{"type":"string"}}}`,
-			true,
+			func(t *testing.T, obj map[string]interface{}) {
+				if obj["additionalProperties"] != false {
+					t.Error("root additionalProperties should be false")
+				}
+			},
 		},
 		{
-			"preserves existing",
+			"preserves existing additionalProperties",
 			`{"type":"object","additionalProperties":{"type":"string"}}`,
-			false, // keeps the existing value
+			func(t *testing.T, obj map[string]interface{}) {
+				// No properties key, so should not be touched
+				if _, ok := obj["additionalProperties"].(map[string]interface{}); !ok {
+					t.Error("should preserve existing additionalProperties object")
+				}
+			},
+		},
+		{
+			"recurses into nested objects",
+			`{"type":"object","properties":{"nested":{"type":"object","properties":{"x":{"type":"string"}}}}}`,
+			func(t *testing.T, obj map[string]interface{}) {
+				if obj["additionalProperties"] != false {
+					t.Error("root additionalProperties should be false")
+				}
+				props := obj["properties"].(map[string]interface{})
+				nested := props["nested"].(map[string]interface{})
+				if nested["additionalProperties"] != false {
+					t.Error("nested additionalProperties should be false")
+				}
+			},
+		},
+		{
+			"recurses into array items",
+			`{"type":"object","properties":{"list":{"type":"array","items":{"type":"object","properties":{"v":{"type":"string"}}}}}}`,
+			func(t *testing.T, obj map[string]interface{}) {
+				props := obj["properties"].(map[string]interface{})
+				list := props["list"].(map[string]interface{})
+				items := list["items"].(map[string]interface{})
+				if items["additionalProperties"] != false {
+					t.Error("array items additionalProperties should be false")
+				}
+			},
 		},
 		{
 			"invalid JSON unchanged",
 			`not json`,
-			false,
+			func(t *testing.T, obj map[string]interface{}) {
+				// Should not panic; obj will be nil
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := ensureAdditionalPropertiesFalse(json.RawMessage(tt.input))
+			out := strictifySchema(json.RawMessage(tt.input))
 			var obj map[string]interface{}
 			if err := json.Unmarshal(out, &obj); err != nil {
-				if tt.want {
-					t.Fatalf("result not valid JSON: %v", err)
+				if tt.name == "invalid JSON unchanged" {
+					return // expected
 				}
-				return
+				t.Fatalf("result not valid JSON: %v", err)
 			}
-			ap, exists := obj["additionalProperties"]
-			if tt.want {
-				if !exists {
-					t.Fatal("additionalProperties not set")
-				}
-				if ap != false {
-					t.Errorf("additionalProperties = %v, want false", ap)
-				}
-			}
+			tt.check(t, obj)
 		})
 	}
 }
