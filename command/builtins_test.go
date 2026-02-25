@@ -689,9 +689,14 @@ func TestLogCommand(t *testing.T) {
 
 	cmd := NewLogCommand(logPath)
 
-	// Default: last 20
+	// Default: last 20, wrapped in code block
 	result, _ := cmd.Execute(context.Background(), "")
-	resultLines := strings.Split(strings.TrimSpace(result), "\n")
+	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
+		t.Errorf("result not wrapped in code block:\n%s", result)
+	}
+	// Strip code block markers and check content
+	inner := strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
+	resultLines := strings.Split(inner, "\n")
 	if len(resultLines) != 20 {
 		t.Errorf("got %d lines, want 20", len(resultLines))
 	}
@@ -701,7 +706,8 @@ func TestLogCommand(t *testing.T) {
 
 	// Custom: last 5
 	result, _ = cmd.Execute(context.Background(), "5")
-	resultLines = strings.Split(strings.TrimSpace(result), "\n")
+	inner = strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
+	resultLines = strings.Split(inner, "\n")
 	if len(resultLines) != 5 {
 		t.Errorf("got %d lines, want 5", len(resultLines))
 	}
@@ -716,7 +722,11 @@ func TestErrorsCommand(t *testing.T) {
 	cmd := NewErrorsCommand(logPath)
 	result, _ := cmd.Execute(context.Background(), "")
 
-	lines := strings.Split(strings.TrimSpace(result), "\n")
+	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
+		t.Errorf("result not wrapped in code block:\n%s", result)
+	}
+	inner := strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
+	lines := strings.Split(inner, "\n")
 	if len(lines) != 2 {
 		t.Errorf("got %d lines, want 2:\n%s", len(lines), result)
 	}

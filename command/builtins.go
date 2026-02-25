@@ -780,7 +780,11 @@ func NewLogCommand(eventLogPath string) *Command {
 					n = parsed
 				}
 			}
-			return tailFile(eventLogPath, n)
+			result, err := tailFile(eventLogPath, n)
+			if err != nil || result == "Log file not found." || result == "Log is empty." {
+				return result, err
+			}
+			return "```\n" + result + "\n```", nil
 		},
 	}
 }
@@ -798,9 +802,13 @@ func NewErrorsCommand(eventLogPath string) *Command {
 					n = parsed
 				}
 			}
-			return tailFileFiltered(eventLogPath, n, func(line string) bool {
+			result, err := tailFileFiltered(eventLogPath, n, func(line string) bool {
 				return strings.Contains(line, "ERROR") || strings.Contains(line, "WARN")
 			})
+			if err != nil || result == "Log file not found." || result == "No matching lines." {
+				return result, err
+			}
+			return "```\n" + result + "\n```", nil
 		},
 	}
 }
