@@ -218,7 +218,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	// Set optional global fields
 	cfg.Sessions.CompactionSummaryPrompt = "/tmp/summary.md"
 	cfg.Sessions.CompactionHandoffMsg = "handoff"
-	cfg.Sessions.CompactionSystemPrompt = "/tmp/sys.md"
 	cfg.Sessions.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000

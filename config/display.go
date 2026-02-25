@@ -127,9 +127,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if cfg.Sessions.CompactionHandoffMsg != "" {
 		add("sessions", "compaction_handoff_msg", cfg.Sessions.CompactionHandoffMsg)
 	}
-	if cfg.Sessions.CompactionSystemPrompt != "" {
-		add("sessions", "compaction_system_prompt", cfg.Sessions.CompactionSystemPrompt)
-	}
 	if cfg.Sessions.CompactionNotify != nil {
 		add("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
 	}
@@ -449,9 +446,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if cfg.Sessions.CompactionHandoffMsg == "" {
 		opts = append(opts, availableOption{"sessions", "compaction_handoff_msg", "\"\"", "handoff message after compaction"})
-	}
-	if cfg.Sessions.CompactionSystemPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "compaction_system_prompt", "\"\"", "extra system prompt during compaction"})
 	}
 	if cfg.Sessions.CompactionNotify == nil {
 		opts = append(opts, availableOption{"sessions", "compaction_notify", "true", "send Telegram notification on compaction"})

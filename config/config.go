@@ -95,7 +95,6 @@ type SessionsConfig struct {
 	CompactionMinMessages   int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
 	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"`     // path to summary prompt file
 	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`        // handoff message after compaction
-	CompactionSystemPrompt  string  `toml:"compaction_system_prompt"`      // path to extra system prompt file injected only during compaction
 	CompactionNotify        *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
 	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
@@ -756,9 +755,6 @@ func (c *Config) ResolveAllPaths() {
 	}
 	if c.Sessions.CompactionSummaryPrompt != "" {
 		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)
-	}
-	if c.Sessions.CompactionSystemPrompt != "" {
-		c.Sessions.CompactionSystemPrompt = ResolvePath(c.Sessions.CompactionSystemPrompt)
 	}
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {

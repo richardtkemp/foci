@@ -174,7 +174,6 @@ Session storage and compaction.
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
 | `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). Empty disables custom prompt (compactor uses a minimal fallback). |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
-| `compaction_system_prompt` | string | `""` | Path to extra system prompt file injected only during compaction (saves tokens on regular turns). Empty disables. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 | `session_reset_prompt` | string | `""` | Path to prompt file sent to the agent before session clear (`/reset` or multiball reclaim). Read at fire-time. Empty disables the reset hook. |
@@ -184,7 +183,7 @@ Session storage and compaction.
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`. `branch_orientation_prompt` is the exception: if the path is empty, a built-in default is used that varies by branch type — multiball branches are told they have direct Telegram access, while cron and spawn branches are told to use `send_to_session` instead.
+All prompt fields (`compaction_summary_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`. `branch_orientation_prompt` is the exception: if the path is empty, a built-in default is used that varies by branch type — multiball branches are told they have direct Telegram access, while cron and spawn branches are told to use `send_to_session` instead.
 
 Default `compaction_handoff_msg`:
 ```
