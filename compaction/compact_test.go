@@ -138,9 +138,12 @@ func TestCompactBasic(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
+	}
+	if summary == "" {
+		t.Error("expected non-empty summary")
 	}
 
 	// After compaction: should have 3 messages (marker + summary + handoff)
@@ -183,9 +186,12 @@ func TestCompactTooFewMessages(t *testing.T) {
 	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("hello")})
 
 	c := NewCompactor(nil, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
+	}
+	if summary != "" {
+		t.Error("expected empty summary for too-few messages")
 	}
 
 	// Messages should be unchanged
@@ -224,7 +230,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	err = c.Compact(context.Background(), sessionKey, nil, "", "")
+	_, err = c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -272,7 +278,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	err = c.Compact(context.Background(), sessionKey, nil, "", "")
+	_, err = c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -302,7 +308,7 @@ func TestCompactAPIError(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	_, err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -373,7 +379,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	err := c.Compact(context.Background(), sessionKey, nil, "custom summary prompt", "custom handoff msg")
+	_, err := c.Compact(context.Background(), sessionKey, nil, "custom summary prompt", "custom handoff msg")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -421,7 +427,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	// Empty strings should fall back to defaults
-	err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	_, err := c.Compact(context.Background(), sessionKey, nil, "", "")
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

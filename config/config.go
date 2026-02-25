@@ -46,6 +46,7 @@ type AgentConfig struct {
 	CompactionSummaryPrompt string   `toml:"compaction_summary_prompt"` // path to summary prompt file
 	CompactionHandoffMsg    string   `toml:"compaction_handoff_msg"`    // handoff message after compaction
 	CompactionNotify        *bool    `toml:"compaction_notify"`         // send Telegram notification on compaction
+	CompactionDebug         *bool    `toml:"compaction_debug"`          // send compaction summary as Telegram file
 	SessionResetPrompt      string   `toml:"session_reset_prompt"`      // path to prompt fired before session clear
 	// Per-agent skills and prompt rules (empty = use global)
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
@@ -96,6 +97,7 @@ type SessionsConfig struct {
 	CompactionNotify        *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
 	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
+	CompactionDebug         bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
 	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
 }
 

@@ -116,7 +116,7 @@ const DefaultHandoffMessage = "[Compaction complete. The conversation continues 
 // Compact summarizes a session's history and replaces it.
 // summaryPrompt is read from a file at call time; if empty, compaction uses a
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
-func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) error {
+func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) (string, error) {
 	if summaryPrompt == "" {
 		summaryPrompt = "Provide a concise summary of the conversation so far, capturing key decisions and context. This summary will replace the conversation history."
 	}
@@ -126,11 +126,11 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 
 	messages, err := c.sessions.LoadFull(sessionKey)
 	if err != nil {
-		return fmt.Errorf("load session for compaction: %w", err)
+		return "", fmt.Errorf("load session for compaction: %w", err)
 	}
 
 	if len(messages) < c.minMessages {
-		return nil // not enough to compact
+		return "", nil // not enough to compact
 	}
 
 	log.Infof("compaction", "compacting session %s (%d messages)", sessionKey, len(messages))
@@ -151,7 +151,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		Messages:  summaryMessages,
 	})
 	if err != nil {
-		return fmt.Errorf("summarize for compaction: %w", err)
+		return "", fmt.Errorf("summarize for compaction: %w", err)
 	}
 
 	summary := anthropic.TextOf(resp.Content)
@@ -187,9 +187,9 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	}
 
 	if err := c.sessions.Replace(sessionKey, compacted); err != nil {
-		return fmt.Errorf("replace session after compaction: %w", err)
+		return "", fmt.Errorf("replace session after compaction: %w", err)
 	}
 
 	log.Infof("compaction", "session %s compacted from %d messages to %d", sessionKey, len(messages), len(compacted))
-	return nil
+	return summary, nil
 }

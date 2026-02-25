@@ -427,6 +427,7 @@ compaction_min_messages = 4              # min messages before compacting
 compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)
 compaction_system_prompt = ""            # path to extra system prompt for compaction (empty = disabled)
 compaction_handoff_msg = "..."           # message after compaction
+compaction_debug = false                 # send summary as Telegram file attachment (default false)
 session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
 ```
 
