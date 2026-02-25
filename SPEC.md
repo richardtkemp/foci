@@ -208,7 +208,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `tmux` — manage tmux sessions (start, send keys, read pane output, list, kill)
 - `read` — read file contents
 - `write` — create/overwrite files
-- `edit` — find-and-replace in files
+- `edit` — find-and-replace in files (with syntax validation for .json, .toml, .go)
 - `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history

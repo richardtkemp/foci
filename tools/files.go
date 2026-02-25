@@ -144,10 +144,24 @@ func editFile(ctx context.Context, params json.RawMessage) (string, error) {
 		return "", fmt.Errorf("old_string found %d times in %s (must be unique)", count, p.Path)
 	}
 
+	// Syntax validation: check before and after
+	preErr := checkSyntax(p.Path, data)
 	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
+
+	if preErr == nil {
+		// File was valid before — reject if edit breaks it
+		if postErr := checkSyntax(p.Path, []byte(newContent)); postErr != nil {
+			return "", fmt.Errorf("edit rejected — would introduce syntax error: %v. File unchanged.", postErr)
+		}
+	}
+
 	if err := os.WriteFile(p.Path, []byte(newContent), 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
 
-	return fmt.Sprintf("Edited %s", p.Path), nil
+	msg := fmt.Sprintf("Edited %s", p.Path)
+	if preErr != nil {
+		msg += fmt.Sprintf("\nWarning: file already had syntax errors: %v", preErr)
+	}
+	return msg, nil
 }
