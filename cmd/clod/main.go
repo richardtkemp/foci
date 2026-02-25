@@ -223,7 +223,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--if-active=") {
 			flags.ifActive = args[i][len("--if-active="):]
 			consumed = true
-		} else if args[i] == "--message-text" || args[i] == "-mt" {
+		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
 				flags.messageText = args[i+1]
 				i++
@@ -232,10 +232,10 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--message-text=") {
 			flags.messageText = args[i][len("--message-text="):]
 			consumed = true
-		} else if strings.HasPrefix(args[i], "-mt=") {
-			flags.messageText = args[i][len("-mt="):]
+		} else if strings.HasPrefix(args[i], "--mt=") || strings.HasPrefix(args[i], "-mt=") {
+			flags.messageText = args[i][strings.Index(args[i], "=")+1:]
 			consumed = true
-		} else if args[i] == "--message-file" || args[i] == "-mf" {
+		} else if args[i] == "--message-file" || args[i] == "--mf" || args[i] == "-mf" {
 			if i+1 < len(args) {
 				flags.messageFile = args[i+1]
 				i++
@@ -244,8 +244,8 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--message-file=") {
 			flags.messageFile = args[i][len("--message-file="):]
 			consumed = true
-		} else if strings.HasPrefix(args[i], "-mf=") {
-			flags.messageFile = args[i][len("-mf="):]
+		} else if strings.HasPrefix(args[i], "--mf=") || strings.HasPrefix(args[i], "-mf=") {
+			flags.messageFile = args[i][strings.Index(args[i], "=")+1:]
 			consumed = true
 		}
 		if !consumed {
@@ -371,20 +371,20 @@ func cmdBranch(base string, args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "--if-active="):
 			ifActive = args[i][len("--if-active="):]
-		case (args[i] == "--message-text" || args[i] == "-mt") && i+1 < len(args):
+		case (args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt") && i+1 < len(args):
 			messageText = args[i+1]
 			i++
 		case strings.HasPrefix(args[i], "--message-text="):
 			messageText = args[i][len("--message-text="):]
-		case strings.HasPrefix(args[i], "-mt="):
-			messageText = args[i][len("-mt="):]
-		case (args[i] == "--message-file" || args[i] == "-mf") && i+1 < len(args):
+		case strings.HasPrefix(args[i], "--mt=") || strings.HasPrefix(args[i], "-mt="):
+			messageText = args[i][strings.Index(args[i], "=")+1:]
+		case (args[i] == "--message-file" || args[i] == "--mf" || args[i] == "-mf") && i+1 < len(args):
 			messageFile = args[i+1]
 			i++
 		case strings.HasPrefix(args[i], "--message-file="):
 			messageFile = args[i][len("--message-file="):]
-		case strings.HasPrefix(args[i], "-mf="):
-			messageFile = args[i][len("-mf="):]
+		case strings.HasPrefix(args[i], "--mf=") || strings.HasPrefix(args[i], "-mf="):
+			messageFile = args[i][strings.Index(args[i], "=")+1:]
 		default:
 			filtered = append(filtered, args[i])
 		}
