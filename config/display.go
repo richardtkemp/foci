@@ -263,9 +263,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 
 // FormatConfigGrouped returns per-group config tables, each wrapped in a
 // markdown code block. The first table is "Global" config (all non-agent
-// sections), followed by one table per agent. Each table is small enough
-// to fit in a single Telegram message.
-func FormatConfigGrouped(cfg *Config) []string {
+// sections), followed by one table for the given agent. Each table is small
+// enough to fit in a single Telegram message.
+func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	// Build global rows (everything except agent-specific)
 	var globalRows []configRow
 	addGlobal := func(section, key string, val interface{}) {
@@ -438,8 +438,8 @@ func FormatConfigGrouped(cfg *Config) []string {
 	var tables []string
 	tables = append(tables, "```\nGlobal\n"+formatTable(globalRows)+"\n```")
 
-	// Per-agent tables
-	for _, agent := range cfg.Agents {
+	// Current agent table
+	{
 		var agentRows []configRow
 		addAgent := func(key string, val interface{}) {
 			agentRows = append(agentRows, configRow{"agent", key, formatValue(val)})
