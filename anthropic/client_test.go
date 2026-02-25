@@ -118,13 +118,13 @@ func TestSendMessageHeaders(t *testing.T) {
 		t.Errorf("anthropic-version = %q", v)
 	}
 
-	// anthropic-beta (both prompt caching and oauth)
+	// anthropic-beta (oauth only — prompt caching is GA)
 	beta := receivedHeaders.Get("anthropic-beta")
-	if !strings.Contains(beta, "prompt-caching-2024-07-31") {
-		t.Errorf("anthropic-beta missing prompt-caching: %q", beta)
-	}
 	if !strings.Contains(beta, "oauth-2025-04-20") {
 		t.Errorf("anthropic-beta missing oauth: %q", beta)
+	}
+	if strings.Contains(beta, "prompt-caching") {
+		t.Errorf("anthropic-beta should not contain prompt-caching (GA): %q", beta)
 	}
 }
 

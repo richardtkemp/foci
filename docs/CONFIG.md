@@ -30,6 +30,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
+| `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. Empty = omit (use API default). Overridable at runtime via `/effort` command. |
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 | `show_tool_calls` | bool | `true` | Show tool call messages in Telegram. Per-agent override of global `[telegram] show_tool_calls`. Set to `false` for user-facing agents where tool visibility is confusing. |
@@ -89,6 +90,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `inject_agent_warnings` | bool | `false` | Default inject_agent_warnings setting. |
 | `max_tool_loops` | int | `25` | Default max tool iterations per turn. |
 | `max_output_tokens` | int | `8192` | Default max tokens in model response. |
+| `effort` | string | `""` | Default effort level: `"low"`, `"medium"`, `"high"`. Empty = omit. |
 | `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |
 | `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
 

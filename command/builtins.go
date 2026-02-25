@@ -605,6 +605,35 @@ func NewModelCommand(getModel func() string, setModel func(string)) *Command {
 	}
 }
 
+// NewEffortCommand returns a /effort command to show or set the effort level.
+// getEffort returns current effort; setEffort changes it (runtime only).
+func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command {
+	return &Command{
+		Name:        "effort",
+		Description: "Show or set effort level (low/medium/high)",
+		Category:    "operations",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			if args == "" {
+				e := getEffort()
+				if e == "" {
+					return "Effort: (not set — using API default)", nil
+				}
+				return fmt.Sprintf("Effort: %s", e), nil
+			}
+			switch strings.ToLower(strings.TrimSpace(args)) {
+			case "low", "medium", "high":
+				setEffort(strings.ToLower(strings.TrimSpace(args)))
+				return fmt.Sprintf("Effort set to: %s", strings.ToLower(strings.TrimSpace(args))), nil
+			case "none", "off", "":
+				setEffort("")
+				return "Effort cleared (using API default)", nil
+			default:
+				return fmt.Sprintf("Invalid effort level: %q (valid: low, medium, high)", args), nil
+			}
+		},
+	}
+}
+
 // ToolInfo holds data for a single tool in the /tools listing.
 type ToolInfo struct {
 	Name        string

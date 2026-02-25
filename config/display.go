@@ -46,6 +46,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	}
 	add("agent", "max_tool_loops", agent.MaxToolLoops)
 	add("agent", "max_output_tokens", agent.MaxOutputTokens)
+	if agent.Effort != "" {
+		add("agent", "effort", agent.Effort)
+	}
 	if agent.TTSRate != 0 {
 		add("agent", "tts_rate", agent.TTSRate)
 	}
@@ -68,6 +71,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("defaults", "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
 	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
 	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
+	if cfg.Defaults.Effort != "" {
+		add("defaults", "effort", cfg.Defaults.Effort)
+	}
 	if cfg.Defaults.DuplicateMessages {
 		add("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
 	}
@@ -424,6 +430,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if agent.ShowToolCalls == nil {
 		opts = append(opts, availableOption{"agent", "show_tool_calls", "(global)", "show tool calls in Telegram (nil = use global)"})
+	}
+	if agent.Effort == "" {
+		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
 	}
 	if agent.ImageSaveDir == "" {
 		opts = append(opts, availableOption{"agent", "image_save_dir", "\"\"", "save received images to this directory"})

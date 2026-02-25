@@ -93,6 +93,7 @@ type Agent struct {
 	ReadPromptFile              func(path, label string) string // reads prompt from file path; nil uses empty string
 	MaxToolLoops                int                             // max tool iterations per turn (default 25)
 	MaxOutputTokens             int                             // max tokens in model response (default 8192)
+	Effort                      string                          // effort level for API requests (empty = omit from request)
 
 	processing    int32 // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu sync.Mutex
@@ -620,6 +621,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 		if useAutoCache {
 			req.CacheControl = anthropic.Ephemeral()
+		}
+		if a.Effort != "" {
+			req.Output = &anthropic.OutputConfig{Effort: a.Effort}
 		}
 
 		// Debug: log cache_control placement

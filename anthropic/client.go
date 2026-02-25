@@ -94,7 +94,9 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("anthropic-beta", "prompt-caching-2024-07-31,oauth-2025-04-20")
+	// prompt-caching beta removed — caching is GA as of 2024.
+	// See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {

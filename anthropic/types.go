@@ -34,6 +34,12 @@ type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	Strict      bool            `json:"strict,omitempty"` // guarantee valid JSON matching schema
+}
+
+// OutputConfig controls output generation parameters.
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"` // "low", "medium", "high"
 }
 
 // SystemBlock is a block of content in the system prompt.
@@ -57,6 +63,7 @@ type MessageRequest struct {
 	System       []SystemBlock `json:"system,omitempty"`
 	Messages     []Message     `json:"messages"`
 	Tools        []ToolDef     `json:"tools,omitempty"`
+	Output       *OutputConfig `json:"output,omitempty"`
 }
 
 // Usage contains token usage information from a response.
