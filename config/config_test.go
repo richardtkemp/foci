@@ -332,6 +332,45 @@ scout = { token_secret = "telegram.scout" }
 	}
 }
 
+func TestLoadPerAgentUsageWarnings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+	toml := `
+[usage_warnings]
+thresholds = [50, 25, 10]
+
+[[agents]]
+id = "main"
+
+[agents.usage_warnings]
+thresholds = [5]
+
+[[agents]]
+id = "other"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// First agent should have per-agent thresholds
+	if len(cfg.Agents[0].UsageWarnings.Thresholds) != 1 || cfg.Agents[0].UsageWarnings.Thresholds[0] != 5 {
+		t.Errorf("Agents[0].UsageWarnings.Thresholds = %v, want [5]", cfg.Agents[0].UsageWarnings.Thresholds)
+	}
+
+	// Second agent should have no per-agent thresholds (falls back to global)
+	if len(cfg.Agents[1].UsageWarnings.Thresholds) != 0 {
+		t.Errorf("Agents[1].UsageWarnings.Thresholds = %v, want []", cfg.Agents[1].UsageWarnings.Thresholds)
+	}
+
+	// Global should still be set
+	if len(cfg.ManaWarnings.Thresholds) != 3 {
+		t.Errorf("ManaWarnings.Thresholds = %v, want [50, 25, 10]", cfg.ManaWarnings.Thresholds)
+	}
+}
+
 func TestLoadAgentsIgnoresLegacyWhenBothPresent(t *testing.T) {
 	// If both [agent] and [[agents]] are present, [[agents]] wins
 	dir := t.TempDir()

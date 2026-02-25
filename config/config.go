@@ -14,6 +14,12 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// AgentUsageWarningsConfig holds per-agent mana warning thresholds.
+// When set, completely replaces global [usage_warnings] thresholds.
+type AgentUsageWarningsConfig struct {
+	Thresholds []int `toml:"thresholds"` // mana percentages to warn at (replaces global, not merged)
+}
+
 // AgentMemoryConfig holds per-agent memory sources.
 // These are combined with global [memory] sources, with agent-specific
 // sources receiving an automatic weight boost.
@@ -55,6 +61,8 @@ type AgentConfig struct {
 	// Per-agent tool behaviour (0 = use global [tools] value)
 	ExecAutoBackground  int `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
 	MaxConcurrentSpawns int `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
+	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
+	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
 }
 
 type AnthropicConfig struct {
@@ -326,6 +334,13 @@ func validate(cfg *Config) error {
 	for i, t := range cfg.ManaWarnings.Thresholds {
 		if t < 0 || t > 100 {
 			return fmt.Errorf("[usage_warnings] thresholds[%d] = %d: must be between 0 and 100", i, t)
+		}
+	}
+	for _, a := range cfg.Agents {
+		for i, t := range a.UsageWarnings.Thresholds {
+			if t < 0 || t > 100 {
+				return fmt.Errorf("agent %q [usage_warnings] thresholds[%d] = %d: must be between 0 and 100", a.ID, i, t)
+			}
 		}
 	}
 

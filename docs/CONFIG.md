@@ -45,6 +45,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `prompt_rules` | array | `[]` | Per-agent prompt rules. Empty = use global `[[prompt_rules]]`. |
 | `exec_auto_background` | int | `0` | Per-agent exec auto-background seconds. 0 = use global `[tools] exec_auto_background`. |
 | `max_concurrent_spawns` | int | `0` | Per-agent max concurrent spawns. 0 = use global `[tools] max_concurrent_spawns`. |
+| `usage_warnings.thresholds` | int[] | `[]` | Per-agent mana warning thresholds. When set, completely replaces global `[usage_warnings] thresholds` for this agent. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
