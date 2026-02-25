@@ -1199,10 +1199,15 @@ func setupAgent(p setupParams) *agentInstance {
 	if acfg.CompactionThreshold != nil {
 		compactionThreshold = *acfg.CompactionThreshold
 	}
+	preserveMessages := p.cfg.Sessions.CompactionPreserveMessages
+	if acfg.CompactionPreserveMessages != nil {
+		preserveMessages = *acfg.CompactionPreserveMessages
+	}
 	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
+		preserveMessages,
 	)
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.AgentID = acfg.ID

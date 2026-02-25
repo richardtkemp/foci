@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -325,7 +326,7 @@ func TestCompactAPIError(t *testing.T) {
 
 func TestWithConfigOverrides(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
-	c.WithConfig(2048, 8)
+	c.WithConfig(2048, 8, 10)
 
 	// Model stays as initialized (always uses agent's model)
 	if c.model != "claude-haiku-4-5" {
@@ -337,19 +338,25 @@ func TestWithConfigOverrides(t *testing.T) {
 	if c.minMessages != 8 {
 		t.Errorf("minMessages = %d", c.minMessages)
 	}
+	if c.preserveMessages != 10 {
+		t.Errorf("preserveMessages = %d", c.preserveMessages)
+	}
 }
 
 func TestWithConfigEmptyValues(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
 	original := *c
-	c.WithConfig(0, 0)
+	c.WithConfig(0, 0, 0)
 
-	// Zero values should not override
+	// Zero values should not override maxTokens/minMessages but preserveMessages=0 is valid
 	if c.maxTokens != original.maxTokens {
 		t.Errorf("maxTokens changed to %d", c.maxTokens)
 	}
 	if c.minMessages != original.minMessages {
 		t.Errorf("minMessages changed to %d", c.minMessages)
+	}
+	if c.preserveMessages != 0 {
+		t.Errorf("preserveMessages = %d, want 0", c.preserveMessages)
 	}
 }
 
@@ -442,5 +449,181 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	handoff := anthropic.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, DefaultHandoffMessage) {
 		t.Errorf("handoff = %q, want default handoff", handoff)
+	}
+}
+
+func TestCompactPreserveMessages(t *testing.T) {
+	server := mockCompactionServer("Summary of conversation.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// Add 10 messages (5 user + 5 assistant)
+	for i := 0; i < 5; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent(fmt.Sprintf("user msg %d", i))})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent(fmt.Sprintf("assistant reply %d", i))})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.WithConfig(4096, 4, 4) // preserve last 4 messages
+
+	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if summary == "" {
+		t.Error("expected non-empty summary")
+	}
+
+	// After compaction: 3 (marker+summary+handoff) + 4 preserved = 7
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 7 {
+		t.Fatalf("after compact: %d messages, want 7", len(msgs))
+	}
+
+	// Summary should contain the preservation note
+	summaryText := anthropic.TextOf(msgs[1].Content)
+	if !strings.Contains(summaryText, "last 4 messages") {
+		t.Errorf("summary missing preservation note: %q", summaryText)
+	}
+
+	// 10 messages: [u0,a0,u1,a1,u2,a2,u3,a3,u4,a4]
+	// Preserve last 4: [u3,a3,u4,a4]
+	// Result: [marker, summary, handoff, u3, a3, u4, a4]
+	expected := []struct {
+		role string
+		text string
+	}{
+		{"user", "user msg 3"},
+		{"assistant", "assistant reply 3"},
+		{"user", "user msg 4"},
+		{"assistant", "assistant reply 4"},
+	}
+	for i, exp := range expected {
+		idx := 3 + i
+		if msgs[idx].Role != exp.role {
+			t.Errorf("preserved[%d].Role = %q, want %q", i, msgs[idx].Role, exp.role)
+		}
+		if anthropic.TextOf(msgs[idx].Content) != exp.text {
+			t.Errorf("preserved[%d] = %q, want %q", i, anthropic.TextOf(msgs[idx].Content), exp.text)
+		}
+	}
+}
+
+func TestCompactPreserveMessagesZero(t *testing.T) {
+	server := mockCompactionServer("Summary of conversation.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.WithConfig(4096, 4, 0) // preserve=0 → same as current behaviour
+
+	_, err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("after compact: %d messages, want 3 (no preserved)", len(msgs))
+	}
+
+	// Summary should NOT contain preservation note
+	summaryText := anthropic.TextOf(msgs[1].Content)
+	if strings.Contains(summaryText, "last") {
+		t.Errorf("summary should not have preservation note when preserve=0: %q", summaryText)
+	}
+}
+
+func TestCompactPreserveMoreThanAvailable(t *testing.T) {
+	server := mockCompactionServer("Summary.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// 10 messages, minMessages=4, preserve=100
+	for i := 0; i < 5; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.WithConfig(4096, 4, 100) // preserve=100 but only 10 messages
+
+	_, err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	msgs, _ := store.Load(sessionKey)
+	// Should clamp: 10 messages, need at least 4 to summarize, so preserve = 6
+	// Result: 3 (marker+summary+handoff) + 6 preserved = 9
+	if len(msgs) != 9 {
+		t.Fatalf("after compact: %d messages, want 9 (clamped preserve)", len(msgs))
+	}
+}
+
+func TestCompactPreserveWithScratchpad(t *testing.T) {
+	server := mockCompactionServer("Summary with scratchpad.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	// Create scratchpad
+	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
+	sp, err := memory.NewScratchpad(dbPath)
+	if err != nil {
+		t.Fatalf("NewScratchpad: %v", err)
+	}
+	defer sp.Close()
+	sp.Write("test", "plan", "my plan")
+
+	for i := 0; i < 5; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.WithConfig(4096, 4, 3)
+	c.Scratchpad = sp
+	c.AgentID = "test"
+
+	_, err = c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	msgs, _ := store.Load(sessionKey)
+	// 3 (marker+summary+handoff) + 3 preserved = 6
+	if len(msgs) != 6 {
+		t.Fatalf("after compact: %d messages, want 6", len(msgs))
+	}
+
+	// Handoff should include scratchpad
+	handoff := anthropic.TextOf(msgs[2].Content)
+	if !strings.Contains(handoff, "scratchpad") {
+		t.Errorf("handoff missing scratchpad: %q", handoff)
+	}
+	if !strings.Contains(handoff, "plan") {
+		t.Errorf("handoff missing scratchpad key: %q", handoff)
+	}
+
+	// Preserved messages should be present after handoff
+	if msgs[3].Role != "assistant" || anthropic.TextOf(msgs[3].Content) != "reply" {
+		t.Errorf("preserved[0] = role=%q text=%q", msgs[3].Role, anthropic.TextOf(msgs[3].Content))
 	}
 }

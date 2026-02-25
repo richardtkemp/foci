@@ -1624,3 +1624,104 @@ web_search_timeout = "invalid"
 		})
 	}
 }
+
+func TestCompactionPreserveMessagesConfig(t *testing.T) {
+	t.Run("global default", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[agent]
+id = "test"
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Sessions.CompactionPreserveMessages != 25 {
+			t.Errorf("CompactionPreserveMessages = %d, want 25", cfg.Sessions.CompactionPreserveMessages)
+		}
+	})
+
+	t.Run("global explicit", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[agent]
+id = "test"
+[sessions]
+compaction_preserve_messages = 10
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Sessions.CompactionPreserveMessages != 10 {
+			t.Errorf("CompactionPreserveMessages = %d, want 10", cfg.Sessions.CompactionPreserveMessages)
+		}
+	})
+
+	t.Run("global explicit zero", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[agent]
+id = "test"
+[sessions]
+compaction_preserve_messages = 0
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Sessions.CompactionPreserveMessages != 0 {
+			t.Errorf("CompactionPreserveMessages = %d, want 0", cfg.Sessions.CompactionPreserveMessages)
+		}
+	})
+
+	t.Run("per-agent override", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[sessions]
+compaction_preserve_messages = 10
+
+[[agents]]
+id = "a"
+compaction_preserve_messages = 5
+
+[[agents]]
+id = "b"
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Sessions.CompactionPreserveMessages != 10 {
+			t.Errorf("global = %d, want 10", cfg.Sessions.CompactionPreserveMessages)
+		}
+		if cfg.Agents[0].CompactionPreserveMessages == nil || *cfg.Agents[0].CompactionPreserveMessages != 5 {
+			t.Errorf("agent a = %v, want 5", cfg.Agents[0].CompactionPreserveMessages)
+		}
+		if cfg.Agents[1].CompactionPreserveMessages != nil {
+			t.Errorf("agent b should be nil, got %v", cfg.Agents[1].CompactionPreserveMessages)
+		}
+	})
+
+	t.Run("negative rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[agent]
+id = "test"
+[sessions]
+compaction_preserve_messages = -1
+`), 0644)
+
+		_, err := Load(path)
+		if err == nil {
+			t.Fatal("expected error for negative value")
+		}
+		if !strings.Contains(err.Error(), "compaction_preserve_messages") {
+			t.Errorf("error = %q, want mention of compaction_preserve_messages", err.Error())
+		}
+	})
+}

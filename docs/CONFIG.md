@@ -40,6 +40,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `compaction_handoff_msg` | string | `""` | Per-agent compaction handoff message. Empty = use global. |
 | `compaction_notify` | bool | nil | Per-agent compaction notification. Nil = use global. |
 | `compaction_debug` | bool | nil | Per-agent compaction debug. Nil = use global. When true, sends compaction summary as a Telegram file attachment. |
+| `compaction_preserve_messages` | int | nil | Per-agent message preservation count. Nil = use global `[sessions] compaction_preserve_messages`. |
 | `session_reset_prompt` | string | `""` | Per-agent reset prompt path. Empty = use global `[sessions] session_reset_prompt`. |
 | `skills_dirs` | string[] | `[]` | Per-agent skill directories. Empty = use global `[skills] dirs`. |
 | `prompt_rules` | array | `[]` | Per-agent prompt rules. Empty = use global `[[prompt_rules]]`. |
@@ -175,6 +176,7 @@ Session storage and compaction.
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
+| `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window, so it won't duplicate them. |
 | `session_reset_prompt` | string | `""` | Path to prompt file sent to the agent before session clear (`/reset` or multiball reclaim). Read at fire-time. Empty disables the reset hook. |
 | `branch_orientation_prompt` | string | `""` | Global default for branch orientation prompt file. Per-agent `branch_orientation_prompt` overrides this. |
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
