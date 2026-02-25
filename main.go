@@ -1375,10 +1375,12 @@ func setupAgent(p setupParams) *agentInstance {
 		switch strings.TrimSpace(strings.ToLower(args)) {
 		case "toml":
 			return config.FormatConfigTOML(p.cfg, acfg), nil
+		case "table":
+			return "```\n" + config.FormatConfig(p.cfg, acfg) + "\n```", nil
 		case "available":
-			return config.FormatAvailable(p.cfg, acfg), nil
+			return "```\n" + config.FormatAvailable(p.cfg, acfg) + "\n```", nil
 		default:
-			return config.FormatConfig(p.cfg, acfg), nil
+			return "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults", nil
 		}
 	}))
 	cmds.Register(command.NewPromptsCommand(func() command.PromptsData {

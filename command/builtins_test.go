@@ -446,20 +446,30 @@ func TestConfigCommand(t *testing.T) {
 		switch args {
 		case "toml":
 			return "toml output", nil
+		case "table":
+			return "table output", nil
 		case "available":
 			return "available output", nil
 		default:
-			return "model = \"haiku\"", nil
+			return "usage text", nil
 		}
 	})
+	// No args → usage
 	result, _ := cmd.Execute(context.Background(), "")
-	if result != "model = \"haiku\"" {
-		t.Errorf("default result = %q", result)
+	if result != "usage text" {
+		t.Errorf("default result = %q, want usage text", result)
 	}
+	// toml subcommand
 	result, _ = cmd.Execute(context.Background(), "toml")
 	if result != "toml output" {
 		t.Errorf("toml result = %q", result)
 	}
+	// table subcommand
+	result, _ = cmd.Execute(context.Background(), "table")
+	if result != "table output" {
+		t.Errorf("table result = %q", result)
+	}
+	// available subcommand
 	result, _ = cmd.Execute(context.Background(), "available")
 	if result != "available output" {
 		t.Errorf("available result = %q", result)

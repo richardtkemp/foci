@@ -595,7 +595,7 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 func NewConfigCommand(configFn func(args string) (string, error)) *Command {
 	return &Command{
 		Name:        "config",
-		Description: "Show running config (secrets redacted). Use 'toml' for raw TOML, 'available' for unset options",
+		Description: "Show running config. Subcommands: toml, table, available",
 		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return configFn(args)
