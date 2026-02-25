@@ -257,6 +257,21 @@ id = "clutch"
 effort = "high"    # per-agent override
 ```
 
+### Adaptive Thinking
+
+Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history but NOT sent to Telegram (internal reasoning). Thinking tokens count toward mana — opt-in per agent.
+
+```toml
+[defaults]
+thinking = "adaptive"   # global default
+
+[[agents]]
+id = "thinker"
+thinking = "adaptive"   # per-agent override
+```
+
+Runtime toggle: `/thinking adaptive` or `/thinking off`.
+
 Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
 
 ### Tool Result Guard
@@ -848,6 +863,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Skills framework (YAML frontmatter, command dispatch, script execution)
 - Compaction (threshold-based, configurable parameters, optional Telegram notification)
 - FTS5 memory search (memory files + conversation history, weighted)
+- Adaptive thinking (extended thinking for Opus 4.6, configurable per-agent, thinking blocks preserved in session but not sent to Telegram)
 - TOML config (single file + secrets.toml)
 - Voice outbound (Edge TTS or OpenAI, configurable speech rate via `tts_rate`)
 - Voice inbound (STT via Groq Whisper)

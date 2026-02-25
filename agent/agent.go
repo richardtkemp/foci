@@ -94,6 +94,7 @@ type Agent struct {
 	MaxToolLoops                int                             // max tool iterations per turn (default 25)
 	MaxOutputTokens             int                             // max tokens in model response (default 8192)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
+	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 
 	processing    int32 // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu sync.Mutex
@@ -624,6 +625,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 		if a.Effort != "" {
 			req.Output = &anthropic.OutputConfig{Effort: a.Effort}
+		}
+		if a.Thinking == "adaptive" {
+			req.Thinking = &anthropic.ThinkingConfig{Type: "adaptive"}
 		}
 
 		// Debug: log cache_control placement

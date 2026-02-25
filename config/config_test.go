@@ -1790,3 +1790,60 @@ id = "b"
 		}
 	})
 }
+
+func TestLoadThinkingConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+
+	toml := `
+[defaults]
+thinking = "adaptive"
+
+[[agents]]
+id = "smart"
+
+[[agents]]
+id = "fast"
+thinking = "off"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Agent "smart" should inherit "adaptive" from defaults
+	if cfg.Agents[0].Thinking != "adaptive" {
+		t.Errorf("agent smart: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
+	}
+	// Agent "fast" should keep its explicit "off"
+	if cfg.Agents[1].Thinking != "off" {
+		t.Errorf("agent fast: Thinking = %q, want %q", cfg.Agents[1].Thinking, "off")
+	}
+}
+
+func TestLoadThinkingPerAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "clod.toml")
+
+	toml := `
+[[agents]]
+id = "thinker"
+thinking = "adaptive"
+
+[[agents]]
+id = "default"
+`
+	os.WriteFile(path, []byte(toml), 0644)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agents[0].Thinking != "adaptive" {
+		t.Errorf("agent thinker: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
+	}
+	if cfg.Agents[1].Thinking != "" {
+		t.Errorf("agent default: Thinking = %q, want empty", cfg.Agents[1].Thinking)
+	}
+}

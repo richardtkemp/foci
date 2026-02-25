@@ -522,6 +522,65 @@ func TestEffortCommand(t *testing.T) {
 	}
 }
 
+func TestThinkingCommand(t *testing.T) {
+	thinking := ""
+	cmd := NewThinkingCommand(
+		func() string { return thinking },
+		func(t string) { thinking = t },
+	)
+
+	// Show when off (default)
+	result, _ := cmd.Execute(context.Background(), "")
+	if !strings.Contains(result, "off") {
+		t.Errorf("expected 'off', got %q", result)
+	}
+
+	// Set to adaptive
+	result, _ = cmd.Execute(context.Background(), "adaptive")
+	if thinking != "adaptive" {
+		t.Errorf("thinking not set to adaptive: %q", thinking)
+	}
+	if !strings.Contains(result, "adaptive") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Set via numeric alias
+	result, _ = cmd.Execute(context.Background(), "0")
+	if thinking != "" {
+		t.Errorf("thinking not cleared via '0': %q", thinking)
+	}
+
+	result, _ = cmd.Execute(context.Background(), "1")
+	if thinking != "adaptive" {
+		t.Errorf("thinking not set via '1': %q", thinking)
+	}
+
+	// Show when set
+	result, _ = cmd.Execute(context.Background(), "")
+	if !strings.Contains(result, "adaptive") {
+		t.Errorf("expected 'adaptive', got %q", result)
+	}
+
+	// Turn off
+	result, _ = cmd.Execute(context.Background(), "off")
+	if thinking != "" {
+		t.Errorf("thinking not cleared: %q", thinking)
+	}
+	if !strings.Contains(result, "off") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Invalid value
+	thinking = "adaptive"
+	result, _ = cmd.Execute(context.Background(), "turbo")
+	if !strings.Contains(result, "Invalid") {
+		t.Errorf("expected 'Invalid', got %q", result)
+	}
+	if thinking != "adaptive" {
+		t.Errorf("thinking changed on invalid input: %q", thinking)
+	}
+}
+
 func TestToolsCommand(t *testing.T) {
 	cmd := NewToolsCommand(func() []ToolInfo {
 		return []ToolInfo{
