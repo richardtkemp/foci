@@ -82,6 +82,7 @@ type Bot struct {
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
 	showToolCalls        bool         // show tool call messages in Telegram (default true via setter)
+	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	imageSaveDir         string       // if non-empty, save received images to this directory
 }
 
@@ -136,6 +137,11 @@ func (b *Bot) SetToolCallPreviewChars(n int) {
 // SetShowToolCalls controls whether tool call messages are shown in Telegram.
 func (b *Bot) SetShowToolCalls(show bool) {
 	b.showToolCalls = show
+}
+
+// SetMessagesInLog controls whether user message content is logged to the event log.
+func (b *Bot) SetMessagesInLog(v bool) {
+	b.messagesInLog = v
 }
 
 // SetImageSaveDir configures auto-saving of received images to disk.
@@ -579,7 +585,11 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if len(images) > 0 {
 		logText = fmt.Sprintf("[%d image(s)] %s", len(images), text)
 	}
-	log.Infof("telegram", "message from %s: %s", msg.From.Username, truncate(logText, 100))
+	if b.messagesInLog {
+		log.Infof("telegram", "message from %s: %s", msg.From.Username, truncate(logText, 100))
+	} else {
+		log.Debugf("telegram", "message from %s", msg.From.Username)
+	}
 
 	// Log received message — use per-chat session key for primary bots
 	recvSession := b.SessionKey()

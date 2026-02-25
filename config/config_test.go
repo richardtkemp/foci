@@ -1725,3 +1725,68 @@ compaction_preserve_messages = -1
 		}
 	})
 }
+
+func TestMessagesInLogConfig(t *testing.T) {
+	t.Run("default false", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[agent]
+id = "test"
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Logging.MessagesInLog {
+			t.Error("MessagesInLog should default to false")
+		}
+	})
+
+	t.Run("global explicit true", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[agent]
+id = "test"
+[logging]
+messages_in_log = true
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Logging.MessagesInLog {
+			t.Error("MessagesInLog should be true")
+		}
+	})
+
+	t.Run("per-agent override", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "clod.toml")
+		os.WriteFile(path, []byte(`[logging]
+messages_in_log = false
+
+[[agents]]
+id = "a"
+messages_in_log = true
+
+[[agents]]
+id = "b"
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Logging.MessagesInLog {
+			t.Error("global should be false")
+		}
+		if cfg.Agents[0].MessagesInLog == nil || !*cfg.Agents[0].MessagesInLog {
+			t.Error("agent a should override to true")
+		}
+		if cfg.Agents[1].MessagesInLog != nil {
+			t.Errorf("agent b should be nil, got %v", cfg.Agents[1].MessagesInLog)
+		}
+	})
+}

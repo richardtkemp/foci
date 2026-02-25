@@ -33,6 +33,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 | `show_tool_calls` | bool | `true` | Show tool call messages in Telegram. Per-agent override of global `[telegram] show_tool_calls`. Set to `false` for user-facing agents where tool visibility is confusing. |
+| `messages_in_log` | bool | nil | Per-agent override of global `[logging] messages_in_log`. Nil = use global. |
 | `image_save_dir` | string | `""` | Save received images to this directory. Empty disables (falls back to `[telegram] image_save_dir`). Relative paths resolve against `$HOME`. Filename format: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. The agent sees `[Image saved to: /path/to/file]` in the message text. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. If set, only these users can message this agent's bot. If empty, falls back to global `[telegram] allowed_users`. |
 | `compaction_threshold` | float | nil | Per-agent compaction threshold (0.0–1.0). Nil = use global `[sessions] compaction_threshold`. |
@@ -317,6 +318,7 @@ Logging and diagnostics.
 | `conversation_file` | string | `""` | Path to conversation SQLite log. Defaults to `data/conversation.db` via `data_dir`. Relative paths resolve against `$HOME`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
+| `messages_in_log` | bool | `false` | Log user message content to the event log. When false (default), messages are logged at DEBUG level with no content for privacy. When true, messages are logged at INFO level with content (truncated to 100 chars). |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
 | `cache_bust_idle_minutes` | int | `10` | Suppress cache bust alerts if the session was idle longer than this many minutes. Anthropic's cache TTL is 5 min, so any gap >10 min means the cache expired naturally — not a genuine bust. |
 | `warning_max_per_window` | int | `3` | Max identical warnings allowed per time window before suppression. Set to `0` to disable rate-limiting. |

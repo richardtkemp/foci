@@ -514,6 +514,7 @@ func main() {
 			}
 			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
 			mbBot.SetShowToolCalls(cfg.Telegram.ShowToolCalls)
+			mbBot.SetMessagesInLog(cfg.Logging.MessagesInLog)
 			if imgDir := cfg.Telegram.ImageSaveDir; imgDir != "" {
 				mbBot.SetImageSaveDir(imgDir)
 			}
@@ -2021,6 +2022,11 @@ func setupAgent(p setupParams) *agentInstance {
 		} else {
 			primaryBot.SetShowToolCalls(p.cfg.Telegram.ShowToolCalls)
 		}
+		if acfg.MessagesInLog != nil {
+			primaryBot.SetMessagesInLog(*acfg.MessagesInLog)
+		} else {
+			primaryBot.SetMessagesInLog(p.cfg.Logging.MessagesInLog)
+		}
 		if imgDir := acfg.ImageSaveDir; imgDir != "" {
 			primaryBot.SetImageSaveDir(imgDir)
 		} else if imgDir := p.cfg.Telegram.ImageSaveDir; imgDir != "" {
@@ -2123,6 +2129,11 @@ func setupAgent(p setupParams) *agentInstance {
 				mbBot.SetShowToolCalls(*acfg.ShowToolCalls)
 			} else {
 				mbBot.SetShowToolCalls(p.cfg.Telegram.ShowToolCalls)
+			}
+			if acfg.MessagesInLog != nil {
+				mbBot.SetMessagesInLog(*acfg.MessagesInLog)
+			} else {
+				mbBot.SetMessagesInLog(p.cfg.Logging.MessagesInLog)
 			}
 			if imgDir := acfg.ImageSaveDir; imgDir != "" {
 				mbBot.SetImageSaveDir(imgDir)
