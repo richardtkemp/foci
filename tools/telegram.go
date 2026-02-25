@@ -15,12 +15,18 @@ type TelegramSender interface {
 	SendDocument(filePath string) error
 	SendVoice(filePath string) error
 	SendVideo(filePath string) error
+	SendPhoto(filePath string) error
+	SendAudio(filePath string) error
+	SendAnimation(filePath string) error
 
 	// Chat-targeted methods (send to a specific chat ID).
 	SendTextToChat(chatID int64, text string) error
 	SendDocumentToChat(chatID int64, filePath string) error
 	SendVoiceToChat(chatID int64, filePath string) error
 	SendVideoToChat(chatID int64, filePath string) error
+	SendPhotoToChat(chatID int64, filePath string) error
+	SendAudioToChat(chatID int64, filePath string) error
+	SendAnimationToChat(chatID int64, filePath string) error
 }
 
 // NewSendTelegramTool creates a tool that sends proactive messages, documents,
@@ -33,7 +39,7 @@ type TelegramSender interface {
 func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
-		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, or videos. Use for alerts, sharing files, or sending voice/video replies.",
+		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use for alerts, sharing files, or sending media.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -47,8 +53,8 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 				},
 				"send_as": {
 					"type": "string",
-					"description": "How to send the file: 'document' (default), 'voice', or 'video'.",
-					"enum": ["document", "voice", "video"]
+					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF).",
+					"enum": ["document", "voice", "video", "photo", "audio", "animation"]
 				},
 				"as_voice": {
 					"type": "boolean",
@@ -122,6 +128,27 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 						err = bot.SendVideo(p.FilePath)
 					}
 					label = "video"
+				case "photo":
+					if chatID != 0 {
+						err = bot.SendPhotoToChat(chatID, p.FilePath)
+					} else {
+						err = bot.SendPhoto(p.FilePath)
+					}
+					label = "photo"
+				case "audio":
+					if chatID != 0 {
+						err = bot.SendAudioToChat(chatID, p.FilePath)
+					} else {
+						err = bot.SendAudio(p.FilePath)
+					}
+					label = "audio"
+				case "animation":
+					if chatID != 0 {
+						err = bot.SendAnimationToChat(chatID, p.FilePath)
+					} else {
+						err = bot.SendAnimation(p.FilePath)
+					}
+					label = "animation"
 				default: // "document"
 					if chatID != 0 {
 						err = bot.SendDocumentToChat(chatID, p.FilePath)

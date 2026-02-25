@@ -13,17 +13,26 @@ type mockTelegramSender struct {
 	textCalls     []string
 	documentCalls []string
 	voiceCalls    []string
-	videoCalls    []string
-	textErr       error
-	documentErr   error
-	voiceErr      error
-	videoErr      error
+	videoCalls     []string
+	photoCalls     []string
+	audioCalls     []string
+	animationCalls []string
+	textErr        error
+	documentErr    error
+	voiceErr       error
+	videoErr       error
+	photoErr       error
+	audioErr       error
+	animationErr   error
 
 	// Chat-targeted calls
-	chatTextCalls     []mockChatCall
-	chatDocumentCalls []mockChatCall
-	chatVoiceCalls    []mockChatCall
-	chatVideoCalls    []mockChatCall
+	chatTextCalls      []mockChatCall
+	chatDocumentCalls  []mockChatCall
+	chatVoiceCalls     []mockChatCall
+	chatVideoCalls     []mockChatCall
+	chatPhotoCalls     []mockChatCall
+	chatAudioCalls     []mockChatCall
+	chatAnimationCalls []mockChatCall
 }
 
 type mockChatCall struct {
@@ -51,6 +60,21 @@ func (m *mockTelegramSender) SendVideo(filePath string) error {
 	return m.videoErr
 }
 
+func (m *mockTelegramSender) SendPhoto(filePath string) error {
+	m.photoCalls = append(m.photoCalls, filePath)
+	return m.photoErr
+}
+
+func (m *mockTelegramSender) SendAudio(filePath string) error {
+	m.audioCalls = append(m.audioCalls, filePath)
+	return m.audioErr
+}
+
+func (m *mockTelegramSender) SendAnimation(filePath string) error {
+	m.animationCalls = append(m.animationCalls, filePath)
+	return m.animationErr
+}
+
 func (m *mockTelegramSender) SendTextToChat(chatID int64, text string) error {
 	m.chatTextCalls = append(m.chatTextCalls, mockChatCall{chatID, text})
 	return m.textErr
@@ -69,6 +93,21 @@ func (m *mockTelegramSender) SendVoiceToChat(chatID int64, filePath string) erro
 func (m *mockTelegramSender) SendVideoToChat(chatID int64, filePath string) error {
 	m.chatVideoCalls = append(m.chatVideoCalls, mockChatCall{chatID, filePath})
 	return m.videoErr
+}
+
+func (m *mockTelegramSender) SendPhotoToChat(chatID int64, filePath string) error {
+	m.chatPhotoCalls = append(m.chatPhotoCalls, mockChatCall{chatID, filePath})
+	return m.photoErr
+}
+
+func (m *mockTelegramSender) SendAudioToChat(chatID int64, filePath string) error {
+	m.chatAudioCalls = append(m.chatAudioCalls, mockChatCall{chatID, filePath})
+	return m.audioErr
+}
+
+func (m *mockTelegramSender) SendAnimationToChat(chatID int64, filePath string) error {
+	m.chatAnimationCalls = append(m.chatAnimationCalls, mockChatCall{chatID, filePath})
+	return m.animationErr
 }
 
 func TestSendTelegramTextOnly(t *testing.T) {
@@ -609,5 +648,194 @@ func TestSendTelegramTextAndVideo(t *testing.T) {
 	}
 	if len(mock.videoCalls) != 1 {
 		t.Errorf("videoCalls = %v", mock.videoCalls)
+	}
+}
+
+// --- photo tests ---
+
+func TestSendTelegramSendAsPhoto(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/image.jpg",
+		"send_as":   "photo",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: photo" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.photoCalls) != 1 || mock.photoCalls[0] != "/tmp/image.jpg" {
+		t.Errorf("photoCalls = %v", mock.photoCalls)
+	}
+}
+
+func TestSendTelegramPhotoError(t *testing.T) {
+	mock := &mockTelegramSender{photoErr: fmt.Errorf("image too large")}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/huge.jpg",
+		"send_as":   "photo",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "image too large") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSendTelegramPhotoChatRouting(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/image.jpg",
+		"send_as":   "photo",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.chatPhotoCalls) != 1 || mock.chatPhotoCalls[0].chatID != 12345 {
+		t.Errorf("chatPhotoCalls = %v", mock.chatPhotoCalls)
+	}
+	if len(mock.photoCalls) != 0 {
+		t.Errorf("default SendPhoto should not be called")
+	}
+}
+
+// --- audio tests ---
+
+func TestSendTelegramSendAsAudio(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/song.mp3",
+		"send_as":   "audio",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: audio" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.audioCalls) != 1 || mock.audioCalls[0] != "/tmp/song.mp3" {
+		t.Errorf("audioCalls = %v", mock.audioCalls)
+	}
+}
+
+func TestSendTelegramAudioError(t *testing.T) {
+	mock := &mockTelegramSender{audioErr: fmt.Errorf("bad format")}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/bad.mp3",
+		"send_as":   "audio",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "bad format") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSendTelegramAudioChatRouting(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/song.mp3",
+		"send_as":   "audio",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.chatAudioCalls) != 1 || mock.chatAudioCalls[0].chatID != 12345 {
+		t.Errorf("chatAudioCalls = %v", mock.chatAudioCalls)
+	}
+	if len(mock.audioCalls) != 0 {
+		t.Errorf("default SendAudio should not be called")
+	}
+}
+
+// --- animation tests ---
+
+func TestSendTelegramSendAsAnimation(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/funny.gif",
+		"send_as":   "animation",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: animation" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.animationCalls) != 1 || mock.animationCalls[0] != "/tmp/funny.gif" {
+		t.Errorf("animationCalls = %v", mock.animationCalls)
+	}
+}
+
+func TestSendTelegramAnimationError(t *testing.T) {
+	mock := &mockTelegramSender{animationErr: fmt.Errorf("gif corrupted")}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/bad.gif",
+		"send_as":   "animation",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "gif corrupted") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSendTelegramAnimationChatRouting(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/funny.gif",
+		"send_as":   "animation",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mock.chatAnimationCalls) != 1 || mock.chatAnimationCalls[0].chatID != 12345 {
+		t.Errorf("chatAnimationCalls = %v", mock.chatAnimationCalls)
+	}
+	if len(mock.animationCalls) != 0 {
+		t.Errorf("default SendAnimation should not be called")
 	}
 }

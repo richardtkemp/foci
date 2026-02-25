@@ -53,6 +53,18 @@ func (m *mockClient) SendVideo(chatId int64, video gotgbot.InputFileOrString, op
 	return &gotgbot.Message{}, nil
 }
 
+func (m *mockClient) SendPhoto(chatId int64, photo gotgbot.InputFileOrString, opts *gotgbot.SendPhotoOpts) (*gotgbot.Message, error) {
+	return &gotgbot.Message{}, nil
+}
+
+func (m *mockClient) SendAudio(chatId int64, audio gotgbot.InputFileOrString, opts *gotgbot.SendAudioOpts) (*gotgbot.Message, error) {
+	return &gotgbot.Message{}, nil
+}
+
+func (m *mockClient) SendAnimation(chatId int64, animation gotgbot.InputFileOrString, opts *gotgbot.SendAnimationOpts) (*gotgbot.Message, error) {
+	return &gotgbot.Message{}, nil
+}
+
 func (m *mockClient) SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error) {
 	return true, nil
 }

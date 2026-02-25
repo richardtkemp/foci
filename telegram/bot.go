@@ -30,6 +30,9 @@ type botClient interface {
 	SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error)
 	SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error)
 	SendVideo(chatId int64, video gotgbot.InputFileOrString, opts *gotgbot.SendVideoOpts) (*gotgbot.Message, error)
+	SendPhoto(chatId int64, photo gotgbot.InputFileOrString, opts *gotgbot.SendPhotoOpts) (*gotgbot.Message, error)
+	SendAudio(chatId int64, audio gotgbot.InputFileOrString, opts *gotgbot.SendAudioOpts) (*gotgbot.Message, error)
+	SendAnimation(chatId int64, animation gotgbot.InputFileOrString, opts *gotgbot.SendAnimationOpts) (*gotgbot.Message, error)
 	SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error)
 	GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error)
 	SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.SetMyCommandsOpts) (bool, error)
@@ -1074,6 +1077,33 @@ func (b *Bot) SendVideo(filePath string) error {
 	return b.SendVideoToChat(chatID, filePath)
 }
 
+// SendPhoto sends a photo to the last known chat.
+func (b *Bot) SendPhoto(filePath string) error {
+	chatID, err := b.lastChatID()
+	if err != nil {
+		return err
+	}
+	return b.SendPhotoToChat(chatID, filePath)
+}
+
+// SendAudio sends an audio file to the last known chat.
+func (b *Bot) SendAudio(filePath string) error {
+	chatID, err := b.lastChatID()
+	if err != nil {
+		return err
+	}
+	return b.SendAudioToChat(chatID, filePath)
+}
+
+// SendAnimation sends an animation (GIF) to the last known chat.
+func (b *Bot) SendAnimation(filePath string) error {
+	chatID, err := b.lastChatID()
+	if err != nil {
+		return err
+	}
+	return b.SendAnimationToChat(chatID, filePath)
+}
+
 // lastChatID returns the last known chat ID, or an error if none has been set.
 func (b *Bot) lastChatID() (int64, error) {
 	b.chatMu.Lock()
@@ -1167,6 +1197,69 @@ func (b *Bot) SendVideoToChat(chatID int64, filePath string) error {
 		Direction: "sent",
 		ChatID:    chatID,
 		Text:      fmt.Sprintf("[video %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendPhotoToChat sends a photo to a specific chat ID.
+func (b *Bot) SendPhotoToChat(chatID int64, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open photo file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendPhoto(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
+		return fmt.Errorf("send photo: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[photo %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendAudioToChat sends an audio file to a specific chat ID.
+func (b *Bot) SendAudioToChat(chatID int64, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open audio file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendAudio(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
+		return fmt.Errorf("send audio: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[audio %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendAnimationToChat sends an animation (GIF) to a specific chat ID.
+func (b *Bot) SendAnimationToChat(chatID int64, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open animation file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendAnimation(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
+		return fmt.Errorf("send animation: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[animation %s]", filePath),
 		Session:   b.SessionKey(),
 	})
 	return nil
