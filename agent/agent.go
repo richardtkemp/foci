@@ -649,6 +649,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				}
 				return "", fmt.Errorf("rate limited — mana exhausted")
 			}
+			// Detect 500 server errors and return a friendly message.
+			if errors.As(err, &apiErr) && apiErr.IsServerError() {
+				log.Debugf("agent", "server error detail: %s", err)
+				log.Warnf("agent", "API server error (status %d)", apiErr.StatusCode)
+				if a.RateLimitFunc != nil {
+					a.RateLimitFunc(0)
+				}
+				return "", fmt.Errorf("Anthropic API is temporarily unavailable. Try again in a few minutes.")
+			}
 			return "", fmt.Errorf("send message: %w", err)
 		}
 
