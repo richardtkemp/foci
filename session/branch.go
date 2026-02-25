@@ -20,48 +20,8 @@ type BranchMeta struct {
 
 // BranchOptions configures optional behavior for a new branch session.
 type BranchOptions struct {
-	NoResetHook bool // skip pre-reset memory hook when this branch is reclaimed
-}
-
-// CreateBranch creates a branch session from a parent at the parent's current message count.
-func (s *Store) CreateBranch(parentKey, branchKey string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Get parent message count
-	parentMsgs, err := s.loadUnlocked(parentKey)
-	if err != nil {
-		return fmt.Errorf("load parent: %w", err)
-	}
-
-	meta := BranchMeta{
-		Type:        "branch_meta",
-		ParentKey:   parentKey,
-		BranchPoint: len(parentMsgs),
-	}
-
-	path := s.keyToPath(branchKey)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("create branch dir: %w", err)
-	}
-
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create branch file: %w", err)
-	}
-	defer f.Close()
-
-	data, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("marshal branch meta: %w", err)
-	}
-
-	if _, err := f.Write(append(data, '\n')); err != nil {
-		return fmt.Errorf("write branch meta: %w", err)
-	}
-
-	log.Infof("session", "branch created key=%s parent=%s branch_point=%d", branchKey, parentKey, meta.BranchPoint)
-	return nil
+	NoResetHook        bool   // skip pre-reset memory hook when this branch is reclaimed
+	OrientationMessage string // if non-empty, written as first user message in the branch
 }
 
 // CreateBranchWithOptions creates a branch session with additional options.
@@ -101,7 +61,23 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		return fmt.Errorf("write branch meta: %w", err)
 	}
 
-	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v", branchKey, parentKey, meta.BranchPoint, opts.NoResetHook)
+	// Write orientation message as first user message if provided.
+	if opts.OrientationMessage != "" {
+		orientMsg := anthropic.Message{
+			Role:    "user",
+			Content: anthropic.TextContent(opts.OrientationMessage),
+		}
+		orientData, err := json.Marshal(orientMsg)
+		if err != nil {
+			return fmt.Errorf("marshal orientation message: %w", err)
+		}
+		if _, err := f.Write(append(orientData, '\n')); err != nil {
+			return fmt.Errorf("write orientation message: %w", err)
+		}
+	}
+
+	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v orientation=%v",
+		branchKey, parentKey, meta.BranchPoint, opts.NoResetHook, opts.OrientationMessage != "")
 	return nil
 }
 
