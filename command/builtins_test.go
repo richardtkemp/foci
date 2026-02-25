@@ -464,6 +464,9 @@ func TestEffortCommand(t *testing.T) {
 	if !strings.Contains(result, "not set") {
 		t.Errorf("expected 'not set', got %q", result)
 	}
+	if !strings.Contains(result, "Options: low, medium, high") {
+		t.Errorf("expected options list, got %q", result)
+	}
 
 	// Set valid levels
 	for _, level := range []string{"low", "medium", "high"} {
@@ -480,6 +483,9 @@ func TestEffortCommand(t *testing.T) {
 	result, _ = cmd.Execute(context.Background(), "")
 	if !strings.Contains(result, "high") {
 		t.Errorf("expected 'high', got %q", result)
+	}
+	if !strings.Contains(result, "Options: low, medium, high") {
+		t.Errorf("expected options list when set, got %q", result)
 	}
 
 	// Invalid level
