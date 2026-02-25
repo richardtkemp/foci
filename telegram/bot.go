@@ -53,19 +53,19 @@ type queuedMessage struct {
 // Messages are received on one goroutine and processed on another.
 // Slash commands execute immediately on the receiver goroutine.
 type Bot struct {
-	api          *gotgbot.Bot // for receiving updates (Run)
-	client       botClient    // for sending messages and files (mockable in tests)
-	agent        *agent.Agent
-	commands     *command.Registry
-	lastMsgStore *command.LastMessageStore // for // repeat command
-	allowedUsers map[string]bool
-	agentID      string       // agent ID for session key derivation
-	sessionKey   string       // override session key (multiball secondary bots only)
-	sessionMu    sync.RWMutex // protects sessionKey (mutable for secondary bots)
-	isSecondary  bool         // true for secondary bots (multiball)
-	pool                *Pool        // back-reference to pool (secondary bots only)
-	OnSessionKeyChange  func(username, sessionKey string) // fires after SetSessionKey (fork/release)
-	botToken            string       // for building file download URLs
+	api                *gotgbot.Bot // for receiving updates (Run)
+	client             botClient    // for sending messages and files (mockable in tests)
+	agent              *agent.Agent
+	commands           *command.Registry
+	lastMsgStore       *command.LastMessageStore // for // repeat command
+	allowedUsers       map[string]bool
+	agentID            string                            // agent ID for session key derivation
+	sessionKey         string                            // override session key (multiball secondary bots only)
+	sessionMu          sync.RWMutex                      // protects sessionKey (mutable for secondary bots)
+	isSecondary        bool                              // true for secondary bots (multiball)
+	pool               *Pool                             // back-reference to pool (secondary bots only)
+	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
+	botToken           string                            // for building file download URLs
 
 	transcriber       voice.STT // nil = voice notes not supported
 	tts               voice.TTS // nil = TTS not available
@@ -573,6 +573,52 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 				}
 			}
 			images = append(images, att)
+		}
+	}
+
+	// Handle video messages
+	if msg.Video != nil {
+		if path, err := b.downloadAndSaveMedia(msg.Video.FileId, msg.Video.FileSize, "video", msg.Chat.Id, extForVideo(msg.Video.MimeType)); err != nil {
+			if isFileTooLarge(err) {
+				text = fmt.Sprintf("[Video too large to download (%d MB)]\n\n%s", msg.Video.FileSize/(1024*1024), text)
+			} else {
+				log.Errorf("telegram", "download video: %s", b.sanitizeError(err))
+			}
+		} else {
+			text = fmt.Sprintf("[Video saved to: %s]\n\n%s", path, text)
+			log.Infof("telegram", "saved video to %s", path)
+		}
+	}
+
+	// Handle video notes (circular video messages)
+	if msg.VideoNote != nil {
+		if path, err := b.downloadAndSaveMedia(msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", msg.Chat.Id, ".mp4"); err != nil {
+			if isFileTooLarge(err) {
+				text = fmt.Sprintf("[Video too large to download (%d MB)]\n\n%s", msg.VideoNote.FileSize/(1024*1024), text)
+			} else {
+				log.Errorf("telegram", "download video note: %s", b.sanitizeError(err))
+			}
+		} else {
+			text = fmt.Sprintf("[Video saved to: %s]\n\n%s", path, text)
+			log.Infof("telegram", "saved video note to %s", path)
+		}
+	}
+
+	// Handle non-image document attachments
+	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) {
+		ext := filepath.Ext(msg.Document.FileName)
+		if ext == "" {
+			ext = extForMIME(msg.Document.MimeType)
+		}
+		if path, err := b.downloadAndSaveMedia(msg.Document.FileId, msg.Document.FileSize, "document", msg.Chat.Id, ext); err != nil {
+			if isFileTooLarge(err) {
+				text = fmt.Sprintf("[Document too large to download (%d MB)]\n\n%s", msg.Document.FileSize/(1024*1024), text)
+			} else {
+				log.Errorf("telegram", "download document: %s", b.sanitizeError(err))
+			}
+		} else {
+			text = fmt.Sprintf("[Document saved to: %s]\n\n%s", path, text)
+			log.Infof("telegram", "saved document to %s", path)
 		}
 	}
 
@@ -1151,6 +1197,101 @@ func extForMediaType(mt string) string {
 	default:
 		return ".bin"
 	}
+}
+
+// extForVideo returns a file extension for video MIME types.
+func extForVideo(mt string) string {
+	switch mt {
+	case "video/mp4":
+		return ".mp4"
+	case "video/quicktime":
+		return ".mov"
+	case "video/webm":
+		return ".webm"
+	case "video/x-matroska":
+		return ".mkv"
+	case "video/avi", "video/x-msvideo":
+		return ".avi"
+	default:
+		return ".mp4"
+	}
+}
+
+// extForMIME returns a file extension for common MIME types.
+func extForMIME(mt string) string {
+	switch {
+	case strings.HasPrefix(mt, "video/"):
+		return extForVideo(mt)
+	case mt == "application/pdf":
+		return ".pdf"
+	case mt == "application/json":
+		return ".json"
+	case mt == "text/plain":
+		return ".txt"
+	case mt == "text/csv":
+		return ".csv"
+	case mt == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case mt == "application/vnd.ms-excel":
+		return ".xls"
+	case mt == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case mt == "application/msword":
+		return ".doc"
+	case strings.HasPrefix(mt, "audio/"):
+		return ".mp3"
+	default:
+		return ".bin"
+	}
+}
+
+// fileTooLargeError indicates a file exceeds the download size limit.
+type fileTooLargeError struct {
+	size int64
+}
+
+func (e *fileTooLargeError) Error() string {
+	return fmt.Sprintf("file too large: %d bytes (limit 20MB)", e.size)
+}
+
+// isFileTooLarge returns true if the error is a file size limit error.
+func isFileTooLarge(err error) bool {
+	_, ok := err.(*fileTooLargeError)
+	return ok
+}
+
+// downloadAndSaveMedia downloads a file from Telegram and saves it to disk.
+// Returns the saved file path or an error (including fileTooLargeError if over 20MB).
+func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType string, chatID int64, ext string) (string, error) {
+	const maxFileSize = 20 * 1024 * 1024 // 20MB Telegram Bot API limit
+
+	if fileSize > maxFileSize {
+		return "", &fileTooLargeError{size: fileSize}
+	}
+
+	if b.imageSaveDir == "" {
+		return "", fmt.Errorf("media save directory not configured")
+	}
+
+	data, err := b.downloadFile(fileID)
+	if err != nil {
+		return "", err
+	}
+
+	return b.saveMedia(data, mediaType, chatID, ext)
+}
+
+// saveMedia writes media data to disk and returns the saved file path.
+func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string) (string, error) {
+	if err := os.MkdirAll(b.imageSaveDir, 0o755); err != nil {
+		return "", fmt.Errorf("create media dir: %w", err)
+	}
+	filename := fmt.Sprintf("%s_%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), mediaType, chatID, ext)
+	path := filepath.Join(b.imageSaveDir, filename)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("write media: %w", err)
+	}
+	return path, nil
 }
 
 // saveImage writes image data to disk and returns the saved file path.
