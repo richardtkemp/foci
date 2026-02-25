@@ -1,13 +1,19 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
+	"gopkg.in/yaml.v3"
 )
 
 // SyntaxChecker validates file content and returns nil if valid.
@@ -15,9 +21,15 @@ type SyntaxChecker func(content []byte) error
 
 // syntaxCheckers maps file extensions to their validators.
 var syntaxCheckers = map[string]SyntaxChecker{
-	".json": checkJSON,
-	".toml": checkTOML,
-	".go":   checkGo,
+	".json":  checkJSON,
+	".toml":  checkTOML,
+	".go":    checkGo,
+	".yaml":  checkYAML,
+	".yml":   checkYAML,
+	".xml":   checkXML,
+	".py":    checkPython,
+	".sh":    checkShell,
+	".bash":  checkShell,
 }
 
 // checkSyntax looks up a checker by file extension and validates content.
@@ -51,6 +63,56 @@ func checkGo(content []byte) error {
 	_, err := parser.ParseFile(fset, "", content, parser.AllErrors)
 	if err != nil {
 		return fmt.Errorf("Go: %w", err)
+	}
+	return nil
+}
+
+func checkYAML(content []byte) error {
+	var v interface{}
+	if err := yaml.Unmarshal(content, &v); err != nil {
+		return fmt.Errorf("YAML: %w", err)
+	}
+	return nil
+}
+
+func checkXML(content []byte) error {
+	d := xml.NewDecoder(bytes.NewReader(content))
+	for {
+		_, err := d.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("XML: %w", err)
+		}
+	}
+	return nil
+}
+
+func checkPython(content []byte) error {
+	path, err := exec.LookPath("python3")
+	if err != nil {
+		return nil // python3 not available, skip
+	}
+	cmd := exec.Command(path, "-c", "import ast,sys; ast.parse(sys.stdin.read())")
+	cmd.Stdin = bytes.NewReader(content)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("Python: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func checkShell(content []byte) error {
+	path, err := exec.LookPath("bash")
+	if err != nil {
+		return nil // bash not available, skip
+	}
+	cmd := exec.Command(path, "-n")
+	cmd.Stdin = bytes.NewReader(content)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("Shell: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
