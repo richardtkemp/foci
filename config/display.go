@@ -8,250 +8,293 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// FormatConfig returns a readable section-by-section dump of the running config
+// configRow is a single row in the /config table output.
+type configRow struct {
+	Section string
+	Key     string
+	Value   string
+}
+
+// FormatConfig returns an aligned columnar table of the running config
 // for the given agent. Secrets are redacted.
 func FormatConfig(cfg *Config, agent AgentConfig) string {
-	var b strings.Builder
-
-	// [agent]
-	b.WriteString("[agent]\n")
-	writeField(&b, "id", agent.ID)
-	writeField(&b, "model", agent.Model)
-	writeField(&b, "workspace", agent.Workspace)
-	writeField(&b, "heartbeat_interval", agent.HeartbeatInterval)
-	if len(agent.SystemFiles) > 0 {
-		writeField(&b, "system_files", agent.SystemFiles)
+	var rows []configRow
+	add := func(section, key string, val interface{}) {
+		rows = append(rows, configRow{section, key, formatValue(val)})
 	}
-	writeField(&b, "duplicate_messages", agent.DuplicateMessages)
+
+	// agent
+	add("agent", "id", agent.ID)
+	add("agent", "model", agent.Model)
+	add("agent", "workspace", agent.Workspace)
+	add("agent", "heartbeat_interval", agent.HeartbeatInterval)
+	if len(agent.SystemFiles) > 0 {
+		add("agent", "system_files", agent.SystemFiles)
+	}
+	add("agent", "duplicate_messages", agent.DuplicateMessages)
 	if agent.ForkPrompt != "" {
-		writeField(&b, "fork_prompt", agent.ForkPrompt)
+		add("agent", "fork_prompt", agent.ForkPrompt)
 	}
 	if agent.TelegramBot != "" {
-		writeField(&b, "telegram_bot", agent.TelegramBot)
+		add("agent", "telegram_bot", agent.TelegramBot)
 	}
 	if len(agent.MultiballBots) > 0 {
-		writeField(&b, "multiball_bots", agent.MultiballBots)
+		add("agent", "multiball_bots", agent.MultiballBots)
 	}
-	writeField(&b, "max_tool_loops", agent.MaxToolLoops)
-	writeField(&b, "max_output_tokens", agent.MaxOutputTokens)
+	add("agent", "max_tool_loops", agent.MaxToolLoops)
+	add("agent", "max_output_tokens", agent.MaxOutputTokens)
 	if agent.TTSRate != 0 {
-		writeField(&b, "tts_rate", agent.TTSRate)
+		add("agent", "tts_rate", agent.TTSRate)
 	}
-	writeField(&b, "inject_agent_warnings", agent.InjectAgentWarnings)
+	add("agent", "inject_agent_warnings", agent.InjectAgentWarnings)
 	if agent.StartupNotification != nil {
-		writeField(&b, "startup_notification", *agent.StartupNotification)
+		add("agent", "startup_notification", *agent.StartupNotification)
 	}
 	if agent.ShowToolCalls != nil {
-		writeField(&b, "show_tool_calls", *agent.ShowToolCalls)
+		add("agent", "show_tool_calls", *agent.ShowToolCalls)
 	}
 	if agent.ImageSaveDir != "" {
-		writeField(&b, "image_save_dir", agent.ImageSaveDir)
+		add("agent", "image_save_dir", agent.ImageSaveDir)
 	}
 	if len(agent.AllowedUsers) > 0 {
-		writeField(&b, "allowed_users", agent.AllowedUsers)
+		add("agent", "allowed_users", agent.AllowedUsers)
 	}
 
-	// [defaults]
-	b.WriteString("\n[defaults]\n")
-	writeField(&b, "model", cfg.Defaults.Model)
-	writeField(&b, "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
-	writeField(&b, "max_tool_loops", cfg.Defaults.MaxToolLoops)
-	writeField(&b, "max_output_tokens", cfg.Defaults.MaxOutputTokens)
+	// defaults
+	add("defaults", "model", cfg.Defaults.Model)
+	add("defaults", "heartbeat_interval", cfg.Defaults.HeartbeatInterval)
+	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
+	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
 	if cfg.Defaults.DuplicateMessages {
-		writeField(&b, "duplicate_messages", cfg.Defaults.DuplicateMessages)
+		add("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
 	}
 	if cfg.Defaults.InjectAgentWarnings {
-		writeField(&b, "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
+		add("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
 	}
 	if cfg.Defaults.TTSRate != 0 {
-		writeField(&b, "tts_rate", cfg.Defaults.TTSRate)
+		add("defaults", "tts_rate", cfg.Defaults.TTSRate)
 	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
-		writeField(&b, "system_files", cfg.Defaults.SystemFiles)
+		add("defaults", "system_files", cfg.Defaults.SystemFiles)
 	}
 
-	// [telegram]
-	b.WriteString("\n[telegram]\n")
-	writeField(&b, "bot_token", redactString(cfg.Telegram.BotToken))
+	// telegram
+	add("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
 	if len(cfg.Telegram.AllowedUsers) > 0 {
-		writeField(&b, "allowed_users", cfg.Telegram.AllowedUsers)
+		add("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
 	}
 	if len(cfg.Telegram.MultiballBots) > 0 {
-		writeField(&b, "multiball_bots", cfg.Telegram.MultiballBots)
+		add("telegram", "multiball_bots", cfg.Telegram.MultiballBots)
 	}
 	if len(cfg.Telegram.Bots) > 0 {
 		var names []string
 		for k := range cfg.Telegram.Bots {
 			names = append(names, k)
 		}
-		writeField(&b, "bots", names)
+		add("telegram", "bots", names)
 	}
 	if len(cfg.Telegram.StopAliases) > 0 {
-		writeField(&b, "stop_aliases", cfg.Telegram.StopAliases)
+		add("telegram", "stop_aliases", cfg.Telegram.StopAliases)
 	}
-	writeField(&b, "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
-	writeField(&b, "enable_startup_notify", cfg.Telegram.EnableStartupNotify)
-	writeField(&b, "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
-	writeField(&b, "message_queue_size", cfg.Telegram.MessageQueueSize)
-	writeField(&b, "long_poll_timeout", cfg.Telegram.LongPollTimeout)
-	writeField(&b, "show_tool_calls", cfg.Telegram.ShowToolCalls)
+	add("telegram", "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
+	add("telegram", "enable_startup_notify", cfg.Telegram.EnableStartupNotify)
+	add("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
+	add("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
+	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
+	add("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
 	if cfg.Telegram.ImageSaveDir != "" {
-		writeField(&b, "image_save_dir", cfg.Telegram.ImageSaveDir)
+		add("telegram", "image_save_dir", cfg.Telegram.ImageSaveDir)
 	}
 
-	// [sessions]
-	b.WriteString("\n[sessions]\n")
-	writeField(&b, "dir", cfg.Sessions.Dir)
-	writeField(&b, "compaction_threshold", cfg.Sessions.CompactionThreshold)
-	writeField(&b, "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
-	writeField(&b, "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
+	// sessions
+	add("sessions", "dir", cfg.Sessions.Dir)
+	add("sessions", "compaction_threshold", cfg.Sessions.CompactionThreshold)
+	add("sessions", "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
+	add("sessions", "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
 	if cfg.Sessions.CompactionSummaryPrompt != "" {
-		writeField(&b, "compaction_summary_prompt", cfg.Sessions.CompactionSummaryPrompt)
+		add("sessions", "compaction_summary_prompt", cfg.Sessions.CompactionSummaryPrompt)
 	}
 	if cfg.Sessions.CompactionHandoffMsg != "" {
-		writeField(&b, "compaction_handoff_msg", cfg.Sessions.CompactionHandoffMsg)
+		add("sessions", "compaction_handoff_msg", cfg.Sessions.CompactionHandoffMsg)
 	}
 	if cfg.Sessions.CompactionSystemPrompt != "" {
-		writeField(&b, "compaction_system_prompt", cfg.Sessions.CompactionSystemPrompt)
+		add("sessions", "compaction_system_prompt", cfg.Sessions.CompactionSystemPrompt)
 	}
 	if cfg.Sessions.CompactionNotify != nil {
-		writeField(&b, "compaction_notify", *cfg.Sessions.CompactionNotify)
+		add("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
 	}
-	writeField(&b, "compaction_debug", cfg.Sessions.CompactionDebug)
-	writeField(&b, "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
-	writeField(&b, "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
+	add("sessions", "compaction_debug", cfg.Sessions.CompactionDebug)
+	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
+	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.SessionResetPrompt != "" {
-		writeField(&b, "session_reset_prompt", cfg.Sessions.SessionResetPrompt)
+		add("sessions", "session_reset_prompt", cfg.Sessions.SessionResetPrompt)
 	}
 
-	// [memory]
-	b.WriteString("\n[memory]\n")
+	// memory
 	if cfg.Memory.Dir != "" {
-		writeField(&b, "dir", cfg.Memory.Dir)
+		add("memory", "dir", cfg.Memory.Dir)
 	}
 	if len(cfg.Memory.Sources) > 0 {
-		writeField(&b, "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
+		add("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
 	}
 	if cfg.Memory.ReindexDebounce != "" {
-		writeField(&b, "reindex_debounce", cfg.Memory.ReindexDebounce)
+		add("memory", "reindex_debounce", cfg.Memory.ReindexDebounce)
 	}
-	writeField(&b, "conversation_weight", cfg.Memory.ConversationWeight)
-	writeField(&b, "search_limit", cfg.Memory.SearchLimit)
+	add("memory", "conversation_weight", cfg.Memory.ConversationWeight)
+	add("memory", "search_limit", cfg.Memory.SearchLimit)
 
-	// [logging]
-	b.WriteString("\n[logging]\n")
-	writeField(&b, "level", cfg.Logging.Level)
-	writeField(&b, "event_file", cfg.Logging.EventFile)
-	writeField(&b, "api_file", cfg.Logging.APIFile)
-	writeField(&b, "conversation_file", cfg.Logging.ConversationFile)
-	writeField(&b, "full_payload", cfg.Logging.FullPayload)
+	// logging
+	add("logging", "level", cfg.Logging.Level)
+	add("logging", "event_file", cfg.Logging.EventFile)
+	add("logging", "api_file", cfg.Logging.APIFile)
+	add("logging", "conversation_file", cfg.Logging.ConversationFile)
+	add("logging", "full_payload", cfg.Logging.FullPayload)
 	if cfg.Logging.PayloadFile != "" {
-		writeField(&b, "payload_file", cfg.Logging.PayloadFile)
+		add("logging", "payload_file", cfg.Logging.PayloadFile)
 	}
-	writeField(&b, "cache_bust_detect", cfg.Logging.CacheBustDetect)
-	writeField(&b, "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
-	writeField(&b, "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
-	writeField(&b, "warning_window_duration", cfg.Logging.WarningWindowDuration)
+	add("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
+	add("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
+	add("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
+	add("logging", "warning_window_duration", cfg.Logging.WarningWindowDuration)
+	add("logging", "log_rotation", cfg.Logging.LogRotation)
+	add("logging", "rotation_period", cfg.Logging.RotationPeriod)
+	add("logging", "retention_period", cfg.Logging.RetentionPeriod)
+	if cfg.Logging.ArchiveDir != "" {
+		add("logging", "archive_dir", cfg.Logging.ArchiveDir)
+	}
 
-	// [http]
-	b.WriteString("\n[http]\n")
-	writeField(&b, "bind", cfg.HTTP.Bind)
-	writeField(&b, "port", cfg.HTTP.Port)
-	writeField(&b, "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout)
+	// http
+	add("http", "bind", cfg.HTTP.Bind)
+	add("http", "port", cfg.HTTP.Port)
+	add("http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout)
 
-	// [tools]
-	b.WriteString("\n[tools]\n")
-	writeField(&b, "max_result_chars", cfg.Tools.MaxResultChars)
-	writeField(&b, "temp_dir", cfg.Tools.TempDir)
-	writeField(&b, "tmux_cols", cfg.Tools.TmuxCols)
-	writeField(&b, "tmux_rows", cfg.Tools.TmuxRows)
-	writeField(&b, "exec_auto_background", cfg.Tools.ExecAutoBackground)
-	writeField(&b, "exec_default_timeout", cfg.Tools.ExecDefaultTimeout)
-	writeField(&b, "exec_max_output_chars", cfg.Tools.ExecMaxOutputChars)
-	writeField(&b, "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
-	writeField(&b, "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
-	writeField(&b, "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)
-	writeField(&b, "web_fetch_max_chars", cfg.Tools.WebFetchMaxChars)
-	writeField(&b, "web_search_timeout", cfg.Tools.WebSearchTimeout)
-	writeField(&b, "max_concurrent_spawns", cfg.Tools.MaxConcurrentSpawns)
-	writeField(&b, "tool_call_preview_chars", cfg.Tools.ToolCallPreviewChars)
-	writeField(&b, "tmux_memory_check_interval", cfg.Tools.TmuxMemoryCheckInterval)
-	writeField(&b, "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)
-	writeField(&b, "tmux_memory_critical", cfg.Tools.TmuxMemoryCritical)
-	writeField(&b, "tmux_memory_kill", cfg.Tools.TmuxMemoryKill)
+	// tools
+	add("tools", "max_result_chars", cfg.Tools.MaxResultChars)
+	add("tools", "temp_dir", cfg.Tools.TempDir)
+	add("tools", "tmux_cols", cfg.Tools.TmuxCols)
+	add("tools", "tmux_rows", cfg.Tools.TmuxRows)
+	add("tools", "exec_auto_background", cfg.Tools.ExecAutoBackground)
+	add("tools", "exec_default_timeout", cfg.Tools.ExecDefaultTimeout)
+	add("tools", "exec_max_output_chars", cfg.Tools.ExecMaxOutputChars)
+	add("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
+	add("tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
+	add("tools", "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)
+	add("tools", "web_fetch_max_chars", cfg.Tools.WebFetchMaxChars)
+	add("tools", "web_search_timeout", cfg.Tools.WebSearchTimeout)
+	add("tools", "max_concurrent_spawns", cfg.Tools.MaxConcurrentSpawns)
+	add("tools", "tool_call_preview_chars", cfg.Tools.ToolCallPreviewChars)
+	add("tools", "tmux_memory_check_interval", cfg.Tools.TmuxMemoryCheckInterval)
+	add("tools", "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)
+	add("tools", "tmux_memory_critical", cfg.Tools.TmuxMemoryCritical)
+	add("tools", "tmux_memory_kill", cfg.Tools.TmuxMemoryKill)
 
-	// [environment]
-	b.WriteString("\n[environment]\n")
-	writeField(&b, "enabled", cfg.Environment.Enabled)
+	// environment
+	add("environment", "enabled", cfg.Environment.Enabled)
 	if cfg.Environment.DocsPath != "" {
-		writeField(&b, "docs_path", cfg.Environment.DocsPath)
+		add("environment", "docs_path", cfg.Environment.DocsPath)
 	}
 
-	// [skills]
+	// skills
 	if len(cfg.Skills.Dirs) > 0 {
-		b.WriteString("\n[skills]\n")
-		writeField(&b, "dirs", cfg.Skills.Dirs)
+		add("skills", "dirs", cfg.Skills.Dirs)
 	}
 
-	// [cache]
-	b.WriteString("\n[cache]\n")
-	writeField(&b, "strategy", cfg.Cache.Strategy)
+	// cache
+	add("cache", "strategy", cfg.Cache.Strategy)
 
-	// [usage_warnings]
-	b.WriteString("\n[usage_warnings]\n")
-	writeField(&b, "name", cfg.ManaWarnings.Name)
+	// usage_warnings
+	add("usage_warnings", "name", cfg.ManaWarnings.Name)
 	if len(cfg.ManaWarnings.Thresholds) > 0 {
-		writeField(&b, "thresholds", cfg.ManaWarnings.Thresholds)
+		add("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
 
-	// [voice]
-	b.WriteString("\n[voice]\n")
+	// voice
 	if cfg.Voice.STTEndpoint != "" {
-		writeField(&b, "stt_endpoint", cfg.Voice.STTEndpoint)
+		add("voice", "stt_endpoint", cfg.Voice.STTEndpoint)
 	}
 	if cfg.Voice.STTModel != "" {
-		writeField(&b, "stt_model", cfg.Voice.STTModel)
+		add("voice", "stt_model", cfg.Voice.STTModel)
 	}
 	if cfg.Voice.TTSProvider != "" {
-		writeField(&b, "tts_provider", cfg.Voice.TTSProvider)
+		add("voice", "tts_provider", cfg.Voice.TTSProvider)
 	}
 	if cfg.Voice.TTSEndpoint != "" {
-		writeField(&b, "tts_endpoint", cfg.Voice.TTSEndpoint)
+		add("voice", "tts_endpoint", cfg.Voice.TTSEndpoint)
 	}
 	if cfg.Voice.TTSModel != "" {
-		writeField(&b, "tts_model", cfg.Voice.TTSModel)
+		add("voice", "tts_model", cfg.Voice.TTSModel)
 	}
 	if cfg.Voice.TTSVoice != "" {
-		writeField(&b, "tts_voice", cfg.Voice.TTSVoice)
+		add("voice", "tts_voice", cfg.Voice.TTSVoice)
 	}
 	if cfg.Voice.TTSRate != 0 {
-		writeField(&b, "tts_rate", cfg.Voice.TTSRate)
+		add("voice", "tts_rate", cfg.Voice.TTSRate)
 	}
 
-	// [database]
-	b.WriteString("\n[database]\n")
-	writeField(&b, "busy_timeout", cfg.Database.BusyTimeout)
+	// database
+	add("database", "busy_timeout", cfg.Database.BusyTimeout)
 
-	// [anthropic] (secrets redacted)
-	b.WriteString("\n[anthropic]\n")
-	writeField(&b, "token", redactString(cfg.Anthropic.Token))
-	writeField(&b, "oauth_token", redactString(cfg.Anthropic.OAuthToken))
-	writeField(&b, "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
-	writeField(&b, "credentials_file", cfg.Anthropic.CredentialsFile)
-	writeField(&b, "http_timeout", cfg.Anthropic.HTTPTimeout)
-	writeField(&b, "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
+	// anthropic (secrets redacted)
+	add("anthropic", "token", redactString(cfg.Anthropic.Token))
+	add("anthropic", "oauth_token", redactString(cfg.Anthropic.OAuthToken))
+	add("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
+	add("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
+	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
+	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 
-	// [[prompt_rules]]
+	// prompt_rules
 	if len(cfg.PromptRules) > 0 {
-		b.WriteString(fmt.Sprintf("\n[[prompt_rules]] (%d rules)\n", len(cfg.PromptRules)))
-		for _, r := range cfg.PromptRules {
-			writeField(&b, "find", r.Find)
-			writeField(&b, "replace", r.Replace)
-			b.WriteString("---\n")
+		add("prompt_rules", fmt.Sprintf("(%d rules)", len(cfg.PromptRules)), "")
+	}
+
+	return formatTable(rows)
+}
+
+// formatTable renders config rows as an aligned columnar table.
+func formatTable(rows []configRow) string {
+	maxSec, maxKey, maxVal := 0, 0, 0
+	for _, r := range rows {
+		if len(r.Section) > maxSec {
+			maxSec = len(r.Section)
+		}
+		if len(r.Key) > maxKey {
+			maxKey = len(r.Key)
+		}
+		if len(r.Value) > maxVal {
+			maxVal = len(r.Value)
 		}
 	}
 
+	var b strings.Builder
+	hdr := fmt.Sprintf("%-*s  %-*s  %s", maxSec, "SECTION", maxKey, "KEY", "VALUE")
+	b.WriteString(hdr)
+	b.WriteByte('\n')
+	b.WriteString(strings.Repeat("─", len(hdr)))
+	b.WriteByte('\n')
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%-*s  %-*s  %s\n", maxSec, r.Section, maxKey, r.Key, r.Value)
+	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatValue converts a config value to its display string.
+func formatValue(val interface{}) string {
+	switch v := val.(type) {
+	case string:
+		return v
+	case bool:
+		return fmt.Sprintf("%v", v)
+	case int:
+		return fmt.Sprintf("%d", v)
+	case float64:
+		return fmt.Sprintf("%g", v)
+	case []string:
+		return fmt.Sprintf("%v", v)
+	case []int:
+		return fmt.Sprintf("%v", v)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // displayConfig is a struct used for TOML marshaling that includes

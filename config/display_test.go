@@ -91,27 +91,37 @@ func TestFormatConfig(t *testing.T) {
 	cfg, agent := testConfig()
 	result := FormatConfig(cfg, agent)
 
-	// Check section headers
+	// Check table header
+	if !strings.Contains(result, "SECTION") || !strings.Contains(result, "KEY") || !strings.Contains(result, "VALUE") {
+		t.Error("missing table header columns")
+	}
+
+	// Check separator line
+	if !strings.Contains(result, "─") {
+		t.Error("missing table separator")
+	}
+
+	// Check sections appear as values in SECTION column
 	for _, section := range []string{
-		"[agent]", "[telegram]", "[sessions]", "[memory]",
-		"[logging]", "[http]", "[tools]", "[environment]",
-		"[cache]", "[usage_warnings]", "[voice]", "[database]",
-		"[anthropic]",
+		"agent", "telegram", "sessions", "memory",
+		"logging", "http", "tools", "environment",
+		"cache", "usage_warnings", "database",
+		"anthropic",
 	} {
 		if !strings.Contains(result, section) {
 			t.Errorf("missing section %q", section)
 		}
 	}
 
-	// Check agent fields
-	if !strings.Contains(result, `id = "test-agent"`) {
-		t.Error("missing agent id")
+	// Check agent fields appear as rows
+	if !strings.Contains(result, "test-agent") {
+		t.Error("missing agent id value")
 	}
-	if !strings.Contains(result, `model = "claude-haiku-4-5"`) {
-		t.Error("missing agent model")
+	if !strings.Contains(result, "claude-haiku-4-5") {
+		t.Error("missing agent model value")
 	}
-	if !strings.Contains(result, `workspace = "/home/user/workspace"`) {
-		t.Error("missing agent workspace")
+	if !strings.Contains(result, "/home/user/workspace") {
+		t.Error("missing agent workspace value")
 	}
 }
 
@@ -134,7 +144,7 @@ func TestFormatConfigSecretRedaction(t *testing.T) {
 	}
 
 	// Redacted markers must be present
-	if !strings.Contains(result, `token = "***"`) {
+	if !strings.Contains(result, "***") {
 		t.Error("expected redacted token marker")
 	}
 }
