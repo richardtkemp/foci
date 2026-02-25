@@ -103,7 +103,7 @@ The core of the system. Two entry points:
 
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
-- If exceeded, writes full result to temp file and returns truncated message
+- If exceeded, writes full result to temp file and returns a guard message (no partial content)
 - Prevents large tool outputs from permanently bloating session history
 - `agent.Redact` is applied to all tool results and error messages (secret redaction)
 - Tool errors are logged as WARN in the event log
@@ -388,7 +388,7 @@ Wired in `main.go` after agent setup. Notification callback sends to agents whos
 
 ### Tool Result Guard
 
-If a tool result exceeds `agent.MaxResultChars` (from config, default 10,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. The agent receives a truncated message with the file path and read instructions. This prevents large results from bloating session history indefinitely.
+If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. The agent receives only a guard message with the file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown) — no partial content is included. This prevents large results from bloating session history indefinitely.
 
 ## Slash Commands (`command/`)
 
