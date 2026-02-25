@@ -62,8 +62,9 @@ type AgentConfig struct {
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
 	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
 	// Per-agent tool behaviour (0 = use global [tools] value)
-	ExecAutoBackground  int `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
-	MaxConcurrentSpawns int `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
+	ExecAutoBackground  int   `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
+	MaxConcurrentSpawns int   `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
+	MaxUploadFileSize   int64 `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
 }
@@ -215,6 +216,7 @@ type ToolsConfig struct {
 	TmuxMemoryWarn          string `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
 	TmuxMemoryCritical      string `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
 	TmuxMemoryKill          string `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
+	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 }
 
 type PromptRule struct {
@@ -640,6 +642,9 @@ if cfg.Sessions.CompactionThreshold == 0 {
 	}
 	if cfg.Tools.MaxConcurrentSpawns == 0 {
 		cfg.Tools.MaxConcurrentSpawns = 3
+	}
+	if cfg.Tools.MaxUploadFileSize == 0 {
+		cfg.Tools.MaxUploadFileSize = 50 * 1024 * 1024 // 50MB
 	}
 	if cfg.Tools.ToolCallPreviewChars == 0 {
 		cfg.Tools.ToolCallPreviewChars = 450

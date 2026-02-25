@@ -1123,6 +1123,12 @@ func setupAgent(p setupParams) *agentInstance {
 		execAutoBg = acfg.ExecAutoBackground
 	}
 
+	// Per-agent max_upload_file_size (0 = use global)
+	maxUploadSize := p.cfg.Tools.MaxUploadFileSize
+	if acfg.MaxUploadFileSize != 0 {
+		maxUploadSize = acfg.MaxUploadFileSize
+	}
+
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace))
 	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
 	registry.Register(tmuxTool)
@@ -1130,7 +1136,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewWriteTool())
 	registry.Register(tools.NewEditTool())
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, notifier))
+	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 	if p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
