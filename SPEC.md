@@ -672,7 +672,7 @@ Built-in rotation runs every `rotation_period` (default 24h). For each log file 
 3. Recent lines → kept in active log
 4. Logger file handles reopened atomically after swap
 
-Enabled by default (`log_rotation = true`). Disable with `log_rotation = false` if using external logrotate.
+Enabled by default (`log_rotation = true`). Disable with `log_rotation = false` if using external logrotate. The scanner buffer size is configurable via `rotation_max_line_size` (default "64MB") — API payload lines can be very large with full request/response JSON.
 
 ## Slash Commands
 

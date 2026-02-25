@@ -142,6 +142,7 @@ type LoggingConfig struct {
 	LogRotation           bool   `toml:"log_rotation"`            // enable built-in log rotation (default true)
 	RotationPeriod        string `toml:"rotation_period"`         // how often to rotate (default "24h")
 	RetentionPeriod       string `toml:"retention_period"`        // keep lines newer than this (default "48h")
+	RotationMaxLineSize   string `toml:"rotation_max_line_size"`  // max line size for scanner buffer (default "64MB")
 	ArchiveDir            string `toml:"archive_dir"`             // gzip archive directory (default: log_dir/archive/)
 }
 
@@ -289,6 +290,9 @@ func validate(cfg *Config) error {
 	}
 	if _, err := time.ParseDuration(cfg.Logging.RetentionPeriod); err != nil {
 		return fmt.Errorf("[logging] retention_period = %q: %w", cfg.Logging.RetentionPeriod, err)
+	}
+	if _, err := ParseByteSize(cfg.Logging.RotationMaxLineSize); err != nil {
+		return fmt.Errorf("[logging] rotation_max_line_size = %q: %w", cfg.Logging.RotationMaxLineSize, err)
 	}
 
 	// Bitwarden
@@ -526,6 +530,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.RetentionPeriod == "" {
 		cfg.Logging.RetentionPeriod = "48h"
+	}
+	if cfg.Logging.RotationMaxLineSize == "" {
+		cfg.Logging.RotationMaxLineSize = "64MB"
 	}
 	if cfg.Anthropic.CredentialsFile == "" {
 		cfg.Anthropic.CredentialsFile = "~/.claude/.credentials.json"
@@ -834,4 +841,42 @@ func ValidateMemoryThreshold(s string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown format %q: use \"N%%\", \"Nmb\", or \"Ngb\"", s)
+}
+
+// ParseByteSize parses a human-readable byte size string like "64MB", "1GB",
+// "512KB", or a plain number (bytes). Case-insensitive.
+func ParseByteSize(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty size")
+	}
+	upper := strings.ToUpper(s)
+	var suffix string
+	var multiplier int
+	for _, pair := range []struct {
+		suffix string
+		mult   int
+	}{
+		{"GB", 1024 * 1024 * 1024},
+		{"MB", 1024 * 1024},
+		{"KB", 1024},
+	} {
+		if strings.HasSuffix(upper, pair.suffix) {
+			suffix = pair.suffix
+			multiplier = pair.mult
+			break
+		}
+	}
+	numStr := strings.TrimSpace(s[:len(s)-len(suffix)])
+	n, err := strconv.Atoi(numStr)
+	if err != nil {
+		return 0, fmt.Errorf("parse %q: %w", s, err)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("size must be positive: %q", s)
+	}
+	if multiplier > 0 {
+		return n * multiplier, nil
+	}
+	return n, nil
 }

@@ -127,7 +127,7 @@ func TestRotateFile(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRotateFileAllFresh(t *testing.T) {
 		`{"ts":"` + recent + `","msg":"new2"}` + "\n"
 	os.WriteFile(logPath, []byte(lines), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -190,14 +190,14 @@ func TestRotateFileEmpty(t *testing.T) {
 	logPath := filepath.Join(dir, "empty.jsonl")
 	os.WriteFile(logPath, []byte{}, 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"))
+	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"), 1024*1024)
 	if err != nil {
 		t.Fatalf("rotateFile on empty: %v", err)
 	}
 }
 
 func TestRotateFileMissing(t *testing.T) {
-	err := rotateFile("/nonexistent/path/log.jsonl", 48*time.Hour, "/tmp/archive")
+	err := rotateFile("/nonexistent/path/log.jsonl", 48*time.Hour, "/tmp/archive", 1024*1024)
 	if err != nil {
 		t.Fatalf("rotateFile on missing: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestRotateFileEventLog(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -259,10 +259,11 @@ func TestRotateFileEventLog(t *testing.T) {
 
 func TestStartRotationStop(t *testing.T) {
 	stop := StartRotation(RotationConfig{
-		Period:     100 * time.Millisecond,
-		Retention:  48 * time.Hour,
-		ArchiveDir: t.TempDir(),
-		Files:      nil, // no files to rotate
+		Period:      100 * time.Millisecond,
+		Retention:   48 * time.Hour,
+		MaxLineSize: 1024 * 1024,
+		ArchiveDir:  t.TempDir(),
+		Files:       nil, // no files to rotate
 	})
 
 	// Let it tick at least once.

@@ -77,6 +77,7 @@ func main() {
 	if cfg.Logging.LogRotation {
 		rotPeriod, _ := time.ParseDuration(cfg.Logging.RotationPeriod)
 		retPeriod, _ := time.ParseDuration(cfg.Logging.RetentionPeriod)
+		maxLineSize, _ := config.ParseByteSize(cfg.Logging.RotationMaxLineSize)
 		archiveDir := cfg.Logging.ArchiveDir
 		if archiveDir == "" {
 			archiveDir = filepath.Join(filepath.Dir(cfg.Logging.EventFile), "archive")
@@ -88,10 +89,11 @@ func main() {
 			}
 		}
 		stopRotation := log.StartRotation(log.RotationConfig{
-			Period:     rotPeriod,
-			Retention:  retPeriod,
-			ArchiveDir: archiveDir,
-			Files:      files,
+			Period:      rotPeriod,
+			Retention:   retPeriod,
+			MaxLineSize: maxLineSize,
+			ArchiveDir:  archiveDir,
+			Files:       files,
 		})
 		defer stopRotation()
 	}

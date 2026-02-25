@@ -324,6 +324,7 @@ Logging and diagnostics.
 | `log_rotation` | bool | `true` | Enable built-in log rotation. |
 | `rotation_period` | string | `"24h"` | How often to check and rotate logs. Go duration format. |
 | `retention_period` | string | `"48h"` | Keep lines newer than this in the active log. Older lines archived to gzip. |
+| `rotation_max_line_size` | string | `"64MB"` | Max line size for the rotation scanner buffer. Accepts `KB`, `MB`, `GB` suffixes. If a log line exceeds this size, rotation fails with "bufio.Scanner: token too long" and that log file won't be rotated. |
 | `archive_dir` | string | `""` | Directory for gzip archives. Default: `logs/archive/`. |
 
 When `inject_agent_warnings` is enabled (per-agent), repeated identical warnings (e.g. polling errors every 2 seconds) are deduplicated: after `warning_max_per_window` occurrences within `warning_window_duration`, further duplicates are suppressed and summarised as "... and N more in last Xm" on the next drain. Warning messages are normalised before comparison — IP addresses, hex strings, and multi-digit numbers are replaced with placeholders so that semantically identical errors (differing only in timestamps or addresses) are grouped together.
