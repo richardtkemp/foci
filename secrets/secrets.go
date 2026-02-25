@@ -25,8 +25,10 @@ var defaultBlockedPaths = []string{
 type Store struct {
 	path         string
 	values       map[string]string
-	allowedHosts map[string][]string // section name → allowed hosts
+	allowedHosts map[string][]string            // section name → allowed hosts
 	blockedPaths []string
+	agentValues  map[string]map[string]string   // agent ID → flat key → value
+	agentHosts   map[string]map[string][]string // agent ID → section → allowed hosts
 }
 
 // Load reads secrets from a TOML file. Returns an empty store (not error) if the file doesn't exist.
@@ -56,6 +58,19 @@ func Load(path string) (*Store, error) {
 
 	// Flatten: [section] key = value → "section.key" = value
 	for section, pairs := range raw {
+		if section == "agents" {
+			// [agents.ID] sections → per-agent overrides
+			s.agentValues = make(map[string]map[string]string)
+			s.agentHosts = make(map[string]map[string][]string)
+			for agentID, v := range pairs {
+				agentTable, ok := v.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				flattenInto(agentID, agentTable, s)
+			}
+			continue
+		}
 		for key, value := range pairs {
 			switch v := value.(type) {
 			case string:
@@ -78,6 +93,70 @@ func Load(path string) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+// flattenInto parses one [agents.ID] sub-table and stores its values
+// into s.agentValues and s.agentHosts.
+func flattenInto(agentID string, table map[string]interface{}, s *Store) {
+	if s.agentValues[agentID] == nil {
+		s.agentValues[agentID] = make(map[string]string)
+	}
+	for section, v := range table {
+		subTable, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for key, val := range subTable {
+			switch tv := val.(type) {
+			case string:
+				s.agentValues[agentID][section+"."+key] = tv
+			case []interface{}:
+				if key == "allowed_hosts" {
+					hosts := make([]string, 0, len(tv))
+					for _, h := range tv {
+						if hs, ok := h.(string); ok {
+							hosts = append(hosts, hs)
+						}
+					}
+					if s.agentHosts[agentID] == nil {
+						s.agentHosts[agentID] = make(map[string][]string)
+					}
+					s.agentHosts[agentID][section] = hosts
+				}
+			}
+		}
+	}
+}
+
+// ForAgent returns a new Store scoped to the given agent ID.
+// Agent-specific values overlay globals; keys not overridden fall back to globals.
+// The returned Store has no path (cannot Save) and no agentValues (doesn't nest further).
+func (s *Store) ForAgent(agentID string) *Store {
+	merged := make(map[string]string, len(s.values))
+	for k, v := range s.values {
+		merged[k] = v
+	}
+	if s.agentValues != nil {
+		for k, v := range s.agentValues[agentID] {
+			merged[k] = v
+		}
+	}
+
+	mergedHosts := make(map[string][]string, len(s.allowedHosts))
+	for k, v := range s.allowedHosts {
+		mergedHosts[k] = v
+	}
+	if s.agentHosts != nil {
+		for k, v := range s.agentHosts[agentID] {
+			mergedHosts[k] = v
+		}
+	}
+
+	return &Store{
+		values:       merged,
+		allowedHosts: mergedHosts,
+		blockedPaths: s.blockedPaths,
+	}
 }
 
 // Get returns a secret value by its flat key (e.g. "anthropic.token").
@@ -167,6 +246,81 @@ func (s *Store) Save() error {
 				fmt.Fprintf(&buf, "%q", h)
 			}
 			buf.WriteString("]\n")
+		}
+	}
+
+	// Write [agents.*] sections
+	if len(s.agentValues) > 0 || len(s.agentHosts) > 0 {
+		agentIDs := make(map[string]bool)
+		for id := range s.agentValues {
+			agentIDs[id] = true
+		}
+		for id := range s.agentHosts {
+			agentIDs[id] = true
+		}
+		sortedIDs := make([]string, 0, len(agentIDs))
+		for id := range agentIDs {
+			sortedIDs = append(sortedIDs, id)
+		}
+		sort.Strings(sortedIDs)
+
+		for _, agentID := range sortedIDs {
+			// Rebuild per-agent sections from flat keys
+			agentSections := make(map[string]map[string]string)
+			for flat, val := range s.agentValues[agentID] {
+				parts := strings.SplitN(flat, ".", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				sec, key := parts[0], parts[1]
+				if agentSections[sec] == nil {
+					agentSections[sec] = make(map[string]string)
+				}
+				agentSections[sec][key] = val
+			}
+
+			// Collect all agent sub-sections
+			allAgentSecs := make(map[string]bool)
+			for sec := range agentSections {
+				allAgentSecs[sec] = true
+			}
+			if s.agentHosts != nil {
+				for sec := range s.agentHosts[agentID] {
+					allAgentSecs[sec] = true
+				}
+			}
+			sortedSecs := make([]string, 0, len(allAgentSecs))
+			for sec := range allAgentSecs {
+				sortedSecs = append(sortedSecs, sec)
+			}
+			sort.Strings(sortedSecs)
+
+			for _, sec := range sortedSecs {
+				buf.WriteByte('\n')
+				fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
+				if pairs, ok := agentSections[sec]; ok {
+					keys := make([]string, 0, len(pairs))
+					for k := range pairs {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
+					}
+				}
+				if s.agentHosts != nil {
+					if hosts, ok := s.agentHosts[agentID][sec]; ok && len(hosts) > 0 {
+						buf.WriteString("allowed_hosts = [")
+						for j, h := range hosts {
+							if j > 0 {
+								buf.WriteString(", ")
+							}
+							fmt.Fprintf(&buf, "%q", h)
+						}
+						buf.WriteString("]\n")
+					}
+				}
+			}
 		}
 	}
 
