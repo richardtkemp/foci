@@ -159,7 +159,7 @@ func TestSendTelegramVoice(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
-		"as_voice":  true,
+		"send_as":   "voice",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -269,7 +269,7 @@ func TestSendTelegramVoiceError(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/voice.ogg",
-		"as_voice":  true,
+		"send_as":   "voice",
 	})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -365,7 +365,7 @@ func TestSendTelegramChatRoutingVoice(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
-		"as_voice":  true,
+		"send_as":   "voice",
 	})
 
 	_, err := tool.Execute(ctx, params)
@@ -521,7 +521,7 @@ func TestSendTelegramSendAsDocument(t *testing.T) {
 }
 
 func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
-	// No send_as, no as_voice — should default to document
+	// No send_as — should default to document
 	mock := &mockTelegramSender{}
 	tool := NewSendTelegramTool(func() TelegramSender { return mock })
 
@@ -538,47 +538,6 @@ func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
 	}
 	if len(mock.documentCalls) != 1 {
 		t.Errorf("documentCalls = %v", mock.documentCalls)
-	}
-}
-
-func TestSendTelegramAsVoiceBackwardsCompat(t *testing.T) {
-	// as_voice=true without send_as should still work
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/note.ogg",
-		"as_voice":  true,
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "Sent: voice note" {
-		t.Errorf("result = %q", result)
-	}
-	if len(mock.voiceCalls) != 1 {
-		t.Errorf("voiceCalls = %v", mock.voiceCalls)
-	}
-}
-
-func TestSendTelegramAsVoiceAndSendAsMutuallyExclusive(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/note.ogg",
-		"as_voice":  true,
-		"send_as":   "video",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for as_voice + send_as")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("error = %v", err)
 	}
 }
 

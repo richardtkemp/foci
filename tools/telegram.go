@@ -55,10 +55,6 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 					"type": "string",
 					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF).",
 					"enum": ["document", "voice", "video", "photo", "audio", "animation"]
-				},
-				"as_voice": {
-					"type": "boolean",
-					"description": "DEPRECATED: use send_as='voice' instead. If true and file_path is set, send as voice note."
 				}
 			}
 		}`),
@@ -67,21 +63,12 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 				Text     string `json:"text"`
 				FilePath string `json:"file_path"`
 				SendAs   string `json:"send_as"`
-				AsVoice  bool   `json:"as_voice"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
 			}
 			if p.Text == "" && p.FilePath == "" {
 				return "", fmt.Errorf("at least one of text or file_path is required")
-			}
-			if p.AsVoice && p.SendAs != "" {
-				return "", fmt.Errorf("as_voice and send_as are mutually exclusive (as_voice is deprecated, use send_as)")
-			}
-
-			// Normalise: fold deprecated as_voice into send_as
-			if p.AsVoice {
-				p.SendAs = "voice"
 			}
 			if p.SendAs == "" {
 				p.SendAs = "document"
