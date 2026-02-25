@@ -140,9 +140,11 @@ func ConvertToTelegramHTML(text string) string {
 	text = codeBlockRe.ReplaceAllStringFunc(text, func(match string) string {
 		idx := len(codeBlocks)
 		// Extract code (everything between ``` markers)
-		inner := codeBlockRe.FindStringSubmatch(match)[1]
-		// HTML-escape the content
-		inner = htmlEscape(inner)
+		parts := codeBlockRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		inner := htmlEscape(parts[1])
 		codeBlocks = append(codeBlocks, "<pre><code>"+inner+"</code></pre>")
 		return "[CODEBLOCK" + string(rune('0'+idx)) + "]"
 	})
@@ -156,8 +158,11 @@ func ConvertToTelegramHTML(text string) string {
 	inlineCodeRe := regexp.MustCompile("`([^`]+)`")
 	text = inlineCodeRe.ReplaceAllStringFunc(text, func(match string) string {
 		idx := len(inlineCodes)
-		code := inlineCodeRe.FindStringSubmatch(match)[1]
-		code = htmlEscape(code)
+		parts := inlineCodeRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		code := htmlEscape(parts[1])
 		inlineCodes = append(inlineCodes, "<code>"+code+"</code>")
 		return "[INLINECODE" + string(rune('0'+idx)) + "]"
 	})
@@ -394,16 +399,25 @@ func convertHeadings(text string) string {
 	}
 
 	text = h1Re.ReplaceAllStringFunc(text, func(m string) string {
-		title := h1Re.FindStringSubmatch(m)[1]
-		return formatHeading(title, h1Style)
+		parts := h1Re.FindStringSubmatch(m)
+		if len(parts) < 2 {
+			return m
+		}
+		return formatHeading(parts[1], h1Style)
 	})
 	text = h2Re.ReplaceAllStringFunc(text, func(m string) string {
-		title := h2Re.FindStringSubmatch(m)[1]
-		return formatHeading(title, h2Style)
+		parts := h2Re.FindStringSubmatch(m)
+		if len(parts) < 2 {
+			return m
+		}
+		return formatHeading(parts[1], h2Style)
 	})
 	text = h3PlusRe.ReplaceAllStringFunc(text, func(m string) string {
-		title := h3PlusRe.FindStringSubmatch(m)[1]
-		return formatHeading(title, h3Style)
+		parts := h3PlusRe.FindStringSubmatch(m)
+		if len(parts) < 2 {
+			return m
+		}
+		return formatHeading(parts[1], h3Style)
 	})
 
 	return text
