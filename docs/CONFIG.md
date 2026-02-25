@@ -22,7 +22,8 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `heartbeat_interval` | string | `"45m"` | Duration between idle heartbeats. Go duration format (`30s`, `5m`, `2h`). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
-| `fork_prompt` | string | `""` | Path to prompt file injected into multiball branch sessions. Read at fork time. If empty, a built-in default is used that tells the agent it's a branch and can use `send_to_session`. |
+| `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, a built-in default is used that varies by branch type. |
+| `fork_prompt` | string | `""` | **Deprecated:** use `branch_orientation_prompt`. Path to prompt file injected into branch sessions. If `branch_orientation_prompt` is set, `fork_prompt` is ignored. |
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
 | `multiball_bot` | string | `""` | **Deprecated:** use `multiball_bots`. If set and `multiball_bots` is empty, promoted to a single-element list with a warning. |
@@ -175,12 +176,13 @@ Session storage and compaction.
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 | `session_reset_prompt` | string | `""` | Path to prompt file sent to the agent before session clear (`/reset` or multiball reclaim). Read at fire-time. Empty disables the reset hook. |
+| `branch_orientation_prompt` | string | `""` | Global default for branch orientation prompt file. Per-agent `branch_orientation_prompt` overrides this. |
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
 | `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`, `fork_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`. `fork_prompt` is the exception: if the path is empty, a built-in default is used (the agent is told it's a branch session and can use `send_to_session`).
+All prompt fields (`compaction_summary_prompt`, `compaction_system_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`. `branch_orientation_prompt` is the exception: if the path is empty, a built-in default is used that varies by branch type — multiball branches are told they have direct Telegram access, while cron and spawn branches are told to use `send_to_session` instead.
 
 Default `compaction_handoff_msg`:
 ```

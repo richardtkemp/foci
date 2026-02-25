@@ -22,9 +22,15 @@ var knownModels = map[string]string{
 	"opus":   "claude-opus-4-6",
 }
 
+// BranchOptions configures optional behavior for a new branch session (tools-side mirror).
+type BranchOptions struct {
+	NoResetHook        bool
+	OrientationMessage string
+}
+
 // SessionBrancher is the session ops needed by spawn inherit mode.
 type SessionBrancher interface {
-	CreateBranch(parentKey, branchKey string, noResetHook bool) error
+	CreateBranch(parentKey, branchKey string, opts BranchOptions) error
 }
 
 // SpawnAgent is the agent interface needed by spawn inherit mode.
@@ -34,13 +40,14 @@ type SpawnAgent interface {
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
-	Client     *anthropic.Client
-	Bootstrap  SystemBlocksProvider
-	Sessions   SessionBrancher
-	AgentID    string
-	Model      string // parent's default model
-	MaxInherit int    // semaphore size (from config)
-	Notifier   *AsyncNotifier // async result delivery for inherit mode
+	Client             *anthropic.Client
+	Bootstrap          SystemBlocksProvider
+	Sessions           SessionBrancher
+	AgentID            string
+	Model              string                                  // parent's default model
+	MaxInherit         int                                     // semaphore size (from config)
+	Notifier           *AsyncNotifier                          // async result delivery for inherit mode
+	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.
@@ -181,8 +188,17 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	// Build unique branch key.
 	branchKey := fmt.Sprintf("agent:%s:spawn:spawn-%d", deps.AgentID, time.Now().UnixNano())
 
+	// Build orientation text for the branch.
+	var orientText string
+	if deps.OrientationBuilder != nil {
+		orientText = deps.OrientationBuilder(branchKey, parentSession)
+	}
+
 	// Create branch with NoResetHook (ephemeral session).
-	if err := deps.Sessions.CreateBranch(parentSession, branchKey, true); err != nil {
+	if err := deps.Sessions.CreateBranch(parentSession, branchKey, BranchOptions{
+		NoResetHook:        true,
+		OrientationMessage: orientText,
+	}); err != nil {
 		return "", fmt.Errorf("spawn inherit: create branch: %w", err)
 	}
 

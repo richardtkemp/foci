@@ -37,16 +37,16 @@ func mockModelServer(handler func(req *anthropic.MessageRequest) *anthropic.Mess
 
 // mockSessionBrancher captures branch creation calls.
 type mockSessionBrancher struct {
-	parentKey   string
-	branchKey   string
-	noResetHook bool
-	err         error
+	parentKey string
+	branchKey string
+	opts      BranchOptions
+	err       error
 }
 
-func (m *mockSessionBrancher) CreateBranch(parentKey, branchKey string, noResetHook bool) error {
+func (m *mockSessionBrancher) CreateBranch(parentKey, branchKey string, opts BranchOptions) error {
 	m.parentKey = parentKey
 	m.branchKey = branchKey
-	m.noResetHook = noResetHook
+	m.opts = opts
 	return m.err
 }
 
@@ -224,7 +224,7 @@ func TestSpawnContextCloneCurrent(t *testing.T) {
 	if !strings.HasPrefix(mockSessions.branchKey, "agent:test:spawn:spawn-") {
 		t.Errorf("branch = %q, want prefix agent:test:spawn:spawn-", mockSessions.branchKey)
 	}
-	if !mockSessions.noResetHook {
+	if !mockSessions.opts.NoResetHook {
 		t.Error("expected noResetHook=true")
 	}
 
@@ -745,5 +745,48 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no parent session") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSpawnInheritOrientationBuilder(t *testing.T) {
+	mockAgent := &mockSpawnAgent{response: "Done."}
+	mockSessions := &mockSessionBrancher{}
+
+	var builderBranch, builderParent string
+	deps := SpawnDeps{
+		Sessions:   mockSessions,
+		AgentID:    "test",
+		Model:      "claude-haiku-4-5",
+		MaxInherit: 3,
+		OrientationBuilder: func(branchKey, parentKey string) string {
+			builderBranch = branchKey
+			builderParent = parentKey
+			return "You are a spawn branch. Do not message Telegram."
+		},
+	}
+	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
+
+	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "Do something",
+		"context": "clone_current",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// OrientationBuilder should have been called with correct keys
+	if builderParent != "agent:test:main" {
+		t.Errorf("builder parentKey = %q, want agent:test:main", builderParent)
+	}
+	if !strings.HasPrefix(builderBranch, "agent:test:spawn:spawn-") {
+		t.Errorf("builder branchKey = %q, want prefix agent:test:spawn:spawn-", builderBranch)
+	}
+
+	// Orientation message should be passed through to session brancher
+	if mockSessions.opts.OrientationMessage != "You are a spawn branch. Do not message Telegram." {
+		t.Errorf("orientation = %q", mockSessions.opts.OrientationMessage)
 	}
 }

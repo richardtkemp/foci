@@ -28,7 +28,8 @@ type AgentConfig struct {
 	HeartbeatInterval   string            `toml:"heartbeat_interval"`
 	SystemFiles         []string          `toml:"system_files"`          // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages   bool              `toml:"duplicate_messages"`    // send user text twice per API call (improves instruction following)
-	ForkPrompt          string            `toml:"fork_prompt"`           // path to prompt file injected as context when a multiball session is forked
+	ForkPrompt               string            `toml:"fork_prompt"`                // DEPRECATED: use branch_orientation_prompt
+	BranchOrientationPrompt  string            `toml:"branch_orientation_prompt"`  // path to prompt file injected into all branch sessions (multiball, cron, spawn)
 	TelegramBot         string            `toml:"telegram_bot"`          // references key in [telegram.bots] map
 	MultiballBot        string            `toml:"multiball_bot"`         // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
 	MultiballBots       []string          `toml:"multiball_bots"`        // references keys in [telegram.bots] map (optional)
@@ -99,6 +100,7 @@ type SessionsConfig struct {
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 	CompactionDebug         bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
 	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
+	BranchOrientationPrompt string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
 }
 
 type MemorySource struct {
@@ -448,6 +450,13 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].ForkPrompt != "" {
 			cfg.Agents[i].ForkPrompt = ResolvePath(cfg.Agents[i].ForkPrompt)
 		}
+		if cfg.Agents[i].BranchOrientationPrompt != "" {
+			cfg.Agents[i].BranchOrientationPrompt = ResolvePath(cfg.Agents[i].BranchOrientationPrompt)
+		}
+		if cfg.Agents[i].ForkPrompt != "" && cfg.Agents[i].BranchOrientationPrompt != "" {
+			log.Warnf("config", "agent %q: both fork_prompt and branch_orientation_prompt set; branch_orientation_prompt takes precedence",
+				cfg.Agents[i].ID)
+		}
 		// Deprecated alias: multiball_bot (singular) → multiball_bots (plural)
 		if cfg.Agents[i].MultiballBot != "" && len(cfg.Agents[i].MultiballBots) == 0 {
 			log.Warnf("config", "agent %q: multiball_bot is deprecated, use multiball_bots = [\"%s\"]",
@@ -729,6 +738,9 @@ func (c *Config) ResolveAllPaths() {
 	}
 	if c.Sessions.SessionResetPrompt != "" {
 		c.Sessions.SessionResetPrompt = ResolvePath(c.Sessions.SessionResetPrompt)
+	}
+	if c.Sessions.BranchOrientationPrompt != "" {
+		c.Sessions.BranchOrientationPrompt = ResolvePath(c.Sessions.BranchOrientationPrompt)
 	}
 	if c.Sessions.CompactionSummaryPrompt != "" {
 		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)

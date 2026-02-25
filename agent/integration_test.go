@@ -111,7 +111,7 @@ func TestBranchCacheSharing(t *testing.T) {
 
 	// --- Step 3: Create branch ---
 	branchKey := "agent:cachetest:cron:branch-test"
-	if err := sessions.CreateBranch(parentKey, branchKey); err != nil {
+	if err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{}); err != nil {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
 	t.Log("=== Step 3: Branch created ===")

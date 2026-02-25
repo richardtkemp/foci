@@ -185,8 +185,8 @@ func TestFormatAvailable(t *testing.T) {
 	result := FormatAvailable(cfg, agent)
 
 	// Unset fields should appear
-	if !strings.Contains(result, "fork_prompt") {
-		t.Error("expected fork_prompt in available options")
+	if !strings.Contains(result, "branch_orientation_prompt") {
+		t.Error("expected branch_orientation_prompt in available options")
 	}
 	if !strings.Contains(result, "system_files") {
 		t.Error("expected system_files in available options")
@@ -205,7 +205,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg, agent := testConfig()
 	// Set all optional agent fields
 	agent.SystemFiles = []string{"IDENTITY.md"}
-	agent.ForkPrompt = "/tmp/fork.md"
+	agent.BranchOrientationPrompt = "/tmp/orientation.md"
 	agent.TelegramBot = "primary"
 	agent.MultiballBots = []string{"mb1"}
 	agent.TTSRate = 1.3
@@ -222,6 +222,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
 	cfg.Sessions.SessionResetPrompt = "/tmp/reset.md"
+	cfg.Sessions.BranchOrientationPrompt = "/tmp/orient.md"
 	cfg.Memory.ReindexDebounce = "2s"
 	cfg.Logging.FullPayload = true
 	cfg.Logging.CacheBustDetect = true

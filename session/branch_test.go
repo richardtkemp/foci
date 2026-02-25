@@ -18,7 +18,7 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	s.Append(parentKey, msg("assistant", "good"))
 
 	// Create branch at current point (4 messages)
-	if err := s.CreateBranch(parentKey, branchKey); err != nil {
+	if err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
 		t.Fatalf("CreateBranch: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 	s.Append(parentKey, msg("assistant", "two"))
 
 	// Branch at 2 messages
-	s.CreateBranch(parentKey, branchKey)
+	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 
 	// Parent grows after branching
 	s.Append(parentKey, msg("user", "three"))
@@ -93,7 +93,7 @@ func TestBranchFromEmptyParent(t *testing.T) {
 	branchKey := "agent:main:cron:empty"
 
 	// Don't add any messages to parent — branch from empty
-	s.CreateBranch(parentKey, branchKey)
+	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 	s.Append(branchKey, msg("user", "branch only"))
 
 	msgs, err := s.LoadFull(branchKey)
@@ -218,7 +218,7 @@ func TestBranchMetaBackwardCompat(t *testing.T) {
 	s.Append(parentKey, msg("user", "hello"))
 
 	// CreateBranch (old method) doesn't set NoResetHook
-	if err := s.CreateBranch(parentKey, branchKey); err != nil {
+	if err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
 		t.Fatalf("CreateBranch: %v", err)
 	}
 
@@ -241,7 +241,7 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 
 	s.Append(parentKey, msg("user", "parent msg"))
 	s.Append(parentKey, msg("assistant", "parent reply"))
-	s.CreateBranch(parentKey, branchKey)
+	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 
 	// Add messages to branch
 	s.Append(branchKey, msg("user", "branch only"))
@@ -251,5 +251,65 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 	parentMsgs, _ := s.Load(parentKey)
 	if len(parentMsgs) != 2 {
 		t.Errorf("parent has %d messages, want 2", len(parentMsgs))
+	}
+}
+
+func TestCreateBranchWithOrientationMessage(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:orient"
+
+	s.Append(parentKey, msg("user", "hello"))
+	s.Append(parentKey, msg("assistant", "hi"))
+
+	orientText := "You are a cron branch. Do not message Telegram directly."
+	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
+		OrientationMessage: orientText,
+	})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+
+	// LoadFull should include parent msgs + orientation message
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+
+	// 2 parent + 1 orientation
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3 (2 parent + 1 orientation)", len(msgs))
+	}
+
+	// Orientation should be the first branch message (index 2)
+	if msgs[2].Role != "user" {
+		t.Errorf("orientation role = %q, want user", msgs[2].Role)
+	}
+	if anthropic.TextOf(msgs[2].Content) != orientText {
+		t.Errorf("orientation text = %q, want %q", anthropic.TextOf(msgs[2].Content), orientText)
+	}
+}
+
+func TestCreateBranchWithoutOrientationMessage(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:main:main"
+	branchKey := "agent:main:cron:noorient"
+
+	s.Append(parentKey, msg("user", "hello"))
+
+	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
+		OrientationMessage: "", // empty — no orientation
+	})
+	if err != nil {
+		t.Fatalf("CreateBranchWithOptions: %v", err)
+	}
+
+	// LoadFull should include only parent msgs, no extra message
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("len = %d, want 1 (1 parent, no orientation)", len(msgs))
 	}
 }

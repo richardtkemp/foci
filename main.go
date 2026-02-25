@@ -858,14 +858,15 @@ func main() {
 		branchID := fmt.Sprintf("wake-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
-		var branchErr error
-		if req.NoResetHook {
-			branchErr = sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
-				NoResetHook: true,
-			})
-		} else {
-			branchErr = sessions.CreateBranch(parentKey, branchKey)
+		orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+		if orientPath == "" {
+			orientPath = inst.agentCfg.ForkPrompt // deprecated fallback
 		}
+		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false)
+		branchErr := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+			NoResetHook:        req.NoResetHook,
+			OrientationMessage: orientText,
+		})
 		if branchErr != nil {
 			log.Errorf("wake", "branch error: %v", branchErr)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -1254,6 +1255,10 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
 	// Uses lazy getter for agent since ag is assigned later in this function.
+	spawnOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+	if spawnOrientPath == "" {
+		spawnOrientPath = acfg.ForkPrompt // deprecated fallback
+	}
 	spawnDeps := tools.SpawnDeps{
 		Client:     p.client,
 		Bootstrap:  bootstrap,
@@ -1262,6 +1267,9 @@ func setupAgent(p setupParams) *agentInstance {
 		Model:      acfg.Model,
 		MaxInherit: resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
 		Notifier:   notifier,
+		OrientationBuilder: func(branchKey, parentKey string) string {
+			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false)
+		},
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
 
@@ -1437,7 +1445,11 @@ func setupAgent(p setupParams) *agentInstance {
 		} else {
 			prompts = append(prompts, command.PromptInfo{Label: "handoff_msg"})
 		}
-		prompts = append(prompts, promptInfo("fork_prompt", acfg.ForkPrompt))
+		resolvedOrientPrompt := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		prompts = append(prompts, promptInfo("branch_orientation", resolvedOrientPrompt))
+		if acfg.ForkPrompt != "" {
+			prompts = append(prompts, promptInfo("fork_prompt (deprecated)", acfg.ForkPrompt))
+		}
 
 		// Build set of configured paths for tagging files
 		configuredPaths := make(map[string]bool)
@@ -1582,24 +1594,17 @@ func setupAgent(p setupParams) *agentInstance {
 		branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
 
-		if err := p.sessions.CreateBranch(parentKey, branchKey); err != nil {
+		orientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		if orientPath == "" {
+			orientPath = acfg.ForkPrompt // deprecated fallback
+		}
+		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true)
+		if err := p.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+			OrientationMessage: orientText,
+		}); err != nil {
 			secBot.SetSessionKey("") // release back to pool
 			return "", fmt.Errorf("create branch: %w", err)
 		}
-
-		// Inject fork prompt so the agent knows it's on a branch.
-		// Uses configured file if set, otherwise a sensible default.
-		var forkText string
-		if acfg.ForkPrompt != "" {
-			forkText = readPromptFile(acfg.ForkPrompt, "fork")
-		}
-		if forkText == "" {
-			forkText = "You are a branch session forked from the main session. You can communicate with other sessions using the send_to_session tool — provide the session key and your message."
-		}
-		p.sessions.Append(branchKey, anthropic.Message{
-			Role:    "user",
-			Content: anthropic.TextContent(forkText),
-		})
 
 		secBot.SetSessionKey(branchKey)
 		if primaryBot := p.botMgr.PrimaryBot(acfg.ID); primaryBot != nil {
@@ -2146,6 +2151,35 @@ func readPromptFile(path, label string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// buildBranchOrientation constructs orientation text for a branch session.
+// If promptPath points to a readable file, its contents are used as a template.
+// Otherwise a built-in default is used (varies by directChat).
+// Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
+func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool) string {
+	var text string
+	if promptPath != "" {
+		text = readPromptFile(promptPath, "branch_orientation")
+	}
+	if text == "" {
+		if directChat {
+			text = "You are now running as a branch session (type: {branch_type}, key: {branch_key}, parent: {parent_key}).\n" +
+				"You have your own Telegram bot and CAN communicate with the user directly.\n" +
+				"You can communicate with other sessions using the send_to_session tool."
+		} else {
+			text = "You are now running as a branch session (type: {branch_type}, key: {branch_key}, parent: {parent_key}).\n" +
+				"Do NOT send messages to Telegram directly — the user cannot see them.\n" +
+				"To communicate with the parent session, use the send_to_session tool with the parent key."
+		}
+	}
+	r := strings.NewReplacer(
+		"{branch_key}", branchKey,
+		"{parent_key}", parentKey,
+		"{branch_type}", branchType,
+		"{direct_chat}", fmt.Sprintf("%v", directChat),
+	)
+	return r.Replace(text)
+}
+
 // promptInfo builds a PromptInfo for a file-path-based prompt config field.
 func promptInfo(label, path string) command.PromptInfo {
 	if path == "" {
@@ -2190,9 +2224,10 @@ type sessionBranchAdapter struct {
 	store *session.Store
 }
 
-func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, noResetHook bool) error {
+func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, opts tools.BranchOptions) error {
 	return a.store.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
-		NoResetHook: noResetHook,
+		NoResetHook:        opts.NoResetHook,
+		OrientationMessage: opts.OrientationMessage,
 	})
 }
 

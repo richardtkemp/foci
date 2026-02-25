@@ -32,8 +32,11 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("agent", "system_files", agent.SystemFiles)
 	}
 	add("agent", "duplicate_messages", agent.DuplicateMessages)
+	if agent.BranchOrientationPrompt != "" {
+		add("agent", "branch_orientation_prompt", agent.BranchOrientationPrompt)
+	}
 	if agent.ForkPrompt != "" {
-		add("agent", "fork_prompt", agent.ForkPrompt)
+		add("agent", "fork_prompt (deprecated)", agent.ForkPrompt)
 	}
 	if agent.TelegramBot != "" {
 		add("agent", "telegram_bot", agent.TelegramBot)
@@ -128,6 +131,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.SessionResetPrompt != "" {
 		add("sessions", "session_reset_prompt", cfg.Sessions.SessionResetPrompt)
+	}
+	if cfg.Sessions.BranchOrientationPrompt != "" {
+		add("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
 	}
 
 	// memory
@@ -401,8 +407,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if len(agent.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
-	if agent.ForkPrompt == "" {
-		opts = append(opts, availableOption{"agent", "fork_prompt", "\"\"", "prompt file injected when a multiball session is forked"})
+	if agent.BranchOrientationPrompt == "" {
+		opts = append(opts, availableOption{"agent", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})
 	}
 	if agent.TelegramBot == "" {
 		opts = append(opts, availableOption{"agent", "telegram_bot", "\"\"", "references key in [telegram.bots] map"})
@@ -447,6 +453,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if cfg.Sessions.SessionResetPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "session_reset_prompt", "\"\"", "prompt file before session clear"})
+	}
+	if cfg.Sessions.BranchOrientationPrompt == "" {
+		opts = append(opts, availableOption{"sessions", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})
 	}
 
 	// Memory fields

@@ -44,6 +44,12 @@ messages: [only messages after branch point]
 
 API payload assembly: system prompt + parent.messages[:branch_point] + branch.messages
 
+**Branch orientation:** All branches (multiball, cron/wake, spawn) receive an orientation message as their first user message. The orientation tells the branch its type, keys, and communication rules:
+- **Multiball** (`direct_chat=true`): told it has its own Telegram bot and can message users directly.
+- **Cron/spawn** (`direct_chat=false`): told NOT to send Telegram messages directly — use `send_to_session` to communicate with the parent.
+
+Orientation text is read from `branch_orientation_prompt` (per-agent or global) if configured, otherwise a built-in default is used. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.
+
 ### Anthropic API
 
 - **Auth:** Subscription token (OAuth-style `sk-ant-oat01-...`)
