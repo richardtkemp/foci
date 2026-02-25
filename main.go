@@ -839,6 +839,7 @@ func main() {
 			NoResetHook bool   `json:"no_reset_hook"`
 			IfActive    string `json:"if_active"` // Go duration — skip if no user activity within this window
 			Async       bool   `json:"async"`     // fire-and-forget: return 202 immediately, deliver response via Telegram
+			Silent      bool   `json:"silent"`    // suppress Telegram delivery of branch response (oneshot cron branches)
 		}
 		// Allow empty body — treat as wake with default text
 		if r.ContentLength > 0 {
@@ -899,7 +900,7 @@ func main() {
 			return
 		}
 
-		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async)
+		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
 
 		wakeCtx := agent.WithTrigger(ctx, "wake")
 		if req.NoCompact {
@@ -907,6 +908,7 @@ func main() {
 		}
 
 		if req.Async {
+			silent := req.Silent
 			go func() {
 				resp, err := inst.ag.HandleMessage(wakeCtx, branchKey, req.Text)
 				if err != nil {
@@ -914,7 +916,7 @@ func main() {
 					return
 				}
 				inst.heartbeat.Reset()
-				if resp != "" {
+				if resp != "" && !silent {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
 						if err := bot.SendText(resp); err != nil {
 							log.Errorf("wake", "async telegram delivery: %v", err)
