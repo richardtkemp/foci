@@ -289,6 +289,94 @@ func TestCostCommandDays(t *testing.T) {
 	}
 }
 
+func TestCostCommand24h(t *testing.T) {
+	now := time.Now().UTC()
+	entries := []apiEntry{
+		// 25h ago — should be excluded
+		{Timestamp: now.Add(-25 * time.Hour), Session: "old", Model: "claude-haiku-4-5",
+			Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 1000, CostUSD: 0.050},
+		// 12h ago — included
+		{Timestamp: now.Add(-12 * time.Hour), Session: "recent-a", Model: "claude-haiku-4-5",
+			Input: 1000, Output: 500, CacheRead: 2000, CacheWrite: 1000, CostUSD: 0.040},
+		// 1h ago — included
+		{Timestamp: now.Add(-1 * time.Hour), Session: "recent-b", Model: "claude-opus-4-6",
+			Input: 500, Output: 200, CacheRead: 3000, CacheWrite: 500, CostUSD: 0.100},
+	}
+	path := writeAPILog(t, entries)
+
+	cmd := NewCostCommand(path)
+	result, err := cmd.Execute(context.Background(), "24h")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show "last 24h" header
+	if !strings.Contains(result, "last 24h") {
+		t.Errorf("missing 'last 24h' header in:\n%s", result)
+	}
+	// Total should be 0.04 + 0.10 = $0.14
+	if !strings.Contains(result, "$0.14") {
+		t.Errorf("expected total $0.14 in:\n%s", result)
+	}
+	// Per-category breakdown lines
+	for _, label := range []string{"Cache reads:", "Cache writes:", "Input:", "Output:"} {
+		if !strings.Contains(result, label) {
+			t.Errorf("missing category %q in:\n%s", label, result)
+		}
+	}
+}
+
+func TestCostCommandWeek(t *testing.T) {
+	now := time.Now().UTC()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
+	entries := []apiEntry{
+		// 10 days ago — should be excluded
+		{Timestamp: startOfToday.AddDate(0, 0, -10), Session: "old", CostUSD: 1.00},
+		// 5 days ago
+		{Timestamp: startOfToday.AddDate(0, 0, -5), Session: "s1", CostUSD: 0.50},
+		// 2 days ago
+		{Timestamp: startOfToday.AddDate(0, 0, -2), Session: "s2", CostUSD: 0.30},
+		// today
+		{Timestamp: startOfToday, Session: "s3", CostUSD: 0.20},
+	}
+	path := writeAPILog(t, entries)
+
+	cmd := NewCostCommand(path)
+	result, err := cmd.Execute(context.Background(), "week")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Header
+	if !strings.Contains(result, "7-day summary") {
+		t.Errorf("missing '7-day summary' header in:\n%s", result)
+	}
+	// Total = 0.50 + 0.30 + 0.20 = $1.00
+	if !strings.Contains(result, "$1.00") {
+		t.Errorf("expected total $1.00 in:\n%s", result)
+	}
+	// Mean/day
+	if !strings.Contains(result, "Mean/day:") {
+		t.Errorf("missing Mean/day in:\n%s", result)
+	}
+	// Today's date should appear
+	todayStr := time.Now().UTC().Format("2006-01-02")
+	if !strings.Contains(result, todayStr) {
+		t.Errorf("missing today's date %s in:\n%s", todayStr, result)
+	}
+	// Days with no data should show $0.00
+	if !strings.Contains(result, "$0.00") {
+		t.Errorf("expected $0.00 for empty days in:\n%s", result)
+	}
+	// Verify newest-first order: today should appear before 5 days ago
+	fiveDaysAgo := startOfToday.AddDate(0, 0, -5).Format("2006-01-02")
+	todayIdx := strings.Index(result, todayStr)
+	fiveIdx := strings.Index(result, fiveDaysAgo)
+	if todayIdx > fiveIdx {
+		t.Errorf("expected newest-first order, today before %s:\n%s", fiveDaysAgo, result)
+	}
+}
+
 func TestResetCommand(t *testing.T) {
 	cleared := false
 	cmd := NewResetCommand(func() error {

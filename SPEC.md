@@ -664,7 +664,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **Logs:**
 - `/log [n]` - last `n` lines from clod.log (default 20)
 - `/errors [n]` - last `n` ERROR/WARN lines from clod.log (default 10)
-- `/cost [today|session]` - total API cost from api.jsonl, grouped by session. Default: today.
+- `/cost [today|24h|week|<days>]` - total API cost from api.jsonl. `today`/default: grouped by session. `24h`: rolling 24h window with per-category breakdown. `week`: 7-day summary with daily totals. `<days>`: total for last N days.
 
 **Context:**
 - `/context` - full context window breakdown. Shows: total tokens vs model max with percentage and compaction threshold; system prompt section-by-section (each workspace file, environment block, skills block) with character counts; conversation breakdown by role (user, assistant, tool results) with message counts; last API call token details (input, cache_read, cache_write, output).

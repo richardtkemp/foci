@@ -95,6 +95,29 @@ type apiEntry struct {
 	StopReason string    `json:"stop_reason"`
 }
 
+// categoryCosts computes per-category cost breakdown from API log entries.
+// Duplicates pricing from log.CalculateCost since command can't import log.
+func categoryCosts(entries []apiEntry) (cacheRead, cacheWrite, input, output float64) {
+	type pricing struct{ input, output, cacheRead, cacheWrite float64 }
+	prices := map[string]pricing{
+		"claude-haiku-4-5":  {1.00, 5.00, 0.10, 1.25},
+		"claude-sonnet-4-5": {3.00, 15.00, 0.30, 3.75},
+		"claude-opus-4-6":   {15.00, 75.00, 1.50, 18.75},
+	}
+	mtok := 1_000_000.0
+	for _, e := range entries {
+		p := prices[e.Model]
+		if p == (pricing{}) {
+			p = prices["claude-haiku-4-5"]
+		}
+		cacheRead += float64(e.CacheRead) / mtok * p.cacheRead
+		cacheWrite += float64(e.CacheWrite) / mtok * p.cacheWrite
+		input += float64(e.Input) / mtok * p.input
+		output += float64(e.Output) / mtok * p.output
+	}
+	return
+}
+
 // StatusInfo holds data for the /status command.
 type StatusInfo struct {
 	AgentID          string
@@ -434,11 +457,63 @@ func NewCostCommand(apiLogPath string) *Command {
 				}
 				return b.String(), nil
 
+				case "24h":
+				cutoff := time.Now().UTC().Add(-24 * time.Hour)
+				var filtered []apiEntry
+				for _, e := range entries {
+					if e.Timestamp.After(cutoff) {
+						filtered = append(filtered, e)
+					}
+				}
+				var total float64
+				for _, e := range filtered {
+					total += e.CostUSD
+				}
+				cr, cw, inp, out := categoryCosts(filtered)
+				var b strings.Builder
+				fmt.Fprintf(&b, "API cost (last 24h): $%.2f eq.\n", total)
+				fmt.Fprintf(&b, "  Cache reads:  $%.2f\n", cr)
+				fmt.Fprintf(&b, "  Cache writes: $%.2f\n", cw)
+				fmt.Fprintf(&b, "  Input:        $%.2f\n", inp)
+				fmt.Fprintf(&b, "  Output:       $%.2f", out)
+				return b.String(), nil
+
+			case "week":
+				now := time.Now().UTC()
+				startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+				cutoff := startOfToday.AddDate(0, 0, -6) // 7 days: today + 6 prior
+				var filtered []apiEntry
+				for _, e := range entries {
+					if !e.Timestamp.Before(cutoff) {
+						filtered = append(filtered, e)
+					}
+				}
+				// Group by date
+				dayCosts := make(map[string]float64)
+				var total float64
+				for _, e := range filtered {
+					day := e.Timestamp.Format("2006-01-02")
+					dayCosts[day] += e.CostUSD
+					total += e.CostUSD
+				}
+				mean := total / 7.0
+
+				var b strings.Builder
+				fmt.Fprintf(&b, "API cost (7-day summary):\n")
+				fmt.Fprintf(&b, "  Total:    $%.2f eq.\n", total)
+				fmt.Fprintf(&b, "  Mean/day: $%.2f\n", mean)
+				// List days newest-first
+				for i := 0; i < 7; i++ {
+					day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
+					fmt.Fprintf(&b, "\n  %s  $%.2f", day, dayCosts[day])
+				}
+				return b.String(), nil
+
 			default:
 				// Try parsing as number of days
 				days, err := strconv.Atoi(scope)
 				if err != nil {
-					return "Usage: /cost [today|<days>]", nil
+					return "Usage: /cost [today|24h|week|<days>]", nil
 				}
 				cutoff := time.Now().UTC().AddDate(0, 0, -days)
 				var total float64
