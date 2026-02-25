@@ -1,118 +1,10 @@
 package telegram
 
 import (
+	"clod/table"
 	"regexp"
 	"strings"
-	"unicode"
 )
-
-// displayWidth calculates the terminal display width of a string.
-// ASCII chars are width 1, East Asian Wide chars are width 2,
-// combining marks and zero-width chars are width 0.
-func displayWidth(s string) int {
-	width := 0
-	for _, r := range s {
-		switch {
-		case r == '\t':
-			width += 4 - (width % 4)
-		case unicode.IsControl(r):
-		case isInWideRange(r):
-			width += 2
-		case isZeroWidth(r):
-		default:
-			width += 1
-		}
-	}
-	return width
-}
-
-func isInWideRange(r rune) bool {
-	switch {
-	case r >= 0x1100 && r <= 0x115F:
-		return true
-	case r >= 0x2329 && r <= 0x232A:
-		return true
-	case r >= 0x2E80 && r <= 0x303E:
-		return true
-	case r >= 0x3040 && r <= 0xA4CF:
-		return true
-	case r >= 0xAC00 && r <= 0xD7A3:
-		return true
-	case r >= 0xF900 && r <= 0xFAFF:
-		return true
-	case r >= 0xFE10 && r <= 0xFE1F:
-		return true
-	case r >= 0xFE30 && r <= 0xFE6F:
-		return true
-	case r >= 0xFF00 && r <= 0xFF60:
-		return true
-	case r >= 0xFFE0 && r <= 0xFFE6:
-		return true
-	case r >= 0x20000 && r <= 0x2FFFD:
-		return true
-	case r >= 0x30000 && r <= 0x3FFFD:
-		return true
-	case r >= 0x2600 && r <= 0x26FF:
-		return true
-	case r >= 0x2700 && r <= 0x27BF:
-		return true
-	case r >= 0x1F000 && r <= 0x1F02F:
-		return true
-	case r >= 0x1F100 && r <= 0x1F1FF:
-		return true
-	case r >= 0x1F300 && r <= 0x1FAD6:
-		return true
-	case r >= 0x1F600 && r <= 0x1F64F:
-		return true
-	case r >= 0x1F680 && r <= 0x1F6FF:
-		return true
-	case r >= 0x1F900 && r <= 0x1F9FF:
-		return true
-	case r >= 0x1FA00 && r <= 0x1FA6F:
-		return true
-	case r >= 0x1FA70 && r <= 0x1FAFF:
-		return true
-	}
-	return false
-}
-
-func isZeroWidth(r rune) bool {
-	switch {
-	case r == 0x200B:
-		return true
-	case r >= 0x200C && r <= 0x200D:
-		return true
-	case r >= 0x202A && r <= 0x202E:
-		return true
-	case r >= 0x2060 && r <= 0x2063:
-		return true
-	case r == 0x2066 || r == 0x2067 || r == 0x2068 || r == 0x2069:
-		return true
-	case r == 0xFEFF:
-		return true
-	case r >= 0x0300 && r <= 0x036F:
-		return true
-	case r >= 0x1AB0 && r <= 0x1AFF:
-		return true
-	case r >= 0x1DC0 && r <= 0x1DFF:
-		return true
-	case r >= 0x20D0 && r <= 0x20FF:
-		return true
-	case r >= 0xFE20 && r <= 0xFE2F:
-		return true
-	case r >= 0xE0100 && r <= 0xE01EF:
-		return true
-	}
-	return false
-}
-
-func padRight(s string, targetWidth int) string {
-	currentWidth := displayWidth(s)
-	if currentWidth >= targetWidth {
-		return s
-	}
-	return s + strings.Repeat(" ", targetWidth-currentWidth)
-}
 
 // ConvertToTelegramHTML converts standard markdown to Telegram's HTML format.
 // HTML is simpler and safer than MarkdownV2 (no escaping hell).
@@ -311,7 +203,7 @@ func formatTable(lines []string, sepRe *regexp.Regexp) string {
 		}
 		for j, cell := range r.cells {
 			if j < maxCols {
-				w := displayWidth(cell)
+				w := table.DisplayWidth(cell)
 				if w > colWidths[j] {
 					colWidths[j] = w
 				}
@@ -339,7 +231,7 @@ func formatTable(lines []string, sepRe *regexp.Regexp) string {
 					cell = r.cells[j]
 				}
 				// Pad with spaces to display width
-				parts = append(parts, padRight(cell, w))
+				parts = append(parts, table.PadRight(cell, w))
 			}
 		}
 		out = append(out, "| "+strings.Join(parts, " | ")+" |")

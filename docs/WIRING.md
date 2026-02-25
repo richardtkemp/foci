@@ -73,8 +73,9 @@ SIGTERM/SIGINT received
 
 ```
 main
- ├── config        (no deps)
+ ├── config        → table
  ├── log           → modernc.org/sqlite
+ ├── table         (no deps)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── anthropic     (no deps)
@@ -85,12 +86,12 @@ main
  ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
  ├── compaction    → anthropic, session, log
- ├── command       (no deps)
+ ├── command       → table
  ├── agent         → anthropic, compaction, session, tools, workspace, log
- └── telegram      → agent, command, log, voice
+ └── telegram      → agent, command, log, table, voice
 ```
 
-No circular dependencies. `config`, `log`, `secrets`, `memory`, `skills`, and `command` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
+No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
 
 ## The Agent Loop (`agent/agent.go`)
 

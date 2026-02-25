@@ -1,6 +1,7 @@
 package command
 
 import (
+	"clod/table"
 	"context"
 	"fmt"
 	"strconv"
@@ -107,35 +108,19 @@ func sessionsListCmd(deps SessionsDeps) (string, error) {
 		rows[i] = r
 	}
 
-	// Measure column widths
-	cidW, unW, msgW, actW := len("Chat ID"), len("User"), len("Msgs"), len("Active")
-	for _, r := range rows {
-		if len(r.chatID) > cidW {
-			cidW = len(r.chatID)
-		}
-		if len(r.username) > unW {
-			unW = len(r.username)
-		}
-		if len(r.msgs) > msgW {
-			msgW = len(r.msgs)
-		}
-		if len(r.active) > actW {
-			actW = len(r.active)
-		}
+	cols := []table.Column{
+		{Header: "Chat ID"},
+		{Header: "User"},
+		{Header: "Msgs", Align: table.AlignRight},
+		{Header: "Active"},
+		{Header: "Def"},
 	}
-
-	sep := strings.Repeat("─", cidW+2+unW+2+msgW+2+actW+4)
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Sessions — %s (%d)\n\n```\n", deps.AgentID, len(sessions))
-	fmt.Fprintf(&sb, "%-*s  %-*s  %*s  %-*s  Def\n", cidW, "Chat ID", unW, "User", msgW, "Msgs", actW, "Active")
-	sb.WriteString(sep + "\n")
-	for _, r := range rows {
-		fmt.Fprintf(&sb, "%-*s  %-*s  %*s  %-*s  %s\n",
-			cidW, r.chatID, unW, r.username, msgW, r.msgs, actW, r.active, r.def)
+	tableRows := make([][]string, len(rows))
+	for i, r := range rows {
+		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.def}
 	}
-	sb.WriteString(sep + "\n")
-	sb.WriteString("```\n★ = default session (used by heartbeats, cron)")
-	return sb.String(), nil
+	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n★ = default session (used by heartbeats, cron)",
+		deps.AgentID, len(sessions), table.Format(cols, tableRows)), nil
 }
 
 func sessionsDefaultCmd(deps SessionsDeps, chatID int64) (string, error) {
