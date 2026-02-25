@@ -40,10 +40,13 @@ func TestRegistryDispatch(t *testing.T) {
 		t.Errorf("result = %q", result)
 	}
 
-	// Unknown command
-	_, ok = r.Dispatch(ctx, "/unknown")
-	if ok {
-		t.Error("expected unknown command to return false")
+	// Unknown command — now returns suggestion
+	result, ok = r.Dispatch(ctx, "/unknown")
+	if !ok {
+		t.Error("expected unknown command to be handled (with suggestion)")
+	}
+	if !strings.Contains(result, "Unknown command") {
+		t.Errorf("expected suggestion, got %q", result)
 	}
 
 	// Not a command
@@ -84,6 +87,67 @@ func TestDispatchError(t *testing.T) {
 	}
 	if result != "Error: something broke" {
 		t.Errorf("result = %q", result)
+	}
+}
+
+func TestDispatchUnknownSuggestion(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name:    "status",
+		Execute: func(ctx context.Context, args string) (string, error) { return "", nil },
+	})
+	r.Register(&Command{
+		Name:    "sessions",
+		Execute: func(ctx context.Context, args string) (string, error) { return "", nil },
+	})
+	r.Register(&Command{
+		Name:    "ping",
+		Execute: func(ctx context.Context, args string) (string, error) { return "", nil },
+	})
+
+	tests := []struct {
+		name    string
+		input   string
+		wantIn  string // expected substring in result
+	}{
+		{"close typo", "/statsu", "/status"},
+		{"close typo 2", "/staus", "/status"},
+		{"prefix match", "/ses", "/sessions"},
+		{"no match", "/xyzzy", "/help"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := r.Dispatch(context.Background(), tt.input)
+			if !ok {
+				t.Fatal("expected unknown command to be handled")
+			}
+			if !strings.Contains(result, tt.wantIn) {
+				t.Errorf("result = %q, want containing %q", result, tt.wantIn)
+			}
+		})
+	}
+}
+
+func TestLevenshtein(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"abc", "abd", 1},
+		{"status", "statsu", 2},
+		{"ping", "pong", 1},
+		{"cat", "dog", 3},
+	}
+	for _, tt := range tests {
+		got := levenshtein(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("levenshtein(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
 	}
 }
 
