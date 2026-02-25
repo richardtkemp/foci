@@ -241,6 +241,61 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	}
 }
 
+func TestFormatConfigGrouped(t *testing.T) {
+	cfg, agent := testConfig()
+	cfg.Agents = []AgentConfig{agent, {
+		ID:                "second-agent",
+		Model:             "claude-sonnet-4-6",
+		Workspace:         "/home/user/workspace2",
+		HeartbeatInterval: "30m",
+		MaxToolLoops:      25,
+		MaxOutputTokens:   8192,
+	}}
+
+	tables := FormatConfigGrouped(cfg)
+
+	// Should have 3 tables: Global + 2 agents
+	if len(tables) != 3 {
+		t.Fatalf("expected 3 tables, got %d", len(tables))
+	}
+
+	// Each table should be wrapped in code blocks
+	for i, table := range tables {
+		if !strings.HasPrefix(table, "```\n") || !strings.HasSuffix(table, "\n```") {
+			t.Errorf("table %d not wrapped in code blocks:\n%s", i, table)
+		}
+	}
+
+	// First table should be Global
+	if !strings.Contains(tables[0], "Global") {
+		t.Errorf("first table should be Global:\n%s", tables[0])
+	}
+	// Global should contain non-agent sections
+	for _, section := range []string{"telegram", "sessions", "logging", "tools"} {
+		if !strings.Contains(tables[0], section) {
+			t.Errorf("Global table missing section %q", section)
+		}
+	}
+	// Global should NOT contain agent-specific data
+	if strings.Contains(tables[0], "test-agent") {
+		t.Error("Global table should not contain agent ID")
+	}
+
+	// Agent tables
+	if !strings.Contains(tables[1], "Agent: test-agent") {
+		t.Errorf("second table should be test-agent:\n%s", tables[1])
+	}
+	if !strings.Contains(tables[2], "Agent: second-agent") {
+		t.Errorf("third table should be second-agent:\n%s", tables[2])
+	}
+	if !strings.Contains(tables[1], "claude-haiku-4-5") {
+		t.Error("test-agent table missing model")
+	}
+	if !strings.Contains(tables[2], "claude-sonnet-4-6") {
+		t.Error("second-agent table missing model")
+	}
+}
+
 func TestRedactString(t *testing.T) {
 	if redactString("secret") != "***" {
 		t.Error("non-empty string should be redacted")
