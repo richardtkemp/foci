@@ -19,7 +19,6 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `id` | string | `""` | Agent identifier. Used in session keys (`agent:ID:main`). |
 | `model` | string | `"claude-haiku-4-5"` | Anthropic model ID for API calls. |
 | `workspace` | string | `""` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). |
-| `heartbeat_interval` | string | `"45m"` | Duration between idle heartbeats. Go duration format (`30s`, `5m`, `2h`). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, a built-in default is used that varies by branch type. |
@@ -85,7 +84,6 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `model` | string | `"claude-haiku-4-5"` | Default model for all agents. |
-| `heartbeat_interval` | string | `"45m"` | Default heartbeat interval. |
 | `duplicate_messages` | bool | `false` | Default duplicate_messages setting. |
 | `inject_agent_warnings` | bool | `false` | Default inject_agent_warnings setting. |
 | `max_tool_loops` | int | `25` | Default max tool iterations per turn. |
@@ -716,7 +714,6 @@ bot_token = "123456:ABC..."
 id = "main"
 model = "claude-sonnet-4-5"
 workspace = "/home/clod/character"
-heartbeat_interval = "30m"
 system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"]
 
 [telegram]

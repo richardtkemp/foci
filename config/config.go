@@ -25,7 +25,6 @@ type AgentConfig struct {
 	ID                  string            `toml:"id"`
 	Model               string            `toml:"model"`
 	Workspace           string            `toml:"workspace"`
-	HeartbeatInterval   string            `toml:"heartbeat_interval"`
 	SystemFiles         []string          `toml:"system_files"`          // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages   bool              `toml:"duplicate_messages"`    // send user text twice per API call (improves instruction following)
 	ForkPrompt               string            `toml:"fork_prompt"`                // DEPRECATED: use branch_orientation_prompt
@@ -221,7 +220,6 @@ type CommandConfig struct {
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
 	Model               string   `toml:"model"`                 // default model (default: claude-haiku-4-5)
-	HeartbeatInterval   string   `toml:"heartbeat_interval"`    // default heartbeat interval (default: 45m)
 	DuplicateMessages   bool     `toml:"duplicate_messages"`    // default duplicate_messages (default: false)
 	InjectAgentWarnings bool     `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
 	MaxToolLoops        int      `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
@@ -312,13 +310,6 @@ func validate(cfg *Config) error {
 	validStrategies := map[string]bool{"auto": true, "explicit": true}
 	if !validStrategies[cfg.Cache.Strategy] {
 		return fmt.Errorf("[cache] strategy = %q: must be \"auto\" or \"explicit\"", cfg.Cache.Strategy)
-	}
-
-	// Agents
-	for i, acfg := range cfg.Agents {
-		if _, err := time.ParseDuration(acfg.HeartbeatInterval); err != nil {
-			return fmt.Errorf("agent[%d] (%s) heartbeat_interval = %q: %w", i, acfg.ID, acfg.HeartbeatInterval, err)
-		}
 	}
 
 	// Memory sources
@@ -418,9 +409,6 @@ func Load(path string) (*Config, error) {
 	if cfg.Defaults.Model == "" {
 		cfg.Defaults.Model = "claude-haiku-4-5"
 	}
-	if cfg.Defaults.HeartbeatInterval == "" {
-		cfg.Defaults.HeartbeatInterval = "45m"
-	}
 	if cfg.Defaults.MaxToolLoops == 0 {
 		cfg.Defaults.MaxToolLoops = 25
 	}
@@ -437,9 +425,6 @@ func Load(path string) (*Config, error) {
 	for i := range cfg.Agents {
 		if cfg.Agents[i].Model == "" {
 			cfg.Agents[i].Model = cfg.Defaults.Model
-		}
-		if cfg.Agents[i].HeartbeatInterval == "" {
-			cfg.Agents[i].HeartbeatInterval = cfg.Defaults.HeartbeatInterval
 		}
 		if cfg.Agents[i].MaxToolLoops == 0 {
 			cfg.Agents[i].MaxToolLoops = cfg.Defaults.MaxToolLoops
@@ -489,10 +474,7 @@ func Load(path string) (*Config, error) {
 	if cfg.Agent.Model == "" {
 		cfg.Agent.Model = "claude-haiku-4-5"
 	}
-	if cfg.Agent.HeartbeatInterval == "" {
-		cfg.Agent.HeartbeatInterval = "45m"
-	}
-	if cfg.Sessions.CompactionThreshold == 0 {
+if cfg.Sessions.CompactionThreshold == 0 {
 		cfg.Sessions.CompactionThreshold = 0.8
 	}
 	if cfg.Sessions.CompactionMaxTokens == 0 {

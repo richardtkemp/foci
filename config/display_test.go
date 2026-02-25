@@ -80,7 +80,7 @@ func testConfig() (*Config, AgentConfig) {
 		ID:                "test-agent",
 		Model:             "claude-haiku-4-5",
 		Workspace:         "/home/user/workspace",
-		HeartbeatInterval: "45m",
+
 		MaxToolLoops:      25,
 		MaxOutputTokens:   8192,
 	}
@@ -247,7 +247,7 @@ func TestFormatConfigGrouped(t *testing.T) {
 		ID:                "second-agent",
 		Model:             "claude-sonnet-4-6",
 		Workspace:         "/home/user/workspace2",
-		HeartbeatInterval: "30m",
+
 		MaxToolLoops:      25,
 		MaxOutputTokens:   8192,
 	}}
@@ -302,7 +302,7 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// Set defaults as Load() would.
 	cfg.Defaults = DefaultsConfig{
 		Model:             "claude-haiku-4-5",
-		HeartbeatInterval: "45m",
+
 		MaxToolLoops:      25,
 		MaxOutputTokens:   8192,
 	}
@@ -311,13 +311,13 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 		ID:                "test-agent",
 		Model:             "claude-sonnet-4-6",
 		Workspace:         "/home/user/workspace",
-		HeartbeatInterval: "45m",
+
 		MaxToolLoops:      25,
 		MaxOutputTokens:   8192,
 	}
 	cfg.Agents = []AgentConfig{agent}
 
-	// Simulate TOML metadata: model is explicitly set, heartbeat is not (hardcoded default).
+	// Simulate TOML metadata: model is explicitly set, some others are not (hardcoded default).
 	cfg.DefinedKeys = map[string]bool{
 		"defaults":                    true,
 		"defaults.model":              true,
@@ -343,11 +343,6 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// defaults.model is explicitly set but overridden by agent → "(overridden)"
 	if !strings.Contains(global, "claude-haiku-4-5 (overridden)") {
 		t.Errorf("expected model to show (overridden):\n%s", global)
-	}
-
-	// defaults.heartbeat_interval is NOT in DefinedKeys → "(default)"
-	if !strings.Contains(global, "45m (default)") {
-		t.Errorf("expected heartbeat_interval to show (default):\n%s", global)
 	}
 
 	// defaults.max_tool_loops is set and NOT overridden → no annotation

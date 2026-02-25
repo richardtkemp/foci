@@ -28,7 +28,7 @@ config.Load(path)                                        ← validates values; l
   → telegram.NewBotManager()
 
   Per-agent loop (for each cfg.Agents[i]):
-  → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap, heartbeat}
+  → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap}
     → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
@@ -43,18 +43,16 @@ config.Load(path)                                        ← validates values; l
     → bot.SetImageSaveDir(acfg.ImageSaveDir || cfg.Telegram.ImageSaveDir)
     → agent.RestoreVoiceMode(defaultSessionKey())           ← deferred until default chat is known
     → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
-    → agent.NewHeartbeat(agent, defaultSessionKey, interval)  ← lazy session key via SessionKeyFn
 
   → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
   → restoreMultiballSessions()                             ← restore bot→session mappings from state store
   → botMgr.StartAll(ctx)                                  ← starts all bots
-  → start all heartbeats
   → http.Server{"/send", "/status", "/command", "/wake"}  ← routes by agent param
   → injectWelcomeFile()                                    ← setup.sh changelog injection
   → block on signal → shutdown
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, heartbeat, and Telegram bot(s). Shared resources (anthropic client, session store, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Shared resources (anthropic client, session store, voice providers) are passed to each agent.
 
 **Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single `memory.db` index (backward compat). Reminder and scratchpad stores are always shared.
 
@@ -64,7 +62,6 @@ config.Load(path)                                        ← validates values; l
 
 ```
 SIGTERM/SIGINT received
-  → stop all heartbeats
   → close HTTP server
   → gracefulShutdown(agents, timeout)    ← wait for in-flight agent turns
   → cancel context                        ← stops Telegram poll loops, triggers update ack
@@ -140,11 +137,10 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 
 Anthropic's prompt cache is prefix-matched. If any message shifts position (because an injected message was inserted before it), all cached tokens after that point are invalidated. A single cache bust can cost $1+ in re-tokenization.
 
-**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex (`turnLock(sessionKey)`) before doing any work. This serializes all turns on the same session — concurrent callers (heartbeat, `AsyncNotifier`, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
+**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex (`turnLock(sessionKey)`) before doing any work. This serializes all turns on the same session — concurrent callers (`AsyncNotifier`, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
 
 **Concurrent callers that are serialized by the turn lock:**
 - Telegram bot worker (user messages)
-- Heartbeat goroutine (`[HEARTBEAT]`)
 - `AsyncNotifier` (`[TMUX WATCH]` inactivity, `[EXEC RESULT]`/`[HTTP RESULT]` auto-background completion)
 - Scheduled wakes (`[SCHEDULED WAKE]`, fires from `go func()`)
 - HTTP `/send` endpoint
@@ -179,7 +175,7 @@ When the model responds with text alongside `tool_use` blocks (e.g., "Looking in
 4. Agent continues executing tools
 5. Final `end_turn` response is returned from `HandleMessage` as usual
 
-Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks. Async callers (heartbeat, tmux watch, exec/http_request auto-background, scheduled wakes) that don't set callbacks get nil — no Telegram side effects. No cross-turn state corruption.
+Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks. Async callers (tmux watch, exec/http_request auto-background, scheduled wakes) that don't set callbacks get nil — no Telegram side effects. No cross-turn state corruption.
 
 ## Tool Call Visibility
 
@@ -203,7 +199,7 @@ The agent can defer thoughts for later via the `memory_remind` tool. Reminders a
 **Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 
 **Time resolution (`resolveWhen`):**
-- `next_heartbeat`, `next_session`, `now` → immediate
+- `next_session`, `now` → immediate
 - `tomorrow` → midnight tomorrow UTC
 - `YYYY-MM-DD` → that date at midnight UTC
 - Go duration (e.g., `2h`, `30m`) → now + duration
@@ -214,7 +210,7 @@ The agent can defer thoughts for later via the `memory_remind` tool. Reminders a
 ```
 [meta] time=2026-02-21T05:30:00Z gap=45m0s
 [reminders]
-- Look into FTS5 phrase boosting (set next_heartbeat, due: 2026-02-21 05:00)
+- Look into FTS5 phrase boosting (set 2h, due: 2026-02-21 05:00)
 Hello, what should I work on?
 ```
 
@@ -259,7 +255,7 @@ System blocks are assembled in this order:
 
 2. **Character files** (`workspace/bootstrap.go`) — reads markdown files from workspace dir in order:
 ```
-IDENTITY.md → SOUL.md → COHERENCE.md → AGENTS.md → TOOLS.md → USER.md → MEMORY.md → HEARTBEAT.md
+IDENTITY.md → SOUL.md → COHERENCE.md → AGENTS.md → TOOLS.md → USER.md → MEMORY.md
 ```
 
 Each becomes a `SystemBlock{type:"text", text:content}`. Missing/empty files are silently skipped.
@@ -570,9 +566,8 @@ Endpoints for external integration (used by `clod` CLI). All endpoints accept an
 
 Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external tools. Binary name: `clod`. Commands: `send`, `branch`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`clodgw`) at `CLOD_ADDR` (default `127.0.0.1:18791`). Both `send` and `branch` support `--if-active <duration>` to skip if no real user activity within the window (e.g. `--if-active 8h`).
 
-## Heartbeat & Wake
+## Wake
 
-- **Heartbeat** (`agent/heartbeat.go`): Timer goroutine, fires after idle duration, injects `[HEARTBEAT]` message into the default session. Uses `SessionKeyFn` for lazy resolution. Skips silently if no default session exists yet. Resets on any activity.
 - **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both. Returns 412 if no default session.
 - **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
 
