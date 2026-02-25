@@ -209,7 +209,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `read` — read file contents
 - `write` — create/overwrite files
 - `edit` — find-and-replace in files
-- `web_fetch` — HTTP GET, extract readable content
+- `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history
 - `memory_remind` — defer a thought for later (next heartbeat, tomorrow, specific date)
