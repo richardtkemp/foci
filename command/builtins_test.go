@@ -378,6 +378,96 @@ func TestConfigCommand(t *testing.T) {
 	}
 }
 
+func TestPromptsCommand(t *testing.T) {
+	cmd := NewPromptsCommand(func() PromptsData {
+		return PromptsData{
+			AgentID: "clutch",
+			Prompts: []PromptInfo{
+				{Label: "compaction_summary", Path: "/home/clod/prompts/compaction.md", Exists: true},
+				{Label: "session_reset"},
+				{Label: "handoff_msg", Inline: "You are picking up a compacted session."},
+				{Label: "fork_prompt", Path: "/missing/file.md", Exists: false},
+			},
+			PromptDirs: []string{"/home/clod/prompts"},
+			Files: []PromptFile{
+				{Dir: "/home/clod/prompts", Name: "compaction.md", Configured: true},
+				{Dir: "/home/clod/prompts", Name: "daily-review.md", Configured: false},
+			},
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	checks := []string{
+		"agent: clutch",
+		"compaction_summary",
+		"/home/clod/prompts/compaction.md",
+		"✓",
+		"session_reset",
+		"[default]",
+		"handoff_msg",
+		"[inline: 39 chars]",
+		"fork_prompt",
+		"✗ (not found)",
+		"Prompt files on disk:",
+		"/home/clod/prompts/",
+		"compaction.md",
+		"[configured]",
+		"daily-review.md",
+		"[cron/other]",
+	}
+	for _, check := range checks {
+		if !strings.Contains(result, check) {
+			t.Errorf("missing %q in:\n%s", check, result)
+		}
+	}
+}
+
+func TestPromptsCommandEmpty(t *testing.T) {
+	cmd := NewPromptsCommand(func() PromptsData {
+		return PromptsData{
+			AgentID: "test",
+			Prompts: []PromptInfo{
+				{Label: "fork_prompt"},
+			},
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "[default]") {
+		t.Errorf("expected [default] in:\n%s", result)
+	}
+	// No files section when no dirs scanned
+	if strings.Contains(result, "Prompt files on disk") {
+		t.Errorf("should not show files section when no dirs:\n%s", result)
+	}
+}
+
+func TestPromptsCommandNoFiles(t *testing.T) {
+	cmd := NewPromptsCommand(func() PromptsData {
+		return PromptsData{
+			AgentID:    "test",
+			Prompts:    []PromptInfo{{Label: "fork_prompt"}},
+			PromptDirs: []string{"/some/dir"},
+			Files:      nil,
+		}
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "No prompt files found") {
+		t.Errorf("expected 'No prompt files found' in:\n%s", result)
+	}
+}
+
 func TestLogCommand(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "test.log")
