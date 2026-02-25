@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -367,7 +368,7 @@ func (b *Bot) Run(ctx context.Context) {
 func (b *Bot) pollUpdates(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("telegram", "panic in polling: %v", r)
+			log.Errorf("telegram", "panic in polling: %v\n%s", r, debug.Stack())
 		}
 	}()
 

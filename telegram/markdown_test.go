@@ -307,6 +307,22 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "use v2_api_endpoint here",
 			want: "use v2_api_endpoint here",
 		},
+		// Edge cases for FindStringSubmatch guards
+		{
+			name: "code block with unicode box-drawing chars",
+			in:   "```\n──────────\n```",
+			want: "<pre><code>──────────</code></pre>",
+		},
+		{
+			name: "code block no language no trailing newline content",
+			in:   "```\nline1\nline2\n```",
+			want: "<pre><code>line1\nline2</code></pre>",
+		},
+		{
+			name: "empty backtick pair not panics",
+			in:   "text `` more",
+			want: "text `` more",
+		},
 	}
 
 	for _, tt := range tests {
