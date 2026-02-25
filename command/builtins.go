@@ -916,7 +916,8 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 
 			var sb strings.Builder
 
-			// Header
+			// Header section
+			sb.WriteString("```\n")
 			fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
 				formatCommas(totalTokens), formatCommas(info.ContextLimit), percentUsed)
 			fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
@@ -927,6 +928,7 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 				remaining := threshTokens - totalTokens
 				fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", formatCommas(remaining))
 			}
+			sb.WriteString("```")
 
 			// System prompt breakdown (character-based estimates)
 			totalSystemChars := 0
@@ -936,7 +938,8 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			totalSystemChars += info.EnvironmentChars + info.SkillsChars
 			systemTokenEst := totalSystemChars / 4
 
-			fmt.Fprintf(&sb, "\nSystem prompt: ~%s tokens (%s chars)\n",
+			sb.WriteString("\n\n```\n")
+			fmt.Fprintf(&sb, "System prompt: ~%s tokens (%s chars)\n",
 				formatCommas(systemTokenEst), formatCommas(totalSystemChars))
 
 			// Find max name width for alignment
@@ -962,13 +965,15 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			if info.SkillsChars > 0 {
 				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, "Skills", formatCommas(info.SkillsChars))
 			}
+			sb.WriteString("```")
 
 			// Conversation breakdown (character-based estimates)
 			mb := info.Messages
 			totalConvChars := mb.UserChars + mb.AssistantChars + mb.ToolResultChars
 			convTokenEst := totalConvChars / 4
 
-			fmt.Fprintf(&sb, "\nConversation: ~%s tokens (%d messages)\n",
+			sb.WriteString("\n\n```\n")
+			fmt.Fprintf(&sb, "Conversation: ~%s tokens (%d messages)\n",
 				formatCommas(convTokenEst), mb.UserCount+mb.AssistantCount)
 			fmt.Fprintf(&sb, "  User messages     %s chars (%d msgs)\n",
 				formatCommas(mb.UserChars), mb.UserCount)
@@ -978,13 +983,16 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 				fmt.Fprintf(&sb, "  Tool results      %s chars\n",
 					formatCommas(mb.ToolResultChars))
 			}
+			sb.WriteString("```")
 
 			// Token breakdown from last API call
-			fmt.Fprintf(&sb, "\nLast API call tokens:\n")
+			sb.WriteString("\n\n```\n")
+			fmt.Fprintf(&sb, "Last API call tokens:\n")
 			fmt.Fprintf(&sb, "  input:       %s\n", formatCommas(lastInput))
 			fmt.Fprintf(&sb, "  cache_read:  %s\n", formatCommas(lastCacheRead))
 			fmt.Fprintf(&sb, "  cache_write: %s\n", formatCommas(lastCacheWrite))
-			fmt.Fprintf(&sb, "  output:      %s", formatCommas(lastOutput))
+			fmt.Fprintf(&sb, "  output:      %s\n", formatCommas(lastOutput))
+			sb.WriteString("```")
 
 			return sb.String(), nil
 		},
