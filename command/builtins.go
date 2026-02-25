@@ -944,6 +944,21 @@ type MessageBreakdown struct {
 	AssistantCount int
 }
 
+// SectionTokens holds the exact token count for one system prompt section.
+type SectionTokens struct {
+	Name   string
+	Tokens int
+}
+
+// TokenCounts holds exact token counts from the counting API.
+type TokenCounts struct {
+	Total        int              // total input tokens (full request)
+	System       int              // system prompt tokens
+	Conversation int              // conversation tokens (total - system - tools)
+	Tools        int              // tool definition tokens
+	Sections     []SectionTokens  // per-component breakdown (env, files, skills)
+}
+
 // ContextInfo holds data for the /context command.
 type ContextInfo struct {
 	SessionKey       string
@@ -954,7 +969,7 @@ type ContextInfo struct {
 	EnvironmentChars int              // environment block chars
 	SkillsChars      int              // skills/extra system blocks chars
 	Messages         MessageBreakdown // conversation breakdown
-	CountTokensFn    func(ctx context.Context) (int, error) // nil = use estimates from last API call
+	CountTokensFn    func(ctx context.Context) (*TokenCounts, error) // nil = use estimates
 }
 
 // NewContextCommand returns a /context command showing context size breakdown.
@@ -979,25 +994,22 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 				}
 			}
 
-			// Try exact token count via counting API
-			var exactTokens int
-			var useExact bool
+			// Try detailed token counts via counting API
+			var tc *TokenCounts
 			if info.CountTokensFn != nil {
-				if n, err := info.CountTokensFn(ctx); err == nil && n > 0 {
-					exactTokens = n
-					useExact = true
-				}
+				tc, _ = info.CountTokensFn(ctx) // ignore error, fall back to estimates
 			}
 
 			totalTokens := lastInput + lastCacheRead + lastCacheWrite
-			if !useExact && totalTokens == 0 {
+			if tc == nil && totalTokens == 0 {
 				return "No API calls yet for this session.", nil
 			}
 
-			// Use exact count for header if available, otherwise last API call
+			// Header tokens
 			headerTokens := totalTokens
+			useExact := tc != nil
 			if useExact {
-				headerTokens = exactTokens
+				headerTokens = tc.Total
 			}
 
 			threshTokens := int(float64(info.ContextLimit) * info.CompactionThresh)
@@ -1024,58 +1036,71 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			}
 			sb.WriteString("```")
 
-			// System prompt breakdown (character-based estimates)
-			totalSystemChars := 0
-			for _, s := range info.SystemSections {
-				totalSystemChars += s.Chars
-			}
-			totalSystemChars += info.EnvironmentChars + info.SkillsChars
-			systemTokenEst := totalSystemChars / 4
-
+			// System prompt breakdown
 			sb.WriteString("\n\n```\n")
-			fmt.Fprintf(&sb, "System prompt: ~%s tokens (%s chars)\n",
-				formatCommas(systemTokenEst), formatCommas(totalSystemChars))
-
-			// Find max name width for alignment
-			maxNameLen := 0
-			if info.EnvironmentChars > 0 {
-				maxNameLen = len("Environment")
-			}
-			if info.SkillsChars > 0 && len("Skills") > maxNameLen {
-				maxNameLen = len("Skills")
-			}
-			for _, s := range info.SystemSections {
-				if len(s.Name) > maxNameLen {
-					maxNameLen = len(s.Name)
+			if useExact {
+				fmt.Fprintf(&sb, "System prompt: %s tokens\n", formatCommas(tc.System))
+				maxNameLen := 0
+				for _, s := range tc.Sections {
+					if len(s.Name) > maxNameLen {
+						maxNameLen = len(s.Name)
+					}
 				}
-			}
+				for _, s := range tc.Sections {
+					fmt.Fprintf(&sb, "  %-*s  %s tokens\n", maxNameLen, s.Name, formatCommas(s.Tokens))
+				}
+				fmt.Fprintf(&sb, "\nTools: %s tokens\n", formatCommas(tc.Tools))
+			} else {
+				totalSystemChars := 0
+				for _, s := range info.SystemSections {
+					totalSystemChars += s.Chars
+				}
+				totalSystemChars += info.EnvironmentChars + info.SkillsChars
+				fmt.Fprintf(&sb, "System prompt: ~%s tokens\n", formatCommas(totalSystemChars/4))
 
-			if info.EnvironmentChars > 0 {
-				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, "Environment", formatCommas(info.EnvironmentChars))
-			}
-			for _, s := range info.SystemSections {
-				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, s.Name, formatCommas(s.Chars))
-			}
-			if info.SkillsChars > 0 {
-				fmt.Fprintf(&sb, "  %-*s  %s chars\n", maxNameLen, "Skills", formatCommas(info.SkillsChars))
+				maxNameLen := 0
+				if info.EnvironmentChars > 0 && len("Environment") > maxNameLen {
+					maxNameLen = len("Environment")
+				}
+				if info.SkillsChars > 0 && len("Skills") > maxNameLen {
+					maxNameLen = len("Skills")
+				}
+				for _, s := range info.SystemSections {
+					if len(s.Name) > maxNameLen {
+						maxNameLen = len(s.Name)
+					}
+				}
+				if info.EnvironmentChars > 0 {
+					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, "Environment", formatCommas(info.EnvironmentChars/4))
+				}
+				for _, s := range info.SystemSections {
+					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, s.Name, formatCommas(s.Chars/4))
+				}
+				if info.SkillsChars > 0 {
+					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, "Skills", formatCommas(info.SkillsChars/4))
+				}
 			}
 			sb.WriteString("```")
 
-			// Conversation breakdown (character-based estimates)
+			// Conversation breakdown
 			mb := info.Messages
-			totalConvChars := mb.UserChars + mb.AssistantChars + mb.ToolResultChars
-			convTokenEst := totalConvChars / 4
-
 			sb.WriteString("\n\n```\n")
-			fmt.Fprintf(&sb, "Conversation: ~%s tokens (%d messages)\n",
-				formatCommas(convTokenEst), mb.UserCount+mb.AssistantCount)
-			fmt.Fprintf(&sb, "  User messages     %s chars (%d msgs)\n",
-				formatCommas(mb.UserChars), mb.UserCount)
-			fmt.Fprintf(&sb, "  Assistant         %s chars (%d msgs)\n",
-				formatCommas(mb.AssistantChars), mb.AssistantCount)
+			if useExact {
+				fmt.Fprintf(&sb, "Conversation: %s tokens (%d messages)\n",
+					formatCommas(tc.Conversation), mb.UserCount+mb.AssistantCount)
+			} else {
+				totalConvChars := mb.UserChars + mb.AssistantChars + mb.ToolResultChars
+				fmt.Fprintf(&sb, "Conversation: ~%s tokens (%d messages)\n",
+					formatCommas(totalConvChars/4), mb.UserCount+mb.AssistantCount)
+			}
+			// Per-role always estimated from chars
+			fmt.Fprintf(&sb, "  User messages     ~%s tokens (%d msgs)\n",
+				formatCommas(mb.UserChars/4), mb.UserCount)
+			fmt.Fprintf(&sb, "  Assistant         ~%s tokens (%d msgs)\n",
+				formatCommas(mb.AssistantChars/4), mb.AssistantCount)
 			if mb.ToolResultChars > 0 {
-				fmt.Fprintf(&sb, "  Tool results      %s chars\n",
-					formatCommas(mb.ToolResultChars))
+				fmt.Fprintf(&sb, "  Tool results      ~%s tokens\n",
+					formatCommas(mb.ToolResultChars/4))
 			}
 			sb.WriteString("```")
 
