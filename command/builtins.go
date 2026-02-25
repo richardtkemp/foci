@@ -645,6 +645,43 @@ func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command 
 	}
 }
 
+// NewThinkingCommand returns a /thinking command to show or set the thinking mode.
+// getThinking returns current mode; setThinking changes it (runtime only).
+func NewThinkingCommand(getThinking func() string, setThinking func(string)) *Command {
+	return &Command{
+		Name:        "thinking",
+		Description: "Show or set thinking mode (off/adaptive)",
+		Category:    "operations",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			const optionsLine = "Options: 0) off  1) adaptive"
+			if args == "" {
+				t := getThinking()
+				if t == "" || t == "off" {
+					return "Thinking: off\n" + optionsLine, nil
+				}
+				return fmt.Sprintf("Thinking: %s\n%s", t, optionsLine), nil
+			}
+			arg := strings.ToLower(strings.TrimSpace(args))
+			switch arg {
+			case "0":
+				arg = "off"
+			case "1":
+				arg = "adaptive"
+			}
+			switch arg {
+			case "off", "none":
+				setThinking("")
+				return "Thinking: off", nil
+			case "adaptive":
+				setThinking("adaptive")
+				return "Thinking: adaptive", nil
+			default:
+				return fmt.Sprintf("Invalid thinking mode: %q\n%s", args, optionsLine), nil
+			}
+		},
+	}
+}
+
 // ToolInfo holds data for a single tool in the /tools listing.
 type ToolInfo struct {
 	Name        string

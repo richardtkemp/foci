@@ -215,3 +215,99 @@ func TestEphemeral(t *testing.T) {
 		t.Errorf("Type = %q", cc.Type)
 	}
 }
+
+func TestThinkingConfigJSON(t *testing.T) {
+	cfg := ThinkingConfig{Type: "adaptive"}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded ThinkingConfig
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Type != "adaptive" {
+		t.Errorf("Type = %q, want %q", decoded.Type, "adaptive")
+	}
+	if decoded.BudgetTokens != 0 {
+		t.Errorf("BudgetTokens = %d, want 0", decoded.BudgetTokens)
+	}
+}
+
+func TestThinkingConfigOmitsEmpty(t *testing.T) {
+	req := MessageRequest{
+		Model:     "claude-opus-4-6",
+		MaxTokens: 8192,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Thinking should be omitted when nil
+	var m map[string]interface{}
+	json.Unmarshal(data, &m)
+	if _, ok := m["thinking"]; ok {
+		t.Error("thinking should be omitted when nil")
+	}
+}
+
+func TestThinkingConfigInRequest(t *testing.T) {
+	req := MessageRequest{
+		Model:     "claude-opus-4-6",
+		MaxTokens: 8192,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+		Thinking:  &ThinkingConfig{Type: "adaptive"},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded MessageRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Thinking == nil {
+		t.Fatal("Thinking is nil")
+	}
+	if decoded.Thinking.Type != "adaptive" {
+		t.Errorf("Thinking.Type = %q, want %q", decoded.Thinking.Type, "adaptive")
+	}
+}
+
+func TestThinkingContentBlock(t *testing.T) {
+	jsonStr := `{"type": "thinking", "thinking": "Let me reason about this..."}`
+	var block ContentBlock
+	if err := json.Unmarshal([]byte(jsonStr), &block); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if block.Type != "thinking" {
+		t.Errorf("Type = %q, want %q", block.Type, "thinking")
+	}
+	if block.Thinking != "Let me reason about this..." {
+		t.Errorf("Thinking = %q", block.Thinking)
+	}
+}
+
+func TestTextOfIgnoresThinking(t *testing.T) {
+	blocks := []ContentBlock{
+		{Type: "thinking", Thinking: "internal reasoning"},
+		{Type: "text", Text: "visible response"},
+	}
+	got := TextOf(blocks)
+	if got != "visible response" {
+		t.Errorf("TextOf = %q, want %q", got, "visible response")
+	}
+}
+
+func TestTextOfOnlyThinking(t *testing.T) {
+	blocks := []ContentBlock{
+		{Type: "thinking", Thinking: "only thinking, no text"},
+	}
+	got := TextOf(blocks)
+	if got != "" {
+		t.Errorf("TextOf = %q, want empty (thinking-only response)", got)
+	}
+}

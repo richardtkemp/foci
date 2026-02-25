@@ -15,10 +15,11 @@ type ImageSource struct {
 }
 
 // ContentBlock is a block of content in a message or response.
-// Covers text, image, tool_use, and tool_result block types.
+// Covers text, image, tool_use, tool_result, and thinking block types.
 type ContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
+	Thinking     string          `json:"thinking,omitempty"`  // thinking: internal reasoning text
 	Source       *ImageSource    `json:"source,omitempty"`    // image: base64 source
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 	ID           string          `json:"id,omitempty"`        // tool_use: block ID
@@ -41,6 +42,12 @@ type OutputConfig struct {
 	Effort string `json:"effort,omitempty"` // "low", "medium", "high"
 }
 
+// ThinkingConfig controls extended thinking / adaptive thinking mode.
+type ThinkingConfig struct {
+	Type         string `json:"type"`                    // "adaptive"
+	BudgetTokens int    `json:"budget_tokens,omitempty"` // only for "enabled" mode (not yet used)
+}
+
 // SystemBlock is a block of content in the system prompt.
 type SystemBlock struct {
 	Type         string        `json:"type"`
@@ -56,13 +63,14 @@ type Message struct {
 
 // MessageRequest is the request body for the /v1/messages endpoint.
 type MessageRequest struct {
-	Model        string        `json:"model"`
-	MaxTokens    int           `json:"max_tokens"`
-	CacheControl *CacheControl `json:"cache_control,omitempty"` // top-level automatic caching
-	System       []SystemBlock `json:"system,omitempty"`
-	Messages     []Message     `json:"messages"`
-	Tools        []ToolDef     `json:"tools,omitempty"`
-	Output       *OutputConfig `json:"output,omitempty"`
+	Model        string         `json:"model"`
+	MaxTokens    int            `json:"max_tokens"`
+	CacheControl *CacheControl  `json:"cache_control,omitempty"` // top-level automatic caching
+	System       []SystemBlock  `json:"system,omitempty"`
+	Messages     []Message      `json:"messages"`
+	Tools        []ToolDef      `json:"tools,omitempty"`
+	Output       *OutputConfig  `json:"output,omitempty"`
+	Thinking     *ThinkingConfig `json:"thinking,omitempty"`
 }
 
 // Usage contains token usage information from a response.

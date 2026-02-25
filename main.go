@@ -1295,6 +1295,7 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
 		Effort:                      acfg.Effort,
+		Thinking:                    acfg.Thinking,
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
@@ -1661,6 +1662,10 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewEffortCommand(
 		func() string { return ag.Effort },
 		func(e string) { ag.Effort = e },
+	))
+	cmds.Register(command.NewThinkingCommand(
+		func() string { return ag.Thinking },
+		func(t string) { ag.Thinking = t },
 	))
 	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
 		var infos []command.ToolInfo
