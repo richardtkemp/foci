@@ -316,7 +316,7 @@ temp_dir = "/tmp/clod-tool-results"   # where to write large results
 - `files` — array of file attachments. Each has `field_name` (form field name), `file_path` (local path), and optional `filename` (override, defaults to basename). When present, the request is sent as `multipart/form-data`.
 - `form_fields` — object of additional text form fields for multipart requests. Values support `{{secret:NAME}}` templates. Requires `files`.
 - `body` and `files` are mutually exclusive — error if both set.
-- Files are validated: must exist, be readable, and not exceed 50MB.
+- Files are validated: must exist, be readable, and not exceed `max_upload_file_size` (default 50MB, configurable globally in `[tools]` and per-agent).
 - Content-Type is set automatically from the multipart writer (includes boundary); agent-set Content-Type is overridden when files are present.
 
 **Each tool is a function with signature:**

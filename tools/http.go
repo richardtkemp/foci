@@ -23,8 +23,6 @@ import (
 	"clod/secrets/bitwarden"
 )
 
-const maxUploadFileSize = 50 * 1024 * 1024 // 50MB
-
 type fileAttachment struct {
 	FieldName string `json:"field_name"`
 	FilePath  string `json:"file_path"`
@@ -38,7 +36,8 @@ type fileAttachment struct {
 // tempDir is used for auto-saving binary responses; if empty, os.TempDir() is used.
 // autoBackgroundSecs is the threshold after which a running request is auto-backgrounded
 // (0 disables). notifier delivers results when an auto-backgrounded request finishes.
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) *Tool {
+// maxUploadFileSize is the max file size in bytes for multipart uploads (0 = 50MB default).
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers/body are resolved server-side and validated against allowed_hosts. Preferred over exec for API calls with secrets. Binary responses are auto-saved to files. Use save_to to save any response to a specific path.",
@@ -119,12 +118,12 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, notifier)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, notifier)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) (string, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) (string, error) {
 	var p struct {
 		URL        string            `json:"url"`
 		Method     string            `json:"method"`
@@ -294,7 +293,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	var bodyReader io.Reader
 	var multipartContentType string
 	if len(p.Files) > 0 {
-		buf, contentType, err := buildMultipartBody(p.Files, resolvedFormFields)
+		buf, contentType, err := buildMultipartBody(p.Files, resolvedFormFields, maxUploadFileSize)
 		if err != nil {
 			return "", err
 		}
@@ -684,7 +683,7 @@ func decodeDataURI(s string) ([]byte, error) {
 
 // buildMultipartBody constructs a multipart/form-data body from file attachments
 // and form fields. Returns the buffer, Content-Type with boundary, and any error.
-func buildMultipartBody(files []fileAttachment, formFields map[string]string) (*bytes.Buffer, string, error) {
+func buildMultipartBody(files []fileAttachment, formFields map[string]string, maxFileSize int64) (*bytes.Buffer, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -712,8 +711,8 @@ func buildMultipartBody(files []fileAttachment, formFields map[string]string) (*
 		if info.IsDir() {
 			return nil, "", fmt.Errorf("file %q is a directory", f.FilePath)
 		}
-		if info.Size() > maxUploadFileSize {
-			return nil, "", fmt.Errorf("file %q is %d bytes, exceeds 50MB limit", f.FilePath, info.Size())
+		if info.Size() > maxFileSize {
+			return nil, "", fmt.Errorf("file %q is %d bytes, exceeds %dMB limit", f.FilePath, info.Size(), maxFileSize/(1024*1024))
 		}
 
 		filename := f.Filename

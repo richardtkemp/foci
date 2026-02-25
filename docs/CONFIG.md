@@ -48,6 +48,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `prompt_rules` | array | `[]` | Per-agent prompt rules. Empty = use global `[[prompt_rules]]`. |
 | `exec_auto_background` | int | `0` | Per-agent exec auto-background seconds. 0 = use global `[tools] exec_auto_background`. |
 | `max_concurrent_spawns` | int | `0` | Per-agent max concurrent spawns. 0 = use global `[tools] max_concurrent_spawns`. |
+| `max_upload_file_size` | int | `0` | Per-agent max file size for multipart uploads in bytes. 0 = use global `[tools] max_upload_file_size`. |
 | `usage_warnings.thresholds` | int[] | `[]` | Per-agent mana warning thresholds. When set, completely replaces global `[usage_warnings] thresholds` for this agent. |
 
 Default `system_files` order (most-stable first for cache efficiency):
@@ -435,6 +436,7 @@ Tool behavior settings.
 | `web_fetch_max_chars` | int | `50000` | Max characters in web fetch output before truncation. |
 | `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` clone_current sessions per agent. Limits how many headless self-forks can run simultaneously. |
+| `max_upload_file_size` | int | `52428800` | Max file size in bytes for multipart/form-data file uploads (default 50MB). |
 | `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |
 | `tmux_memory_warn` | string | `"10%"` | Warn threshold. Sends Telegram notification. Formats: `"N%"` (% of RAM), `"Nmb"`, `"Ngb"`. |
 | `tmux_memory_critical` | string | `"20%"` | Critical threshold. Sends Telegram notification with stronger message. Same formats. |
