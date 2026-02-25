@@ -460,12 +460,16 @@ func TestParseSendFlagsMessageFlags(t *testing.T) {
 		wantRest    []string
 	}{
 		{"-mt with value", []string{"-mt", "hello"}, "hello", "", nil},
+		{"--mt with value", []string{"--mt", "hello"}, "hello", "", nil},
 		{"--message-text with value", []string{"--message-text", "hello"}, "hello", "", nil},
 		{"-mt=value", []string{"-mt=hello"}, "hello", "", nil},
+		{"--mt=value", []string{"--mt=hello"}, "hello", "", nil},
 		{"--message-text=value", []string{"--message-text=hello"}, "hello", "", nil},
 		{"-mf with value", []string{"-mf", "/tmp/f"}, "", "/tmp/f", nil},
+		{"--mf with value", []string{"--mf", "/tmp/f"}, "", "/tmp/f", nil},
 		{"--message-file with value", []string{"--message-file", "/tmp/f"}, "", "/tmp/f", nil},
 		{"-mf=value", []string{"-mf=/tmp/f"}, "", "/tmp/f", nil},
+		{"--mf=value", []string{"--mf=/tmp/f"}, "", "/tmp/f", nil},
 		{"--message-file=value", []string{"--message-file=/tmp/f"}, "", "/tmp/f", nil},
 		{"-mt with other flags", []string{"-a", "clutch", "-mt", "hi", "extra"}, "hi", "", []string{"extra"}},
 	}
