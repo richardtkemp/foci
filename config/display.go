@@ -117,6 +117,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if cfg.Sessions.CompactionNotify != nil {
 		writeField(&b, "compaction_notify", *cfg.Sessions.CompactionNotify)
 	}
+	writeField(&b, "compaction_debug", cfg.Sessions.CompactionDebug)
 	writeField(&b, "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	writeField(&b, "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.SessionResetPrompt != "" {

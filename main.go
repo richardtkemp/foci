@@ -1628,11 +1628,15 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		system := bootstrap.SystemBlocks()
 		summaryPrompt := readPromptFile(ag.CompactionSummaryPromptPath, "compaction")
-		if err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, ag.CompactionHandoffMsg); err != nil {
+		summary, err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, ag.CompactionHandoffMsg)
+		if err != nil {
 			return 0, fmt.Errorf("compaction failed: %w", err)
 		}
 		if ag.CompactionNotifyFunc != nil {
 			ag.CompactionNotifyFunc(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
+		}
+		if ag.CompactionDebugFunc != nil && summary != "" {
+			ag.CompactionDebugFunc(sk, summary)
 		}
 		bootstrap.Reload()
 		return mc, nil
@@ -1784,6 +1788,33 @@ func setupAgent(p setupParams) *agentInstance {
 		if compactNotify == nil || *compactNotify {
 			ag.CompactionNotifyFunc = func(session string, msg string) {
 				primaryBot.SendNotification(msg)
+			}
+		}
+
+		// Wire compaction debug (send summary as file attachment)
+		compactDebug := p.cfg.Sessions.CompactionDebug
+		if acfg.CompactionDebug != nil {
+			compactDebug = *acfg.CompactionDebug
+		}
+		if compactDebug {
+			bot := primaryBot // capture for closure
+			ag.CompactionDebugFunc = func(sessionKey, summary string) {
+				f, err := os.CreateTemp("", "compaction-summary-*.md")
+				if err != nil {
+					log.Warnf("agent", "compaction debug: create temp file: %v", err)
+					return
+				}
+				if _, err := f.WriteString(summary); err != nil {
+					f.Close()
+					os.Remove(f.Name())
+					log.Warnf("agent", "compaction debug: write temp file: %v", err)
+					return
+				}
+				f.Close()
+				if err := bot.SendDocument(f.Name()); err != nil {
+					log.Warnf("agent", "compaction debug: send document: %v", err)
+				}
+				os.Remove(f.Name())
 			}
 		}
 

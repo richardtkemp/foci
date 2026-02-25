@@ -83,6 +83,7 @@ type Agent struct {
 	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
 	RateLimitFunc               func(retryAfter int)            // callback when API returns 429/529 (rate limited or overloaded)
 	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
+	CompactionDebugFunc         func(string, string)            // callback for compaction debug (session key, summary text)
 	Redact                      func(string) string             // redact secrets from tool output; nil disables
 	StateStore                  *state.Store                    // nil disables state persistence
 	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
@@ -758,10 +759,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 					if a.ReadPromptFile != nil {
 						summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
 					}
-					if err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
+					if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
 						log.Errorf("agent", "compaction failed: %v", err)
-					} else if a.CompactionNotifyFunc != nil {
-						a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+					} else {
+						if a.CompactionNotifyFunc != nil {
+							a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+						}
+						if a.CompactionDebugFunc != nil && summary != "" {
+							a.CompactionDebugFunc(sessionKey, summary)
+						}
 					}
 					// Reload system prompt — compaction may have changed memory files
 					a.Bootstrap.Reload()
