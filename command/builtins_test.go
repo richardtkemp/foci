@@ -1030,6 +1030,7 @@ func TestContextCommand(t *testing.T) {
 	}
 
 	checks := []string{
+		"```",               // code block wrapping
 		"105,000",           // total tokens (60000 + 40000 + 5000)
 		"200,000",           // context limit
 		"52.5%",             // 105000 / 200000
@@ -1054,6 +1055,10 @@ func TestContextCommand(t *testing.T) {
 		"cache_write:",
 		"output:",
 		"1,500", // output tokens
+	}
+	// Should have 4 separate code blocks (header, system, conversation, last API call)
+	if strings.Count(result, "```") != 8 { // 4 opening + 4 closing
+		t.Errorf("expected 4 code blocks (8 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
