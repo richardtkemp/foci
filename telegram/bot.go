@@ -1195,26 +1195,137 @@ func isImageMIME(mime string) bool {
 	return false
 }
 
+// splitMessage splits text into chunks of at most maxLen bytes.
+// It prefers splitting at newline boundaries and preserves HTML formatting
+// by closing open tags at split points and reopening them in the next chunk.
 func splitMessage(text string, maxLen int) []string {
 	if len(text) <= maxLen {
 		return []string{text}
 	}
 	var chunks []string
 	for len(text) > 0 {
-		end := maxLen
-		if end > len(text) {
-			end = len(text)
+		if len(text) <= maxLen {
+			chunks = append(chunks, text)
+			break
 		}
-		// Try to split at a newline
-		if end < len(text) {
-			if idx := strings.LastIndex(text[:end], "\n"); idx > 0 {
-				end = idx + 1
-			}
-		}
-		chunks = append(chunks, text[:end])
-		text = text[end:]
+		chunk, rest := splitChunk(text, maxLen)
+		chunks = append(chunks, chunk)
+		text = rest
 	}
 	return chunks
+}
+
+// splitChunk splits text at a good boundary, returning the chunk and remaining text.
+// It closes any open HTML tags at the end of the chunk and reopens them in the rest.
+func splitChunk(text string, maxLen int) (chunk, rest string) {
+	end := findSplitPoint(text, maxLen)
+	open := openHTMLTags(text[:end])
+
+	if len(open) == 0 {
+		return text[:end], text[end:]
+	}
+
+	var suffix, prefix string
+	for i := len(open) - 1; i >= 0; i-- {
+		suffix += closingHTMLTag(open[i])
+	}
+	for _, tag := range open {
+		prefix += tag
+	}
+
+	// Reduce split point if closing tags would exceed maxLen.
+	if end+len(suffix) > maxLen {
+		end = findSplitPoint(text, maxLen-len(suffix))
+		// Recompute with new split point.
+		open = openHTMLTags(text[:end])
+		suffix = ""
+		prefix = ""
+		for i := len(open) - 1; i >= 0; i-- {
+			suffix += closingHTMLTag(open[i])
+		}
+		for _, tag := range open {
+			prefix += tag
+		}
+	}
+
+	return text[:end] + suffix, prefix + text[end:]
+}
+
+// findSplitPoint finds the best position to split text, up to maxLen bytes.
+// Prefers newline boundaries and avoids splitting inside HTML tags.
+func findSplitPoint(text string, maxLen int) int {
+	end := maxLen
+	if end > len(text) {
+		end = len(text)
+	}
+	if end >= len(text) {
+		return end
+	}
+
+	// Prefer splitting at a newline.
+	if idx := strings.LastIndex(text[:end], "\n"); idx > 0 {
+		return idx + 1
+	}
+
+	// No newline — avoid splitting inside an HTML tag.
+	lastOpen := strings.LastIndexByte(text[:end], '<')
+	lastClose := strings.LastIndexByte(text[:end], '>')
+	if lastOpen >= 0 && lastOpen > lastClose && lastOpen > 0 {
+		return lastOpen
+	}
+
+	return end
+}
+
+// openHTMLTags scans HTML text and returns the stack of unclosed tags.
+// Each entry is the full opening tag (e.g. "<pre>", "<a href=\"url\">").
+func openHTMLTags(html string) []string {
+	var stack []string
+	for i := 0; i < len(html); {
+		idx := strings.IndexByte(html[i:], '<')
+		if idx < 0 {
+			break
+		}
+		i += idx
+		end := strings.IndexByte(html[i:], '>')
+		if end < 0 {
+			break // incomplete tag at end of string
+		}
+		tag := html[i : i+end+1]
+		i += end + 1
+
+		if strings.HasPrefix(tag, "</") {
+			// Closing tag — pop matching from stack.
+			name := htmlTagName(tag[2:])
+			for j := len(stack) - 1; j >= 0; j-- {
+				if htmlTagName(stack[j][1:]) == name {
+					stack = append(stack[:j], stack[j+1:]...)
+					break
+				}
+			}
+		} else if !strings.HasSuffix(tag, "/>") {
+			// Opening tag (skip self-closing).
+			stack = append(stack, tag)
+		}
+	}
+	return stack
+}
+
+// htmlTagName extracts the tag name from a string starting after '<' or '</'.
+// E.g. "pre>", "a href=\"url\">" → "pre", "a".
+func htmlTagName(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' || s[i] == '>' || s[i] == '/' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// closingHTMLTag returns the closing tag for a full opening tag.
+// E.g. "<pre>" → "</pre>", "<a href=\"url\">" → "</a>".
+func closingHTMLTag(openTag string) string {
+	return "</" + htmlTagName(openTag[1:]) + ">"
 }
 
 // formatToolCall formats a tool call for display in Telegram.
