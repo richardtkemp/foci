@@ -219,7 +219,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 
 The `tmux` tool includes operations for monitoring pane inactivity:
 
-- `watch` — monitor a pane for inactivity; fires if content unchanged for threshold seconds (default 30s)
+- `watch` — monitor a pane for inactivity; fires if content unchanged for threshold seconds (default 30s). Watches persist across restarts.
   - Parameters: `session` (required), `window` (default 0), `threshold_seconds` (default 30)
   - Tracks content with MD5 hash; timer resets on change
   - Runs as background goroutine, one-shot alert mechanism

@@ -1504,3 +1504,250 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Errorf("read on restored session should succeed, got: %v", err)
 	}
 }
+
+func TestTmuxPersistWatches(t *testing.T) {
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+
+	name := "clod-test-persist-watch"
+	defer tmuxCleanup(t, name)
+
+	// Start a session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	// Watch it
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 45,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Verify watches were persisted
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) {
+		t.Fatal("watches not persisted")
+	}
+	if len(watches) != 1 {
+		t.Fatalf("persisted watches = %d, want 1", len(watches))
+	}
+	if watches[0].Session != name {
+		t.Errorf("persisted watch session = %q, want %q", watches[0].Session, name)
+	}
+	if watches[0].ThresholdSecs != 45 {
+		t.Errorf("persisted watch threshold = %d, want 45", watches[0].ThresholdSecs)
+	}
+
+	// Cleanup
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	tool.Execute(context.Background(), params)
+}
+
+func TestTmuxRestoreWatches(t *testing.T) {
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+
+	name := "clod-test-restore-watch"
+	defer tmuxCleanup(t, name)
+
+	// Create the tmux session (simulating it still exists from before restart)
+	exec.Command("tmux", "new-session", "-d", "-s", name, "sleep", "60").Run()
+
+	// Pre-populate state with owned session and watch
+	if err := store.Set("tmux:test-agent", []string{name}); err != nil {
+		t.Fatalf("set owned state: %v", err)
+	}
+	if err := store.Set("tmux:test-agent:watches", []persistedWatch{
+		{Session: name, Window: 0, ThresholdSecs: 30, AgentSessionKey: "test-session"},
+	}); err != nil {
+		t.Fatalf("set watch state: %v", err)
+	}
+
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+
+	// Verify the watch was restored by checking the state is still persisted
+	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) {
+		t.Fatal("watches should still be in state")
+	}
+	if len(watches) != 1 {
+		t.Fatalf("restored watches = %d, want 1", len(watches))
+	}
+	if watches[0].Session != name {
+		t.Errorf("restored watch session = %q, want %q", watches[0].Session, name)
+	}
+
+	// Cleanup watches via ClearAll
+	cleanup()
+}
+
+func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+
+	// Pre-populate with a watch for a non-existent session
+	if err := store.Set("tmux:test-agent:watches", []persistedWatch{
+		{Session: "clod-test-stale-watch-xyz", Window: 0, ThresholdSecs: 30, AgentSessionKey: "test-session"},
+	}); err != nil {
+		t.Fatalf("set watch state: %v", err)
+	}
+
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+
+	// Stale watch should have been cleaned from state
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) {
+		t.Fatal("watches key should still exist")
+	}
+	if len(watches) != 0 {
+		t.Errorf("persisted watches after stale cleanup = %d, want 0", len(watches))
+	}
+}
+
+func TestTmuxUnwatchPersists(t *testing.T) {
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+
+	name := "clod-test-unwatch-persist"
+	defer tmuxCleanup(t, name)
+
+	// Start and watch
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 30,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Verify watch is persisted
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) || len(watches) != 1 {
+		t.Fatal("watch should be persisted")
+	}
+
+	// Unwatch
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("unwatch: %v", err)
+	}
+
+	// Verify watches state is now empty
+	if !store.Get("tmux:test-agent:watches", &watches) {
+		t.Fatal("watches key should still exist")
+	}
+	if len(watches) != 0 {
+		t.Errorf("persisted watches after unwatch = %d, want 0", len(watches))
+	}
+}
+
+func TestTmuxClearAllPersistsWatches(t *testing.T) {
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+
+	name := "clod-test-clearall-watch"
+	defer tmuxCleanup(t, name)
+
+	// Start and watch
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 30,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Verify watch is persisted
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) || len(watches) != 1 {
+		t.Fatal("watch should be persisted before ClearAll")
+	}
+
+	// ClearAll
+	cleanup()
+
+	// Verify watches state is cleared
+	if !store.Get("tmux:test-agent:watches", &watches) {
+		t.Fatal("watches key should still exist")
+	}
+	if len(watches) != 0 {
+		t.Errorf("persisted watches after ClearAll = %d, want 0", len(watches))
+	}
+}
