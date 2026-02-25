@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -1216,7 +1217,7 @@ func setupAgent(p setupParams) *agentInstance {
 	sessionNotifyFn := tools.SessionNotifyFn(func(targetSessionKey, message string) {
 		go func() {
 			// Parse agent ID from session key (agent:<id>:...)
-			parts := strings.SplitN(targetSessionKey, ":", 3)
+			parts := strings.Split(targetSessionKey, ":")
 			if len(parts) < 2 {
 				log.Errorf("session_notify", "invalid session key: %s", targetSessionKey)
 				return
@@ -1243,8 +1244,22 @@ func setupAgent(p setupParams) *agentInstance {
 				log.Warnf("session_notify", "no primary bot for agent %s, response not delivered", targetAgentID)
 				return
 			}
-			if err := bot.SendText(resp); err != nil {
-				log.Errorf("session_notify", "telegram delivery: %v", err)
+
+			// Extract chat ID from session key (agent:X:chat:CHATID) for
+			// targeted delivery. Falls back to bot's default chat if the
+			// session key doesn't contain a chat segment.
+			var chatID int64
+			if len(parts) >= 4 && parts[2] == "chat" {
+				chatID, _ = strconv.ParseInt(parts[3], 10, 64)
+			}
+			if chatID != 0 {
+				if err := bot.SendTextToChat(chatID, resp); err != nil {
+					log.Errorf("session_notify", "telegram delivery to chat %d: %v", chatID, err)
+				}
+			} else {
+				if err := bot.SendText(resp); err != nil {
+					log.Errorf("session_notify", "telegram delivery: %v", err)
+				}
 			}
 		}()
 	})
