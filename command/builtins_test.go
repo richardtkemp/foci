@@ -452,6 +452,55 @@ func TestModelCommand(t *testing.T) {
 	}
 }
 
+func TestEffortCommand(t *testing.T) {
+	effort := ""
+	cmd := NewEffortCommand(
+		func() string { return effort },
+		func(e string) { effort = e },
+	)
+
+	// Show when not set
+	result, _ := cmd.Execute(context.Background(), "")
+	if !strings.Contains(result, "not set") {
+		t.Errorf("expected 'not set', got %q", result)
+	}
+
+	// Set valid levels
+	for _, level := range []string{"low", "medium", "high"} {
+		result, _ = cmd.Execute(context.Background(), level)
+		if effort != level {
+			t.Errorf("effort not set to %s: %s", level, effort)
+		}
+		if !strings.Contains(result, level) {
+			t.Errorf("result = %q", result)
+		}
+	}
+
+	// Show when set
+	result, _ = cmd.Execute(context.Background(), "")
+	if !strings.Contains(result, "high") {
+		t.Errorf("expected 'high', got %q", result)
+	}
+
+	// Invalid level
+	result, _ = cmd.Execute(context.Background(), "turbo")
+	if !strings.Contains(result, "Invalid") {
+		t.Errorf("expected 'Invalid', got %q", result)
+	}
+	if effort != "high" {
+		t.Errorf("effort changed on invalid input: %s", effort)
+	}
+
+	// Clear
+	result, _ = cmd.Execute(context.Background(), "none")
+	if effort != "" {
+		t.Errorf("effort not cleared: %q", effort)
+	}
+	if !strings.Contains(result, "cleared") {
+		t.Errorf("result = %q", result)
+	}
+}
+
 func TestToolsCommand(t *testing.T) {
 	cmd := NewToolsCommand(func() []ToolInfo {
 		return []ToolInfo{

@@ -56,6 +56,7 @@ func (r *Registry) ToolDefs() []anthropic.ToolDef {
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.Parameters,
+			Strict:      true,
 		})
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })

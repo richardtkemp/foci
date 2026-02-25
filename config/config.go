@@ -36,6 +36,7 @@ type AgentConfig struct {
 	Memory              AgentMemoryConfig `toml:"memory"`                // per-agent memory sources (combined with global [memory])
 	MaxToolLoops        int               `toml:"max_tool_loops"`        // max tool iterations per turn (default 25)
 	MaxOutputTokens     int               `toml:"max_output_tokens"`     // max tokens in model response (default 8192)
+	Effort              string            `toml:"effort"`                // effort level: "low", "medium", "high" (empty = omit from request)
 	TTSRate             float64           `toml:"tts_rate"`              // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
@@ -225,6 +226,7 @@ type DefaultsConfig struct {
 	InjectAgentWarnings bool     `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
 	MaxToolLoops        int      `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
 	MaxOutputTokens     int      `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
+	Effort              string   `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
 	TTSRate             float64  `toml:"tts_rate"`               // default TTS speech rate (default: 0 = voice config)
 	SystemFiles         []string `toml:"system_files"`          // default system file list
 }
@@ -434,6 +436,9 @@ func Load(path string) (*Config, error) {
 		}
 		if cfg.Agents[i].MaxOutputTokens == 0 {
 			cfg.Agents[i].MaxOutputTokens = cfg.Defaults.MaxOutputTokens
+		}
+		if cfg.Agents[i].Effort == "" {
+			cfg.Agents[i].Effort = cfg.Defaults.Effort
 		}
 		if cfg.Agents[i].TTSRate == 0 {
 			cfg.Agents[i].TTSRate = cfg.Defaults.TTSRate

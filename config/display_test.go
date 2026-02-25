@@ -214,6 +214,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ShowToolCalls = &boolTrue
 	agent.ImageSaveDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
+	agent.Effort = "high"
 	// Set optional global fields
 	cfg.Sessions.CompactionSummaryPrompt = "/tmp/summary.md"
 	cfg.Sessions.CompactionHandoffMsg = "handoff"

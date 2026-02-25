@@ -244,6 +244,21 @@ Three thresholds (all configurable as `%` of RAM, `mb`, or `gb`):
 
 Notifications go to agents whose `inject_agent_warnings` is false. Dedup prevents spam: same threshold only fires once until memory drops below it or tmux is killed.
 
+### Effort Parameter
+
+Controls how much work Claude does per turn. Lower effort = shorter responses, fewer tool calls, less thinking. Configurable at global and per-agent level, overridable at runtime via `/effort` command.
+
+```toml
+[defaults]
+effort = "high"    # global default
+
+[[agents]]
+id = "clutch"
+effort = "high"    # per-agent override
+```
+
+Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
+
 ### Tool Result Guard
 
 When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), clod does NOT inject the full result into session history. Instead:
@@ -848,7 +863,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Secret redaction on all tool output — exec output, tool errors, and all tool results scanned for known secret patterns
 - Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
 - Tool result size guard (large results saved to temp file)
-- Slash commands: /status, /cache, /ping, /last, /mana, /reload, /tools, /config, /model, /reset, /multiball, /sessions
+- Slash commands: /status, /cache, /ping, /last, /mana, /effort, /reload, /tools, /config, /model, /reset, /multiball, /sessions
 - Cron system (system crontab, prompts loaded from disk)
 - Setup script (idempotent, builds from source, installs as systemd service)
 - Repair interrupted tool calls on session load

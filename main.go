@@ -1266,6 +1266,7 @@ func setupAgent(p setupParams) *agentInstance {
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
+		Effort:                      acfg.Effort,
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
@@ -1456,6 +1457,10 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewModelCommand(
 		func() string { return ag.Model },
 		func(m string) { ag.Model = m },
+	))
+	cmds.Register(command.NewEffortCommand(
+		func() string { return ag.Effort },
+		func(e string) { ag.Effort = e },
 	))
 	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
 		var infos []command.ToolInfo
