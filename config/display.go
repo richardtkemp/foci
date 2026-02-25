@@ -84,9 +84,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	b.WriteString("\n[sessions]\n")
 	writeField(&b, "dir", cfg.Sessions.Dir)
 	writeField(&b, "compaction_threshold", cfg.Sessions.CompactionThreshold)
-	if cfg.Sessions.CompactionModel != "" {
-		writeField(&b, "compaction_model", cfg.Sessions.CompactionModel)
-	}
 	writeField(&b, "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
 	writeField(&b, "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
 	if cfg.Sessions.CompactionSummaryPrompt != "" {
@@ -366,9 +363,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Sessions fields
-	if cfg.Sessions.CompactionModel == "" {
-		opts = append(opts, availableOption{"sessions", "compaction_model", "(agent model)", "model for summarization"})
-	}
 	if cfg.Sessions.CompactionSummaryPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "compaction_summary_prompt", "\"\"", "path to summary prompt file"})
 	}

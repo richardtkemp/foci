@@ -130,7 +130,6 @@ Session storage and compaction.
 |-----|------|---------|-------------|
 | `dir` | string | `""` | Directory for JSONL session files. Defaults to `data/sessions/` via `data_dir`. Relative paths resolve against `$HOME`. |
 | `compaction_threshold` | float | `0.8` | Trigger compaction when context usage exceeds this fraction (0.0–1.0). |
-| `compaction_model` | string | agent model | Model to use for summarization. Defaults to the agent's own model. |
 | `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
 | `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). Empty disables custom prompt (compactor uses a minimal fallback). |

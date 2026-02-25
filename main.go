@@ -1093,7 +1093,6 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent compactor
 	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, p.cfg.Sessions.CompactionThreshold)
 	compactor.WithConfig(
-		p.cfg.Sessions.CompactionModel,
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
 	)
