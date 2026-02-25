@@ -13,7 +13,6 @@ type Tool struct {
 	Name        string
 	Description string
 	Parameters  json.RawMessage
-	Strict      bool // enable strict schema validation (API enforces additionalProperties:false)
 	Execute     func(ctx context.Context, params json.RawMessage) (string, error)
 }
 
@@ -53,59 +52,12 @@ func (r *Registry) All() []*Tool {
 func (r *Registry) ToolDefs() []anthropic.ToolDef {
 	defs := make([]anthropic.ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
-		schema := t.Parameters
-		if t.Strict {
-			schema = strictifySchema(schema)
-		}
 		defs = append(defs, anthropic.ToolDef{
 			Name:        t.Name,
 			Description: t.Description,
-			InputSchema: schema,
-			Strict:      t.Strict,
+			InputSchema: t.Parameters,
 		})
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
-}
-
-// strictifySchema recursively walks a JSON schema and injects
-// "additionalProperties": false on every object that has "properties".
-// Required for strict tool mode — the API rejects schemas where any
-// object with properties lacks this field.
-func strictifySchema(schema json.RawMessage) json.RawMessage {
-	var node interface{}
-	if err := json.Unmarshal(schema, &node); err != nil {
-		return schema
-	}
-	strictifyNode(node)
-	out, err := json.Marshal(node)
-	if err != nil {
-		return schema
-	}
-	return out
-}
-
-func strictifyNode(node interface{}) {
-	obj, ok := node.(map[string]interface{})
-	if !ok {
-		return
-	}
-
-	// If this object has "properties", it's a schema object — enforce strict.
-	if _, hasProps := obj["properties"]; hasProps {
-		if _, hasAP := obj["additionalProperties"]; !hasAP {
-			obj["additionalProperties"] = false
-		}
-		// Recurse into each property's schema
-		if props, ok := obj["properties"].(map[string]interface{}); ok {
-			for _, v := range props {
-				strictifyNode(v)
-			}
-		}
-	}
-
-	// Recurse into "items" (array items schema)
-	if items, ok := obj["items"]; ok {
-		strictifyNode(items)
-	}
 }

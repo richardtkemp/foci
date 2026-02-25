@@ -10,7 +10,6 @@ import (
 
 func NewMemoryRemindTool(rs *memory.ReminderStore, agentID string) *Tool {
 	return &Tool{
-		Strict:      true,
 		Name:        "memory_remind",
 		Description: "Defer a thought for later. The reminder will surface as injected context at the specified time. Use this for things you want to think about or follow up on later — not a full task system, just 'future me should think about this.'",
 		Parameters: json.RawMessage(`{

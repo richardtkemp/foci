@@ -30,7 +30,6 @@ type TelegramSender interface {
 // session key doesn't contain a chat ID (e.g. spawn branches, cron sessions).
 func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 	return &Tool{
-		Strict:      true,
 		Name:        "send_telegram",
 		Description: "Send a proactive Telegram message to the user. Can send text, files, or voice notes. Use for alerts, sharing files, or sending voice replies.",
 		Parameters: json.RawMessage(`{

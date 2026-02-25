@@ -30,7 +30,6 @@ import (
 // (0 disables). notifier delivers results when an auto-backgrounded request finishes.
 func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) *Tool {
 	return &Tool{
-		Strict:      true,
 		Name:        "http_request",
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers/body are resolved server-side and validated against allowed_hosts. Preferred over exec for API calls with secrets. Binary responses are auto-saved to files. Use save_to to save any response to a specific path.",
 		Parameters: json.RawMessage(`{
@@ -46,34 +45,18 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 					"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
 				},
 				"headers": {
-					"type": "array",
-					"description": "Request headers. Use {{secret:NAME}} for credentials.",
-					"items": {
-						"type": "object",
-						"properties": {
-							"name":  { "type": "string", "description": "Header name" },
-							"value": { "type": "string", "description": "Header value" }
-						},
-						"required": ["name", "value"],
-						"additionalProperties": false
-					}
+					"type": "object",
+					"description": "Request headers as key-value pairs. Use {{secret:NAME}} for credentials.",
+					"additionalProperties": { "type": "string" }
 				},
 				"body": {
 					"type": "string",
 					"description": "Request body. Use {{secret:NAME}} for credentials."
 				},
 				"query": {
-					"type": "array",
-					"description": "Query parameters.",
-					"items": {
-						"type": "object",
-						"properties": {
-							"name":  { "type": "string", "description": "Parameter name" },
-							"value": { "type": "string", "description": "Parameter value" }
-						},
-						"required": ["name", "value"],
-						"additionalProperties": false
-					}
+					"type": "object",
+					"description": "Query parameters as key-value pairs",
+					"additionalProperties": { "type": "string" }
 				},
 				"save_to": {
 					"type": "string",
@@ -104,45 +87,18 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 	}
 }
 
-// kvPairs unmarshals from either an array of {name,value} objects or a
-// legacy map[string]string, producing a consistent map.
-type kvPairs map[string]string
-
-func (kv *kvPairs) UnmarshalJSON(data []byte) error {
-	// Try array of {name, value} first (new schema)
-	var arr []struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-	}
-	if err := json.Unmarshal(data, &arr); err == nil {
-		m := make(map[string]string, len(arr))
-		for _, item := range arr {
-			m[item.Name] = item.Value
-		}
-		*kv = m
-		return nil
-	}
-	// Fall back to map[string]string (legacy)
-	var m map[string]string
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	*kv = m
-	return nil
-}
-
 func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, notifier *AsyncNotifier) (string, error) {
 	var p struct {
-		URL              string  `json:"url"`
-		Method           string  `json:"method"`
-		Headers          kvPairs `json:"headers"`
-		Body             string  `json:"body"`
-		Query            kvPairs `json:"query"`
-		SaveTo           string  `json:"save_to"`
-		SaveFromJSONPath string  `json:"save_from_json_path"`
-		Timeout          int     `json:"timeout"`
-		MaxResponseBytes int64   `json:"max_response_bytes"`
-		Background       bool    `json:"background"`
+		URL     string            `json:"url"`
+		Method  string            `json:"method"`
+		Headers map[string]string `json:"headers"`
+		Body    string            `json:"body"`
+		Query   map[string]string `json:"query"`
+		SaveTo           string            `json:"save_to"`
+		SaveFromJSONPath string            `json:"save_from_json_path"`
+		Timeout          int              `json:"timeout"`
+		MaxResponseBytes int64            `json:"max_response_bytes"`
+		Background       bool             `json:"background"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)

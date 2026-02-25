@@ -20,7 +20,6 @@ func NewScheduleWakeTool(fn ...ScheduleWakeFn) *Tool {
 		wakeFn = fn[0]
 	}
 	return &Tool{
-		Strict:      true,
 		Name:        "schedule_wake",
 		Description: "Schedule a message to be sent to the session at a specified time or delay",
 		Parameters: json.RawMessage(`{
