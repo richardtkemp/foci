@@ -382,6 +382,7 @@ func cmdBranch(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
 	noCompact := false
 	noResetHook := false
+	silent := false
 	asyncFlag := false
 	syncFlag := false
 	ifActive := ""
@@ -394,9 +395,12 @@ func cmdBranch(base string, args []string) error {
 			noCompact = true
 		case args[i] == "--no-reset-hook":
 			noResetHook = true
+		case args[i] == "--silent":
+			silent = true
 		case args[i] == "--oneshot":
 			noCompact = true
 			noResetHook = true
+			silent = true
 		case args[i] == "--async" || args[i] == "--no-wait":
 			asyncFlag = true
 		case args[i] == "--sync" || args[i] == "--wait":
@@ -463,6 +467,9 @@ func cmdBranch(base string, args []string) error {
 	}
 	if ifActive != "" {
 		body["if_active"] = ifActive
+	}
+	if silent {
+		body["silent"] = true
 	}
 	return postJSON(base+"/wake", body)
 }
