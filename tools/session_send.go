@@ -25,7 +25,6 @@ type SessionNotifyFn func(sessionKey, message string)
 // response to the target session's own chat instead of back to the caller.
 func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn) *Tool {
 	return &Tool{
-		Strict:      true,
 		Name:        "send_to_session",
 		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own Telegram chat instead.",
 		Parameters: json.RawMessage(`{

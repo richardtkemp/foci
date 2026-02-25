@@ -58,7 +58,6 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	sem := make(chan struct{}, deps.MaxInherit)
 
 	return &Tool{
-		Strict:      true,
 		Name:        "spawn",
 		Description: "Spawn a sub-call to a model. Three context modes: 'none' (just your prompt, no system context), 'character_only' (your prompt + character files), 'clone_current' (branch session with full tool access — a headless self-fork). Use 'none'/'character_only' for one-shot queries to different models. Use 'clone_current' to delegate complex multi-step tasks that need tools.",
 		Parameters: json.RawMessage(`{

@@ -34,7 +34,6 @@ type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	InputSchema json.RawMessage `json:"input_schema"`
-	Strict      bool            `json:"strict,omitempty"`
 }
 
 // OutputConfig controls output generation parameters.

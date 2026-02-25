@@ -13,7 +13,6 @@ import (
 // Never returns secret values — only item names, IDs, URIs, and usernames.
 func NewBitwardenSearchTool(store *bitwarden.Store) *Tool {
 	return &Tool{
-		Strict:      true,
 		Name:        "bitwarden_search",
 		Description: "Search Bitwarden vault items by name, URI, folder, or username. Returns metadata only (never passwords). Use bitwarden_unlock to unlock a specific item for use in http_request.",
 		Parameters: json.RawMessage(`{
@@ -67,7 +66,6 @@ func NewBitwardenSearchTool(store *bitwarden.Store) *Tool {
 // The tool NEVER returns the actual password value.
 func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 	return &Tool{
-		Strict:      true,
 		Name:        "bitwarden_unlock",
 		Description: "Unlock a Bitwarden vault item by ID. Requires administrator approval via Telegram. Once unlocked, use {{secret:bw.ID}} in http_request headers/body. The password value is never returned — only a confirmation that it's available.",
 		Parameters: json.RawMessage(`{
