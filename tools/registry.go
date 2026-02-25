@@ -13,6 +13,7 @@ type Tool struct {
 	Name        string
 	Description string
 	Parameters  json.RawMessage
+	Strict      bool // enable strict schema validation (API enforces additionalProperties:false)
 	Execute     func(ctx context.Context, params json.RawMessage) (string, error)
 }
 
@@ -52,11 +53,15 @@ func (r *Registry) All() []*Tool {
 func (r *Registry) ToolDefs() []anthropic.ToolDef {
 	defs := make([]anthropic.ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
+		schema := t.Parameters
+		if t.Strict {
+			schema = strictifySchema(schema)
+		}
 		defs = append(defs, anthropic.ToolDef{
 			Name:        t.Name,
 			Description: t.Description,
-			InputSchema: strictifySchema(t.Parameters),
-			Strict:      true,
+			InputSchema: schema,
+			Strict:      t.Strict,
 		})
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })

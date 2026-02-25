@@ -28,6 +28,7 @@ func NewReadTool() *Tool {
 
 func NewWriteTool() *Tool {
 	return &Tool{
+		Strict:      true,
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
 		Parameters: json.RawMessage(`{
@@ -50,6 +51,7 @@ func NewWriteTool() *Tool {
 
 func NewEditTool() *Tool {
 	return &Tool{
+		Strict:      true,
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
 		Parameters: json.RawMessage(`{

@@ -63,32 +63,100 @@ func TestRegistryToolDefs(t *testing.T) {
 	r.Register(&Tool{
 		Name:        "exec",
 		Description: "run commands",
+		Strict:      true,
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"cmd":{"type":"string"}}}`),
+	})
+	r.Register(&Tool{
+		Name:        "simple",
+		Description: "simple tool",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`),
 	})
 
 	defs := r.ToolDefs()
-	if len(defs) != 1 {
-		t.Fatalf("len = %d, want 1", len(defs))
-	}
-	if defs[0].Name != "exec" {
-		t.Errorf("Name = %q", defs[0].Name)
-	}
-	if defs[0].Description != "run commands" {
-		t.Errorf("Description = %q", defs[0].Description)
+	if len(defs) != 2 {
+		t.Fatalf("len = %d, want 2", len(defs))
 	}
 
-	// InputSchema should be valid JSON with additionalProperties injected
+	// exec is strict — should have additionalProperties injected
+	exec := defs[0] // sorted: exec < simple
+	if exec.Name != "exec" {
+		t.Errorf("Name = %q", exec.Name)
+	}
+	if !exec.Strict {
+		t.Error("exec should be strict")
+	}
 	var schema map[string]interface{}
-	if err := json.Unmarshal(defs[0].InputSchema, &schema); err != nil {
-		t.Errorf("InputSchema not valid JSON: %v", err)
+	if err := json.Unmarshal(exec.InputSchema, &schema); err != nil {
+		t.Fatalf("InputSchema not valid JSON: %v", err)
 	}
 	if ap, ok := schema["additionalProperties"]; !ok {
-		t.Error("additionalProperties not injected into schema")
+		t.Error("additionalProperties not injected into strict schema")
 	} else if ap != false {
 		t.Errorf("additionalProperties = %v, want false", ap)
 	}
-	if !defs[0].Strict {
-		t.Error("Strict should be true")
+
+	// simple is not strict — no additionalProperties injected
+	simple := defs[1]
+	if simple.Strict {
+		t.Error("simple should not be strict")
+	}
+	var simpleSchema map[string]interface{}
+	if err := json.Unmarshal(simple.InputSchema, &simpleSchema); err != nil {
+		t.Fatalf("InputSchema not valid JSON: %v", err)
+	}
+	if _, ok := simpleSchema["additionalProperties"]; ok {
+		t.Error("non-strict schema should not have additionalProperties injected")
+	}
+}
+
+// TestStrictToolLimit ensures the API limit of 20 strict tools is not exceeded.
+// If you add a new strict tool, update this list. If the count exceeds 20,
+// either remove strict from a less-important tool or wait for Anthropic to
+// raise the limit.
+func TestStrictToolLimit(t *testing.T) {
+	const maxStrict = 20
+
+	// Exhaustive list of tools with Strict: true.
+	// If you add Strict to a new tool, add it here.
+	strictTools := []string{
+		"bitwarden_search",
+		"bitwarden_unlock",
+		"edit",
+		"exec",
+		"http_request",
+		"memory_remind",
+		"schedule_wake",
+		"send_telegram",
+		"send_to_session",
+		"spawn",
+		"tmux",
+		"todo",
+		"write",
+	}
+
+	if len(strictTools) > maxStrict {
+		t.Errorf("too many strict tools (%d > %d): %v", len(strictTools), maxStrict, strictTools)
+	}
+
+	// Verify the list matches reality by checking the non-dep tools we can construct.
+	for _, fn := range []struct {
+		name string
+		tool *Tool
+	}{
+		{"write", NewWriteTool()},
+		{"edit", NewEditTool()},
+		{"read", NewReadTool()},
+	} {
+		wantStrict := false
+		for _, s := range strictTools {
+			if s == fn.name {
+				wantStrict = true
+				break
+			}
+		}
+		if fn.tool.Strict != wantStrict {
+			t.Errorf("tool %q: Strict=%v, expected %v", fn.name, fn.tool.Strict, wantStrict)
+		}
 	}
 }
 
