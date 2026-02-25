@@ -143,3 +143,152 @@ func TestFormatNoCols(t *testing.T) {
 		t.Errorf("expected empty string for no columns, got: %q", got)
 	}
 }
+
+func TestFormatSingleColumn(t *testing.T) {
+	cols := []Column{{Header: "Item"}}
+	rows := [][]string{{"alpha"}, {"beta"}}
+
+	got := Format(cols, rows)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 4 { // header + sep + 2 rows
+		t.Fatalf("expected 4 lines, got %d:\n%s", len(lines), got)
+	}
+	if !strings.Contains(lines[0], "Item") {
+		t.Errorf("header missing 'Item': %q", lines[0])
+	}
+}
+
+func TestFormatMismatchedRowLengths(t *testing.T) {
+	cols := []Column{{Header: "A"}, {Header: "B"}, {Header: "C"}}
+
+	// Row shorter than columns — missing cells should render as empty
+	rows := [][]string{{"x"}}
+	got := Format(cols, rows)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 { // header + sep + 1 row
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
+	}
+
+	// Row longer than columns — extra cells should be ignored
+	rows = [][]string{{"a", "b", "c", "d", "e"}}
+	got = Format(cols, rows)
+	lines = strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
+	}
+	// Extra cells should not appear
+	if strings.Contains(lines[2], "d") || strings.Contains(lines[2], "e") {
+		t.Errorf("extra cells should be ignored: %q", lines[2])
+	}
+}
+
+func TestFormatRightAlignUnicode(t *testing.T) {
+	cols := []Column{
+		{Header: "Name"},
+		{Header: "Count", Align: AlignRight},
+	}
+	rows := [][]string{
+		{"日本", "42"},
+		{"ab", "7"},
+	}
+
+	got := Format(cols, rows)
+	lines := strings.Split(got, "\n")
+
+	// All content lines (not separator) should have the same display width
+	headerW := DisplayWidth(lines[0])
+	for i, line := range lines {
+		if i == 1 {
+			continue
+		}
+		w := DisplayWidth(line)
+		if w != headerW {
+			t.Errorf("line %d display width %d != header width %d\nline: %q", i, w, headerW, line)
+		}
+	}
+}
+
+func TestDisplayWidthZeroWidth(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"ZWJ", "\u200D", 0},
+		{"ZWNJ", "\u200C", 0},
+		{"ZWSP", "\u200B", 0},
+		{"BOM", "\uFEFF", 0},
+		{"combining 0300", "a\u0300", 1},  // a + combining grave
+		{"combining 1AB0", "x\u1AB0", 1},  // x + combining mark
+		{"combining 1DC0", "y\u1DC0", 1},  // y + combining mark
+		{"combining 20D0", "z\u20D0", 1},  // z + combining mark
+		{"combining FE20", "w\uFE20", 1},  // w + combining mark
+		{"VS selector E0100", string([]rune{'A', 0xE0100}), 1},
+		{"bidi LRE", "\u202A", 0},
+		{"WJ", "\u2060", 0},
+		{"LRI", "\u2066", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DisplayWidth(tt.in); got != tt.want {
+				t.Errorf("DisplayWidth(%q) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDisplayWidthWideRanges(t *testing.T) {
+	// One sample rune from each isWide() range — all should have display width 2
+	wideRunes := []struct {
+		name string
+		r    rune
+	}{
+		{"Hangul Jamo", 0x1100},
+		{"CJK Bracket", 0x2329},
+		{"CJK Radicals", 0x2E80},
+		{"Hiragana", 0x3040},
+		{"Hangul Syllable", 0xAC00},
+		{"CJK Compat Ideograph", 0xF900},
+		{"Vertical Forms", 0xFE10},
+		{"CJK Compat Forms", 0xFE30},
+		{"Fullwidth Latin", 0xFF01},
+		{"Fullwidth Cent", 0xFFE0},
+		{"CJK Extension B", 0x20000},
+		{"CJK Extension G", 0x30000},
+		{"Dingbats 2600", 0x2600},
+		{"Dingbats 2700", 0x2700},
+		{"Mahjong", 0x1F000},
+		{"Enclosed Alphanum", 0x1F100},
+		{"Misc Symbols", 0x1F300},
+		{"Emoticons", 0x1F600},
+		{"Transport", 0x1F680},
+		{"Supplemental Symbols", 0x1F900},
+		{"Chess Symbols", 0x1FA00},
+		{"Symbols Extended-A", 0x1FA70},
+	}
+	for _, tt := range wideRunes {
+		t.Run(tt.name, func(t *testing.T) {
+			s := string(tt.r)
+			if got := DisplayWidth(s); got != 2 {
+				t.Errorf("DisplayWidth(%q / U+%04X) = %d, want 2", s, tt.r, got)
+			}
+		})
+	}
+}
+
+func TestDisplayWidthMultipleTabs(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"\t\t", 8},        // 0→4, 4→8
+		{"ab\t", 4},        // ab(2) + tab to 4 = 4
+		{"abcd\t", 8},      // abcd(4) + tab to 8 = 8
+		{"abc\tdef\t", 8},  // abc(3)+tab→4(+1)+def(3)=7+tab→8(+1)=8
+	}
+	for _, tt := range tests {
+		if got := DisplayWidth(tt.in); got != tt.want {
+			t.Errorf("DisplayWidth(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}

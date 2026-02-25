@@ -280,6 +280,47 @@ func TestReminderMigration(t *testing.T) {
 	}
 }
 
+func TestScratchpadList(t *testing.T) {
+	s := testScratchpad(t)
+
+	s.Write("test", "alpha", "short")
+	s.Write("test", "beta", "a longer piece of content")
+
+	entries, err := s.List("test")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// Ordered by key
+	if entries[0].Key != "alpha" || entries[1].Key != "beta" {
+		t.Errorf("keys = %q, %q", entries[0].Key, entries[1].Key)
+	}
+	if entries[0].SizeBytes != len("short") {
+		t.Errorf("alpha size = %d, want %d", entries[0].SizeBytes, len("short"))
+	}
+	if entries[1].SizeBytes != len("a longer piece of content") {
+		t.Errorf("beta size = %d, want %d", entries[1].SizeBytes, len("a longer piece of content"))
+	}
+	if entries[0].Updated.IsZero() {
+		t.Error("alpha Updated should not be zero")
+	}
+}
+
+func TestScratchpadListEmpty(t *testing.T) {
+	s := testScratchpad(t)
+
+	entries, err := s.List("test")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries, got %d", len(entries))
+	}
+}
+
 func openTestDB(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", path)
 }

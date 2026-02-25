@@ -437,6 +437,116 @@ func TestPreInitBufferNoFile(t *testing.T) {
 	}
 }
 
+func TestFilePaths(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	eventPath := filepath.Join(dir, "clod.log")
+	apiPath := filepath.Join(dir, "api.jsonl")
+	payloadPath := filepath.Join(dir, "payload.jsonl")
+
+	err := Init(Config{
+		Level:       "INFO",
+		EventFile:   eventPath,
+		APIFile:     apiPath,
+		PayloadFile: payloadPath,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	gotEvent, gotAPI, gotPayload := FilePaths()
+	if gotEvent != eventPath {
+		t.Errorf("event path = %q, want %q", gotEvent, eventPath)
+	}
+	if gotAPI != apiPath {
+		t.Errorf("api path = %q, want %q", gotAPI, apiPath)
+	}
+	if gotPayload != payloadPath {
+		t.Errorf("payload path = %q, want %q", gotPayload, payloadPath)
+	}
+}
+
+func TestGetLevel(t *testing.T) {
+	SetLevel(WARN)
+	defer SetLevel(INFO)
+
+	if got := GetLevel(); got != WARN {
+		t.Errorf("GetLevel() = %v, want WARN", got)
+	}
+
+	SetLevel(DEBUG)
+	if got := GetLevel(); got != DEBUG {
+		t.Errorf("GetLevel() = %v, want DEBUG", got)
+	}
+}
+
+func TestPayloadEnabled(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// No payload file — should be false
+	if PayloadEnabled() {
+		t.Error("PayloadEnabled() should be false with no payload file")
+	}
+
+	// With payload file — should be true
+	dir := t.TempDir()
+	err := Init(Config{
+		Level:       "INFO",
+		PayloadFile: filepath.Join(dir, "payload.jsonl"),
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	if !PayloadEnabled() {
+		t.Error("PayloadEnabled() should be true after Init with PayloadFile")
+	}
+}
+
+func TestPayloadLog(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	payloadPath := filepath.Join(dir, "payload.jsonl")
+
+	err := Init(Config{
+		Level:       "INFO",
+		PayloadFile: payloadPath,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	Payload(PayloadEntry{
+		Session:    "test-session",
+		Model:      "test-model",
+		Request:    json.RawMessage(`{"prompt":"hello"}`),
+		Response:   json.RawMessage(`{"text":"world"}`),
+		DurationMS: 500,
+	})
+
+	// Force close to flush
+	Close()
+
+	data, err := os.ReadFile(payloadPath)
+	if err != nil {
+		t.Fatalf("read payload: %v", err)
+	}
+	if !strings.Contains(string(data), "test-session") {
+		t.Errorf("payload missing session: %s", string(data))
+	}
+	if !strings.Contains(string(data), "test-model") {
+		t.Errorf("payload missing model: %s", string(data))
+	}
+}
+
 func TestPreInitFilteredByLevel(t *testing.T) {
 	resetGlobal()
 	defer resetGlobal()
