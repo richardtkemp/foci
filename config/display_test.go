@@ -252,11 +252,11 @@ func TestFormatConfigGrouped(t *testing.T) {
 		MaxOutputTokens:   8192,
 	}}
 
-	tables := FormatConfigGrouped(cfg)
+	tables := FormatConfigGrouped(cfg, agent)
 
-	// Should have 3 tables: Global + 2 agents
-	if len(tables) != 3 {
-		t.Fatalf("expected 3 tables, got %d", len(tables))
+	// Should have 2 tables: Global + calling agent only
+	if len(tables) != 2 {
+		t.Fatalf("expected 2 tables, got %d", len(tables))
 	}
 
 	// Each table should be wrapped in code blocks
@@ -281,18 +281,19 @@ func TestFormatConfigGrouped(t *testing.T) {
 		t.Error("Global table should not contain agent ID")
 	}
 
-	// Agent tables
+	// Only the calling agent should appear
 	if !strings.Contains(tables[1], "Agent: test-agent") {
 		t.Errorf("second table should be test-agent:\n%s", tables[1])
-	}
-	if !strings.Contains(tables[2], "Agent: second-agent") {
-		t.Errorf("third table should be second-agent:\n%s", tables[2])
 	}
 	if !strings.Contains(tables[1], "claude-haiku-4-5") {
 		t.Error("test-agent table missing model")
 	}
-	if !strings.Contains(tables[2], "claude-sonnet-4-6") {
-		t.Error("second-agent table missing model")
+
+	// Other agents should NOT appear
+	for _, table := range tables {
+		if strings.Contains(table, "second-agent") {
+			t.Error("other agent should not appear in output")
+		}
 	}
 }
 

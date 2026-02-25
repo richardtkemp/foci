@@ -1646,7 +1646,7 @@ func setupAgent(p setupParams) *agentInstance {
 		case "toml":
 			return config.FormatConfigTOML(p.cfg, acfg), nil
 		case "table":
-			return strings.Join(config.FormatConfigGrouped(p.cfg), "\x00"), nil
+			return strings.Join(config.FormatConfigGrouped(p.cfg, acfg), "\x00"), nil
 		case "available":
 			return "```\n" + config.FormatAvailable(p.cfg, acfg) + "\n```", nil
 		default:
