@@ -21,6 +21,7 @@ These flags are accepted by all commands:
 | `--agent <id>` | `-a` | `CLOD_AGENT` | Target a specific agent. Default: first configured agent. |
 | `--session <id>` | `-s` | `CLOD_SESSION` | Target session type. Default: `main`. |
 | `--if-active <dur>` | | `CLOD_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
+| `--if-inactive <dur>` | | `CLOD_IF_INACTIVE` | Skip if user was active within duration (e.g. `30m`, `1h`). Opposite of `--if-active`. |
 | `--message-text <text>` | `-mt` | `CLOD_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
 | `--message-file <path>` | `-mf` | `CLOD_MESSAGE_FILE` | Read message from file path. |
 | `--sync` / `--wait` | | `CLOD_SYNC` | Wait for response (send/branch only, non-empty = true). |
@@ -52,7 +53,7 @@ Sends a text message to the agent's default session (or a named session). By def
 
 **Usage:**
 ```
-clod send [-a agent] [-s session] [--if-active <duration>] [--sync] [-mt text | -mf file] [message text]
+clod send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
 ```
 
 **Flags:**
@@ -62,6 +63,7 @@ clod send [-a agent] [-s session] [--if-active <duration>] [--sync] [-mt text | 
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `agent:<id>:<session>`. Default: `main`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
+| `--if-inactive <dur>` | | Skip if user was active within duration. Opposite of `--if-active` — for heartbeats that should only fire when idle. |
 | `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
 | `--async` / `--no-wait` | | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--message-text <text>` | `-mt` | Explicit message text (alternative to trailing args). |
@@ -110,7 +112,7 @@ Aliased as `wake` for backward compatibility.
 
 **Usage:**
 ```
-clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+clod branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -119,6 +121,7 @@ clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook]
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
 | `--if-active <dur>` | Skip if no real user activity within duration. |
+| `--if-inactive <dur>` | Skip if user was active within duration. For heartbeats that should only fire when idle. |
 | `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |
 | `--async` / `--no-wait` | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
@@ -240,11 +243,14 @@ The CLI is designed for cron jobs. Both `send` and `branch` default to async mod
 # Nightly one-shot task (no compaction overhead)
 0 2 * * * /home/clod/bin/clod branch --oneshot -a clutch "nightly cleanup"
 
+# Heartbeat — only if idle for 30+ minutes (don't interrupt active conversations)
+*/30 * * * * /home/clod/bin/clod branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
+
 # Force sync if you need the output in the cron log
 0 6 * * * /home/clod/bin/clod send --sync -a clutch "morning report" >> /var/log/clod-report.log
 ```
 
-The `--if-active` flag prevents cron jobs from running when the user hasn't interacted recently, saving API tokens and avoiding pointless background work.
+The `--if-active` flag prevents cron jobs from running when the user hasn't interacted recently. The `--if-inactive` flag is the opposite — it skips when the user IS active, useful for heartbeat-style tasks that shouldn't interrupt conversations.
 
 ## HTTP API
 
