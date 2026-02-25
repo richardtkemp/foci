@@ -596,9 +596,9 @@ func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
 	msg := makeMsg(111, "owner", "hello")
 	b.receiveMessage(context.Background(), msg)
 
-	// Should reply with "idle" message, not queue
-	if mock.sentCount() != 1 {
-		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
+	// Should silently drop — no reply, no queue
+	if mock.sentCount() != 0 {
+		t.Fatalf("expected 0 sent messages (silent drop), got %d", mock.sentCount())
 	}
 	if len(b.queue) != 0 {
 		t.Error("idle secondary bot should not queue messages")

@@ -657,9 +657,11 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		}
 	}
 
-	// Secondary bots with no session reject non-command messages
+	// Secondary bots with no session silently drop non-command messages.
+	// Replying would cause spurious "idle" messages on restart when stale
+	// Telegram updates are replayed.
 	if b.isSecondary && b.SessionKey() == "" {
-		b.sendReply(msg, userID, "This bot is idle. Use /multiball in the main bot to start a session.")
+		log.Debugf("telegram", "dropping message to idle secondary bot from %s", msg.From.Username)
 		return
 	}
 
