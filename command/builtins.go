@@ -943,6 +943,7 @@ type ContextInfo struct {
 	EnvironmentChars int              // environment block chars
 	SkillsChars      int              // skills/extra system blocks chars
 	Messages         MessageBreakdown // conversation breakdown
+	CountTokensFn    func(ctx context.Context) (int, error) // nil = use estimates from last API call
 }
 
 // NewContextCommand returns a /context command showing context size breakdown.
@@ -967,27 +968,47 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 				}
 			}
 
+			// Try exact token count via counting API
+			var exactTokens int
+			var useExact bool
+			if info.CountTokensFn != nil {
+				if n, err := info.CountTokensFn(ctx); err == nil && n > 0 {
+					exactTokens = n
+					useExact = true
+				}
+			}
+
 			totalTokens := lastInput + lastCacheRead + lastCacheWrite
-			if totalTokens == 0 {
+			if !useExact && totalTokens == 0 {
 				return "No API calls yet for this session.", nil
 			}
 
+			// Use exact count for header if available, otherwise last API call
+			headerTokens := totalTokens
+			if useExact {
+				headerTokens = exactTokens
+			}
+
 			threshTokens := int(float64(info.ContextLimit) * info.CompactionThresh)
-			percentUsed := float64(totalTokens) / float64(info.ContextLimit) * 100
+			percentUsed := float64(headerTokens) / float64(info.ContextLimit) * 100
 			percentThresh := info.CompactionThresh * 100
 
 			var sb strings.Builder
 
 			// Header section
+			tokenLabel := formatCommas(headerTokens)
+			if !useExact {
+				tokenLabel = "~" + tokenLabel
+			}
 			sb.WriteString("```\n")
 			fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
-				formatCommas(totalTokens), formatCommas(info.ContextLimit), percentUsed)
+				tokenLabel, formatCommas(info.ContextLimit), percentUsed)
 			fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
 				formatCommas(threshTokens), percentThresh)
-			if totalTokens >= threshTokens {
+			if headerTokens >= threshTokens {
 				sb.WriteString("Status: at/above threshold\n")
 			} else {
-				remaining := threshTokens - totalTokens
+				remaining := threshTokens - headerTokens
 				fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", formatCommas(remaining))
 			}
 			sb.WriteString("```")

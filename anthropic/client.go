@@ -124,3 +124,48 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 
 	return &resp, nil
 }
+
+// CountTokens calls the /v1/messages/count_tokens endpoint to get exact
+// input token counts for a request. The endpoint is free (no tokens billed).
+func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return 0, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages/count_tokens", bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+
+	httpResp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return 0, fmt.Errorf("send request: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("read response: %w", err)
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		return 0, &APIError{
+			StatusCode: httpResp.StatusCode,
+			Body:       string(respBody),
+			RetryAfter: httpResp.Header.Get("Retry-After"),
+		}
+	}
+
+	var resp CountTokensResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return 0, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	return resp.InputTokens, nil
+}
