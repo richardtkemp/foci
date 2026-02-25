@@ -175,7 +175,9 @@ Note: The agent must have the `exec` tool available to actually run the command.
 
 ### `command` — Dispatch a slash command
 
-Sends a slash command to the agent. The leading `/` is added automatically if omitted.
+Dispatches a slash command directly via the HTTP API and returns the result to the CLI caller. The leading `/` is added automatically if omitted.
+
+**Important:** This bypasses the agent conversation entirely. The agent never sees the command or its output — the command is executed by the gateway's command handler and the result is returned only to the CLI. This is useful for observability and diagnostics without polluting the chat context.
 
 **Usage:**
 ```
@@ -187,6 +189,7 @@ clod command [-a agent] </cmd> [args]
 clod command /cache
 clod command -a research /status
 clod command /config available
+clod command /cost today
 ```
 
 ---
