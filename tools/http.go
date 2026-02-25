@@ -60,7 +60,11 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 				},
 				"body": {
 					"type": "string",
-					"description": "Request body. Use {{secret:NAME}} for credentials. Mutually exclusive with files."
+					"description": "Request body. Use {{secret:NAME}} for credentials. Mutually exclusive with body_file and files."
+				},
+				"body_file": {
+					"type": "string",
+					"description": "Read request body from this file path instead of inline body. Supports {{secret:NAME}} in file contents. Mutually exclusive with body and files. Use for large payloads that are impractical as inline strings."
 				},
 				"files": {
 					"type": "array",
@@ -129,6 +133,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		Method     string            `json:"method"`
 		Headers    map[string]string `json:"headers"`
 		Body       string            `json:"body"`
+		BodyFile   string            `json:"body_file"`
 		Files      []fileAttachment  `json:"files"`
 		FormFields map[string]string `json:"form_fields"`
 		Query      map[string]string `json:"query"`
@@ -148,11 +153,41 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	if p.SaveFromJSONPath != "" && p.SaveTo == "" {
 		return "", fmt.Errorf("save_from_json_path requires save_to")
 	}
-	if p.Body != "" && len(p.Files) > 0 {
-		return "", fmt.Errorf("body and files are mutually exclusive")
+	// Mutual exclusivity: body, body_file, files
+	bodySourceCount := 0
+	if p.Body != "" {
+		bodySourceCount++
+	}
+	if p.BodyFile != "" {
+		bodySourceCount++
+	}
+	if len(p.Files) > 0 {
+		bodySourceCount++
+	}
+	if bodySourceCount > 1 {
+		return "", fmt.Errorf("body, body_file, and files are mutually exclusive")
 	}
 	if len(p.FormFields) > 0 && len(p.Files) == 0 {
 		return "", fmt.Errorf("form_fields requires files")
+	}
+
+	// Read body_file contents early so secrets can be scanned
+	if p.BodyFile != "" {
+		info, err := os.Stat(p.BodyFile)
+		if err != nil {
+			return "", fmt.Errorf("body_file %q: %w", p.BodyFile, err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("body_file %q is a directory", p.BodyFile)
+		}
+		if info.Size() > maxUploadFileSize {
+			return "", fmt.Errorf("body_file %q is %d bytes, exceeds %dMB limit", p.BodyFile, info.Size(), maxUploadFileSize/(1024*1024))
+		}
+		data, err := os.ReadFile(p.BodyFile)
+		if err != nil {
+			return "", fmt.Errorf("read body_file %q: %w", p.BodyFile, err)
+		}
+		p.Body = string(data)
 	}
 
 	// Collect all secret refs from headers, body, and form_fields
