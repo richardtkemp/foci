@@ -674,7 +674,6 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 **Debug & inspection:**
 - `/cache` - last 5 API calls with cache hit/miss breakdown from api.jsonl. Shows: tokens in, cache read, cache write, cost. Quick way to verify caching is working.
 - `/last` - show the last API request/response: model, stop reason, token usage, duration, cost. The single most useful debug command.
-- `/usage` - check Claude subscription usage and rate limits (requires OAuth token in config)
 - `/tools` - list registered tools with enabled/disabled status
 - `/config` - show usage. `/config toml` for raw TOML output. `/config table` for formatted config table. `/config available` to discover unset options.
 - `/ping` - return "pong" with timestamp. Simplest possible liveness check.
@@ -849,7 +848,7 @@ Both formats supported. `[agent]` (singular) is auto-promoted to a single-elemen
 - Secret redaction on all tool output — exec output, tool errors, and all tool results scanned for known secret patterns
 - Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
 - Tool result size guard (large results saved to temp file)
-- Slash commands: /status, /cache, /ping, /last, /usage, /reload, /tools, /config, /model, /reset, /multiball, /sessions
+- Slash commands: /status, /cache, /ping, /last, /mana, /reload, /tools, /config, /model, /reset, /multiball, /sessions
 - Cron system (system crontab, prompts loaded from disk)
 - Setup script (idempotent, builds from source, installs as systemd service)
 - Repair interrupted tool calls on session load

@@ -399,8 +399,8 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Commands exposed as tools:** All registered commands are automatically exposed to the agent as tools with the same name (without the `/` prefix). This allows the agent to invoke commands programmatically. Each command tool accepts an optional `args` string parameter. The tool wrapper converts the JSON params to command arguments and passes through the result or error. Naming collisions between tool names and command names cause a fatal startup error.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/usage`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
-   - `/usage` — check Claude subscription usage (requires OAuth token)
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
+   - `/mana` — check quota remaining (configurable name via `[mana_warnings] name`; `/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `clod.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
