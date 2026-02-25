@@ -354,10 +354,27 @@ func TestToolsCommandEmpty(t *testing.T) {
 }
 
 func TestConfigCommand(t *testing.T) {
-	cmd := NewConfigCommand(func() string { return "model = \"haiku\"" })
+	cmd := NewConfigCommand(func(args string) (string, error) {
+		switch args {
+		case "toml":
+			return "toml output", nil
+		case "available":
+			return "available output", nil
+		default:
+			return "model = \"haiku\"", nil
+		}
+	})
 	result, _ := cmd.Execute(context.Background(), "")
 	if result != "model = \"haiku\"" {
-		t.Errorf("result = %q", result)
+		t.Errorf("default result = %q", result)
+	}
+	result, _ = cmd.Execute(context.Background(), "toml")
+	if result != "toml output" {
+		t.Errorf("toml result = %q", result)
+	}
+	result, _ = cmd.Execute(context.Background(), "available")
+	if result != "available output" {
+		t.Errorf("available result = %q", result)
 	}
 }
 

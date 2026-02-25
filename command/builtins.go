@@ -515,14 +515,15 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 }
 
 // NewConfigCommand returns a /config command dumping the running config.
-// configFn returns the config as a string with secrets redacted.
-func NewConfigCommand(configFn func() string) *Command {
+// configFn receives the subcommand args ("toml", "available", or "") and
+// returns the formatted config with secrets redacted.
+func NewConfigCommand(configFn func(args string) (string, error)) *Command {
 	return &Command{
 		Name:        "config",
-		Description: "Show running config (secrets redacted)",
+		Description: "Show running config (secrets redacted). Use 'toml' for raw TOML, 'available' for unset options",
 		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			return configFn(), nil
+			return configFn(args)
 		},
 	}
 }

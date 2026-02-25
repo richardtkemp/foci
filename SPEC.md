@@ -638,7 +638,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/last` - show the last API request/response: model, stop reason, token usage, duration, cost. The single most useful debug command.
 - `/usage` - check Claude subscription usage and rate limits (requires OAuth token in config)
 - `/tools` - list registered tools with enabled/disabled status
-- `/config` - dump current running config (redact secrets)
+- `/config` - dump full running config for this agent (secrets redacted). `/config toml` for raw TOML output. `/config available` to discover unset options.
 - `/ping` - return "pong" with timestamp. Simplest possible liveness check.
 
 **Logs:**
