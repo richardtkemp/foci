@@ -439,6 +439,7 @@ reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
 - Compaction: call model with configurable summary prompt, replace history with summary
 - Post-compaction: inject handoff note so agent knows compaction occurred
 - Scratchpad preserved through compaction (appended to handoff)
+- Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
 
 **Configuration:**
 ```toml
@@ -449,6 +450,7 @@ compaction_min_messages = 4              # min messages before compacting
 compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)
 compaction_handoff_msg = "..."           # message after compaction
 compaction_debug = false                 # send summary as Telegram file attachment (default false)
+compaction_preserve_messages = 25        # preserve last N messages through compaction (0 disables)
 session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
 ```
 

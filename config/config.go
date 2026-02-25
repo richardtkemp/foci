@@ -52,9 +52,10 @@ type AgentConfig struct {
 	CompactionThreshold     *float64 `toml:"compaction_threshold"`      // compact at this % of context window
 	CompactionSummaryPrompt string   `toml:"compaction_summary_prompt"` // path to summary prompt file
 	CompactionHandoffMsg    string   `toml:"compaction_handoff_msg"`    // handoff message after compaction
-	CompactionNotify        *bool    `toml:"compaction_notify"`         // send Telegram notification on compaction
-	CompactionDebug         *bool    `toml:"compaction_debug"`          // send compaction summary as Telegram file
-	SessionResetPrompt      string   `toml:"session_reset_prompt"`      // path to prompt fired before session clear
+	CompactionNotify           *bool `toml:"compaction_notify"`              // send Telegram notification on compaction
+	CompactionDebug            *bool `toml:"compaction_debug"`               // send compaction summary as Telegram file
+	CompactionPreserveMessages *int  `toml:"compaction_preserve_messages"`   // preserve last N messages through compaction (nil = use global)
+	SessionResetPrompt         string `toml:"session_reset_prompt"`           // path to prompt fired before session clear
 	// Per-agent skills and prompt rules (empty = use global)
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
 	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
@@ -105,9 +106,10 @@ type SessionsConfig struct {
 	CompactionNotify        *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
 	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
 	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
-	CompactionDebug         bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
-	SessionResetPrompt      string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
-	BranchOrientationPrompt string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
+	CompactionDebug             bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
+	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
+	SessionResetPrompt         string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
+	BranchOrientationPrompt    string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
 }
 
 type MemorySource struct {
@@ -275,6 +277,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Sessions.CompactionMinMessages < 0 {
 		return fmt.Errorf("[sessions] compaction_min_messages = %d: must not be negative", cfg.Sessions.CompactionMinMessages)
+	}
+	if cfg.Sessions.CompactionPreserveMessages < 0 {
+		return fmt.Errorf("[sessions] compaction_preserve_messages = %d: must not be negative", cfg.Sessions.CompactionPreserveMessages)
 	}
 
 	// HTTP
@@ -497,6 +502,9 @@ if cfg.Sessions.CompactionThreshold == 0 {
 	}
 	if cfg.Sessions.CompactionMinMessages == 0 {
 		cfg.Sessions.CompactionMinMessages = 4
+	}
+	if cfg.Sessions.CompactionPreserveMessages == 0 && !md.IsDefined("sessions", "compaction_preserve_messages") {
+		cfg.Sessions.CompactionPreserveMessages = 25
 	}
 	if cfg.HTTP.Port == 0 {
 		cfg.HTTP.Port = 18791

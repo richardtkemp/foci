@@ -66,6 +66,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if len(agent.AllowedUsers) > 0 {
 		add("agent", "allowed_users", agent.AllowedUsers)
 	}
+	if agent.CompactionPreserveMessages != nil {
+		add("agent", "compaction_preserve_messages", *agent.CompactionPreserveMessages)
+	}
 	if len(agent.UsageWarnings.Thresholds) > 0 {
 		add("agent", "usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
 	}
@@ -134,6 +137,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
 	}
 	add("sessions", "compaction_debug", cfg.Sessions.CompactionDebug)
+	add("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.SessionResetPrompt != "" {
@@ -365,6 +369,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		addGlobal("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
 	}
 	addGlobal("sessions", "compaction_debug", cfg.Sessions.CompactionDebug)
+	addGlobal("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	addGlobal("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	addGlobal("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.SessionResetPrompt != "" {
@@ -517,6 +522,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		}
 		if len(agent.AllowedUsers) > 0 {
 			addAgent("allowed_users", agent.AllowedUsers)
+		}
+		if agent.CompactionPreserveMessages != nil {
+			addAgent("compaction_preserve_messages", *agent.CompactionPreserveMessages)
 		}
 		if len(agent.UsageWarnings.Thresholds) > 0 {
 			addAgent("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
@@ -722,6 +730,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if cfg.Sessions.MaxSystemPromptTotal == 0 {
 		opts = append(opts, availableOption{"sessions", "max_system_prompt_chars_total", "80000", "total system prompt char warning threshold"})
+	}
+	if cfg.Sessions.CompactionPreserveMessages == 0 {
+		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
 	}
 	if cfg.Sessions.SessionResetPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "session_reset_prompt", "\"\"", "prompt file before session clear"})

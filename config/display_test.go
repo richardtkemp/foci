@@ -223,6 +223,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.MaxSystemPromptTotal = 80000
 	cfg.Sessions.SessionResetPrompt = "/tmp/reset.md"
 	cfg.Sessions.BranchOrientationPrompt = "/tmp/orient.md"
+	cfg.Sessions.CompactionPreserveMessages = 25
 	cfg.Memory.ReindexDebounce = "2s"
 	cfg.Logging.FullPayload = true
 	cfg.Logging.CacheBustDetect = true

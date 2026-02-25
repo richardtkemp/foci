@@ -12,14 +12,15 @@ import (
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
-	client      *anthropic.Client
-	sessions    *session.Store
-	model       string
-	threshold   float64 // fraction of context window (e.g. 0.8)
-	maxTokens   int
-	minMessages int
-	Scratchpad  *memory.Scratchpad // nil disables scratchpad injection
-	AgentID     string             // agent ID for per-agent scratchpad queries
+	client           *anthropic.Client
+	sessions         *session.Store
+	model            string
+	threshold        float64 // fraction of context window (e.g. 0.8)
+	maxTokens        int
+	minMessages      int
+	preserveMessages int // preserve last N messages through compaction (0 disables)
+	Scratchpad       *memory.Scratchpad // nil disables scratchpad injection
+	AgentID          string             // agent ID for per-agent scratchpad queries
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -35,12 +36,15 @@ func NewCompactor(client *anthropic.Client, sessions *session.Store, model strin
 }
 
 // WithConfig updates compactor settings from configuration.
-func (c *Compactor) WithConfig(maxTokens, minMessages int) *Compactor {
+func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Compactor {
 	if maxTokens > 0 {
 		c.maxTokens = maxTokens
 	}
 	if minMessages > 0 {
 		c.minMessages = minMessages
+	}
+	if preserveMessages >= 0 {
+		c.preserveMessages = preserveMessages
 	}
 	c.checkConfig()
 	return c
@@ -135,9 +139,31 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 
 	log.Infof("compaction", "compacting session %s (%d messages)", sessionKey, len(messages))
 
+	// Determine how many messages to preserve through compaction.
+	// Preserved messages are appended verbatim after the summary.
+	preserveN := c.preserveMessages
+	if preserveN > len(messages) {
+		preserveN = len(messages)
+	}
+	// Ensure we still have at least minMessages to summarize
+	if len(messages)-preserveN < c.minMessages {
+		preserveN = len(messages) - c.minMessages
+		if preserveN < 0 {
+			preserveN = 0
+		}
+	}
+
+	toSummarise := messages
+	var preserved []anthropic.Message
+	if preserveN > 0 {
+		toSummarise = messages[:len(messages)-preserveN]
+		preserved = messages[len(messages)-preserveN:]
+		log.Infof("compaction", "preserving %d messages through compaction", preserveN)
+	}
+
 	// Ask model to summarize the conversation
-	summaryMessages := make([]anthropic.Message, len(messages))
-	copy(summaryMessages, messages)
+	summaryMessages := make([]anthropic.Message, len(toSummarise))
+	copy(summaryMessages, toSummarise)
 	summaryMessages = append(summaryMessages, anthropic.Message{
 		Role:    "user",
 		Content: anthropic.TextContent(summaryPrompt),
@@ -170,7 +196,12 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		}
 	}
 
-	// Replace session with summary + handoff note
+	// Append preservation note to summary if messages are being preserved
+	if preserveN > 0 {
+		summary += fmt.Sprintf("\n\nThe last %d messages from before compaction follow.", preserveN)
+	}
+
+	// Replace session with summary + handoff note + preserved messages
 	compacted := []anthropic.Message{
 		{
 			Role:    "user",
@@ -185,6 +216,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 			Content: anthropic.TextContent(handoff),
 		},
 	}
+	compacted = append(compacted, preserved...)
 
 	if err := c.sessions.Replace(sessionKey, compacted); err != nil {
 		return "", fmt.Errorf("replace session after compaction: %w", err)
