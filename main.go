@@ -681,6 +681,7 @@ func main() {
 			Session  string `json:"session"`
 			Text     string `json:"text"`
 			IfActive string `json:"if_active"` // Go duration — skip if no user activity within this window
+			Async    bool   `json:"async"`     // fire-and-forget: return 202 immediately, deliver response via Telegram
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
@@ -730,6 +731,28 @@ func main() {
 				}
 				return
 			}
+		}
+
+		if req.Async {
+			go func() {
+				resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "user"), sessionKey, req.Text)
+				if err != nil {
+					log.Errorf("http", "async send error: %v", err)
+					return
+				}
+				inst.heartbeat.Reset()
+				if resp != "" {
+					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
+						if err := bot.SendText(resp); err != nil {
+							log.Errorf("http", "async send telegram delivery: %v", err)
+						}
+					}
+				}
+			}()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+			return
 		}
 
 		resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "user"), sessionKey, req.Text)
@@ -813,6 +836,7 @@ func main() {
 			NoCompact   bool   `json:"no_compact"`
 			NoResetHook bool   `json:"no_reset_hook"`
 			IfActive    string `json:"if_active"` // Go duration — skip if no user activity within this window
+			Async       bool   `json:"async"`     // fire-and-forget: return 202 immediately, deliver response via Telegram
 		}
 		// Allow empty body — treat as wake with default text
 		if r.ContentLength > 0 {
@@ -873,12 +897,35 @@ func main() {
 			return
 		}
 
-		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook)
+		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async)
 
 		wakeCtx := agent.WithTrigger(ctx, "wake")
 		if req.NoCompact {
 			wakeCtx = agent.WithNoCompact(wakeCtx)
 		}
+
+		if req.Async {
+			go func() {
+				resp, err := inst.ag.HandleMessage(wakeCtx, branchKey, req.Text)
+				if err != nil {
+					log.Errorf("wake", "async error: %v", err)
+					return
+				}
+				inst.heartbeat.Reset()
+				if resp != "" {
+					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
+						if err := bot.SendText(resp); err != nil {
+							log.Errorf("wake", "async telegram delivery: %v", err)
+						}
+					}
+				}
+			}()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+			return
+		}
+
 		resp, err := inst.ag.HandleMessage(wakeCtx, branchKey, req.Text)
 		if err != nil {
 			log.Errorf("wake", "error: %v", err)

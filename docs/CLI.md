@@ -23,6 +23,8 @@ These flags are accepted by all commands:
 | `--if-active <dur>` | | `CLOD_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
 | `--message-text <text>` | `-mt` | `CLOD_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
 | `--message-file <path>` | `-mf` | `CLOD_MESSAGE_FILE` | Read message from file path. |
+| `--sync` / `--wait` | | `CLOD_SYNC` | Wait for response (send/branch only, non-empty = true). |
+| `--async` / `--no-wait` | | `CLOD_ASYNC` | Fire-and-forget (send/branch default, non-empty = true). |
 | `--no-compact` | | `CLOD_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
 | `--no-reset-hook` | | `CLOD_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
 | `--oneshot` | | `CLOD_ONESHOT` | No compaction + no reset hook (branch only, non-empty = true). |
@@ -46,11 +48,11 @@ CLOD_IF_ACTIVE=4h
 
 ### `send` — Send a message to the agent
 
-Sends a text message to the agent's default session (or a named session). The message is queued and processed asynchronously — the CLI returns immediately after the HTTP request completes.
+Sends a text message to the agent's default session (or a named session). By default, send is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
 
 **Usage:**
 ```
-clod send [-a agent] [-s session] [--if-active <duration>] [-mt text | -mf file] [message text]
+clod send [-a agent] [-s session] [--if-active <duration>] [--sync] [-mt text | -mf file] [message text]
 ```
 
 **Flags:**
@@ -60,6 +62,8 @@ clod send [-a agent] [-s session] [--if-active <duration>] [-mt text | -mf file]
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `agent:<id>:<session>`. Default: `main`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
+| `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
+| `--async` / `--no-wait` | | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--message-text <text>` | `-mt` | Explicit message text (alternative to trailing args). |
 | `--message-file <path>` | `-mf` | Read message from file. Sends the file contents as the message. |
 
@@ -67,8 +71,11 @@ Trailing args without a flag are treated as implicit `--message-text`. Cannot us
 
 **Examples:**
 ```bash
-# Send a message to the default agent's main session
+# Send a message (async, returns immediately with "queued")
 clod send "check the weather forecast"
+
+# Send and wait for the response
+clod send --sync "check the weather forecast"
 
 # Equivalent using explicit flag
 clod send -mt "check the weather forecast"
@@ -97,11 +104,13 @@ clod send -a clutch --if-active 4h -mf tasks/review.md
 
 Creates a branch session from the agent's default chat session, optionally injects a message, and runs the agent on the branch. Used for cron jobs and background tasks that shouldn't pollute the main conversation.
 
+By default, branch is **asynchronous** (fire-and-forget): the CLI returns immediately with "queued" and the agent's response is delivered to Telegram. Use `--sync`/`--wait` to block until the response is available.
+
 Aliased as `wake` for backward compatibility.
 
 **Usage:**
 ```
-clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [-mt text | -mf file] [text]
+clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -110,6 +119,8 @@ clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook]
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
 | `--if-active <dur>` | Skip if no real user activity within duration. |
+| `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |
+| `--async` / `--no-wait` | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
 | `--no-reset-hook` | Skip the pre-reset memory hook when the branch session is reclaimed. |
 | `--oneshot` | Shorthand for `--no-compact --no-reset-hook`. For quick fire-and-forget tasks. |
@@ -118,8 +129,11 @@ clod branch [-a agent] [--if-active <duration>] [--no-compact] [--no-reset-hook]
 
 **Examples:**
 ```bash
-# Fork a branch for a background task
+# Fork a branch for a background task (returns immediately)
 clod branch -a clutch "run your morning routine"
+
+# Fork and wait for the response
+clod branch --sync -a clutch "run your morning routine"
 
 # Quick one-shot task (no compaction, no reset hook)
 clod branch --oneshot -a clutch "check disk space and report"
@@ -157,7 +171,7 @@ clod status -a research
 
 ### `eval` — Run a shell command via the agent
 
-Wraps a shell command in a prompt asking the agent to execute it and show the output. The command is sent as a message to the agent's main session.
+Wraps a shell command in a prompt asking the agent to execute it and show the output. The command is sent as a message to the agent's main session. Always synchronous (waits for the response).
 
 **Usage:**
 ```
@@ -214,10 +228,10 @@ clod ping -a research
 
 ## Cron Integration
 
-The CLI is designed for cron jobs. Typical patterns:
+The CLI is designed for cron jobs. Both `send` and `branch` default to async mode — the cron job returns immediately and the agent's response is delivered to Telegram. Typical patterns:
 
 ```crontab
-# Daily morning routine (only if user was active yesterday)
+# Daily morning routine (returns instantly, response goes to Telegram)
 0 7 * * * /home/clod/bin/clod branch --if-active 24h -a clutch "run your morning routine"
 
 # Hourly health check (only if user is around)
@@ -225,6 +239,9 @@ The CLI is designed for cron jobs. Typical patterns:
 
 # Nightly one-shot task (no compaction overhead)
 0 2 * * * /home/clod/bin/clod branch --oneshot -a clutch "nightly cleanup"
+
+# Force sync if you need the output in the cron log
+0 6 * * * /home/clod/bin/clod send --sync -a clutch "morning report" >> /var/log/clod-report.log
 ```
 
 The `--if-active` flag prevents cron jobs from running when the user hasn't interacted recently, saving API tokens and avoiding pointless background work.

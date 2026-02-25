@@ -143,6 +143,8 @@ Environment (flag > env var > default):
   CLOD_AGENT           Target agent (-a)
   CLOD_SESSION         Target session (-s)
   CLOD_IF_ACTIVE       Activity gate duration (--if-active)
+  CLOD_SYNC            Wait for response (--sync/--wait, non-empty = true)
+  CLOD_ASYNC           Fire-and-forget (--async/--no-wait, non-empty = true)
   CLOD_MESSAGE_TEXT    Message text (-mt)
   CLOD_MESSAGE_FILE    Message file path (-mf)
   CLOD_NO_COMPACT      Skip compaction (--no-compact, non-empty = true)
@@ -184,6 +186,8 @@ type sendFlags struct {
 	ifActive    string // Go duration for activity gating
 	messageText string // explicit --message-text / -mt
 	messageFile string // explicit --message-file / -mf
+	async       bool   // fire-and-forget mode
+	sync        bool   // wait for response (overrides async)
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -247,6 +251,12 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--mf=") || strings.HasPrefix(args[i], "-mf=") {
 			flags.messageFile = args[i][strings.Index(args[i], "=")+1:]
 			consumed = true
+		} else if args[i] == "--async" || args[i] == "--no-wait" {
+			flags.async = true
+			consumed = true
+		} else if args[i] == "--sync" || args[i] == "--wait" {
+			flags.sync = true
+			consumed = true
 		}
 		if !consumed {
 			filtered = append(filtered, args[i])
@@ -258,6 +268,8 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.ifActive = envDefault(flags.ifActive, "CLOD_IF_ACTIVE")
 	flags.messageText = envDefault(flags.messageText, "CLOD_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "CLOD_MESSAGE_FILE")
+	flags.async = envBool(flags.async, "CLOD_ASYNC")
+	flags.sync = envBool(flags.sync, "CLOD_SYNC")
 	return flags, filtered
 }
 
@@ -285,14 +297,20 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod send [-a agent] [-s session] [--if-active <dur>] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: clod send [-a agent] [-s session] [--if-active <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
+
+By default, send is asynchronous (fire-and-forget): the CLI returns immediately
+and the agent's response is delivered to Telegram. Use --sync/--wait to block
+until the response is available.
 
 Flags:
   -a, --agent <id>        Target agent (env: CLOD_AGENT)
   -s, --session <id>      Target session (env: CLOD_SESSION, default: main)
   --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
+  --sync, --wait          Wait for the response (env: CLOD_SYNC)
+  --async, --no-wait      Fire-and-forget (default) (env: CLOD_ASYNC)
   -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
   -mf, --message-file     Read message from file (env: CLOD_MESSAGE_FILE)
 
@@ -314,7 +332,12 @@ func cmdSend(base string, args []string) error {
 	if text == "" {
 		return fmt.Errorf("usage: clod send [-a agent] [-s session] [-mt text | -mf file] <message text>")
 	}
-	body := map[string]string{"text": text}
+	// Default async=true unless --sync/--wait or CLOD_SYNC is set
+	async := !flags.sync
+	if flags.async {
+		async = true // explicit --async overrides
+	}
+	body := map[string]interface{}{"text": text, "async": async}
 	if flags.agent != "" {
 		body["agent"] = flags.agent
 	}
@@ -328,9 +351,13 @@ func cmdSend(base string, args []string) error {
 }
 
 func branchUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod branch [-a agent] [--if-active <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [-mt text | -mf file] [text]
+	fmt.Fprintf(os.Stderr, `Usage: clod branch [-a agent] [--if-active <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 
 Fork a branch session from the agent's main chat.
+
+By default, branch is asynchronous (fire-and-forget): the CLI returns immediately
+and the agent's response is delivered to Telegram. Use --sync/--wait to block
+until the response is available.
 
 Flags:
   -a, --agent <id>        Target agent (env: CLOD_AGENT)
@@ -338,6 +365,8 @@ Flags:
   --no-compact            Skip compaction if context limit reached (env: CLOD_NO_COMPACT)
   --no-reset-hook         Skip pre-reset memory hook (env: CLOD_NO_RESET_HOOK)
   --oneshot               Shorthand for --no-compact --no-reset-hook (env: CLOD_ONESHOT)
+  --sync, --wait          Wait for the response (env: CLOD_SYNC)
+  --async, --no-wait      Fire-and-forget (default) (env: CLOD_ASYNC)
   -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
   -mf, --message-file     Read message from file (env: CLOD_MESSAGE_FILE)
 
@@ -353,6 +382,8 @@ func cmdBranch(base string, args []string) error {
 	agent, args := parseAgentFlag(args)
 	noCompact := false
 	noResetHook := false
+	asyncFlag := false
+	syncFlag := false
 	ifActive := ""
 	messageText := ""
 	messageFile := ""
@@ -366,6 +397,10 @@ func cmdBranch(base string, args []string) error {
 		case args[i] == "--oneshot":
 			noCompact = true
 			noResetHook = true
+		case args[i] == "--async" || args[i] == "--no-wait":
+			asyncFlag = true
+		case args[i] == "--sync" || args[i] == "--wait":
+			syncFlag = true
 		case args[i] == "--if-active" && i+1 < len(args):
 			ifActive = args[i+1]
 			i++
@@ -396,16 +431,24 @@ func cmdBranch(base string, args []string) error {
 		noCompact = true
 		noResetHook = true
 	}
+	asyncFlag = envBool(asyncFlag, "CLOD_ASYNC")
+	syncFlag = envBool(syncFlag, "CLOD_SYNC")
 	ifActive = envDefault(ifActive, "CLOD_IF_ACTIVE")
 	messageText = envDefault(messageText, "CLOD_MESSAGE_TEXT")
 	messageFile = envDefault(messageFile, "CLOD_MESSAGE_FILE")
+
+	// Default async=true unless --sync/--wait or CLOD_SYNC is set
+	async := !syncFlag
+	if asyncFlag {
+		async = true // explicit --async overrides
+	}
 
 	sf := sendFlags{messageText: messageText, messageFile: messageFile}
 	text, err := resolveMessage(sf, filtered)
 	if err != nil {
 		return err
 	}
-	body := map[string]interface{}{}
+	body := map[string]interface{}{"async": async}
 	if agent != "" {
 		body["agent"] = agent
 	}
@@ -540,17 +583,24 @@ func printResponse(resp *http.Response) error {
 		return fmt.Errorf("read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	// Try to extract "response" field from JSON
+	// Try to extract "response" or "status" field from JSON
 	var result struct {
 		Response string `json:"response"`
+		Status   string `json:"status"`
 	}
-	if json.Unmarshal(body, &result) == nil && result.Response != "" {
-		fmt.Println(result.Response)
-		return nil
+	if json.Unmarshal(body, &result) == nil {
+		if result.Response != "" {
+			fmt.Println(result.Response)
+			return nil
+		}
+		if result.Status != "" {
+			fmt.Println(result.Status)
+			return nil
+		}
 	}
 
 	// Fallback: print raw body

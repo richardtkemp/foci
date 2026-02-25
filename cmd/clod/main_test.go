@@ -21,10 +21,17 @@ func mockGateway() *httptest.Server {
 			Session  string `json:"session"`
 			Text     string `json:"text"`
 			IfActive string `json:"if_active"`
+			Async    bool   `json:"async"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
 			http.Error(w, "unknown agent: \"nonexistent\"", http.StatusBadRequest)
+			return
+		}
+		if req.Async {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
 			return
 		}
 		resp := "echo: " + req.Text
@@ -47,10 +54,17 @@ func mockGateway() *httptest.Server {
 			Text      string `json:"text"`
 			NoCompact bool   `json:"no_compact"`
 			IfActive  string `json:"if_active"`
+			Async     bool   `json:"async"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Agent == "nonexistent" {
 			http.Error(w, "unknown agent: \"nonexistent\"", http.StatusBadRequest)
+			return
+		}
+		if req.Async {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
 			return
 		}
 		resp := "wake ok"
@@ -111,70 +125,85 @@ func TestCLIIntegration(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"send", []string{"send", "hello"}, "echo: hello", false},
-		{"branch", []string{"branch"}, "wake ok", false},
-		{"wake alias", []string{"wake"}, "wake ok", false},
+		// Default mode is async — returns "queued"
+		{"send", []string{"send", "hello"}, "queued", false},
+		{"branch", []string{"branch"}, "queued", false},
+		{"wake alias", []string{"wake"}, "queued", false},
+
+		// --sync returns full response
+		{"send --sync", []string{"send", "--sync", "hello"}, "echo: hello", false},
+		{"send --wait", []string{"send", "--wait", "hello"}, "echo: hello", false},
+		{"branch --sync", []string{"branch", "--sync"}, "wake ok", false},
+		{"branch --wait", []string{"branch", "--wait"}, "wake ok", false},
+
+		// Explicit --async
+		{"send --async", []string{"send", "--async", "hello"}, "queued", false},
+		{"send --no-wait", []string{"send", "--no-wait", "hello"}, "queued", false},
+		{"branch --async", []string{"branch", "--async"}, "queued", false},
+		{"branch --no-wait", []string{"branch", "--no-wait"}, "queued", false},
+
 		{"status", []string{"status"}, "status: idle", false},
 		{"ping", []string{"ping"}, "pong", false},
 		{"command", []string{"command", "/ping"}, "pong", false},
+		// eval is always sync
 		{"eval", []string{"eval", "ls -la"}, "echo: Run this command", false},
 
-		// -a flag (space-separated)
-		{"send with -a", []string{"send", "-a", "research", "hello"}, "[research] echo: hello", false},
-		{"branch with -a", []string{"branch", "-a", "research"}, "[research] wake ok", false},
-		{"wake alias with -a", []string{"wake", "-a", "research"}, "[research] wake ok", false},
-		{"branch with -a and text", []string{"branch", "-a", "research", "check news"}, "[research] wake ok", false},
-		{"wake alias with -a and text", []string{"wake", "-a", "research", "check news"}, "[research] wake ok", false},
+		// -a flag (space-separated) — use --sync to get content-based responses
+		{"send with -a", []string{"send", "--sync", "-a", "research", "hello"}, "[research] echo: hello", false},
+		{"branch with -a", []string{"branch", "--sync", "-a", "research"}, "[research] wake ok", false},
+		{"wake alias with -a", []string{"wake", "--sync", "-a", "research"}, "[research] wake ok", false},
+		{"branch with -a and text", []string{"branch", "--sync", "-a", "research", "check news"}, "[research] wake ok", false},
+		{"wake alias with -a and text", []string{"wake", "--sync", "-a", "research", "check news"}, "[research] wake ok", false},
 		{"status with -a", []string{"status", "-a", "research"}, "[research] status: idle", false},
 		{"eval with -a", []string{"eval", "-a", "research", "ls"}, "[research] echo: Run this command", false},
 		{"command with -a", []string{"command", "-a", "research", "/ping"}, "[research] pong", false},
 		{"ping with -a", []string{"ping", "-a", "research"}, "[research] pong", false},
 
 		// --agent flag (space-separated)
-		{"send with --agent", []string{"send", "--agent", "main", "hello"}, "[main] echo: hello", false},
+		{"send with --agent", []string{"send", "--sync", "--agent", "main", "hello"}, "[main] echo: hello", false},
 
 		// --agent=value form
-		{"send with --agent=val", []string{"send", "--agent=scout", "hello"}, "[scout] echo: hello", false},
+		{"send with --agent=val", []string{"send", "--sync", "--agent=scout", "hello"}, "[scout] echo: hello", false},
 
 		// -a=value form
-		{"send with -a=val", []string{"send", "-a=scout", "hello"}, "[scout] echo: hello", false},
+		{"send with -a=val", []string{"send", "--sync", "-a=scout", "hello"}, "[scout] echo: hello", false},
 
 		// -s/--session flag
-		{"send with -s", []string{"send", "-s", "research", "hello"}, "(session:research) echo: hello", false},
-		{"send with --session", []string{"send", "--session", "feature1", "hello"}, "(session:feature1) echo: hello", false},
-		{"send with -s=value", []string{"send", "-s=branch1", "hello"}, "(session:branch1) echo: hello", false},
-		{"send with --session=value", []string{"send", "--session=testing", "hello"}, "(session:testing) echo: hello", false},
+		{"send with -s", []string{"send", "--sync", "-s", "research", "hello"}, "(session:research) echo: hello", false},
+		{"send with --session", []string{"send", "--sync", "--session", "feature1", "hello"}, "(session:feature1) echo: hello", false},
+		{"send with -s=value", []string{"send", "--sync", "-s=branch1", "hello"}, "(session:branch1) echo: hello", false},
+		{"send with --session=value", []string{"send", "--sync", "--session=testing", "hello"}, "(session:testing) echo: hello", false},
 
 		// -a and -s flags together
-		{"send with -a and -s", []string{"send", "-a", "clutch", "-s", "research", "hello"}, "(session:research) [clutch] echo: hello", false},
-		{"send with -s and -a", []string{"send", "-s", "feature", "-a", "clutch", "hello"}, "(session:feature) [clutch] echo: hello", false},
-		{"send with -a= and -s=", []string{"send", "-a=clutch", "-s=main", "hello"}, "(session:main) [clutch] echo: hello", false},
+		{"send with -a and -s", []string{"send", "--sync", "-a", "clutch", "-s", "research", "hello"}, "(session:research) [clutch] echo: hello", false},
+		{"send with -s and -a", []string{"send", "--sync", "-s", "feature", "-a", "clutch", "hello"}, "(session:feature) [clutch] echo: hello", false},
+		{"send with -a= and -s=", []string{"send", "--sync", "-a=clutch", "-s=main", "hello"}, "(session:main) [clutch] echo: hello", false},
 
 		// Flag after positional args
-		{"send flag after text", []string{"send", "hello", "-a", "research"}, "[research] echo: hello", false},
+		{"send flag after text", []string{"send", "--sync", "hello", "-a", "research"}, "[research] echo: hello", false},
 
 		// --no-compact flag for branch
-		{"branch with --no-compact", []string{"branch", "--no-compact"}, "wake ok (no_compact)", false},
-		{"branch with --no-compact and text", []string{"branch", "--no-compact", "morning check"}, "wake ok (no_compact)", false},
-		{"branch with -a and --no-compact", []string{"branch", "-a", "research", "--no-compact"}, "[research] wake ok (no_compact)", false},
+		{"branch with --no-compact", []string{"branch", "--sync", "--no-compact"}, "wake ok (no_compact)", false},
+		{"branch with --no-compact and text", []string{"branch", "--sync", "--no-compact", "morning check"}, "wake ok (no_compact)", false},
+		{"branch with -a and --no-compact", []string{"branch", "--sync", "-a", "research", "--no-compact"}, "[research] wake ok (no_compact)", false},
 
 		// --if-active flag for send
-		{"send with --if-active", []string{"send", "--if-active", "8h", "hello"}, "(if_active:8h) echo: hello", false},
-		{"send with --if-active=", []string{"send", "--if-active=30m", "hello"}, "(if_active:30m) echo: hello", false},
-		{"send with -a and --if-active", []string{"send", "-a", "clutch", "--if-active", "4h", "hello"}, "(if_active:4h) [clutch] echo: hello", false},
+		{"send with --if-active", []string{"send", "--sync", "--if-active", "8h", "hello"}, "(if_active:8h) echo: hello", false},
+		{"send with --if-active=", []string{"send", "--sync", "--if-active=30m", "hello"}, "(if_active:30m) echo: hello", false},
+		{"send with -a and --if-active", []string{"send", "--sync", "-a", "clutch", "--if-active", "4h", "hello"}, "(if_active:4h) [clutch] echo: hello", false},
 
 		// --if-active flag for branch
-		{"branch with --if-active", []string{"branch", "--if-active", "12h", "do work"}, "(if_active:12h) wake ok", false},
-		{"branch with --if-active=", []string{"branch", "--if-active=6h"}, "(if_active:6h) wake ok", false},
-		{"branch with -a and --if-active", []string{"branch", "-a", "research", "--if-active", "8h"}, "(if_active:8h) [research] wake ok", false},
-		{"branch with --if-active and --no-compact", []string{"branch", "--if-active", "8h", "--no-compact"}, "(if_active:8h) wake ok (no_compact)", false},
+		{"branch with --if-active", []string{"branch", "--sync", "--if-active", "12h", "do work"}, "(if_active:12h) wake ok", false},
+		{"branch with --if-active=", []string{"branch", "--sync", "--if-active=6h"}, "(if_active:6h) wake ok", false},
+		{"branch with -a and --if-active", []string{"branch", "--sync", "-a", "research", "--if-active", "8h"}, "(if_active:8h) [research] wake ok", false},
+		{"branch with --if-active and --no-compact", []string{"branch", "--sync", "--if-active", "8h", "--no-compact"}, "(if_active:8h) wake ok (no_compact)", false},
 
 		// --message-text / -mt flag
-		{"send with -mt", []string{"send", "-mt", "hello from mt"}, "echo: hello from mt", false},
-		{"send with --message-text", []string{"send", "--message-text", "explicit text"}, "echo: explicit text", false},
-		{"send with -mt=value", []string{"send", "-mt=inline"}, "echo: inline", false},
-		{"send with -mt and -a", []string{"send", "-a", "research", "-mt", "flagged"}, "[research] echo: flagged", false},
-		{"branch with -mt", []string{"branch", "-mt", "branch text"}, "wake ok", false},
+		{"send with -mt", []string{"send", "--sync", "-mt", "hello from mt"}, "echo: hello from mt", false},
+		{"send with --message-text", []string{"send", "--sync", "--message-text", "explicit text"}, "echo: explicit text", false},
+		{"send with -mt=value", []string{"send", "--sync", "-mt=inline"}, "echo: inline", false},
+		{"send with -mt and -a", []string{"send", "--sync", "-a", "research", "-mt", "flagged"}, "[research] echo: flagged", false},
+		{"branch with -mt", []string{"branch", "--sync", "-mt", "branch text"}, "wake ok", false},
 
 		// Error cases: unknown agent returns HTTP 400, exit non-zero
 		{"send unknown agent", []string{"send", "-a", "nonexistent", "hello"}, "unknown agent", true},
@@ -233,12 +262,12 @@ func TestCLIMessageFile(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"send -mf", []string{"send", "-mf", msgFile}, "echo: hello from file", false},
-		{"send --message-file", []string{"send", "--message-file", msgFile}, "echo: hello from file", false},
-		{"send -mf=value", []string{"send", "-mf=" + msgFile}, "echo: hello from file", false},
-		{"send -mf with -a", []string{"send", "-a", "research", "-mf", msgFile}, "[research] echo: hello from file", false},
-		{"branch -mf", []string{"branch", "-mf", msgFile}, "wake ok", false},
-		{"branch --oneshot -mf", []string{"branch", "--oneshot", "-mf", msgFile}, "wake ok (no_compact)", false},
+		{"send -mf", []string{"send", "--sync", "-mf", msgFile}, "echo: hello from file", false},
+		{"send --message-file", []string{"send", "--sync", "--message-file", msgFile}, "echo: hello from file", false},
+		{"send -mf=value", []string{"send", "--sync", "-mf=" + msgFile}, "echo: hello from file", false},
+		{"send -mf with -a", []string{"send", "--sync", "-a", "research", "-mf", msgFile}, "[research] echo: hello from file", false},
+		{"branch -mf", []string{"branch", "--sync", "-mf", msgFile}, "wake ok", false},
+		{"branch --oneshot -mf", []string{"branch", "--sync", "--oneshot", "-mf", msgFile}, "wake ok (no_compact)", false},
 
 		// Error: both -mt and -mf
 		{"send -mt and -mf", []string{"send", "-mt", "text", "-mf", msgFile}, "cannot specify both", true},
@@ -295,75 +324,99 @@ func TestCLIEnvVars(t *testing.T) {
 	}{
 		{
 			name: "CLOD_AGENT env var",
-			args: []string{"send", "hello"},
+			args: []string{"send", "--sync", "hello"},
 			env:  []string{"CLOD_AGENT=research"},
 			want: "[research] echo: hello",
 		},
 		{
 			name: "flag overrides CLOD_AGENT",
-			args: []string{"send", "-a", "main", "hello"},
+			args: []string{"send", "--sync", "-a", "main", "hello"},
 			env:  []string{"CLOD_AGENT=research"},
 			want: "[main] echo: hello",
 		},
 		{
 			name: "CLOD_SESSION env var",
-			args: []string{"send", "hello"},
+			args: []string{"send", "--sync", "hello"},
 			env:  []string{"CLOD_SESSION=research"},
 			want: "(session:research) echo: hello",
 		},
 		{
 			name: "CLOD_IF_ACTIVE env var for send",
-			args: []string{"send", "hello"},
+			args: []string{"send", "--sync", "hello"},
 			env:  []string{"CLOD_IF_ACTIVE=8h"},
 			want: "(if_active:8h) echo: hello",
 		},
 		{
 			name: "CLOD_MESSAGE_TEXT env var",
-			args: []string{"send"},
+			args: []string{"send", "--sync"},
 			env:  []string{"CLOD_MESSAGE_TEXT=from env"},
 			want: "echo: from env",
 		},
 		{
 			name: "CLOD_MESSAGE_FILE env var",
-			args: []string{"send"},
+			args: []string{"send", "--sync"},
 			env:  []string{"CLOD_MESSAGE_FILE=" + msgFile},
 			want: "echo: env file msg",
 		},
 		{
 			name: "CLOD_NO_COMPACT env var",
-			args: []string{"branch"},
+			args: []string{"branch", "--sync"},
 			env:  []string{"CLOD_NO_COMPACT=1"},
 			want: "wake ok (no_compact)",
 		},
 		{
 			name: "CLOD_ONESHOT env var",
-			args: []string{"branch"},
+			args: []string{"branch", "--sync"},
 			env:  []string{"CLOD_ONESHOT=1"},
 			want: "wake ok (no_compact)",
 		},
 		{
 			name: "CLOD_IF_ACTIVE env var for branch",
-			args: []string{"branch"},
+			args: []string{"branch", "--sync"},
 			env:  []string{"CLOD_IF_ACTIVE=12h"},
 			want: "(if_active:12h) wake ok",
 		},
 		{
 			name: "--addr flag",
-			args: []string{"--addr", addr, "send", "hello"},
+			args: []string{"--addr", addr, "send", "--sync", "hello"},
 			env:  nil, // no CLOD_ADDR
 			want: "echo: hello",
 		},
 		{
 			name: "--addr=value flag",
-			args: []string{"--addr=" + addr, "send", "hello"},
+			args: []string{"--addr=" + addr, "send", "--sync", "hello"},
 			env:  nil,
 			want: "echo: hello",
 		},
 		{
 			name: "CLOD_AGENT env var for branch",
-			args: []string{"branch", "do work"},
+			args: []string{"branch", "--sync", "do work"},
 			env:  []string{"CLOD_AGENT=research"},
 			want: "[research] wake ok",
+		},
+		{
+			name: "CLOD_SYNC env var for send",
+			args: []string{"send", "hello"},
+			env:  []string{"CLOD_SYNC=1"},
+			want: "echo: hello",
+		},
+		{
+			name: "CLOD_SYNC env var for branch",
+			args: []string{"branch"},
+			env:  []string{"CLOD_SYNC=1"},
+			want: "wake ok",
+		},
+		{
+			name: "CLOD_ASYNC env var for send",
+			args: []string{"send", "hello"},
+			env:  []string{"CLOD_ASYNC=1"},
+			want: "queued",
+		},
+		{
+			name: "CLOD_ASYNC env var for branch",
+			args: []string{"branch"},
+			env:  []string{"CLOD_ASYNC=1"},
+			want: "queued",
 		},
 	}
 
@@ -493,6 +546,41 @@ func TestParseSendFlagsMessageFlags(t *testing.T) {
 	}
 }
 
+func TestParseSendFlagsAsyncSync(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantAsync bool
+		wantSync  bool
+		wantRest  []string
+	}{
+		{"--async", []string{"--async", "hello"}, true, false, []string{"hello"}},
+		{"--no-wait", []string{"--no-wait", "hello"}, true, false, []string{"hello"}},
+		{"--sync", []string{"--sync", "hello"}, false, true, []string{"hello"}},
+		{"--wait", []string{"--wait", "hello"}, false, true, []string{"hello"}},
+		{"--sync with other flags", []string{"-a", "clutch", "--sync", "hello"}, false, true, []string{"hello"}},
+		{"no async/sync flags", []string{"hello"}, false, false, []string{"hello"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags, rest := parseSendFlags(tt.args)
+			if flags.async != tt.wantAsync {
+				t.Errorf("async = %v, want %v", flags.async, tt.wantAsync)
+			}
+			if flags.sync != tt.wantSync {
+				t.Errorf("sync = %v, want %v", flags.sync, tt.wantSync)
+			}
+			if len(rest) == 0 && len(tt.wantRest) == 0 {
+				return
+			}
+			if len(rest) != len(tt.wantRest) {
+				t.Errorf("rest = %v, want %v", rest, tt.wantRest)
+			}
+		})
+	}
+}
+
 func TestPrintResponseError(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -541,6 +629,26 @@ func TestPrintResponseError(t *testing.T) {
 				t.Errorf("error = %q, want %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestPrintResponse202(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+	}))
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	err = printResponse(resp)
+	if err != nil {
+		t.Errorf("printResponse returned error for 202: %v", err)
 	}
 }
 
