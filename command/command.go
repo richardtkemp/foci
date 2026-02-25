@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -75,7 +76,7 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 
 	cmd := r.commands[name]
 	if cmd == nil {
-		return "", false
+		return r.suggestCommand(name), true
 	}
 
 	result, err := cmd.Execute(ctx, args)
@@ -83,6 +84,64 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 		return "Error: " + err.Error(), true
 	}
 	return result, true
+}
+
+// suggestCommand returns a helpful message when a command isn't found,
+// with "did you mean?" suggestions based on edit distance.
+func (r *Registry) suggestCommand(name string) string {
+	type match struct {
+		name string
+		dist int
+	}
+	var matches []match
+	for cmdName := range r.commands {
+		d := levenshtein(name, cmdName)
+		if d <= 2 || (len(name) >= 3 && strings.HasPrefix(cmdName, name[:3])) {
+			matches = append(matches, match{cmdName, d})
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].dist < matches[j].dist })
+
+	if len(matches) > 0 {
+		// Show up to 3 suggestions
+		limit := len(matches)
+		if limit > 3 {
+			limit = 3
+		}
+		var suggestions []string
+		for _, m := range matches[:limit] {
+			suggestions = append(suggestions, "/"+m.name)
+		}
+		return fmt.Sprintf("Unknown command /%s. Did you mean %s?", name, strings.Join(suggestions, ", "))
+	}
+	return fmt.Sprintf("Unknown command /%s. Type /help to see available commands.", name)
+}
+
+// levenshtein returns the edit distance between two strings.
+func levenshtein(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(curr[j-1]+1, min(prev[j]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 // SetWizard activates a wizard that intercepts all messages.

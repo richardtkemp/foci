@@ -220,7 +220,7 @@ func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
 	}
 }
 
-func TestReceiveMessage_UnknownSlashCommandGoesToQueue(t *testing.T) {
+func TestReceiveMessage_UnknownSlashCommandGetsSuggestion(t *testing.T) {
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name: "ping",
@@ -229,14 +229,17 @@ func TestReceiveMessage_UnknownSlashCommandGoesToQueue(t *testing.T) {
 		},
 	})
 
-	b, _ := testBot([]string{"111"}, cmds)
+	b, mock := testBot([]string{"111"}, cmds)
 
 	msg := makeMsg(111, "owner", "/unknown_cmd")
 	b.receiveMessage(context.Background(), msg)
 
-	// Unknown commands should fall through to the agent queue
-	if len(b.queue) != 1 {
-		t.Fatalf("unknown slash command should be queued, got %d queued", len(b.queue))
+	// Unknown commands should get a suggestion reply, not be queued
+	if len(b.queue) != 0 {
+		t.Fatalf("unknown slash command should not be queued, got %d queued", len(b.queue))
+	}
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 suggestion reply, got %d", mock.sentCount())
 	}
 }
 
@@ -293,7 +296,7 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 }
 
 func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Aliases disabled — even with aliases configured, they shouldn't work
 	b.SetStopAliases([]string{"wait", "hold"}, false)
@@ -308,9 +311,12 @@ func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
 	msg := makeMsg(111, "owner", "/wait")
 	b.receiveMessage(context.Background(), msg)
 
-	// Should be queued (not recognized as stop command)
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message for unknown /wait, got %d", len(b.queue))
+	// Should get a suggestion reply (unknown command), not queued or treated as stop
+	if len(b.queue) != 0 {
+		t.Fatalf("expected 0 queued messages for unknown /wait, got %d", len(b.queue))
+	}
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 suggestion reply for unknown /wait, got %d", mock.sentCount())
 	}
 }
 

@@ -760,6 +760,8 @@ Built-in commands are code-defined. Custom commands from TOML are script-defined
 
 If the agent is mid-turn processing a previous message, `/status` still returns instantly. That's the point.
 
+**Unknown commands** — if a `/` message doesn't match any registered command, the command system catches it and replies with a suggestion instead of passing it to the agent. Uses Levenshtein distance (≤ 2) and prefix matching (≥ 3 chars) to suggest close matches: "Unknown command `/statsu`. Did you mean `/status`?" If no close matches, points to `/help`.
+
 ## Config
 
 Single TOML file. Flat, commented, no deep nesting.
