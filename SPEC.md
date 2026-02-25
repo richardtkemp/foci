@@ -276,7 +276,7 @@ This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently 
 
 ```toml
 [tools]
-max_result_chars = 5000               # max chars before writing to file
+max_result_chars = 15000              # max chars before writing to file
 temp_dir = "/tmp/clod-tool-results"   # where to write large results
 ```
 

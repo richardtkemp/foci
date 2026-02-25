@@ -417,7 +417,7 @@ Tool behavior settings.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `max_result_chars` | int | `5000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). |
+| `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). |
 | `temp_dir` | string | `"/tmp/clod-tool-results"` | Directory for large tool result files. |
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
