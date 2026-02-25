@@ -637,6 +637,7 @@ func NewPromptsCommand(dataFn func() PromptsData) *Command {
 			var sb strings.Builder
 
 			// Configured prompts
+			sb.WriteString("```\n")
 			fmt.Fprintf(&sb, "Configured prompts (agent: %s):\n", data.AgentID)
 
 			maxLabel := 0
@@ -656,10 +657,12 @@ func NewPromptsCommand(dataFn func() PromptsData) *Command {
 					fmt.Fprintf(&sb, "  %-*s  %s  ✗ (not found)\n", maxLabel, p.Label, p.Path)
 				}
 			}
+			sb.WriteString("```")
 
 			// Files on disk
 			if len(data.Files) > 0 {
-				sb.WriteString("\nPrompt files on disk:\n")
+				sb.WriteString("\n\n```\n")
+				sb.WriteString("Prompt files on disk:\n")
 				currentDir := ""
 				for _, f := range data.Files {
 					if f.Dir != currentDir {
@@ -672,11 +675,12 @@ func NewPromptsCommand(dataFn func() PromptsData) *Command {
 					}
 					fmt.Fprintf(&sb, "    %-36s %s\n", f.Name, tag)
 				}
+				sb.WriteString("```")
 			} else if len(data.PromptDirs) > 0 {
-				sb.WriteString("\nNo prompt files found on disk.\n")
+				sb.WriteString("\n\nNo prompt files found on disk.")
 			}
 
-			return strings.TrimRight(sb.String(), "\n"), nil
+			return sb.String(), nil
 		},
 	}
 }

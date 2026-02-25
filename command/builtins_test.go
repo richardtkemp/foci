@@ -500,6 +500,7 @@ func TestPromptsCommand(t *testing.T) {
 	}
 
 	checks := []string{
+		"```",
 		"agent: clutch",
 		"compaction_summary",
 		"/home/clod/prompts/compaction.md",
@@ -521,6 +522,10 @@ func TestPromptsCommand(t *testing.T) {
 		if !strings.Contains(result, check) {
 			t.Errorf("missing %q in:\n%s", check, result)
 		}
+	}
+	// Should have 2 separate code blocks (configured prompts + files on disk)
+	if strings.Count(result, "```") != 4 { // 2 opening + 2 closing
+		t.Errorf("expected 2 code blocks (4 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
 	}
 }
 
@@ -544,6 +549,10 @@ func TestPromptsCommandEmpty(t *testing.T) {
 	// No files section when no dirs scanned
 	if strings.Contains(result, "Prompt files on disk") {
 		t.Errorf("should not show files section when no dirs:\n%s", result)
+	}
+	// Only 1 code block (configured prompts, no files section)
+	if strings.Count(result, "```") != 2 {
+		t.Errorf("expected 1 code block (2 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
 	}
 }
 
