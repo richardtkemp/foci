@@ -14,11 +14,13 @@ type TelegramSender interface {
 	SendText(text string) error
 	SendDocument(filePath string) error
 	SendVoice(filePath string) error
+	SendVideo(filePath string) error
 
 	// Chat-targeted methods (send to a specific chat ID).
 	SendTextToChat(chatID int64, text string) error
 	SendDocumentToChat(chatID int64, filePath string) error
 	SendVoiceToChat(chatID int64, filePath string) error
+	SendVideoToChat(chatID int64, filePath string) error
 }
 
 // NewSendTelegramTool creates a tool that sends proactive messages, documents,
@@ -31,7 +33,7 @@ type TelegramSender interface {
 func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
-		Description: "Send a proactive Telegram message to the user. Can send text, files, or voice notes. Use for alerts, sharing files, or sending voice replies.",
+		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, or videos. Use for alerts, sharing files, or sending voice/video replies.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -43,9 +45,14 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 					"type": "string",
 					"description": "Path to a file to send as a document attachment."
 				},
+				"send_as": {
+					"type": "string",
+					"description": "How to send the file: 'document' (default), 'voice', or 'video'.",
+					"enum": ["document", "voice", "video"]
+				},
 				"as_voice": {
 					"type": "boolean",
-					"description": "If true and file_path is set, send the file as a voice note instead of a document."
+					"description": "DEPRECATED: use send_as='voice' instead. If true and file_path is set, send as voice note."
 				}
 			}
 		}`),
@@ -53,6 +60,7 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 			var p struct {
 				Text     string `json:"text"`
 				FilePath string `json:"file_path"`
+				SendAs   string `json:"send_as"`
 				AsVoice  bool   `json:"as_voice"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
@@ -60,6 +68,17 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 			}
 			if p.Text == "" && p.FilePath == "" {
 				return "", fmt.Errorf("at least one of text or file_path is required")
+			}
+			if p.AsVoice && p.SendAs != "" {
+				return "", fmt.Errorf("as_voice and send_as are mutually exclusive (as_voice is deprecated, use send_as)")
+			}
+
+			// Normalise: fold deprecated as_voice into send_as
+			if p.AsVoice {
+				p.SendAs = "voice"
+			}
+			if p.SendAs == "" {
+				p.SendAs = "document"
 			}
 
 			bot := getSender()
@@ -86,29 +105,35 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 			}
 
 			if p.FilePath != "" {
-				if p.AsVoice {
-					var err error
+				var err error
+				var label string
+				switch p.SendAs {
+				case "voice":
 					if chatID != 0 {
 						err = bot.SendVoiceToChat(chatID, p.FilePath)
 					} else {
 						err = bot.SendVoice(p.FilePath)
 					}
-					if err != nil {
-						return "", fmt.Errorf("send voice: %w", err)
+					label = "voice note"
+				case "video":
+					if chatID != 0 {
+						err = bot.SendVideoToChat(chatID, p.FilePath)
+					} else {
+						err = bot.SendVideo(p.FilePath)
 					}
-					sent = append(sent, "voice note")
-				} else {
-					var err error
+					label = "video"
+				default: // "document"
 					if chatID != 0 {
 						err = bot.SendDocumentToChat(chatID, p.FilePath)
 					} else {
 						err = bot.SendDocument(p.FilePath)
 					}
-					if err != nil {
-						return "", fmt.Errorf("send document: %w", err)
-					}
-					sent = append(sent, "document")
+					label = "document"
 				}
+				if err != nil {
+					return "", fmt.Errorf("send %s: %w", label, err)
+				}
+				sent = append(sent, label)
 			}
 
 			return fmt.Sprintf("Sent: %s", joinWords(sent)), nil

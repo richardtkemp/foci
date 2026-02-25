@@ -29,6 +29,7 @@ type botClient interface {
 	EditMessageText(text string, opts *gotgbot.EditMessageTextOpts) (*gotgbot.Message, bool, error)
 	SendDocument(chatId int64, document gotgbot.InputFileOrString, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error)
 	SendVoice(chatId int64, voice gotgbot.InputFileOrString, opts *gotgbot.SendVoiceOpts) (*gotgbot.Message, error)
+	SendVideo(chatId int64, video gotgbot.InputFileOrString, opts *gotgbot.SendVideoOpts) (*gotgbot.Message, error)
 	SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error)
 	GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error)
 	SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.SetMyCommandsOpts) (bool, error)
@@ -1064,6 +1065,15 @@ func (b *Bot) SendVoice(filePath string) error {
 	return b.SendVoiceToChat(chatID, filePath)
 }
 
+// SendVideo sends a video file to the last known chat.
+func (b *Bot) SendVideo(filePath string) error {
+	chatID, err := b.lastChatID()
+	if err != nil {
+		return err
+	}
+	return b.SendVideoToChat(chatID, filePath)
+}
+
 // lastChatID returns the last known chat ID, or an error if none has been set.
 func (b *Bot) lastChatID() (int64, error) {
 	b.chatMu.Lock()
@@ -1136,6 +1146,27 @@ func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
 		Direction: "sent",
 		ChatID:    chatID,
 		Text:      fmt.Sprintf("[voice %s]", filePath),
+		Session:   b.SessionKey(),
+	})
+	return nil
+}
+
+// SendVideoToChat sends a video file to a specific chat ID.
+func (b *Bot) SendVideoToChat(chatID int64, filePath string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open video file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := b.client.SendVideo(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
+		return fmt.Errorf("send video: %w", err)
+	}
+
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      fmt.Sprintf("[video %s]", filePath),
 		Session:   b.SessionKey(),
 	})
 	return nil

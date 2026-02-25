@@ -13,14 +13,17 @@ type mockTelegramSender struct {
 	textCalls     []string
 	documentCalls []string
 	voiceCalls    []string
+	videoCalls    []string
 	textErr       error
 	documentErr   error
 	voiceErr      error
+	videoErr      error
 
 	// Chat-targeted calls
 	chatTextCalls     []mockChatCall
 	chatDocumentCalls []mockChatCall
 	chatVoiceCalls    []mockChatCall
+	chatVideoCalls    []mockChatCall
 }
 
 type mockChatCall struct {
@@ -43,6 +46,11 @@ func (m *mockTelegramSender) SendVoice(filePath string) error {
 	return m.voiceErr
 }
 
+func (m *mockTelegramSender) SendVideo(filePath string) error {
+	m.videoCalls = append(m.videoCalls, filePath)
+	return m.videoErr
+}
+
 func (m *mockTelegramSender) SendTextToChat(chatID int64, text string) error {
 	m.chatTextCalls = append(m.chatTextCalls, mockChatCall{chatID, text})
 	return m.textErr
@@ -56,6 +64,11 @@ func (m *mockTelegramSender) SendDocumentToChat(chatID int64, filePath string) e
 func (m *mockTelegramSender) SendVoiceToChat(chatID int64, filePath string) error {
 	m.chatVoiceCalls = append(m.chatVoiceCalls, mockChatCall{chatID, filePath})
 	return m.voiceErr
+}
+
+func (m *mockTelegramSender) SendVideoToChat(chatID int64, filePath string) error {
+	m.chatVideoCalls = append(m.chatVideoCalls, mockChatCall{chatID, filePath})
+	return m.videoErr
 }
 
 func TestSendTelegramTextOnly(t *testing.T) {
@@ -397,5 +410,204 @@ func TestChatIDFromSessionKey(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("chatIDFromSessionKey(%q) = %d, want %d", tt.key, got, tt.want)
 		}
+	}
+}
+
+// --- send_as tests ---
+
+func TestSendTelegramSendAsVideo(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/clip.mp4",
+		"send_as":   "video",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: video" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.videoCalls) != 1 || mock.videoCalls[0] != "/tmp/clip.mp4" {
+		t.Errorf("videoCalls = %v", mock.videoCalls)
+	}
+	if len(mock.documentCalls) != 0 {
+		t.Errorf("documentCalls should be empty, got %v", mock.documentCalls)
+	}
+}
+
+func TestSendTelegramSendAsVoice(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/note.ogg",
+		"send_as":   "voice",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: voice note" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.voiceCalls) != 1 {
+		t.Errorf("voiceCalls = %v", mock.voiceCalls)
+	}
+}
+
+func TestSendTelegramSendAsDocument(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/report.pdf",
+		"send_as":   "document",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: document" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.documentCalls) != 1 {
+		t.Errorf("documentCalls = %v", mock.documentCalls)
+	}
+}
+
+func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
+	// No send_as, no as_voice — should default to document
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/file.bin",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: document" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.documentCalls) != 1 {
+		t.Errorf("documentCalls = %v", mock.documentCalls)
+	}
+}
+
+func TestSendTelegramAsVoiceBackwardsCompat(t *testing.T) {
+	// as_voice=true without send_as should still work
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/note.ogg",
+		"as_voice":  true,
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: voice note" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.voiceCalls) != 1 {
+		t.Errorf("voiceCalls = %v", mock.voiceCalls)
+	}
+}
+
+func TestSendTelegramAsVoiceAndSendAsMutuallyExclusive(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/note.ogg",
+		"as_voice":  true,
+		"send_as":   "video",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for as_voice + send_as")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error = %v", err)
+	}
+}
+
+func TestSendTelegramVideoError(t *testing.T) {
+	mock := &mockTelegramSender{videoErr: fmt.Errorf("video too large")}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/big.mp4",
+		"send_as":   "video",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "video too large") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSendTelegramVideoChatRouting(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
+	params, _ := json.Marshal(map[string]interface{}{
+		"file_path": "/tmp/clip.mp4",
+		"send_as":   "video",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.chatVideoCalls) != 1 {
+		t.Fatalf("expected 1 chatVideoCall, got %d", len(mock.chatVideoCalls))
+	}
+	if mock.chatVideoCalls[0].chatID != 12345 {
+		t.Errorf("chatID = %d, want 12345", mock.chatVideoCalls[0].chatID)
+	}
+	if len(mock.videoCalls) != 0 {
+		t.Errorf("default SendVideo should not be called")
+	}
+}
+
+func TestSendTelegramTextAndVideo(t *testing.T) {
+	mock := &mockTelegramSender{}
+	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"text":      "check this out",
+		"file_path": "/tmp/clip.mp4",
+		"send_as":   "video",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: text + video" {
+		t.Errorf("result = %q", result)
+	}
+	if len(mock.textCalls) != 1 {
+		t.Errorf("textCalls = %v", mock.textCalls)
+	}
+	if len(mock.videoCalls) != 1 {
+		t.Errorf("videoCalls = %v", mock.videoCalls)
 	}
 }

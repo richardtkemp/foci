@@ -49,6 +49,10 @@ func (m *mockClient) SendVoice(chatId int64, voice gotgbot.InputFileOrString, op
 	return &gotgbot.Message{}, nil
 }
 
+func (m *mockClient) SendVideo(chatId int64, video gotgbot.InputFileOrString, opts *gotgbot.SendVideoOpts) (*gotgbot.Message, error) {
+	return &gotgbot.Message{}, nil
+}
+
 func (m *mockClient) SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error) {
 	return true, nil
 }

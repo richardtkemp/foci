@@ -224,6 +224,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `memory_search` — FTS5 search over memory files + conversation history (sort by relevance or recency)
 - `memory_remind` — defer a thought for later (delay, tomorrow, specific date)
 - `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
+- `send_telegram` — send proactive Telegram messages, documents, voice notes, or videos. `send_as` parameter controls file type: `"document"` (default), `"voice"`, `"video"`. Deprecated `as_voice` boolean still supported for backwards compat (mutually exclusive with `send_as`).
 - `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat
 - `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
 - `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
