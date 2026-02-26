@@ -59,6 +59,15 @@ func ConvertToTelegramHTML(text string) string {
 		return "[INLINECODE" + string(rune('0'+idx)) + "]"
 	})
 
+	// Escape & and < in the body text after extracting code blocks and inline
+	// code (which have their own escaping) but before markdown → HTML conversion.
+	// Without this, stray < and & in model output break Telegram's HTML parser,
+	// causing fallback to unformatted plain text with raw HTML tags visible.
+	// We don't escape > because it's needed for blockquote syntax ("> text")
+	// and is harmless in HTML outside of tags.
+	text = strings.ReplaceAll(text, "&", "&amp;")
+	text = strings.ReplaceAll(text, "<", "&lt;")
+
 	// Links: [text](url)
 	text = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`).ReplaceAllString(text, "<a href=\"$2\">$1</a>")
 
