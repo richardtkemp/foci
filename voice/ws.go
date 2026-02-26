@@ -52,6 +52,10 @@ type HandlerConfig struct {
 
 	// AgentTTS returns a TTS provider for the given agent (with per-agent rate).
 	AgentTTS func(agentID string) TTS
+
+	// SessionExists returns true if a session with the given key already exists.
+	// Used to allow clients to reattach to existing sessions.
+	SessionExists func(key string) bool
 }
 
 var upgrader = websocket.Upgrader{
@@ -238,9 +242,13 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 	}
 
 	c.agentID = sel.AgentID
-	c.sessionKey = fmt.Sprintf("agent:%s:voice:%s", sel.AgentID, connID)
-
-	log.Infof("voice-ws", "agent selected: %s (session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
+	if sel.SessionKey != "" && c.cfg.SessionExists != nil && c.cfg.SessionExists(sel.SessionKey) {
+		c.sessionKey = sel.SessionKey
+		log.Infof("voice-ws", "agent selected: %s (reused session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
+	} else {
+		c.sessionKey = fmt.Sprintf("agent:%s:voice:%s", sel.AgentID, connID)
+		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
+	}
 
 	c.sendJSON(SessionReadyMsg{
 		Type:       "session_ready",

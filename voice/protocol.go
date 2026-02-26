@@ -13,8 +13,9 @@ type ClientMessage struct {
 
 // SelectAgentMsg — client picks which agent to talk to.
 type SelectAgentMsg struct {
-	Type    string `json:"type"`     // "select_agent"
-	AgentID string `json:"agent_id"` // agent ID from connected message
+	Type       string `json:"type"`                  // "select_agent"
+	AgentID    string `json:"agent_id"`              // agent ID from connected message
+	SessionKey string `json:"session_key,omitempty"` // optional: reuse existing session
 }
 
 // AudioStartMsg — client begins recording.
