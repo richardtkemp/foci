@@ -21,6 +21,7 @@ import (
 	"clod/command"
 	"clod/compaction"
 	"clod/config"
+	"clod/heartbeat"
 	"clod/log"
 	"clod/memory"
 	"clod/secrets"
@@ -52,6 +53,7 @@ type agentInstance struct {
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
 	tmuxClearAll      func() // clears tmux tool state (watches, owned sessions)
+	hbRunner          *heartbeat.Runner // heartbeat & background work timer (nil if disabled)
 }
 
 // checkActivityGate parses if_active/if_inactive durations, checks them against
@@ -552,6 +554,28 @@ func main() {
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
+
+		// Heartbeat & background work runner
+		if cfg.Heartbeat.Enabled || cfg.Background.Enabled {
+			orientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+			if orientPrompt == "" {
+				orientPrompt = acfg.ForkPrompt // deprecated fallback
+			}
+			branchFn := heartbeat.BuildBranchFunc(
+				acfg.ID, inst.ag, sessions, inst.defaultSessionKey, orientPrompt, ctx,
+			)
+			inst.hbRunner = heartbeat.New(heartbeat.RunnerConfig{
+				AgentID:     acfg.ID,
+				Heartbeat:   cfg.Heartbeat,
+				Background:  cfg.Background,
+				TodoStore:   todoStore,
+				UsageClient: usageClient,
+				BranchFunc:  branchFn,
+			})
+			inst.hbRunner.Start(ctx)
+			log.Infof("main", "agent %q heartbeat runner started (hb=%v bg=%v)", acfg.ID, cfg.Heartbeat.Enabled, cfg.Background.Enabled)
+		}
+
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
 	}
 
@@ -1087,6 +1111,13 @@ func main() {
 
 	log.Infof("main", "shutting down...")
 
+	// Stop heartbeat runners — prevents new timer-triggered branches
+	for _, inst := range agents {
+		if inst.hbRunner != nil {
+			inst.hbRunner.Stop()
+		}
+	}
+
 	// Close HTTP server — prevents new HTTP-triggered turns
 	httpMu.Lock()
 	if httpServer != nil {
@@ -1153,6 +1184,20 @@ func setupAgent(p setupParams) *agentInstance {
 			return defaultSessionKeyFn()
 		}
 		return ""
+	}
+
+	// sessionKeyFromCtx resolves the session key from a command/tool context.
+	// Priority: (1) tools.SessionKeyFromContext (set by agent tool execution),
+	// (2) command.ChatIDKey (set by Telegram command dispatch),
+	// (3) defaultSessionKey fallback.
+	sessionKeyFromCtx := func(ctx context.Context) string {
+		if sk := tools.SessionKeyFromContext(ctx); sk != "" {
+			return sk
+		}
+		if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
+			return telegram.SessionKeyForChat(acfg.ID, chatID)
+		}
+		return defaultSessionKey()
 	}
 
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
@@ -1764,18 +1809,18 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	cmds.Register(command.NewModelCommand(
-		func() string { return ag.SessionModel(defaultSessionKey()) },
-		func(m string) { ag.SetSessionModel(defaultSessionKey(), m) },
+		func(ctx context.Context) string { return ag.SessionModel(sessionKeyFromCtx(ctx)) },
+		func(ctx context.Context, m string) { ag.SetSessionModel(sessionKeyFromCtx(ctx), m) },
 		resolveModelFn,
 	))
 
 	cmds.Register(command.NewEffortCommand(
-		func() string { return ag.SessionEffort(defaultSessionKey()) },
-		func(e string) { ag.SetSessionEffort(defaultSessionKey(), e) },
+		func(ctx context.Context) string { return ag.SessionEffort(sessionKeyFromCtx(ctx)) },
+		func(ctx context.Context, e string) { ag.SetSessionEffort(sessionKeyFromCtx(ctx), e) },
 	))
 	cmds.Register(command.NewThinkingCommand(
-		func() string { return ag.SessionThinking(defaultSessionKey()) },
-		func(t string) { ag.SetSessionThinking(defaultSessionKey(), t) },
+		func(ctx context.Context) string { return ag.SessionThinking(sessionKeyFromCtx(ctx)) },
+		func(ctx context.Context, t string) { ag.SetSessionThinking(sessionKeyFromCtx(ctx), t) },
 	))
 	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
 		var infos []command.ToolInfo
@@ -1931,8 +1976,8 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// /voice command
 	cmds.Register(command.NewVoiceCommand(
-		func() bool { return ag.VoiceMode(defaultSessionKey()) },
-		func(on bool) { ag.SetVoiceMode(defaultSessionKey(), on) },
+		func(ctx context.Context) bool { return ag.VoiceMode(sessionKeyFromCtx(ctx)) },
+		func(ctx context.Context, on bool) { ag.SetVoiceMode(sessionKeyFromCtx(ctx), on) },
 	))
 
 	// /multiball and /mb — per-agent pool first, shared pool fallback.

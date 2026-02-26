@@ -444,8 +444,8 @@ func TestModelCommand(t *testing.T) {
 		}
 	}
 	cmd := NewModelCommand(
-		func() string { return model },
-		func(m string) { model = m },
+		func(context.Context) string { return model },
+		func(_ context.Context, m string) { model = m },
 		resolveModel,
 	)
 
@@ -487,8 +487,8 @@ func TestModelCommand(t *testing.T) {
 func TestEffortCommand(t *testing.T) {
 	effort := ""
 	cmd := NewEffortCommand(
-		func() string { return effort },
-		func(e string) { effort = e },
+		func(context.Context) string { return effort },
+		func(_ context.Context, e string) { effort = e },
 	)
 
 	// Show when not set
@@ -557,8 +557,8 @@ func TestEffortCommand(t *testing.T) {
 func TestThinkingCommand(t *testing.T) {
 	thinking := ""
 	cmd := NewThinkingCommand(
-		func() string { return thinking },
-		func(t string) { thinking = t },
+		func(context.Context) string { return thinking },
+		func(_ context.Context, t string) { thinking = t },
 	)
 
 	// Show when off (default)
@@ -610,6 +610,27 @@ func TestThinkingCommand(t *testing.T) {
 	}
 	if thinking != "adaptive" {
 		t.Errorf("thinking changed on invalid input: %q", thinking)
+	}
+}
+
+func TestThinkingCommandContextRouting(t *testing.T) {
+	// Verify the callback receives context so callers can resolve per-session state.
+	// This tests the fix for bug #134 — Telegram commands need the ChatIDKey
+	// from context to resolve the correct session key.
+	var lastCtx context.Context
+	cmd := NewThinkingCommand(
+		func(ctx context.Context) string { lastCtx = ctx; return "" },
+		func(ctx context.Context, _ string) { lastCtx = ctx },
+	)
+
+	// Simulate Telegram dispatch: context carries ChatIDKey
+	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(99887766))
+	cmd.Execute(ctx, "adaptive")
+
+	// The callback should have received the context with ChatIDKey
+	chatID, ok := lastCtx.Value(ChatIDKey{}).(int64)
+	if !ok || chatID != 99887766 {
+		t.Errorf("callback context ChatIDKey = %d, want 99887766", chatID)
 	}
 }
 
@@ -1122,8 +1143,8 @@ func TestAgentsCommandEmpty(t *testing.T) {
 func TestVoiceCommand(t *testing.T) {
 	voiceOn := false
 	cmd := NewVoiceCommand(
-		func() bool { return voiceOn },
-		func(on bool) { voiceOn = on },
+		func(context.Context) bool { return voiceOn },
+		func(_ context.Context, on bool) { voiceOn = on },
 	)
 
 	// Toggle on

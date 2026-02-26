@@ -567,17 +567,18 @@ func NewResetCommand(resetFn func() error) *Command {
 
 // NewModelCommand returns a /model command to show or switch the model.
 // getModel returns current model; setModel switches it; resolveModel resolves aliases.
-func NewModelCommand(getModel func() string, setModel func(string), resolveModel func(string) string) *Command {
+// Callbacks receive the command's context so callers can resolve per-session state.
+func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string), resolveModel func(string) string) *Command {
 	return &Command{
 		Name:        "model",
 		Description: "Show or switch model",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if args == "" {
-				return fmt.Sprintf("Current model: %s", getModel()), nil
+				return fmt.Sprintf("Current model: %s", getModel(ctx)), nil
 			}
 			resolved := resolveModel(args)
-			setModel(resolved)
+			setModel(ctx, resolved)
 			return fmt.Sprintf("Model switched to: %s", resolved), nil
 		},
 	}
@@ -585,7 +586,8 @@ func NewModelCommand(getModel func() string, setModel func(string), resolveModel
 
 // NewEffortCommand returns a /effort command to show or set the effort level.
 // getEffort returns current effort; setEffort changes it (runtime only).
-func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command {
+// Callbacks receive the command's context so callers can resolve per-session state.
+func NewEffortCommand(getEffort func(context.Context) string, setEffort func(context.Context, string)) *Command {
 	return &Command{
 		Name:        "effort",
 		Description: "Show or set effort level (low/medium/high)",
@@ -593,7 +595,7 @@ func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command 
 		Execute: func(ctx context.Context, args string) (string, error) {
 			const optionsLine = "Options: 1) low  2) medium  3) high"
 			if args == "" {
-				e := getEffort()
+				e := getEffort(ctx)
 				if e == "" {
 					return "Effort: not set (using API default)\n" + optionsLine, nil
 				}
@@ -611,10 +613,10 @@ func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command 
 			}
 			switch arg {
 			case "low", "medium", "high":
-				setEffort(arg)
+				setEffort(ctx, arg)
 				return fmt.Sprintf("Effort set to: %s", arg), nil
 			case "none", "off", "":
-				setEffort("")
+				setEffort(ctx, "")
 				return "Effort cleared (using API default)", nil
 			default:
 				return fmt.Sprintf("Invalid effort level: %q\n%s", args, optionsLine), nil
@@ -625,7 +627,8 @@ func NewEffortCommand(getEffort func() string, setEffort func(string)) *Command 
 
 // NewThinkingCommand returns a /thinking command to show or set the thinking mode.
 // getThinking returns current mode; setThinking changes it (runtime only).
-func NewThinkingCommand(getThinking func() string, setThinking func(string)) *Command {
+// Callbacks receive the command's context so callers can resolve per-session state.
+func NewThinkingCommand(getThinking func(context.Context) string, setThinking func(context.Context, string)) *Command {
 	return &Command{
 		Name:        "thinking",
 		Description: "Show or set thinking mode (off/adaptive)",
@@ -633,7 +636,7 @@ func NewThinkingCommand(getThinking func() string, setThinking func(string)) *Co
 		Execute: func(ctx context.Context, args string) (string, error) {
 			const optionsLine = "Options: 0) off  1) adaptive"
 			if args == "" {
-				t := getThinking()
+				t := getThinking(ctx)
 				if t == "" || t == "off" {
 					return "Thinking: off\n" + optionsLine, nil
 				}
@@ -648,10 +651,10 @@ func NewThinkingCommand(getThinking func() string, setThinking func(string)) *Co
 			}
 			switch arg {
 			case "off", "none":
-				setThinking("")
+				setThinking(ctx, "")
 				return "Thinking: off", nil
 			case "adaptive":
-				setThinking("adaptive")
+				setThinking(ctx, "adaptive")
 				return "Thinking: adaptive", nil
 			default:
 				return fmt.Sprintf("Invalid thinking mode: %q\n%s", args, optionsLine), nil
@@ -912,14 +915,15 @@ func NewVersionCommand(info BuildInfo) *Command {
 }
 
 // NewVoiceCommand returns a /voice command to toggle voice mode.
-func NewVoiceCommand(getVoice func() bool, setVoice func(bool)) *Command {
+// Callbacks receive the command's context so callers can resolve per-session state.
+func NewVoiceCommand(getVoice func(context.Context) bool, setVoice func(context.Context, bool)) *Command {
 	return &Command{
 		Name:        "voice",
 		Description: "Toggle voice mode (replies sent as voice notes)",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			current := getVoice()
-			setVoice(!current)
+			current := getVoice(ctx)
+			setVoice(ctx, !current)
 			if !current {
 				return "Voice mode ON — replies will be sent as voice notes.", nil
 			}
