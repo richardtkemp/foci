@@ -74,8 +74,9 @@ type conn struct {
 	agentID    string // selected agent (empty until select_agent)
 	sessionKey string // voice session key
 
-	recording bool   // true between audio_start and audio_end
-	audioBuf  []byte // accumulated audio data during recording
+	recording  bool   // true between audio_start and audio_end
+	audioBuf   []byte // accumulated audio data during recording
+	sampleRate int    // sample rate from audio_start (default 24000)
 }
 
 // Handler returns an http.HandlerFunc that handles /voice WebSocket connections.
@@ -175,9 +176,20 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 		c.handleSelectAgent(connID, sel)
 
 	case "audio_start":
+		var as AudioStartMsg
+		if err := json.Unmarshal(data, &as); err != nil {
+			c.sendError("invalid audio_start message")
+			return
+		}
+		sampleRate := as.SampleRate
+		if sampleRate <= 0 {
+			sampleRate = 24000 // default
+		}
+
 		c.audioMu.Lock()
 		c.recording = true
 		c.audioBuf = nil
+		c.sampleRate = sampleRate
 		c.audioMu.Unlock()
 
 	case "audio_end":
@@ -185,6 +197,7 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 		c.recording = false
 		audio := c.audioBuf
 		c.audioBuf = nil
+		sampleRate := c.sampleRate
 		c.audioMu.Unlock()
 
 		if len(audio) == 0 {
@@ -193,7 +206,7 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 		}
 
 		// Process audio in a goroutine with turn lock.
-		go c.processAudio(ctx, connID, audio)
+		go c.processAudio(ctx, connID, audio, sampleRate)
 
 	case "text":
 		var txt TextMsg
@@ -258,7 +271,7 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 }
 
 // processAudio transcribes audio and runs the agent pipeline.
-func (c *conn) processAudio(ctx context.Context, connID string, audio []byte) {
+func (c *conn) processAudio(ctx context.Context, connID string, audio []byte, sampleRate int) {
 	c.turnMu.Lock()
 	defer c.turnMu.Unlock()
 
@@ -267,9 +280,12 @@ func (c *conn) processAudio(ctx context.Context, connID string, audio []byte) {
 		return
 	}
 
+	// Wrap raw PCM in WAV header (16-bit, mono, little-endian).
+	wavAudio := wrapPCMInWAV(audio, sampleRate, 1, 16)
+
 	// STT
-	log.Debugf("voice-ws", "transcribing %d bytes (conn=%s)", len(audio), connID)
-	text, err := c.cfg.STT.Transcribe(ctx, audio, "voice.opus")
+	log.Debugf("voice-ws", "transcribing %d bytes (conn=%s)", len(wavAudio), connID)
+	text, err := c.cfg.STT.Transcribe(ctx, wavAudio, "voice.wav")
 	if err != nil {
 		log.Errorf("voice-ws", "STT error (conn=%s): %v", connID, err)
 		c.sendError(fmt.Sprintf("transcription failed: %v", err))
