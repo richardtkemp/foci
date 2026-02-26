@@ -1007,6 +1007,10 @@ func main() {
 				}
 				return inst.ag.HandleMessage(agent.WithTrigger(msgCtx, "voice"), sessionKey, text)
 			},
+			SessionExists: func(key string) bool {
+				msgs, err := sessions.Load(key)
+				return err == nil && msgs != nil
+			},
 			STT: sttProvider,
 			AgentTTS: func(agentID string) voice.TTS {
 				if ttsProvider == nil {
