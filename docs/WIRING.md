@@ -526,9 +526,10 @@ GET /voice?api_key=KEY → validate key → upgrade to WebSocket
 
 **Audio turn flow:**
 ```
-audio_start → binary frames (Opus) → audio_end
+audio_start{sample_rate} → binary frames (raw PCM) → audio_end
   → goroutine with turnMu lock
-  → STT.Transcribe → send transcription
+  → wrap PCM in WAV header (44 bytes, 16-bit mono)
+  → STT.Transcribe("voice.wav") → send transcription
   → response_start → HandleMessage(agent, session, text) → response_text (final=true)
   → TTS.Synthesize → audio_start + 4KB binary chunks + audio_end
   → response_end
