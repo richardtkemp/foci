@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -547,5 +549,109 @@ func TestOAuthManagerStartStop(t *testing.T) {
 		// ok
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop() hung")
+	}
+}
+
+func TestOAuthManagerImmediateRefreshOnStart(t *testing.T) {
+	dir := t.TempDir()
+	// Token expires in 10 minutes (less than RefreshWindow of 30 min)
+	path := writeTestCreds(t, dir, CredentialsFile{
+		ClaudeAiOauth: OAuthCredentials{
+			AccessToken:  "expiring-soon-token",
+			RefreshToken: "refresh-token",
+			ExpiresAt:    time.Now().Add(10 * time.Minute).UnixMilli(),
+		},
+	})
+
+	var refreshed atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshed.Add(1)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "refreshed-token",
+			"refresh_token": "new-refresh",
+			"expires_in":    28800,
+		})
+	}))
+	defer server.Close()
+
+	var logMessages []string
+	mgr, err := NewOAuthManager(path,
+		WithRefreshURL(server.URL),
+		WithLogger(func(format string, args ...any) {
+			logMessages = append(logMessages, fmt.Sprintf(format, args...))
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewOAuthManager: %v", err)
+	}
+
+	// Start() should immediately check and refresh without waiting for ticker
+	mgr.Start()
+	defer mgr.Stop()
+
+	// Wait a short time for the immediate refresh to complete
+	time.Sleep(100 * time.Millisecond)
+
+	if refreshed.Load() != 1 {
+		t.Errorf("expected 1 immediate refresh on Start(), got %d", refreshed.Load())
+	}
+
+	if got := mgr.Token(); got != "refreshed-token" {
+		t.Errorf("Token() = %q, want %q", got, "refreshed-token")
+	}
+
+	// Check that we logged the expiry info
+	var foundExpiryLog bool
+	for _, msg := range logMessages {
+		if strings.Contains(msg, "token expires at") {
+			foundExpiryLog = true
+			break
+		}
+	}
+	if !foundExpiryLog {
+		t.Error("expected log message about token expiry on Start()")
+	}
+}
+
+func TestOAuthManagerRefreshExpiredToken(t *testing.T) {
+	dir := t.TempDir()
+	// Token expired 5 minutes ago
+	path := writeTestCreds(t, dir, CredentialsFile{
+		ClaudeAiOauth: OAuthCredentials{
+			AccessToken:  "already-expired-token",
+			RefreshToken: "refresh-token",
+			ExpiresAt:    time.Now().Add(-5 * time.Minute).UnixMilli(),
+		},
+	})
+
+	var refreshed atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshed.Add(1)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "fresh-token",
+			"refresh_token": "new-refresh",
+			"expires_in":    28800,
+		})
+	}))
+	defer server.Close()
+
+	mgr, err := NewOAuthManager(path, WithRefreshURL(server.URL))
+	if err != nil {
+		t.Fatalf("NewOAuthManager: %v", err)
+	}
+
+	// Start() should refresh even though token is already expired
+	mgr.Start()
+	defer mgr.Stop()
+
+	// Wait for immediate refresh to complete
+	time.Sleep(100 * time.Millisecond)
+
+	if refreshed.Load() != 1 {
+		t.Errorf("expected 1 refresh for expired token, got %d", refreshed.Load())
+	}
+
+	if got := mgr.Token(); got != "fresh-token" {
+		t.Errorf("Token() = %q, want %q", got, "fresh-token")
 	}
 }
