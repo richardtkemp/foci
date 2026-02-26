@@ -17,6 +17,7 @@ import (
 	"clod/compaction"
 	"clod/memory"
 	"clod/session"
+	"clod/state"
 	"clod/tools"
 	"clod/workspace"
 )
@@ -1054,6 +1055,147 @@ func TestVoiceMode(t *testing.T) {
 	ag.SetVoiceMode("session1", false)
 	if ag.VoiceMode("session1") {
 		t.Error("voice mode should be off after SetVoiceMode(false)")
+	}
+}
+
+func TestSessionEffort(t *testing.T) {
+	ag := &Agent{Model: "test", Effort: "low"}
+
+	// Default: falls back to agent-wide
+	if got := ag.SessionEffort("s1"); got != "low" {
+		t.Errorf("SessionEffort fallback = %q, want %q", got, "low")
+	}
+
+	// Set per-session override
+	ag.SetSessionEffort("s1", "high")
+	if got := ag.SessionEffort("s1"); got != "high" {
+		t.Errorf("SessionEffort after set = %q, want %q", got, "high")
+	}
+
+	// Other session unaffected
+	if got := ag.SessionEffort("s2"); got != "low" {
+		t.Errorf("SessionEffort other session = %q, want %q", got, "low")
+	}
+
+	// Clear override — falls back to agent default
+	ag.SetSessionEffort("s1", "")
+	if got := ag.SessionEffort("s1"); got != "low" {
+		t.Errorf("SessionEffort after clear = %q, want %q", got, "low")
+	}
+}
+
+func TestSessionThinking(t *testing.T) {
+	ag := &Agent{Model: "test", Thinking: "off"}
+
+	// Default: falls back to agent-wide
+	if got := ag.SessionThinking("s1"); got != "off" {
+		t.Errorf("SessionThinking fallback = %q, want %q", got, "off")
+	}
+
+	// Set per-session override
+	ag.SetSessionThinking("s1", "adaptive")
+	if got := ag.SessionThinking("s1"); got != "adaptive" {
+		t.Errorf("SessionThinking after set = %q, want %q", got, "adaptive")
+	}
+
+	// Other session unaffected
+	if got := ag.SessionThinking("s2"); got != "off" {
+		t.Errorf("SessionThinking other session = %q, want %q", got, "off")
+	}
+
+	// Clear override
+	ag.SetSessionThinking("s1", "")
+	if got := ag.SessionThinking("s1"); got != "off" {
+		t.Errorf("SessionThinking after clear = %q, want %q", got, "off")
+	}
+}
+
+func TestSessionModel(t *testing.T) {
+	ag := &Agent{Model: "claude-haiku-4-5"}
+
+	// Default: falls back to agent-wide
+	if got := ag.SessionModel("s1"); got != "claude-haiku-4-5" {
+		t.Errorf("SessionModel fallback = %q, want %q", got, "claude-haiku-4-5")
+	}
+
+	// Set per-session override
+	ag.SetSessionModel("s1", "claude-sonnet-4-5")
+	if got := ag.SessionModel("s1"); got != "claude-sonnet-4-5" {
+		t.Errorf("SessionModel after set = %q, want %q", got, "claude-sonnet-4-5")
+	}
+
+	// Other session unaffected
+	if got := ag.SessionModel("s2"); got != "claude-haiku-4-5" {
+		t.Errorf("SessionModel other session = %q, want %q", got, "claude-haiku-4-5")
+	}
+
+	// Clear override
+	ag.SetSessionModel("s1", "")
+	if got := ag.SessionModel("s1"); got != "claude-haiku-4-5" {
+		t.Errorf("SessionModel after clear = %q, want %q", got, "claude-haiku-4-5")
+	}
+}
+
+func TestRestoreSessionOverrides(t *testing.T) {
+	dir := t.TempDir()
+	ss := state.New(dir + "/state.json")
+	if err := ss.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	ag := &Agent{
+		Model:      "claude-haiku-4-5",
+		Effort:     "low",
+		Thinking:   "off",
+		StateStore: ss,
+	}
+
+	// Persist values via setters
+	ag.SetSessionEffort("s1", "high")
+	ag.SetSessionThinking("s1", "adaptive")
+	ag.SetSessionModel("s1", "claude-opus-4-6")
+
+	// Create a fresh agent (simulating restart) with the same state store
+	ag2 := &Agent{
+		Model:      "claude-haiku-4-5",
+		Effort:     "low",
+		Thinking:   "off",
+		StateStore: ss,
+	}
+
+	// Before restore: should fall back to defaults
+	if got := ag2.SessionEffort("s1"); got != "low" {
+		t.Errorf("before restore effort = %q, want %q", got, "low")
+	}
+
+	// Restore
+	ag2.RestoreSessionOverrides("s1")
+
+	// After restore: should have overrides
+	if got := ag2.SessionEffort("s1"); got != "high" {
+		t.Errorf("after restore effort = %q, want %q", got, "high")
+	}
+	if got := ag2.SessionThinking("s1"); got != "adaptive" {
+		t.Errorf("after restore thinking = %q, want %q", got, "adaptive")
+	}
+	if got := ag2.SessionModel("s1"); got != "claude-opus-4-6" {
+		t.Errorf("after restore model = %q, want %q", got, "claude-opus-4-6")
+	}
+
+	// Unrelated session should still use defaults
+	if got := ag2.SessionEffort("s2"); got != "low" {
+		t.Errorf("unrelated session effort = %q, want %q", got, "low")
+	}
+}
+
+func TestRestoreSessionOverrides_NilStateStore(t *testing.T) {
+	ag := &Agent{Model: "test", Effort: "low"}
+
+	// Should not panic with nil state store
+	ag.RestoreSessionOverrides("s1")
+
+	if got := ag.SessionEffort("s1"); got != "low" {
+		t.Errorf("effort with nil store = %q, want %q", got, "low")
 	}
 }
 

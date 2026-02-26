@@ -76,7 +76,7 @@ type AnthropicConfig struct {
 	OAuthToken      string `toml:"oauth_token"` // OAuth access token for usage API (legacy, static)
 	BraveAPIKey     string `toml:"brave_api_key"`
 	CredentialsFile string `toml:"credentials_file"`  // path to Claude Code credentials.json (default ~/.claude/.credentials.json)
-	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "120s")
+	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
 }
 
@@ -617,7 +617,7 @@ if cfg.Sessions.CompactionThreshold == 0 {
 
 	// Anthropic defaults
 	if cfg.Anthropic.HTTPTimeout == "" {
-		cfg.Anthropic.HTTPTimeout = "120s"
+		cfg.Anthropic.HTTPTimeout = "600s" // 10 min — thinking responses can take several minutes
 	}
 	if cfg.Anthropic.UsageAPITimeout == "" {
 		cfg.Anthropic.UsageAPITimeout = "10s"

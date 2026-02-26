@@ -41,6 +41,9 @@ type sessionMeta struct {
 	prevCacheRead   int
 	prevCacheWrite  int
 	voiceMode       bool
+	effort          string // per-session effort override (empty = use agent default)
+	thinking        string // per-session thinking override (empty = use agent default)
+	model           string // per-session model override (empty = use agent default)
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -194,6 +197,123 @@ func (a *Agent) RestoreVoiceMode(sessionKey string) {
 		sm.voiceMode = on
 		a.metaMu.Unlock()
 		log.Infof("agent", "restored voice mode for %s", sessionKey)
+	}
+}
+
+// SessionEffort returns the effective effort for the session.
+// Returns the per-session override if set, otherwise the agent-wide default.
+func (a *Agent) SessionEffort(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	if sm.effort != "" {
+		return sm.effort
+	}
+	return a.Effort
+}
+
+// SetSessionEffort sets the per-session effort override and persists it.
+func (a *Agent) SetSessionEffort(sessionKey, value string) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	sm.effort = value
+	a.metaMu.Unlock()
+
+	if a.StateStore != nil {
+		if value == "" {
+			a.StateStore.Delete("effort:" + sessionKey)
+		} else if err := a.StateStore.Set("effort:"+sessionKey, value); err != nil {
+			log.Errorf("agent", "persist effort: %v", err)
+		}
+	}
+}
+
+// SessionThinking returns the effective thinking mode for the session.
+// Returns the per-session override if set, otherwise the agent-wide default.
+func (a *Agent) SessionThinking(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	if sm.thinking != "" {
+		return sm.thinking
+	}
+	return a.Thinking
+}
+
+// SetSessionThinking sets the per-session thinking override and persists it.
+func (a *Agent) SetSessionThinking(sessionKey, value string) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	sm.thinking = value
+	a.metaMu.Unlock()
+
+	if a.StateStore != nil {
+		if value == "" {
+			a.StateStore.Delete("thinking:" + sessionKey)
+		} else if err := a.StateStore.Set("thinking:"+sessionKey, value); err != nil {
+			log.Errorf("agent", "persist thinking: %v", err)
+		}
+	}
+}
+
+// SessionModel returns the effective model for the session.
+// Returns the per-session override if set, otherwise the agent-wide default.
+func (a *Agent) SessionModel(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	if sm.model != "" {
+		return sm.model
+	}
+	return a.Model
+}
+
+// SetSessionModel sets the per-session model override and persists it.
+func (a *Agent) SetSessionModel(sessionKey, value string) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	sm.model = value
+	a.metaMu.Unlock()
+
+	if a.StateStore != nil {
+		if value == "" {
+			a.StateStore.Delete("model:" + sessionKey)
+		} else if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
+			log.Errorf("agent", "persist model: %v", err)
+		}
+	}
+}
+
+// RestoreSessionOverrides loads per-session effort/thinking/model from state store.
+func (a *Agent) RestoreSessionOverrides(sessionKey string) {
+	if a.StateStore == nil {
+		return
+	}
+	var restored []string
+	var val string
+	if a.StateStore.Get("effort:"+sessionKey, &val) && val != "" {
+		sm := a.getSessionMeta(sessionKey)
+		a.metaMu.Lock()
+		sm.effort = val
+		a.metaMu.Unlock()
+		restored = append(restored, "effort="+val)
+	}
+	if a.StateStore.Get("thinking:"+sessionKey, &val) && val != "" {
+		sm := a.getSessionMeta(sessionKey)
+		a.metaMu.Lock()
+		sm.thinking = val
+		a.metaMu.Unlock()
+		restored = append(restored, "thinking="+val)
+	}
+	if a.StateStore.Get("model:"+sessionKey, &val) && val != "" {
+		sm := a.getSessionMeta(sessionKey)
+		a.metaMu.Lock()
+		sm.model = val
+		a.metaMu.Unlock()
+		restored = append(restored, "model="+val)
+	}
+	if len(restored) > 0 {
+		log.Infof("agent", "restored session overrides for %s: %s", sessionKey, strings.Join(restored, ", "))
 	}
 }
 
@@ -498,7 +618,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 	}
 
-	turnModel := a.Model
+	turnModel := a.SessionModel(sessionKey)
+	turnEffort := a.SessionEffort(sessionKey)
+	turnThinking := a.SessionThinking(sessionKey)
 
 	// Apply prompt rules (regex find/replace on inbound message)
 	if len(a.PromptRules) > 0 {
@@ -623,10 +745,10 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		if useAutoCache {
 			req.CacheControl = anthropic.Ephemeral()
 		}
-		if a.Effort != "" {
-			req.Output = &anthropic.OutputConfig{Effort: a.Effort}
+		if turnEffort != "" {
+			req.Output = &anthropic.OutputConfig{Effort: turnEffort}
 		}
-		if a.Thinking == "adaptive" {
+		if turnThinking == "adaptive" {
 			req.Thinking = &anthropic.ThinkingConfig{Type: "adaptive"}
 		}
 

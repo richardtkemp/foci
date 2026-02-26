@@ -42,6 +42,7 @@ config.Load(path)                                        ← validates values; l
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetImageSaveDir(acfg.ImageSaveDir || cfg.Telegram.ImageSaveDir)
     → agent.RestoreVoiceMode(defaultSessionKey())           ← deferred until default chat is known
+    → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store
     → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
   → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
@@ -578,6 +579,8 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 - Idle secondary bots respond with "This bot is idle. Use /multiball..." to non-command messages
 
 **Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<telegram_username>`. Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `main.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetAgentAndCommands` and gets the primary bot's chat ID for notifications.
+
+**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort:<sessionKey>`, `thinking:<sessionKey>`, `model:<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all three. The `/voice` mode follows the same pattern under `voice:<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
 
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool
