@@ -112,7 +112,7 @@ func (m *mockTelegramSender) SendAnimationToChat(chatID int64, filePath string) 
 
 func TestSendTelegramTextOnly(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello user",
@@ -135,7 +135,7 @@ func TestSendTelegramTextOnly(t *testing.T) {
 
 func TestSendTelegramDocumentOnly(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
@@ -155,7 +155,7 @@ func TestSendTelegramDocumentOnly(t *testing.T) {
 
 func TestSendTelegramVoice(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
@@ -176,7 +176,7 @@ func TestSendTelegramVoice(t *testing.T) {
 
 func TestSendTelegramTextAndDocument(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "here's the file",
@@ -200,7 +200,7 @@ func TestSendTelegramTextAndDocument(t *testing.T) {
 
 func TestSendTelegramNoInput(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{})
 
@@ -214,7 +214,7 @@ func TestSendTelegramNoInput(t *testing.T) {
 }
 
 func TestSendTelegramNilSender(t *testing.T) {
-	tool := NewSendTelegramTool(func() TelegramSender { return nil })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return nil })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -231,7 +231,7 @@ func TestSendTelegramNilSender(t *testing.T) {
 
 func TestSendTelegramTextError(t *testing.T) {
 	mock := &mockTelegramSender{textErr: fmt.Errorf("network down")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -248,7 +248,7 @@ func TestSendTelegramTextError(t *testing.T) {
 
 func TestSendTelegramDocumentError(t *testing.T) {
 	mock := &mockTelegramSender{documentErr: fmt.Errorf("file too large")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/huge.bin",
@@ -265,7 +265,7 @@ func TestSendTelegramDocumentError(t *testing.T) {
 
 func TestSendTelegramVoiceError(t *testing.T) {
 	mock := &mockTelegramSender{voiceErr: fmt.Errorf("codec error")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/voice.ogg",
@@ -303,7 +303,7 @@ func TestJoinWords(t *testing.T) {
 func TestSendTelegramChatRouting(t *testing.T) {
 	// When session key contains a chat ID, send to that specific chat.
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:99887766")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -335,7 +335,7 @@ func TestSendTelegramChatRouting(t *testing.T) {
 
 func TestSendTelegramChatRoutingDocument(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -360,7 +360,7 @@ func TestSendTelegramChatRoutingDocument(t *testing.T) {
 
 func TestSendTelegramChatRoutingVoice(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -387,7 +387,7 @@ func TestSendTelegramChatRoutingVoice(t *testing.T) {
 func TestSendTelegramFallbackNoChat(t *testing.T) {
 	// When session key doesn't contain a chat ID, fall back to default.
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	// Spawn branch session — no chat ID
 	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
@@ -412,7 +412,7 @@ func TestSendTelegramFallbackNoChat(t *testing.T) {
 func TestSendTelegramFallbackNoContext(t *testing.T) {
 	// No session key in context at all — fall back to default.
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -456,7 +456,7 @@ func TestChatIDFromSessionKey(t *testing.T) {
 
 func TestSendTelegramSendAsVideo(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/clip.mp4",
@@ -480,7 +480,7 @@ func TestSendTelegramSendAsVideo(t *testing.T) {
 
 func TestSendTelegramSendAsVoice(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
@@ -501,7 +501,7 @@ func TestSendTelegramSendAsVoice(t *testing.T) {
 
 func TestSendTelegramSendAsDocument(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
@@ -523,7 +523,7 @@ func TestSendTelegramSendAsDocument(t *testing.T) {
 func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
 	// No send_as — should default to document
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/file.bin",
@@ -543,7 +543,7 @@ func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
 
 func TestSendTelegramVideoError(t *testing.T) {
 	mock := &mockTelegramSender{videoErr: fmt.Errorf("video too large")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/big.mp4",
@@ -561,7 +561,7 @@ func TestSendTelegramVideoError(t *testing.T) {
 
 func TestSendTelegramVideoChatRouting(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -587,7 +587,7 @@ func TestSendTelegramVideoChatRouting(t *testing.T) {
 
 func TestSendTelegramTextAndVideo(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "check this out",
@@ -614,7 +614,7 @@ func TestSendTelegramTextAndVideo(t *testing.T) {
 
 func TestSendTelegramSendAsPhoto(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/image.jpg",
@@ -635,7 +635,7 @@ func TestSendTelegramSendAsPhoto(t *testing.T) {
 
 func TestSendTelegramPhotoError(t *testing.T) {
 	mock := &mockTelegramSender{photoErr: fmt.Errorf("image too large")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/huge.jpg",
@@ -653,7 +653,7 @@ func TestSendTelegramPhotoError(t *testing.T) {
 
 func TestSendTelegramPhotoChatRouting(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -677,7 +677,7 @@ func TestSendTelegramPhotoChatRouting(t *testing.T) {
 
 func TestSendTelegramSendAsAudio(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/song.mp3",
@@ -698,7 +698,7 @@ func TestSendTelegramSendAsAudio(t *testing.T) {
 
 func TestSendTelegramAudioError(t *testing.T) {
 	mock := &mockTelegramSender{audioErr: fmt.Errorf("bad format")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/bad.mp3",
@@ -716,7 +716,7 @@ func TestSendTelegramAudioError(t *testing.T) {
 
 func TestSendTelegramAudioChatRouting(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -740,7 +740,7 @@ func TestSendTelegramAudioChatRouting(t *testing.T) {
 
 func TestSendTelegramSendAsAnimation(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/funny.gif",
@@ -761,7 +761,7 @@ func TestSendTelegramSendAsAnimation(t *testing.T) {
 
 func TestSendTelegramAnimationError(t *testing.T) {
 	mock := &mockTelegramSender{animationErr: fmt.Errorf("gif corrupted")}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/bad.gif",
@@ -779,7 +779,7 @@ func TestSendTelegramAnimationError(t *testing.T) {
 
 func TestSendTelegramAnimationChatRouting(t *testing.T) {
 	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func() TelegramSender { return mock })
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock })
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -796,5 +796,70 @@ func TestSendTelegramAnimationChatRouting(t *testing.T) {
 	}
 	if len(mock.animationCalls) != 0 {
 		t.Errorf("default SendAnimation should not be called")
+	}
+}
+
+// --- Multiball routing tests ---
+
+func TestSendTelegramMultiballRouting(t *testing.T) {
+	// When session key contains :multiball:, the getSender callback receives
+	// the session key so it can resolve the correct bot.
+	multiballMock := &mockTelegramSender{}
+	primaryMock := &mockTelegramSender{}
+
+	tool := NewSendTelegramTool(func(sessionKey string) TelegramSender {
+		if strings.Contains(sessionKey, ":multiball:") {
+			return multiballMock
+		}
+		return primaryMock
+	})
+
+	// Multiball session — should use multiball sender
+	ctx := WithSessionKey(context.Background(), "agent:clutch:multiball:mb-123")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "multiball message",
+	})
+
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "Sent: text" {
+		t.Errorf("result = %q", result)
+	}
+	if len(multiballMock.textCalls) != 1 || multiballMock.textCalls[0] != "multiball message" {
+		t.Errorf("multiball textCalls = %v", multiballMock.textCalls)
+	}
+	if len(primaryMock.textCalls) != 0 {
+		t.Errorf("primary should not be called for multiball session")
+	}
+}
+
+func TestSendTelegramChatSessionUsesPrimary(t *testing.T) {
+	// Regular chat sessions should still use the primary bot.
+	multiballMock := &mockTelegramSender{}
+	primaryMock := &mockTelegramSender{}
+
+	tool := NewSendTelegramTool(func(sessionKey string) TelegramSender {
+		if strings.Contains(sessionKey, ":multiball:") {
+			return multiballMock
+		}
+		return primaryMock
+	})
+
+	ctx := WithSessionKey(context.Background(), "agent:clutch:chat:99887766")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "primary message",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(primaryMock.chatTextCalls) != 1 || primaryMock.chatTextCalls[0].chatID != 99887766 {
+		t.Errorf("primary chatTextCalls = %v", primaryMock.chatTextCalls)
+	}
+	if len(multiballMock.textCalls) != 0 && len(multiballMock.chatTextCalls) != 0 {
+		t.Errorf("multiball should not be called for chat session")
 	}
 }

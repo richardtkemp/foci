@@ -310,6 +310,66 @@ func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
 	}
 }
 
+// --- BotForSession tests ---
+
+func TestBotForSession_PerAgentPool(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+
+	// Acquire and assign a session key
+	bot, _ := mgr.Pool("clutch").Acquire()
+	bot.SetSessionKey("agent:clutch:multiball:mb-100")
+
+	found := mgr.BotForSession("agent:clutch:multiball:mb-100")
+	if found != bot {
+		t.Errorf("BotForSession should find per-agent multiball bot")
+	}
+}
+
+func TestBotForSession_SharedPool(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	shared := testSecondaryBot("shared1")
+	mgr.AddSharedMultiball(shared)
+
+	// Acquire and assign a session key
+	bot, _ := mgr.SharedPool().Acquire()
+	bot.SetSessionKey("agent:clutch:multiball:mb-200")
+
+	found := mgr.BotForSession("agent:clutch:multiball:mb-200")
+	if found != bot {
+		t.Errorf("BotForSession should find shared multiball bot")
+	}
+}
+
+func TestBotForSession_NotFound(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+
+	found := mgr.BotForSession("agent:clutch:multiball:mb-nonexistent")
+	if found != nil {
+		t.Errorf("BotForSession should return nil for unknown session key, got %v", found)
+	}
+}
+
+func TestBotForSession_EmptyKey(t *testing.T) {
+	mgr := NewBotManager()
+	found := mgr.BotForSession("")
+	if found != nil {
+		t.Errorf("BotForSession('') should return nil, got %v", found)
+	}
+}
+
 // --- OnSessionKeyChange persistence integration ---
 
 func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {

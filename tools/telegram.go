@@ -36,7 +36,7 @@ type TelegramSender interface {
 // The tool extracts the chat ID from the session key (format agent:X:chat:CHATID)
 // and sends to that specific chat. Falls back to the bot's default chat when the
 // session key doesn't contain a chat ID (e.g. spawn branches, cron sessions).
-func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
+func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
 		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use for alerts, sharing files, or sending media.",
@@ -74,13 +74,14 @@ func NewSendTelegramTool(getSender func() TelegramSender) *Tool {
 				p.SendAs = "document"
 			}
 
-			bot := getSender()
+			sessionKey := SessionKeyFromContext(ctx)
+			bot := getSender(sessionKey)
 			if bot == nil {
 				return "", fmt.Errorf("telegram not configured")
 			}
 
 			// Extract chat ID from session key for targeted delivery.
-			chatID := chatIDFromSessionKey(SessionKeyFromContext(ctx))
+			chatID := chatIDFromSessionKey(sessionKey)
 
 			var sent []string
 

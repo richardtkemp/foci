@@ -84,6 +84,39 @@ func (m *BotManager) SharedPool() *Pool {
 	return m.shared
 }
 
+// BotForSession returns the bot whose SessionKey() matches the given key,
+// searching all per-agent pools and the shared pool. Returns nil if no match.
+func (m *BotManager) BotForSession(sessionKey string) *Bot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, pool := range m.pools {
+		var found *Bot
+		pool.ForEach(func(b *Bot) {
+			if b.SessionKey() == sessionKey {
+				found = b
+			}
+		})
+		if found != nil {
+			return found
+		}
+	}
+
+	if m.shared != nil {
+		var found *Bot
+		m.shared.ForEach(func(b *Bot) {
+			if b.SessionKey() == sessionKey {
+				found = b
+			}
+		})
+		if found != nil {
+			return found
+		}
+	}
+
+	return nil
+}
+
 // AcquireMultiball tries to acquire a multiball bot for the given agent.
 // Priority: per-agent pool first, then shared pool as fallback.
 // Returns the bot and true on success, or nil and false if no bots available.
