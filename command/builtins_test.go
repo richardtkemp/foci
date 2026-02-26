@@ -450,6 +450,25 @@ func TestModelCommand(t *testing.T) {
 	if !strings.Contains(result, "claude-opus-4-6") {
 		t.Errorf("result = %q", result)
 	}
+
+	// Switch with short name
+	result, _ = cmd.Execute(context.Background(), "haiku")
+	if model != "claude-haiku-4-5" {
+		t.Errorf("short name not resolved: got %q, want %q", model, "claude-haiku-4-5")
+	}
+	if !strings.Contains(result, "claude-haiku-4-5") {
+		t.Errorf("result = %q", result)
+	}
+
+	result, _ = cmd.Execute(context.Background(), "opus")
+	if model != "claude-opus-4-6" {
+		t.Errorf("short name not resolved: got %q, want %q", model, "claude-opus-4-6")
+	}
+
+	result, _ = cmd.Execute(context.Background(), "sonnet")
+	if model != "claude-sonnet-4-6" {
+		t.Errorf("short name not resolved: got %q, want %q", model, "claude-sonnet-4-6")
+	}
 }
 
 func TestEffortCommand(t *testing.T) {
@@ -885,8 +904,8 @@ func TestScriptCommandDefaultTimeout(t *testing.T) {
 
 func TestHelpCommand(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(NewPingCommand())                                       // category: session
-	reg.Register(NewCacheCommand("/dev/null"))                           // category: observability
+	reg.Register(NewPingCommand())                                      // category: session
+	reg.Register(NewCacheCommand("/dev/null"))                          // category: observability
 	reg.Register(NewResetCommand(func() error { return nil }))          // category: operations
 	reg.Register(NewVersionCommand(BuildInfo{Version: "1.0"}))          // category: diagnostics
 	reg.Register(&Command{Name: "custom", Description: "Custom thing"}) // no category
@@ -1218,12 +1237,12 @@ func TestContextCommand(t *testing.T) {
 	}
 
 	checks := []string{
-		"```",               // code block wrapping
-		"~105,000",          // total tokens (60000 + 40000 + 5000), estimated
-		"200,000",           // context limit
-		"52.5%",             // 105000 / 200000
-		"160,000",           // threshold tokens (200000 * 0.8)
-		"80%",               // compaction threshold
+		"```",      // code block wrapping
+		"~105,000", // total tokens (60000 + 40000 + 5000), estimated
+		"200,000",  // context limit
+		"52.5%",    // 105000 / 200000
+		"160,000",  // threshold tokens (200000 * 0.8)
+		"80%",      // compaction threshold
 		"55,000 tokens until compaction",
 		// System prompt sections
 		"System prompt:",
@@ -1232,7 +1251,7 @@ func TestContextCommand(t *testing.T) {
 		"MEMORY.md",
 		"Environment",
 		"Skills",
-		"tokens",            // all sections show tokens
+		"tokens", // all sections show tokens
 		// Conversation
 		"Conversation:",
 		"User messages",
@@ -1401,10 +1420,10 @@ func TestContextCommandExactTokens(t *testing.T) {
 		"SOUL.md",
 		"MEMORY.md",
 		"Skills",
-		"2,500 tokens",                    // IDENTITY.md exact
+		"2,500 tokens", // IDENTITY.md exact
 		"Tools: 2,000 tokens",
-		"Conversation: 15,000 tokens",     // exact, no ~
-		"User messages",                   // per-role still shown
+		"Conversation: 15,000 tokens", // exact, no ~
+		"User messages",               // per-role still shown
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
@@ -1450,11 +1469,11 @@ func TestContextCommandCountingAPIError(t *testing.T) {
 func TestSecretsListTable(t *testing.T) {
 	store := &mockSecretsStore{
 		data: map[string]string{
-			"anthropic.token":      "x",
-			"telegram.clutch":      "x",
-			"telegram.clutchling":  "x",
-			"telegram.scout":       "x",
-			"brave.api_key":        "x",
+			"anthropic.token":     "x",
+			"telegram.clutch":     "x",
+			"telegram.clutchling": "x",
+			"telegram.scout":      "x",
+			"brave.api_key":       "x",
 		},
 		allowedHosts: map[string][]string{
 			"anthropic": {"api.anthropic.com"},
