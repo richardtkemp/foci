@@ -21,7 +21,7 @@ func NewMemoryRemindTool(rs *memory.ReminderStore, agentID string) *Tool {
 				},
 				"when": {
 					"type": "string",
-					"description": "When to surface: 'next_heartbeat', 'next_session', 'tomorrow', a date (YYYY-MM-DD), or a duration (e.g. '2h', '30m')"
+					"description": "When to surface: 'next_heartbeat', 'next_session', 'tomorrow', a date (YYYY-MM-DD), an ISO timestamp (e.g. '2026-02-26T12:00:00Z'), or a duration (e.g. '2h', '30m')"
 				}
 			},
 			"required": ["text", "when"]

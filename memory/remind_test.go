@@ -148,6 +148,9 @@ func TestResolveWhen(t *testing.T) {
 		{"next_session", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
 		{"tomorrow", func(t time.Time) bool { return t.After(time.Now()) }, "should be in the future"},
 		{"2030-06-15", func(t time.Time) bool { return t.Year() == 2030 && t.Month() == 6 && t.Day() == 15 }, "should be that date"},
+		{"2030-06-15T14:30:00Z", func(t time.Time) bool {
+			return t.Year() == 2030 && t.Month() == 6 && t.Day() == 15 && t.Hour() == 14 && t.Minute() == 30
+		}, "should be that RFC3339 timestamp"},
 		{"2h", func(t time.Time) bool { return t.After(time.Now().Add(time.Hour)) }, "should be ~2h from now"},
 		{"gibberish", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "unknown defaults to now"},
 	}
