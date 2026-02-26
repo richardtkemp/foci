@@ -31,7 +31,7 @@ const (
 type OAuthCredentials struct {
 	AccessToken      string `json:"accessToken"`
 	RefreshToken     string `json:"refreshToken"`
-	ExpiresAt        string `json:"expiresAt"`
+	ExpiresAt        int64  `json:"expiresAt"`       // Unix milliseconds
 	Scopes           string `json:"scopes"`
 	SubscriptionType string `json:"subscriptionType"`
 	RateLimitTier    string `json:"rateLimitTier"`
@@ -275,15 +275,8 @@ func (m *OAuthManager) readCredentials() error {
 	}
 
 	var expiresAt time.Time
-	if creds.ClaudeAiOauth.ExpiresAt != "" {
-		expiresAt, err = time.Parse(time.RFC3339, creds.ClaudeAiOauth.ExpiresAt)
-		if err != nil {
-			// Try other formats
-			expiresAt, err = time.Parse(time.RFC3339Nano, creds.ClaudeAiOauth.ExpiresAt)
-			if err != nil {
-				m.logFunc("oauth: cannot parse expiresAt %q, treating as expired", creds.ClaudeAiOauth.ExpiresAt)
-			}
-		}
+	if creds.ClaudeAiOauth.ExpiresAt > 0 {
+		expiresAt = time.UnixMilli(creds.ClaudeAiOauth.ExpiresAt)
 	}
 
 	m.mu.Lock()
@@ -339,7 +332,7 @@ func (m *OAuthManager) writeCredentials() error {
 		oauth["refreshToken"] = m.refreshToken
 	}
 	if !m.expiresAt.IsZero() {
-		oauth["expiresAt"] = m.expiresAt.Format(time.RFC3339)
+		oauth["expiresAt"] = m.expiresAt.UnixMilli()
 	}
 	m.mu.Unlock()
 
