@@ -270,12 +270,12 @@ func NewCacheCommand(apiLogPath string) *Command {
 
 			// Pre-compute per-row values for column width measurement
 			type cacheRow struct {
-				time     string
-				input    string
-				cRead    string
-				cWrite   string
-				cost     string
-				hitPct   string
+				time   string
+				input  string
+				cRead  string
+				cWrite string
+				cost   string
+				hitPct string
 			}
 			rows := make([]cacheRow, len(recent))
 			for i, e := range recent {
@@ -420,7 +420,7 @@ func NewCostCommand(apiLogPath string) *Command {
 				}
 				return b.String(), nil
 
-				case "24h":
+			case "24h":
 				cutoff := time.Now().UTC().Add(-24 * time.Hour)
 				var filtered []apiEntry
 				for _, e := range entries {
@@ -437,7 +437,10 @@ func NewCostCommand(apiLogPath string) *Command {
 				fmt.Fprintf(&b, "API cost (last 24h): $%.2f eq.\n", total)
 				b.WriteString("\n```\n")
 				// Category table
-				type catRow struct{ name string; cost float64 }
+				type catRow struct {
+					name string
+					cost float64
+				}
 				cats := []catRow{
 					{"Cache reads", cr}, {"Cache writes", cw},
 					{"Input", inp}, {"Output", out},
@@ -445,13 +448,21 @@ func NewCostCommand(apiLogPath string) *Command {
 				nameW := len("Category")
 				costW := len("Cost")
 				for _, c := range cats {
-					if len(c.name) > nameW { nameW = len(c.name) }
+					if len(c.name) > nameW {
+						nameW = len(c.name)
+					}
 					cs := fmt.Sprintf("$%.2f", c.cost)
-					if len(cs) > costW { costW = len(cs) }
+					if len(cs) > costW {
+						costW = len(cs)
+					}
 				}
 				ts := fmt.Sprintf("$%.2f", total)
-				if len(ts) > costW { costW = len(ts) }
-				if len("Total") > nameW { nameW = len("Total") }
+				if len(ts) > costW {
+					costW = len(ts)
+				}
+				if len("Total") > nameW {
+					nameW = len("Total")
+				}
 				sep := strings.Repeat("─", nameW+2+costW)
 				fmt.Fprintf(&b, "%-*s  %*s\n", nameW, "Category", costW, "Cost")
 				b.WriteString(sep + "\n")
@@ -492,12 +503,18 @@ func NewCostCommand(apiLogPath string) *Command {
 				for i := 0; i < 7; i++ {
 					day := startOfToday.AddDate(0, 0, -i).Format("2006-01-02")
 					cs := fmt.Sprintf("$%.2f", dayCosts[day])
-					if len(cs) > costW { costW = len(cs) }
+					if len(cs) > costW {
+						costW = len(cs)
+					}
 				}
 				ts := fmt.Sprintf("$%.2f", total)
-				if len(ts) > costW { costW = len(ts) }
+				if len(ts) > costW {
+					costW = len(ts)
+				}
 				ms := fmt.Sprintf("$%.2f", mean)
-				if len(ms) > costW { costW = len(ms) }
+				if len(ms) > costW {
+					costW = len(ms)
+				}
 				sep := strings.Repeat("─", dateW+2+costW)
 				fmt.Fprintf(&b, "%-*s  %*s\n", dateW, "Date", costW, "Cost")
 				b.WriteString(sep + "\n")
@@ -559,8 +576,9 @@ func NewModelCommand(getModel func() string, setModel func(string)) *Command {
 			if args == "" {
 				return fmt.Sprintf("Current model: %s", getModel()), nil
 			}
-			setModel(args)
-			return fmt.Sprintf("Model switched to: %s", args), nil
+			resolved := resolveModel(args)
+			setModel(resolved)
+			return fmt.Sprintf("Model switched to: %s", resolved), nil
 		},
 	}
 }
@@ -945,11 +963,11 @@ type SystemSection struct {
 
 // MessageBreakdown holds character counts by message role.
 type MessageBreakdown struct {
-	UserChars      int
-	AssistantChars int
+	UserChars       int
+	AssistantChars  int
 	ToolResultChars int
-	UserCount      int
-	AssistantCount int
+	UserCount       int
+	AssistantCount  int
 }
 
 // SectionTokens holds the exact token count for one system prompt section.
@@ -960,11 +978,11 @@ type SectionTokens struct {
 
 // TokenCounts holds exact token counts from the counting API.
 type TokenCounts struct {
-	Total        int              // total input tokens (full request)
-	System       int              // system prompt tokens
-	Conversation int              // conversation tokens (total - system - tools)
-	Tools        int              // tool definition tokens
-	Sections     []SectionTokens  // per-component breakdown (env, files, skills)
+	Total        int             // total input tokens (full request)
+	System       int             // system prompt tokens
+	Conversation int             // conversation tokens (total - system - tools)
+	Tools        int             // tool definition tokens
+	Sections     []SectionTokens // per-component breakdown (env, files, skills)
 }
 
 // ContextInfo holds data for the /context command.
@@ -973,10 +991,10 @@ type ContextInfo struct {
 	Model            string
 	CompactionThresh float64
 	ContextLimit     int
-	SystemSections   []SystemSection  // workspace file sections
-	EnvironmentChars int              // environment block chars
-	SkillsChars      int              // skills/extra system blocks chars
-	Messages         MessageBreakdown // conversation breakdown
+	SystemSections   []SystemSection                                 // workspace file sections
+	EnvironmentChars int                                             // environment block chars
+	SkillsChars      int                                             // skills/extra system blocks chars
+	Messages         MessageBreakdown                                // conversation breakdown
 	CountTokensFn    func(ctx context.Context) (*TokenCounts, error) // nil = use estimates
 }
 
