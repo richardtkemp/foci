@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"regexp"
 	"syscall"
@@ -14,6 +15,8 @@ import (
 	"clod/secrets"
 	"clod/secrets/bitwarden"
 )
+
+const execMaxOutputBytes = 2 * 1024 * 1024 // 2MB cap on stdout/stderr to prevent OOM
 
 // sleepRegexp matches commands that start with "sleep" (case-insensitive).
 // This blocks bare sleep commands which block for up to 10s then silently
@@ -134,8 +137,35 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		}
 	}
 
-	out, err := proc.CombinedOutput()
-	return formatResult(string(out), err, ctx, timeout, displayCmd, store, bwStore), nil
+	// Use pipes with LimitReader to cap memory usage (Bug #115)
+	stdout, err := proc.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("create stdout pipe: %w", err)
+	}
+	stderr, err := proc.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("create stderr pipe: %w", err)
+	}
+
+	if err := proc.Start(); err != nil {
+		return "", fmt.Errorf("start command: %w", err)
+	}
+
+	// Read stdout and stderr with limits. Pipes close when process exits,
+	// so we must read in goroutines and wait for them after Wait().
+	var combined bytes.Buffer
+	doneRead := make(chan struct{})
+
+	go func() {
+		defer close(doneRead)
+		io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
+		io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
+	}()
+
+	err = proc.Wait()
+	<-doneRead // Wait for all output to be read
+
+	return formatResult(combined.String(), err, ctx, timeout, displayCmd, store, bwStore), nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
@@ -151,14 +181,32 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 	}
 
-	var stdout bytes.Buffer
-	proc.Stdout = &stdout
-	proc.Stderr = &stdout
+	// Use pipes with LimitReader to cap memory usage (Bug #115)
+	stdout, err := proc.StdoutPipe()
+	if err != nil {
+		cmdCancel()
+		return "", fmt.Errorf("create stdout pipe: %w", err)
+	}
+	stderr, err := proc.StderrPipe()
+	if err != nil {
+		cmdCancel()
+		return "", fmt.Errorf("create stderr pipe: %w", err)
+	}
 
 	if err := proc.Start(); err != nil {
 		cmdCancel()
 		return "", fmt.Errorf("start command: %w", err)
 	}
+
+	// Read stdout and stderr with limits into shared buffer
+	var combined bytes.Buffer
+	doneRead := make(chan struct{})
+
+	go func() {
+		defer close(doneRead)
+		io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
+		io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
+	}()
 
 	// Wait for completion or threshold
 	done := make(chan error, 1)
@@ -170,8 +218,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	select {
 	case err := <-done:
 		// Command finished before threshold
+		<-doneRead // Wait for output reading to complete
 		cmdCancel()
-		return formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
+		return formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
@@ -181,7 +230,8 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		go func() {
 			defer cmdCancel()
 			err := <-done
-			result := formatResult(stdout.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+			<-doneRead // Wait for output reading to complete
+			result := formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
 			notifier.Notify(sessionKey, msg)
 		}()
@@ -193,6 +243,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		go func() {
 			defer cmdCancel()
 			<-done
+			<-doneRead
 		}()
 		return "", ctx.Err()
 	}
