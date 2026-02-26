@@ -170,6 +170,10 @@ func resolveWhen(when string) time.Time {
 		tomorrow := now.Add(24 * time.Hour)
 		return time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, time.UTC)
 	default:
+		// Try parsing as an ISO 8601 / RFC3339 timestamp
+		if t, err := time.Parse(time.RFC3339, when); err == nil {
+			return t
+		}
 		// Try parsing as a date
 		if t, err := time.Parse("2006-01-02", when); err == nil {
 			return t
