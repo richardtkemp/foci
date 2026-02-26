@@ -226,7 +226,31 @@ func main() {
 		log.Warnf("main", "invalid anthropic.http_timeout, using default: %v", err)
 		httpTimeout = 120 * time.Second
 	}
-	client := anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
+
+	// OAuth auto-refresh: when credentials_file exists and auto_refresh is nil or true,
+	// create an OAuthManager for proactive + reactive token refresh.
+	autoRefresh := cfg.Anthropic.AutoRefresh == nil || *cfg.Anthropic.AutoRefresh
+	var oauthMgr *anthropic.OAuthManager
+	var client *anthropic.Client
+	if autoRefresh {
+		mgr, mgrErr := anthropic.NewOAuthManager(cfg.Anthropic.CredentialsFile,
+			anthropic.WithLogger(func(format string, args ...any) {
+				log.Infof("oauth", format, args...)
+			}))
+		if mgrErr != nil {
+			log.Warnf("main", "oauth auto-refresh unavailable, using static token: %v", mgrErr)
+			client = anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
+		} else {
+			oauthMgr = mgr
+			mgr.Start()
+			defer mgr.Stop()
+			client = anthropic.NewClientWithTokenFunc(mgr.Token, httpTimeout)
+			client.SetRefreshFunc(mgr.RefreshIfNeeded)
+			log.Infof("main", "oauth auto-refresh enabled (credentials: %s)", cfg.Anthropic.CredentialsFile)
+		}
+	} else {
+		client = anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
+	}
 	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
 
 	// Shared: Session store
@@ -437,7 +461,7 @@ func main() {
 	// Bot manager — owns all Telegram bots
 	botMgr := telegram.NewBotManager()
 
-	// Shared: usage client — prefer credentials file (auto-refreshing), fall back to static token
+	// Shared: usage client — prefer OAuthManager (auto-refreshing), fall back to credentials file or static token
 	credFile := cfg.Anthropic.CredentialsFile
 	if strings.HasPrefix(credFile, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -445,7 +469,10 @@ func main() {
 		}
 	}
 	var usageClient *anthropic.UsageClient
-	if credFile != "" {
+	if oauthMgr != nil {
+		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
+		log.Infof("main", "usage: using OAuthManager token")
+	} else if credFile != "" {
 		usageClient = anthropic.NewUsageClientWithFunc(func() string {
 			token, err := anthropic.ReadCredentialsToken(credFile)
 			if err != nil {

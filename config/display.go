@@ -262,6 +262,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("anthropic", "oauth_token", redactString(cfg.Anthropic.OAuthToken))
 	add("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	add("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
+	if cfg.Anthropic.AutoRefresh != nil {
+		add("anthropic", "auto_refresh", *cfg.Anthropic.AutoRefresh)
+	}
 	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 
@@ -473,6 +476,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("anthropic", "oauth_token", redactString(cfg.Anthropic.OAuthToken))
 	addGlobal("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	addGlobal("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
+	if cfg.Anthropic.AutoRefresh != nil {
+		addGlobal("anthropic", "auto_refresh", *cfg.Anthropic.AutoRefresh)
+	}
 	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 	if len(cfg.PromptRules) > 0 {
@@ -615,6 +621,7 @@ type displayAnthropic struct {
 	OAuthToken      string `toml:"oauth_token"`
 	BraveAPIKey     string `toml:"brave_api_key"`
 	CredentialsFile string `toml:"credentials_file"`
+	AutoRefresh     *bool  `toml:"auto_refresh,omitempty"`
 	HTTPTimeout     string `toml:"http_timeout"`
 	UsageAPITimeout string `toml:"usage_api_timeout"`
 }
@@ -652,6 +659,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			OAuthToken:      redactString(cfg.Anthropic.OAuthToken),
 			BraveAPIKey:     redactString(cfg.Anthropic.BraveAPIKey),
 			CredentialsFile: cfg.Anthropic.CredentialsFile,
+			AutoRefresh:     cfg.Anthropic.AutoRefresh,
 			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,
 			UsageAPITimeout: cfg.Anthropic.UsageAPITimeout,
 		},
