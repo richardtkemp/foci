@@ -258,6 +258,47 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "use v2_api_endpoint here",
 			want: "use v2_api_endpoint here",
 		},
+		// HTML escaping in body text
+		{
+			name: "angle brackets in text escaped",
+			in:   "use a <b> tag for bold",
+			want: "use a &lt;b> tag for bold",
+		},
+		{
+			name: "ampersand in text escaped",
+			in:   "foo & bar",
+			want: "foo &amp; bar",
+		},
+		{
+			name: "angle brackets preserved in code block",
+			in:   "```\n<div>hello</div>\n```",
+			want: "<pre><code>&lt;div&gt;hello&lt;/div&gt;</code></pre>",
+		},
+		{
+			name: "angle brackets preserved in inline code",
+			in:   "use `<div>` for this",
+			want: "use <code>&lt;div&gt;</code> for this",
+		},
+		{
+			name: "thinking-like tags in text escaped",
+			in:   "The model may output <think> tags",
+			want: "The model may output &lt;think> tags",
+		},
+		{
+			name: "math inequality in text escaped",
+			in:   "when a < b and c > d",
+			want: "when a &lt; b and c > d",
+		},
+		{
+			name: "HTML escaping with bold markdown",
+			in:   "**bold** and a < b",
+			want: "<b>bold</b> and a &lt; b",
+		},
+		{
+			name: "ampersand in link URL preserved",
+			in:   "click [here](https://example.com?a=1&b=2)",
+			want: `click <a href="https://example.com?a=1&amp;b=2">here</a>`,
+		},
 		// Edge cases for FindStringSubmatch guards
 		{
 			name: "code block with unicode box-drawing chars",
