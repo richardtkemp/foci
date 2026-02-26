@@ -110,7 +110,32 @@ system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 
 Resolution order: **agent field > `[defaults]` > hardcoded default**.
 
----
+2. The | `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |
+| `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
+
+## `[models]
+
+Model aliases and related configuration.
+
+The `aliases` map allows shorthand names to be resolved to full model IDs in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
+
+    | Key | Type | Default | Description |
+    |-----|------|---------|-------------|
+    | `aliases` | map | see below | Shorthand → full model ID mapping. |
+
+    Default aliases (used when `[models]` section is not configured):
+    - `opus` → `claude-opus-4-6`
+    - `sonnet` → `claude-sonnet-4-6`
+    - `haiku` → `claude-haiku-4-5`
+
+    Example with custom model aliases:
+    ```toml
+    [models.aliases]
+    opus = "claude-opus-5-0"
+    sonnet = "claude-sonnet-5-0"
+    haiku = "claude-haiku-5-0"
+    custom = "claude-custom-model"
+    ```
 
 ## `[anthropic]`
 

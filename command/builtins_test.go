@@ -431,9 +431,22 @@ func TestResetCommand(t *testing.T) {
 
 func TestModelCommand(t *testing.T) {
 	model := "claude-haiku-4-5"
+	resolveModel := func(input string) string {
+		switch strings.ToLower(strings.TrimSpace(input)) {
+		case "opus":
+			return "claude-opus-4-6"
+		case "sonnet", "":
+			return "claude-sonnet-4-6"
+		case "haiku":
+			return "claude-haiku-4-5"
+		default:
+			return input
+		}
+	}
 	cmd := NewModelCommand(
 		func() string { return model },
 		func(m string) { model = m },
+		resolveModel,
 	)
 
 	// Show current

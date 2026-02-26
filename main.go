@@ -793,7 +793,7 @@ func main() {
 					log.Errorf("http", "async send error: %v", err)
 					return
 				}
-	
+
 				if resp != "" {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
 						if err := bot.SendText(resp); err != nil {
@@ -955,7 +955,7 @@ func main() {
 					log.Errorf("wake", "async error: %v", err)
 					return
 				}
-	
+
 				if resp != "" && !silent {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
 						if err := bot.SendText(resp); err != nil {
@@ -1735,10 +1735,33 @@ func setupAgent(p setupParams) *agentInstance {
 		bootstrap.Reload()
 		return nil
 	}))
+
+	// Model resolution using config aliases
+	var resolveModelFn func(string) string
+	if len(p.cfg.Models.Aliases) > 0 {
+		aliases := p.cfg.Models.Aliases
+		resolveModelFn = func(input string) string {
+			key := strings.ToLower(strings.TrimSpace(input))
+			if resolved, ok := aliases[key]; ok {
+				return resolved
+			}
+			if input == "" {
+				if resolved, ok := aliases["sonnet"]; ok {
+					return resolved
+				}
+			}
+			return input
+		}
+	} else {
+		resolveModelFn = func(input string) string { return input }
+	}
+
 	cmds.Register(command.NewModelCommand(
 		func() string { return ag.SessionModel(defaultSessionKey()) },
 		func(m string) { ag.SetSessionModel(defaultSessionKey(), m) },
+		resolveModelFn,
 	))
+
 	cmds.Register(command.NewEffortCommand(
 		func() string { return ag.SessionEffort(defaultSessionKey()) },
 		func(e string) { ag.SetSessionEffort(defaultSessionKey(), e) },
@@ -1975,6 +1998,7 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 			return names
 		},
+		ResolveModel: resolveModelFn,
 	}
 	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
 	cmds.Register(command.NewCompactCommand(func(ctx context.Context) (int, error) {

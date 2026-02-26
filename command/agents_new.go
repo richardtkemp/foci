@@ -12,12 +12,13 @@ import (
 
 // AgentNewDeps holds dependencies for the /agents new wizard.
 type AgentNewDeps struct {
-	ConfigPath  string           // path to clod.toml
-	DefaultsDir string           // path to shared/defaults/
-	HomeDir     string           // base dir for workspaces (e.g. /home/clod)
-	ListFn      func() []AgentInfo
-	SecretNames func() []string // current secret names
-	BotNames    func() []string // existing bot names from [telegram.bots] config
+	ConfigPath   string // path to clod.toml
+	DefaultsDir  string // path to shared/defaults/
+	HomeDir      string // base dir for workspaces (e.g. /home/clod)
+	ListFn       func() []AgentInfo
+	SecretNames  func() []string // current secret names
+	BotNames     func() []string // existing bot names from [telegram.bots] config
+	ResolveModel func(string) string
 }
 
 // agentWizard implements WizardHandler for interactive agent creation.
@@ -106,9 +107,27 @@ func (w *agentWizard) handleEmoji(text string) (string, bool) {
 }
 
 func (w *agentWizard) handleModel(text string) (string, bool) {
-	w.model = resolveModel(text)
+	resolve := w.deps.ResolveModel
+	if resolve == nil {
+		resolve = defaultResolveModel
+	}
+	w.model = resolve(text)
 	w.step = 4
 	return "Bot token secret name (e.g. `telegram.greek`):", false
+}
+
+// defaultResolveModel is the fallback when no ResolveModel callback is provided.
+func defaultResolveModel(input string) string {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "opus":
+		return "claude-opus-4-6"
+	case "sonnet", "":
+		return "claude-sonnet-4-6"
+	case "haiku":
+		return "claude-haiku-4-5"
+	default:
+		return input
+	}
 }
 
 func (w *agentWizard) handleToken(text string) (string, bool) {
@@ -186,20 +205,6 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 		return fmt.Sprintf("Creation failed: %s", err), true
 	}
 	return result, true
-}
-
-// resolveModel resolves shorthand model names to full Anthropic model IDs.
-func resolveModel(input string) string {
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "opus":
-		return "claude-opus-4-6"
-	case "sonnet", "":
-		return "claude-sonnet-4-6"
-	case "haiku":
-		return "claude-haiku-4-5"
-	default:
-		return input
-	}
 }
 
 // createAgent is the default creation function that sets up workspace, config, and crontab.
