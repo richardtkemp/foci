@@ -29,12 +29,12 @@ const (
 
 // OAuthCredentials represents the claudeAiOauth section of the credentials file.
 type OAuthCredentials struct {
-	AccessToken      string `json:"accessToken"`
-	RefreshToken     string `json:"refreshToken"`
-	ExpiresAt        int64  `json:"expiresAt"`       // Unix milliseconds
+	AccessToken      string   `json:"accessToken"`
+	RefreshToken     string   `json:"refreshToken"`
+	ExpiresAt        int64    `json:"expiresAt"` // Unix milliseconds
 	Scopes           []string `json:"scopes"`
-	SubscriptionType string `json:"subscriptionType"`
-	RateLimitTier    string `json:"rateLimitTier"`
+	SubscriptionType string   `json:"subscriptionType"`
+	RateLimitTier    string   `json:"rateLimitTier"`
 }
 
 // CredentialsFile wraps the top-level credentials JSON.
@@ -137,7 +137,15 @@ func (m *OAuthManager) RefreshIfNeeded(staleToken string) error {
 }
 
 // Start begins the background proactive refresh goroutine.
+// Performs an immediate expiry check before starting the ticker.
 func (m *OAuthManager) Start() {
+	m.mu.Lock()
+	remaining := time.Until(m.expiresAt)
+	m.mu.Unlock()
+	m.logFunc("oauth: token expires at %s (in %s)", m.expiresAt.Format(time.RFC3339), remaining.Round(time.Second))
+
+	m.maybeRefresh()
+
 	go func() {
 		defer close(m.done)
 		ticker := time.NewTicker(RefreshInterval)
@@ -147,19 +155,25 @@ func (m *OAuthManager) Start() {
 			case <-m.stop:
 				return
 			case <-ticker.C:
-				m.mu.Lock()
-				remaining := time.Until(m.expiresAt)
-				m.mu.Unlock()
-
-				if remaining < RefreshWindow && remaining > 0 {
-					m.logFunc("oauth: token expires in %s, refreshing proactively", remaining.Round(time.Second))
-					if err := m.refresh(); err != nil {
-						m.logFunc("oauth: proactive refresh failed: %v", err)
-					}
-				}
+				m.maybeRefresh()
 			}
 		}
 	}()
+}
+
+// maybeRefresh checks if the token is within the refresh window and refreshes if needed.
+// Unlike the previous implementation, it also refreshes already-expired tokens.
+func (m *OAuthManager) maybeRefresh() {
+	m.mu.Lock()
+	remaining := time.Until(m.expiresAt)
+	m.mu.Unlock()
+
+	if remaining < RefreshWindow {
+		m.logFunc("oauth: token expires in %s, refreshing proactively", remaining.Round(time.Second))
+		if err := m.refresh(); err != nil {
+			m.logFunc("oauth: proactive refresh failed: %v", err)
+		}
+	}
 }
 
 // Stop stops the background refresh goroutine and waits for it to finish.
