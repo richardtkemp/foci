@@ -1,14 +1,15 @@
-# Task: /config table should produce a table
+# Fix: /config table display bugs
 
-## Problem
-`/config table` does not produce a formatted table. It should look like `/config available`'s output — aligned columns showing key-value pairs.
+## Problem A: Not splitting into separate messages
+/config table should send separate messages — one for global config, one per agent. Currently sends one big concatenated response. Each section should be its own message so Telegram doesn't need to split mid-table.
 
-## Requirements
-1. `/config table` should display the running config as a formatted, aligned table (like `/config available` does)
-2. Same column alignment and code block wrapping approach
+## Problem B: HTML tags break on message split  
+The output uses `<pre><code>` HTML tags. When Telegram splits a long message, the tags aren't re-added to continuation messages, so subsequent chunks render as garbage.
 
-## Reference
-Look at how `/config available` formats its output and match that style for `/config table`.
+## Fix
+1. Switch from HTML `<pre><code>` to markdown triple-backtick code blocks
+2. Return multiple messages (one per section) instead of one big response. The command handler needs to support returning multiple responses, OR the /config table command should send each section via the bot directly.
+3. Each section gets its own code block: "Global", "clutch", "fotini", etc.
 
-## Update docs
-- docs/CONFIG.md if relevant
+## Docs
+Update SPEC.md if the command output format is documented.
