@@ -198,9 +198,45 @@ func TestAgentWizardModelResolution(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := resolveModel(tt.input)
+		got := defaultResolveModel(tt.input)
 		if got != tt.want {
-			t.Errorf("resolveModel(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("defaultResolveModel(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestAgentWizardModelResolutionWithCustomAliases(t *testing.T) {
+	customAliases := map[string]string{
+		"opus":   "claude-opus-5-0",
+		"sonnet": "claude-sonnet-5-0",
+		"haiku":  "claude-haiku-5-0",
+	}
+	resolveWithAliases := func(input string) string {
+		key := strings.ToLower(strings.TrimSpace(input))
+		if resolved, ok := customAliases[key]; ok {
+			return resolved
+		}
+		if input == "" {
+			return customAliases["sonnet"]
+		}
+		return input
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"opus", "claude-opus-5-0"},
+		{"sonnet", "claude-sonnet-5-0"},
+		{"haiku", "claude-haiku-5-0"},
+		{"", "claude-sonnet-5-0"},
+		{"claude-custom-model", "claude-custom-model"},
+	}
+
+	for _, tt := range tests {
+		got := resolveWithAliases(tt.input)
+		if got != tt.want {
+			t.Errorf("resolveWithAliases(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

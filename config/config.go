@@ -28,38 +28,38 @@ type AgentMemoryConfig struct {
 }
 
 type AgentConfig struct {
-	ID                  string            `toml:"id"`
-	Name                string            `toml:"name"`              // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji               string            `toml:"emoji"`             // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Model               string            `toml:"model"`
-	Workspace           string            `toml:"workspace"`
-	SystemFiles         []string          `toml:"system_files"`          // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages   bool              `toml:"duplicate_messages"`    // send user text twice per API call (improves instruction following)
-	ForkPrompt               string            `toml:"fork_prompt"`                // DEPRECATED: use branch_orientation_prompt
-	BranchOrientationPrompt  string            `toml:"branch_orientation_prompt"`  // path to prompt file injected into all branch sessions (multiball, cron, spawn)
-	TelegramBot         string            `toml:"telegram_bot"`          // references key in [telegram.bots] map
-	MultiballBot        string            `toml:"multiball_bot"`         // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
-	MultiballBots       []string          `toml:"multiball_bots"`        // references keys in [telegram.bots] map (optional)
-	Memory              AgentMemoryConfig `toml:"memory"`                // per-agent memory sources (combined with global [memory])
-	MaxToolLoops        int               `toml:"max_tool_loops"`        // max tool iterations per turn (default 25)
-	MaxOutputTokens     int               `toml:"max_output_tokens"`     // max tokens in model response (default 8192)
-	Effort              string            `toml:"effort"`                // effort level: "low", "medium", "high" (empty = omit from request)
-	Thinking            string            `toml:"thinking"`              // thinking mode: "off" (default), "adaptive"
-	TTSRate             float64           `toml:"tts_rate"`              // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
-	InjectAgentWarnings bool              `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
-	StartupNotification *bool             `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
-	ShowToolCalls       *bool             `toml:"show_tool_calls"`       // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
-	MessagesInLog       *bool             `toml:"messages_in_log"`       // log user message content to event log (nil = use global logging.messages_in_log)
-	ImageSaveDir        string            `toml:"image_save_dir"`        // save received images to this directory (empty = disabled)
-	AllowedUsers        []string          `toml:"allowed_users"`         // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
+	ID                      string            `toml:"id"`
+	Name                    string            `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji                   string            `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Model                   string            `toml:"model"`
+	Workspace               string            `toml:"workspace"`
+	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	DuplicateMessages       bool              `toml:"duplicate_messages"`        // send user text twice per API call (improves instruction following)
+	ForkPrompt              string            `toml:"fork_prompt"`               // DEPRECATED: use branch_orientation_prompt
+	BranchOrientationPrompt string            `toml:"branch_orientation_prompt"` // path to prompt file injected into all branch sessions (multiball, cron, spawn)
+	TelegramBot             string            `toml:"telegram_bot"`              // references key in [telegram.bots] map
+	MultiballBot            string            `toml:"multiball_bot"`             // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
+	MultiballBots           []string          `toml:"multiball_bots"`            // references keys in [telegram.bots] map (optional)
+	Memory                  AgentMemoryConfig `toml:"memory"`                    // per-agent memory sources (combined with global [memory])
+	MaxToolLoops            int               `toml:"max_tool_loops"`            // max tool iterations per turn (default 25)
+	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
+	Effort                  string            `toml:"effort"`                    // effort level: "low", "medium", "high" (empty = omit from request)
+	Thinking                string            `toml:"thinking"`                  // thinking mode: "off" (default), "adaptive"
+	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
+	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
+	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
+	ShowToolCalls           *bool             `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
+	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
+	ImageSaveDir            string            `toml:"image_save_dir"`            // save received images to this directory (empty = disabled)
+	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
 	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
-	CompactionThreshold     *float64 `toml:"compaction_threshold"`      // compact at this % of context window
-	CompactionSummaryPrompt string   `toml:"compaction_summary_prompt"` // path to summary prompt file
-	CompactionHandoffMsg    string   `toml:"compaction_handoff_msg"`    // handoff message after compaction
-	CompactionNotify           *bool `toml:"compaction_notify"`              // send Telegram notification on compaction
-	CompactionDebug            *bool `toml:"compaction_debug"`               // send compaction summary as Telegram file
-	CompactionPreserveMessages *int  `toml:"compaction_preserve_messages"`   // preserve last N messages through compaction (nil = use global)
-	SessionResetPrompt         string `toml:"session_reset_prompt"`           // path to prompt fired before session clear
+	CompactionThreshold        *float64 `toml:"compaction_threshold"`         // compact at this % of context window
+	CompactionSummaryPrompt    string   `toml:"compaction_summary_prompt"`    // path to summary prompt file
+	CompactionHandoffMsg       string   `toml:"compaction_handoff_msg"`       // handoff message after compaction
+	CompactionNotify           *bool    `toml:"compaction_notify"`            // send Telegram notification on compaction
+	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
+	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
+	SessionResetPrompt         string   `toml:"session_reset_prompt"`         // path to prompt fired before session clear
 	// Per-agent skills and prompt rules (empty = use global)
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
 	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
@@ -103,16 +103,16 @@ type TelegramConfig struct {
 }
 
 type SessionsConfig struct {
-	Dir                     string  `toml:"dir"`
-	CompactionThreshold     float64 `toml:"compaction_threshold"`          // compact at this % of context window (default 0.8)
-	CompactionMaxTokens     int     `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
-	CompactionMinMessages   int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
-	CompactionSummaryPrompt string  `toml:"compaction_summary_prompt"`     // path to summary prompt file
-	CompactionHandoffMsg    string  `toml:"compaction_handoff_msg"`        // handoff message after compaction
-	CompactionNotify        *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
-	MaxSystemPromptFile     int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
-	MaxSystemPromptTotal    int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
-	CompactionDebug             bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
+	Dir                        string  `toml:"dir"`
+	CompactionThreshold        float64 `toml:"compaction_threshold"`          // compact at this % of context window (default 0.8)
+	CompactionMaxTokens        int     `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
+	CompactionMinMessages      int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
+	CompactionSummaryPrompt    string  `toml:"compaction_summary_prompt"`     // path to summary prompt file
+	CompactionHandoffMsg       string  `toml:"compaction_handoff_msg"`        // handoff message after compaction
+	CompactionNotify           *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
+	MaxSystemPromptFile        int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
+	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
+	CompactionDebug            bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
 	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
 	SessionResetPrompt         string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
 	BranchOrientationPrompt    string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
@@ -247,13 +247,19 @@ type DefaultsConfig struct {
 	MaxOutputTokens     int      `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
 	Effort              string   `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
 	Thinking            string   `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
-	TTSRate             float64  `toml:"tts_rate"`               // default TTS speech rate (default: 0 = voice config)
+	TTSRate             float64  `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
 	SystemFiles         []string `toml:"system_files"`          // default system file list
+}
+
+// ModelsConfig holds model-related configuration.
+type ModelsConfig struct {
+	Aliases map[string]string `toml:"aliases"` // shorthand → full model ID (e.g., "opus" → "claude-opus-4-6")
 }
 
 type Config struct {
 	DataDir            string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
 	Defaults           DefaultsConfig     `toml:"defaults"` // global defaults for agent-specific fields
+	Models             ModelsConfig       `toml:"models"`   // model aliases and related config
 	Agent              AgentConfig        `toml:"agent"`    // legacy: single agent
 	Agents             []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
 	Anthropic          AnthropicConfig    `toml:"anthropic"`
@@ -509,7 +515,17 @@ func Load(path string) (*Config, error) {
 	if cfg.Agent.Model == "" {
 		cfg.Agent.Model = "claude-haiku-4-5"
 	}
-if cfg.Sessions.CompactionThreshold == 0 {
+
+	// Model aliases defaults (if not configured)
+	if len(cfg.Models.Aliases) == 0 {
+		cfg.Models.Aliases = map[string]string{
+			"opus":   "claude-opus-4-6",
+			"sonnet": "claude-sonnet-4-6",
+			"haiku":  "claude-haiku-4-5",
+		}
+	}
+
+	if cfg.Sessions.CompactionThreshold == 0 {
 		cfg.Sessions.CompactionThreshold = 0.8
 	}
 	if cfg.Sessions.CompactionMaxTokens == 0 {

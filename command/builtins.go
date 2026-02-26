@@ -566,8 +566,8 @@ func NewResetCommand(resetFn func() error) *Command {
 }
 
 // NewModelCommand returns a /model command to show or switch the model.
-// getModel returns current model; setModel switches it.
-func NewModelCommand(getModel func() string, setModel func(string)) *Command {
+// getModel returns current model; setModel switches it; resolveModel resolves aliases.
+func NewModelCommand(getModel func() string, setModel func(string), resolveModel func(string) string) *Command {
 	return &Command{
 		Name:        "model",
 		Description: "Show or switch model",
