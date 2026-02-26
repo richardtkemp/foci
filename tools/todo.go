@@ -13,7 +13,7 @@ import (
 func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
 		Name:        "todo",
-		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, and removing items. Items have priority (high/medium/low) and survive restarts.",
+		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -30,6 +30,10 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					"type": "string",
 					"enum": ["high", "medium", "low"],
 					"description": "Priority level (default: medium, used with 'add')"
+				},
+				"tag": {
+					"type": "string",
+					"description": "Comma-separated tags (used with 'add' to set tags, with 'list' to filter by tag, e.g. 'background')"
 				},
 				"id": {
 					"type": "integer",
@@ -52,6 +56,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Action   string `json:"action"`
 				Text     string `json:"text"`
 				Priority string `json:"priority"`
+				Tag      string `json:"tag"`
 				ID       int64  `json:"id"`
 				Status   string `json:"status"`
 				Query    string `json:"query"`
@@ -65,7 +70,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				if p.Text == "" {
 					return "", fmt.Errorf("text is required for add")
 				}
-				id, err := store.Add(agentID, p.Text, p.Priority)
+				id, err := store.Add(agentID, p.Text, p.Priority, p.Tag)
 				if err != nil {
 					return "", fmt.Errorf("add todo: %w", err)
 				}
@@ -73,10 +78,14 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				if pri == "" {
 					pri = "medium"
 				}
-				return fmt.Sprintf("Added todo #%d (%s): %s", id, pri, p.Text), nil
+				tagStr := ""
+				if p.Tag != "" {
+					tagStr = fmt.Sprintf(" [%s]", p.Tag)
+				}
+				return fmt.Sprintf("Added todo #%d (%s%s): %s", id, pri, tagStr, p.Text), nil
 
 			case "list":
-				items, err := store.List(agentID, p.Status)
+				items, err := store.List(agentID, p.Status, p.Tag)
 				if err != nil {
 					return "", fmt.Errorf("list todos: %w", err)
 				}
@@ -92,7 +101,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					if item.Status == "done" {
 						marker = "[x]"
 					}
-					lines = append(lines, fmt.Sprintf("#%d %s [%s] %s", item.ID, marker, item.Priority, item.Text))
+					tags := memory.FormatTags(item.Tags)
+					lines = append(lines, fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text))
 				}
 				return strings.Join(lines, "\n"), nil
 
@@ -113,7 +123,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					if item.Status == "done" {
 						marker = "[x]"
 					}
-					lines = append(lines, fmt.Sprintf("#%d %s [%s] %s", item.ID, marker, item.Priority, item.Text))
+					tags := memory.FormatTags(item.Tags)
+					lines = append(lines, fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text))
 				}
 				return strings.Join(lines, "\n"), nil
 

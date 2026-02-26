@@ -498,6 +498,37 @@ Each subdirectory with a `SKILL.md` is loaded. The skill name and description (f
 
 ---
 
+## `[heartbeat]`
+
+Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic cache prefix warm.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable heartbeat timer. |
+| `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be < 1h (Anthropic cache TTL). |
+| `prompt` | string | `"prompts/heartbeat.md"` | Path to heartbeat prompt file. |
+
+---
+
+## `[background]`
+
+Mana-gated background work timer. Fires when the user is idle, there are open background-tagged todos, and the manamometer says spending is wise.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable background work timer. |
+| `interval` | string | `"5m"` | Time since last interaction before firing. |
+| `prompt` | string | `"prompts/background.md"` | Path to background work prompt file. |
+| `invest_interval` | string | `"30m"` | Quiet period after mana reset to let cache invest before spending. |
+
+**Validation warnings:**
+- `background.interval > heartbeat.interval` — heartbeat resets the cache timer; background work may never trigger.
+- `heartbeat.interval > 1h` — Anthropic cache TTL is 1 hour; cache may expire between heartbeats.
+
+See [HEARTBEAT.md](HEARTBEAT.md) for full details on the manamometer and timer logic.
+
+---
+
 ## `[[commands]]`
 
 Custom slash commands. Each entry is a `[[commands]]` table array.

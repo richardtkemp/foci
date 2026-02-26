@@ -3,6 +3,7 @@ package memory
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -14,6 +15,7 @@ type TodoItem struct {
 	Text        string
 	Status      string // "open" or "done"
 	Priority    string // "high", "medium", "low"
+	Tags        string // comma-separated tags (e.g. "background,daily")
 	AgentID     string
 	CreatedAt   time.Time
 	CompletedAt *time.Time
@@ -54,18 +56,55 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		return nil, fmt.Errorf("create todos table: %w", err)
 	}
 
+	// Migration: add tags column if missing
+	if err := migrateAddTags(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate tags: %w", err)
+	}
+
 	return &TodoStore{db: db}, nil
 }
 
+// migrateAddTags adds the tags column if it doesn't exist.
+func migrateAddTags(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(todos)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasTags := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "tags" {
+			hasTags = true
+		}
+	}
+	if !hasTags {
+		_, err := db.Exec(`ALTER TABLE todos ADD COLUMN tags TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Add creates a new todo item and returns its ID.
-func (s *TodoStore) Add(agentID, text, priority string) (int64, error) {
+func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	if priority == "" {
 		priority = "medium"
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		`INSERT INTO todos (text, status, priority, agent_id, created_at) VALUES (?, 'open', ?, ?, ?)`,
-		text, priority, agentID, now,
+		`INSERT INTO todos (text, status, priority, tags, agent_id, created_at) VALUES (?, 'open', ?, ?, ?, ?)`,
+		text, priority, tags, agentID, now,
 	)
 	if err != nil {
 		return 0, err
@@ -73,28 +112,43 @@ func (s *TodoStore) Add(agentID, text, priority string) (int64, error) {
 	return res.LastInsertId()
 }
 
-// List returns todo items for an agent, optionally filtered by status.
-// If status is empty, returns all items.
-func (s *TodoStore) List(agentID, status string) ([]TodoItem, error) {
-	var rows *sql.Rows
-	var err error
+// List returns todo items for an agent, optionally filtered by status and/or tag.
+func (s *TodoStore) List(agentID, status, tag string) ([]TodoItem, error) {
+	query := `SELECT id, text, status, priority, tags, agent_id, created_at, completed_at FROM todos WHERE agent_id = ?`
+	args := []any{agentID}
+
 	if status != "" {
-		rows, err = s.db.Query(
-			`SELECT id, text, status, priority, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND status = ? ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
-			agentID, status,
-		)
-	} else {
-		rows, err = s.db.Query(
-			`SELECT id, text, status, priority, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
-			agentID,
-		)
+		query += ` AND status = ?`
+		args = append(args, status)
 	}
+	if tag != "" {
+		// Match tag as whole word in comma-separated list
+		query += ` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`
+		args = append(args, tag)
+	}
+
+	if status != "" {
+		query += ` ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+	} else {
+		query += ` ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	return scanTodos(rows)
+}
+
+// CountOpenByTag counts open todos with the given tag for an agent.
+func (s *TodoStore) CountOpenByTag(agentID, tag string) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM todos WHERE agent_id = ? AND status = 'open' AND (',' || tags || ',' LIKE '%,' || ? || ',%')`,
+		agentID, tag,
+	).Scan(&count)
+	return count, err
 }
 
 // Complete marks a todo item as done.
@@ -130,7 +184,7 @@ func (s *TodoStore) Remove(agentID string, id int64) error {
 // Search returns todo items matching a case-insensitive substring query.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, text, status, priority, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
+		`SELECT id, text, status, priority, tags, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
 		agentID, query,
 	)
 	if err != nil {
@@ -151,7 +205,7 @@ func scanTodos(rows *sql.Rows) ([]TodoItem, error) {
 		var item TodoItem
 		var createdAt string
 		var completedAt sql.NullString
-		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.AgentID, &createdAt, &completedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.AgentID, &createdAt, &completedAt); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -162,4 +216,22 @@ func scanTodos(rows *sql.Rows) ([]TodoItem, error) {
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// FormatTags returns a display string for tags, or empty if none.
+func FormatTags(tags string) string {
+	if tags == "" {
+		return ""
+	}
+	var parts []string
+	for _, t := range strings.Split(tags, ",") {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			parts = append(parts, t)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " {" + strings.Join(parts, ",") + "}"
 }

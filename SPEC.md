@@ -536,6 +536,23 @@ Both `POST /send` and `POST /wake` accept optional activity gating fields:
 
 The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
+### Heartbeat & Background Work
+
+Two timer-driven mechanisms run on a ~30s tick loop per agent:
+
+**Heartbeat** — Cache keepalive. Fires when `time_since(lastCacheWarmed) >= heartbeat.interval`. Creates a lightweight branch session with `no_compact` to keep the Anthropic cache prefix warm. Does no real work.
+
+**Background work** — Mana-gated task execution. Fires when:
+1. User has been idle for `background.interval`
+2. Open todos tagged "background" exist
+3. Manamometer says we can afford it
+
+Creates a branch session that picks up the highest-priority background todo item.
+
+**Manamometer** — Linear interpolation of expected mana over the 5-hour budget window. After `invest_interval` (default 30m) of quiet to let the cache build, the expected mana line drops linearly from 100% to 0% at window end. Work fires when actual mana exceeds expected mana. Near reset, even tiny mana is "in credit" since the budget resets soon.
+
+Config: `[heartbeat]` and `[background]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
+
 ### Secrets
 
 Secrets never pass through agent context. The agent cannot read, echo, or exfiltrate credentials.

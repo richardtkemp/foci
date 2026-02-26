@@ -573,6 +573,18 @@ func main() {
 				BranchFunc:  branchFn,
 			})
 			inst.hbRunner.Start(ctx)
+
+			// Wire Telegram bot callbacks to heartbeat runner
+			if bot := botMgr.PrimaryBot(acfg.ID); bot != nil {
+				runner := inst.hbRunner
+				bot.OnUserMessage = func() {
+					runner.NotifyInteraction()
+				}
+				bot.OnTurnComplete = func() {
+					runner.NotifyCacheWarmed()
+				}
+			}
+
 			log.Infof("main", "agent %q heartbeat runner started (hb=%v bg=%v)", acfg.ID, cfg.Heartbeat.Enabled, cfg.Background.Enabled)
 		}
 

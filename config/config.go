@@ -256,6 +256,21 @@ type ModelsConfig struct {
 	Aliases map[string]string `toml:"aliases"` // shorthand → full model ID (e.g., "opus" → "claude-opus-4-6")
 }
 
+// HeartbeatConfig controls the cache keepalive timer.
+type HeartbeatConfig struct {
+	Enabled  bool   `toml:"enabled"`  // enable heartbeat timer (default: false)
+	Interval string `toml:"interval"` // time since cache last warmed before firing (default: "55m")
+	Prompt   string `toml:"prompt"`   // file path to heartbeat prompt (default: "prompts/heartbeat.md")
+}
+
+// BackgroundConfig controls the mana-gated background work timer.
+type BackgroundConfig struct {
+	Enabled        bool   `toml:"enabled"`         // enable background work timer (default: false)
+	Interval       string `toml:"interval"`        // time since last interaction before firing (default: "5m")
+	Prompt         string `toml:"prompt"`           // file path to background work prompt (default: "prompts/background.md")
+	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset to let cache invest (default: "30m")
+}
+
 type Config struct {
 	DataDir            string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
 	Defaults           DefaultsConfig     `toml:"defaults"` // global defaults for agent-specific fields
@@ -276,6 +291,8 @@ type Config struct {
 	Environment        EnvironmentConfig  `toml:"environment"`
 	Skills             SkillsConfig       `toml:"skills"`
 	Tools              ToolsConfig        `toml:"tools"`
+	Heartbeat          HeartbeatConfig    `toml:"heartbeat"`
+	Background         BackgroundConfig   `toml:"background"`
 	Commands           []CommandConfig    `toml:"commands"`
 	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
 	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
@@ -716,7 +733,39 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.ShowToolCalls = true
 	}
 
+	// Heartbeat/background defaults
+	if cfg.Heartbeat.Interval == "" {
+		cfg.Heartbeat.Interval = "55m"
+	}
+	if cfg.Heartbeat.Prompt == "" {
+		cfg.Heartbeat.Prompt = "prompts/heartbeat.md"
+	}
+	if cfg.Background.Interval == "" {
+		cfg.Background.Interval = "5m"
+	}
+	if cfg.Background.Prompt == "" {
+		cfg.Background.Prompt = "prompts/background.md"
+	}
+	if cfg.Background.InvestInterval == "" {
+		cfg.Background.InvestInterval = "30m"
+	}
+
 	cfg.ResolveAllPaths()
+
+	// Heartbeat/background validation warnings
+	if cfg.Background.Enabled && cfg.Heartbeat.Enabled {
+		bgInt, _ := time.ParseDuration(cfg.Background.Interval)
+		hbInt, _ := time.ParseDuration(cfg.Heartbeat.Interval)
+		if bgInt > 0 && hbInt > 0 && bgInt > hbInt {
+			log.Warnf("config", "[background] interval %s > [heartbeat] interval %s — heartbeat resets cache timer, background work may never trigger", cfg.Background.Interval, cfg.Heartbeat.Interval)
+		}
+	}
+	if cfg.Heartbeat.Enabled {
+		hbInt, _ := time.ParseDuration(cfg.Heartbeat.Interval)
+		if hbInt > time.Hour {
+			log.Warnf("config", "[heartbeat] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between heartbeats", cfg.Heartbeat.Interval)
+		}
+	}
 
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
@@ -801,6 +850,12 @@ func (c *Config) ResolveAllPaths() {
 	}
 	if c.Sessions.CompactionSummaryPrompt != "" {
 		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)
+	}
+	if c.Heartbeat.Prompt != "" {
+		c.Heartbeat.Prompt = ResolvePath(c.Heartbeat.Prompt)
+	}
+	if c.Background.Prompt != "" {
+		c.Background.Prompt = ResolvePath(c.Background.Prompt)
 	}
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {
