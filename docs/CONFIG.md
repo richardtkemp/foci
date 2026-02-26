@@ -31,8 +31,8 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
-| `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. Empty = omit (use API default). Overridable at runtime via `/effort` command. |
-| `thinking` | string | `""` | Thinking mode: `"adaptive"` enables adaptive extended thinking (Opus 4.6). Empty or `"off"` = disabled. Overridable at runtime via `/thinking` command. Thinking tokens count toward mana. |
+| `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. Empty = omit (use API default). Overridable at runtime via `/effort` command. Per-session overrides persist across restarts via state store and reset when a new session starts. |
+| `thinking` | string | `""` | Thinking mode: `"adaptive"` enables adaptive extended thinking (Opus 4.6). Empty or `"off"` = disabled. Overridable at runtime via `/thinking` command. Per-session overrides persist across restarts via state store. Thinking tokens count toward mana. |
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 | `show_tool_calls` | bool | `true` | Show tool call messages in Telegram. Per-agent override of global `[telegram] show_tool_calls`. Set to `false` for user-facing agents where tool visibility is confusing. |
@@ -121,7 +121,7 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens.
 | `token` | string | `""` | Anthropic API key. Overridden by `secrets.toml` `[anthropic] token`. |
 | `oauth_token` | string | `""` | OAuth access token for the usage API. Overridden by `secrets.toml` `[anthropic] oauth_token`. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
-| `http_timeout` | string | `"120s"` | HTTP timeout for Anthropic API calls. Go duration format. |
+| `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 
 ---

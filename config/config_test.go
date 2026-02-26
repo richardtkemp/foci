@@ -1122,8 +1122,8 @@ token = "test-token"
 	if cfg.Agent.MaxOutputTokens != 8192 {
 		t.Errorf("default Agent.MaxOutputTokens = %d, want 8192", cfg.Agent.MaxOutputTokens)
 	}
-	if cfg.Anthropic.HTTPTimeout != "120s" {
-		t.Errorf("default Anthropic.HTTPTimeout = %q, want 120s", cfg.Anthropic.HTTPTimeout)
+	if cfg.Anthropic.HTTPTimeout != "600s" {
+		t.Errorf("default Anthropic.HTTPTimeout = %q, want 600s", cfg.Anthropic.HTTPTimeout)
 	}
 	if cfg.Anthropic.UsageAPITimeout != "10s" {
 		t.Errorf("default Anthropic.UsageAPITimeout = %q, want 10s", cfg.Anthropic.UsageAPITimeout)

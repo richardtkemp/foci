@@ -1355,10 +1355,11 @@ func setupAgent(p setupParams) *agentInstance {
 	} else if p.bwStore != nil {
 		ag.Redact = p.bwStore.Redact
 	}
-	// Restore voice mode and seed session meta for default session (if any).
+	// Restore per-session state and seed session meta for default session (if any).
 	// These are no-ops if no default session exists yet (first startup).
 	if sk := defaultSessionKey(); sk != "" {
 		ag.RestoreVoiceMode(sk)
+		ag.RestoreSessionOverrides(sk)
 		ag.SeedSessionMeta(sk)
 	}
 
@@ -1704,16 +1705,16 @@ func setupAgent(p setupParams) *agentInstance {
 		return nil
 	}))
 	cmds.Register(command.NewModelCommand(
-		func() string { return ag.Model },
-		func(m string) { ag.Model = m },
+		func() string { return ag.SessionModel(defaultSessionKey()) },
+		func(m string) { ag.SetSessionModel(defaultSessionKey(), m) },
 	))
 	cmds.Register(command.NewEffortCommand(
-		func() string { return ag.Effort },
-		func(e string) { ag.Effort = e },
+		func() string { return ag.SessionEffort(defaultSessionKey()) },
+		func(e string) { ag.SetSessionEffort(defaultSessionKey(), e) },
 	))
 	cmds.Register(command.NewThinkingCommand(
-		func() string { return ag.Thinking },
-		func(t string) { ag.Thinking = t },
+		func() string { return ag.SessionThinking(defaultSessionKey()) },
+		func(t string) { ag.SetSessionThinking(defaultSessionKey(), t) },
 	))
 	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
 		var infos []command.ToolInfo

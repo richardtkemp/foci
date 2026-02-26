@@ -15,11 +15,13 @@ type ImageSource struct {
 }
 
 // ContentBlock is a block of content in a message or response.
-// Covers text, image, tool_use, tool_result, and thinking block types.
+// Covers text, image, tool_use, tool_result, thinking, and redacted_thinking block types.
 type ContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
 	Thinking     string          `json:"thinking,omitempty"`  // thinking: internal reasoning text
+	Signature    string          `json:"signature,omitempty"` // thinking: encrypted verification signature (must be preserved)
+	Data         string          `json:"data,omitempty"`      // redacted_thinking: encrypted thinking data
 	Source       *ImageSource    `json:"source,omitempty"`    // image: base64 source
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 	ID           string          `json:"id,omitempty"`        // tool_use: block ID
@@ -69,7 +71,7 @@ type MessageRequest struct {
 	System       []SystemBlock  `json:"system,omitempty"`
 	Messages     []Message      `json:"messages"`
 	Tools        []ToolDef      `json:"tools,omitempty"`
-	Output       *OutputConfig  `json:"output,omitempty"`
+	Output       *OutputConfig  `json:"output_config,omitempty"`
 	Thinking     *ThinkingConfig `json:"thinking,omitempty"`
 }
 
