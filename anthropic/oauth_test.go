@@ -204,7 +204,7 @@ func TestOAuthManagerFileWritebackPreservesUnknownFields(t *testing.T) {
 			"accessToken":  "old-token",
 			"refreshToken": "refresh-token",
 			"expiresAt":    float64(time.Now().Add(1 * time.Minute).UnixMilli()),
-			"scopes":       "user:inference user:usage",
+			"scopes":       []string{"user:inference", "user:usage"},
 			"customField":  "should-survive",
 		},
 		"extraSection": map[string]interface{}{
@@ -251,7 +251,8 @@ func TestOAuthManagerFileWritebackPreservesUnknownFields(t *testing.T) {
 	if oauth["customField"] != "should-survive" {
 		t.Errorf("customField = %v", oauth["customField"])
 	}
-	if oauth["scopes"] != "user:inference user:usage" {
+	scopes, ok := oauth["scopes"].([]interface{})
+	if !ok || len(scopes) != 2 {
 		t.Errorf("scopes = %v", oauth["scopes"])
 	}
 	if oauth["accessToken"] != "new-access" {

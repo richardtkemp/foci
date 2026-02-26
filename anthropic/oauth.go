@@ -32,7 +32,7 @@ type OAuthCredentials struct {
 	AccessToken      string `json:"accessToken"`
 	RefreshToken     string `json:"refreshToken"`
 	ExpiresAt        int64  `json:"expiresAt"`       // Unix milliseconds
-	Scopes           string `json:"scopes"`
+	Scopes           []string `json:"scopes"`
 	SubscriptionType string `json:"subscriptionType"`
 	RateLimitTier    string `json:"rateLimitTier"`
 }
