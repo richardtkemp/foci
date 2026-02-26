@@ -69,6 +69,8 @@ type Bot struct {
 	isSecondary        bool                              // true for secondary bots (multiball)
 	pool               *Pool                             // back-reference to pool (secondary bots only)
 	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
+	OnUserMessage      func()                           // fires on each inbound user message (for heartbeat interaction tracking)
+	OnTurnComplete     func()                           // fires after each agent turn completes (for cache warming tracking)
 	botToken           string                            // for building file download URLs
 
 	transcriber       voice.STT // nil = voice notes not supported
@@ -506,6 +508,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if !b.isSecondary && b.agentID != "" && b.stateStore != nil {
 		b.stateStore.Set("agent:"+b.agentID+":last_user_activity", time.Now().Unix())
 	}
+	if b.OnUserMessage != nil {
+		b.OnUserMessage()
+	}
 
 	// Get text from message or caption (photos use caption)
 	text := msg.Text
@@ -858,6 +863,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		}
 		log.Errorf("telegram", "agent error: %s", b.sanitizeError(err))
 		response = fmt.Sprintf("Error: %s", b.sanitizeError(err))
+	}
+	if b.OnTurnComplete != nil {
+		b.OnTurnComplete()
 	}
 
 	// Guard against empty responses (e.g. end_turn after tool use with no text).
