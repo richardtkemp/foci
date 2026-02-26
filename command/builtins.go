@@ -959,6 +959,64 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 	}
 }
 
+// TmuxSessionInfo describes a tmux session for the /tmux command.
+type TmuxSessionInfo struct {
+	Name      string
+	Created   string // human-readable creation time
+	Windows   int
+	Watched   bool
+	WatchInfo string // additional watch info (e.g., window number, threshold)
+}
+
+// NewTmuxCommand returns a /tmux command that lists tmux sessions with status.
+func NewTmuxCommand(listFn func(ctx context.Context) ([]TmuxSessionInfo, error)) *Command {
+	return &Command{
+		Name:        "tmux",
+		Description: "List tmux sessions with status info",
+		Category:    "observability",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			sessions, err := listFn(ctx)
+			if err != nil {
+				return "", err
+			}
+
+			if len(sessions) == 0 {
+				return "No tmux sessions.", nil
+			}
+
+			// Build table
+			var rows [][]string
+			for _, s := range sessions {
+				status := "idle"
+				if s.Watched {
+					status = "watched"
+				}
+				watchInfo := "-"
+				if s.Watched && s.WatchInfo != "" {
+					watchInfo = s.WatchInfo
+				}
+				rows = append(rows, []string{
+					s.Name,
+					fmt.Sprintf("%d", s.Windows),
+					s.Created,
+					status,
+					watchInfo,
+				})
+			}
+
+			cols := []table.Column{
+				{Header: "Session"},
+				{Header: "Wins"},
+				{Header: "Created"},
+				{Header: "Status"},
+				{Header: "Watch"},
+			}
+
+			return table.Format(cols, rows), nil
+		},
+	}
+}
+
 // SystemSection describes one section of the system prompt with its character count.
 type SystemSection struct {
 	Name  string

@@ -1677,3 +1677,69 @@ func TestSecretsHostsUsage(t *testing.T) {
 		t.Errorf("expected usage for invalid action: %s", result)
 	}
 }
+
+func TestTmuxCommand(t *testing.T) {
+	sessions := []TmuxSessionInfo{
+		{Name: "work", Windows: 2, Created: "1h 30m", Watched: false},
+		{Name: "build", Windows: 1, Created: "15m", Watched: true, WatchInfo: "w0: 30s"},
+	}
+	cmd := NewTmuxCommand(func(ctx context.Context) ([]TmuxSessionInfo, error) {
+		return sessions, nil
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Should contain session names
+	if !strings.Contains(result, "work") {
+		t.Errorf("missing 'work' in result: %s", result)
+	}
+	if !strings.Contains(result, "build") {
+		t.Errorf("missing 'build' in result: %s", result)
+	}
+	// Should contain table headers
+	if !strings.Contains(result, "Session") {
+		t.Errorf("missing 'Session' header: %s", result)
+	}
+	// Should show watch info
+	if !strings.Contains(result, "w0: 30s") {
+		t.Errorf("missing watch info: %s", result)
+	}
+	// Unwatched should show idle
+	if !strings.Contains(result, "idle") {
+		t.Errorf("missing 'idle' status: %s", result)
+	}
+	// Watched should show watched
+	if !strings.Contains(result, "watched") {
+		t.Errorf("missing 'watched' status: %s", result)
+	}
+}
+
+func TestTmuxCommandEmpty(t *testing.T) {
+	cmd := NewTmuxCommand(func(ctx context.Context) ([]TmuxSessionInfo, error) {
+		return nil, nil
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result != "No tmux sessions." {
+		t.Errorf("result = %q, want %q", result, "No tmux sessions.")
+	}
+}
+
+func TestTmuxCommandError(t *testing.T) {
+	cmd := NewTmuxCommand(func(ctx context.Context) ([]TmuxSessionInfo, error) {
+		return nil, fmt.Errorf("tmux not running")
+	})
+
+	_, err := cmd.Execute(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "tmux not running") {
+		t.Errorf("error = %q", err.Error())
+	}
+}

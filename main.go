@@ -52,8 +52,9 @@ type agentInstance struct {
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
-	tmuxClearAll      func() // clears tmux tool state (watches, owned sessions)
-	hbRunner          *heartbeat.Runner // heartbeat & background work timer (nil if disabled)
+	tmuxClearAll      func()                                                     // clears tmux tool state (watches, owned sessions)
+	tmuxSessionInfo   func(ctx context.Context) ([]tools.TmuxSessionInfo, error) // returns tmux session status for /tmux command
+	hbRunner          *heartbeat.Runner                                          // heartbeat & background work timer (nil if disabled)
 }
 
 // checkActivityGate parses if_active/if_inactive durations, checks them against
@@ -1179,6 +1180,7 @@ type setupParams struct {
 	ctx                 context.Context
 	agentListFn         func() []command.AgentInfo
 	agentResolverFn     func(agentID string) *agentInstance
+	tmuxSessionInfo     func(ctx context.Context) ([]tools.TmuxSessionInfo, error) // per-agent tmux session info
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
@@ -1264,7 +1266,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace))
-	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
+	tmuxTool, tmuxClearAll, tmuxSessionInfo := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
@@ -1562,6 +1564,26 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
+	cmds.Register(command.NewTmuxCommand(func(ctx context.Context) ([]command.TmuxSessionInfo, error) {
+		if tmuxSessionInfo == nil {
+			return nil, nil
+		}
+		tsis, err := tmuxSessionInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]command.TmuxSessionInfo, len(tsis))
+		for i, ts := range tsis {
+			out[i] = command.TmuxSessionInfo{
+				Name:      ts.Name,
+				Windows:   ts.Windows,
+				Created:   ts.Created,
+				Watched:   ts.Watched,
+				WatchInfo: ts.WatchInfo,
+			}
+		}
+		return out, nil
+	}))
 	// Token count cache for /context (persists across calls, invalidated when context changes)
 	var (
 		tcCacheMu     sync.Mutex
@@ -2362,6 +2384,7 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		tmuxClearAll:      tmuxClearAll,
+		tmuxSessionInfo:   tmuxSessionInfo,
 	}
 }
 
