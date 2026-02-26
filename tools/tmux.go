@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,7 +61,8 @@ type tmuxInstance struct {
 // stateStore and stateKey enable persistence of owned sessions across restarts.
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) (*Tool, func()) {
+// The sessionInfo function returns structured info about all tmux sessions.
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) (*Tool, func(), func(ctx context.Context) ([]TmuxSessionInfo, error)) {
 	inst := &tmuxInstance{
 		watched:       make(map[string]*watchedSession),
 		owned:         make(map[string]struct{}),
@@ -175,7 +177,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
 			return inst.execute(ctx, params)
 		},
-	}, inst.ClearAll
+	}, inst.ClearAll, inst.SessionInfo
 }
 
 func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (string, error) {
@@ -429,6 +431,90 @@ func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
 		return "No tmux sessions.", nil
 	}
 	return strings.Join(filtered, "\n"), nil
+}
+
+// SessionInfo returns structured info about all tmux sessions for the /tmux command.
+func (inst *tmuxInstance) SessionInfo(ctx context.Context) ([]TmuxSessionInfo, error) {
+	// Get all sessions from tmux
+	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
+	if err != nil {
+		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
+	}
+
+	inst.mu.Lock()
+	watched := make(map[string]*watchedSession, len(inst.watched))
+	for k, v := range inst.watched {
+		watched[k] = v
+	}
+	inst.mu.Unlock()
+
+	var infos []TmuxSessionInfo
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) < 3 {
+			continue
+		}
+		name := parts[0]
+		windows, _ := strconv.Atoi(parts[1])
+		createdUnix, _ := strconv.ParseInt(parts[2], 10, 64)
+		created := formatTmuxAge(createdUnix)
+
+		// Check if watched
+		isWatched := false
+		watchInfo := ""
+		for _, ws := range watched {
+			if ws.session == name {
+				isWatched = true
+				// Format: "w0: 30s"
+				watchInfo = fmt.Sprintf("w%d: %s", ws.window, ws.threshold.Round(time.Second))
+				break // one match is enough
+			}
+		}
+
+		infos = append(infos, TmuxSessionInfo{
+			Name:      name,
+			Windows:   windows,
+			Created:   created,
+			Watched:   isWatched,
+			WatchInfo: watchInfo,
+		})
+	}
+
+	return infos, nil
+}
+
+// TmuxSessionInfo describes a tmux session for the /tmux command.
+type TmuxSessionInfo struct {
+	Name      string
+	Windows   int
+	Created   string
+	Watched   bool
+	WatchInfo string
+}
+
+// formatTmuxAge converts a Unix timestamp to a human-readable age string.
+func formatTmuxAge(createdUnix int64) string {
+	if createdUnix == 0 {
+		return "?"
+	}
+	created := time.Unix(createdUnix, 0)
+	age := time.Since(created)
+	if age < time.Minute {
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	}
+	if age < time.Hour {
+		return fmt.Sprintf("%dm", int(age.Minutes()))
+	}
+	if age < 24*time.Hour {
+		return fmt.Sprintf("%dh %dm", int(age.Hours()), int(age.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd %dh", int(age.Hours())/24, int(age.Hours())%24)
 }
 
 func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error) {
