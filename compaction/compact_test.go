@@ -477,21 +477,27 @@ func TestCompactPreserveMessages(t *testing.T) {
 		t.Error("expected non-empty summary")
 	}
 
-	// After compaction: 3 (marker+summary+handoff) + 4 preserved = 7
+	// After compaction: preserved[0] is user, so handoff folds into summary.
+	// 2 (marker + summary+handoff) + 4 preserved = 6
 	msgs, _ := store.Load(sessionKey)
-	if len(msgs) != 7 {
-		t.Fatalf("after compact: %d messages, want 7", len(msgs))
+	if len(msgs) != 6 {
+		t.Fatalf("after compact: %d messages, want 6", len(msgs))
 	}
 
-	// Summary should contain the preservation note
+	// Summary+handoff (folded) should contain the preservation note
 	summaryText := anthropic.TextOf(msgs[1].Content)
 	if !strings.Contains(summaryText, "last 4 messages") {
 		t.Errorf("summary missing preservation note: %q", summaryText)
 	}
+	// Handoff text should be folded into the summary
+	if !strings.Contains(summaryText, "Compaction complete") {
+		t.Errorf("summary should contain folded handoff: %q", summaryText)
+	}
 
 	// 10 messages: [u0,a0,u1,a1,u2,a2,u3,a3,u4,a4]
 	// Preserve last 4: [u3,a3,u4,a4]
-	// Result: [marker, summary, handoff, u3, a3, u4, a4]
+	// preserved[0]=user → handoff folded into summary
+	// Result: [marker, summary+handoff, u3, a3, u4, a4]
 	expected := []struct {
 		role string
 		text string
@@ -502,12 +508,19 @@ func TestCompactPreserveMessages(t *testing.T) {
 		{"assistant", "assistant reply 4"},
 	}
 	for i, exp := range expected {
-		idx := 3 + i
+		idx := 2 + i // preserved starts at index 2 (handoff folded)
 		if msgs[idx].Role != exp.role {
 			t.Errorf("preserved[%d].Role = %q, want %q", i, msgs[idx].Role, exp.role)
 		}
 		if anthropic.TextOf(msgs[idx].Content) != exp.text {
 			t.Errorf("preserved[%d] = %q, want %q", i, anthropic.TextOf(msgs[idx].Content), exp.text)
+		}
+	}
+
+	// Verify role alternation: every pair of consecutive messages has different roles
+	for i := 1; i < len(msgs); i++ {
+		if msgs[i].Role == msgs[i-1].Role {
+			t.Errorf("consecutive same role at [%d,%d]: %s", i-1, i, msgs[i].Role)
 		}
 	}
 }
@@ -569,10 +582,84 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 
 	msgs, _ := store.Load(sessionKey)
 	// Should clamp: 10 messages, need at least 4 to summarize, so preserve = 6
-	// Result: 3 (marker+summary+handoff) + 6 preserved = 9
-	if len(msgs) != 9 {
-		t.Fatalf("after compact: %d messages, want 9 (clamped preserve)", len(msgs))
+	// preserved[0] is user → handoff folded into summary
+	// Result: 2 (marker + summary+handoff) + 6 preserved = 8
+	if len(msgs) != 8 {
+		t.Fatalf("after compact: %d messages, want 8 (clamped preserve)", len(msgs))
 	}
+}
+
+func TestCompactPreserveRoleAlternation(t *testing.T) {
+	server := mockCompactionServer("Summary.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+
+	t.Run("preserved_starts_user", func(t *testing.T) {
+		// Even preserve count from even total → preserved[0] is user
+		store := session.NewStore(t.TempDir())
+		key := "agent:test:main"
+		for i := 0; i < 5; i++ {
+			store.Append(key, anthropic.Message{Role: "user", Content: anthropic.TextContent("u")})
+			store.Append(key, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("a")})
+		}
+
+		c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		c.WithConfig(4096, 4, 4) // preserve 4 → [u3,a3,u4,a4] → starts user
+
+		if _, err := c.Compact(context.Background(), key, nil, "", ""); err != nil {
+			t.Fatalf("Compact: %v", err)
+		}
+
+		msgs, _ := store.Load(key)
+		// Handoff folded: 2 header + 4 preserved = 6
+		if len(msgs) != 6 {
+			t.Fatalf("got %d messages, want 6", len(msgs))
+		}
+		// Verify no consecutive same-role
+		for i := 1; i < len(msgs); i++ {
+			if msgs[i].Role == msgs[i-1].Role {
+				t.Errorf("consecutive %s at [%d,%d]", msgs[i].Role, i-1, i)
+			}
+		}
+		// Handoff text should be folded into the assistant summary
+		if !strings.Contains(anthropic.TextOf(msgs[1].Content), "Compaction complete") {
+			t.Errorf("summary should contain folded handoff")
+		}
+	})
+
+	t.Run("preserved_starts_assistant", func(t *testing.T) {
+		// Odd preserve count from even total → preserved[0] is assistant
+		store := session.NewStore(t.TempDir())
+		key := "agent:test:main"
+		for i := 0; i < 5; i++ {
+			store.Append(key, anthropic.Message{Role: "user", Content: anthropic.TextContent("u")})
+			store.Append(key, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("a")})
+		}
+
+		c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		c.WithConfig(4096, 4, 3) // preserve 3 → [a3,u4,a4] → starts assistant
+
+		if _, err := c.Compact(context.Background(), key, nil, "", ""); err != nil {
+			t.Fatalf("Compact: %v", err)
+		}
+
+		msgs, _ := store.Load(key)
+		// Standard layout: 3 header + 3 preserved = 6
+		if len(msgs) != 6 {
+			t.Fatalf("got %d messages, want 6", len(msgs))
+		}
+		// Verify no consecutive same-role
+		for i := 1; i < len(msgs); i++ {
+			if msgs[i].Role == msgs[i-1].Role {
+				t.Errorf("consecutive %s at [%d,%d]", msgs[i].Role, i-1, i)
+			}
+		}
+		// Handoff should be separate user message (not folded)
+		if msgs[2].Role != "user" {
+			t.Errorf("handoff role = %q, want user", msgs[2].Role)
+		}
+	})
 }
 
 func TestCompactPreserveWithScratchpad(t *testing.T) {

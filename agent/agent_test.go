@@ -1759,6 +1759,118 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("preserve", func(t *testing.T) {
+		var turnCount atomic.Int32
+		server := compactionMockServer(&turnCount, 5)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor.WithConfig(4096, 4, 4) // preserve last 4 messages
+
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+		}
+
+		sessionKey := "agent:test:preserve"
+
+		// Phase 1: 4 turns with low tokens — no compaction
+		for i := 1; i <= 4; i++ {
+			resp, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i))
+			if err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+			if resp != fmt.Sprintf("Response %d", i) {
+				t.Errorf("Turn %d: response = %q", i, resp)
+			}
+		}
+
+		msgs, _ := store.Load(sessionKey)
+		if len(msgs) != 8 {
+			t.Fatalf("after 4 turns: %d messages, want 8", len(msgs))
+		}
+
+		// Phase 2: Turn 5 — high tokens triggers compaction
+		resp, err := ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
+		if err != nil {
+			t.Fatalf("Turn 5: %v", err)
+		}
+		if resp != "Response 5" {
+			t.Errorf("Turn 5: response = %q", resp)
+		}
+
+		// After compaction with preserve=4, preserved[0] is user so handoff folds:
+		// 2 (marker + summary+handoff) + 4 preserved = 6
+		msgs, _ = store.Load(sessionKey)
+		if len(msgs) != 6 {
+			t.Fatalf("after compaction: %d messages, want 6 (2 header + 4 preserved)", len(msgs))
+		}
+
+		// Verify role alternation (the fix ensures no consecutive same-role)
+		for i := 1; i < len(msgs); i++ {
+			if msgs[i].Role == msgs[i-1].Role {
+				t.Errorf("consecutive same role at [%d,%d]: %s", i-1, i, msgs[i].Role)
+			}
+		}
+
+		// Verify the preserved messages are the last 4 from pre-compaction
+		// Pre-compaction had 10 messages: [u1,a1,u2,a2,u3,a3,u4,a4,u5,a5]
+		// Last 4: [u4,a4,u5,a5]
+		preserved := msgs[2:] // preserved starts at index 2 (handoff folded)
+		if len(preserved) != 4 {
+			t.Fatalf("preserved = %d messages, want 4", len(preserved))
+		}
+		if preserved[0].Role != "user" {
+			t.Errorf("preserved[0].Role = %q, want user", preserved[0].Role)
+		}
+		if preserved[1].Role != "assistant" {
+			t.Errorf("preserved[1].Role = %q, want assistant", preserved[1].Role)
+		}
+		// Verify content of preserved messages (Turn 4 user msg has metadata prefix, so check contains)
+		if !strings.Contains(anthropic.TextOf(preserved[0].Content), "Turn 4") {
+			t.Errorf("preserved[0] should contain 'Turn 4': %q", anthropic.TextOf(preserved[0].Content))
+		}
+		if anthropic.TextOf(preserved[1].Content) != "Response 4" {
+			t.Errorf("preserved[1] = %q, want 'Response 4'", anthropic.TextOf(preserved[1].Content))
+		}
+
+		// Summary+handoff should mention preservation and contain handoff text
+		summaryText := anthropic.TextOf(msgs[1].Content)
+		if !strings.Contains(summaryText, "last 4 messages") {
+			t.Errorf("summary missing preservation note: %q", summaryText)
+		}
+		if !strings.Contains(summaryText, "Compaction complete") {
+			t.Errorf("summary should contain folded handoff: %q", summaryText)
+		}
+
+		// Phase 3: Turn 6 — post-compaction continuity (messages survive reload)
+		resp, err = ag.HandleMessage(context.Background(), sessionKey, "Turn 6")
+		if err != nil {
+			t.Fatalf("Turn 6: %v", err)
+		}
+		if resp != "Response 6" {
+			t.Errorf("Turn 6: response = %q", resp)
+		}
+
+		// 6 compacted + user turn 6 + assistant turn 6 = 8
+		msgs, _ = store.Load(sessionKey)
+		if len(msgs) != 8 {
+			t.Fatalf("after Turn 6: %d messages, want 8", len(msgs))
+		}
+
+		// The preserved messages should still be at positions 2-5
+		if !strings.Contains(anthropic.TextOf(msgs[2].Content), "Turn 4") {
+			t.Errorf("preserved msg should survive post-compaction turn: %q", anthropic.TextOf(msgs[2].Content))
+		}
+	})
+
 	t.Run("notify", func(t *testing.T) {
 		var turnCount atomic.Int32
 		server := compactionMockServer(&turnCount, 5)
