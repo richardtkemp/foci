@@ -33,7 +33,7 @@ func TestOAuthManagerToken(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "access-token-123",
 			RefreshToken: "refresh-token-456",
-			ExpiresAt:    time.Now().Add(8 * time.Hour).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(8 * time.Hour).UnixMilli(),
 		},
 	})
 
@@ -53,7 +53,7 @@ func TestOAuthManagerRefreshSuccess(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "old-access",
 			RefreshToken: "my-refresh-token",
-			ExpiresAt:    time.Now().Add(1 * time.Minute).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(1 * time.Minute).UnixMilli(),
 		},
 	})
 
@@ -110,7 +110,7 @@ func TestOAuthManagerRefreshDedup(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "stale-token",
 			RefreshToken: "refresh-token",
-			ExpiresAt:    time.Now().Add(1 * time.Minute).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(1 * time.Minute).UnixMilli(),
 		},
 	})
 
@@ -162,7 +162,7 @@ func TestOAuthManagerRefreshSkipWhenAlreadyRefreshed(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "current-token",
 			RefreshToken: "refresh-token",
-			ExpiresAt:    time.Now().Add(8 * time.Hour).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(8 * time.Hour).UnixMilli(),
 		},
 	})
 
@@ -198,12 +198,12 @@ func TestOAuthManagerFileWritebackPreservesUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".credentials.json")
 
-	// Write a file with extra fields.
+	// Write a file with extra fields (expiresAt as Unix millis, matching real credentials file).
 	original := map[string]interface{}{
 		"claudeAiOauth": map[string]interface{}{
 			"accessToken":  "old-token",
 			"refreshToken": "refresh-token",
-			"expiresAt":    time.Now().Add(1 * time.Minute).Format(time.RFC3339),
+			"expiresAt":    float64(time.Now().Add(1 * time.Minute).UnixMilli()),
 			"scopes":       "user:inference user:usage",
 			"customField":  "should-survive",
 		},
@@ -309,7 +309,7 @@ func TestOAuthManagerRefreshHTTPError(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "old-token",
 			RefreshToken: "refresh-token",
-			ExpiresAt:    time.Now().Add(1 * time.Minute).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(1 * time.Minute).UnixMilli(),
 		},
 	})
 
@@ -342,7 +342,7 @@ func TestOAuthManagerProactiveRefresh(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "expiring-token",
 			RefreshToken: "refresh-token",
-			ExpiresAt:    time.Now().Add(10 * time.Minute).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(10 * time.Minute).UnixMilli(),
 		},
 	})
 
@@ -523,7 +523,7 @@ func TestOAuthManagerStartStop(t *testing.T) {
 		ClaudeAiOauth: OAuthCredentials{
 			AccessToken:  "token",
 			RefreshToken: "refresh",
-			ExpiresAt:    time.Now().Add(8 * time.Hour).Format(time.RFC3339),
+			ExpiresAt:    time.Now().Add(8 * time.Hour).UnixMilli(),
 		},
 	})
 
