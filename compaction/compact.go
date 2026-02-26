@@ -201,20 +201,42 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		summary += fmt.Sprintf("\n\nThe last %d messages from before compaction follow.", preserveN)
 	}
 
-	// Replace session with summary + handoff note + preserved messages
-	compacted := []anthropic.Message{
-		{
-			Role:    "user",
-			Content: anthropic.TextContent("[Session compacted. Previous conversation summary follows.]"),
-		},
-		{
-			Role:    "assistant",
-			Content: anthropic.TextContent(summary),
-		},
-		{
-			Role:    "user",
-			Content: anthropic.TextContent(handoff),
-		},
+	// Build compacted message sequence, ensuring role alternation.
+	// The Anthropic API requires strictly alternating user/assistant roles.
+	// When preserved messages start with "user", folding the handoff into the
+	// assistant summary avoids consecutive user messages:
+	//   [user_marker, assistant_summary+handoff, user_preserved[0], ...]
+	// When preserved messages start with "assistant" (or there are none),
+	// keep the standard 3-message header:
+	//   [user_marker, assistant_summary, user_handoff, assistant_preserved[0], ...]
+	var compacted []anthropic.Message
+	if preserveN > 0 && preserved[0].Role == "user" {
+		// Fold handoff into assistant summary to avoid user→user
+		compacted = []anthropic.Message{
+			{
+				Role:    "user",
+				Content: anthropic.TextContent("[Session compacted. Previous conversation summary follows.]"),
+			},
+			{
+				Role:    "assistant",
+				Content: anthropic.TextContent(summary + "\n\n" + handoff),
+			},
+		}
+	} else {
+		compacted = []anthropic.Message{
+			{
+				Role:    "user",
+				Content: anthropic.TextContent("[Session compacted. Previous conversation summary follows.]"),
+			},
+			{
+				Role:    "assistant",
+				Content: anthropic.TextContent(summary),
+			},
+			{
+				Role:    "user",
+				Content: anthropic.TextContent(handoff),
+			},
+		}
 	}
 	compacted = append(compacted, preserved...)
 
