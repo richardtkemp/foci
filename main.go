@@ -1279,7 +1279,14 @@ func setupAgent(p setupParams) *agentInstance {
 	compactor.AgentID = acfg.ID
 
 	// Per-agent send_telegram tool (closure captures this agent's bot)
-	registry.Register(tools.NewSendTelegramTool(func() tools.TelegramSender {
+	registry.Register(tools.NewSendTelegramTool(func(sessionKey string) tools.TelegramSender {
+		// For multiball sessions, use the multiball bot that owns this session
+		if strings.Contains(sessionKey, ":multiball:") {
+			if mb := p.botMgr.BotForSession(sessionKey); mb != nil {
+				return mb
+			}
+		}
+		// Default: primary bot
 		bot := p.botMgr.PrimaryBot(acfg.ID)
 		if bot == nil {
 			return nil
