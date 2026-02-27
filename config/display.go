@@ -59,7 +59,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("agent", "startup_notification", *agent.StartupNotification)
 	}
 	if agent.ShowToolCalls != nil {
-		add("agent", "show_tool_calls", *agent.ShowToolCalls)
+		add("agent", "show_tool_calls", string(*agent.ShowToolCalls))
 	}
 	if agent.MessagesInLog != nil {
 		add("agent", "messages_in_log", *agent.MessagesInLog)
@@ -527,7 +527,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 			addAgent("startup_notification", *agent.StartupNotification)
 		}
 		if agent.ShowToolCalls != nil {
-			addAgent("show_tool_calls", *agent.ShowToolCalls)
+			addAgent("show_tool_calls", string(*agent.ShowToolCalls))
 		}
 		if agent.MessagesInLog != nil {
 			addAgent("messages_in_log", *agent.MessagesInLog)
@@ -612,7 +612,7 @@ type displayTelegram struct {
 	MultiballSessionTTL string   `toml:"multiball_session_ttl"`
 	MessageQueueSize    int      `toml:"message_queue_size"`
 	LongPollTimeout     string   `toml:"long_poll_timeout"`
-	ShowToolCalls       bool     `toml:"show_tool_calls"`
+	ShowToolCalls       string   `toml:"show_tool_calls"`
 	ImageSaveDir        string   `toml:"image_save_dir,omitempty"`
 }
 
@@ -640,7 +640,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			MultiballSessionTTL: cfg.Telegram.MultiballSessionTTL,
 			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
 			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
-			ShowToolCalls:       cfg.Telegram.ShowToolCalls,
+			ShowToolCalls:       string(cfg.Telegram.ShowToolCalls),
 			ImageSaveDir:        cfg.Telegram.ImageSaveDir,
 		},
 		Sessions:      cfg.Sessions,
@@ -706,8 +706,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if agent.StartupNotification == nil && !cfg.Telegram.EnableStartupNotify {
 		opts = append(opts, availableOption{"agent", "startup_notification", "(global)", "send startup notification (nil = use global)"})
 	}
-	if agent.ShowToolCalls == nil && !cfg.Telegram.ShowToolCalls {
-		opts = append(opts, availableOption{"agent", "show_tool_calls", "(global)", "show tool calls in Telegram (nil = use global)"})
+	if agent.ShowToolCalls == nil && cfg.Telegram.ShowToolCalls == ToolCallOff {
+		opts = append(opts, availableOption{"agent", "show_tool_calls", "(global)", "tool call display mode: off, preview, full (nil = use global)"})
 	}
 	if agent.Effort == "" && cfg.Defaults.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})

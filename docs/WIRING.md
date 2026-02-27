@@ -187,18 +187,28 @@ Callbacks are **context-scoped**, not agent-global. Each turn gets its own isola
 
 ## Tool Call Visibility
 
-Tool calls are shown in Telegram via a send+edit pattern using `ToolCallObserver`. The first tool call in a turn sends a new message; subsequent tool calls edit that same message. The final response then edits the tool message with the answer (or falls back to a new message if too long). Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCallbacks` struct — per-turn, not agent-global.
+Tool call display is controlled by `show_tool_calls` (string: `"off"`, `"preview"`, `"full"`). Configurable globally in `[telegram]` and per-agent in `[[agents]]`. Bool values are accepted for backwards compat (`true` → `"preview"`, `false` → `"off"`).
+
+**Modes:**
+- **`"off"`** (default) — Tool calls are hidden. `ToolCallObserver` returns immediately.
+- **`"preview"`** — Tool calls are shown via send+edit, then the final response **overwrites** the tool message (or falls back to a new message if too long).
+- **`"full"`** — Tool calls are shown via send+edit (same as preview), but the final response is always sent as a **separate new message**, preserving the tool call log in chat.
+
+Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCallbacks` struct — per-turn, not agent-global.
 
 **Ordering with deferred replies:** When intermediate text fires between tool loops, `ReplyFunc` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
 
-**Flow (multi-loop turn):**
+**Flow (multi-loop turn, preview/full):**
 1. Loop 1: API returns `[tool_use(exec)]` — `notifyToolCall` sends message A (`toolMsgID=A`)
 2. Loop 2: API returns `[text("Checking..."), tool_use(read)]`
    - `sendIntermediate` fires `ReplyFunc` → sends message B, resets `toolMsgID=0`
    - `notifyToolCall` sends message C (`toolMsgID=C`, fresh because reset)
-3. Final: `end_turn` response edits message C with the answer
+3. Final:
+   - **preview**: `end_turn` response edits message C with the answer
+   - **full**: `end_turn` response sends as message D (new message)
 
-**Chat order:** A ("🔧 exec") → B ("Checking...") → C ("🔧 read" → final answer) ✓
+**Chat order (preview):** A ("🔧 exec") → B ("Checking...") → C ("🔧 read" → final answer) ✓
+**Chat order (full):** A ("🔧 exec") → B ("Checking...") → C ("🔧 read") → D (final answer) ✓
 
 ## Thought Queue (Reminders)
 

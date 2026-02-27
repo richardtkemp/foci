@@ -621,7 +621,7 @@ func main() {
 				mbBot.SetTTS(ttsProvider)
 			}
 			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
-			mbBot.SetShowToolCalls(cfg.Telegram.ShowToolCalls)
+			mbBot.SetShowToolCalls(string(cfg.Telegram.ShowToolCalls))
 			mbBot.SetMessagesInLog(cfg.Logging.MessagesInLog)
 			if imgDir := cfg.Telegram.ImageSaveDir; imgDir != "" {
 				mbBot.SetImageSaveDir(imgDir)
@@ -2200,9 +2200,9 @@ func setupAgent(p setupParams) *agentInstance {
 		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 		primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
 		if acfg.ShowToolCalls != nil {
-			primaryBot.SetShowToolCalls(*acfg.ShowToolCalls)
+			primaryBot.SetShowToolCalls(string(*acfg.ShowToolCalls))
 		} else {
-			primaryBot.SetShowToolCalls(p.cfg.Telegram.ShowToolCalls)
+			primaryBot.SetShowToolCalls(string(p.cfg.Telegram.ShowToolCalls))
 		}
 		if acfg.MessagesInLog != nil {
 			primaryBot.SetMessagesInLog(*acfg.MessagesInLog)
@@ -2308,9 +2308,9 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 			if acfg.ShowToolCalls != nil {
-				mbBot.SetShowToolCalls(*acfg.ShowToolCalls)
+				mbBot.SetShowToolCalls(string(*acfg.ShowToolCalls))
 			} else {
-				mbBot.SetShowToolCalls(p.cfg.Telegram.ShowToolCalls)
+				mbBot.SetShowToolCalls(string(p.cfg.Telegram.ShowToolCalls))
 			}
 			if acfg.MessagesInLog != nil {
 				mbBot.SetMessagesInLog(*acfg.MessagesInLog)

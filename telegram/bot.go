@@ -87,7 +87,7 @@ type Bot struct {
 	stateStore           *state.Store // nil = no persistence
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
-	showToolCalls        bool         // show tool call messages in Telegram (default true via setter)
+	showToolCalls        string       // tool call display mode: "off", "preview", "full"
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	imageSaveDir         string       // if non-empty, save received images to this directory
 }
@@ -140,9 +140,10 @@ func (b *Bot) SetToolCallPreviewChars(n int) {
 	b.toolCallPreviewChars = n
 }
 
-// SetShowToolCalls controls whether tool call messages are shown in Telegram.
-func (b *Bot) SetShowToolCalls(show bool) {
-	b.showToolCalls = show
+// SetShowToolCalls controls how tool call messages are displayed in Telegram.
+// Accepts "off", "preview", or "full".
+func (b *Bot) SetShowToolCalls(mode string) {
+	b.showToolCalls = mode
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -813,7 +814,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		},
 		// Tool call visibility via send+edit pattern (gated by showToolCalls)
 		ToolCallObserver: func(toolName string, params json.RawMessage) {
-			if !b.showToolCalls {
+			if b.showToolCalls == "off" || b.showToolCalls == "" {
 				return
 			}
 			toolMsgMu.Lock()
@@ -893,7 +894,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	editID := toolMsgID
 	toolMsgMu.Unlock()
 
-	if editID != 0 && len(response) <= 4096 {
+	if editID != 0 && b.showToolCalls == "preview" && len(response) <= 4096 {
 		htmlResp := ConvertToTelegramHTML(response)
 		_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 			ChatId:    qm.msg.Chat.Id,

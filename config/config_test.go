@@ -1847,3 +1847,119 @@ id = "default"
 		t.Errorf("agent default: Thinking = %q, want empty", cfg.Agents[1].Thinking)
 	}
 }
+
+func TestShowToolCallsDisplay(t *testing.T) {
+	tests := []struct {
+		name    string
+		toml    string
+		want    ToolCallDisplay
+		wantErr bool
+	}{
+		{"bool true", `show_tool_calls = true`, ToolCallPreview, false},
+		{"bool false", `show_tool_calls = false`, ToolCallOff, false},
+		{"string off", `show_tool_calls = "off"`, ToolCallOff, false},
+		{"string preview", `show_tool_calls = "preview"`, ToolCallPreview, false},
+		{"string full", `show_tool_calls = "full"`, ToolCallFull, false},
+		{"invalid string", `show_tool_calls = "banana"`, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out struct {
+				ShowToolCalls ToolCallDisplay `toml:"show_tool_calls"`
+			}
+			_, err := tomlParser.Decode(tt.toml, &out)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tt.toml)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if out.ShowToolCalls != tt.want {
+				t.Errorf("ShowToolCalls = %q, want %q", out.ShowToolCalls, tt.want)
+			}
+		})
+	}
+
+	// Per-agent *ToolCallDisplay: non-nil when set, nil when not set.
+	t.Run("per-agent set", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "a"
+show_tool_calls = "full"
+
+[[agents]]
+id = "b"
+`), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].ShowToolCalls == nil {
+			t.Fatal("agent a: ShowToolCalls should be non-nil")
+		}
+		if *cfg.Agents[0].ShowToolCalls != ToolCallFull {
+			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].ShowToolCalls, ToolCallFull)
+		}
+		if cfg.Agents[1].ShowToolCalls != nil {
+			t.Errorf("agent b: ShowToolCalls should be nil, got %q", *cfg.Agents[1].ShowToolCalls)
+		}
+	})
+
+	// Per-agent with bool backwards compat
+	t.Run("per-agent bool compat", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "a"
+show_tool_calls = true
+`), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].ShowToolCalls == nil {
+			t.Fatal("agent a: ShowToolCalls should be non-nil")
+		}
+		if *cfg.Agents[0].ShowToolCalls != ToolCallPreview {
+			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].ShowToolCalls, ToolCallPreview)
+		}
+	})
+
+	// Global telegram section
+	t.Run("global string", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[telegram]
+show_tool_calls = "full"
+`), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Telegram.ShowToolCalls != ToolCallFull {
+			t.Errorf("Telegram.ShowToolCalls = %q, want %q", cfg.Telegram.ShowToolCalls, ToolCallFull)
+		}
+	})
+
+	// Global default (not set)
+	t.Run("global default", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(``), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Telegram.ShowToolCalls != ToolCallOff {
+			t.Errorf("Telegram.ShowToolCalls = %q, want %q", cfg.Telegram.ShowToolCalls, ToolCallOff)
+		}
+	})
+}
