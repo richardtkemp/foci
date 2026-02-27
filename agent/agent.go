@@ -883,24 +883,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 					if a.Warnings != nil {
 						a.Warnings.Push("WARN", "agent", fmt.Sprintf("Context at ~%d%% capacity. This session cannot compact. Consider wrapping up.", percent))
 					}
-					// Proactive parent compaction: if this is a branch session,
-					// its large context was inherited from the parent. Compact the
-					// parent so future branches don't pay the same cost.
-					if meta, _ := a.Sessions.GetBranchMeta(sessionKey); meta != nil {
-						parentMsgs, err := a.Sessions.LoadFull(meta.ParentKey)
-						if err == nil && a.Compactor.ShouldCompact(parentMsgs, nil) {
-							log.Infof("agent", "proactive parent compaction: %s (%d messages)", meta.ParentKey, len(parentMsgs))
-							summaryPrompt := ""
-							if a.ReadPromptFile != nil {
-								summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
-							}
-							if _, err := a.Compactor.Compact(ctx, meta.ParentKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
-								log.Errorf("agent", "proactive parent compaction failed: %v", err)
-							} else {
-								log.Infof("agent", "proactive parent compaction complete: %s", meta.ParentKey)
-							}
-						}
-					}
 				} else {
 					oldCount := len(messages)
 					if a.CompactionNotifyFunc != nil {

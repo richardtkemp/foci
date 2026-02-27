@@ -493,7 +493,6 @@ reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
 - Scratchpad preserved through compaction (appended to handoff)
 - Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
 - Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
-- Proactive parent compaction: when a `no_compact` branch session hits the compaction threshold, the parent session is checked and compacted if it also exceeds the threshold — prevents parent context from growing unbounded between user interactions
 
 **Configuration:**
 ```toml
