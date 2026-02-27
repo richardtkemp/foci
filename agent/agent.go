@@ -55,6 +55,10 @@ type ReplyFunc func(text string)
 // Used by the Telegram bot to show which tools the agent is calling.
 type ToolCallObserver func(toolName string, params json.RawMessage)
 
+// ToolResultObserver is called after each tool execution with the result.
+// Used by the Telegram bot to store tool results for inline keyboard expansion.
+type ToolResultObserver func(toolName string, result string, isError bool)
+
 // CacheBustFunc is called when a cache bust is detected (cache_read drops
 // significantly compared to the previous request).
 // session is the session key, prevRead is what we had, curRead is what we got.
@@ -965,6 +969,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, errMsg, true,
 				))
+				notifyToolResultCtx(ctx, block.Name, errMsg, true)
 				signalActivityCtx(ctx)
 				continue
 			}
@@ -978,6 +983,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
 				block.ID, guardedResult, false,
 			))
+			notifyToolResultCtx(ctx, block.Name, guardedResult, false)
 			signalActivityCtx(ctx)
 		}
 

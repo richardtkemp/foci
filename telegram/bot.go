@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type botClient interface {
 	SendChatAction(chatId int64, action string, opts *gotgbot.SendChatActionOpts) (bool, error)
 	GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error)
 	SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.SetMyCommandsOpts) (bool, error)
+	AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.AnswerCallbackQueryOpts) (bool, error)
 }
 
 // imageAttachment is a downloaded image ready for the agent.
@@ -90,6 +92,7 @@ type Bot struct {
 	showToolCalls        string       // tool call display mode: "off", "preview", "full"
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	imageSaveDir         string       // if non-empty, save received images to this directory
+	toolResults          sync.Map     // message ID (int64) → tool result text (string); ephemeral, for inline keyboard expansion
 }
 
 // NewBot creates a new Telegram bot.
@@ -397,8 +400,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 	defer func() {
 		if offset > 0 {
 			_, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
-				Offset:  offset,
-				Timeout: 0,
+				Offset:         offset,
+				Timeout:        0,
+				AllowedUpdates: []string{"message", "callback_query"},
 				RequestOpts: &gotgbot.RequestOpts{
 					Timeout: 5 * time.Second,
 				},
@@ -419,8 +423,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 		ch := make(chan updateResult, 1)
 		go func() {
 			updates, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
-				Offset:  offset,
-				Timeout: 60,
+				Offset:         offset,
+				Timeout:        60,
+				AllowedUpdates: []string{"message", "callback_query"},
 				RequestOpts: &gotgbot.RequestOpts{
 					Timeout: 65 * time.Second, // must exceed Telegram's long-poll timeout
 				},
@@ -445,6 +450,10 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			for _, update := range res.updates {
 				if update.UpdateId >= offset {
 					offset = update.UpdateId + 1
+				}
+				if update.CallbackQuery != nil {
+					b.handleCallbackQuery(ctx, update.CallbackQuery)
+					continue
 				}
 				if update.Message == nil {
 					continue
@@ -790,6 +799,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Declared before ReplyFunc so the closure can reset toolMsgID
 	// when intermediate text is sent (fixes message ordering).
 	var toolMsgID int64
+	var toolMsgText string // last formatted tool call HTML (for result storage)
 	var toolMsgMu sync.Mutex
 
 	// Per-turn callbacks scoped to context -- no cross-turn races.
@@ -821,25 +831,75 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			defer toolMsgMu.Unlock()
 
 			text := b.formatToolCall(toolName, params)
+			sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
+			editOpts := &gotgbot.EditMessageTextOpts{
+				ChatId:    qm.msg.Chat.Id,
+				MessageId: toolMsgID,
+				ParseMode: "HTML",
+			}
+			// In "full" mode, add inline keyboard for result expansion.
+			if b.showToolCalls == "full" {
+				// Use a placeholder callback data; will be updated with real msgID after send.
+				keyboard := gotgbot.InlineKeyboardMarkup{
+					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+						{Text: "Show results", CallbackData: "tc:show:0"},
+					}},
+				}
+				sendOpts.ReplyMarkup = keyboard
+				editOpts.ReplyMarkup = keyboard
+			}
+
 			if toolMsgID == 0 {
 				// First tool call: send a new message
-				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, sendOpts)
 				if err != nil {
 					log.Debugf("telegram", "send tool call msg: %v", err)
 					return
 				}
 				toolMsgID = sent.MessageId
+				toolMsgText = text
+				// Update the button callback data with the real message ID.
+				if b.showToolCalls == "full" {
+					b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+						ChatId:    qm.msg.Chat.Id,
+						MessageId: toolMsgID,
+						ParseMode: "HTML",
+						ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+							InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+								{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
+							}},
+						},
+					})
+				}
 			} else {
 				// Subsequent tool calls: edit the existing message
-				_, _, err := b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-					ChatId:    qm.msg.Chat.Id,
-					MessageId: toolMsgID,
-					ParseMode: "HTML",
-				})
+				if b.showToolCalls == "full" {
+					editOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{
+						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+							{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
+						}},
+					}
+				}
+				_, _, err := b.client.EditMessageText(text, editOpts)
 				if err != nil {
 					log.Debugf("telegram", "edit tool call msg: %v", err)
 				}
+				toolMsgText = text
 			}
+		},
+		// Tool result storage for inline keyboard expansion (full mode only)
+		ToolResultObserver: func(toolName string, result string, isError bool) {
+			if b.showToolCalls != "full" {
+				return
+			}
+			toolMsgMu.Lock()
+			msgID := toolMsgID
+			text := toolMsgText
+			toolMsgMu.Unlock()
+			if msgID == 0 {
+				return
+			}
+			b.toolResults.Store(msgID, toolResultEntry{toolText: text, result: result})
 		},
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
@@ -1627,6 +1687,89 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// handleCallbackQuery processes inline keyboard button presses for tool result expansion.
+func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery) {
+	if cq.Data == "" || cq.Message.GetChat().Id == 0 {
+		return
+	}
+	chatID := cq.Message.GetChat().Id
+
+	// Always answer the callback query to dismiss the loading indicator.
+	defer func() {
+		b.client.AnswerCallbackQuery(cq.Id, nil)
+	}()
+
+	parts := strings.SplitN(cq.Data, ":", 3)
+	if len(parts) != 3 || parts[0] != "tc" {
+		return
+	}
+	action := parts[1] // "show" or "hide"
+	msgID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return
+	}
+
+	// Look up the stored tool call text and result.
+	toolTextVal, ok := b.toolResults.Load(msgID)
+	if !ok {
+		return
+	}
+	stored := toolTextVal.(toolResultEntry)
+
+	switch action {
+	case "show":
+		expanded := formatToolCallWithResult(stored.toolText, stored.result)
+		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Hide results", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
+				}},
+			},
+		})
+	case "hide":
+		b.client.EditMessageText(stored.toolText, &gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", msgID)},
+				}},
+			},
+		})
+	}
+}
+
+// toolResultEntry stores both the tool call text and result for inline keyboard expansion.
+type toolResultEntry struct {
+	toolText string // the formatted tool call HTML (for collapsed state)
+	result   string // the raw tool result text
+}
+
+// formatToolCallWithResult combines a tool call message with its result,
+// truncating the result so the total message fits within Telegram's 4096 char limit.
+func formatToolCallWithResult(toolText, result string) string {
+	const maxLen = 4096
+	separator := "\n\n📋 <b>Result:</b>\n<pre>"
+	suffix := "</pre>"
+
+	overhead := len(toolText) + len(separator) + len(suffix)
+	if overhead >= maxLen {
+		// Tool text alone is too long; just return it as-is.
+		return toolText
+	}
+
+	escapedResult := htmlEscapeBot(result)
+	available := maxLen - overhead
+	if len(escapedResult) > available {
+		escapedResult = escapedResult[:available-3] + "..."
+	}
+	return toolText + separator + escapedResult + suffix
 }
 
 // sanitizeError replaces the bot token in an error string to prevent it

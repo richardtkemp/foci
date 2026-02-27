@@ -25,10 +25,11 @@ func TriggerFromContext(ctx context.Context) string {
 // TurnCallbacks holds per-turn callbacks scoped to a context.
 // Using context avoids cross-turn races from mutable Agent fields.
 type TurnCallbacks struct {
-	ReplyFunc        ReplyFunc
-	VoiceReplyFunc   VoiceReplyFunc
-	ToolCallObserver ToolCallObserver
-	ActivityFunc     func()
+	ReplyFunc          ReplyFunc
+	VoiceReplyFunc     VoiceReplyFunc
+	ToolCallObserver   ToolCallObserver
+	ToolResultObserver ToolResultObserver
+	ActivityFunc       func()
 }
 
 // WithTurnCallbacks attaches TurnCallbacks to a context.
@@ -60,6 +61,13 @@ func signalActivityCtx(ctx context.Context) {
 func notifyToolCallCtx(ctx context.Context, name string, params json.RawMessage) {
 	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ToolCallObserver != nil {
 		cb.ToolCallObserver(name, params)
+	}
+}
+
+// notifyToolResultCtx calls the tool result observer via context.
+func notifyToolResultCtx(ctx context.Context, name string, result string, isError bool) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ToolResultObserver != nil {
+		cb.ToolResultObserver(name, result, isError)
 	}
 }
 
