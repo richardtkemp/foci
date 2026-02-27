@@ -23,7 +23,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `workspace` | string | `""` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
-| `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, a built-in default is used that varies by branch type. |
+| `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, embedded defaults from `prompts/branch-orientation-headless.md` or `prompts/branch-orientation-multiball.md` are used. |
 | `fork_prompt` | string | `""` | **Deprecated:** use `branch_orientation_prompt`. Path to prompt file injected into branch sessions. If `branch_orientation_prompt` is set, `fork_prompt` is ignored. |
 | `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
@@ -211,18 +211,19 @@ Session storage and compaction.
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window, so it won't duplicate them. |
 | `session_reset_prompt` | string | `""` | Path to prompt file sent to the agent before session clear (`/reset` or multiball reclaim). Read at fire-time. Empty disables the reset hook. |
-| `branch_orientation_prompt` | string | `""` | Global default for branch orientation prompt file. Per-agent `branch_orientation_prompt` overrides this. |
+| `branch_orientation_prompt` | string | `""` | Global default for branch orientation prompt file. Per-agent `branch_orientation_prompt` overrides this. If empty, embedded defaults from `prompts/` are used. |
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
 | `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`. `branch_orientation_prompt` is the exception: if the path is empty, a built-in default is used that varies by branch type — multiball branches are told they have direct Telegram access, while cron and spawn branches are told to use `send_to_session` instead.
+All prompt fields (`compaction_summary_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
-Default `compaction_handoff_msg`:
-```
-[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]
-```
+When no config override is set, embedded defaults from `prompts/` are used:
+- `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, heartbeat)
+- `prompts/branch-orientation-multiball.md` — user-attached multiball branches
+- `prompts/compaction-summary.md` — compaction summary prompt
+- `prompts/compaction-handoff.md` — post-compaction handoff message (`compaction_handoff_msg` default)
 
 ---
 

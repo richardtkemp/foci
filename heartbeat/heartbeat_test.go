@@ -1,6 +1,7 @@
 package heartbeat
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -110,13 +111,14 @@ func TestManaWindow(t *testing.T) {
 	}
 }
 
-func TestBuildOrientation(t *testing.T) {
-	text := buildOrientation("", "branch:1", "parent:1", "heartbeat")
-	if text == "" {
-		t.Fatal("expected non-empty orientation text")
+func TestOrientationBuilderIntegration(t *testing.T) {
+	// OrientationBuilder is now injected from main. Verify the type is usable.
+	var builder OrientationBuilder = func(branchKey, parentKey, branchType string) string {
+		return fmt.Sprintf("branch=%s parent=%s type=%s", branchKey, parentKey, branchType)
 	}
+	text := builder("branch:1", "parent:1", "heartbeat")
 	if !containsAll(text, "branch:1", "parent:1", "heartbeat") {
-		t.Errorf("orientation missing template values: %s", text)
+		t.Errorf("builder missing values: %s", text)
 	}
 }
 

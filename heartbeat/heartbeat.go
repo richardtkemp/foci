@@ -315,6 +315,7 @@ func ManaIsGood(actualMana float64, resetsAt time.Time, investInterval time.Dura
 	return actualMana > expectedMana
 }
 
+
 // readPromptFile reads a prompt from disk, returning empty string on error.
 func readPromptFile(path string) string {
 	if path == "" {
@@ -335,6 +336,11 @@ func readPromptFile(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// OrientationBuilder constructs orientation text for a branch session given the
+// branch key, parent key, and branch type. Injected from main to avoid duplicating
+// prompt defaults.
+type OrientationBuilder func(branchKey, parentKey, branchType string) string
+
 // BuildBranchFunc creates a BranchFunc that dispatches branch sessions using the
 // provided agent infrastructure. This is the bridge between the heartbeat package
 // and the main package's agent/session handling.
@@ -343,7 +349,7 @@ func BuildBranchFunc(
 	ag *agent.Agent,
 	sessions *session.Store,
 	defaultSessionKey func() string,
-	orientationPrompt string,
+	buildOrientation OrientationBuilder,
 	ctx context.Context,
 ) BranchFunc {
 	return func(branchType, promptText string, noCompact bool) {
@@ -356,7 +362,7 @@ func BuildBranchFunc(
 		branchID := fmt.Sprintf("%s-%d", branchType, time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", agentID, branchID)
 
-		orientText := buildOrientation(orientationPrompt, branchKey, parentKey, branchType)
+		orientText := buildOrientation(branchKey, parentKey, branchType)
 		err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        true,
 			OrientationMessage: orientText,
@@ -378,21 +384,4 @@ func BuildBranchFunc(
 		}
 		_ = resp // heartbeat/background responses are not delivered to user
 	}
-}
-
-// buildOrientation constructs orientation text for a branch session.
-func buildOrientation(promptPath, branchKey, parentKey, branchType string) string {
-	text := readPromptFile(promptPath)
-	if text == "" {
-		text = "You are now running as a branch session (type: {branch_type}, key: {branch_key}, parent: {parent_key}).\n" +
-			"Do NOT send messages to Telegram directly — the user cannot see them.\n" +
-			"To communicate with the parent session, use the send_to_session tool with the parent key."
-	}
-	r := strings.NewReplacer(
-		"{branch_key}", branchKey,
-		"{parent_key}", parentKey,
-		"{branch_type}", branchType,
-		"{direct_chat}", "false",
-	)
-	return r.Replace(text)
 }

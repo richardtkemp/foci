@@ -24,6 +24,7 @@ import (
 	"clod/heartbeat"
 	"clod/log"
 	"clod/memory"
+	"clod/prompts"
 	"clod/secrets"
 	"clod/secrets/bitwarden"
 	"clod/session"
@@ -561,8 +562,13 @@ func main() {
 			if orientPrompt == "" {
 				orientPrompt = acfg.ForkPrompt // deprecated fallback
 			}
+			hbOrientPrompt := orientPrompt // capture for closure
 			branchFn := heartbeat.BuildBranchFunc(
-				acfg.ID, inst.ag, sessions, inst.defaultSessionKey, orientPrompt, ctx,
+				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
+				func(branchKey, parentKey, branchType string) string {
+					return buildBranchOrientation(hbOrientPrompt, branchKey, parentKey, branchType, false)
+				},
+				ctx,
 			)
 			inst.hbRunner = heartbeat.New(heartbeat.RunnerConfig{
 				AgentID:     acfg.ID,
@@ -2581,7 +2587,7 @@ func readPromptFile(path, label string) string {
 
 // buildBranchOrientation constructs orientation text for a branch session.
 // If promptPath points to a readable file, its contents are used as a template.
-// Otherwise a built-in default is used (varies by directChat).
+// Otherwise an embedded default from prompts/ is used (varies by directChat).
 // Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
 func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool) string {
 	var text string
@@ -2590,22 +2596,17 @@ func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string,
 	}
 	if text == "" {
 		if directChat {
-			text = "You are now running as a branch session (type: {branch_type}, key: {branch_key}, parent: {parent_key}).\n" +
-				"You have your own Telegram bot and CAN communicate with the user directly.\n" +
-				"You can communicate with other sessions using the send_to_session tool."
+			text = prompts.BranchOrientationMultiball()
 		} else {
-			text = "You are now running as a branch session (type: {branch_type}, key: {branch_key}, parent: {parent_key}).\n" +
-				"Do NOT send messages to Telegram directly — the user cannot see them.\n" +
-				"To communicate with the parent session, use the send_to_session tool with the parent key."
+			text = prompts.BranchOrientationHeadless()
 		}
 	}
-	r := strings.NewReplacer(
-		"{branch_key}", branchKey,
-		"{parent_key}", parentKey,
-		"{branch_type}", branchType,
-		"{direct_chat}", fmt.Sprintf("%v", directChat),
-	)
-	return r.Replace(text)
+	return prompts.ReplaceVars(text, map[string]string{
+		"branch_key":  branchKey,
+		"parent_key":  parentKey,
+		"branch_type": branchType,
+		"direct_chat": fmt.Sprintf("%v", directChat),
+	})
 }
 
 // promptInfo builds a PromptInfo for a file-path-based prompt config field.

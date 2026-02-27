@@ -91,13 +91,14 @@ main
  ├── skills        → log (leaf package)
  ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
- ├── compaction    → anthropic, session, log
+ ├── prompts       (no deps — embedded .md files)
+ ├── compaction    → anthropic, prompts, session, log
  ├── command       → table
  ├── agent         → anthropic, compaction, session, tools, workspace, log
  └── telegram      → agent, command, log, table, voice
 ```
 
-No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
+No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
 
 ## The Agent Loop (`agent/agent.go`)
 
@@ -647,8 +648,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `minMessages` — min messages before compacting (default: 4)
 
 **Passed to `Compact()` at call time** (not stored on the Compactor):
-- `summaryPrompt` — read live from file at compaction time via `ReadPromptFile` callback (empty uses a minimal fallback). Edits take effect immediately.
-- `handoffMessage` — message after compaction completes (empty uses `DefaultHandoffMessage`)
+- `summaryPrompt` — read live from file at compaction time via `ReadPromptFile` callback. If empty, falls back to `prompts.CompactionSummary()` (embedded from `prompts/compaction-summary.md`). Edits to the config file take effect immediately.
+- `handoffMessage` — message after compaction completes. If empty, uses `DefaultHandoffMessage` (embedded from `prompts/compaction-handoff.md`).
 
 ## Deployment & Migrations
 
