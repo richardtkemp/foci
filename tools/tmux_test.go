@@ -455,11 +455,12 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	name := "foci-test-wake"
 	defer tmuxCleanup(t, name)
 
-	// Start a session that does nothing (sleep)
+	// Start a session that does nothing (sleep) — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -518,11 +519,12 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	name := "foci-test-dead"
 	defer tmuxCleanup(t, name)
 
-	// Start a session
+	// Start a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -730,21 +732,23 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	defer tmuxCleanup(t, nameA)
 	defer tmuxCleanup(t, nameB)
 
-	// Agent A starts and watches a session
+	// Agent A starts a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      nameA,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := toolA.Execute(context.Background(), params); err != nil {
 		t.Fatalf("agent A start: %v", err)
 	}
 
-	// Agent B starts and watches a session
+	// Agent B starts a session — watch=false to control watch params below
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      nameB,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := toolB.Execute(context.Background(), params); err != nil {
 		t.Fatalf("agent B start: %v", err)
@@ -1554,11 +1558,12 @@ func TestTmuxPersistWatches(t *testing.T) {
 	name := "foci-test-persist-watch"
 	defer tmuxCleanup(t, name)
 
-	// Start a session
+	// Start a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -1689,11 +1694,12 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	name := "foci-test-unwatch-persist"
 	defer tmuxCleanup(t, name)
 
-	// Start and watch
+	// Start — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -1748,11 +1754,12 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	name := "foci-test-clearall-watch"
 	defer tmuxCleanup(t, name)
 
-	// Start and watch
+	// Start — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := tool.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -1802,11 +1809,12 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	name := "foci-test-unwatch-restart"
 	defer tmuxCleanup(t, name)
 
-	// Start session
+	// Start session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
 		"command":   "sleep 60",
+		"watch":     false,
 	})
 	if _, err := tool1.Execute(context.Background(), params); err != nil {
 		t.Fatalf("start: %v", err)
@@ -1862,5 +1870,128 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	var watches2 []persistedWatch
 	if store2.Get("tmux:test-agent:watches", &watches2) && len(watches2) != 0 {
 		t.Errorf("watches in state after restart = %d, want 0", len(watches2))
+	}
+}
+
+func TestTmuxStartAutoWatch(t *testing.T) {
+	tmuxAvailable(t)
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch")
+
+	name := "foci-test-autowatch"
+	defer tmuxCleanup(t, name)
+
+	// Start with default watch=true (omitted from params)
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !strings.Contains(result, "Session started") {
+		t.Errorf("result missing 'Session started': %q", result)
+	}
+	if !strings.Contains(result, "Watching") {
+		t.Errorf("result missing watch confirmation: %q", result)
+	}
+
+	// Verify watch was persisted
+	var watches []persistedWatch
+	if !store.Get("tmux:test-autowatch:watches", &watches) {
+		t.Fatal("watches not persisted after auto-watch")
+	}
+	if len(watches) != 1 {
+		t.Fatalf("persisted watches = %d, want 1", len(watches))
+	}
+	if watches[0].Session != name {
+		t.Errorf("watch session = %q, want %q", watches[0].Session, name)
+	}
+	if watches[0].ThresholdSecs != 30 {
+		t.Errorf("watch threshold = %d, want 30 (default)", watches[0].ThresholdSecs)
+	}
+
+	// Cleanup watch
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	tool.Execute(context.Background(), params)
+}
+
+func TestTmuxStartWatchFalse(t *testing.T) {
+	tmuxAvailable(t)
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch")
+
+	name := "foci-test-nowatch"
+	defer tmuxCleanup(t, name)
+
+	// Start with watch=false
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+		"watch":     false,
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !strings.Contains(result, "Session started") {
+		t.Errorf("result missing 'Session started': %q", result)
+	}
+	if strings.Contains(result, "Watching") {
+		t.Errorf("result should NOT contain watch confirmation when watch=false: %q", result)
+	}
+
+	// Verify no watches persisted
+	var watches []persistedWatch
+	if store.Get("tmux:test-nowatch:watches", &watches) && len(watches) != 0 {
+		t.Errorf("persisted watches = %d, want 0 when watch=false", len(watches))
+	}
+}
+
+func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
+	tmuxAvailable(t)
+
+	// No notifier — auto-watch should be silently skipped
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
+	name := "foci-test-autowatch-nonotif"
+	defer tmuxCleanup(t, name)
+
+	// Start with default watch=true but no notifier
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !strings.Contains(result, "Session started") {
+		t.Errorf("result missing 'Session started': %q", result)
+	}
+	// Should not contain watch info since no notifier
+	if strings.Contains(result, "Watching") {
+		t.Errorf("result should NOT contain watch when no notifier: %q", result)
 	}
 }
