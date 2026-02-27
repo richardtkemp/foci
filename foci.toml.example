@@ -1,4 +1,4 @@
-# Foci config — minimal test setup
+# Foci config — minimal example setup
 
 [agent]
 id = "main"
