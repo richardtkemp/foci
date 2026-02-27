@@ -639,6 +639,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 **Session file rotation:** `Replace()` in `session/store.go` renames the existing file before writing. Archive files use the pattern `{name}.{N}.jsonl` (N = 1, 2, 3...). The active session is always the unnumbered file. `Load`, `LoadFull`, `Append` etc. are unaffected — `keyToPath()` always resolves to the unnumbered path. `ListChatSessions`, `RepairOrphans`, and `InjectRestartMarkers` skip archive files.
 
+**Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone_current, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
+
 **Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this on the next turn and can gracefully conclude rather than hitting the context limit unexpectedly.
 
 

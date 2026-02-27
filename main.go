@@ -1425,6 +1425,7 @@ func setupAgent(p setupParams) *agentInstance {
 		EnvironmentBlock:            envBlock,
 		Bootstrap:                   bootstrap,
 		Compactor:                   compactor,
+		AsyncNotifier:               notifier,
 		Reminders:                   p.reminderStore,
 		AgentID:                     acfg.ID,
 		Model:                       acfg.Model,

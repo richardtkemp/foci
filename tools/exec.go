@@ -225,10 +225,12 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
 		log.Infof("exec", "auto-backgrounding after %v: %s", threshold, truncateCmd(displayCmd, 100))
+		notifier.MarkPending(sessionKey)
 
 		// Continue waiting in background goroutine
 		go func() {
 			defer cmdCancel()
+			defer notifier.MarkDone(sessionKey)
 			err := <-done
 			<-doneRead // Wait for output reading to complete
 			result := formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)

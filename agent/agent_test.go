@@ -1987,6 +1987,86 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("warning = %q, want contains 'cannot compact'", warned[0])
 		}
 	})
+
+	t.Run("skipped_when_async_pending", func(t *testing.T) {
+		var turnCount atomic.Int32
+		server := compactionMockServer(&turnCount, 5)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+		notifier := tools.NewAsyncNotifier(func(sk, msg string) {})
+		var notified []string
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+			AsyncNotifier: notifier,
+			CompactionNotifyFunc: func(session string, msg string) {
+				notified = append(notified, msg)
+			},
+		}
+
+		sessionKey := "agent:test:asyncpending"
+
+		// 4 normal turns
+		for i := 1; i <= 4; i++ {
+			if _, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i)); err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+		}
+
+		// Mark an async result as pending for this session
+		notifier.MarkPending(sessionKey)
+
+		// Turn 5 triggers compaction threshold — but async pending blocks it
+		resp, err := ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
+		if err != nil {
+			t.Fatalf("Turn 5: %v", err)
+		}
+		if resp != "Response 5" {
+			t.Errorf("got %q, want %q", resp, "Response 5")
+		}
+
+		// Compaction should NOT have fired
+		if len(notified) != 0 {
+			t.Errorf("expected 0 compaction notifications with async pending, got %d", len(notified))
+		}
+
+		// Session should still have all original messages
+		msgs, err := store.Load(sessionKey)
+		if err != nil {
+			t.Fatalf("load session: %v", err)
+		}
+		if len(msgs) != 10 {
+			t.Errorf("expected 10 messages (uncompacted), got %d", len(msgs))
+		}
+
+		// Clear pending — next turn should compact
+		notifier.MarkDone(sessionKey)
+		turnCount.Store(4) // reset so turn 6 = count 5 → high tokens
+
+		resp, err = ag.HandleMessage(context.Background(), sessionKey, "Turn 6")
+		if err != nil {
+			t.Fatalf("Turn 6: %v", err)
+		}
+
+		// Compaction should have fired now
+		if len(notified) == 0 {
+			t.Error("expected compaction to fire after async pending cleared")
+		}
+
+		msgs, _ = store.Load(sessionKey)
+		if len(msgs) > 5 {
+			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
+		}
+	})
 }
 
 func TestIntermediateTextBeforeToolCalls(t *testing.T) {
