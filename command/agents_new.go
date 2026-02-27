@@ -294,17 +294,18 @@ func generateConfigEntry(w *agentWizard, workspace string) string {
 }
 
 // defaultCrontabTemplate is the fallback when the template file doesn't exist.
+// Placeholders: AGENT_NAME, WORKSPACE, HOMEDIR are replaced at generation time.
 const defaultCrontabTemplate = `# AGENT_NAME crontab entries
-*/30 * * * * foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/memory-formation.md)" 2>&1 >> /home/foci/logs/cron.log
-*/45 * * * * foci send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> /home/foci/logs/cron.log
-0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/daily-memory-review.md)" 2>&1 >> /home/foci/logs/cron.log
-40 2 * * 1 foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/weekly-character-review.md)" 2>&1 >> /home/foci/logs/cron.log
+*/30 * * * * foci branch --oneshot -a AGENT_NAME "$(cat HOMEDIR/shared/prompts/memory-formation.md)" 2>&1 >> HOMEDIR/logs/cron.log
+*/45 * * * * foci send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> HOMEDIR/logs/cron.log
+0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat HOMEDIR/shared/prompts/daily-memory-review.md)" 2>&1 >> HOMEDIR/logs/cron.log
+40 2 * * 1 foci branch --oneshot -a AGENT_NAME "$(cat HOMEDIR/shared/prompts/weekly-character-review.md)" 2>&1 >> HOMEDIR/logs/cron.log
 `
 
 // generateCrontab returns crontab entries for the new agent.
 // Reads a template from {DefaultsDir}/crontab.template if it exists,
-// otherwise uses a built-in fallback. Replaces AGENT_NAME and WORKSPACE
-// placeholders, then staggers minute values based on agent count.
+// otherwise uses a built-in fallback. Replaces AGENT_NAME, WORKSPACE,
+// and HOMEDIR placeholders, then staggers minute values based on agent count.
 func generateCrontab(w *agentWizard, workspace string) []string {
 	// Try to read template file
 	templatePath := filepath.Join(w.deps.DefaultsDir, "crontab.template")
@@ -316,6 +317,7 @@ func generateCrontab(w *agentWizard, workspace string) []string {
 	// Replace placeholders
 	tmpl = strings.ReplaceAll(tmpl, "AGENT_NAME", w.id)
 	tmpl = strings.ReplaceAll(tmpl, "WORKSPACE", workspace)
+	tmpl = strings.ReplaceAll(tmpl, "HOMEDIR", w.deps.HomeDir)
 
 	// Stagger minute offsets based on number of existing agents
 	agents := w.deps.ListFn()
