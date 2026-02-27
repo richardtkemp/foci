@@ -146,6 +146,10 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 					"type": "string",
 					"description": "Working directory (start, optional)"
 				},
+				"watch": {
+					"type": "boolean",
+					"description": "Auto-watch for inactivity after start (start, default true). Requires notifier."
+				},
 				"keys": {
 					"type": "string",
 					"description": "Keystrokes to send (send)"
@@ -185,6 +189,7 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 		Name             string `json:"name"`
 		Command          string `json:"command"`
 		Workdir          string `json:"workdir"`
+		Watch            *bool  `json:"watch"`
 		Keys             string `json:"keys"`
 		Enter            *bool  `json:"enter"`
 		Lines            int    `json:"lines"`
@@ -198,7 +203,11 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 
 	switch p.Operation {
 	case "start":
-		return inst.start(ctx, p.Name, p.Command, p.Workdir)
+		watch := true
+		if p.Watch != nil {
+			watch = *p.Watch
+		}
+		return inst.start(ctx, p.Name, p.Command, p.Workdir, watch)
 	case "send":
 		enter := true
 		if p.Enter != nil {
@@ -292,7 +301,7 @@ func (inst *tmuxInstance) ClearAll() {
 	log.Debugf("tmux", "ClearAll: cleared all watches and owned sessions")
 }
 
-func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string) (string, error) {
+func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string, watch bool) (string, error) {
 	if name == "" {
 		n := atomic.AddUint64(&tmuxCounter, 1)
 		name = fmt.Sprintf("foci-%d", n)
@@ -306,7 +315,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir stri
 		args = append(args, command)
 	}
 
-	log.Debugf("tmux", "start: name=%s command=%q workdir=%q cols=%d rows=%d", name, command, workdir, inst.cols, inst.rows)
+	log.Debugf("tmux", "start: name=%s command=%q workdir=%q cols=%d rows=%d watch=%v", name, command, workdir, inst.cols, inst.rows, watch)
 
 	out, err := runTmux(ctx, args...)
 	if err != nil {
@@ -326,7 +335,19 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir stri
 	inst.persistOwned()
 	inst.mu.Unlock()
 
-	return fmt.Sprintf("Session started: %s", name), nil
+	result := fmt.Sprintf("Session started: %s", name)
+
+	// Auto-watch for inactivity if requested and notifier is available
+	if watch && inst.notifier != nil {
+		watchResult, watchErr := inst.watch(ctx, name, 0, 30)
+		if watchErr != nil {
+			log.Warnf("tmux", "auto-watch failed for %s: %v", name, watchErr)
+		} else {
+			result += "\n" + watchResult
+		}
+	}
+
+	return result, nil
 }
 
 func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter bool) (string, error) {
