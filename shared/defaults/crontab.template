@@ -1,20 +1,21 @@
 # Default crontab entries for a new foci agent
 # Replace AGENT_NAME with the agent's ID (e.g. greek-tutor)
 # Replace WORKSPACE with the agent's workspace path (e.g. /home/foci/greek-tutor)
+# Replace HOMEDIR with the foci user's home directory (e.g. /home/foci)
 # Add these to the foci user's crontab: crontab -e
 #
 # Prereqs: FOCI_ADDR and PATH should be set at top of crontab:
 #   PATH=/usr/local/bin:/usr/bin:/bin
 #   FOCI_ADDR=127.0.0.1:18791
 
-# Memory formation: capture important session memories (every 30 min)
-*/30 * * * * foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/memory-formation.md)" 2>&1 >> /home/foci/logs/cron.log
+# Memory formation: capture important session memories (every 30 min, only if active in last 30m)
+*/30 * * * * foci branch --oneshot --if-active 30m -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log
 
-# Heartbeat: autonomous check-in (every 45 min)
-*/45 * * * * foci send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> /home/foci/logs/cron.log
+# Heartbeat: autonomous check-in (every 45 min, only if inactive for 45m+)
+*/45 * * * * foci branch --oneshot --if-inactive 45m -a AGENT_NAME -mf WORKSPACE/prompts/HEARTBEAT.md 2>&1 >> HOMEDIR/logs/cron.log
 
-# Daily 04:00: review and curate MEMORY.md
-0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/daily-memory-review.md)" 2>&1 >> /home/foci/logs/cron.log
+# Daily 04:00: review and curate MEMORY.md (only if active in last 24h)
+0 4 * * * foci branch --oneshot --if-active 24h -a AGENT_NAME -mf HOMEDIR/shared/prompts/daily-memory-review.md 2>&1 >> HOMEDIR/logs/cron.log
 
 # Weekly Mon 02:40: character review
-40 2 * * 1 foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/weekly-character-review.md)" 2>&1 >> /home/foci/logs/cron.log
+40 2 * * 1 foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/weekly-character-review.md 2>&1 >> HOMEDIR/logs/cron.log
