@@ -10,7 +10,7 @@ import (
 func TestSystemBlocks(t *testing.T) {
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
 	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
 	os.WriteFile(filepath.Join(dir, "TOOLS.md"), []byte("You have tools."), 0644)
 
@@ -22,7 +22,7 @@ func TestSystemBlocks(t *testing.T) {
 	}
 
 	// Check order matches file order (IDENTITY before SOUL before TOOLS)
-	if blocks[0].Text != "I am Clod." {
+	if blocks[0].Text != "I am Foci." {
 		t.Errorf("blocks[0].Text = %q", blocks[0].Text)
 	}
 	if blocks[1].Text != "Be kind." {
@@ -142,7 +142,7 @@ func TestDefaultFileOrder(t *testing.T) {
 
 func TestSetSecretNames(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
 
 	b := NewBootstrap(dir, nil)
 
@@ -175,7 +175,7 @@ func TestSetSecretNames(t *testing.T) {
 
 func TestSetSecretNamesCacheInvalidation(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
 
 	b := NewBootstrap(dir, nil)
 
@@ -196,7 +196,7 @@ func TestSetSecretNamesCacheInvalidation(t *testing.T) {
 
 func TestSecretsCacheControlOnLastBlock(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644)
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
 	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
 
 	b := NewBootstrap(dir, nil)
@@ -318,7 +318,7 @@ func TestCheckSizes(t *testing.T) {
 func TestSectionSizes(t *testing.T) {
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Clod."), 0644) // 10 chars
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644) // 10 chars
 	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)       // 8 chars
 	// COHERENCE.md missing — should be skipped
 
