@@ -13,31 +13,31 @@ import (
 func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
 		Name:        "todo",
-		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
+		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["add", "list", "search", "complete", "remove"],
+					"enum": ["add", "list", "search", "complete", "edit", "remove"],
 					"description": "The operation to perform"
 				},
 				"text": {
 					"type": "string",
-					"description": "Text for the todo item (required for 'add')"
+					"description": "Text for the todo item (required for 'add', optional for 'edit')"
 				},
 				"priority": {
 					"type": "string",
 					"enum": ["high", "medium", "low"],
-					"description": "Priority level (default: medium, used with 'add')"
+					"description": "Priority level (default: medium, used with 'add' and 'edit')"
 				},
 				"tag": {
 					"type": "string",
-					"description": "Comma-separated tags (used with 'add' to set tags, with 'list' to filter by tag, e.g. 'background')"
+					"description": "Comma-separated tags (used with 'add'/'edit' to set tags, with 'list' to filter by tag, e.g. 'background')"
 				},
 				"id": {
 					"type": "integer",
-					"description": "Todo item ID (required for 'complete' and 'remove')"
+					"description": "Todo item ID (required for 'complete', 'edit', and 'remove')"
 				},
 				"status": {
 					"type": "string",
@@ -137,6 +137,29 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				}
 				return fmt.Sprintf("Completed todo #%d.", p.ID), nil
 
+			case "edit":
+				if p.ID == 0 {
+					return "", fmt.Errorf("id is required for edit")
+				}
+				// Detect whether "tag" key was explicitly provided (allows setting to "").
+				var raw map[string]json.RawMessage
+				json.Unmarshal(params, &raw)
+				_, setTags := raw["tag"]
+
+				if p.Text == "" && p.Priority == "" && !setTags {
+					return "", fmt.Errorf("edit requires at least one of: text, priority, tag")
+				}
+				item, err := store.Edit(agentID, p.ID, p.Text, p.Priority, p.Tag, setTags)
+				if err != nil {
+					return "", err
+				}
+				tags := memory.FormatTags(item.Tags)
+				marker := "[ ]"
+				if item.Status == "done" {
+					marker = "[x]"
+				}
+				return fmt.Sprintf("Updated todo #%d: %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text), nil
+
 			case "remove":
 				if p.ID == 0 {
 					return "", fmt.Errorf("id is required for remove")
@@ -147,7 +170,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return fmt.Sprintf("Removed todo #%d.", p.ID), nil
 
 			default:
-				return "", fmt.Errorf("unknown action: %s (use add, list, search, complete, or remove)", p.Action)
+				return "", fmt.Errorf("unknown action: %s (use add, list, search, complete, edit, or remove)", p.Action)
 			}
 		},
 	}

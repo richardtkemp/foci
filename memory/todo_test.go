@@ -304,6 +304,120 @@ func TestFormatTags(t *testing.T) {
 	}
 }
 
+func TestTodoEdit(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Original text", "high", "work")
+
+	// Edit text only — priority and tags stay unchanged.
+	item, err := store.Edit("agent1", id, "Updated text", "", "", false)
+	if err != nil {
+		t.Fatalf("Edit text: %v", err)
+	}
+	if item.Text != "Updated text" {
+		t.Errorf("text = %q, want %q", item.Text, "Updated text")
+	}
+	if item.Priority != "high" {
+		t.Errorf("priority = %q, want %q (unchanged)", item.Priority, "high")
+	}
+	if item.Tags != "work" {
+		t.Errorf("tags = %q, want %q (unchanged)", item.Tags, "work")
+	}
+}
+
+func TestTodoEditPriority(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "My task", "high", "")
+
+	item, err := store.Edit("agent1", id, "", "low", "", false)
+	if err != nil {
+		t.Fatalf("Edit priority: %v", err)
+	}
+	if item.Priority != "low" {
+		t.Errorf("priority = %q, want %q", item.Priority, "low")
+	}
+	if item.Text != "My task" {
+		t.Errorf("text = %q, want %q (unchanged)", item.Text, "My task")
+	}
+}
+
+func TestTodoEditTags(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Tagged task", "medium", "old")
+
+	// Set new tag.
+	item, err := store.Edit("agent1", id, "", "", "new", true)
+	if err != nil {
+		t.Fatalf("Edit tags: %v", err)
+	}
+	if item.Tags != "new" {
+		t.Errorf("tags = %q, want %q", item.Tags, "new")
+	}
+
+	// Clear tags by setting to empty with setTags=true.
+	item, err = store.Edit("agent1", id, "", "", "", true)
+	if err != nil {
+		t.Fatalf("Edit clear tags: %v", err)
+	}
+	if item.Tags != "" {
+		t.Errorf("tags = %q, want empty", item.Tags)
+	}
+}
+
+func TestTodoEditMultipleFields(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Original", "low", "a")
+
+	item, err := store.Edit("agent1", id, "New text", "high", "b,c", true)
+	if err != nil {
+		t.Fatalf("Edit multiple: %v", err)
+	}
+	if item.Text != "New text" {
+		t.Errorf("text = %q, want %q", item.Text, "New text")
+	}
+	if item.Priority != "high" {
+		t.Errorf("priority = %q, want %q", item.Priority, "high")
+	}
+	if item.Tags != "b,c" {
+		t.Errorf("tags = %q, want %q", item.Tags, "b,c")
+	}
+}
+
+func TestTodoEditNotFound(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	_, err := store.Edit("agent1", 999, "text", "", "", false)
+	if err == nil {
+		t.Error("expected error for nonexistent todo")
+	}
+}
+
+func TestTodoCrossAgentEdit(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Agent 1 only", "medium", "")
+
+	// Agent 2 should not be able to edit agent 1's todo.
+	_, err := store.Edit("agent2", id, "hacked", "", "", false)
+	if err == nil {
+		t.Error("expected error when editing another agent's todo")
+	}
+}
+
+func TestTodoEditNothingToUpdate(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Task", "medium", "")
+
+	_, err := store.Edit("agent1", id, "", "", "", false)
+	if err == nil {
+		t.Error("expected error when nothing to update")
+	}
+}
+
 func newTestTodoStore(t *testing.T) *TodoStore {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "todo_test.db")
