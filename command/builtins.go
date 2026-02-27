@@ -959,60 +959,157 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 	}
 }
 
-// TmuxSessionInfo describes a tmux session for the /tmux command.
-type TmuxSessionInfo struct {
-	Name      string
-	Created   string // human-readable creation time
-	Windows   int
-	Watched   bool
-	WatchInfo string // additional watch info (e.g., window number, threshold)
-}
+// NewTmuxCommand returns a /tmux command that wraps the tmux tool, exposing all
+// operations via slash-command syntax. It delegates to execFn (the tool's Execute).
+func NewTmuxCommand(execFn func(ctx context.Context, params json.RawMessage) (string, error)) *Command {
+	const usage = `Usage: /tmux [operation] [args...]
 
-// NewTmuxCommand returns a /tmux command that lists tmux sessions with status.
-func NewTmuxCommand(listFn func(ctx context.Context) ([]TmuxSessionInfo, error)) *Command {
+Operations:
+  list                          List all tmux sessions (default)
+  start [name] [command...]     Start a new session (auto-watches)
+  start [name] --no-watch [cmd] Start without auto-watch
+  send <name> <keys...>         Send keystrokes to a session
+  read <name> [lines]           Read pane output
+  kill <name>                   Kill a session
+  watch <name> [threshold_secs] Watch session for inactivity
+  unwatch <name>                Stop watching a session`
+
 	return &Command{
-		Name:        "tmux",
-		Description: "List tmux sessions with status info",
-		Category:    "observability",
+		Name:           "tmux",
+		Description:    "Manage tmux sessions — start, send, read, list, kill, watch, unwatch",
+		Category:       "observability",
+		SkipToolExport: true,
 		Execute: func(ctx context.Context, args string) (string, error) {
-			sessions, err := listFn(ctx)
-			if err != nil {
-				return "", err
+			fields := strings.Fields(args)
+
+			// Default to list
+			op := "list"
+			if len(fields) > 0 {
+				op = fields[0]
+				fields = fields[1:]
 			}
 
-			if len(sessions) == 0 {
-				return "No tmux sessions.", nil
-			}
+			var params map[string]interface{}
 
-			// Build table
-			var rows [][]string
-			for _, s := range sessions {
-				status := "idle"
-				if s.Watched {
-					status = "watched"
+			switch op {
+			case "list":
+				params = map[string]interface{}{"operation": "list"}
+
+			case "start":
+				params = map[string]interface{}{"operation": "start"}
+				autoWatch := true
+				var cmdParts []string
+				for i := 0; i < len(fields); i++ {
+					if fields[i] == "--no-watch" {
+						autoWatch = false
+						continue
+					}
+					if _, ok := params["name"]; !ok {
+						params["name"] = fields[i]
+					} else {
+						cmdParts = append(cmdParts, fields[i:]...)
+						break
+					}
 				}
-				watchInfo := "-"
-				if s.Watched && s.WatchInfo != "" {
-					watchInfo = s.WatchInfo
+				if len(cmdParts) > 0 {
+					params["command"] = strings.Join(cmdParts, " ")
 				}
-				rows = append(rows, []string{
-					s.Name,
-					fmt.Sprintf("%d", s.Windows),
-					s.Created,
-					status,
-					watchInfo,
-				})
+
+				raw, _ := json.Marshal(params)
+				result, err := execFn(ctx, raw)
+				if err != nil {
+					return "", err
+				}
+
+				// Auto-watch unless --no-watch
+				if autoWatch {
+					// Extract session name from result "Session started: <name>"
+					name, _ := params["name"].(string)
+					if name == "" {
+						// Auto-generated name — parse from result
+						name = strings.TrimPrefix(result, "Session started: ")
+					}
+					watchParams, _ := json.Marshal(map[string]interface{}{
+						"operation": "watch",
+						"name":      name,
+					})
+					watchResult, watchErr := execFn(ctx, watchParams)
+					if watchErr != nil {
+						return result + "\n(auto-watch failed: " + watchErr.Error() + ")", nil
+					}
+					return result + "\n" + watchResult, nil
+				}
+				return result, nil
+
+			case "send":
+				if len(fields) < 2 {
+					return "", fmt.Errorf("usage: /tmux send <name> <keys...>")
+				}
+				params = map[string]interface{}{
+					"operation": "send",
+					"name":      fields[0],
+					"keys":      strings.Join(fields[1:], " "),
+				}
+
+			case "read":
+				if len(fields) < 1 {
+					return "", fmt.Errorf("usage: /tmux read <name> [lines]")
+				}
+				params = map[string]interface{}{
+					"operation": "read",
+					"name":      fields[0],
+				}
+				if len(fields) > 1 {
+					if n, err := strconv.Atoi(fields[1]); err == nil {
+						params["lines"] = n
+					}
+				}
+
+				raw, _ := json.Marshal(params)
+				result, err := execFn(ctx, raw)
+				if err != nil {
+					return "", err
+				}
+				return "```\n" + result + "\n```", nil
+
+			case "kill":
+				if len(fields) < 1 {
+					return "", fmt.Errorf("usage: /tmux kill <name>")
+				}
+				params = map[string]interface{}{
+					"operation": "kill",
+					"name":      fields[0],
+				}
+
+			case "watch":
+				if len(fields) < 1 {
+					return "", fmt.Errorf("usage: /tmux watch <name> [threshold_secs]")
+				}
+				params = map[string]interface{}{
+					"operation": "watch",
+					"name":      fields[0],
+				}
+				if len(fields) > 1 {
+					if n, err := strconv.Atoi(fields[1]); err == nil {
+						params["threshold_seconds"] = n
+					}
+				}
+
+			case "unwatch":
+				if len(fields) < 1 {
+					return "", fmt.Errorf("usage: /tmux unwatch <name>")
+				}
+				params = map[string]interface{}{
+					"operation": "unwatch",
+					"name":      fields[0],
+				}
+
+			default:
+				return usage, nil
 			}
 
-			cols := []table.Column{
-				{Header: "Session"},
-				{Header: "Wins"},
-				{Header: "Created"},
-				{Header: "Status"},
-				{Header: "Watch"},
-			}
-
-			return table.Format(cols, rows), nil
+			raw, _ := json.Marshal(params)
+			return execFn(ctx, raw)
 		},
 	}
 }
