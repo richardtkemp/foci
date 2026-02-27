@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"clod/log"
+	"foci/log"
 )
 
 // Item holds vault item metadata (never the password value).
@@ -58,7 +58,7 @@ type Executor interface {
 //   - "list" subcommand → `sudo -u bitwarden bw list items ...` (allowlisted, auto-approved)
 //   - "get" subcommand → `sudo -u bitwarden bw get password ...` (requires Telegram approval)
 //
-// The bitwarden user reads its own session file — clod never sees the session token.
+// The bitwarden user reads its own session file — foci never sees the session token.
 type DefaultExecutor struct {
 	SessionFile string // path to session file (default /home/bitwarden/.bw_session)
 }

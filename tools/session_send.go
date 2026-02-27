@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"clod/anthropic"
-	"clod/log"
+	"foci/anthropic"
+	"foci/log"
 )
 
 // SessionAppender appends a message to a session.

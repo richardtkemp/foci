@@ -15,22 +15,38 @@ const defaultAddr = "127.0.0.1:18791"
 
 var client = &http.Client{Timeout: 5 * time.Minute}
 
-// Convention: every CLI flag must have a corresponding CLOD_ env var, and every
-// CLOD_ env var must have a corresponding CLI flag. Resolution order: flag > env > default.
+// Convention: every CLI flag must have a corresponding FOCI_ env var, and every
+// FOCI_ env var must have a corresponding CLI flag. Resolution order: flag > env > default.
 // When adding new flags, add the env var fallback in parseSendFlags (for send flags)
 // or cmdBranch (for branch-specific flags), and update the usage() text for both.
 
 // envDefault returns val if non-empty, otherwise falls back to the env var.
+// Checks FOCI_ prefix first, then CLOD_ prefix as legacy fallback.
 func envDefault(val, envKey string) string {
 	if val != "" {
 		return val
 	}
-	return os.Getenv(envKey)
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	// Legacy fallback: CLOD_ prefix
+	if strings.HasPrefix(envKey, "FOCI_") {
+		return os.Getenv("CLOD_" + strings.TrimPrefix(envKey, "FOCI_"))
+	}
+	return ""
 }
 
 // envBool returns true if val is true, or the env var is non-empty.
+// Checks FOCI_ prefix first, then CLOD_ prefix as legacy fallback.
 func envBool(val bool, envKey string) bool {
-	return val || os.Getenv(envKey) != ""
+	if val || os.Getenv(envKey) != "" {
+		return true
+	}
+	// Legacy fallback: CLOD_ prefix
+	if strings.HasPrefix(envKey, "FOCI_") {
+		return os.Getenv("CLOD_"+strings.TrimPrefix(envKey, "FOCI_")) != ""
+	}
+	return false
 }
 
 // wantsHelp returns true if args contain -h or --help.
@@ -71,7 +87,7 @@ func main() {
 	// Parse --addr from global args (before command)
 	allArgs := os.Args[1:]
 	addrFlag, allArgs := parseAddrFlag(allArgs)
-	addr := envDefault(addrFlag, "CLOD_ADDR")
+	addr := envDefault(addrFlag, "FOCI_ADDR")
 	if addr == "" {
 		addr = defaultAddr
 	}
@@ -117,7 +133,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod <command> [args...]
+	fmt.Fprintf(os.Stderr, `Usage: foci <command> [args...]
 
 Commands:
   send <text>          Send a message to the agent (main session)
@@ -139,17 +155,17 @@ Flags:
   -mf, --message-file  Read message from file path
 
 Environment (flag > env var > default):
-  CLOD_ADDR            Gateway address (--addr)
-  CLOD_AGENT           Target agent (-a)
-  CLOD_SESSION         Target session (-s)
-  CLOD_IF_ACTIVE       Activity gate duration (--if-active)
-  CLOD_SYNC            Wait for response (--sync/--wait, non-empty = true)
-  CLOD_ASYNC           Fire-and-forget (--async/--no-wait, non-empty = true)
-  CLOD_MESSAGE_TEXT    Message text (-mt)
-  CLOD_MESSAGE_FILE    Message file path (-mf)
-  CLOD_NO_COMPACT      Skip compaction (--no-compact, non-empty = true)
-  CLOD_NO_RESET_HOOK   Skip reset hook (--no-reset-hook, non-empty = true)
-  CLOD_ONESHOT         Oneshot mode (--oneshot, non-empty = true)
+  FOCI_ADDR            Gateway address (--addr)
+  FOCI_AGENT           Target agent (-a)
+  FOCI_SESSION         Target session (-s)
+  FOCI_IF_ACTIVE       Activity gate duration (--if-active)
+  FOCI_SYNC            Wait for response (--sync/--wait, non-empty = true)
+  FOCI_ASYNC           Fire-and-forget (--async/--no-wait, non-empty = true)
+  FOCI_MESSAGE_TEXT    Message text (-mt)
+  FOCI_MESSAGE_FILE    Message file path (-mf)
+  FOCI_NO_COMPACT      Skip compaction (--no-compact, non-empty = true)
+  FOCI_NO_RESET_HOOK   Skip reset hook (--no-reset-hook, non-empty = true)
+  FOCI_ONESHOT         Oneshot mode (--oneshot, non-empty = true)
 `, defaultAddr)
 }
 
@@ -175,7 +191,7 @@ func parseAgentFlag(args []string) (agentID string, rest []string) {
 	}
 	// Env var fallback
 	if agentID == "" {
-		agentID = os.Getenv("CLOD_AGENT")
+		agentID = envDefault("", "FOCI_AGENT")
 	}
 	return agentID, args
 }
@@ -273,14 +289,14 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		}
 	}
 	// Apply env var fallbacks (flag > env > default)
-	flags.agent = envDefault(flags.agent, "CLOD_AGENT")
-	flags.session = envDefault(flags.session, "CLOD_SESSION")
-	flags.ifActive = envDefault(flags.ifActive, "CLOD_IF_ACTIVE")
-	flags.ifInactive = envDefault(flags.ifInactive, "CLOD_IF_INACTIVE")
-	flags.messageText = envDefault(flags.messageText, "CLOD_MESSAGE_TEXT")
-	flags.messageFile = envDefault(flags.messageFile, "CLOD_MESSAGE_FILE")
-	flags.async = envBool(flags.async, "CLOD_ASYNC")
-	flags.sync = envBool(flags.sync, "CLOD_SYNC")
+	flags.agent = envDefault(flags.agent, "FOCI_AGENT")
+	flags.session = envDefault(flags.session, "FOCI_SESSION")
+	flags.ifActive = envDefault(flags.ifActive, "FOCI_IF_ACTIVE")
+	flags.ifInactive = envDefault(flags.ifInactive, "FOCI_IF_INACTIVE")
+	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
+	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
+	flags.async = envBool(flags.async, "FOCI_ASYNC")
+	flags.sync = envBool(flags.sync, "FOCI_SYNC")
 	return flags, filtered
 }
 
@@ -308,7 +324,7 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod send [-a agent] [-s session] [--if-active <dur>] [--if-inactive <dur>] [--sync] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [--if-active <dur>] [--if-inactive <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
 
@@ -317,14 +333,14 @@ and the agent's response is delivered to Telegram. Use --sync/--wait to block
 until the response is available.
 
 Flags:
-  -a, --agent <id>        Target agent (env: CLOD_AGENT)
-  -s, --session <id>      Target session (env: CLOD_SESSION, default: main)
-  --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
-  --if-inactive <dur>     Skip if user was active within duration (env: CLOD_IF_INACTIVE)
-  --sync, --wait          Wait for the response (env: CLOD_SYNC)
-  --async, --no-wait      Fire-and-forget (default) (env: CLOD_ASYNC)
-  -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
-  -mf, --message-file     Read message from file (env: CLOD_MESSAGE_FILE)
+  -a, --agent <id>        Target agent (env: FOCI_AGENT)
+  -s, --session <id>      Target session (env: FOCI_SESSION, default: main)
+  --if-active <dur>       Skip if no user activity within duration (env: FOCI_IF_ACTIVE)
+  --if-inactive <dur>     Skip if user was active within duration (env: FOCI_IF_INACTIVE)
+  --sync, --wait          Wait for the response (env: FOCI_SYNC)
+  --async, --no-wait      Fire-and-forget (default) (env: FOCI_ASYNC)
+  -mt, --message-text     Message text (env: FOCI_MESSAGE_TEXT)
+  -mf, --message-file     Read message from file (env: FOCI_MESSAGE_FILE)
 
 Trailing args without a flag are treated as implicit --message-text.
 Cannot use both -mt and -mf.
@@ -342,9 +358,9 @@ func cmdSend(base string, args []string) error {
 		return err
 	}
 	if text == "" {
-		return fmt.Errorf("usage: clod send [-a agent] [-s session] [-mt text | -mf file] <message text>")
+		return fmt.Errorf("usage: foci send [-a agent] [-s session] [-mt text | -mf file] <message text>")
 	}
-	// Default async=true unless --sync/--wait or CLOD_SYNC is set
+	// Default async=true unless --sync/--wait or FOCI_SYNC is set
 	async := !flags.sync
 	if flags.async {
 		async = true // explicit --async overrides
@@ -366,7 +382,7 @@ func cmdSend(base string, args []string) error {
 }
 
 func branchUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod branch [-a agent] [--if-active <dur>] [--if-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [--if-active <dur>] [--if-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 
 Fork a branch session from the agent's main chat.
 
@@ -375,16 +391,16 @@ and the agent's response is delivered to Telegram. Use --sync/--wait to block
 until the response is available.
 
 Flags:
-  -a, --agent <id>        Target agent (env: CLOD_AGENT)
-  --if-active <dur>       Skip if no user activity within duration (env: CLOD_IF_ACTIVE)
-  --if-inactive <dur>     Skip if user was active within duration (env: CLOD_IF_INACTIVE)
-  --no-compact            Skip compaction if context limit reached (env: CLOD_NO_COMPACT)
-  --no-reset-hook         Skip pre-reset memory hook (env: CLOD_NO_RESET_HOOK)
-  --oneshot               Shorthand for --no-compact --no-reset-hook (env: CLOD_ONESHOT)
-  --sync, --wait          Wait for the response (env: CLOD_SYNC)
-  --async, --no-wait      Fire-and-forget (default) (env: CLOD_ASYNC)
-  -mt, --message-text     Message text (env: CLOD_MESSAGE_TEXT)
-  -mf, --message-file     Read message from file (env: CLOD_MESSAGE_FILE)
+  -a, --agent <id>        Target agent (env: FOCI_AGENT)
+  --if-active <dur>       Skip if no user activity within duration (env: FOCI_IF_ACTIVE)
+  --if-inactive <dur>     Skip if user was active within duration (env: FOCI_IF_INACTIVE)
+  --no-compact            Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
+  --no-reset-hook         Skip pre-reset memory hook (env: FOCI_NO_RESET_HOOK)
+  --oneshot               Shorthand for --no-compact --no-reset-hook (env: FOCI_ONESHOT)
+  --sync, --wait          Wait for the response (env: FOCI_SYNC)
+  --async, --no-wait      Fire-and-forget (default) (env: FOCI_ASYNC)
+  -mt, --message-text     Message text (env: FOCI_MESSAGE_TEXT)
+  -mf, --message-file     Read message from file (env: FOCI_MESSAGE_FILE)
 
 Aliased as 'wake'.
 `)
@@ -451,20 +467,20 @@ func cmdBranch(base string, args []string) error {
 		}
 	}
 	// Apply env var fallbacks for branch-specific flags
-	noCompact = envBool(noCompact, "CLOD_NO_COMPACT")
-	noResetHook = envBool(noResetHook, "CLOD_NO_RESET_HOOK")
-	if envBool(false, "CLOD_ONESHOT") {
+	noCompact = envBool(noCompact, "FOCI_NO_COMPACT")
+	noResetHook = envBool(noResetHook, "FOCI_NO_RESET_HOOK")
+	if envBool(false, "FOCI_ONESHOT") {
 		noCompact = true
 		noResetHook = true
 	}
-	asyncFlag = envBool(asyncFlag, "CLOD_ASYNC")
-	syncFlag = envBool(syncFlag, "CLOD_SYNC")
-	ifActive = envDefault(ifActive, "CLOD_IF_ACTIVE")
-	ifInactive = envDefault(ifInactive, "CLOD_IF_INACTIVE")
-	messageText = envDefault(messageText, "CLOD_MESSAGE_TEXT")
-	messageFile = envDefault(messageFile, "CLOD_MESSAGE_FILE")
+	asyncFlag = envBool(asyncFlag, "FOCI_ASYNC")
+	syncFlag = envBool(syncFlag, "FOCI_SYNC")
+	ifActive = envDefault(ifActive, "FOCI_IF_ACTIVE")
+	ifInactive = envDefault(ifInactive, "FOCI_IF_INACTIVE")
+	messageText = envDefault(messageText, "FOCI_MESSAGE_TEXT")
+	messageFile = envDefault(messageFile, "FOCI_MESSAGE_FILE")
 
-	// Default async=true unless --sync/--wait or CLOD_SYNC is set
+	// Default async=true unless --sync/--wait or FOCI_SYNC is set
 	async := !syncFlag
 	if asyncFlag {
 		async = true // explicit --async overrides
@@ -501,12 +517,12 @@ func cmdBranch(base string, args []string) error {
 }
 
 func statusUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod status [-a agent]
+	fmt.Fprintf(os.Stderr, `Usage: foci status [-a agent]
 
 Query agent status (session info, model, uptime).
 
 Flags:
-  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+  -a, --agent <id>        Target agent (env: FOCI_AGENT)
 `)
 }
 
@@ -529,12 +545,12 @@ func cmdStatus(base string, args []string) error {
 }
 
 func evalUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod eval [-a agent] <shell command>
+	fmt.Fprintf(os.Stderr, `Usage: foci eval [-a agent] <shell command>
 
 Ask the agent to run a shell command and show output.
 
 Flags:
-  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+  -a, --agent <id>        Target agent (env: FOCI_AGENT)
 `)
 }
 
@@ -545,7 +561,7 @@ func cmdEval(base string, args []string) error {
 	}
 	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod eval [-a agent] <shell command>")
+		return fmt.Errorf("usage: foci eval [-a agent] <shell command>")
 	}
 	cmd := strings.Join(args, " ")
 	text := fmt.Sprintf("Run this command and show the output:\n```\n%s\n```", cmd)
@@ -557,12 +573,12 @@ func cmdEval(base string, args []string) error {
 }
 
 func commandUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod command [-a agent] </cmd> [args]
+	fmt.Fprintf(os.Stderr, `Usage: foci command [-a agent] </cmd> [args]
 
 Dispatch a slash command via the gateway (bypasses agent conversation).
 
 Flags:
-  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+  -a, --agent <id>        Target agent (env: FOCI_AGENT)
 `)
 }
 
@@ -573,7 +589,7 @@ func cmdCommand(base string, args []string) error {
 	}
 	agent, args := parseAgentFlag(args)
 	if len(args) == 0 {
-		return fmt.Errorf("usage: clod command [-a agent] </cmd> [args]")
+		return fmt.Errorf("usage: foci command [-a agent] </cmd> [args]")
 	}
 	cmd := strings.Join(args, " ")
 	if !strings.HasPrefix(cmd, "/") {
@@ -587,12 +603,12 @@ func cmdCommand(base string, args []string) error {
 }
 
 func pingUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: clod ping [-a agent]
+	fmt.Fprintf(os.Stderr, `Usage: foci ping [-a agent]
 
-Liveness check (shorthand for 'clod command /ping').
+Liveness check (shorthand for 'foci command /ping').
 
 Flags:
-  -a, --agent <id>        Target agent (env: CLOD_AGENT)
+  -a, --agent <id>        Target agent (env: FOCI_AGENT)
 `)
 }
 

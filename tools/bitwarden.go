@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"clod/secrets/bitwarden"
+	"foci/secrets/bitwarden"
 )
 
 // NewBitwardenSearchTool creates a tool that searches cached Bitwarden vault metadata.

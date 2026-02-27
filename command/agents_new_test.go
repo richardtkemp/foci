@@ -13,7 +13,7 @@ func testDeps(agents []AgentInfo, secrets []string) AgentNewDeps {
 
 func testDepsWithBots(agents []AgentInfo, secrets []string, botNames []string) AgentNewDeps {
 	return AgentNewDeps{
-		ConfigPath:  filepath.Join(os.TempDir(), "test-clod.toml"),
+		ConfigPath:  filepath.Join(os.TempDir(), "test-foci.toml"),
 		DefaultsDir: "",
 		HomeDir:     os.TempDir(),
 		ListFn:      func() []AgentInfo { return agents },
@@ -417,7 +417,7 @@ func TestCreateWorkspace(t *testing.T) {
 	os.WriteFile(filepath.Join(defaultsDir, "prompts", "HEARTBEAT.md"), []byte("heartbeat"), 0644)
 
 	// Create a config file to append to
-	configPath := filepath.Join(tmpDir, "clod.toml")
+	configPath := filepath.Join(tmpDir, "foci.toml")
 	os.WriteFile(configPath, []byte("# existing config\n"), 0644)
 
 	// Override crontab command to prevent real crontab modification
@@ -510,7 +510,7 @@ func TestCreateWorkspace(t *testing.T) {
 func TestCreateWorkspaceBlank(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	configPath := filepath.Join(tmpDir, "clod.toml")
+	configPath := filepath.Join(tmpDir, "foci.toml")
 	os.WriteFile(configPath, []byte("# config\n"), 0644)
 
 	origCrontab := runCrontabCmd
@@ -606,18 +606,18 @@ func TestGenerateConfigEntry(t *testing.T) {
 		tokenSecret: "telegram.greek",
 	}
 
-	result := generateConfigEntry(w, "/home/clod/greek-tutor")
+	result := generateConfigEntry(w, "/home/foci/greek-tutor")
 
 	checks := []string{
 		"[[agents]]",
 		`id = "greek-tutor"`,
 		`model = "claude-sonnet-4-6"`,
 		`telegram_bot = "greek"`,
-		`workspace = "/home/clod/greek-tutor"`,
+		`workspace = "/home/foci/greek-tutor"`,
 		`system_files = ["character/SOUL.md"`,
 		"[[agents.memory.sources]]",
 		`name = "greek-tutor"`,
-		`dir = "/home/clod/greek-tutor/memory"`,
+		`dir = "/home/foci/greek-tutor/memory"`,
 		"weight = 1.0",
 		"[telegram.bots.greek]",
 		`token_secret = "telegram.greek"`,
@@ -640,20 +640,20 @@ func TestGenerateCrontabFallback(t *testing.T) {
 		id:      "greek-tutor",
 		display: "Greek Tutor",
 	}
-	lines := generateCrontab(w, "/home/clod/greek-tutor")
+	lines := generateCrontab(w, "/home/foci/greek-tutor")
 
-	// Should contain clod send/branch commands, not curl
+	// Should contain foci send/branch commands, not curl
 	joined := strings.Join(lines, "\n")
 	if strings.Contains(joined, "curl") {
 		t.Errorf("should not use curl, got:\n%s", joined)
 	}
-	if !strings.Contains(joined, "clod send -a greek-tutor") {
-		t.Errorf("missing clod send command:\n%s", joined)
+	if !strings.Contains(joined, "foci send -a greek-tutor") {
+		t.Errorf("missing foci send command:\n%s", joined)
 	}
-	if !strings.Contains(joined, "clod branch --oneshot -a greek-tutor") {
-		t.Errorf("missing clod branch command:\n%s", joined)
+	if !strings.Contains(joined, "foci branch --oneshot -a greek-tutor") {
+		t.Errorf("missing foci branch command:\n%s", joined)
 	}
-	if !strings.Contains(joined, "/home/clod/greek-tutor/prompts/HEARTBEAT.md") {
+	if !strings.Contains(joined, "/home/foci/greek-tutor/prompts/HEARTBEAT.md") {
 		t.Errorf("missing workspace-relative heartbeat path:\n%s", joined)
 	}
 	if !strings.Contains(joined, "cron.log") {
@@ -668,8 +668,8 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 
 	// Write a template file
 	template := `# AGENT_NAME cron
-0 4 * * * clod branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> /home/clod/logs/cron.log
-*/30 * * * * clod send -a AGENT_NAME "[heartbeat]" 2>&1 >> /home/clod/logs/cron.log
+0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> /home/foci/logs/cron.log
+*/30 * * * * foci send -a AGENT_NAME "[heartbeat]" 2>&1 >> /home/foci/logs/cron.log
 `
 	os.WriteFile(filepath.Join(templateDir, "crontab.template"), []byte(template), 0644)
 
@@ -681,7 +681,7 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 		id:      "helen",
 		display: "Helen",
 	}
-	lines := generateCrontab(w, "/home/clod/helen")
+	lines := generateCrontab(w, "/home/foci/helen")
 	joined := strings.Join(lines, "\n")
 
 	// Placeholders should be replaced
@@ -691,10 +691,10 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 	if strings.Contains(joined, "WORKSPACE") {
 		t.Errorf("WORKSPACE not replaced:\n%s", joined)
 	}
-	if !strings.Contains(joined, "clod branch --oneshot -a helen") {
+	if !strings.Contains(joined, "foci branch --oneshot -a helen") {
 		t.Errorf("missing agent name substitution:\n%s", joined)
 	}
-	if !strings.Contains(joined, "/home/clod/helen/prompts/review.md") {
+	if !strings.Contains(joined, "/home/foci/helen/prompts/review.md") {
 		t.Errorf("missing workspace substitution:\n%s", joined)
 	}
 }
@@ -711,7 +711,7 @@ func TestGenerateCrontabStagger(t *testing.T) {
 		id:      "fourth",
 		display: "Fourth",
 	}
-	lines := generateCrontab(w, "/home/clod/fourth")
+	lines := generateCrontab(w, "/home/foci/fourth")
 
 	// The "0 4 * * *" daily entry should become "9 4 * * *"
 	found := false

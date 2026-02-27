@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"clod/anthropic"
-	"clod/compaction"
-	"clod/memory"
-	"clod/session"
-	"clod/state"
-	"clod/tools"
-	"clod/workspace"
+	"foci/anthropic"
+	"foci/compaction"
+	"foci/memory"
+	"foci/session"
+	"foci/state"
+	"foci/tools"
+	"foci/workspace"
 )
 
 // mockServer returns a test HTTP server that returns canned Anthropic responses.

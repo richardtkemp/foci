@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"clod/command"
+	"foci/command"
 )
 
 func TestCommandWrapperNoArgs(t *testing.T) {

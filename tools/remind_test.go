@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"clod/memory"
+	"foci/memory"
 )
 
 func testRemindTool(t *testing.T) *Tool {

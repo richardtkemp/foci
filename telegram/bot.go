@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"clod/agent"
-	"clod/command"
-	"clod/log"
-	"clod/state"
-	"clod/voice"
+	"foci/agent"
+	"foci/command"
+	"foci/log"
+	"foci/state"
+	"foci/voice"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -1013,7 +1013,7 @@ func (b *Bot) SendStartupNotification(agentID string) {
 
 	botName := b.Username()
 	if botName == "" {
-		botName = "clod"
+		botName = "foci"
 	}
 	text := fmt.Sprintf("%s restarted at %s", botName, time.Now().Format("15:04:05"))
 

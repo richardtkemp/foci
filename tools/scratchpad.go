@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"clod/memory"
+	"foci/memory"
 )
 
 func NewScratchpadWriteTool(s *memory.Scratchpad, agentID string) *Tool {

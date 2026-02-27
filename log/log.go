@@ -78,11 +78,11 @@ type PayloadEntry struct {
 // Logger writes event log lines and structured API log entries.
 type Logger struct {
 	level       Level
-	eventOut    io.Writer // clod.log + stderr multiwriter
-	eventFile   *os.File  // clod.log file handle (nil = stderr only)
+	eventOut    io.Writer // foci.log + stderr multiwriter
+	eventFile   *os.File  // foci.log file handle (nil = stderr only)
 	apiFile     *os.File  // api.jsonl (nil if disabled)
 	payloadFile *os.File  // api-payload.jsonl (nil if disabled)
-	eventPath   string    // path to clod.log
+	eventPath   string    // path to foci.log
 	apiPath     string    // path to api.jsonl
 	payloadPath string    // path to api-payload.jsonl
 	buffer      []string  // pre-Init event lines, replayed to event file on Init
@@ -96,7 +96,7 @@ var std = &Logger{level: INFO, eventOut: os.Stderr}
 // Config holds logging configuration.
 type Config struct {
 	Level       string // DEBUG, INFO, WARN, ERROR
-	EventFile   string // path to clod.log
+	EventFile   string // path to foci.log
 	APIFile     string // path to api.jsonl
 	PayloadFile string // path to api-payload.jsonl (empty = disabled)
 }

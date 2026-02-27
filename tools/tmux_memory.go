@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"clod/log"
+	"foci/log"
 )
 
 // TmuxMemoryConfig holds the parsed configuration for the tmux memory monitor.

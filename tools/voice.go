@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"clod/log"
-	"clod/voice"
+	"foci/log"
+	"foci/voice"
 )
 
 // VoiceReplyFunc is called to deliver a voice note from the TTS tool.

@@ -12,7 +12,7 @@ import (
 
 func TestLoadFullConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
 [agent]
@@ -42,7 +42,7 @@ bind = "0.0.0.0"
 
 [logging]
 level = "DEBUG"
-event_file = "/tmp/clod.log"
+event_file = "/tmp/foci.log"
 api_file = "/tmp/api.jsonl"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -91,7 +91,7 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Logging.Level != "DEBUG" {
 		t.Errorf("Logging.Level = %q, want %q", cfg.Logging.Level, "DEBUG")
 	}
-	if cfg.Logging.EventFile != "/tmp/clod.log" {
+	if cfg.Logging.EventFile != "/tmp/foci.log" {
 		t.Errorf("Logging.EventFile = %q", cfg.Logging.EventFile)
 	}
 	if cfg.Logging.APIFile != "/tmp/api.jsonl" {
@@ -101,7 +101,7 @@ api_file = "/tmp/api.jsonl"
 
 func TestLoadDefaults(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	// Minimal config — only required fields
 	toml := `
@@ -134,7 +134,7 @@ token = "test-token"
 		t.Errorf("default Logging.Level = %q, want %q", cfg.Logging.Level, "INFO")
 	}
 	home, _ := os.UserHomeDir()
-	wantEventFile := filepath.Join(home, "logs/clod.log")
+	wantEventFile := filepath.Join(home, "logs/foci.log")
 	if cfg.Logging.EventFile != wantEventFile {
 		t.Errorf("default Logging.EventFile = %q, want %q", cfg.Logging.EventFile, wantEventFile)
 	}
@@ -149,7 +149,7 @@ token = "test-token"
 
 func TestLoadCustomManaName(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -177,7 +177,7 @@ thresholds = [50, 25, 10]
 
 func TestLoadCustomCommands(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -219,7 +219,7 @@ timeout = 30
 func TestLoadSingleAgentBackwardCompat(t *testing.T) {
 	// Old [agent] format should populate Agents slice
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "main"
@@ -252,7 +252,7 @@ workspace = "/tmp/workspace"
 
 func TestLoadMultiAgent(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "clutch"
@@ -334,7 +334,7 @@ scout = { token_secret = "telegram.scout" }
 
 func TestLoadPerAgentUsageWarnings(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [usage_warnings]
 thresholds = [50, 25, 10]
@@ -374,7 +374,7 @@ id = "other"
 func TestLoadAgentsIgnoresLegacyWhenBothPresent(t *testing.T) {
 	// If both [agent] and [[agents]] are present, [[agents]] wins
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "ignored"
@@ -465,7 +465,7 @@ func TestResolveBotToken(t *testing.T) {
 func TestMultiAgentSessionKeys(t *testing.T) {
 	// Verify that multi-agent config produces correct session key namespaces
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "clutch"
@@ -591,7 +591,7 @@ some_key = "value"
 func TestLoadWarnsUnknownKeys(t *testing.T) {
 	// Load should succeed even with unknown keys (just warns)
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
 [agent]
@@ -641,7 +641,7 @@ tts_rate = 1.3
 func TestLoadTelegramToggleDefaults(t *testing.T) {
 	// When not set, both toggles default to true
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -663,7 +663,7 @@ id = "test"
 func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
 	// When explicitly set to false, they stay false
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -689,7 +689,7 @@ enable_startup_notify = false
 func TestAgentStartupNotification(t *testing.T) {
 	t.Run("defaults to nil", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		toml := `
 [[agents]]
 id = "test"
@@ -707,7 +707,7 @@ id = "test"
 
 	t.Run("explicit true", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		toml := `
 [[agents]]
 id = "test"
@@ -726,7 +726,7 @@ startup_notification = true
 
 	t.Run("explicit false", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		toml := `
 [[agents]]
 id = "test"
@@ -769,7 +769,7 @@ func TestValidateCompactionThreshold(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "clod.toml")
+			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
 			_, err := Load(path)
@@ -815,7 +815,7 @@ func TestValidateHTTPPort(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "clod.toml")
+			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
 			_, err := Load(path)
@@ -837,7 +837,7 @@ func TestValidateHTTPPort(t *testing.T) {
 
 func TestValidateLoggingLevel(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
 
 	_, err := Load(path)
@@ -851,7 +851,7 @@ func TestValidateLoggingLevel(t *testing.T) {
 
 func TestValidateCacheStrategy(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
 
 	_, err := Load(path)
@@ -865,7 +865,7 @@ func TestValidateCacheStrategy(t *testing.T) {
 
 func TestValidateWarningWindowDuration(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
 
 	_, err := Load(path)
@@ -879,7 +879,7 @@ func TestValidateWarningWindowDuration(t *testing.T) {
 
 func TestValidateMemorySourceWeight(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -901,7 +901,7 @@ weight = 2.0
 }
 
 func TestLoadMissingFile(t *testing.T) {
-	_, err := Load("/nonexistent/path/clod.toml")
+	_, err := Load("/nonexistent/path/foci.toml")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -920,7 +920,7 @@ func TestLoadInvalidTOML(t *testing.T) {
 
 func TestLoadMemoryConversationWeightDefault(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -939,7 +939,7 @@ id = "test"
 
 func TestLoadMemoryConversationWeightCustom(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -984,7 +984,7 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "clod.toml")
+			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
 			_, err := Load(path)
@@ -1006,7 +1006,7 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 
 func TestLoadNewConfigFields(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
 [agent]
@@ -1100,7 +1100,7 @@ web_search_timeout = "20s"
 
 func TestNewConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
 [agent]
@@ -1187,9 +1187,9 @@ func TestResolvePath(t *testing.T) {
 }
 
 func TestDataPathAbsoluteDataDir(t *testing.T) {
-	cfg := &Config{DataDir: "/opt/clod/data"}
+	cfg := &Config{DataDir: "/opt/foci/data"}
 	got := cfg.DataPath("memory.db")
-	want := "/opt/clod/data/memory.db"
+	want := "/opt/foci/data/memory.db"
 	if got != want {
 		t.Errorf("DataPath() = %q, want %q", got, want)
 	}
@@ -1217,9 +1217,9 @@ func TestDataPathDefault(t *testing.T) {
 
 func TestDataPathLoadsFromConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
-data_dir = "/opt/clod/data"
+data_dir = "/opt/foci/data"
 
 [agent]
 id = "test"
@@ -1230,11 +1230,11 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.DataDir != "/opt/clod/data" {
-		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/opt/clod/data")
+	if cfg.DataDir != "/opt/foci/data" {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, "/opt/foci/data")
 	}
 	got := cfg.DataPath("memory.db")
-	want := "/opt/clod/data/memory.db"
+	want := "/opt/foci/data/memory.db"
 	if got != want {
 		t.Errorf("DataPath() = %q, want %q", got, want)
 	}
@@ -1242,14 +1242,14 @@ id = "test"
 
 func TestPromptFilePathsConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
 
 [sessions]
-session_reset_prompt = "/home/clod/shared/prompts/reset.md"
-compaction_summary_prompt = "/home/clod/shared/prompts/compaction-summary.md"
+session_reset_prompt = "/home/foci/shared/prompts/reset.md"
+compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -1257,17 +1257,17 @@ compaction_summary_prompt = "/home/clod/shared/prompts/compaction-summary.md"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Sessions.SessionResetPrompt != "/home/clod/shared/prompts/reset.md" {
+	if cfg.Sessions.SessionResetPrompt != "/home/foci/shared/prompts/reset.md" {
 		t.Errorf("SessionResetPrompt = %q", cfg.Sessions.SessionResetPrompt)
 	}
-	if cfg.Sessions.CompactionSummaryPrompt != "/home/clod/shared/prompts/compaction-summary.md" {
+	if cfg.Sessions.CompactionSummaryPrompt != "/home/foci/shared/prompts/compaction-summary.md" {
 		t.Errorf("CompactionSummaryPrompt = %q", cfg.Sessions.CompactionSummaryPrompt)
 	}
 }
 
 func TestPromptFilePathsDefaultEmpty(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
@@ -1290,7 +1290,7 @@ func TestResolveAllPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	// Minimal config with no path overrides — all defaults
 	toml := `
 [agent]
@@ -1304,7 +1304,7 @@ id = "test"
 	}
 
 	// Log files should resolve to $HOME/logs/...
-	wantEventFile := filepath.Join(home, "logs/clod.log")
+	wantEventFile := filepath.Join(home, "logs/foci.log")
 	if cfg.Logging.EventFile != wantEventFile {
 		t.Errorf("EventFile = %q, want %q", cfg.Logging.EventFile, wantEventFile)
 	}
@@ -1334,7 +1334,7 @@ id = "test"
 
 func TestResolveAllPathsAbsoluteOverrides(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 welcome_file = "/opt/welcome.md"
 
@@ -1342,7 +1342,7 @@ welcome_file = "/opt/welcome.md"
 id = "test"
 
 [logging]
-event_file = "/var/log/clod.log"
+event_file = "/var/log/foci.log"
 api_file = "/var/log/api.jsonl"
 conversation_file = "/var/data/conv.db"
 
@@ -1357,8 +1357,8 @@ dir = "/var/sessions"
 	}
 
 	// Absolute paths should be preserved
-	if cfg.Logging.EventFile != "/var/log/clod.log" {
-		t.Errorf("EventFile = %q, want /var/log/clod.log", cfg.Logging.EventFile)
+	if cfg.Logging.EventFile != "/var/log/foci.log" {
+		t.Errorf("EventFile = %q, want /var/log/foci.log", cfg.Logging.EventFile)
 	}
 	if cfg.Logging.APIFile != "/var/log/api.jsonl" {
 		t.Errorf("APIFile = %q, want /var/log/api.jsonl", cfg.Logging.APIFile)
@@ -1376,7 +1376,7 @@ dir = "/var/sessions"
 
 func TestLoadMultiballBotsPlural(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "clutch"
@@ -1409,7 +1409,7 @@ mb2 = { token_secret = "telegram.mb2" }
 func TestLoadMultiballBotDeprecatedAlias(t *testing.T) {
 	// multiball_bot (singular) should be promoted to multiball_bots (plural) with deprecation warning
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "clutch"
@@ -1446,7 +1446,7 @@ secondary = { token_secret = "telegram.secondary" }
 func TestLoadMultiballBotPluralTakesPrecedence(t *testing.T) {
 	// If both multiball_bot and multiball_bots are set, plural wins
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "clutch"
@@ -1481,7 +1481,7 @@ new2 = { token_secret = "telegram.new2" }
 
 func TestLoadSharedMultiballBots(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "clutch"
@@ -1605,7 +1605,7 @@ web_search_timeout = "invalid"
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			path := filepath.Join(dir, "clod.toml")
+			path := filepath.Join(dir, "foci.toml")
 			os.WriteFile(path, []byte(tt.toml), 0644)
 
 			_, err := Load(path)
@@ -1628,7 +1628,7 @@ web_search_timeout = "invalid"
 func TestCompactionPreserveMessagesConfig(t *testing.T) {
 	t.Run("global default", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[agent]
 id = "test"
 `), 0644)
@@ -1644,7 +1644,7 @@ id = "test"
 
 	t.Run("global explicit", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[agent]
 id = "test"
 [sessions]
@@ -1662,7 +1662,7 @@ compaction_preserve_messages = 10
 
 	t.Run("global explicit zero", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[agent]
 id = "test"
 [sessions]
@@ -1680,7 +1680,7 @@ compaction_preserve_messages = 0
 
 	t.Run("per-agent override", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[sessions]
 compaction_preserve_messages = 10
 
@@ -1709,7 +1709,7 @@ id = "b"
 
 	t.Run("negative rejected", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[agent]
 id = "test"
 [sessions]
@@ -1729,7 +1729,7 @@ compaction_preserve_messages = -1
 func TestMessagesInLogConfig(t *testing.T) {
 	t.Run("default false", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[agent]
 id = "test"
 `), 0644)
@@ -1745,7 +1745,7 @@ id = "test"
 
 	t.Run("global explicit true", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[agent]
 id = "test"
 [logging]
@@ -1763,7 +1763,7 @@ messages_in_log = true
 
 	t.Run("per-agent override", func(t *testing.T) {
 		dir := t.TempDir()
-		path := filepath.Join(dir, "clod.toml")
+		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`[logging]
 messages_in_log = false
 
@@ -1793,7 +1793,7 @@ id = "b"
 
 func TestLoadThinkingConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
 [defaults]
@@ -1824,7 +1824,7 @@ thinking = "off"
 
 func TestLoadThinkingPerAgent(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "clod.toml")
+	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
 [[agents]]

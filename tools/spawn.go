@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"clod/anthropic"
-	"clod/log"
+	"foci/anthropic"
+	"foci/log"
 )
 
 // SystemBlocksProvider returns the system prompt blocks (for full context mode).

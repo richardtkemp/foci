@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"clod/log"
-	"clod/state"
+	"foci/log"
+	"foci/state"
 )
 
 var tmuxCounter uint64
@@ -295,7 +295,7 @@ func (inst *tmuxInstance) ClearAll() {
 func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string) (string, error) {
 	if name == "" {
 		n := atomic.AddUint64(&tmuxCounter, 1)
-		name = fmt.Sprintf("clod-%d", n)
+		name = fmt.Sprintf("foci-%d", n)
 	}
 
 	args := []string{"new-session", "-d", "-s", name}
@@ -716,7 +716,7 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
 	// Setsid puts the tmux process in its own session so it (and the tmux
 	// server it may spawn) won't be killed when the parent process group
-	// is cleaned up. Also drops supplementary groups (clod-secrets).
+	// is cleaned up. Also drops supplementary groups (foci-secrets).
 	cmd.SysProcAttr = ChildSysProcAttrSetsid()
 	out, err := cmd.CombinedOutput()
 	return string(out), err

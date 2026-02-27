@@ -45,7 +45,7 @@ func testConfig() (*Config, AgentConfig) {
 		},
 		Logging: LoggingConfig{
 			Level:                 "INFO",
-			EventFile:             "/logs/clod.log",
+			EventFile:             "/logs/foci.log",
 			APIFile:               "/logs/api.jsonl",
 			ConversationFile:      "/data/conversation.db",
 			WarningMaxPerWindow:   3,
@@ -53,7 +53,7 @@ func testConfig() (*Config, AgentConfig) {
 		},
 		Tools: ToolsConfig{
 			MaxResultChars:          15000,
-			TempDir:                 "/tmp/clod-tool-results",
+			TempDir:                 "/tmp/foci-tool-results",
 			TmuxCols:                300,
 			TmuxRows:                30,
 			ExecAutoBackground:      10,

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"clod/command"
-	"clod/state"
+	"foci/command"
+	"foci/state"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )

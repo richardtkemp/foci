@@ -1,7 +1,7 @@
 package telegram
 
 import (
-	"clod/table"
+	"foci/table"
 	"regexp"
 	"strings"
 )

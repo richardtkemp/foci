@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"clod/anthropic"
-	"clod/memory"
-	"clod/session"
+	"foci/anthropic"
+	"foci/memory"
+	"foci/session"
 )
 
 func TestEstimateTokens(t *testing.T) {

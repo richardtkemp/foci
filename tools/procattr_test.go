@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"clod/secrets"
+	"foci/secrets"
 )
 
 func TestChildSysProcAttr(t *testing.T) {
@@ -35,24 +35,24 @@ func TestChildCredentialPreservesOtherGroups(t *testing.T) {
 		t.Skip("test requires non-root user")
 	}
 
-	// If clod-secrets group doesn't exist, credential should be nil
+	// If foci-secrets group doesn't exist, credential should be nil
 	// (nothing to drop). If it does exist but we lack CAP_SETGID,
 	// credential should also be nil. In both cases, child inherits
 	// all parent groups — which is correct.
 	if childCredential == nil {
-		t.Log("childCredential is nil — either clod-secrets group not found or CAP_SETGID unavailable")
+		t.Log("childCredential is nil — either foci-secrets group not found or CAP_SETGID unavailable")
 		return
 	}
 
-	// If credential IS set, verify clod-secrets is not in the group list
+	// If credential IS set, verify foci-secrets is not in the group list
 	secretsGrp, err := user.LookupGroup(secrets.SecurityGroupName)
 	if err != nil {
-		t.Fatalf("clod-secrets group lookup failed but credential is set: %v", err)
+		t.Fatalf("foci-secrets group lookup failed but credential is set: %v", err)
 	}
 
 	for _, g := range childCredential.Groups {
 		if g == uint32(mustParseUint(secretsGrp.Gid)) {
-			t.Errorf("childCredential.Groups contains clod-secrets gid %s — should be filtered", secretsGrp.Gid)
+			t.Errorf("childCredential.Groups contains foci-secrets gid %s — should be filtered", secretsGrp.Gid)
 		}
 	}
 
@@ -98,13 +98,13 @@ func TestExecSetsidStillWorks(t *testing.T) {
 }
 
 func TestNoCredentialWithoutSecretsGroup(t *testing.T) {
-	// If clod-secrets group doesn't exist on this system,
+	// If foci-secrets group doesn't exist on this system,
 	// credential should be nil (no group to drop).
 	_, err := user.LookupGroup(secrets.SecurityGroupName)
 	if err != nil {
 		// Group doesn't exist — credential must be nil
 		if childCredential != nil {
-			t.Error("childCredential should be nil when clod-secrets group doesn't exist")
+			t.Error("childCredential should be nil when foci-secrets group doesn't exist")
 		}
 	}
 }

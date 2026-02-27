@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/anthropic"
+	"foci/anthropic"
 )
 
 func msg(role, text string) anthropic.Message {

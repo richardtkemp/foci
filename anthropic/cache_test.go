@@ -1,7 +1,7 @@
 package anthropic_test
 
 import (
-	"clod/anthropic"
+	"foci/anthropic"
 	"context"
 	"fmt"
 	"os"

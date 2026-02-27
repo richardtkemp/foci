@@ -1,6 +1,6 @@
-/clod
-/clodgw
-clod.toml
+/foci
+/focigw
+foci.toml
 sessions/
 workspace/*.md
 *.log

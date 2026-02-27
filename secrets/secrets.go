@@ -510,7 +510,7 @@ func (s *Store) IsBlockedCommand(cmd string) bool {
 }
 
 // SecurityGroupName is the OS group that protects secrets.toml.
-const SecurityGroupName = "clod-secrets"
+const SecurityGroupName = "foci-secrets"
 
 // CheckSecurity verifies the OS-level protection of secrets.toml.
 // Returns a list of warning messages for any issues found.
@@ -539,10 +539,10 @@ func (s *Store) CheckSecurity() []string {
 	// Check owner is root (uid 0)
 	if stat.Uid != 0 {
 		warnings = append(warnings,
-			fmt.Sprintf("secrets.toml owner is uid %d, expected root (uid 0) — run: sudo chown root:clod-secrets %s", stat.Uid, s.path))
+			fmt.Sprintf("secrets.toml owner is uid %d, expected root (uid 0) — run: sudo chown root:%s %s", stat.Uid, SecurityGroupName, s.path))
 	}
 
-	// Check group is clod-secrets
+	// Check group is foci-secrets
 	grp, err := user.LookupGroup(SecurityGroupName)
 	if err != nil {
 		warnings = append(warnings,
@@ -563,7 +563,7 @@ func (s *Store) CheckSecurity() []string {
 			fmt.Sprintf("secrets.toml permissions are %04o, expected 0660 — run: sudo chmod 0660 %s", mode, s.path))
 	}
 
-	// Check process has clod-secrets in supplementary groups
+	// Check process has foci-secrets in supplementary groups
 	if grp != nil {
 		expectedGID, _ := strconv.ParseUint(grp.Gid, 10, 32)
 		gids, err := syscall.Getgroups()

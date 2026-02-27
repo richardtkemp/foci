@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/secrets"
+	"foci/secrets"
 )
 
 func TestExecEcho(t *testing.T) {

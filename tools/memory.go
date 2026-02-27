@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"clod/memory"
+	"foci/memory"
 )
 
 func NewMemorySearchTool(idx *memory.Index) *Tool {

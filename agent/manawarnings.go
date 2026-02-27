@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"clod/log"
-	"clod/state"
+	"foci/log"
+	"foci/state"
 )
 
 type ManaWatcher struct {

@@ -173,13 +173,13 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 // archiveName returns the archive path for a log file.
 // e.g. api-payload.jsonl → archive/api-payload-2026-02-25.jsonl.gz
 //
-//	clod.log       → archive/clod-2026-02-25.log.gz
+//	foci.log       → archive/foci-2026-02-25.log.gz
 func archiveName(path, archiveDir string) string {
 	base := filepath.Base(path)
 	date := time.Now().UTC().Format("2006-01-02")
 
 	ext := filepath.Ext(base)            // .jsonl or .log
-	name := strings.TrimSuffix(base, ext) // api-payload or clod
+	name := strings.TrimSuffix(base, ext) // api-payload or foci
 
 	return filepath.Join(archiveDir, fmt.Sprintf("%s-%s%s.gz", name, date, ext))
 }
@@ -213,7 +213,7 @@ func parseJSONLTimestamp(line []byte) (time.Time, bool) {
 	return ts, true
 }
 
-// parseEventTimestamp extracts an RFC3339 timestamp from the start of a clod.log line.
+// parseEventTimestamp extracts an RFC3339 timestamp from the start of a foci.log line.
 // Log format: "2026-02-25T12:34:56Z INFO  [component] message"
 func parseEventTimestamp(line []byte) (time.Time, bool) {
 	if len(line) == 0 {

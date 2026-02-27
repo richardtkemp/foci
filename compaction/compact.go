@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"clod/anthropic"
-	"clod/log"
-	"clod/memory"
-	"clod/prompts"
-	"clod/session"
+	"foci/anthropic"
+	"foci/log"
+	"foci/memory"
+	"foci/prompts"
+	"foci/session"
 )
 
 // Compactor handles session compaction when context gets too large.

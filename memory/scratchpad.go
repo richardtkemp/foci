@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"clod/log"
+	"foci/log"
 
 	_ "modernc.org/sqlite"
 )

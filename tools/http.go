@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"clod/log"
-	"clod/secrets"
-	"clod/secrets/bitwarden"
+	"foci/log"
+	"foci/secrets"
+	"foci/secrets/bitwarden"
 )
 
 type fileAttachment struct {
@@ -353,7 +353,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		return "", fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "Clod/1.0")
+	req.Header.Set("User-Agent", "Foci/1.0")
 	for k, v := range resolvedHeaders {
 		req.Header.Set(k, v)
 	}

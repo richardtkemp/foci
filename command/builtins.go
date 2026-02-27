@@ -2,7 +2,7 @@ package command
 
 import (
 	"bufio"
-	"clod/table"
+	"foci/table"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,7 +16,7 @@ import (
 )
 
 // ChildSysProcAttr is called to get the SysProcAttr for child processes.
-// Set this from main to drop supplementary groups (clod-secrets).
+// Set this from main to drop supplementary groups (foci-secrets).
 // If nil, defaults to {Setpgid: true}.
 var ChildSysProcAttr func() *syscall.SysProcAttr
 
@@ -1525,19 +1525,19 @@ func NewCompactCommand(compactFn func(ctx context.Context) (int, error)) *Comman
 	}
 }
 
-// NewRestartCommand creates a /restart command that restarts the clod service.
+// NewRestartCommand creates a /restart command that restarts the foci service.
 // notifyFn is called before the restart to send a notification (e.g., Telegram).
 func NewRestartCommand(notifyFn func(string)) *Command {
 	return &Command{
 		Name:        "restart",
-		Description: "Restart the clod service",
+		Description: "Restart the foci service",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if notifyFn != nil {
 				notifyFn("Restarting...")
 			}
 
-			cmd := exec.Command("systemctl", "restart", "clod")
+			cmd := exec.Command("systemctl", "restart", "foci")
 			if err := cmd.Start(); err != nil {
 				return "", fmt.Errorf("restart failed: %w", err)
 			}

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"clod/anthropic"
-	"clod/log"
+	"foci/anthropic"
+	"foci/log"
 )
 
 // BranchMeta is stored as the first line of a branch session file.

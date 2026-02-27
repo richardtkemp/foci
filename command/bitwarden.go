@@ -120,7 +120,7 @@ func bitwardenSetup() (string, error) {
 		sb.WriteString("  2. Unlock and save session key:\n")
 		sb.WriteString("     sudo -u bitwarden bw unlock --raw | sudo -u bitwarden tee /home/bitwarden/.bw_session\n")
 		sb.WriteString("     sudo -u bitwarden chmod 600 /home/bitwarden/.bw_session\n")
-		sb.WriteString("  3. Set [bitwarden] enabled = true in clod.toml and restart\n")
+		sb.WriteString("  3. Set [bitwarden] enabled = true in foci.toml and restart\n")
 	} else {
 		sb.WriteString("Fix the issues above, then run /bitwarden setup again.\n")
 	}
@@ -136,7 +136,7 @@ func bitwardenStatus(storeInfo BitwardenStoreInfo, enabled bool) (string, error)
 
 	if !enabled {
 		sb.WriteString("State: DISABLED\n")
-		sb.WriteString("\nEnable in clod.toml:\n")
+		sb.WriteString("\nEnable in foci.toml:\n")
 		sb.WriteString("  [bitwarden]\n")
 		sb.WriteString("  enabled = true\n")
 		return sb.String(), nil

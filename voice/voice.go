@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"clod/log"
+	"foci/log"
 )
 
 // STT transcribes audio to text.
@@ -117,7 +117,7 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 		cmd = "edge-tts"
 	}
 
-	tmpFile, err := os.CreateTemp("", "clod-tts-*.mp3")
+	tmpFile, err := os.CreateTemp("", "foci-tts-*.mp3")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"clod/log"
+	"foci/log"
 
 	"github.com/BurntSushi/toml"
 )
@@ -205,7 +205,7 @@ type SkillsConfig struct {
 
 type ToolsConfig struct {
 	MaxResultChars          int    `toml:"max_result_chars"`           // max chars before writing result to file (default 15000)
-	TempDir                 string `toml:"temp_dir"`                   // where to write large tool results (default /tmp/clod-tool-results)
+	TempDir                 string `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci-tool-results)
 	TmuxCols                int    `toml:"tmux_cols"`                  // tmux window columns on start (default 300)
 	TmuxRows                int    `toml:"tmux_rows"`                  // tmux window rows on start (default 30)
 	ExecAutoBackground      int    `toml:"exec_auto_background"`       // seconds before auto-backgrounding exec (default 10, 0 disables)
@@ -295,7 +295,7 @@ type Config struct {
 	Background         BackgroundConfig   `toml:"background"`
 	Commands           []CommandConfig    `toml:"commands"`
 	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
-	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/clod/WELCOME.md)
+	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
 	SkipSecurityChecks bool               `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 	DefinedKeys        map[string]bool    `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
 }
@@ -564,7 +564,7 @@ func Load(path string) (*Config, error) {
 		cfg.Logging.Level = "INFO"
 	}
 	if cfg.Logging.EventFile == "" {
-		cfg.Logging.EventFile = "logs/clod.log"
+		cfg.Logging.EventFile = "logs/foci.log"
 	}
 	if cfg.Logging.APIFile == "" {
 		cfg.Logging.APIFile = "logs/api.jsonl"
@@ -620,7 +620,7 @@ func Load(path string) (*Config, error) {
 		cfg.Tools.MaxResultChars = 15000
 	}
 	if cfg.Tools.TempDir == "" {
-		cfg.Tools.TempDir = "/tmp/clod-tool-results"
+		cfg.Tools.TempDir = "/tmp/foci-tool-results"
 	}
 	if cfg.Tools.TmuxCols == 0 {
 		cfg.Tools.TmuxCols = 300
@@ -873,7 +873,7 @@ func (c *Config) ResolveAllPaths() {
 
 // ParseFlags returns the config file path from command-line flags.
 func ParseFlags() string {
-	path := flag.String("config", "clod.toml", "path to config file")
+	path := flag.String("config", "foci.toml", "path to config file")
 	flag.Parse()
 	return *path
 }

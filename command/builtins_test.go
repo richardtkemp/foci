@@ -703,15 +703,15 @@ func TestPromptsCommand(t *testing.T) {
 		return PromptsData{
 			AgentID: "clutch",
 			Prompts: []PromptInfo{
-				{Label: "compaction_summary", Path: "/home/clod/prompts/compaction.md", Exists: true},
+				{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Exists: true},
 				{Label: "session_reset"},
 				{Label: "handoff_msg", Inline: "You are picking up a compacted session."},
 				{Label: "fork_prompt", Path: "/missing/file.md", Exists: false},
 			},
-			PromptDirs: []string{"/home/clod/prompts"},
+			PromptDirs: []string{"/home/foci/prompts"},
 			Files: []PromptFile{
-				{Dir: "/home/clod/prompts", Name: "compaction.md", Configured: true},
-				{Dir: "/home/clod/prompts", Name: "daily-review.md", Configured: false},
+				{Dir: "/home/foci/prompts", Name: "compaction.md", Configured: true},
+				{Dir: "/home/foci/prompts", Name: "daily-review.md", Configured: false},
 			},
 		}
 	})
@@ -725,7 +725,7 @@ func TestPromptsCommand(t *testing.T) {
 		"```",
 		"agent: clutch",
 		"compaction_summary",
-		"/home/clod/prompts/compaction.md",
+		"/home/foci/prompts/compaction.md",
 		"✓",
 		"session_reset",
 		"[default]",
@@ -734,7 +734,7 @@ func TestPromptsCommand(t *testing.T) {
 		"fork_prompt",
 		"✗ (not found)",
 		"Prompt files on disk:",
-		"/home/clod/prompts/",
+		"/home/foci/prompts/",
 		"compaction.md",
 		"[configured]",
 		"daily-review.md",
@@ -1769,7 +1769,7 @@ func TestTmuxCommandStartNoWatch(t *testing.T) {
 }
 
 func TestTmuxCommandStartAutoName(t *testing.T) {
-	execFn, calls := mockTmuxExec("Session started: clod-1", nil)
+	execFn, calls := mockTmuxExec("Session started: foci-1", nil)
 	cmd := NewTmuxCommand(execFn)
 
 	_, err := cmd.Execute(context.Background(), "start")
@@ -1780,8 +1780,8 @@ func TestTmuxCommandStartAutoName(t *testing.T) {
 	if len(*calls) != 2 {
 		t.Fatalf("calls = %d, want 2", len(*calls))
 	}
-	if (*calls)[1]["name"] != "clod-1" {
-		t.Errorf("watch name = %v, want clod-1", (*calls)[1]["name"])
+	if (*calls)[1]["name"] != "foci-1" {
+		t.Errorf("watch name = %v, want foci-1", (*calls)[1]["name"])
 	}
 }
 

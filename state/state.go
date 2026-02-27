@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"clod/log"
+	"foci/log"
 )
 
 // Store provides thread-safe JSON file-backed key-value persistence.

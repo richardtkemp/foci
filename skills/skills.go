@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"clod/log"
+	"foci/log"
 )
 
 // Skill represents a loaded skill from a SKILL.md file.

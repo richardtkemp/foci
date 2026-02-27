@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"clod/config"
+	"foci/config"
 )
 
 func TestApplyPromptRulesQuestion(t *testing.T) {

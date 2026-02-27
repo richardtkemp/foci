@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"clod/memory"
+	"foci/memory"
 )
 
 func testMemoryTool(t *testing.T) (*Tool, string) {

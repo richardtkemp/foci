@@ -11,16 +11,16 @@ LDFLAGS = -X main.version=$(VERSION) \
 all: build cli
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o clodgw .
+	go build -ldflags "$(LDFLAGS)" -o focigw .
 
 cli:
-	go build -ldflags "$(LDFLAGS)" -o clod ./cmd/clod
+	go build -ldflags "$(LDFLAGS)" -o foci ./cmd/foci
 
 test:
 	go test ./...
 
 clean:
-	rm -f clodgw clod
+	rm -f focigw foci
 
 vet:
 	go vet ./...
