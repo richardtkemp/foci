@@ -181,6 +181,61 @@ func (s *TodoStore) Remove(agentID string, id int64) error {
 	return nil
 }
 
+// Edit updates fields on an existing todo item. Only non-empty text and priority
+// are applied. Tags are updated only when setTags is true (allowing clearing to "").
+// Returns the updated item.
+func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, setTags bool) (*TodoItem, error) {
+	var setClauses []string
+	var args []any
+
+	if text != "" {
+		setClauses = append(setClauses, "text = ?")
+		args = append(args, text)
+	}
+	if priority != "" {
+		setClauses = append(setClauses, "priority = ?")
+		args = append(args, priority)
+	}
+	if setTags {
+		setClauses = append(setClauses, "tags = ?")
+		args = append(args, tags)
+	}
+
+	if len(setClauses) == 0 {
+		return nil, fmt.Errorf("nothing to update")
+	}
+
+	query := "UPDATE todos SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND agent_id = ?"
+	args = append(args, id, agentID)
+
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, fmt.Errorf("todo #%d not found", id)
+	}
+
+	// Re-read the updated row.
+	row := s.db.QueryRow(
+		`SELECT id, text, status, priority, tags, agent_id, created_at, completed_at FROM todos WHERE id = ? AND agent_id = ?`,
+		id, agentID,
+	)
+	var item TodoItem
+	var createdAt string
+	var completedAt sql.NullString
+	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.AgentID, &createdAt, &completedAt); err != nil {
+		return nil, fmt.Errorf("re-read after edit: %w", err)
+	}
+	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if completedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, completedAt.String)
+		item.CompletedAt = &t
+	}
+	return &item, nil
+}
+
 // Search returns todo items matching a case-insensitive substring query.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	rows, err := s.db.Query(
