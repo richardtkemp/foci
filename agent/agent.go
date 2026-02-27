@@ -66,8 +66,9 @@ type Agent struct {
 	Sessions  *session.Store
 	Tools     *tools.Registry
 	Bootstrap *workspace.Bootstrap
-	Compactor *compaction.Compactor // nil disables auto-compaction
-	Reminders *memory.ReminderStore // nil disables reminder injection
+	Compactor     *compaction.Compactor // nil disables auto-compaction
+	AsyncNotifier *tools.AsyncNotifier // nil disables async-pending compaction guard
+	Reminders     *memory.ReminderStore // nil disables reminder injection
 	AgentID   string                // unique agent identifier (for per-agent DB queries)
 	Model     string
 
@@ -873,8 +874,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			sm.prevCacheRead = resp.Usage.CacheReadInputTokens
 			sm.prevCacheWrite = resp.Usage.CacheCreationInputTokens
 
-			// Check if compaction is needed
-			if a.Compactor != nil && a.Compactor.ShouldCompact(messages, &resp.Usage) {
+			// Check if compaction is needed (skip while async results are pending)
+			if a.Compactor != nil && !a.AsyncNotifier.HasPending(sessionKey) && a.Compactor.ShouldCompact(messages, &resp.Usage) {
 				if NoCompactFromContext(ctx) {
 					totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
 					limit := compaction.ContextLimit(a.Model)

@@ -398,8 +398,10 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	if p.Background && notifier != nil {
 		sk := SessionKeyFromContext(ctx)
 		bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
+		notifier.MarkPending(sk)
 		go func() {
 			defer bgCancel()
+			defer notifier.MarkDone(sk)
 			result, err := doAndProcess(bgCtx)
 			var msg string
 			if err != nil {
@@ -438,8 +440,10 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 
 		case <-time.After(threshold):
 			log.Infof("http_request", "auto-backgrounding after %v: %s", threshold, displayURL)
+			notifier.MarkPending(sk)
 			go func() {
 				defer bgCancel()
+				defer notifier.MarkDone(sk)
 				r := <-done
 				var msg string
 				if r.err != nil {

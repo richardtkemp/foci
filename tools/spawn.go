@@ -219,8 +219,10 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			return "", ctx.Err()
 		}
 
+		deps.Notifier.MarkPending(parentSession)
 		go func() {
 			defer func() { <-sem }()
+			defer deps.Notifier.MarkDone(parentSession)
 
 			// Detached context — survives parent turn ending.
 			spawnCtx, cancel := context.WithTimeout(context.Background(), timeout)
