@@ -12,9 +12,9 @@ import (
 
 // AgentNewDeps holds dependencies for the /agents new wizard.
 type AgentNewDeps struct {
-	ConfigPath   string // path to clod.toml
+	ConfigPath   string // path to foci.toml
 	DefaultsDir  string // path to shared/defaults/
-	HomeDir      string // base dir for workspaces (e.g. /home/clod)
+	HomeDir      string // base dir for workspaces (e.g. /home/foci)
 	ListFn       func() []AgentInfo
 	SecretNames  func() []string // current secret names
 	BotNames     func() []string // existing bot names from [telegram.bots] config
@@ -248,7 +248,7 @@ func createAgent(w *agentWizard) (string, error) {
 		sb.WriteString("✅ Character files: blank templates created\n")
 	}
 
-	// 3. Append to clod.toml
+	// 3. Append to foci.toml
 	configEntry := generateConfigEntry(w, workspace)
 	if err := appendToFile(w.deps.ConfigPath, configEntry); err != nil {
 		return "", fmt.Errorf("update config: %w", err)
@@ -267,7 +267,7 @@ func createAgent(w *agentWizard) (string, error) {
 	}
 
 	sb.WriteString(fmt.Sprintf("\n%s %s (%s) is ready.\n", w.emoji, w.display, w.id))
-	sb.WriteString("Restart clod for the new agent to start: /restart")
+	sb.WriteString("Restart foci for the new agent to start: /restart")
 	return sb.String(), nil
 }
 
@@ -295,10 +295,10 @@ func generateConfigEntry(w *agentWizard, workspace string) string {
 
 // defaultCrontabTemplate is the fallback when the template file doesn't exist.
 const defaultCrontabTemplate = `# AGENT_NAME crontab entries
-*/30 * * * * clod branch --oneshot -a AGENT_NAME "$(cat /home/clod/shared/prompts/memory-formation.md)" 2>&1 >> /home/clod/logs/cron.log
-*/45 * * * * clod send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> /home/clod/logs/cron.log
-0 4 * * * clod branch --oneshot -a AGENT_NAME "$(cat /home/clod/shared/prompts/daily-memory-review.md)" 2>&1 >> /home/clod/logs/cron.log
-40 2 * * 1 clod branch --oneshot -a AGENT_NAME "$(cat /home/clod/shared/prompts/weekly-character-review.md)" 2>&1 >> /home/clod/logs/cron.log
+*/30 * * * * foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/memory-formation.md)" 2>&1 >> /home/foci/logs/cron.log
+*/45 * * * * foci send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> /home/foci/logs/cron.log
+0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/daily-memory-review.md)" 2>&1 >> /home/foci/logs/cron.log
+40 2 * * 1 foci branch --oneshot -a AGENT_NAME "$(cat /home/foci/shared/prompts/weekly-character-review.md)" 2>&1 >> /home/foci/logs/cron.log
 `
 
 // generateCrontab returns crontab entries for the new agent.

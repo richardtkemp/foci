@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"sort"
 
-	"clod/anthropic"
+	"foci/anthropic"
 )
 
 // Tool is a callable tool with a JSON Schema for parameters.

@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"syscall"
 
-	"clod/log"
-	"clod/secrets"
+	"foci/log"
+	"foci/secrets"
 )
 
-// childCredential is set at init time to drop the clod-secrets
+// childCredential is set at init time to drop the foci-secrets
 // supplementary group from exec'd child processes while preserving
-// all other groups (docker, git, etc.). If the clod-secrets group
+// all other groups (docker, git, etc.). If the foci-secrets group
 // doesn't exist or CAP_SETGID is unavailable, this remains nil.
 var childCredential *syscall.Credential
 
@@ -27,7 +27,7 @@ func init() {
 		return
 	}
 
-	// Look up the clod-secrets group. If it doesn't exist, there's
+	// Look up the foci-secrets group. If it doesn't exist, there's
 	// nothing to protect against — skip credential setup entirely.
 	secretsGrp, err := user.LookupGroup(secrets.SecurityGroupName)
 	if err != nil {
@@ -46,19 +46,19 @@ func init() {
 		return
 	}
 
-	// Build filtered list: all groups EXCEPT clod-secrets
+	// Build filtered list: all groups EXCEPT foci-secrets
 	var filteredGroups []uint32
 	found := false
 	for _, g := range currentGroups {
 		if uint64(g) == secretsGID {
 			found = true
-			continue // drop clod-secrets
+			continue // drop foci-secrets
 		}
 		filteredGroups = append(filteredGroups, uint32(g))
 	}
 
 	if !found {
-		// Process doesn't have clod-secrets — nothing to drop
+		// Process doesn't have foci-secrets — nothing to drop
 		log.Debugf("exec", "process does not have %s group — skipping child credential setup", secrets.SecurityGroupName)
 		return
 	}
@@ -74,7 +74,7 @@ func init() {
 	cred := &syscall.Credential{
 		Uid:    uint32(uid),
 		Gid:    primaryGID,
-		Groups: filteredGroups, // all groups except clod-secrets
+		Groups: filteredGroups, // all groups except foci-secrets
 	}
 
 	// Probe: try spawning a trivial process with the credential.
@@ -97,7 +97,7 @@ func init() {
 }
 
 // ChildSysProcAttr returns a SysProcAttr that creates a new process group
-// and drops the clod-secrets supplementary group from child processes.
+// and drops the foci-secrets supplementary group from child processes.
 // All other groups are preserved. If credential setup failed at init
 // time, only Setpgid is set.
 // Exported so main.go can wire it into the command package.
@@ -110,7 +110,7 @@ func ChildSysProcAttr() *syscall.SysProcAttr {
 }
 
 // ChildSysProcAttrSetsid returns a SysProcAttr that creates a new session
-// (for background/daemon processes) and drops the clod-secrets group.
+// (for background/daemon processes) and drops the foci-secrets group.
 func ChildSysProcAttrSetsid() *syscall.SysProcAttr {
 	attr := &syscall.SysProcAttr{Setsid: true}
 	if childCredential != nil {

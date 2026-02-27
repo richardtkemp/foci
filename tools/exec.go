@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"clod/log"
-	"clod/secrets"
-	"clod/secrets/bitwarden"
+	"foci/log"
+	"foci/secrets"
+	"foci/secrets/bitwarden"
 )
 
 const execMaxOutputBytes = 2 * 1024 * 1024 // 2MB cap on stdout/stderr to prevent OOM

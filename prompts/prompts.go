@@ -1,4 +1,4 @@
-// Package prompts provides embedded default prompt files for clod.
+// Package prompts provides embedded default prompt files for foci.
 // All defaults are loaded at build time via //go:embed.
 // Config file overrides still take precedence at runtime.
 package prompts

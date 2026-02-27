@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"clod/agent"
-	"clod/config"
-	"clod/memory"
-	"clod/session"
+	"foci/agent"
+	"foci/config"
+	"foci/memory"
+	"foci/session"
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {

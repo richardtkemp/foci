@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"clod/anthropic"
-	"clod/log"
-	"clod/session"
-	"clod/tools"
-	"clod/workspace"
+	"foci/anthropic"
+	"foci/log"
+	"foci/session"
+	"foci/tools"
+	"foci/workspace"
 )
 
 // TestBranchCacheSharing is the full-stack integration test matching SPEC.md Testing Priority.

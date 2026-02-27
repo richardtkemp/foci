@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"clod/log"
+	"foci/log"
 
 	"github.com/gorilla/websocket"
 )

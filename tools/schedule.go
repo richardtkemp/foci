@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"clod/log"
+	"foci/log"
 )
 
 // ScheduleWakeFn is a callback to schedule a wake event

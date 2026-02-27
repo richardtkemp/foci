@@ -209,7 +209,7 @@ func TestRotateFileArchiveNaming(t *testing.T) {
 		want string // suffix only (date varies)
 	}{
 		{"api-payload.jsonl", "api-payload-DATE.jsonl.gz"},
-		{"clod.log", "clod-DATE.log.gz"},
+		{"foci.log", "foci-DATE.log.gz"},
 		{"api.jsonl", "api-DATE.jsonl.gz"},
 	}
 
@@ -226,7 +226,7 @@ func TestRotateFileArchiveNaming(t *testing.T) {
 func TestRotateFileEventLog(t *testing.T) {
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
-	logPath := filepath.Join(dir, "clod.log")
+	logPath := filepath.Join(dir, "foci.log")
 
 	now := time.Now().UTC()
 	old := now.Add(-72 * time.Hour).Format(time.RFC3339)

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/secrets"
+	"foci/secrets"
 )
 
 func writeTestSecrets(t *testing.T, content string) *secrets.Store {

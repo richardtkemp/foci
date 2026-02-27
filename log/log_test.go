@@ -226,7 +226,7 @@ func TestInitWithFiles(t *testing.T) {
 	defer resetGlobal()
 
 	dir := t.TempDir()
-	eventPath := filepath.Join(dir, "clod.log")
+	eventPath := filepath.Join(dir, "foci.log")
 	apiPath := filepath.Join(dir, "api.jsonl")
 
 	err := Init(Config{
@@ -262,7 +262,7 @@ func TestInitWithFiles(t *testing.T) {
 }
 
 func TestInitBadEventPath(t *testing.T) {
-	err := Init(Config{EventFile: "/nonexistent/dir/clod.log"})
+	err := Init(Config{EventFile: "/nonexistent/dir/foci.log"})
 	if err == nil {
 		t.Fatal("expected error for bad event file path")
 	}
@@ -348,7 +348,7 @@ func TestPreInitBufferReplay(t *testing.T) {
 	defer resetGlobal()
 
 	dir := t.TempDir()
-	eventPath := filepath.Join(dir, "clod.log")
+	eventPath := filepath.Join(dir, "foci.log")
 
 	// Log before Init — should go to stderr (captured by SetOutput)
 	// and be buffered for replay.
@@ -356,7 +356,7 @@ func TestPreInitBufferReplay(t *testing.T) {
 	SetOutput(&stderrBuf)
 
 	Warnf("config", "unknown key: foo.bar")
-	Infof("startup", "loading config from clod.toml")
+	Infof("startup", "loading config from foci.toml")
 
 	// Verify buffer has two entries
 	std.mu.Lock()
@@ -390,7 +390,7 @@ func TestPreInitBufferReplay(t *testing.T) {
 	if !strings.Contains(content, "unknown key: foo.bar") {
 		t.Errorf("event file missing replayed warning: %s", content)
 	}
-	if !strings.Contains(content, "loading config from clod.toml") {
+	if !strings.Contains(content, "loading config from foci.toml") {
 		t.Errorf("event file missing replayed info: %s", content)
 	}
 
@@ -442,7 +442,7 @@ func TestFilePaths(t *testing.T) {
 	defer resetGlobal()
 
 	dir := t.TempDir()
-	eventPath := filepath.Join(dir, "clod.log")
+	eventPath := filepath.Join(dir, "foci.log")
 	apiPath := filepath.Join(dir, "api.jsonl")
 	payloadPath := filepath.Join(dir, "payload.jsonl")
 

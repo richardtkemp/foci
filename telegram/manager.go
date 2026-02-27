@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"clod/log"
+	"foci/log"
 )
 
 // BotManager owns all Telegram bots and provides lookups by agent ID.

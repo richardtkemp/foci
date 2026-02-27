@@ -1,7 +1,7 @@
 package command
 
 import (
-	"clod/table"
+	"foci/table"
 	"context"
 	"fmt"
 	"strconv"

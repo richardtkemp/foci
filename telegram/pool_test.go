@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/command"
+	"foci/command"
 )
 
 func testSecondaryBot(name string) *Bot {

@@ -14,7 +14,7 @@ import (
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	readability "github.com/go-shiori/go-readability"
 
-	"clod/log"
+	"foci/log"
 )
 
 func NewWebFetchTool() *Tool {
@@ -78,7 +78,7 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("User-Agent", "Clod/1.0")
+	req.Header.Set("User-Agent", "Foci/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {

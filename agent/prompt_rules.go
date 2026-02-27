@@ -3,8 +3,8 @@ package agent
 import (
 	"regexp"
 
-	"clod/config"
-	"clod/log"
+	"foci/config"
+	"foci/log"
 )
 
 // CompiledPromptRule is a pre-compiled regex rule for prompt transformation.

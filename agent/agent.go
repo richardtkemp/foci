@@ -15,14 +15,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"clod/anthropic"
-	"clod/compaction"
-	"clod/log"
-	"clod/memory"
-	"clod/session"
-	"clod/state"
-	"clod/tools"
-	"clod/workspace"
+	"foci/anthropic"
+	"foci/compaction"
+	"foci/log"
+	"foci/memory"
+	"foci/session"
+	"foci/state"
+	"foci/tools"
+	"foci/workspace"
 )
 
 // ImageData holds a raw image for inclusion in a message.
@@ -679,7 +679,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	messages = append(messages, userMsg)
 
 	// Track new messages to save. The defer flushes unsaved messages on
-	// shutdown (e.g. SIGTERM during a tool call like "systemctl restart clod").
+	// shutdown (e.g. SIGTERM during a tool call like "systemctl restart foci").
 	// Normal exits set newMessages=nil after saving, so the defer is a no-op.
 	var newMessages []anthropic.Message
 	newMessages = append(newMessages, userMsg)

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"clod/anthropic"
-	"clod/session"
-	"clod/tools"
-	"clod/workspace"
+	"foci/anthropic"
+	"foci/session"
+	"foci/tools"
+	"foci/workspace"
 )
 
 func TestEnvironmentBlockPrepended(t *testing.T) {
@@ -31,7 +31,7 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
-	envText := "# Environment\n\nYou are running on **clod**.\n\n## Workspace\n- Workspace: /home/test\n- Agent ID: tester\n"
+	envText := "# Environment\n\nYou are running on **foci**.\n\n## Workspace\n- Workspace: /home/test\n- Agent ID: tester\n"
 
 	ag := &Agent{
 		Client:           client,

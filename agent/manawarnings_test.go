@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/state"
+	"foci/state"
 )
 
 func TestManaWatcherNewNilForEmpty(t *testing.T) {

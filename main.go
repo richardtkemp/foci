@@ -16,24 +16,24 @@ import (
 	"syscall"
 	"time"
 
-	"clod/agent"
-	"clod/anthropic"
-	"clod/command"
-	"clod/compaction"
-	"clod/config"
-	"clod/heartbeat"
-	"clod/log"
-	"clod/memory"
-	"clod/prompts"
-	"clod/secrets"
-	"clod/secrets/bitwarden"
-	"clod/session"
-	"clod/skills"
-	"clod/state"
-	"clod/telegram"
-	"clod/tools"
-	"clod/voice"
-	"clod/workspace"
+	"foci/agent"
+	"foci/anthropic"
+	"foci/command"
+	"foci/compaction"
+	"foci/config"
+	"foci/heartbeat"
+	"foci/log"
+	"foci/memory"
+	"foci/prompts"
+	"foci/secrets"
+	"foci/secrets/bitwarden"
+	"foci/session"
+	"foci/skills"
+	"foci/state"
+	"foci/telegram"
+	"foci/tools"
+	"foci/voice"
+	"foci/workspace"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
@@ -166,7 +166,7 @@ func main() {
 	// (so script commands also drop supplementary groups).
 	command.ChildSysProcAttr = tools.ChildSysProcAttr
 
-	// Resolve shared credentials: secrets.toml overrides clod.toml
+	// Resolve shared credentials: secrets.toml overrides foci.toml
 	anthropicToken := cfg.Anthropic.Token
 	if v, ok := store.Get("anthropic.token"); ok {
 		anthropicToken = v
@@ -1977,7 +1977,7 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 		ag.ExtraSystemBlocks = newExtraSystemBlocks
-		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: clod.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", newSkillRegistry.Len())
+		msg := fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: foci.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", newSkillRegistry.Len())
 		return msg, nil
 	}))
 
@@ -2396,13 +2396,13 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 
 	var b strings.Builder
 	b.WriteString("# Environment\n\n")
-	b.WriteString("You are running on **clod**, an AI agent platform.\n\n")
+	b.WriteString("You are running on **foci**, an AI agent platform.\n\n")
 
 	// Workspace
 	b.WriteString("## Workspace\n")
 	fmt.Fprintf(&b, "- Workspace: %s\n", acfg.Workspace)
 	fmt.Fprintf(&b, "- Agent ID: %s\n", acfg.ID)
-	b.WriteString("- Platform: clod (https://github.com/richardtkemp/clod)\n")
+	b.WriteString("- Platform: foci (https://github.com/richardtkemp/foci)\n")
 	if cfg.Environment.DocsPath != "" {
 		fmt.Fprintf(&b, "- Platform docs: %s\n", cfg.Environment.DocsPath)
 	}

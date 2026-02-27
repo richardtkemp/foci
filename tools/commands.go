@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"clod/command"
+	"foci/command"
 )
 
 // CreateCommandWrapperTool wraps a slash command as a tool.

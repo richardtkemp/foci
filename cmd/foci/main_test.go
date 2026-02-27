@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// mockGateway creates a test server that mimics the clod HTTP gateway.
+// mockGateway creates a test server that mimics the foci HTTP gateway.
 // It echoes the agent field back in responses so tests can verify it.
 func mockGateway() *httptest.Server {
 	mux := http.NewServeMux()
@@ -228,7 +228,7 @@ func TestCLIIntegration(t *testing.T) {
 	}
 
 	// Build the CLI binary once
-	binPath := t.TempDir() + "/clod"
+	binPath := t.TempDir() + "/foci"
 	build := exec.Command("go", "build", "-o", binPath, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {
@@ -266,7 +266,7 @@ func TestCLIMessageFile(t *testing.T) {
 	os.WriteFile(msgFile, []byte("hello from file"), 0644)
 
 	// Build the CLI binary
-	binPath := t.TempDir() + "/clod"
+	binPath := t.TempDir() + "/foci"
 	build := exec.Command("go", "build", "-o", binPath, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {
@@ -325,7 +325,7 @@ func TestCLIEnvVars(t *testing.T) {
 	os.WriteFile(msgFile, []byte("env file msg"), 0644)
 
 	// Build the CLI binary
-	binPath := t.TempDir() + "/clod"
+	binPath := t.TempDir() + "/foci"
 	build := exec.Command("go", "build", "-o", binPath, ".")
 	build.Dir = "."
 	if out, err := build.CombinedOutput(); err != nil {

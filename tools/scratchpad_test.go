@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"clod/memory"
+	"foci/memory"
 )
 
 func testScratchpadTools(t *testing.T) (*Tool, *Tool, *Tool) {

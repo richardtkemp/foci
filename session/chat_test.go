@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"clod/anthropic"
+	"foci/anthropic"
 )
 
 func TestListChatSessions_Empty(t *testing.T) {

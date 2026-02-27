@@ -196,14 +196,14 @@ func TestShortPath(t *testing.T) {
 	}{
 		{
 			name:     "empty base returns abs",
-			absPath:  "/home/clod/shared/skills/reheat/SKILL.md",
+			absPath:  "/home/foci/shared/skills/reheat/SKILL.md",
 			baseDir:  "",
-			expected: "/home/clod/shared/skills/reheat/SKILL.md",
+			expected: "/home/foci/shared/skills/reheat/SKILL.md",
 		},
 		{
 			name:     "relative shorter",
-			absPath:  "/home/clod/shared/skills/reheat/SKILL.md",
-			baseDir:  "/home/clod/clutch",
+			absPath:  "/home/foci/shared/skills/reheat/SKILL.md",
+			baseDir:  "/home/foci/clutch",
 			expected: "../shared/skills/reheat/SKILL.md",
 		},
 		{
@@ -214,8 +214,8 @@ func TestShortPath(t *testing.T) {
 		},
 		{
 			name:     "same dir",
-			absPath:  "/home/clod/workspace/SKILL.md",
-			baseDir:  "/home/clod/workspace",
+			absPath:  "/home/foci/workspace/SKILL.md",
+			baseDir:  "/home/foci/workspace",
 			expected: "SKILL.md",
 		},
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"clod/anthropic"
+	"foci/anthropic"
 )
 
 // mockSessionAppender captures Append calls.

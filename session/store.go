@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"clod/anthropic"
-	"clod/log"
+	"foci/anthropic"
+	"foci/log"
 )
 
 // SessionMeta is stored as the first line in a session file to preserve metadata

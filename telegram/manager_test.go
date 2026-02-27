@@ -3,7 +3,7 @@ package telegram
 import (
 	"testing"
 
-	"clod/command"
+	"foci/command"
 )
 
 func TestBotManagerPrimary(t *testing.T) {

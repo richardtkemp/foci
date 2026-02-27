@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/secrets/bitwarden"
+	"foci/secrets/bitwarden"
 )
 
 // testBWExecutor is a mock executor for tool tests.

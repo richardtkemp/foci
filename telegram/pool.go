@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"clod/log"
+	"foci/log"
 )
 
 // SessionActivityChecker returns the last activity time for a session key.

@@ -749,8 +749,8 @@ key = "val"
 }
 
 func TestCheckSecurityGroupName(t *testing.T) {
-	if SecurityGroupName != "clod-secrets" {
-		t.Errorf("SecurityGroupName = %q, want clod-secrets", SecurityGroupName)
+	if SecurityGroupName != "foci-secrets" {
+		t.Errorf("SecurityGroupName = %q, want foci-secrets", SecurityGroupName)
 	}
 }
 

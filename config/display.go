@@ -2,7 +2,7 @@ package config
 
 import (
 	"bytes"
-	"clod/table"
+	"foci/table"
 	"fmt"
 	"sort"
 	"strings"

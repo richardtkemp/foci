@@ -1,0 +1,35 @@
+# Foci config — minimal test setup
+
+[agent]
+id = "main"
+model = "claude-haiku-4-5"
+workspace = "/path/to/your/workspace"
+heartbeat_interval = "45m"
+
+[anthropic]
+token = "YOUR_ANTHROPIC_TOKEN_HERE"
+
+[telegram]
+bot_token = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
+allowed_users = ["YOUR_TELEGRAM_USER_ID_HERE"]
+
+[sessions]
+dir = "/path/to/your/sessions"
+compaction_threshold = 0.8
+
+# Load summary prompt from file (takes precedence over inline compaction_summary_prompt)
+# compaction_summary_prompt_file = "/home/foci/shared/prompts/compaction-summary.md"
+
+# Or inline (used if _file is not set or file is missing):
+# compaction_summary_prompt = "Please provide a concise summary of our entire conversation..."
+
+[environment]
+# enabled = true                          # inject environment block as first system block
+# docs_path = "/path/to/your/docs"        # platform docs directory (relative paths resolve against $HOME)
+
+[memory]
+dir = "/path/to/your/memory"
+
+[http]
+port = 18791
+bind = "127.0.0.1"

@@ -11,8 +11,8 @@ import (
 
 func TestWebFetchSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("User-Agent") != "Clod/1.0" {
-			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), "Clod/1.0")
+		if r.Header.Get("User-Agent") != "Foci/1.0" {
+			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), "Foci/1.0")
 		}
 		w.Write([]byte("<html><body><p>Hello World</p></body></html>"))
 	}))

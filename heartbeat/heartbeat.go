@@ -18,12 +18,12 @@ import (
 	"sync"
 	"time"
 
-	"clod/agent"
-	"clod/anthropic"
-	"clod/config"
-	"clod/log"
-	"clod/memory"
-	"clod/session"
+	"foci/agent"
+	"foci/anthropic"
+	"foci/config"
+	"foci/log"
+	"foci/memory"
+	"foci/session"
 )
 
 const (

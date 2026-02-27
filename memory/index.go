@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"clod/log"
+	"foci/log"
 
 	"github.com/fsnotify/fsnotify"
 	_ "modernc.org/sqlite"

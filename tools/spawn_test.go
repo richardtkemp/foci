@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"clod/anthropic"
+	"foci/anthropic"
 )
 
 // mockBootstrap implements SystemBlocksProvider for tests.

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"clod/anthropic"
-	"clod/log"
+	"foci/anthropic"
+	"foci/log"
 )
 
 // DefaultFileOrder is the default order for loading workspace files.

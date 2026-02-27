@@ -164,7 +164,7 @@ func TestCheckOnce_KillThreshold(t *testing.T) {
 	// Set RSS to 35% of RAM (exceeds kill threshold)
 	m.getTmuxRSSFn = func() (int64, error) { return memTotalKB * 35 / 100, nil }
 	m.getMemTotalFn = func() (int64, error) { return memTotalKB, nil }
-	m.killTmuxFn = func() ([]string, error) { return []string{"clod-1", "clod-2"}, nil }
+	m.killTmuxFn = func() ([]string, error) { return []string{"foci-1", "foci-2"}, nil }
 
 	m.checkOnce()
 
@@ -179,7 +179,7 @@ func TestCheckOnce_KillThreshold(t *testing.T) {
 	if !strings.Contains(notifications[1], "KILL") {
 		t.Errorf("expected KILL notification, got: %s", notifications[1])
 	}
-	if !strings.Contains(notifications[1], "clod-1") || !strings.Contains(notifications[1], "clod-2") {
+	if !strings.Contains(notifications[1], "foci-1") || !strings.Contains(notifications[1], "foci-2") {
 		t.Errorf("kill notification should list sessions: %s", notifications[1])
 	}
 	if !cleanupCalled {
