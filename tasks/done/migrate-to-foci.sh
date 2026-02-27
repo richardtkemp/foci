@@ -57,13 +57,22 @@ else
     run useradd --system --home-dir /home/foci --create-home --shell /bin/bash foci
 fi
 
+# Add foci to required groups (docker, aisudo, rich-readers, kvm)
+for grp in docker aisudo rich-readers kvm; do
+    if getent group "$grp" &>/dev/null; then
+        run usermod -aG "$grp" foci
+        echo "  Added foci to $grp"
+    fi
+done
+
 # ── Phase 2: Copy all data ────────────────────────────────────────
 
 section "Phase 2: Copy clod data to /home/foci"
 
-if [[ -d /home/foci ]] && [[ "$(ls -A /home/foci 2>/dev/null)" ]]; then
-    echo "  WARNING: /home/foci is not empty. Skipping copy."
-    echo "  If you want to re-copy, remove /home/foci contents first."
+if [[ -f /home/foci/config/foci.toml ]] || [[ -f /home/foci/config/clod.toml ]]; then
+    echo "  Config already exists in /home/foci — skipping copy (already migrated?)"
+    echo "  Ensuring ownership is correct..."
+    run chown -R foci:foci /home/foci/
 else
     run cp -a /home/clod/. /home/foci/
     run chown -R foci:foci /home/foci/
@@ -83,36 +92,60 @@ fi
 
 # ── Phase 4: Automated find-replace ───────────────────────────────
 
+PHASE4_START=$(date +%s)
 section "Phase 4: Find-replace 'clod' → 'foci' in /home/foci"
 
 echo "  Note: 'clod' is not a real word, so there are no false-positive concerns."
 echo "  This replaces all case variants in text files."
 
-# Build list of text files to process (skip binaries, databases, images, archives)
+# Build list of text files to process (skip bulk dirs, binaries, databases, images, archives)
 TEXT_FILES=()
 while IFS= read -r -d '' f; do
     # Skip binary/non-text files by extension
     case "$f" in
-        *.db|*.db-wal|*.db-shm|*.gz|*.mp3|*.wav|*.png|*.jpg|*.jpeg|*.gif|*.pdf|*.zip|*.tar)
+        *.db|*.db-wal|*.db-shm|*.gz|*.mp3|*.wav|*.png|*.jpg|*.jpeg|*.gif|*.pdf|*.zip|*.tar|*.whl|*.pyc|*.so|*.o|*.a|*.jar|*.class)
             continue ;;
     esac
-    # Skip .git directory
-    if [[ "$f" == */\.git/* ]]; then
-        continue
-    fi
-    # Only process actual text files
-    if file --brief --mime-type "$f" 2>/dev/null | grep -q '^text/'; then
-        TEXT_FILES+=("$f")
-    fi
-done < <(find /home/foci -type f -print0 2>/dev/null)
+    TEXT_FILES+=("$f")
+done < <(find /home/foci -type f \
+    -not -path '*/.git/*' \
+    -not -path '*/.cache/*' \
+    -not -path '*/.npm/*' \
+    -not -path '*/.bun/*' \
+    -not -path '*/.cargo/*' \
+    -not -path '*/.rustup/*' \
+    -not -path '*/.gradle/*' \
+    -not -path '*/.android/*' \
+    -not -path '*/.claude/*' \
+    -not -path '*/.opencode/*' \
+    -not -path '*/.config/*' \
+    -not -path '*/.pki/*' \
+    -not -path '*/.ssh/*' \
+    -not -path '*/.zai/*' \
+    -not -path '*/node_modules/*' \
+    -not -path '*/.local/lib/*' \
+    -not -path '*/.local/share/*' \
+    -not -path '*/images_received/*' \
+    -not -path '*/logs/archive/*' \
+    -not -path '*/data/sessions/*' \
+    -not -path '*/.claude.json' \
+    -not -path '*/.bash_history' \
+    -print0 \
+    2>/dev/null)
 
 echo "  Found ${#TEXT_FILES[@]} text files to scan"
 
 REPLACED=0
+SCANNED=0
+TOTAL=${#TEXT_FILES[@]}
 for f in "${TEXT_FILES[@]}"; do
+    ((SCANNED++)) || true
+    if (( SCANNED % 100 == 0 )); then
+        echo "  ... scanned $SCANNED/$TOTAL files ($REPLACED replaced so far)"
+    fi
     if grep -ql 'clod\|Clod\|CLOD' "$f" 2>/dev/null; then
+        echo "  Replacing in: ${f#/home/foci/}"
         if [[ "$DRY_RUN" == true ]]; then
-            echo "  Would update: $f"
             grep -n 'clod\|Clod\|CLOD' "$f" | head -5
         else
             # Perform replacements: paths, config refs, binary names, env vars
@@ -143,13 +176,41 @@ for f in "${TEXT_FILES[@]}"; do
                 -e 's|\bclod eval\b|foci eval|g' \
                 -e 's|\bclod command\b|foci command|g' \
                 -e 's|\bclod ping\b|foci ping|g' \
+                -e 's|clod|foci|g' \
+                -e 's|Clod|Foci|g' \
+                -e 's|CLOD|FOCI|g' \
                 "$f"
         fi
         ((REPLACED++)) || true
     fi
 done
 
-echo "  Updated $REPLACED files"
+PHASE4_END=$(date +%s)
+echo "  Updated $REPLACED files out of $TOTAL scanned in $((PHASE4_END - PHASE4_START))s"
+
+# Change HTTP port so foci can run in parallel with clod
+if [[ -f /home/foci/config/foci.toml ]]; then
+    if grep -q 'port = 18791' /home/foci/config/foci.toml 2>/dev/null; then
+        if [[ "$DRY_RUN" == false ]]; then
+            sed -i 's|port = 18791|port = 18792|g' /home/foci/config/foci.toml
+        fi
+        echo "  Changed HTTP port from 18791 → 18792 (parallel with clod)"
+    fi
+fi
+
+# ── Phase 4b: Set up rich-readers access ──────────────────────────
+
+section "Phase 4b: rich-readers group access"
+
+if getent group rich-readers &>/dev/null; then
+    # Match the setgid setup from /home/clod
+    run chgrp -R rich-readers /home/foci
+    run find /home/foci -type d -exec chmod g+rxs {} +
+    run find /home/foci -type f -exec chmod g+r {} +
+    echo "  Set rich-readers group with setgid on /home/foci"
+else
+    echo "  WARNING: rich-readers group not found"
+fi
 
 # ── Phase 5: Security group ───────────────────────────────────────
 
@@ -267,18 +328,24 @@ echo "  ✓ Copied polkit rules"
 echo ""
 echo "What was NOT touched (left as fallback):"
 echo "  • clod user and /home/clod — intact"
-echo "  • clod.service — disabled but present"
+echo "  • clod.service — still enabled and present"
 echo "  • /usr/local/bin/clod and clodgw — still present"
 echo "  • clod crontab — still active"
 echo ""
-echo "Next steps:"
-echo "  1. Build and install new binaries:"
+echo "Next steps (MANUAL):"
+echo "  1. Review /home/foci/ contents — spot-check the find-replace"
+echo "  2. Build and install new binaries:"
 echo "     cd /home/rich/git/clod && make all"
 echo "     sudo cp focigw /usr/local/bin/focigw"
 echo "     sudo cp foci /usr/local/bin/foci"
-echo "  2. Stop old service:  sudo systemctl stop clod.service"
-echo "  3. Start new service: sudo systemctl start foci.service"
-echo "  4. Verify:            sudo journalctl -u foci.service -f"
-echo "  5. Test:              foci ping"
+echo "  3. Rename GitHub repo: richardtkemp/clod → richardtkemp/foci"
+echo "  4. Update git remote: git remote set-url origin https://github.com/richardtkemp/foci.git"
+echo "  5. When ready to switch:"
+echo "     sudo systemctl stop clod.service"
+echo "     sudo systemctl start foci.service"
+echo "     sudo journalctl -u foci.service -f"
+echo "     foci ping"
+echo ""
+echo "foci HTTP port: 18792 (clod stays on 18791 — can run in parallel)"
 echo ""
 echo "To roll back: sudo systemctl stop foci.service && sudo systemctl start clod.service"
