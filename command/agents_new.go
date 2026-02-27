@@ -256,8 +256,11 @@ func createAgent(w *agentWizard) (string, error) {
 	fmt.Fprintf(&sb, "✅ Config: appended to %s\n", w.deps.ConfigPath)
 
 	// 4. Crontab entries
-	crontabLines := generateCrontab(w, workspace)
-	if err := appendCrontab(crontabLines); err != nil {
+	crontabLines, err := generateCrontab(w, workspace)
+	if err != nil {
+		sb.WriteString("⚠️  Crontab: could not read template — skipping crontab setup.\n")
+		fmt.Fprintf(&sb, "   (%s)\n", err)
+	} else if err := appendCrontab(crontabLines); err != nil {
 		sb.WriteString("⚠️  Crontab: could not update automatically. Add these entries manually:\n")
 		for _, line := range crontabLines {
 			fmt.Fprintf(&sb, "   %s\n", line)
@@ -293,26 +296,17 @@ func generateConfigEntry(w *agentWizard, workspace string) string {
 	return sb.String()
 }
 
-// defaultCrontabTemplate is the fallback when the template file doesn't exist.
-// Placeholders: AGENT_NAME, WORKSPACE, HOMEDIR are replaced at generation time.
-const defaultCrontabTemplate = `# AGENT_NAME crontab entries
-*/30 * * * * foci branch --oneshot -a AGENT_NAME "$(cat HOMEDIR/shared/prompts/memory-formation.md)" 2>&1 >> HOMEDIR/logs/cron.log
-*/45 * * * * foci send -a AGENT_NAME "[heartbeat] $(cat WORKSPACE/prompts/HEARTBEAT.md)" 2>&1 >> HOMEDIR/logs/cron.log
-0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat HOMEDIR/shared/prompts/daily-memory-review.md)" 2>&1 >> HOMEDIR/logs/cron.log
-40 2 * * 1 foci branch --oneshot -a AGENT_NAME "$(cat HOMEDIR/shared/prompts/weekly-character-review.md)" 2>&1 >> HOMEDIR/logs/cron.log
-`
-
 // generateCrontab returns crontab entries for the new agent.
-// Reads a template from {DefaultsDir}/crontab.template if it exists,
-// otherwise uses a built-in fallback. Replaces AGENT_NAME, WORKSPACE,
-// and HOMEDIR placeholders, then staggers minute values based on agent count.
-func generateCrontab(w *agentWizard, workspace string) []string {
-	// Try to read template file
+// Reads a template from {DefaultsDir}/crontab.template, replaces AGENT_NAME,
+// WORKSPACE, and HOMEDIR placeholders, strips comment lines, then staggers
+// minute values based on agent count.
+func generateCrontab(w *agentWizard, workspace string) ([]string, error) {
 	templatePath := filepath.Join(w.deps.DefaultsDir, "crontab.template")
-	tmpl := defaultCrontabTemplate
-	if data, err := os.ReadFile(templatePath); err == nil {
-		tmpl = string(data)
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		return nil, fmt.Errorf("read crontab template: %w", err)
 	}
+	tmpl := string(data)
 
 	// Replace placeholders
 	tmpl = strings.ReplaceAll(tmpl, "AGENT_NAME", w.id)
@@ -326,15 +320,15 @@ func generateCrontab(w *agentWizard, workspace string) []string {
 	var lines []string
 	for _, line := range strings.Split(strings.TrimSpace(tmpl), "\n") {
 		line = strings.TrimRight(line, " \t")
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if offset > 0 && !strings.HasPrefix(line, "#") {
+		if offset > 0 {
 			line = staggerCrontabLine(line, offset)
 		}
 		lines = append(lines, line)
 	}
-	return lines
+	return lines, nil
 }
 
 // staggerCrontabLine offsets the minute field(s) of a crontab line.
