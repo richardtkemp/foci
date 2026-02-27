@@ -632,9 +632,12 @@ Entry points:
 
 Checks token usage against threshold (default 80% of context window). When triggered:
 1. Asks model (configurable) to summarize history using configurable prompt
-2. Replaces session with 3-message compacted version (context note + summary + continuation note)
-3. Appends any scratchpad entries to preservation message (scoped to agent via `Compactor.AgentID`)
-4. If `CompactionNotifyFunc` is set, sends Telegram notification with session key and pre-compaction message count (configurable via `compaction_notify`, default true)
+2. Rotates the pre-compaction session file to a numbered archive (e.g. `5970082313.1.jsonl`) — old messages are preserved for usage tracking and audit
+3. Writes the compacted session (context note + summary + continuation note) to the original file path
+4. Appends any scratchpad entries to preservation message (scoped to agent via `Compactor.AgentID`)
+5. If `CompactionNotifyFunc` is set, sends Telegram notification with session key and pre-compaction message count (configurable via `compaction_notify`, default true)
+
+**Session file rotation:** `Replace()` in `session/store.go` renames the existing file before writing. Archive files use the pattern `{name}.{N}.jsonl` (N = 1, 2, 3...). The active session is always the unnumbered file. `Load`, `LoadFull`, `Append` etc. are unaffected — `keyToPath()` always resolves to the unnumbered path. `ListChatSessions`, `RepairOrphans`, and `InjectRestartMarkers` skip archive files.
 
 **Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this on the next turn and can gracefully conclude rather than hitting the context limit unexpectedly.
 

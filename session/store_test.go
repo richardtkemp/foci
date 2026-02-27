@@ -2,7 +2,9 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -667,5 +669,228 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 	parentMsgs, _ := s.Load(parentKey)
 	if len(parentMsgs) != 4 {
 		t.Errorf("parent has %d messages, want 4", len(parentMsgs))
+	}
+}
+
+func TestReplaceRotatesFile(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	key := "agent:test:chat:999"
+
+	// Write initial messages
+	s.Append(key, msg("user", "old1"))
+	s.Append(key, msg("assistant", "old2"))
+	s.Append(key, msg("user", "old3"))
+
+	// Replace (simulating compaction)
+	compacted := []anthropic.Message{
+		msg("user", "summary"),
+		msg("assistant", "acknowledged"),
+	}
+	if err := s.Replace(key, compacted); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	// Current file should have compacted messages
+	msgs, _ := s.Load(key)
+	if len(msgs) != 2 {
+		t.Fatalf("current len = %d, want 2", len(msgs))
+	}
+	if anthropic.TextOf(msgs[0].Content) != "summary" {
+		t.Errorf("current msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	}
+
+	// Archive file should exist with old messages
+	archivePath := filepath.Join(dir, "agent", "test", "chat", "999.1.jsonl")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("archive file not found: %v", err)
+	}
+
+	// Read archive to verify old messages are preserved
+	archiveData, _ := os.ReadFile(archivePath)
+	lines := strings.Split(strings.TrimSpace(string(archiveData)), "\n")
+	// session_meta + 3 messages = 4 lines
+	if len(lines) != 4 {
+		t.Errorf("archive lines = %d, want 4 (meta + 3 messages)", len(lines))
+	}
+}
+
+func TestReplaceMultipleRotations(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	key := "agent:test:chat:888"
+
+	for round := 1; round <= 3; round++ {
+		s.Append(key, msg("user", fmt.Sprintf("round %d", round)))
+		s.Append(key, msg("assistant", fmt.Sprintf("reply %d", round)))
+
+		compacted := []anthropic.Message{
+			msg("user", fmt.Sprintf("summary %d", round)),
+		}
+		if err := s.Replace(key, compacted); err != nil {
+			t.Fatalf("Replace round %d: %v", round, err)
+		}
+	}
+
+	// Should have archives .1, .2, .3
+	chatDir := filepath.Join(dir, "agent", "test", "chat")
+	for n := 1; n <= 3; n++ {
+		archive := filepath.Join(chatDir, fmt.Sprintf("888.%d.jsonl", n))
+		if _, err := os.Stat(archive); err != nil {
+			t.Errorf("archive .%d not found: %v", n, err)
+		}
+	}
+
+	// Current file should have latest compacted messages
+	msgs, _ := s.Load(key)
+	if len(msgs) != 1 {
+		t.Fatalf("current len = %d, want 1", len(msgs))
+	}
+	if anthropic.TextOf(msgs[0].Content) != "summary 3" {
+		t.Errorf("current = %q, want %q", anthropic.TextOf(msgs[0].Content), "summary 3")
+	}
+}
+
+func TestReplaceBranchRotation(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+	parentKey := "agent:test:chat:777"
+	branchKey := "agent:test:cron:wake-111"
+
+	s.Append(parentKey, msg("user", "parent"))
+	s.Append(parentKey, msg("assistant", "reply"))
+	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
+	s.Append(branchKey, msg("user", "branch q"))
+	s.Append(branchKey, msg("assistant", "branch a"))
+
+	compacted := []anthropic.Message{
+		msg("user", "[compacted]"),
+		msg("assistant", "summary"),
+	}
+	if err := s.Replace(branchKey, compacted); err != nil {
+		t.Fatalf("Replace branch: %v", err)
+	}
+
+	// Archive should exist
+	archivePath := filepath.Join(dir, "agent", "test", "cron", "wake-111.1.jsonl")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("branch archive not found: %v", err)
+	}
+
+	// Archive should have branch_meta as first line
+	archiveData, _ := os.ReadFile(archivePath)
+	firstLine := strings.SplitN(string(archiveData), "\n", 2)[0]
+	var meta BranchMeta
+	if err := json.Unmarshal([]byte(firstLine), &meta); err != nil {
+		t.Fatalf("archive branch_meta unmarshal: %v", err)
+	}
+	if meta.Type != "branch_meta" {
+		t.Errorf("archive first line type = %q, want branch_meta", meta.Type)
+	}
+	if meta.BranchPoint != 2 {
+		t.Errorf("archive branch_point = %d, want 2 (original)", meta.BranchPoint)
+	}
+
+	// New file should have branch_meta with branch_point=0
+	newMeta, _ := s.GetBranchMeta(branchKey)
+	if newMeta == nil {
+		t.Fatal("new file missing branch_meta")
+	}
+	if newMeta.BranchPoint != 0 {
+		t.Errorf("new branch_point = %d, want 0", newMeta.BranchPoint)
+	}
+}
+
+func TestListChatSessionsSkipsArchives(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	// Create a real chat session
+	key := "agent:test:chat:555"
+	s.Append(key, msg("user", "hello"))
+
+	// Simulate an archive file by creating it directly
+	archivePath := filepath.Join(dir, "agent", "test", "chat", "555.1.jsonl")
+	os.WriteFile(archivePath, []byte(`{"role":"user","content":[{"type":"text","text":"old"}]}`+"\n"), 0644)
+
+	sessions, err := s.ListChatSessions("test")
+	if err != nil {
+		t.Fatalf("ListChatSessions: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1 (archive should be skipped)", len(sessions))
+	}
+	if sessions[0].ChatID != 555 {
+		t.Errorf("ChatID = %d, want 555", sessions[0].ChatID)
+	}
+}
+
+func TestRepairOrphansSkipsArchives(t *testing.T) {
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	// Create a session with an orphaned tool_use
+	key := "agent:test:chat:444"
+	s.Append(key, msg("user", "hello"))
+	s.Append(key, anthropic.Message{
+		Role: "assistant",
+		Content: []anthropic.ContentBlock{
+			{Type: "tool_use", ID: "tool_1", Name: "exec", Input: json.RawMessage(`{}`)},
+		},
+	})
+
+	// Create an archive file with the same orphaned pattern
+	archiveDir := filepath.Join(dir, "agent", "test", "chat")
+	archiveData := `{"role":"user","content":[{"type":"text","text":"old"}]}` + "\n" +
+		`{"role":"assistant","content":[{"type":"tool_use","id":"tool_2","name":"exec","input":{}}]}` + "\n"
+	os.WriteFile(filepath.Join(archiveDir, "444.1.jsonl"), []byte(archiveData), 0644)
+
+	repaired, err := s.RepairOrphans()
+	if err != nil {
+		t.Fatalf("RepairOrphans: %v", err)
+	}
+
+	// Should only repair the current file, not the archive
+	if repaired != 1 {
+		t.Errorf("repaired = %d, want 1 (archive should be skipped)", repaired)
+	}
+}
+
+func TestReplaceNonexistentFile(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "agent:test:chat:333"
+
+	// Replace on a key with no existing file should work (no rotation needed)
+	compacted := []anthropic.Message{
+		msg("user", "fresh"),
+	}
+	if err := s.Replace(key, compacted); err != nil {
+		t.Fatalf("Replace nonexistent: %v", err)
+	}
+
+	msgs, _ := s.Load(key)
+	if len(msgs) != 1 {
+		t.Fatalf("len = %d, want 1", len(msgs))
+	}
+}
+
+func TestIsArchiveFile(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"5970082313.jsonl", false},
+		{"5970082313.1.jsonl", true},
+		{"5970082313.2.jsonl", true},
+		{"5970082313.10.jsonl", true},
+		{"main.jsonl", false},
+		{"wake-111.jsonl", false},
+		{"wake-111.1.jsonl", true},
+	}
+	for _, tt := range tests {
+		if got := isArchiveFile(tt.name); got != tt.want {
+			t.Errorf("isArchiveFile(%q) = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }
