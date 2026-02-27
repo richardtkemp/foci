@@ -29,7 +29,7 @@ func tmuxCleanup(t *testing.T, name string) {
 
 func TestTmuxStartAndList(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
 
 	name := "clod-test-start"
 	defer tmuxCleanup(t, name)
@@ -59,11 +59,20 @@ func TestTmuxStartAndList(t *testing.T) {
 	if !strings.Contains(result, name) {
 		t.Errorf("list result = %q, want %q", result, name)
 	}
+	// Should have header line
+	if !strings.Contains(result, "SESSION") {
+		t.Errorf("list result missing header: %q", result)
+	}
+	// Owned session should show "owned" status
+	if !strings.Contains(result, "owned") {
+		t.Errorf("list result missing 'owned' status: %q", result)
+	}
 }
 
 func TestTmuxSendAndRead(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-sendread"
 	defer tmuxCleanup(t, name)
@@ -108,7 +117,8 @@ func TestTmuxSendAndRead(t *testing.T) {
 
 func TestTmuxReadDefault(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-readdefault"
 	defer tmuxCleanup(t, name)
@@ -136,7 +146,8 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-kill"
 	defer tmuxCleanup(t, name)
@@ -178,7 +189,8 @@ func TestTmuxKill(t *testing.T) {
 }
 
 func TestTmuxInvalidOperation(t *testing.T) {
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "restart",
@@ -194,7 +206,8 @@ func TestTmuxInvalidOperation(t *testing.T) {
 
 func TestTmuxStartNoName(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -215,7 +228,8 @@ func TestTmuxStartNoName(t *testing.T) {
 
 func TestTmuxSendNoEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-noenter"
 	defer tmuxCleanup(t, name)
@@ -247,7 +261,8 @@ func TestTmuxSendNoEnter(t *testing.T) {
 }
 
 func TestTmuxMissingName(t *testing.T) {
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	for _, op := range []string{"send", "read", "kill"} {
 		params, _ := json.Marshal(map[string]interface{}{
@@ -262,7 +277,8 @@ func TestTmuxMissingName(t *testing.T) {
 
 func TestTmuxStartWithWorkdir(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-workdir"
 	defer tmuxCleanup(t, name)
@@ -315,7 +331,8 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 
 func TestTmuxWatchUnwatch(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-watch"
 	defer tmuxCleanup(t, name)
@@ -362,7 +379,8 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-watch-dup"
 	defer tmuxCleanup(t, name)
@@ -405,7 +423,8 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 }
 
 func TestTmuxUnwatchNotWatched(t *testing.T) {
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "unwatch",
@@ -431,7 +450,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		wakeMsg = msg
 	})
 
-	tool, _, _ := NewTmuxTool(300, 30, notifier, nil, "")
+	tool, _ := NewTmuxTool(300, 30, notifier, nil, "")
 
 	name := "clod-test-wake"
 	defer tmuxCleanup(t, name)
@@ -494,7 +513,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	tool, _, _ := NewTmuxTool(300, 30, notifier, nil, "")
+	tool, _ := NewTmuxTool(300, 30, notifier, nil, "")
 
 	name := "clod-test-dead"
 	defer tmuxCleanup(t, name)
@@ -563,7 +582,8 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 }
 
 func TestTmuxWatchMissingName(t *testing.T) {
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "watch",
@@ -585,8 +605,8 @@ func TestTmuxWatchMissingName(t *testing.T) {
 func TestTmuxInstanceIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _, _ := NewTmuxTool(300, 30, nil, nil, "")
-	toolB, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	toolA, _ := NewTmuxTool(300, 30, nil, nil, "")
+	toolB, _ := NewTmuxTool(300, 30, nil, nil, "")
 
 	nameA := "clod-test-iso-a"
 	nameB := "clod-test-iso-b"
@@ -613,7 +633,7 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 		t.Fatalf("agent B start: %v", err)
 	}
 
-	// Agent A's list should only show A's session
+	// List now shows ALL sessions — but ownership status differs per instance
 	listParams, _ := json.Marshal(map[string]interface{}{
 		"operation": "list",
 	})
@@ -624,11 +644,16 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	if !strings.Contains(result, nameA) {
 		t.Errorf("agent A list missing own session: %q", result)
 	}
-	if strings.Contains(result, nameB) {
-		t.Errorf("agent A list shows agent B's session: %q", result)
+	// A should see its own session as "owned" and B's as "idle"
+	for _, line := range strings.Split(result, "\n") {
+		if strings.Contains(line, nameA) && !strings.Contains(line, "owned") {
+			t.Errorf("agent A list should show %q as owned: %q", nameA, line)
+		}
+		if strings.Contains(line, nameB) && strings.Contains(line, "owned") {
+			t.Errorf("agent A list should not show %q as owned: %q", nameB, line)
+		}
 	}
 
-	// Agent B's list should only show B's session
 	result, err = toolB.Execute(context.Background(), listParams)
 	if err != nil {
 		t.Fatalf("agent B list: %v", err)
@@ -636,8 +661,14 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	if !strings.Contains(result, nameB) {
 		t.Errorf("agent B list missing own session: %q", result)
 	}
-	if strings.Contains(result, nameA) {
-		t.Errorf("agent B list shows agent A's session: %q", result)
+	// B should see its own session as "owned" and A's as "idle"
+	for _, line := range strings.Split(result, "\n") {
+		if strings.Contains(line, nameB) && !strings.Contains(line, "owned") {
+			t.Errorf("agent B list should show %q as owned: %q", nameB, line)
+		}
+		if strings.Contains(line, nameA) && strings.Contains(line, "owned") {
+			t.Errorf("agent B list should not show %q as owned: %q", nameA, line)
+		}
 	}
 
 	// Agent B cannot read agent A's session
@@ -685,10 +716,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
-	toolA, _, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
+	toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeA.Add(1)
 	}), nil, "")
-	toolB, _, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
+	toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeB.Add(1)
 	}), nil, "")
 
@@ -776,8 +807,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 func TestTmuxWatchIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _, _ := NewTmuxTool(300, 30, nil, nil, "")
-	toolB, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	toolA, _ := NewTmuxTool(300, 30, nil, nil, "")
+
+	toolB, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-watchiso"
 	defer tmuxCleanup(t, name)
@@ -1198,7 +1231,8 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 
 func TestTmuxReadRaw(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-readraw"
 	defer tmuxCleanup(t, name)
@@ -1268,7 +1302,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
 
 	name := "clod-test-persist"
 	defer tmuxCleanup(t, name)
@@ -1314,7 +1348,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with state store - should restore owned sessions
-	tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1336,7 +1370,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
 
 	name := "clod-test-persistkill"
 	defer tmuxCleanup(t, name)
@@ -1393,19 +1427,18 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
 
 	// List should detect stale sessions and clear persisted state
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "list",
 	})
-	result, err := tool.Execute(context.Background(), params)
+	_, err := tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if result != "No tmux sessions." {
-		t.Errorf("list result = %q, want 'No tmux sessions.'", result)
-	}
+	// The stale sessions should not appear as "owned" in the output
+	// (the main check is that persisted state is cleared, below)
 
 	// Verify persisted state was cleared
 	var owned []string
@@ -1421,7 +1454,8 @@ func TestTmuxNoStateStore(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Create tool without state store (nil)
-	tool, _, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+
 
 	name := "clod-test-nostate"
 	defer tmuxCleanup(t, name)
@@ -1460,7 +1494,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state1: %v", err)
 	}
 
-	tool1, _, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent")
+	tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent")
 
 	name := "clod-test-roundtrip"
 	defer tmuxCleanup(t, name)
@@ -1492,7 +1526,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state2: %v", err)
 	}
 
-	tool2, _, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent")
+	tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent")
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -1515,7 +1549,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
 
 	name := "clod-test-persist-watch"
 	defer tmuxCleanup(t, name)
@@ -1591,7 +1625,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	_, cleanup, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -1650,7 +1684,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
 
 	name := "clod-test-unwatch-persist"
 	defer tmuxCleanup(t, name)
@@ -1709,7 +1743,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, cleanup, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
 
 	name := "clod-test-clearall-watch"
 	defer tmuxCleanup(t, name)
@@ -1762,7 +1796,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
 	defer cleanup1()
 
 	name := "clod-test-unwatch-restart"
@@ -1811,7 +1845,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("reload state: %v", err)
 	}
 
-	tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent")
+	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent")
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch

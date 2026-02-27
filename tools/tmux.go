@@ -61,8 +61,7 @@ type tmuxInstance struct {
 // stateStore and stateKey enable persistence of owned sessions across restarts.
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-// The sessionInfo function returns structured info about all tmux sessions.
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) (*Tool, func(), func(ctx context.Context) ([]TmuxSessionInfo, error)) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string) (*Tool, func()) {
 	inst := &tmuxInstance{
 		watched:       make(map[string]*watchedSession),
 		owned:         make(map[string]struct{}),
@@ -177,7 +176,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
 			return inst.execute(ctx, params)
 		},
-	}, inst.ClearAll, inst.SessionInfo
+	}, inst.ClearAll
 }
 
 func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (string, error) {
@@ -389,19 +388,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 }
 
 func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
-	inst.mu.Lock()
-	if len(inst.owned) == 0 {
-		inst.mu.Unlock()
-		return "No tmux sessions.", nil
-	}
-	// Copy owned set under lock
-	ownedNames := make(map[string]struct{}, len(inst.owned))
-	for k, v := range inst.owned {
-		ownedNames[k] = v
-	}
-	inst.mu.Unlock()
-
-	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}: #{session_windows} windows (created #{session_created_string})")
+	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
 	if err != nil {
 		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
 			return "No tmux sessions.", nil
@@ -409,49 +396,19 @@ func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
 	}
 
-	// Filter to only sessions owned by this instance
-	var filtered []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == "" {
-			continue
-		}
-		// Line format: "name: N windows (created ...)"
-		name := strings.SplitN(line, ":", 2)[0]
-		if _, ok := ownedNames[name]; ok {
-			filtered = append(filtered, line)
-		}
-	}
-
-	if len(filtered) == 0 {
-		// Owned sessions no longer exist in tmux — clean up stale entries
-		inst.mu.Lock()
-		inst.owned = make(map[string]struct{})
-		inst.persistOwned()
-		inst.mu.Unlock()
-		return "No tmux sessions.", nil
-	}
-	return strings.Join(filtered, "\n"), nil
-}
-
-// SessionInfo returns structured info about all tmux sessions for the /tmux command.
-func (inst *tmuxInstance) SessionInfo(ctx context.Context) ([]TmuxSessionInfo, error) {
-	// Get all sessions from tmux
-	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
-	if err != nil {
-		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
-	}
-
 	inst.mu.Lock()
+	ownedNames := make(map[string]struct{}, len(inst.owned))
+	for k, v := range inst.owned {
+		ownedNames[k] = v
+	}
 	watched := make(map[string]*watchedSession, len(inst.watched))
 	for k, v := range inst.watched {
 		watched[k] = v
 	}
 	inst.mu.Unlock()
 
-	var infos []TmuxSessionInfo
+	var lines []string
+	var ownedStillExist bool
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
 			continue
@@ -461,41 +418,47 @@ func (inst *tmuxInstance) SessionInfo(ctx context.Context) ([]TmuxSessionInfo, e
 			continue
 		}
 		name := parts[0]
-		windows, _ := strconv.Atoi(parts[1])
+		windows := parts[1]
 		createdUnix, _ := strconv.ParseInt(parts[2], 10, 64)
-		created := formatTmuxAge(createdUnix)
+		age := formatTmuxAge(createdUnix)
 
-		// Check if watched
-		isWatched := false
-		watchInfo := ""
+		_, isOwned := ownedNames[name]
+		if isOwned {
+			ownedStillExist = true
+		}
+
+		// Status: owned / watched / idle
+		status := "idle"
+		if isOwned {
+			status = "owned"
+		}
+
+		watchInfo := "-"
 		for _, ws := range watched {
 			if ws.session == name {
-				isWatched = true
-				// Format: "w0: 30s"
+				status = "watched"
 				watchInfo = fmt.Sprintf("w%d: %s", ws.window, ws.threshold.Round(time.Second))
-				break // one match is enough
+				break
 			}
 		}
 
-		infos = append(infos, TmuxSessionInfo{
-			Name:      name,
-			Windows:   windows,
-			Created:   created,
-			Watched:   isWatched,
-			WatchInfo: watchInfo,
-		})
+		lines = append(lines, fmt.Sprintf("%-20s %sw  %6s  %-8s %s", name, windows, age, status, watchInfo))
 	}
 
-	return infos, nil
-}
+	if len(lines) == 0 {
+		return "No tmux sessions.", nil
+	}
 
-// TmuxSessionInfo describes a tmux session for the /tmux command.
-type TmuxSessionInfo struct {
-	Name      string
-	Windows   int
-	Created   string
-	Watched   bool
-	WatchInfo string
+	// Clean up stale owned entries if none still exist in tmux
+	if len(ownedNames) > 0 && !ownedStillExist {
+		inst.mu.Lock()
+		inst.owned = make(map[string]struct{})
+		inst.persistOwned()
+		inst.mu.Unlock()
+	}
+
+	header := fmt.Sprintf("%-20s %s  %6s  %-8s %s", "SESSION", "W", "AGE", "STATUS", "WATCH")
+	return header + "\n" + strings.Join(lines, "\n"), nil
 }
 
 // formatTmuxAge converts a Unix timestamp to a human-readable age string.
