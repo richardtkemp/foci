@@ -1987,6 +1987,77 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("warning = %q, want contains 'cannot compact'", warned[0])
 		}
 	})
+
+	t.Run("proactive_parent_compaction", func(t *testing.T) {
+		var turnCount atomic.Int32
+		// highTokenTurn=1 so the very first turn on the branch triggers threshold
+		server := compactionMockServer(&turnCount, 1)
+		defer server.Close()
+
+		client := newTestClientWithBase(server.URL, "test-token")
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+
+		ag := &Agent{
+			Client:    client,
+			Sessions:  store,
+			Tools:     tools.NewRegistry(),
+			Bootstrap: bootstrap,
+			Compactor: compactor,
+			Model:     "claude-haiku-4-5",
+			Warnings:  NewWarningQueue(0, 0),
+		}
+
+		parentKey := "agent:test:chat:123"
+		branchKey := "agent:test:cron:wake-999"
+
+		// Directly write large parent messages to exceed the compaction threshold
+		// when estimated by token count. Threshold = 0.8 * 200k = 160k tokens.
+		// estimateTokens counts len(text)/4, so need ~640k chars total.
+		// Use 8 messages of ~80k chars each.
+		bigText := strings.Repeat("x", 80_000)
+		for i := 0; i < 4; i++ {
+			store.Append(parentKey, anthropic.Message{
+				Role:    "user",
+				Content: anthropic.TextContent(fmt.Sprintf("Parent question %d: %s", i, bigText)),
+			})
+			store.Append(parentKey, anthropic.Message{
+				Role:    "assistant",
+				Content: anthropic.TextContent(fmt.Sprintf("Parent answer %d: %s", i, bigText)),
+			})
+		}
+
+		parentMsgsBefore, _ := store.Load(parentKey)
+		if len(parentMsgsBefore) != 8 {
+			t.Fatalf("parent messages before = %d, want 8", len(parentMsgsBefore))
+		}
+
+		// Create branch from parent
+		if err := store.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{NoResetHook: true}); err != nil {
+			t.Fatalf("create branch: %v", err)
+		}
+
+		// Branch turn triggers high token count — but branch is no_compact.
+		// Since it's a branch with a large parent, proactive parent compaction should fire.
+		ctx := WithNoCompact(context.Background())
+		_, err := ag.HandleMessage(ctx, branchKey, "Branch turn")
+		if err != nil {
+			t.Fatalf("Branch turn: %v", err)
+		}
+
+		// Branch itself should NOT be compacted (no_compact)
+		branchMsgs, _ := store.Load(branchKey)
+		if len(branchMsgs) != 2 {
+			t.Errorf("branch messages = %d, want 2 (uncompacted)", len(branchMsgs))
+		}
+
+		// Parent SHOULD be compacted (proactive compaction)
+		parentMsgsAfter, _ := store.Load(parentKey)
+		if len(parentMsgsAfter) >= len(parentMsgsBefore) {
+			t.Errorf("parent messages after = %d, want fewer than %d (should be compacted)", len(parentMsgsAfter), len(parentMsgsBefore))
+		}
+	})
 }
 
 func TestIntermediateTextBeforeToolCalls(t *testing.T) {

@@ -190,7 +190,8 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
-	// Get existing creation time to preserve through compaction
+	// Read metadata before truncating the file
+	branchMeta, _ := s.readBranchMeta(key)
 	createdAt := s.getStoredCreatedAt(key)
 
 	f, err := os.Create(path)
@@ -199,8 +200,19 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 	}
 	defer f.Close()
 
-	// Write session metadata to preserve creation time
-	if createdAt != "" {
+	if branchMeta != nil {
+		// Branch session: preserve branch_meta with branch_point=0.
+		// Compacted messages are self-contained (summary includes parent context).
+		branchMeta.BranchPoint = 0
+		metaData, err := json.Marshal(branchMeta)
+		if err != nil {
+			return fmt.Errorf("marshal branch meta: %w", err)
+		}
+		if _, err := f.Write(append(metaData, '\n')); err != nil {
+			return fmt.Errorf("write branch meta: %w", err)
+		}
+	} else if createdAt != "" {
+		// Regular session: write session_meta to preserve creation time
 		meta := SessionMeta{
 			Type:      "session_meta",
 			CreatedAt: createdAt,
