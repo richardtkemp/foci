@@ -14,6 +14,38 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// ToolCallDisplay controls how tool calls are shown in Telegram.
+type ToolCallDisplay string
+
+const (
+	ToolCallOff     ToolCallDisplay = "off"     // hidden
+	ToolCallPreview ToolCallDisplay = "preview" // shown then overwritten by reply
+	ToolCallFull    ToolCallDisplay = "full"    // shown and kept; reply is a separate message
+)
+
+// UnmarshalTOML accepts both string ("off"/"preview"/"full") and bool (backwards compat).
+func (d *ToolCallDisplay) UnmarshalTOML(v any) error {
+	switch val := v.(type) {
+	case string:
+		switch val {
+		case "off", "preview", "full":
+			*d = ToolCallDisplay(val)
+			return nil
+		default:
+			return fmt.Errorf("invalid show_tool_calls value %q (must be off, preview, full)", val)
+		}
+	case bool:
+		if val {
+			*d = ToolCallPreview
+		} else {
+			*d = ToolCallOff
+		}
+		return nil
+	default:
+		return fmt.Errorf("show_tool_calls must be a string (off/preview/full) or bool")
+	}
+}
+
 // AgentUsageWarningsConfig holds per-agent mana warning thresholds.
 // When set, completely replaces global [usage_warnings] thresholds.
 type AgentUsageWarningsConfig struct {
@@ -48,7 +80,7 @@ type AgentConfig struct {
 	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
-	ShowToolCalls           *bool             `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
+	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
 	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
 	ImageSaveDir            string            `toml:"image_save_dir"`            // save received images to this directory (empty = disabled)
 	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
@@ -98,7 +130,7 @@ type TelegramConfig struct {
 	MultiballSessionTTL string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
-	ShowToolCalls       bool                         `toml:"show_tool_calls"`       // show tool call messages in Telegram (default true)
+	ShowToolCalls       ToolCallDisplay               `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
 	ImageSaveDir        string                       `toml:"image_save_dir"`        // save received images to this directory (empty = disabled, per-agent overrides)
 }
 
@@ -730,7 +762,7 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.EnableStartupNotify = true
 	}
 	if !md.IsDefined("telegram", "show_tool_calls") {
-		cfg.Telegram.ShowToolCalls = true
+		cfg.Telegram.ShowToolCalls = ToolCallOff
 	}
 
 	// Heartbeat/background defaults

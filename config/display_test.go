@@ -25,7 +25,7 @@ func testConfig() (*Config, AgentConfig) {
 			MultiballSessionTTL: "60m",
 			MessageQueueSize:    64,
 			LongPollTimeout:     "65s",
-			ShowToolCalls:       true,
+			ShowToolCalls:       ToolCallPreview,
 		},
 		Sessions: SessionsConfig{
 			Dir:                 "/data/sessions",
@@ -211,7 +211,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.TTSRate = 1.3
 	boolTrue := true
 	agent.StartupNotification = &boolTrue
-	agent.ShowToolCalls = &boolTrue
+	showPreview := ToolCallPreview
+	agent.ShowToolCalls = &showPreview
 	agent.ImageSaveDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"
