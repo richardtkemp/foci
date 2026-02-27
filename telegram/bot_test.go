@@ -19,18 +19,25 @@ import (
 
 // mockClient implements botClient for testing.
 type mockClient struct {
-	mu         sync.Mutex
-	sends      int                  // counts SendMessage calls
-	edits      int                  // counts EditMessageText calls
-	files      map[string]string    // fileId → filePath for GetFile mock
-	setCmds    []gotgbot.BotCommand // last SetMyCommands call
-	setCmdsErr error                // error to return from SetMyCommands
+	mu             sync.Mutex
+	sends          int                  // counts SendMessage calls
+	edits          int                  // counts EditMessageText calls
+	files          map[string]string    // fileId → filePath for GetFile mock
+	setCmds        []gotgbot.BotCommand // last SetMyCommands call
+	setCmdsErr     error                // error to return from SetMyCommands
+	lastSendOpts   *gotgbot.SendMessageOpts  // last SendMessage opts
+	lastSendText   string                    // last SendMessage text
+	lastEditOpts   *gotgbot.EditMessageTextOpts // last EditMessageText opts
+	lastEditText   string                    // last EditMessageText text
+	answerCBCalls  int                       // counts AnswerCallbackQuery calls
 }
 
 func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sends++
+	m.lastSendText = text
+	m.lastSendOpts = opts
 	return &gotgbot.Message{MessageId: int64(m.sends)}, nil
 }
 
@@ -38,6 +45,8 @@ func (m *mockClient) EditMessageText(text string, opts *gotgbot.EditMessageTextO
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.edits++
+	m.lastEditText = text
+	m.lastEditOpts = opts
 	return &gotgbot.Message{}, true, nil
 }
 
@@ -89,6 +98,13 @@ func (m *mockClient) SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.
 	if m.setCmdsErr != nil {
 		return false, m.setCmdsErr
 	}
+	return true, nil
+}
+
+func (m *mockClient) AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.AnswerCallbackQueryOpts) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.answerCBCalls++
 	return true, nil
 }
 
@@ -2160,5 +2176,239 @@ func TestDownloadAndSaveMedia_TooLarge(t *testing.T) {
 	}
 	if !isFileTooLarge(err) {
 		t.Errorf("expected fileTooLargeError, got: %v", err)
+	}
+}
+
+// --- Inline keyboard for tool results (full mode) ---
+
+func TestToolCallFull_InlineKeyboard(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.showToolCalls = "full"
+
+	// Simulate the ToolCallObserver closure from processAgentMessage.
+	var toolMsgID int64
+	var toolMsgText string
+	var toolMsgMu sync.Mutex
+	chatID := int64(12345)
+
+	observer := func(toolName string, params json.RawMessage) {
+		if b.showToolCalls == "off" || b.showToolCalls == "" {
+			return
+		}
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+
+		text := b.formatToolCall(toolName, params)
+		sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
+		if b.showToolCalls == "full" {
+			keyboard := gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Show results", CallbackData: "tc:show:0"},
+				}},
+			}
+			sendOpts.ReplyMarkup = keyboard
+		}
+		if toolMsgID == 0 {
+			sent, err := b.client.SendMessage(chatID, text, sendOpts)
+			if err != nil {
+				return
+			}
+			toolMsgID = sent.MessageId
+			toolMsgText = text
+			if b.showToolCalls == "full" {
+				b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+					ChatId:    chatID,
+					MessageId: toolMsgID,
+					ParseMode: "HTML",
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+							{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
+						}},
+					},
+				})
+			}
+		}
+		_ = toolMsgText
+	}
+
+	observer("exec", json.RawMessage(`{"command":"ls"}`))
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+
+	if mock.sends != 1 {
+		t.Fatalf("expected 1 send, got %d", mock.sends)
+	}
+	// First send should have ReplyMarkup (inline keyboard)
+	if mock.lastSendOpts == nil {
+		t.Fatal("expected SendMessageOpts to be set")
+	}
+	// After send, an edit should update the callback data with the real message ID
+	if mock.edits != 1 {
+		t.Fatalf("expected 1 edit (to update callback data), got %d", mock.edits)
+	}
+	if mock.lastEditOpts == nil {
+		t.Fatal("expected EditMessageTextOpts to be set")
+	}
+	kb := mock.lastEditOpts.ReplyMarkup
+	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 1 {
+		t.Fatal("expected 1x1 inline keyboard")
+	}
+	btn := kb.InlineKeyboard[0][0]
+	if btn.Text != "Show results" {
+		t.Errorf("button text = %q, want %q", btn.Text, "Show results")
+	}
+	if btn.CallbackData != "tc:show:1" {
+		t.Errorf("callback data = %q, want %q", btn.CallbackData, "tc:show:1")
+	}
+}
+
+func TestHandleCallbackQuery_Show(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Pre-store a tool result.
+	var msgID int64 = 42
+	toolText := `🔧 <b>exec</b>\n<pre>ls</pre>`
+	b.toolResults.Store(msgID, toolResultEntry{toolText: toolText, result: "file1.txt\nfile2.txt"})
+
+	cq := &gotgbot.CallbackQuery{
+		Id:   "cq1",
+		From: gotgbot.User{Id: 111},
+		Message: gotgbot.Message{
+			MessageId: msgID,
+			Chat:      gotgbot.Chat{Id: 12345},
+		},
+		Data: fmt.Sprintf("tc:show:%d", msgID),
+	}
+	b.handleCallbackQuery(context.Background(), cq)
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+
+	if mock.edits != 1 {
+		t.Fatalf("expected 1 edit, got %d", mock.edits)
+	}
+	if mock.answerCBCalls != 1 {
+		t.Fatalf("expected 1 AnswerCallbackQuery call, got %d", mock.answerCBCalls)
+	}
+	// The edited text should contain the result
+	if !strings.Contains(mock.lastEditText, "Result:") {
+		t.Errorf("expected edit text to contain result, got: %s", mock.lastEditText)
+	}
+	// Button should now be "Hide results"
+	if mock.lastEditOpts == nil {
+		t.Fatal("expected edit opts to be set")
+	}
+	kb := mock.lastEditOpts.ReplyMarkup
+	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 1 {
+		t.Fatal("expected 1x1 inline keyboard")
+	}
+	btn := kb.InlineKeyboard[0][0]
+	if btn.Text != "Hide results" {
+		t.Errorf("button text = %q, want %q", btn.Text, "Hide results")
+	}
+	if !strings.HasPrefix(btn.CallbackData, "tc:hide:") {
+		t.Errorf("callback data = %q, want tc:hide: prefix", btn.CallbackData)
+	}
+}
+
+func TestHandleCallbackQuery_Hide(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	var msgID int64 = 42
+	toolText := `🔧 <b>exec</b>\n<pre>ls</pre>`
+	b.toolResults.Store(msgID, toolResultEntry{toolText: toolText, result: "file1.txt\nfile2.txt"})
+
+	cq := &gotgbot.CallbackQuery{
+		Id:   "cq2",
+		From: gotgbot.User{Id: 111},
+		Message: gotgbot.Message{
+			MessageId: msgID,
+			Chat:      gotgbot.Chat{Id: 12345},
+		},
+		Data: fmt.Sprintf("tc:hide:%d", msgID),
+	}
+	b.handleCallbackQuery(context.Background(), cq)
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+
+	if mock.edits != 1 {
+		t.Fatalf("expected 1 edit, got %d", mock.edits)
+	}
+	// The edited text should be just the tool text (collapsed)
+	if mock.lastEditText != toolText {
+		t.Errorf("expected collapsed tool text, got: %s", mock.lastEditText)
+	}
+	// Button should be "Show results"
+	kb := mock.lastEditOpts.ReplyMarkup
+	btn := kb.InlineKeyboard[0][0]
+	if btn.Text != "Show results" {
+		t.Errorf("button text = %q, want %q", btn.Text, "Show results")
+	}
+}
+
+func TestToolResultObserver_StoresResult(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.showToolCalls = "full"
+
+	// Simulate what the ToolResultObserver closure does.
+	var toolMsgID int64 = 99
+	var toolMsgText = `🔧 <b>exec</b>\n<pre>ls</pre>`
+	var toolMsgMu sync.Mutex
+
+	observer := func(toolName string, result string, isError bool) {
+		if b.showToolCalls != "full" {
+			return
+		}
+		toolMsgMu.Lock()
+		msgID := toolMsgID
+		text := toolMsgText
+		toolMsgMu.Unlock()
+		if msgID == 0 {
+			return
+		}
+		b.toolResults.Store(msgID, toolResultEntry{toolText: text, result: result})
+	}
+
+	observer("exec", "file1.txt\nfile2.txt", false)
+
+	val, ok := b.toolResults.Load(int64(99))
+	if !ok {
+		t.Fatal("expected tool result to be stored")
+	}
+	entry := val.(toolResultEntry)
+	if entry.result != "file1.txt\nfile2.txt" {
+		t.Errorf("stored result = %q, want %q", entry.result, "file1.txt\nfile2.txt")
+	}
+	if entry.toolText != toolMsgText {
+		t.Errorf("stored toolText = %q, want %q", entry.toolText, toolMsgText)
+	}
+}
+
+func TestFormatToolCallWithResult_Truncation(t *testing.T) {
+	toolText := `🔧 <b>exec</b>\n<pre>ls</pre>`
+
+	// Short result — should not be truncated
+	result := "hello"
+	out := formatToolCallWithResult(toolText, result)
+	if !strings.Contains(out, "hello") {
+		t.Error("expected result in output")
+	}
+	if !strings.Contains(out, "Result:") {
+		t.Error("expected Result: header in output")
+	}
+
+	// Long result — should be truncated to fit 4096 chars
+	longResult := strings.Repeat("x", 5000)
+	out = formatToolCallWithResult(toolText, longResult)
+	if len(out) > 4096 {
+		t.Errorf("output length = %d, want <= 4096", len(out))
+	}
+	if !strings.HasSuffix(out, "</pre>") {
+		t.Errorf("expected output to end with </pre>, got: ...%s", out[len(out)-20:])
+	}
+	if !strings.Contains(out, "...") {
+		t.Error("expected truncation indicator ...")
 	}
 }
