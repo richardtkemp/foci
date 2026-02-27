@@ -163,7 +163,17 @@ func (m *OAuthManager) Start() {
 
 // maybeRefresh checks if the token is within the refresh window and refreshes if needed.
 // Unlike the previous implementation, it also refreshes already-expired tokens.
+// Re-reads the credentials file first in case another process (e.g. Claude Code)
+// has already refreshed the token, avoiding unnecessary refresh attempts with
+// potentially-rotated refresh tokens.
 func (m *OAuthManager) maybeRefresh() {
+	// Re-read credentials in case another process refreshed the token.
+	// This picks up a fresh access_token and expiresAt, avoiding a
+	// needless (and possibly failing) refresh with a stale refresh_token.
+	if err := m.readCredentials(); err != nil {
+		m.logFunc("oauth: re-read credentials: %v", err)
+	}
+
 	m.mu.Lock()
 	remaining := time.Until(m.expiresAt)
 	m.mu.Unlock()

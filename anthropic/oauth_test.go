@@ -655,3 +655,54 @@ func TestOAuthManagerRefreshExpiredToken(t *testing.T) {
 		t.Errorf("Token() = %q, want %q", got, "fresh-token")
 	}
 }
+
+func TestOAuthManagerReReadsCredsBeforeRefresh(t *testing.T) {
+	dir := t.TempDir()
+	// Start with token expiring in 10 minutes (inside refresh window)
+	path := writeTestCreds(t, dir, CredentialsFile{
+		ClaudeAiOauth: OAuthCredentials{
+			AccessToken:  "expiring-token",
+			RefreshToken: "refresh-token",
+			ExpiresAt:    time.Now().Add(10 * time.Minute).UnixMilli(),
+		},
+	})
+
+	var refreshCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalls.Add(1)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token":  "server-refreshed-token",
+			"refresh_token": "new-refresh",
+			"expires_in":    28800,
+		})
+	}))
+	defer server.Close()
+
+	mgr, err := NewOAuthManager(path, WithRefreshURL(server.URL))
+	if err != nil {
+		t.Fatalf("NewOAuthManager: %v", err)
+	}
+
+	// Simulate another process (Claude Code) refreshing the token and writing
+	// a fresh expiry to the credentials file. This should cause maybeRefresh
+	// to re-read the file and see the token no longer needs refreshing.
+	writeTestCreds(t, dir, CredentialsFile{
+		ClaudeAiOauth: OAuthCredentials{
+			AccessToken:  "cc-refreshed-token",
+			RefreshToken: "cc-refresh-token",
+			ExpiresAt:    time.Now().Add(2 * time.Hour).UnixMilli(),
+		},
+	})
+
+	// maybeRefresh re-reads creds, sees fresh expiry, skips refresh
+	mgr.maybeRefresh()
+
+	if refreshCalls.Load() != 0 {
+		t.Errorf("expected 0 refresh calls (CC already refreshed), got %d", refreshCalls.Load())
+	}
+
+	// mgr should have picked up CC's token from the re-read
+	if got := mgr.Token(); got != "cc-refreshed-token" {
+		t.Errorf("Token() = %q, want %q (from CC's refresh)", got, "cc-refreshed-token")
+	}
+}
