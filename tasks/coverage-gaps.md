@@ -18,7 +18,7 @@ memory        68.0%   ⚠️
 telegram      66.4%   ⚠️
 table         65.9%   ⚠️
 voice         64.8%   ⚠️
-cmd/clod      42.8%   ⚠️
+cmd/foci      42.8%   ⚠️
 main.go       3.7%    (expected — wiring)
 ```
 

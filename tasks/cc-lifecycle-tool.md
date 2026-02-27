@@ -13,14 +13,14 @@ Managing a coding agent (Claude Code) through tmux requires 3-5 tool calls per t
 This is repeated identically for every task. The orchestrating agent (Clutch) spends significant mana on this boilerplate.
 
 ## Proposed Solution
-A `coding-task` tool (native Go, built into clod) that manages the full CC lifecycle.
+A `coding-task` tool (native Go, built into foci) that manages the full CC lifecycle.
 
 ### Interface
 ```
 coding_task:
   session: "cc-main"              # tmux session name (reuse or create)
   task: "description or path"     # inline task text OR path to task file
-  workdir: "/home/rich/git/clod"  # project directory
+  workdir: "/home/rich/git/foci"  # project directory
   agent: "claude-code"            # "claude-code" or "opencode"
   auto_commit: true               # auto-send commit/push on completion
   auto_approve: true              # auto-approve CC plans (option 2)
@@ -42,7 +42,7 @@ coding_task:
 - Kill sessions — that's still a human decision
 
 ### Implementation Notes
-- This is a clod tool (tools/coding_task.go), not a script
+- This is a foci tool (tools/coding_task.go), not a script
 - It's essentially a state machine: STARTING → SENDING → WAITING → APPROVING → COMPLETING → COMMITTING → DONE
 - Each state transition happens on tmux watch notifications
 - The tool returns immediately after sending the task; progress updates come through watch notifications

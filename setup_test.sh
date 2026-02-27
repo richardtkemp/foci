@@ -72,7 +72,7 @@ fi
 
 # Test 7: Config won't be overwritten (idempotent check exists)
 echo "--- Test 7: Config idempotency guard ---"
-if grep -q 'if \[\[ -f.*clod.toml' "$SETUP"; then
+if grep -q 'if \[\[ -f.*foci.toml' "$SETUP"; then
     pass "Config file existence check present"
 else
     fail "Missing config idempotency guard"

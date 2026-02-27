@@ -1,13 +1,13 @@
 # Task: CLI --if-inactive flag
 
 ## Context
-Todo #100. Clod's CLI branch command needs an `--if-inactive` flag — the opposite of the existing `--if-active`.
+Todo #100. Foci's CLI branch command needs an `--if-inactive` flag — the opposite of the existing `--if-active`.
 
 Use case: cron heartbeat branches should only fire when the session is INACTIVE. If the user is already talking, the heartbeat is redundant and wastes mana.
 
 Example usage:
 ```
-clod branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
+foci branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
 ```
 
 This means: "only start this branch if the target session has been inactive for at least 30 minutes."

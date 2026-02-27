@@ -1,4 +1,4 @@
-# Clod — Specification
+# Foci — Specification
 
 A minimal, maintainable agent platform in Go. One binary, no framework, no bloat.
 
@@ -21,7 +21,7 @@ Format: `agent:AGENTID:TYPE[:BRANCHID]`
 - `agent:main:multiball:mb-1709123456` — multiball fork
 - `agent:clutch:voice:1709123456` — WebSocket voice session (ephemeral, one per connection)
 
-Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`clod send`/`clod branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
+Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`foci send`/`foci branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
 
 The 4th segment (branch ID) is optional. Branch sessions inherit the parent's message prefix for cache sharing.
 
@@ -85,7 +85,7 @@ All parameters have sensible defaults. Customize only what you need. Prompt file
 ### Anthropic API
 
 - **Auth:** Subscription token (OAuth-style `sk-ant-oat01-...`)
-- **Model:** Haiku (`claude-haiku-4-5`) for clod itself; configurable per agent
+- **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** `cache_control` with `{"type": "ephemeral"}` on system prompt blocks
 - **Streaming:** Server-sent events for responses
 - **Key constraint:** System prompt must be byte-identical across turns for cache reuse
@@ -335,12 +335,12 @@ Notifications go to agents whose `inject_agent_warnings` is false. Dedup prevent
 
 ### Tool Result Guard
 
-When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), clod does NOT inject the full result into session history. Instead:
+When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), foci does NOT inject the full result into session history. Instead:
 
 1. Write the full result to a temp file: `{temp_dir}/tool-result-{tool}-{random}.txt`
 2. Return only a guard message — no partial content is included:
    ```
-   Result too large (47231 chars, limit 5000). Full output saved to /tmp/clod-tool-results/tool-result-exec-a1b2c3d4.txt.
+   Result too large (47231 chars, limit 5000). Full output saved to /tmp/foci-tool-results/tool-result-exec-a1b2c3d4.txt.
    Use `head -n 50` to preview, or `grep`/`ack` to search for specific content.
    ```
 
@@ -351,7 +351,7 @@ This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently 
 ```toml
 [tools]
 max_result_chars = 15000              # max chars before writing to file
-temp_dir = "/tmp/clod-tool-results"   # where to write large results
+temp_dir = "/tmp/foci-tool-results"   # where to write large results
 ```
 
 **http_request — file saves, binary handling, and auto-background:**
@@ -401,7 +401,7 @@ Order matters: most-stable files first maximises cache prefix length.
 Skills extend the agent without code changes. A skill is a directory containing a `SKILL.md` file with YAML frontmatter and markdown instructions:
 
 ```
-/home/clod/skills/
+/home/foci/skills/
 ├── reheat/
 │   ├── SKILL.md
 │   └── reheat.sh
@@ -429,7 +429,7 @@ The agent reads this file with the `read` tool.
 - `script` (optional) — script to run when the command fires (path relative to skill dir)
 
 **How it works:**
-1. Config lists directories to scan: `[skills] dirs = ["/home/clod/skills"]`
+1. Config lists directories to scan: `[skills] dirs = ["/home/foci/skills"]`
 2. On startup, scan each dir for subdirectories containing `SKILL.md`
 3. Parse frontmatter, collect name + description into a registry
 4. Inject skill list (name, description, SKILL.md path) as a system prompt block — the agent knows what's available but doesn't load full instructions until needed
@@ -447,22 +447,22 @@ Skills are not dynamic plugins — no code loading, no compilation. Just directo
 
 **Multiple Sources with Weights:**
 
-Configure multiple indexed directories, each with a configurable weight multiplier in `clod.toml`:
+Configure multiple indexed directories, each with a configurable weight multiplier in `foci.toml`:
 
 ```toml
 [[memory.sources]]
 name = "canonical"
-dir = "/home/clod/workspace/memory"
+dir = "/home/foci/workspace/memory"
 weight = 1.0      # highest priority: 2.0x multiplier
 
 [[memory.sources]]
 name = "code"
-dir = "/home/clod/src"
+dir = "/home/foci/src"
 weight = 0.3      # lower priority: 1.3x multiplier
 
 [[memory.sources]]
 name = "docs"
-dir = "/home/clod/docs"
+dir = "/home/foci/docs"
 weight = 0.5      # medium priority: 1.5x multiplier
 ```
 
@@ -474,7 +474,7 @@ If `sources` array is empty, fall back to single `dir` field (default weight=1.0
 
 ```toml
 [memory]
-dir = "/home/clod/workspace/memory"   # old way, still works
+dir = "/home/foci/workspace/memory"   # old way, still works
 ```
 
 **Search:** SQLite FTS5 index over multiple sources with conversation history:
@@ -545,7 +545,7 @@ Both `POST /send` and `POST /wake` accept optional activity gating fields:
 - `if_active` (Go duration, e.g. `"8h"`) — skip if no user activity within the window ("skipped: no recent user activity")
 - `if_inactive` (Go duration, e.g. `"30m"`) — skip if user WAS active within the window ("skipped: session recently active")
 
-"Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`clod send`/`clod branch`), async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a cron send cannot reset the activity timer.
+"Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`foci send`/`foci branch`), async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a cron send cannot reset the activity timer.
 
 The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
@@ -579,9 +579,9 @@ Credentials are loaded once at startup into process memory. Built-in integration
 
 **OS-level protection (primary):**
 
-- `secrets.toml` owned by `root:clod-secrets`, mode `0660`
-- Main clod process has `clod-secrets` as a supplementary group (via systemd `SupplementaryGroups`)
-- All child processes (exec tool, tmux tool, script commands) have supplementary groups dropped — they run with only the primary `clod` group
+- `secrets.toml` owned by `root:foci-secrets`, mode `0660`
+- Main foci process has `foci-secrets` as a supplementary group (via systemd `SupplementaryGroups`)
+- All child processes (exec tool, tmux tool, script commands) have supplementary groups dropped — they run with only the primary `foci` group
 - The OS kernel denies access regardless of how the path is specified (encoding tricks, globs, interpreter string construction all fail)
 - Requires `AmbientCapabilities=CAP_SETGID` in the systemd unit for `setgroups()` to work
 
@@ -593,7 +593,7 @@ Credentials are loaded once at startup into process memory. Built-in integration
    ```
    curl -H "Authorization: Bearer {{secret:custom.github_token}}" https://api.github.com/...
    ```
-   Clod resolves `{{secret:NAME}}` before spawning the subprocess. The agent sees the template, never the value. Unresolved references are an error (not silently passed through).
+   Foci resolves `{{secret:NAME}}` before spawning the subprocess. The agent sees the template, never the value. Unresolved references are an error (not silently passed through).
 
 3. **Output redaction** — Exec tool output is scanned for known secret patterns and redacted before returning to the agent. Catches accidental leaks from `env`, error messages, config dumps, etc.
 
@@ -607,7 +607,7 @@ A dynamic secret store backed by the Bitwarden CLI, with a two-tier aisudo appro
 - **Metadata (list)** — `sudo -u bitwarden bw list items` is allowlisted in aisudo, runs without approval. Caches item names, URIs, folders, usernames. Refreshed on a configurable interval.
 - **Passwords (get)** — `sudo -u bitwarden bw get password <id>` requires Telegram approval via aisudo. Blocks until approved or denied. Cached with configurable TTL.
 - **Template syntax** — `{{secret:bw.ITEM_UUID}}` in http_request headers/body. Host validation uses the vault item's URI fields.
-- **Dedicated system user** — `bitwarden` user owns the CLI session state and session file. Not root. Clod never reads the session token — each `bw` command reads the session file as the bitwarden user.
+- **Dedicated system user** — `bitwarden` user owns the CLI session state and session file. Not root. Foci never reads the session token — each `bw` command reads the session file as the bitwarden user.
 
 **Per-agent secrets:**
 
@@ -681,7 +681,7 @@ No tool call should prevent the system from responding to interrupts. If it does
 
 ### Session reset guard
 
-`/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — clod has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
+`/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — foci has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
 
 **Pre-reset memory hook:** Before clearing the session, if `session_reset_prompt` is configured, the agent gets one final turn to save important context to memory files. The hook has a 60-second timeout and is non-fatal — if it fails, the reset proceeds. Branch sessions can opt out via `NoResetHook` in their branch metadata (set via `--no-reset-hook` or `--oneshot` CLI flags). The same hook fires on multiball TTL reclaim.
 
@@ -691,11 +691,11 @@ If automatic resets are added later: never reset an active session. A session is
 
 Two log outputs, both plain files on disk. No systemd journal dependency.
 
-### Event log (`clod.log`)
+### Event log (`foci.log`)
 Human-readable, one line per event. Timestamp + level + component + message.
 
 ```
-2026-02-21T03:52:39Z INFO  [telegram] bot started as @rk_clodbot
+2026-02-21T03:52:39Z INFO  [telegram] bot started as @rk_focibot
 2026-02-21T03:52:41Z INFO  [agent] stop_reason=end_turn input=1119 output=164 cache_read=0 cache_write=1119
 2026-02-21T03:53:01Z WARN  [exec] command timed out after 30s
 2026-02-21T03:53:05Z ERROR [anthropic] 529 overloaded, retrying in 5s
@@ -725,7 +725,7 @@ Useful during development and debugging. The agent and `/last` can reference it 
 
 ### Cache bust alerts
 
-When a single API call writes more than a configurable threshold of cache tokens, clod sends an immediate Telegram notification to the session's chat. This is a plain Telegram message, not an agent turn — zero tokens spent.
+When a single API call writes more than a configurable threshold of cache tokens, foci sends an immediate Telegram notification to the session's chat. This is a plain Telegram message, not an agent turn — zero tokens spent.
 
 ```toml
 [logging]
@@ -741,7 +741,7 @@ Default threshold: 20,000 tokens. Set to 0 to disable. Helps catch system prompt
 
 ### Log rotation
 
-Built-in rotation runs every `rotation_period` (default 24h). For each log file (clod.log, api.jsonl, api-payload.jsonl):
+Built-in rotation runs every `rotation_period` (default 24h). For each log file (foci.log, api.jsonl, api-payload.jsonl):
 
 1. Stream line-by-line (memory-efficient — handles multi-GB files)
 2. Lines older than `retention_period` (default 48h) → compressed to `archive/{name}-{date}.gz`
@@ -771,8 +771,8 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/prompts` - show configured prompt paths (compaction summary, session reset, handoff message, fork prompt) with existence checks, plus prompt files found on disk in workspace and shared directories.
 
 **Logs:**
-- `/log [n]` - last `n` lines from clod.log (default 20)
-- `/errors [n]` - last `n` ERROR/WARN lines from clod.log (default 10)
+- `/log [n]` - last `n` lines from foci.log (default 20)
+- `/errors [n]` - last `n` ERROR/WARN lines from foci.log (default 10)
 - `/cost <subcommand>` - API cost from api.jsonl. No args: show usage. `today`: per-session table. `24h`: rolling 24h with per-category table. `week`: 7-day daily table. `<days>`: total for last N days.
 
 **Context:**
@@ -785,7 +785,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 
 **Agents:**
 - `/agents` - list active agent sessions with status, model, and message counts
-- `/agents new` - interactive wizard for creating a new agent. Walks through: agent ID, display name, emoji, model, bot token secret, character file mode. Creates workspace, appends config to clod.toml, adds crontab entries. Requires restart to activate.
+- `/agents new` - interactive wizard for creating a new agent. Walks through: agent ID, display name, emoji, model, bot token secret, character file mode. Creates workspace, appends config to foci.toml, adds crontab entries. Requires restart to activate.
 
 **System:**
 - `/version` - binary version, go version, build time, git commit
@@ -803,7 +803,7 @@ script = "jq -s 'map(.cost_usd) | add' api.jsonl"
 [[commands]]
 name = "logs"
 description = "Recent event log"
-script = "tail -20 clod.log"
+script = "tail -20 foci.log"
 
 [[commands]]
 name = "health"
@@ -844,7 +844,7 @@ Single TOML file. Flat, commented, no deep nesting.
 
 **Single agent (legacy):**
 ```toml
-# clod.toml
+# foci.toml
 
 [agent]
 id = "main"
@@ -860,7 +860,7 @@ bot_token = "8351531463:AAH..."
 allowed_users = ["5970082313"]
 
 [sessions]
-dir = "/home/rich/git/clod/sessions"
+dir = "/home/rich/git/foci/sessions"
 compaction_threshold = 0.8
 compaction_max_tokens = 4096
 compaction_min_messages = 4
@@ -870,7 +870,7 @@ dir = "/home/rich/git/openclaw/workspace/memory"
 
 [tools]
 max_result_chars = 10000
-temp_dir = "/tmp/clod-tool-results"
+temp_dir = "/tmp/foci-tool-results"
 
 [voice]
 stt_endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
@@ -883,7 +883,7 @@ bind = "127.0.0.1"
 
 [logging]
 level = "INFO"
-event_file = "clod.log"
+event_file = "foci.log"
 api_file = "api.jsonl"
 ```
 
@@ -937,10 +937,10 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 
 ### What it does
 
-1. **System user:** Create `clod` user if it doesn't exist (no login shell, home at `/home/clod`)
-2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `clod` and `clodgw` to `/usr/local/bin/`
-3. **systemd service:** Install `/etc/systemd/system/clod.service` if it doesn't exist. `User=clod`, `WorkingDirectory=/home/clod`, restart on failure. Enable and start.
-4. **Config:** Write `/home/clod/clod.toml` if it doesn't exist. Prompt interactively for:
+1. **System user:** Create `foci` user if it doesn't exist (no login shell, home at `/home/foci`)
+2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `foci` and `focigw` to `/usr/local/bin/`
+3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
+4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
    - Anthropic API token  
    - Telegram user ID (allowed_users)
@@ -952,15 +952,15 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
    - `agents.md` — how you work
    - `tools.md` — what you use
    - `memory.md` — what you've learned
-6. **Directories:** Create `~/sessions/`, `~/workspace/memory/`, `~/character/` under clod's home
-7. **Log rotation:** Install logrotate config for `clod.log` and `api.jsonl` (weekly, keep 4, compress)
+6. **Directories:** Create `~/sessions/`, `~/workspace/memory/`, `~/character/` under foci's home
+7. **Log rotation:** Install logrotate config for `foci.log` and `api.jsonl` (weekly, keep 4, compress)
 8. **PATH:** Symlinks already in `/usr/local/bin/`, nothing extra needed
 
 ### Config references character files
 
 ```toml
 [agent]
-workspace = "/home/clod/character"
+workspace = "/home/foci/character"
 # bootstrap loads: identity.md, soul.md, user.md, agents.md, tools.md, memory.md
 ```
 
@@ -982,9 +982,9 @@ When binaries already exist: rebuild/re-download, restart service. When config a
 ## Directory Structure
 
 ```
-clod/
+foci/
 ├── SPEC.md
-├── clod.toml
+├── foci.toml
 ├── go.mod
 ├── go.sum
 ├── main.go              # entry point, wire everything together

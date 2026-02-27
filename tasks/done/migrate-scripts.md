@@ -1,11 +1,11 @@
-# Task: Migrate 3 Scripts from OpenClaw to Clod
+# Task: Migrate 3 Scripts from OpenClaw to Foci
 
 ## Context
-Three scripts in `/home/clod/scripts/` were written for the old "openclaw" platform and need migrating to "clod". The migration plan at `/home/clod/scripts/migration-plan.md` has full details, but here's what you need.
+Three scripts in `/home/foci/scripts/` were written for the old "openclaw" platform and need migrating to "foci". The migration plan at `/home/foci/scripts/migration-plan.md` has full details, but here's what you need.
 
-## Session File Format (Clod)
+## Session File Format (Foci)
 
-**Location:** `/home/clod/data/sessions/agent/<agent>/chat/<session_id>.jsonl`
+**Location:** `/home/foci/data/sessions/agent/<agent>/chat/<session_id>.jsonl`
 
 **Format:** JSONL where each line is one of:
 ```json
@@ -24,7 +24,7 @@ Key differences from openclaw:
 
 ## API Payload Log (alternative data source)
 
-There's also `/home/clod/logs/api-payload.jsonl` with per-API-call data:
+There's also `/home/foci/logs/api-payload.jsonl` with per-API-call data:
 ```json
 {"ts":"2026-02-26T18:59:16Z","session":"agent:clutch:chat:5970082313","model":"claude-opus-4-6","request":{...},"response":{"usage":{"input_tokens":1,"output_tokens":211,"cache_read_input_tokens":159769,"cache_creation_input_tokens":314}}}
 ```
@@ -33,14 +33,14 @@ This is ~100KB per line (contains full request/response), so **never load it ent
 ## Script 1: token-usage-tracker.py
 
 ### Changes needed:
-1. Update `AGENTS_DIR` to `Path("/home/clod/data/sessions/agent")`
-2. Update `OUTPUT_DIR` to `Path("/home/clod/data/token-usage")` (create if needed)
+1. Update `AGENTS_DIR` to `Path("/home/foci/data/sessions/agent")`
+2. Update `OUTPUT_DIR` to `Path("/home/foci/data/token-usage")` (create if needed)
 3. Rewrite `load_data()` to:
    - Glob `*/chat/*.jsonl` and `*/spawn/*.jsonl`
    - Extract agent from path (directory name after `agent/`)
    - Parse `[meta]` tags from user messages for timestamps and token usage
    - Handle the `prev_tokens` attribution (it describes previous turn)
-4. Update title strings from "OpenClaw" to "Clod"
+4. Update title strings from "OpenClaw" to "Foci"
 5. Update description/docstring
 6. Add `-h`/`--help` support (already has argparse, just update description)
 
@@ -55,31 +55,31 @@ def parse_meta(text):
 ## Script 2: token-budget-analyzer.py
 
 ### Changes needed:
-1. Update `load_sessions()` paths to clod format
-2. Rewrite `parse_session_file()` to parse clod JSONL format
+1. Update `load_sessions()` paths to foci format
+2. Rewrite `parse_session_file()` to parse foci JSONL format
 3. Extract token usage from `[meta]` tags (same helper)
-4. Update all strings/descriptions from "openclaw" to "clod"
+4. Update all strings/descriptions from "openclaw" to "foci"
 5. Consider using api-payload.jsonl instead of session files (it has exact per-call usage). But session files work too since [meta] has the data.
 
 ## Script 3: run-morning-routine.sh
 
 ### Changes needed:
 1. Remove `OPENCLAW_WORKSPACE` dependency entirely
-2. Remove `send-to-telegram.sh` call — replace with `clod send`
+2. Remove `send-to-telegram.sh` call — replace with `foci send`
 3. Update the token-usage-tracker call path
 4. Update output file paths
 5. Replace direct Telegram send with:
    ```bash
    # Write report to file
-   cat > /home/clod/data/morning-report.md << EOF
+   cat > /home/foci/data/morning-report.md << EOF
    $MESSAGE
    EOF
    
    # Copy chart
-   cp "$OUTPUT_DIR/token-usage-clutch.png" /home/clod/data/morning-chart.png 2>/dev/null
+   cp "$OUTPUT_DIR/token-usage-clutch.png" /home/foci/data/morning-chart.png 2>/dev/null
    
    # Notify agent to forward to user
-   clod -a clutch send "Morning routine complete. Report at /home/clod/data/morning-report.md and chart at /home/clod/data/morning-chart.png. Please read the report and forward the summary and chart to Dick."
+   foci -a clutch send "Morning routine complete. Report at /home/foci/data/morning-report.md and chart at /home/foci/data/morning-chart.png. Please read the report and forward the summary and chart to Dick."
    ```
 
 ## Testing
@@ -87,19 +87,19 @@ def parse_meta(text):
 After migration, run each script and verify:
 ```bash
 # Script 1
-python3 /home/clod/scripts/token-usage-tracker.py --report --days 3
-python3 /home/clod/scripts/token-usage-tracker.py --days 7
+python3 /home/foci/scripts/token-usage-tracker.py --report --days 3
+python3 /home/foci/scripts/token-usage-tracker.py --days 7
 
 # Script 2
-python3 /home/clod/scripts/token-budget-analyzer.py
+python3 /home/foci/scripts/token-budget-analyzer.py
 
 # Script 3 (just check it parses, don't actually send)
-bash -n /home/clod/scripts/run-morning-routine.sh
+bash -n /home/foci/scripts/run-morning-routine.sh
 ```
 
 ## Important
-- Keep the scripts in `/home/clod/scripts/` (same location)
-- Create `/home/clod/data/token-usage/` output directory
+- Keep the scripts in `/home/foci/scripts/` (same location)
+- Create `/home/foci/data/token-usage/` output directory
 - Don't change the analysis logic — only the data loading/format parsing and output delivery
 - Make sure scripts handle the case where `[meta]` tag or `prev_tokens` is missing (some messages won't have it)
 - Push changes when done

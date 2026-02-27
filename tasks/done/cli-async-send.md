@@ -1,15 +1,15 @@
-# Task: Async mode for clod send
+# Task: Async mode for foci send
 
 ## Problem
-`clod send` is always synchronous — it waits for the full agent response before returning. For cron jobs this means the cron process hangs for minutes. Most callers don't need the response — they just want to inject a message and let the agent handle it, with any reply going to Telegram.
+`foci send` is always synchronous — it waits for the full agent response before returning. For cron jobs this means the cron process hangs for minutes. Most callers don't need the response — they just want to inject a message and let the agent handle it, with any reply going to Telegram.
 
 ## Requirements
 
 ### CLI flag
-- `--async` / `--no-wait` flag on `clod send` (and `clod branch` for consistency)
+- `--async` / `--no-wait` flag on `foci send` (and `foci branch` for consistency)
 - Default: **async** (fire and forget, return immediately after the gateway accepts the message)
-- `--sync` / `--wait` for when you DO want the response (e.g. `clod eval`)
-- Env var: `CLOD_ASYNC` (non-empty = true), `CLOD_SYNC` for the inverse
+- `--sync` / `--wait` for when you DO want the response (e.g. `foci eval`)
+- Env var: `FOCI_ASYNC` (non-empty = true), `FOCI_SYNC` for the inverse
 
 ### Gateway support
 - The `/send` endpoint needs to support an `async` field in the request body
@@ -18,10 +18,10 @@
 - When `async: false` (or omitted for backward compat): current sync behaviour
 
 ### Default behaviour
-- `clod send` → async (default)
-- `clod send --sync` → wait for response
-- `clod branch` → async (default) 
-- `clod eval` → always sync (needs the response)
+- `foci send` → async (default)
+- `foci send --sync` → wait for response
+- `foci branch` → async (default) 
+- `foci eval` → always sync (needs the response)
 
 ## Update docs
 - docs/CLI.md — new flags

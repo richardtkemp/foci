@@ -2,7 +2,7 @@
 
 ## Problem
 
-When clod restarts (deploy, crash, manual restart), multiball/forked sessions are lost. The session data is persisted on disk (JSONL files), but the in-memory mapping between secondary bots and their session keys is not restored. After restart, secondary bots come up with no session key — they're idle in the pool — and any active forked conversations are orphaned.
+When foci restarts (deploy, crash, manual restart), multiball/forked sessions are lost. The session data is persisted on disk (JSONL files), but the in-memory mapping between secondary bots and their session keys is not restored. After restart, secondary bots come up with no session key — they're idle in the pool — and any active forked conversations are orphaned.
 
 ## Current Behaviour
 

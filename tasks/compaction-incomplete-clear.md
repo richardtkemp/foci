@@ -12,17 +12,17 @@ From `api-payload.jsonl` (session `agent:clutch:chat:5970082313`):
 The second compaction clearly worked. The first one generated a good summary but didn't remove the old messages.
 
 ## Session file
-`/home/clod/data/sessions/agent/clutch/chat/5970082313.jsonl`
+`/home/foci/data/sessions/agent/clutch/chat/5970082313.jsonl`
 
 ## Process logs
-`/home/clod/logs/clod.log`
+`/home/foci/logs/foci.log`
 
 ## API payload logs  
-`/home/clod/logs/api-payload.jsonl`
+`/home/foci/logs/api-payload.jsonl`
 
 ## What to investigate
 1. Look at the compaction code — what's supposed to happen after the summary is generated? How are old messages replaced?
-2. Check clod.log around 00:46 on 2026-02-27 for any errors or warnings during compaction
+2. Check foci.log around 00:46 on 2026-02-27 for any errors or warnings during compaction
 3. Is there a race condition or error path where the summary gets prepended but old messages aren't removed?
 4. Why did the second compaction (08:40) work correctly but the first (00:46) didn't?
 5. Update SPEC.md and relevant docs with any fixes. Push when done.

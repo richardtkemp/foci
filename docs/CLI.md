@@ -1,12 +1,12 @@
-# Clod CLI Reference
+# Foci CLI Reference
 
-The `clod` CLI is a lightweight client that talks to the `clodgw` HTTP gateway. It is built separately:
+The `foci` CLI is a lightweight client that talks to the `focigw` HTTP gateway. It is built separately:
 
 ```
-go build ./cmd/clod
+go build ./cmd/foci
 ```
 
-All commands communicate over HTTP to the gateway at `CLOD_ADDR` (default `127.0.0.1:18791`).
+All commands communicate over HTTP to the gateway at `FOCI_ADDR` (default `127.0.0.1:18791`).
 
 ---
 
@@ -16,31 +16,31 @@ These flags are accepted by all commands:
 
 | Flag | Short | Env var | Description |
 |------|-------|---------|-------------|
-| `--help` | `-h` | | Show usage for any command (e.g. `clod send -h`). |
-| `--addr <host:port>` | | `CLOD_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
-| `--agent <id>` | `-a` | `CLOD_AGENT` | Target a specific agent. Default: first configured agent. |
-| `--session <id>` | `-s` | `CLOD_SESSION` | Target session type. Default: `main`. |
-| `--if-active <dur>` | | `CLOD_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
-| `--if-inactive <dur>` | | `CLOD_IF_INACTIVE` | Skip if user was active within duration (e.g. `30m`, `1h`). Opposite of `--if-active`. |
-| `--message-text <text>` | `-mt` | `CLOD_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
-| `--message-file <path>` | `-mf` | `CLOD_MESSAGE_FILE` | Read message from file path. |
-| `--sync` / `--wait` | | `CLOD_SYNC` | Wait for response (send/branch only, non-empty = true). |
-| `--async` / `--no-wait` | | `CLOD_ASYNC` | Fire-and-forget (send/branch default, non-empty = true). |
-| `--no-compact` | | `CLOD_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
-| `--no-reset-hook` | | `CLOD_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
-| `--oneshot` | | `CLOD_ONESHOT` | No compaction + no reset hook (branch only, non-empty = true). |
+| `--help` | `-h` | | Show usage for any command (e.g. `foci send -h`). |
+| `--addr <host:port>` | | `FOCI_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
+| `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
+| `--session <id>` | `-s` | `FOCI_SESSION` | Target session type. Default: `main`. |
+| `--if-active <dur>` | | `FOCI_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
+| `--if-inactive <dur>` | | `FOCI_IF_INACTIVE` | Skip if user was active within duration (e.g. `30m`, `1h`). Opposite of `--if-active`. |
+| `--message-text <text>` | `-mt` | `FOCI_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
+| `--message-file <path>` | `-mf` | `FOCI_MESSAGE_FILE` | Read message from file path. |
+| `--sync` / `--wait` | | `FOCI_SYNC` | Wait for response (send/branch only, non-empty = true). |
+| `--async` / `--no-wait` | | `FOCI_ASYNC` | Fire-and-forget (send/branch default, non-empty = true). |
+| `--no-compact` | | `FOCI_NO_COMPACT` | Skip compaction (branch only, non-empty = true). |
+| `--no-reset-hook` | | `FOCI_NO_RESET_HOOK` | Skip reset hook (branch only, non-empty = true). |
+| `--oneshot` | | `FOCI_ONESHOT` | No compaction + no reset hook (branch only, non-empty = true). |
 
-**Resolution order:** explicit flag > env var > default. Every flag has a corresponding `CLOD_` env var and vice versa.
+**Resolution order:** explicit flag > env var > default. Every flag has a corresponding `FOCI_` env var and vice versa.
 
 ## Environment Variables
 
 Setting env vars is useful for crontab entries where the same agent/session is targeted repeatedly:
 
 ```crontab
-CLOD_AGENT=clutch
-CLOD_IF_ACTIVE=4h
-*/30 * * * * clod send -mf /home/clod/shared/prompts/memory-formation.md
-0 7 * * * clod branch --oneshot -mf /home/clod/shared/prompts/morning-routine.md
+FOCI_AGENT=clutch
+FOCI_IF_ACTIVE=4h
+*/30 * * * * foci send -mf /home/foci/shared/prompts/memory-formation.md
+0 7 * * * foci branch --oneshot -mf /home/foci/shared/prompts/morning-routine.md
 ```
 
 ---
@@ -53,7 +53,7 @@ Sends a text message to the agent's default session (or a named session). By def
 
 **Usage:**
 ```
-clod send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
+foci send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
 ```
 
 **Flags:**
@@ -74,28 +74,28 @@ Trailing args without a flag are treated as implicit `--message-text`. Cannot us
 **Examples:**
 ```bash
 # Send a message (async, returns immediately with "queued")
-clod send "check the weather forecast"
+foci send "check the weather forecast"
 
 # Send and wait for the response
-clod send --sync "check the weather forecast"
+foci send --sync "check the weather forecast"
 
 # Equivalent using explicit flag
-clod send -mt "check the weather forecast"
+foci send -mt "check the weather forecast"
 
 # Send file contents as the message
-clod send -mf /home/clod/shared/prompts/memory-formation.md
+foci send -mf /home/foci/shared/prompts/memory-formation.md
 
 # Send to a specific agent
-clod send -a research "summarize today's news"
+foci send -a research "summarize today's news"
 
 # Send to a named session
-clod send -a clutch -s research "continue the analysis"
+foci send -a clutch -s research "continue the analysis"
 
 # Only send if user was active in the last 8 hours (for cron jobs)
-clod send --if-active 8h "daily health check"
+foci send --if-active 8h "daily health check"
 
 # Send file contents with activity gating
-clod send -a clutch --if-active 4h -mf tasks/review.md
+foci send -a clutch --if-active 4h -mf tasks/review.md
 ```
 
 **Exit codes:** 0 on success, 1 on error (network failure, HTTP error).
@@ -112,7 +112,7 @@ Aliased as `wake` for backward compatibility.
 
 **Usage:**
 ```
-clod branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+foci branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -133,22 +133,22 @@ clod branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no
 **Examples:**
 ```bash
 # Fork a branch for a background task (returns immediately)
-clod branch -a clutch "run your morning routine"
+foci branch -a clutch "run your morning routine"
 
 # Fork and wait for the response
-clod branch --sync -a clutch "run your morning routine"
+foci branch --sync -a clutch "run your morning routine"
 
 # Quick one-shot task (no compaction, no reset hook)
-clod branch --oneshot -a clutch "check disk space and report"
+foci branch --oneshot -a clutch "check disk space and report"
 
 # Branch with message from file
-clod branch --oneshot -a scout -mf /home/clod/shared/prompts/daily-health-check.md
+foci branch --oneshot -a scout -mf /home/foci/shared/prompts/daily-health-check.md
 
 # Only branch if user was active recently
-clod branch --if-active 12h -a clutch "daily memory review"
+foci branch --if-active 12h -a clutch "daily memory review"
 
 # Empty branch (agent wakes up with fork context only)
-clod branch -a research
+foci branch -a research
 ```
 
 **Exit codes:** 0 on success, 1 on error. Returns HTTP 412 if the agent has no default session yet (no Telegram chat has been started).
@@ -161,13 +161,13 @@ Returns the agent's current status including session info, model, uptime, and wh
 
 **Usage:**
 ```
-clod status [-a agent]
+foci status [-a agent]
 ```
 
 **Examples:**
 ```bash
-clod status
-clod status -a research
+foci status
+foci status -a research
 ```
 
 ---
@@ -178,13 +178,13 @@ Wraps a shell command in a prompt asking the agent to execute it and show the ou
 
 **Usage:**
 ```
-clod eval [-a agent] <shell command>
+foci eval [-a agent] <shell command>
 ```
 
 **Examples:**
 ```bash
-clod eval "df -h"
-clod eval -a research "git log --oneline -5"
+foci eval "df -h"
+foci eval -a research "git log --oneline -5"
 ```
 
 Note: The agent must have the `exec` tool available to actually run the command.
@@ -199,32 +199,32 @@ Dispatches a slash command directly via the HTTP API and returns the result to t
 
 **Usage:**
 ```
-clod command [-a agent] </cmd> [args]
+foci command [-a agent] </cmd> [args]
 ```
 
 **Examples:**
 ```bash
-clod command /cache
-clod command -a research /status
-clod command /config available
-clod command /cost today
+foci command /cache
+foci command -a research /status
+foci command /config available
+foci command /cost today
 ```
 
 ---
 
 ### `ping` — Liveness check
 
-Shorthand for `clod command /ping`. Returns "pong" with a timestamp if the gateway and agent are running.
+Shorthand for `foci command /ping`. Returns "pong" with a timestamp if the gateway and agent are running.
 
 **Usage:**
 ```
-clod ping [-a agent]
+foci ping [-a agent]
 ```
 
 **Examples:**
 ```bash
-clod ping
-clod ping -a research
+foci ping
+foci ping -a research
 ```
 
 ---
@@ -235,19 +235,19 @@ The CLI is designed for cron jobs. Both `send` and `branch` default to async mod
 
 ```crontab
 # Daily morning routine (returns instantly, response goes to Telegram)
-0 7 * * * /home/clod/bin/clod branch --if-active 24h -a clutch "run your morning routine"
+0 7 * * * /home/foci/bin/foci branch --if-active 24h -a clutch "run your morning routine"
 
 # Hourly health check (only if user is around)
-0 * * * * /home/clod/bin/clod send --if-active 8h -a clutch "quick health check"
+0 * * * * /home/foci/bin/foci send --if-active 8h -a clutch "quick health check"
 
 # Nightly one-shot task (no compaction overhead)
-0 2 * * * /home/clod/bin/clod branch --oneshot -a clutch "nightly cleanup"
+0 2 * * * /home/foci/bin/foci branch --oneshot -a clutch "nightly cleanup"
 
 # Heartbeat — only if idle for 30+ minutes (don't interrupt active conversations)
-*/30 * * * * /home/clod/bin/clod branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
+*/30 * * * * /home/foci/bin/foci branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
 
 # Force sync if you need the output in the cron log
-0 6 * * * /home/clod/bin/clod send --sync -a clutch "morning report" >> /var/log/clod-report.log
+0 6 * * * /home/foci/bin/foci send --sync -a clutch "morning report" >> /var/log/foci-report.log
 ```
 
 The `--if-active` flag prevents cron jobs from running when the user hasn't interacted recently. The `--if-inactive` flag is the opposite — it skips when the user IS active, useful for heartbeat-style tasks that shouldn't interrupt conversations.

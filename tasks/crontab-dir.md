@@ -1,12 +1,12 @@
 # Task: Directory-based crontab management
 
 ## Overview
-Replace monolithic crontab editing with a directory structure where each cron job is its own file. Clod's gateway watches the directories and auto-rebuilds the system crontab by concatenating all files.
+Replace monolithic crontab editing with a directory structure where each cron job is its own file. Foci's gateway watches the directories and auto-rebuilds the system crontab by concatenating all files.
 
 ## Directory Structure
 ```
 ~/crontab/
-├── _env                          # env vars (PATH, CLOD_ADDR, etc) — goes at top of crontab
+├── _env                          # env vars (PATH, FOCI_ADDR, etc) — goes at top of crontab
 ├── clutch/
 │   ├── memory-formation.cron
 │   ├── heartbeat.cron
@@ -28,7 +28,7 @@ enabled = true                    # default true, global only (not per-agent)
 dir = "crontab"                   # relative to agent home dir, default "crontab"
 ```
 
-`enabled = false` disables the watcher entirely — clod won't touch the system crontab.
+`enabled = false` disables the watcher entirely — foci won't touch the system crontab.
 
 ## Behaviour
 
@@ -79,13 +79,13 @@ This means existing crontabs are automatically migrated — no manual work neede
 - No validation of cron schedule syntax (crontab handles this)
 - No per-agent config — this is a global system feature
 - No UI/slash command (yet) — just file-based management
-- Doesn't manage non-clod crontab entries from other users
+- Doesn't manage non-foci crontab entries from other users
 
 ## File format
 Each `.cron` file is plain crontab format:
 ```
 # Heartbeat: autonomous check-in (only when idle 45+ min)
-*/45 * * * * clod branch --oneshot --if-inactive 45m -a clutch -mf clutch/prompts/HEARTBEAT.md 2>&1 >> /home/clod/logs/cron.log
+*/45 * * * * foci branch --oneshot --if-inactive 45m -a clutch -mf clutch/prompts/HEARTBEAT.md 2>&1 >> /home/foci/logs/cron.log
 ```
 
 Comments and blank lines are preserved.

@@ -38,4 +38,4 @@ But this is complicated by the fact that 4 more successful cached calls happened
 
 ## Report
 
-Write your findings to `/home/rich/git/clod/tasks/cache-bust-findings.md`. Do NOT modify any source files.
+Write your findings to `/home/rich/git/foci/tasks/cache-bust-findings.md`. Do NOT modify any source files.

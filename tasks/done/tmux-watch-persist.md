@@ -1,7 +1,7 @@
 # Task: Persist tmux watches across process restarts
 
 ## Problem
-Tmux watches (inactivity monitoring goroutines) are in-memory only. When clod restarts (deploy, crash, manual restart), all watches are lost. The user has to manually re-set them, which they won't remember to do.
+Tmux watches (inactivity monitoring goroutines) are in-memory only. When foci restarts (deploy, crash, manual restart), all watches are lost. The user has to manually re-set them, which they won't remember to do.
 
 ## Requirements
 1. When a watch is set, persist it to the state store (same pattern as owned tmux sessions)

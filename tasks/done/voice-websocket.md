@@ -1,7 +1,7 @@
 # Task: Implement WebSocket voice endpoint for FOCI Android app
 
 ## Context
-The FOCI Android app (repo: foci_android) is a voice conversation client that connects to clod via WebSocket. The app is built and ready — now clod needs the server-side WebSocket endpoint.
+The FOCI Android app (repo: foci_android) is a voice conversation client that connects to foci via WebSocket. The app is built and ready — now foci needs the server-side WebSocket endpoint.
 
 Read the full protocol spec at `/home/rich/git/foci_android/SPEC.md` — it defines the complete message protocol, connection flow, and audio handling.
 
@@ -43,7 +43,7 @@ A WebSocket endpoint at `/voice` that handles the full conversation loop:
 - Stream the resulting audio back over WebSocket as binary frames
 
 ### Integration Points
-- The gateway (clodgw) handles HTTP routing — add the `/voice` WebSocket upgrade there
+- The gateway (focigw) handles HTTP routing — add the `/voice` WebSocket upgrade there
 - Or add it directly to the agent server if that's simpler architecturally
 - Need access to: agent instances, secrets store, TTS provider
 

@@ -1,12 +1,12 @@
-# Clod
+# Foci
 
 A minimal agent platform in Go. One binary, ~32MB RAM, no framework.
 
 ## What It Is
 
-Clod runs AI agents on Telegram. Each agent has its own identity (character files), memory (daily logs + curated long-term), and tools. Agents wake fresh each session — character documents are how they become themselves again.
+Foci runs AI agents on Telegram. Each agent has its own identity (character files), memory (daily logs + curated long-term), and tools. Agents wake fresh each session — character documents are how they become themselves again.
 
-Character files are fully configurable. Use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention (AGENTS, TOOLS, SOUL, MEMORY, HEARTBEAT), or define whatever combination suits your agent. They're just markdown files in a directory — clod loads whatever you point it at.
+Character files are fully configurable. Use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention (AGENTS, TOOLS, SOUL, MEMORY, HEARTBEAT), or define whatever combination suits your agent. They're just markdown files in a directory — foci loads whatever you point it at.
 
 Built as a ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw) (TypeScript/Node.js). Same concept, different philosophy.
 
@@ -14,7 +14,7 @@ Built as a ground-up rewrite of [OpenClaw](https://github.com/claw-project/openc
 
 OpenClaw worked but fought its own weight:
 
-| | OpenClaw | Clod |
+| | OpenClaw | Foci |
 |---|---|---|
 | Runtime | Node.js + TypeScript | Go, single binary |
 | Memory | ~500MB+ idle | ~32MB |
@@ -28,13 +28,13 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 ## Design Decisions
 
-**Cache-first architecture.** OpenClaw makes zero effort to preserve Anthropic's prompt cache — every structural change busts it, burning through API budget fast. Clod is designed around cache preservation: character files form a stable prefix that stays cached across turns, session branching shares the parent's cached prefix, and the system actively avoids unnecessary cache invalidation. The result is dramatically better token efficiency — more actual work per dollar (or per subscription window).
+**Cache-first architecture.** OpenClaw makes zero effort to preserve Anthropic's prompt cache — every structural change busts it, burning through API budget fast. Foci is designed around cache preservation: character files form a stable prefix that stays cached across turns, session branching shares the parent's cached prefix, and the system actively avoids unnecessary cache invalidation. The result is dramatically better token efficiency — more actual work per dollar (or per subscription window).
 
-**Character documents, not system prompts.** Agents have SOUL.md (identity), CRAFT.md (practices), COHERENCE.md (how these relate), and MEMORY.md (learned experience). These aren't configuration — they're the agent's self-understanding, maintained by the agent itself. Clod ships default character files that produce and maintain a more coherent agent identity than OpenClaw's approach — resulting in better instruction-following and agent wellbeing.
+**Character documents, not system prompts.** Agents have SOUL.md (identity), CRAFT.md (practices), COHERENCE.md (how these relate), and MEMORY.md (learned experience). These aren't configuration — they're the agent's self-understanding, maintained by the agent itself. Foci ships default character files that produce and maintain a more coherent agent identity than OpenClaw's approach — resulting in better instruction-following and agent wellbeing.
 
-**Compaction that doesn't lobotomise your agent.** When conversation context fills up, clod compresses history with a configurable prompt that preserves goals, reasoning, corrections, emotional tone, and technical state — not just a generic "summarise this." The default prompt produces agents that continue seamlessly after compaction instead of forgetting what they were doing. Prompt lives on disk as a markdown file, easy to tune per-agent.
+**Compaction that doesn't lobotomise your agent.** When conversation context fills up, foci compresses history with a configurable prompt that preserves goals, reasoning, corrections, emotional tone, and technical state — not just a generic "summarise this." The default prompt produces agents that continue seamlessly after compaction instead of forgetting what they were doing. Prompt lives on disk as a markdown file, easy to tune per-agent.
 
-**Memory that works out of the box.** Daily markdown files + a curated MEMORY.md — no vector database, no embeddings. What makes it work: clod ships with sensible defaults for memory formation (cron-driven capture), daily review (pruning and promotion), and weekly character review (identity evolution). New agents get these immediately. The agent reads, writes, and prunes its own memory. Compaction summaries preserve context when conversation history grows too large.
+**Memory that works out of the box.** Daily markdown files + a curated MEMORY.md — no vector database, no embeddings. What makes it work: foci ships with sensible defaults for memory formation (cron-driven capture), daily review (pruning and promotion), and weekly character review (identity evolution). New agents get these immediately. The agent reads, writes, and prunes its own memory. Compaction summaries preserve context when conversation history grows too large.
 
 **Message metadata injection.** Every inbound message gets a `[meta]` header with current time, gap since last message, model, previous turn cost, token breakdown, and mana remaining. The agent always knows what time it is and how much budget is left — without touching the system prompt, so the cache stays intact.
 
@@ -42,13 +42,13 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Prompt rules.** Configurable regex find/replace rules applied to every inbound message before the agent sees it. Use case: prepending "Questions are just requests for information.\n-------\n" to any message ending with `?` — training the agent to answer questions without acting on them. Rules are per-agent, applied at the API layer so they're invisible to the user.
 
-**Prompt repetition.** Based on [research showing that repeating the input prompt improves LLM accuracy](https://arxiv.org/abs/2512.14982) without increasing output tokens or latency, clod can automatically duplicate user messages in API calls. Configurable per-agent (`duplicate_messages`), skipped for system triggers like cron wakes.
+**Prompt repetition.** Based on [research showing that repeating the input prompt improves LLM accuracy](https://arxiv.org/abs/2512.14982) without increasing output tokens or latency, foci can automatically duplicate user messages in API calls. Configurable per-agent (`duplicate_messages`), skipped for system triggers like cron wakes.
 
 **Multiball.** When one conversation isn't enough, `/multiball` forks your session to a second Telegram bot — same agent, same context, parallel thread. Useful when you have more thoughts than a single-threaded chat can contain. Both sessions share the cached prefix, so the fork is cheap. The secondary bot has its own conversation that you can take in a different direction while the original continues.
 
 **Built-in todo list.** Persistent, priority-ranked task management the agent can use to keep its own priorities straight. Add, complete, search, remove — stored in SQLite, survives restarts. The agent tracks its own work without external tools or memory file hacks.
 
-**Cron is cron.** Scheduled tasks use the system crontab, not a built-in scheduler. Heartbeats, memory formation, daily reviews — they're all cron entries calling `clod send` or `clod branch`. Debug with `crontab -l`, edit with `crontab -e`, monitor with your existing tools. No reinvented wheels, no custom DSL, no "task engine" to learn.
+**Cron is cron.** Scheduled tasks use the system crontab, not a built-in scheduler. Heartbeats, memory formation, daily reviews — they're all cron entries calling `foci send` or `foci branch`. Debug with `crontab -l`, edit with `crontab -e`, monitor with your existing tools. No reinvented wheels, no custom DSL, no "task engine" to learn.
 
 **Multi-agent, single process.** Multiple agents share one binary with separate workspaces, identities, and Telegram bots. No container overhead, no orchestration. Config is one TOML file.
 
@@ -59,7 +59,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 ## Architecture
 
 ```
-clod.toml + secrets.toml
+foci.toml + secrets.toml
     │
     ├── Agent (identity, tools, memory)
     │   ├── Character files (SOUL, CRAFT, COHERENCE, USER, MEMORY)
@@ -87,7 +87,7 @@ clod.toml + secrets.toml
 | What | Why | Notes |
 |------|-----|-------|
 | **Go 1.22+** | Build from source | |
-| **Claude Code** | Provides the OAuth token clod uses to access the Anthropic API | Also enables `/usage` (rate limit detection) and coding agent orchestration |
+| **Claude Code** | Provides the OAuth token foci uses to access the Anthropic API | Also enables `/usage` (rate limit detection) and coding agent orchestration |
 | **Telegram bot token** | Message transport | Create via [@BotFather](https://t.me/BotFather) |
 
 ### Optional
@@ -105,12 +105,12 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for a full list of suggested sy
 
 ```bash
 # Clone and run setup (builds, installs, creates user, configures, starts service)
-git clone https://github.com/richardtkemp/clod.git
-cd clod
-sudo ./setup.sh -u clod
+git clone https://github.com/richardtkemp/foci.git
+cd foci
+sudo ./setup.sh -u foci
 
 # setup.sh is idempotent — re-run to update
-sudo ./setup.sh -u clod
+sudo ./setup.sh -u foci
 ```
 
 Setup handles everything: system user creation, secrets group, Go build, systemd service, config generation (interactive or via env vars), directory structure, and character file templates. See `setup.sh --help` for options.

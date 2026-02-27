@@ -2,7 +2,7 @@
 
 ## Overview
 
-Clod stores credentials in `secrets.toml` (alongside `clod.toml`). Secrets are never injected into the agent's message context. They are resolved at tool execution time via `{{secret:NAME}}` templates in `http_request` headers/body, and redacted from all tool output.
+Foci stores credentials in `secrets.toml` (alongside `foci.toml`). Secrets are never injected into the agent's message context. They are resolved at tool execution time via `{{secret:NAME}}` templates in `http_request` headers/body, and redacted from all tool output.
 
 ## Managing Secrets
 
@@ -97,10 +97,10 @@ Add `allowed_hosts` to the secret's section in `secrets.toml`. Secrets without `
 
 Secrets are protected at the operating system level using Unix groups:
 
-1. **Group `clod-secrets`** — a dedicated group that owns `secrets.toml`
-2. **File ownership** — `secrets.toml` is owned by `root:clod-secrets` with permissions `0660`
-3. **Supplementary groups** — the systemd unit grants `SupplementaryGroups=clod-secrets` so the main clod process can read and write secrets
-4. **Group dropping** — all child processes spawned by the exec tool, tmux tool, and script commands have the `clod-secrets` group removed from their supplementary group list. All other groups (e.g. `docker`, `git`, `sudo`) are preserved. The OS denies access to `secrets.toml` because the child no longer has `clod-secrets`
+1. **Group `foci-secrets`** — a dedicated group that owns `secrets.toml`
+2. **File ownership** — `secrets.toml` is owned by `root:foci-secrets` with permissions `0660`
+3. **Supplementary groups** — the systemd unit grants `SupplementaryGroups=foci-secrets` so the main foci process can read and write secrets
+4. **Group dropping** — all child processes spawned by the exec tool, tmux tool, and script commands have the `foci-secrets` group removed from their supplementary group list. All other groups (e.g. `docker`, `git`, `sudo`) are preserved. The OS denies access to `secrets.toml` because the child no longer has `foci-secrets`
 5. **CAP_SETGID** — the systemd unit grants `AmbientCapabilities=CAP_SETGID` so the process can call `setgroups()` to drop groups on child processes
 
 This means even if an AI agent constructs a command to read `secrets.toml` using encoding tricks, glob patterns, interpreter string construction, or any other bypass technique, the OS kernel denies access. The protection is not bypassable from userspace.
@@ -123,31 +123,31 @@ Red team testing showed that an AI agent could bypass string-based defences by:
 - Constructing the path via interpreter string operations (`$'s''ecrets.toml'`)
 - Reading via `/proc/self/fd/` or other indirect paths
 
-None of these bypass OS-level file permissions. The child process simply does not have the `clod-secrets` group, so `open()` returns `EACCES` regardless of how the path is specified.
+None of these bypass OS-level file permissions. The child process simply does not have the `foci-secrets` group, so `open()` returns `EACCES` regardless of how the path is specified.
 
 ## Startup Security Checks
 
-At startup, clod verifies:
+At startup, foci verifies:
 - `secrets.toml` is owned by `root` (uid 0)
-- `secrets.toml` group is `clod-secrets`
+- `secrets.toml` group is `foci-secrets`
 - `secrets.toml` permissions are `0660`
-- The process has `clod-secrets` in its supplementary groups
+- The process has `foci-secrets` in its supplementary groups
 
 If any check fails, a WARN message is logged with the specific issue and a suggested fix command. Checks never prevent startup.
 
 ### Suppressing checks
 
-Set `skip_security_checks = true` in `clod.toml` to disable startup checks (e.g. for development environments).
+Set `skip_security_checks = true` in `foci.toml` to disable startup checks (e.g. for development environments).
 
 ## Setup
 
 ### Using setup.sh
 
 `setup.sh` handles all security setup automatically:
-- Creates the `clod-secrets` group
-- Adds the `clod` user to the group
-- Sets `secrets.toml` ownership to `root:clod-secrets` with mode `0660`
-- Configures the systemd unit with `SupplementaryGroups=clod-secrets` and `AmbientCapabilities=CAP_SETGID`
+- Creates the `foci-secrets` group
+- Adds the `foci` user to the group
+- Sets `secrets.toml` ownership to `root:foci-secrets` with mode `0660`
+- Configures the systemd unit with `SupplementaryGroups=foci-secrets` and `AmbientCapabilities=CAP_SETGID`
 
 Running `setup.sh` on an existing install upgrades the security model idempotently.
 
@@ -157,22 +157,22 @@ If not using `setup.sh`:
 
 ```bash
 # Create group
-sudo groupadd clod-secrets
+sudo groupadd foci-secrets
 
-# Add clod user to group
-sudo usermod -aG clod-secrets clod
+# Add foci user to group
+sudo usermod -aG foci-secrets foci
 
 # Set file ownership and permissions
-sudo chown root:clod-secrets /home/clod/config/secrets.toml
-sudo chmod 0660 /home/clod/config/secrets.toml
+sudo chown root:foci-secrets /home/foci/config/secrets.toml
+sudo chmod 0660 /home/foci/config/secrets.toml
 
 # Update systemd unit (add to [Service] section)
-# SupplementaryGroups=clod-secrets
+# SupplementaryGroups=foci-secrets
 # AmbientCapabilities=CAP_SETGID
 
 # Reload and restart
 sudo systemctl daemon-reload
-sudo systemctl restart clod
+sudo systemctl restart foci
 ```
 
 ### Verifying
@@ -180,7 +180,7 @@ sudo systemctl restart clod
 After setup, check that the startup log shows no security warnings:
 
 ```bash
-journalctl -u clod | grep -i security
+journalctl -u foci | grep -i security
 ```
 
 You can also verify from within a session:
@@ -191,7 +191,7 @@ You can also verify from within a session:
 
 ### Overview
 
-In addition to static secrets in `secrets.toml`, Clod can dynamically access credentials stored in a Bitwarden vault via the `bw` CLI. This provides a larger, centrally-managed credential store with approval-gated access.
+In addition to static secrets in `secrets.toml`, Foci can dynamically access credentials stored in a Bitwarden vault via the `bw` CLI. This provides a larger, centrally-managed credential store with approval-gated access.
 
 ### How It Works
 
@@ -289,5 +289,5 @@ See [CONFIG.md](CONFIG.md) for full option reference.
    sudo -u bitwarden bw unlock --raw | sudo -u bitwarden tee /home/bitwarden/.bw_session
    sudo -u bitwarden chmod 600 /home/bitwarden/.bw_session
    ```
-   The session file is owned by `bitwarden:bitwarden`, mode `600` — only the bitwarden user can read it. Clod never reads this file; each `bw` command reads it fresh at execution time.
-5. Set `enabled = true` in `clod.toml` and restart Clod
+   The session file is owned by `bitwarden:bitwarden`, mode `600` — only the bitwarden user can read it. Foci never reads this file; each `bw` command reads it fresh at execution time.
+5. Set `enabled = true` in `foci.toml` and restart Foci

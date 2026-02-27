@@ -1,4 +1,4 @@
-# Clod — Claude Code Instructions
+# Foci — Claude Code Instructions
 
 ## Before You Start
 
@@ -20,7 +20,7 @@ If you modify how packages connect, add new packages, change the startup flow, a
 ## Running
 
 ```
-go build -o clod . && ./clod -config clod.toml
+go build -o foci . && ./foci -config foci.toml
 go test ./...
 go vet ./...
 ```
