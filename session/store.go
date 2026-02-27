@@ -180,7 +180,27 @@ func (s *Store) Clear(key string) error {
 	return err
 }
 
-// Replace overwrites a session with the given messages.
+// nextArchivePath returns the next available archive path for a session file.
+// E.g. for "5970082313.jsonl" it returns "5970082313.1.jsonl", or ".2.jsonl" if .1 exists, etc.
+func nextArchivePath(basePath string) string {
+	ext := filepath.Ext(basePath)
+	stem := strings.TrimSuffix(basePath, ext)
+	for n := 1; ; n++ {
+		candidate := fmt.Sprintf("%s.%d%s", stem, n, ext)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+}
+
+// isArchiveFile returns true if a filename is a numbered archive (e.g. "5970082313.1.jsonl").
+func isArchiveFile(name string) bool {
+	base := strings.TrimSuffix(name, ".jsonl")
+	return strings.Contains(base, ".")
+}
+
+// Replace overwrites a session with the given messages, rotating the old file
+// to a numbered archive (e.g. 5970082313.1.jsonl) for audit/history.
 func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -190,9 +210,18 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
-	// Read metadata before truncating the file
+	// Read metadata before rotating the file
 	branchMeta, _ := s.readBranchMeta(key)
 	createdAt := s.getStoredCreatedAt(key)
+
+	// Rotate existing file to numbered archive
+	if _, err := os.Stat(path); err == nil {
+		archivePath := nextArchivePath(path)
+		if err := os.Rename(path, archivePath); err != nil {
+			return fmt.Errorf("rotate session file: %w", err)
+		}
+		log.Infof("session", "session rotated key=%s archive=%s", key, filepath.Base(archivePath))
+	}
 
 	f, err := os.Create(path)
 	if err != nil {
@@ -282,6 +311,9 @@ func (s *Store) RepairOrphans() (int, error) {
 		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
 			return nil
 		}
+		if isArchiveFile(filepath.Base(path)) {
+			return nil
+		}
 
 		// Convert file path back to session key
 		rel, err := filepath.Rel(s.dir, path)
@@ -350,6 +382,9 @@ func (s *Store) InjectRestartMarkers(maxAge time.Duration) (int, error) {
 			return nil // skip unreadable entries
 		}
 		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+		if isArchiveFile(filepath.Base(path)) {
 			return nil
 		}
 
@@ -458,6 +493,9 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 	var sessions []ChatSessionInfo
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		if isArchiveFile(e.Name()) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".jsonl")
