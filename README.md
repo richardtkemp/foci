@@ -132,4 +132,4 @@ Setup handles everything: system user creation, secrets group, Go build, systemd
 
 ## License
 
-Private. Not currently open source.
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, academic, and non-commercial use. Commercial use requires a separate license. Contact [Richard Kemp](https://github.com/richardtkemp) for details.
