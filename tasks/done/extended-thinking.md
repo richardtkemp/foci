@@ -1,7 +1,7 @@
 # Task: Extended thinking / adaptive thinking mode
 
 ## Context
-Todo #11. Clod currently sends no `thinking` config to the Anthropic API — Claude uses no extended thinking. Opus 4.6 supports adaptive thinking with interleaved thinking between tool calls, which is a major reasoning boost.
+Todo #11. Foci currently sends no `thinking` config to the Anthropic API — Claude uses no extended thinking. Opus 4.6 supports adaptive thinking with interleaved thinking between tool calls, which is a major reasoning boost.
 
 ## Requirements
 

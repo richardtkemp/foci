@@ -1,7 +1,7 @@
 # Task: Fix Multiball "Idle" Message on Restart (#85)
 
 ## Bug
-When clod restarts, multiball/pool bots (e.g. clodbot, clutchling) send "This bot is idle" messages. They should stay completely silent when idle.
+When foci restarts, multiball/pool bots (e.g. focibot, clutchling) send "This bot is idle" messages. They should stay completely silent when idle.
 
 ## Likely causes to investigate
 1. **Stale Telegram updates:** On restart, the bot processes queued getUpdates from while it was down. If someone (or something) sent a message during downtime, the idle bot responds.
@@ -12,7 +12,7 @@ When clod restarts, multiball/pool bots (e.g. clodbot, clutchling) send "This bo
 1. Check what triggers the "idle" message — search for the string in the codebase
 2. Trace the code path: bot receives update → checks if it has an active session → responds
 3. Check if multiball persist (state store) is loaded before the bots start polling
-4. Check getUpdates offset handling on startup — does clod skip stale updates?
+4. Check getUpdates offset handling on startup — does foci skip stale updates?
 
 ## Fix
 Depends on root cause. Likely one of:
@@ -21,6 +21,6 @@ Depends on root cause. Likely one of:
 - Ensure state restoration happens before polling starts
 
 ## Verification
-- Restart clod, verify no "idle" messages from multiball bots
+- Restart foci, verify no "idle" messages from multiball bots
 - Multiball bots still respond correctly when assigned to a session
 - `go build && go test ./... && go vet ./...`

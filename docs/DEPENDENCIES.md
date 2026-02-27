@@ -1,6 +1,6 @@
 # Suggested System Tools
 
-Tools that clod agents can use via the `exec` tool or that clod integrates with directly. None are strictly required — install what your agents need.
+Tools that foci agents can use via the `exec` tool or that foci integrates with directly. None are strictly required — install what your agents need.
 
 ## Core
 
@@ -19,7 +19,7 @@ Tools that clod agents can use via the `exec` tool or that clod integrates with 
 
 ## Coding Agents (Supported, Optional)
 
-Clod has first-class tmux-based orchestration for coding agents. These are supported out of the box but not required.
+Foci has first-class tmux-based orchestration for coding agents. These are supported out of the box but not required.
 
 | Tool | Purpose | Install |
 |------|---------|---------|
@@ -46,7 +46,7 @@ Voice transcription uses the Groq Whisper API — fast and free (no local instal
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **Bitwarden CLI** | Dynamic secret access with approval-gated unlocking | `npm install -g @bitwarden/cli` |
-| **aisudo** | Telegram-approved privilege escalation | Ships with clod (see setup.sh) |
+| **aisudo** | Telegram-approved privilege escalation | Ships with foci (see setup.sh) |
 
 ## Monitoring
 
@@ -59,6 +59,6 @@ Voice transcription uses the Groq Whisper API — fast and free (no local instal
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **go** | Required to build clod from source, also useful for agents running Go tools | See [go.dev](https://go.dev) |
+| **go** | Required to build foci from source, also useful for agents running Go tools | See [go.dev](https://go.dev) |
 | **git** | Version control — agents commit their own work | `apt install git` |
 | **node/npm** | Required for Claude Code and Bitwarden CLI | `apt install nodejs npm` |

@@ -5,7 +5,7 @@ Move hardcoded branch orientation strings out of Go code into markdown files in 
 
 ## Part 1: Prompt file infrastructure
 
-Create a `prompts/` directory in the clod repo with embedded markdown files:
+Create a `prompts/` directory in the foci repo with embedded markdown files:
 - `prompts/branch-orientation-headless.md` — for heartbeats, cron, spawns (directChat=false)
 - `prompts/branch-orientation-multiball.md` — for user-attached multiball branches (directChat=true)
 

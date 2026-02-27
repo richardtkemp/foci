@@ -1,4 +1,4 @@
-# Clod — Wiring Diagram
+# Foci — Wiring Diagram
 
 How the pieces connect. Read this before touching the code.
 
@@ -8,7 +8,7 @@ How the pieces connect. Read this before touching the code.
 config.Load(path)                                        ← validates values; logs to stderr + buffer
   → log.Init(cfg.Logging)                                ← opens event file, replays buffered events
   → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite
-  → secrets.Load(secretsPath)                            ← secrets.toml overrides clod.toml
+  → secrets.Load(secretsPath)                            ← secrets.toml overrides foci.toml
   → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
     → DefaultExecutor{SessionFile: cfg.SessionFile} — bitwarden user reads its own session file
     → bwStore.Refresh() → initial metadata load (allowlisted in aisudo)
@@ -309,7 +309,7 @@ Cache breakpoints are added **only to the API request payload**, never persisted
 
 ## Secrets (`secrets/`)
 
-Loaded from `secrets.toml` (same directory as `clod.toml`). Format:
+Loaded from `secrets.toml` (same directory as `foci.toml`). Format:
 
 ```toml
 [anthropic]
@@ -322,7 +322,7 @@ bot_token = "123:ABC"
 github_token = "ghp_..."
 ```
 
-Stored as flat keys: `anthropic.token`, `custom.github_token`, etc. Overrides `clod.toml` credentials at startup.
+Stored as flat keys: `anthropic.token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup.
 
 Features:
 - **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in exec (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in exec (approval-gated via aisudo).
@@ -343,7 +343,7 @@ Features:
 
 Three outputs:
 
-1. **Event log** (`clod.log` + stderr): `2026-02-21T03:52:39Z INFO  [telegram] message from rich: hello`
+1. **Event log** (`foci.log` + stderr): `2026-02-21T03:52:39Z INFO  [telegram] message from rich: hello`
    - Use: `log.Infof("component", "format", args...)`
    - Levels: DEBUG < INFO < WARN < ERROR
 
@@ -406,13 +406,13 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
    - `/mana` — check quota remaining (configurable name via `[mana_warnings] name`; `/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
-2. **Custom** (script-defined in `clod.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
+2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
 Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
 
 ## Config (`config/config.go`)
 
-Single `clod.toml` parsed with BurntSushi/toml. Defaults applied for missing fields.
+Single `foci.toml` parsed with BurntSushi/toml. Defaults applied for missing fields.
 
 **Multi-agent config:** Two formats supported:
 
@@ -547,7 +547,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 
 Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix.
 
-**Config** (`clod.toml`):
+**Config** (`foci.toml`):
 ```toml
 [[agents]]
 id = "clutch"
@@ -596,7 +596,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 ## HTTP Gateway (`main.go`)
 
-Endpoints for external integration (used by `clod` CLI). All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent (backward compat).
+Endpoints for external integration (used by `foci` CLI). All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent (backward compat).
 
 - `POST /send` — `{"agent": "clutch", "text": "...", "if_active": "8h"}` — message to agent's default session. Returns 412 if no default session exists yet. Optional `if_active` / `if_inactive` for activity gating.
 - `GET /status?agent=clutch` — dispatches `/status` for the specified agent
@@ -604,9 +604,9 @@ Endpoints for external integration (used by `clod` CLI). All endpoints accept an
 - `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true, "if_active": "12h"}` — branch from default session for cron. Returns 412 if no default session. Optional `if_active` / `if_inactive` for activity gating.
 - `GET /voice?api_key=KEY` — WebSocket upgrade for real-time voice conversation (see Voice WebSocket section). Enabled when `[voice] ws_enabled = true`.
 
-## CLI Tool (`cmd/clod/`)
+## CLI Tool (`cmd/foci/`)
 
-Separate binary (`go build ./cmd/clod`) for scripts, cron jobs, and external tools. Binary name: `clod`. Commands: `send`, `branch`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`clodgw`) at `CLOD_ADDR` (default `127.0.0.1:18791`). Both `send` and `branch` support `--if-active <duration>` (skip if inactive) and `--if-inactive <duration>` (skip if active) for activity gating.
+Separate binary (`go build ./cmd/foci`) for scripts, cron jobs, and external tools. Binary name: `foci`. Commands: `send`, `branch`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`focigw`) at `FOCI_ADDR` (default `127.0.0.1:18791`). Both `send` and `branch` support `--if-active <duration>` (skip if inactive) and `--if-inactive <duration>` (skip if active) for activity gating.
 
 ## Wake
 
@@ -659,7 +659,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 ### setup.sh
 
-`/home/rich/git/clod/setup.sh -u clod` — builds Go binaries, installs to `/usr/local/bin`, restarts service. Allowlisted in aisudo (no approval needed). Uses `--no-block` restart to avoid deadlock when run from clod's own exec.
+`/home/rich/git/foci/setup.sh -u foci` — builds Go binaries, installs to `/usr/local/bin`, restarts service. Allowlisted in aisudo (no approval needed). Uses `--no-block` restart to avoid deadlock when run from foci's own exec.
 
 ### Migrations
 
@@ -668,13 +668,13 @@ Numbered scripts in `migrations/` (e.g. `001-homedir-restructure.sh`). Run manua
 **Convention:**
 - Scripts are idempotent (safe to run twice)
 - Include `--dry-run` and `-h`/`--help`
-- Must run while clod is stopped (script handles stop/start)
+- Must run while foci is stopped (script handles stop/start)
 - Require root (`sudo`) for service control and file ownership
 
 **Planned integration:** `setup.sh` will check for and run pending migrations between building binaries and restarting the service. A state file tracks which migrations have been applied.
 
 **Current migrations:**
-- `001-homedir-restructure.sh` — Moves flat home dir into `config/`, `data/`, `logs/`, `shared/` layout. Updates clod.toml paths, systemd unit, and crontab.
+- `001-homedir-restructure.sh` — Moves flat home dir into `config/`, `data/`, `logs/`, `shared/` layout. Updates foci.toml paths, systemd unit, and crontab.
 
 ## Testing
 

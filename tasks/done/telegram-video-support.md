@@ -1,7 +1,7 @@
 # Task: Telegram video message support
 
 ## Context
-Clod currently handles photo attachments from Telegram (downloads, saves, injects path into message text). Video messages are silently ignored. Fotini needs video support for social media content from Eleni.
+Foci currently handles photo attachments from Telegram (downloads, saves, injects path into message text). Video messages are silently ignored. Fotini needs video support for social media content from Eleni.
 
 ## Current photo handling (telegram/bot.go)
 When a Telegram message contains a photo:

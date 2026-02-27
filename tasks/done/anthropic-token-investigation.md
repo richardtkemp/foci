@@ -4,7 +4,7 @@
 Thorough investigation of how Anthropic OAuth tokens work in this codebase — where they come from, where they're used, and how they're refreshed.
 
 ## Context
-- This is a Go application at `/home/rich/git/clod`
+- This is a Go application at `/home/rich/git/foci`
 - It uses Anthropic's API via OAuth (Claude Max subscription)
 - There's an OAuth auto-refresh system that was recently built but the proactive refresh never fired (TODO #125)
 - The OAuth flow uses a relay server for headless auth
@@ -35,7 +35,7 @@ Thorough investigation of how Anthropic OAuth tokens work in this codebase — w
    - Check logs for any refresh-related messages
 
 ## Deliverable
-Write findings to `/home/rich/git/clod/tasks/anthropic-token-findings.md` with:
+Write findings to `/home/rich/git/foci/tasks/anthropic-token-findings.md` with:
 - Code references (file:line) for each component
 - Data flow diagram (text-based)
 - Any bugs or issues found

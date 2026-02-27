@@ -28,6 +28,6 @@ The `resolveModel` function uses hardcoded model versions (claude-opus-4-6, clau
 ## Test
 Add a test case to TestModelCommand verifying that short names get resolved.
 
-## Do NOT rename the project or change import paths. Module is "clod".
+## Do NOT rename the project or change import paths. Module is "foci".
 
 Commit and push when done.

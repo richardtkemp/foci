@@ -6,9 +6,9 @@ Logs grow unbounded. api-payload.jsonl hit 3.1GB in 4 days. Need periodic rotati
 ## Design
 
 ### Behaviour
-Every `rotation_period` (default 24h), for each log file (api.jsonl, api-payload.jsonl, clod.log):
+Every `rotation_period` (default 24h), for each log file (api.jsonl, api-payload.jsonl, foci.log):
 1. Stream through the file line by line (do NOT load entire file into memory — these can be multi-GB)
-2. For each line, extract the timestamp (JSONL files have `ts` field; clod.log has timestamp prefix)
+2. For each line, extract the timestamp (JSONL files have `ts` field; foci.log has timestamp prefix)
 3. Lines older than `retention_period` (default 2d) → write to a gzip archive file
 4. Lines within retention → write to a temp file
 5. When complete: close the active log file handle in the logger, atomically rename temp → active, reopen
@@ -46,7 +46,7 @@ archive_dir = ""              # default: $log_dir/archive/
 - Empty log files: skip
 - Log files that don't exist: skip
 - Corrupt lines (no parseable timestamp): keep in active log (don't archive what you can't date)
-- clod.log is not JSONL — parse timestamp differently (it uses standard log format with timestamps at line start)
+- foci.log is not JSONL — parse timestamp differently (it uses standard log format with timestamps at line start)
 - Rotation in progress when new log writes arrive: the logger lock prevents interleaving
 
 ### Startup

@@ -154,7 +154,7 @@ This is correct — near the end of the window, even tiny mana is "in credit" be
 Add tag support to the existing todo tool:
 
 ```
-todo add "Run errcheck on clod codebase" --priority medium --tag background
+todo add "Run errcheck on foci codebase" --priority medium --tag background
 todo list --tag background
 todo list --tag background --status open
 ```

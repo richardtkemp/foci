@@ -6,7 +6,7 @@ When a multiball session uses the `send_telegram` tool, messages are sent via th
 **This only applies to multiball branches (`/mb`, `/multiball`), NOT other branch types (heartbeats, cron, scheduled wakes, etc.).**
 
 ## Expected Behavior
-- Multiball session sends Telegram message → uses the multiball bot token (e.g. `telegram.clutchling` or `telegram.clodbot`)
+- Multiball session sends Telegram message → uses the multiball bot token (e.g. `telegram.clutchling` or `telegram.focibot`)
 - Main session sends Telegram message → uses the main bot token (e.g. `telegram.clutch`)
 - Other branches (heartbeats, cron) → use the main bot token (current behavior is correct)
 
@@ -14,13 +14,13 @@ When a multiball session uses the `send_telegram` tool, messages are sent via th
 1. How are multiball sessions created? Check `multiball.go` or wherever `/mb` is handled
 2. How does `send_telegram` get its bot token? Is it from the agent config, session config, or hardcoded?
 3. Multiball sessions likely need to know which Telegram bot they belong to — check if there's a `bot_token` field in the session or branch config
-4. The multiball bot token should be configured somewhere — check `clod.toml` for multiball-related Telegram config
+4. The multiball bot token should be configured somewhere — check `foci.toml` for multiball-related Telegram config
 
 ## Config Context
 From secrets.toml, relevant tokens:
 - `telegram.clutch` — main bot
 - `telegram.clutchling` — per-agent multiball bot
-- `telegram.clodbot` — shared multiball pool bot
+- `telegram.focibot` — shared multiball pool bot
 
 ## Important
 - Don't change behavior for non-multiball branches

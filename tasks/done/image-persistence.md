@@ -13,7 +13,7 @@ image_save_dir = ""  # default: empty = don't auto-save
 
 [[agents]]
 id = "clutch"
-image_save_dir = "/home/clod/clutch/images"  # per-agent override
+image_save_dir = "/home/foci/clutch/images"  # per-agent override
 ```
 
 Per-agent overrides global. Empty/unset = disabled.

@@ -1,16 +1,16 @@
 # Task: Write docs/CLI.md (#79)
 
 ## What
-Document all `clod` CLI commands with usage, flags, and examples.
+Document all `foci` CLI commands with usage, flags, and examples.
 
 ## How to find what to document
-1. Read `cmd/clod/main.go` — all CLI subcommands are defined there
+1. Read `cmd/foci/main.go` — all CLI subcommands are defined there
 2. Check the usage/help strings already in the code
-3. Run `clod --help` if useful
+3. Run `foci --help` if useful
 
 ## Expected commands to document (verify against source)
-- `clod send` — send message to agent session
-- `clod branch` — fork a branch session
+- `foci send` — send message to agent session
+- `foci branch` — fork a branch session
 - Plus any other subcommands
 
 ## For each command, document

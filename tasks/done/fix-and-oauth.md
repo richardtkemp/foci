@@ -1,6 +1,6 @@
 # Task: Fix thinking support + integrate OAuth auto-refresh
 
-Two separate commits needed. Do NOT rename the project — the Go module stays as `clod`.
+Two separate commits needed. Do NOT rename the project — the Go module stays as `foci`.
 
 ## Commit 1: Fix thinking/effort support in API types
 

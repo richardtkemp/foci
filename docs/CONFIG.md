@@ -1,12 +1,12 @@
-# Clod Configuration Reference
+# Foci Configuration Reference
 
-Clod uses two TOML files: `clod.toml` (main config) and `secrets.toml` (credentials). Pass the config path with `-config`:
+Foci uses two TOML files: `foci.toml` (main config) and `secrets.toml` (credentials). Pass the config path with `-config`:
 
 ```
-clodgw -config /home/clod/clod.toml
+focigw -config /home/foci/foci.toml
 ```
 
-Secrets are loaded from `secrets.toml` in the same directory as the config file. Values in `secrets.toml` override matching fields in `clod.toml`.
+Secrets are loaded from `secrets.toml` in the same directory as the config file. Values in `secrets.toml` override matching fields in `foci.toml`.
 
 ---
 
@@ -65,14 +65,14 @@ Multi-agent example:
 [[agents]]
 id = "main"
 model = "claude-sonnet-4-5"
-workspace = "/home/clod/character"
+workspace = "/home/foci/character"
 telegram_bot = "primary"
 multiball_bots = ["mainling"]  # per-agent multiball pool
 
 [[agents]]
 id = "research"
 model = "claude-haiku-4-5"
-workspace = "/home/clod/character"
+workspace = "/home/foci/character"
 telegram_bot = "secondary"
 # no multiball_bots — uses shared pool only
 
@@ -254,12 +254,12 @@ Example:
 ```toml
 [[memory.sources]]
 name = "canonical"
-dir = "/home/clod/character/memory"
+dir = "/home/foci/character/memory"
 weight = 1.0
 
 [[memory.sources]]
 name = "docs"
-dir = "/home/clod/project/docs"
+dir = "/home/foci/project/docs"
 weight = 0.5
 ```
 
@@ -280,7 +280,7 @@ Example:
 # Global memory (shared by all agents)
 [[memory.sources]]
 name = "shared"
-dir = "/home/clod/shared/memory"
+dir = "/home/foci/shared/memory"
 weight = 1.0
 
 # Agent-specific memory
@@ -290,7 +290,7 @@ model = "claude-sonnet-4-6"
 
 [[agents.memory.sources]]
 name = "workspace"
-dir = "/home/clod/clutch/memory"
+dir = "/home/foci/clutch/memory"
 weight = 1.0    # effective weight: 2.0 (1.0 + 1.0 boost)
 
 [[agents]]
@@ -299,7 +299,7 @@ model = "claude-haiku-4-5"
 
 [[agents.memory.sources]]
 name = "workspace"
-dir = "/home/clod/scout/memory"
+dir = "/home/foci/scout/memory"
 weight = 1.0
 ```
 
@@ -321,18 +321,18 @@ Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `GET /voi
 
 All endpoints accept an `agent` field (JSON body for POST, query param for GET) to target a specific agent by ID. When empty or omitted, the first configured agent is used. The `/send` endpoint also accepts an optional `session` field to target a specific session key (defaults to `main`).
 
-### CLI (`clod` command)
+### CLI (`foci` command)
 
-The `clod` CLI wraps the HTTP API. All subcommands accept `-a <id>` / `--agent <id>` to target a specific agent. The `send` command also accepts `-s <session>` / `--session <id>` to target a specific session:
+The `foci` CLI wraps the HTTP API. All subcommands accept `-a <id>` / `--agent <id>` to target a specific agent. The `send` command also accepts `-s <session>` / `--session <id>` to target a specific session:
 
 ```
-clod send -a research "check the news"
-clod send -a clutch -s research "text"  # routes to agent:clutch:research
-clod branch -a research
-clod status --agent=research
-clod ping -a research
-clod eval -a research "df -h"
-clod command -a research /cache
+foci send -a research "check the news"
+foci send -a clutch -s research "text"  # routes to agent:clutch:research
+foci branch -a research
+foci status --agent=research
+foci ping -a research
+foci eval -a research "df -h"
+foci command -a research /cache
 ```
 
 When omitted, the first agent and main session are used (backward compatible).
@@ -346,7 +346,7 @@ Logging and diagnostics.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `level` | string | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
-| `event_file` | string | `"logs/clod.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
+| `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
 | `conversation_file` | string | `""` | Path to conversation SQLite log. Defaults to `data/conversation.db` via `data_dir`. Relative paths resolve against `$HOME`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
@@ -392,7 +392,7 @@ Bitwarden vault integration. Provides dynamic, approval-gated access to vault cr
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable Bitwarden integration. Requires `bw` CLI installed and session file configured. |
-| `session_file` | string | `"/home/bitwarden/.bw_session"` | Path to BW session token file. Read by the bitwarden user at execution time — clod never reads this file. |
+| `session_file` | string | `"/home/bitwarden/.bw_session"` | Path to BW session token file. Read by the bitwarden user at execution time — foci never reads this file. |
 | `refresh_interval` | string | `"15m"` | How often to refresh vault item metadata. Go duration format. |
 | `secret_ttl` | string | `"30m"` | How long unlocked passwords stay cached before requiring re-approval. Go duration format. |
 | `cleanup_interval` | string | `"1m"` | How often to purge expired cached values. Go duration format. |
@@ -401,7 +401,7 @@ Two-tier security model:
 - **`bw list items`** runs via `sudo -u bitwarden sh -c 'export BW_SESSION=$(cat FILE) && bw list items'` (allowlisted in aisudo, auto-approved)
 - **`bw get password <id>`** runs via the same wrapper (requires Telegram approval via aisudo)
 
-The bitwarden user reads its own session file at each invocation — clod never sees the session token. This means vault re-locks are handled gracefully (just update the session file).
+The bitwarden user reads its own session file at each invocation — foci never sees the session token. This means vault re-locks are handled gracefully (just update the session file).
 
 Example:
 ```toml
@@ -455,7 +455,7 @@ Tool behavior settings.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). |
-| `temp_dir` | string | `"/tmp/clod-tool-results"` | Directory for large tool result files. |
+| `temp_dir` | string | `"/tmp/foci-tool-results"` | Directory for large tool result files. |
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. |
@@ -546,7 +546,7 @@ Example:
 [[commands]]
 name = "deploy"
 description = "Deploy the latest build"
-script = "/home/clod/scripts/deploy.sh"
+script = "/home/foci/scripts/deploy.sh"
 timeout = 30
 ```
 
@@ -602,7 +602,7 @@ With no path fields set, files auto-organize under `$HOME`:
 
 ```
 $HOME/
-  logs/clod.log          ← event log
+  logs/foci.log          ← event log
   logs/api.jsonl         ← API call log
   logs/api-payload.jsonl ← full payload log (if enabled)
   data/conversation.db   ← conversation SQLite log
@@ -618,10 +618,10 @@ $HOME/
 ### Overriding with `data_dir`
 
 ```toml
-data_dir = "/opt/clod/data"
+data_dir = "/opt/foci/data"
 ```
 
-All data files (`*.db`, `state.json`, `sessions/`) resolve under `/opt/clod/data/`. Log files are unaffected — they use their own paths.
+All data files (`*.db`, `state.json`, `sessions/`) resolve under `/opt/foci/data/`. Log files are unaffected — they use their own paths.
 
 A relative `data_dir` resolves against `$HOME`:
 
@@ -635,12 +635,12 @@ Any field set to an absolute path overrides all resolution:
 
 ```toml
 [logging]
-event_file = "/var/log/clod/clod.log"
-api_file = "/var/log/clod/api.jsonl"
-conversation_file = "/var/data/clod/conversation.db"
+event_file = "/var/log/foci/foci.log"
+api_file = "/var/log/foci/api.jsonl"
+conversation_file = "/var/data/foci/conversation.db"
 
 [sessions]
-dir = "/var/data/clod/sessions"
+dir = "/var/data/foci/sessions"
 ```
 
 ---
@@ -650,10 +650,10 @@ dir = "/var/data/clod/sessions"
 For new installs, `setup.sh` creates this structure:
 
 ```
-/home/clod/
-  config/            — clod.toml, secrets.toml
-  data/              — *.db, sessions/, .clod-commit, state.json, WELCOME.md
-  logs/              — clod.log, api.jsonl, api-payload.jsonl
+/home/foci/
+  config/            — foci.toml, secrets.toml
+  data/              — *.db, sessions/, .foci-commit, state.json, WELCOME.md
+  logs/              — foci.log, api.jsonl, api-payload.jsonl
   shared/            — skills/, scripts/
   character/         — agent workspace (IDENTITY.md, SOUL.md, memory/, etc.)
 ```
@@ -661,20 +661,20 @@ For new installs, `setup.sh` creates this structure:
 The key config fields that wire this up:
 
 ```toml
-data_dir = "/home/clod/data"
+data_dir = "/home/foci/data"
 
 [sessions]
-dir = "/home/clod/data/sessions"
+dir = "/home/foci/data/sessions"
 
 [logging]
-event_file = "/home/clod/logs/clod.log"
-api_file = "/home/clod/logs/api.jsonl"
-conversation_file = "/home/clod/data/conversation.db"
+event_file = "/home/foci/logs/foci.log"
+api_file = "/home/foci/logs/api.jsonl"
+conversation_file = "/home/foci/data/conversation.db"
 
 [skills]
-dirs = ["/home/clod/shared/skills"]
+dirs = ["/home/foci/shared/skills"]
 
-welcome_file = "/home/clod/data/WELCOME.md"
+welcome_file = "/home/foci/data/WELCOME.md"
 ```
 
 Existing flat-layout installs continue to work unchanged. To migrate, run `scripts/migrate-homedir.sh`.
@@ -683,7 +683,7 @@ Existing flat-layout installs continue to work unchanged. To migrate, run `scrip
 
 ## `secrets.toml`
 
-Credentials file. Lives alongside `clod.toml`. Protected at the OS level by the `clod-secrets` group — see [docs/SECRETS.md](SECRETS.md) for the full security model and setup instructions.
+Credentials file. Lives alongside `foci.toml`. Protected at the OS level by the `foci-secrets` group — see [docs/SECRETS.md](SECRETS.md) for the full security model and setup instructions.
 
 ```toml
 [anthropic]
@@ -712,7 +712,7 @@ github_token = "ghp_..."
 allowed_hosts = ["api.github.com"]
 ```
 
-All secrets override their corresponding `clod.toml` values.
+All secrets override their corresponding `foci.toml` values.
 
 ### `allowed_hosts`
 
@@ -755,16 +755,16 @@ Per-agent scoping applies to: exec `{{secret:NAME}}` templates, `http_request` s
 [agent]
 id = "main"
 model = "claude-haiku-4-5"
-workspace = "/home/clod/character"
+workspace = "/home/foci/character"
 
 [telegram]
 allowed_users = ["123456789"]
 
 [sessions]
-dir = "/home/clod/sessions"
+dir = "/home/foci/sessions"
 
 [memory]
-dir = "/home/clod/character/memory"
+dir = "/home/foci/character/memory"
 
 [logging]
 level = "INFO"
@@ -787,7 +787,7 @@ bot_token = "123456:ABC..."
 [agent]
 id = "main"
 model = "claude-sonnet-4-5"
-workspace = "/home/clod/character"
+workspace = "/home/foci/character"
 system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"]
 
 [telegram]
@@ -797,11 +797,11 @@ allowed_users = ["123456789"]
 token_secret = "telegram.primary"
 
 [sessions]
-dir = "/home/clod/sessions"
+dir = "/home/foci/sessions"
 compaction_threshold = 0.8
 
 [memory]
-dir = "/home/clod/character/memory"
+dir = "/home/foci/character/memory"
 reindex_debounce = "500ms"
 
 [http]
@@ -810,11 +810,11 @@ bind = "127.0.0.1"
 
 [logging]
 level = "INFO"
-event_file = "/home/clod/clod.log"
-api_file = "/home/clod/api.jsonl"
-conversation_file = "/home/clod/conversation.db"
+event_file = "/home/foci/foci.log"
+api_file = "/home/foci/api.jsonl"
+conversation_file = "/home/foci/conversation.db"
 full_payload = true
-payload_file = "/home/clod/api-payload.jsonl"
+payload_file = "/home/foci/api-payload.jsonl"
 cache_bust_detect = true
 
 [voice]
@@ -831,11 +831,11 @@ tmux_cols = 300
 tmux_rows = 30
 
 [skills]
-dirs = ["/home/clod/skills"]
+dirs = ["/home/foci/skills"]
 
 [[commands]]
 name = "reheat"
 description = "Clear API cooldowns"
-script = "/home/clod/scripts/reheat.sh"
+script = "/home/foci/scripts/reheat.sh"
 timeout = 10
 ```
