@@ -593,3 +593,79 @@ func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
 		t.Errorf("old len = %d, want 1", len(msgs))
 	}
 }
+
+func TestReplaceBranchPreservesMeta(t *testing.T) {
+	s := NewStore(t.TempDir())
+	parentKey := "agent:test:chat:123"
+	branchKey := "agent:test:cron:wake-999"
+
+	// Build parent with 4 messages
+	s.Append(parentKey, msg("user", "parent1"))
+	s.Append(parentKey, msg("assistant", "parent2"))
+	s.Append(parentKey, msg("user", "parent3"))
+	s.Append(parentKey, msg("assistant", "parent4"))
+
+	// Create branch at point 4
+	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{NoResetHook: true})
+
+	// Add branch messages
+	s.Append(branchKey, msg("user", "branch q"))
+	s.Append(branchKey, msg("assistant", "branch a"))
+
+	// Verify branch_meta before Replace
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta before: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected branch_meta before Replace")
+	}
+	if meta.BranchPoint != 4 {
+		t.Errorf("BranchPoint before = %d, want 4", meta.BranchPoint)
+	}
+
+	// Replace (simulating compaction)
+	compacted := []anthropic.Message{
+		msg("user", "[Session compacted]"),
+		msg("assistant", "summary of parent + branch"),
+	}
+	if err := s.Replace(branchKey, compacted); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	// branch_meta should be preserved with BranchPoint=0
+	meta, err = s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta after: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("branch_meta lost after Replace")
+	}
+	if meta.ParentKey != parentKey {
+		t.Errorf("ParentKey = %q, want %q", meta.ParentKey, parentKey)
+	}
+	if meta.BranchPoint != 0 {
+		t.Errorf("BranchPoint after = %d, want 0", meta.BranchPoint)
+	}
+	if !meta.NoResetHook {
+		t.Error("NoResetHook should be preserved")
+	}
+
+	// LoadFull after compaction: parent[:0] + own = just compacted messages
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull after Replace: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("LoadFull len = %d, want 2", len(msgs))
+	}
+	if anthropic.TextOf(msgs[0].Content) != "[Session compacted]" {
+		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	}
+
+	// Parent should be unaffected
+	parentMsgs, _ := s.Load(parentKey)
+	if len(parentMsgs) != 4 {
+		t.Errorf("parent has %d messages, want 4", len(parentMsgs))
+	}
+}
