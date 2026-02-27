@@ -9,7 +9,7 @@ A minimal, maintainable agent platform in Go. One binary, no framework, no bloat
 - **Own every line.** No 5.4GB node_modules. Dependencies are standard library + a few well-chosen packages.
 - **Cache-aware from day zero.** Anthropic prompt caching drives architectural decisions.
 
-## Architecture
+## Sessions & State
 
 ### Session Keys
 
@@ -50,6 +50,37 @@ API payload assembly: system prompt + parent.messages[:branch_point] + branch.me
 - **Multiball** (`direct_chat=true`): has its own Telegram bot for direct user replies; keeps the main session informed of visible work via `send_to_session`; sends a completion summary before going idle.
 
 Default orientation text is embedded in `prompts/branch-orientation-headless.md` and `prompts/branch-orientation-multiball.md`. Config override via `branch_orientation_prompt` (per-agent or global) takes precedence. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.
+
+### Compaction
+
+**Alpha:** Threshold-based with fully configurable parameters.
+- When context exceeds N% of model's context window, trigger compaction
+- Pre-compaction: inject system message "save important context to memory now", let agent write to memory files
+- Pre-session-end: same memory prompt fires before a session goes inactive — e.g. when the user runs `/new`, or after N minutes of inactivity. The agent gets a chance to persist anything important before the session is replaced or archived.
+- Compaction: call model with configurable summary prompt, replace history with summary
+- Post-compaction: inject handoff note so agent knows compaction occurred
+- Scratchpad preserved through compaction (appended to handoff)
+- Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
+- Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
+- Session file rotation: on compaction, the pre-compaction file is renamed to a numbered archive (e.g. `5970082313.1.jsonl`, `.2.jsonl`) before writing the new compacted session. Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
+- Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone_current, auto-backgrounded exec/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
+
+**Configuration:**
+```toml
+[sessions]
+compaction_threshold = 0.8               # compact at 80% of context window
+compaction_max_tokens = 4096             # max output tokens for summary
+compaction_min_messages = 4              # min messages before compacting
+compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)
+compaction_handoff_msg = "..."           # message after compaction
+compaction_debug = false                 # send summary as Telegram file attachment (default false)
+compaction_preserve_messages = 25        # preserve last N messages through compaction (0 disables)
+session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
+```
+
+All parameters have sensible defaults. Customize only what you need. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+
+## Communication
 
 ### Anthropic API
 
@@ -175,6 +206,8 @@ The agent can acknowledge a message and deliver a full response later. For compl
 
 Implementation: The agent turn can produce multiple Telegram messages. The first is sent immediately. Subsequent messages are sent as the agent completes tool calls. This is just streaming tool results to Telegram rather than batching everything into one final response.
 
+## Agent Behaviour
+
 ### Scratchpad
 
 Working notes that survive compaction but aren't permanent memory. For when the agent is mid-investigation and building up context that would be catastrophic to lose but isn't worth saving to memory files.
@@ -222,6 +255,38 @@ memory_remind("Ask Dick about the Greece decision", "tomorrow")
 
 Reminders surface as injected context at the specified time (next session, specific date, or after a delay). Stored in SQLite, scoped per-agent via `agent_id` column. Lightweight — not a full task system, just "future me should think about this."
 
+### Effort Parameter
+
+Controls how much work Claude does per turn. Lower effort = shorter responses, fewer tool calls, less thinking. Configurable at global and per-agent level, overridable at runtime via `/effort` command.
+
+```toml
+[defaults]
+effort = "high"    # global default
+
+[[agents]]
+id = "clutch"
+effort = "high"    # per-agent override
+```
+
+### Adaptive Thinking
+
+Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history but NOT sent to Telegram (internal reasoning). Thinking tokens count toward mana — opt-in per agent.
+
+```toml
+[defaults]
+thinking = "adaptive"   # global default
+
+[[agents]]
+id = "thinker"
+thinking = "adaptive"   # per-agent override
+```
+
+Runtime toggle: `/thinking adaptive` or `/thinking off`.
+
+Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
+
+## Tools
+
 ### Tool System
 
 Tools are Go functions registered at compile time. No dynamic loading, no plugin discovery.
@@ -267,36 +332,6 @@ Three thresholds (all configurable as `%` of RAM, `mb`, or `gb`):
 - **kill** (default 30%) — log ERROR, send Telegram notification, `tmux kill-server`, clean up tool state
 
 Notifications go to agents whose `inject_agent_warnings` is false. Dedup prevents spam: same threshold only fires once until memory drops below it or tmux is killed.
-
-### Effort Parameter
-
-Controls how much work Claude does per turn. Lower effort = shorter responses, fewer tool calls, less thinking. Configurable at global and per-agent level, overridable at runtime via `/effort` command.
-
-```toml
-[defaults]
-effort = "high"    # global default
-
-[[agents]]
-id = "clutch"
-effort = "high"    # per-agent override
-```
-
-### Adaptive Thinking
-
-Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history but NOT sent to Telegram (internal reasoning). Thinking tokens count toward mana — opt-in per agent.
-
-```toml
-[defaults]
-thinking = "adaptive"   # global default
-
-[[agents]]
-id = "thinker"
-thinking = "adaptive"   # per-agent override
-```
-
-Runtime toggle: `/thinking adaptive` or `/thinking off`.
-
-Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
 
 ### Tool Result Guard
 
@@ -348,6 +383,8 @@ type Tool struct {
     Execute     func(ctx context.Context, params json.RawMessage) (string, error)
 }
 ```
+
+## Identity & Knowledge
 
 ### Workspace Bootstrap
 
@@ -482,34 +519,7 @@ reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
 
 **Maybe later:** Vector embeddings for semantic search when FTS5 misses. But not until FTS5 proves insufficient.
 
-### Compaction
-
-**Alpha:** Threshold-based with fully configurable parameters.
-- When context exceeds N% of model's context window, trigger compaction
-- Pre-compaction: inject system message "save important context to memory now", let agent write to memory files
-- Pre-session-end: same memory prompt fires before a session goes inactive — e.g. when the user runs `/new`, or after N minutes of inactivity. The agent gets a chance to persist anything important before the session is replaced or archived.
-- Compaction: call model with configurable summary prompt, replace history with summary
-- Post-compaction: inject handoff note so agent knows compaction occurred
-- Scratchpad preserved through compaction (appended to handoff)
-- Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
-- Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
-- Session file rotation: on compaction, the pre-compaction file is renamed to a numbered archive (e.g. `5970082313.1.jsonl`, `.2.jsonl`) before writing the new compacted session. Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
-- Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone_current, auto-backgrounded exec/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
-
-**Configuration:**
-```toml
-[sessions]
-compaction_threshold = 0.8               # compact at 80% of context window
-compaction_max_tokens = 4096             # max output tokens for summary
-compaction_min_messages = 4              # min messages before compacting
-compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)
-compaction_handoff_msg = "..."           # message after compaction
-compaction_debug = false                 # send summary as Telegram file attachment (default false)
-compaction_preserve_messages = 25        # preserve last N messages through compaction (0 disables)
-session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
-```
-
-All parameters have sensible defaults. Customize only what you need. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+## Scheduling & Background
 
 ### Scheduled Wakes
 
@@ -556,7 +566,7 @@ Creates a branch session that picks up the highest-priority background todo item
 
 Config: `[heartbeat]` and `[background]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
 
-### Secrets
+## Secrets
 
 Secrets never pass through agent context. The agent cannot read, echo, or exfiltrate credentials.
 
@@ -611,7 +621,7 @@ github_token = "ghp_fotini_account"
 ```
 Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (exec templates, http_request, redaction, system prompt secret names).
 
-### What the agent knows
+### What the agent knows about secrets
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
   - Available secret names are injected into the system prompt at startup so the agent can discover what's available
   - Per-agent overrides add or replace names visible to that agent
@@ -905,56 +915,6 @@ spare1 = { token_secret = "telegram.spare1" }
 
 Both formats supported. `[agent]` (singular) is auto-promoted to a single-element `[[agents]]` array. Bot tokens resolved from `secrets.toml` via `token_secret` reference.
 
-## Implementation Status
-
-### ✅ Alpha — Complete
-
-- Anthropic API client with prompt caching (auto strategy, deterministic tool ordering)
-- Session store (JSONL-backed)
-- Session branching with cache sharing (confirmed: branches read cached prefix, zero cold starts)
-- Multiball — `/multiball` forks to secondary Telegram bot, tested and working
-- Wake/cron sessions — `POST /wake` creates branch sessions for cron jobs
-- Telegram bot (text messages, DM only)
-- Tools: exec, read, write, edit, web_fetch, web_search, http_request, memory_search, memory_remind, scratchpad (read/write/clear), send_telegram, send_to_session, tmux (watch/unwatch), spawn (none/character_only/clone_current), schedule_wake, tts, todo
-- Workspace bootstrap (markdown files → system prompt, configurable file order)
-- Skills framework (YAML frontmatter, command dispatch, script execution)
-- Compaction (threshold-based, configurable parameters, optional Telegram notification)
-- FTS5 memory search (memory files + conversation history, weighted)
-- Adaptive thinking (extended thinking for Opus 4.6, configurable per-agent, thinking blocks preserved in session but not sent to Telegram)
-- TOML config (single file + secrets.toml)
-- Voice outbound (Edge TTS or OpenAI, configurable speech rate via `tts_rate`)
-- Voice inbound (STT via Groq Whisper)
-- Deferred replies (multiple Telegram messages per turn)
-- Cache bust alerts (Telegram notification on large cache writes)
-- Regular secret templates blocked in exec — `{{secret:NAME}}` returns error, must use http_request. Bitwarden `{{secret:bw.*}}` still allowed (approval-gated)
-- Secret redaction on all tool output — exec output, tool errors, and all tool results scanned for known secret patterns
-- Telegram markdown rendering (HTML parse mode for rich formatting without escaping complexity)
-- Tool result size guard (large results saved to temp file)
-- Slash commands: /status, /cache, /ping, /last, /mana, /effort, /reload, /tools, /config, /model, /reset, /multiball, /sessions
-- Cron system (system crontab, prompts loaded from disk)
-- Setup script (idempotent, builds from source, installs as systemd service)
-- Repair interrupted tool calls on session load
-- Restart markers — on startup, appends `[System restarted]` to recently active sessions (within 1 hour)
-- Gap calculation seeded from session history on restart (correct `gap=` on first post-restart message)
-- Environment block — system-generated runtime context injected as first system prompt block (`[environment]` config)
-- BotFather slash command registration on startup (Telegram `setMyCommands`)
-- Todo tool — native todo management with SQLite persistence, per-agent scoping, priority ordering
-- Per-agent scratchpad and reminders — `agent_id` column in shared databases, schema migration
-- Async exec/tmux result routing — per-notification session key (results route to correct session, not hardcoded main)
-- max_tokens warning — log WARN + Telegram notification when stop_reason=max_tokens
-- Rate limit handling — API 429/529 errors detected as `*APIError`, friendly Telegram notification sent via `RateLimitFunc` callback (with estimated retry time from `Retry-After` header), clean error returned instead of raw API error
-- Tool call errors logged as WARNING in event log
-- Tool call visibility gating — `show_tool_calls` config (global + per-agent) controls whether tool call messages appear in Telegram. Default true (current behavior). Set false for user-facing agents where tool visibility is confusing
-- Log privacy — `messages_in_log` config (global `[logging]` + per-agent) controls whether user message content appears in the event log. Default false (privacy-first). When false, messages log at DEBUG with no content; when true, messages log at INFO with content truncated to 100 chars
-- Video and document support — received videos, video notes, and non-image documents are saved to `image_save_dir` with injected path markers. 20MB size limit with graceful fallback for oversized files.
-
-### 🔶 Phase 2 — Next
-
-- **Streaming** — SSE streaming for API responses. Better UX, eliminates timeout risk on long thinking turns. Low priority.
-
-### 🔷 Enhancement — Later
-
-- Provider abstraction — pluggable backends for LLM (OpenAI, Gemini, local models via Ollama), STT (Groq Whisper, local Whisper, Google STT), TTS (Edge TTS, OpenAI TTS, Piper local, Google TTS). Currently hardcoded to Anthropic/Groq/Edge — abstract behind interfaces when a second provider is actually needed, not before.
 
 ## Testing Priority
 
