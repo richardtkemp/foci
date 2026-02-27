@@ -635,6 +635,7 @@ func TestGenerateCrontabFallback(t *testing.T) {
 	w := &agentWizard{
 		deps: AgentNewDeps{
 			DefaultsDir: filepath.Join(t.TempDir(), "nonexistent"),
+			HomeDir:     "/home/foci",
 			ListFn:      func() []AgentInfo { return nil },
 		},
 		id:      "greek-tutor",
@@ -656,8 +657,11 @@ func TestGenerateCrontabFallback(t *testing.T) {
 	if !strings.Contains(joined, "/home/foci/greek-tutor/prompts/HEARTBEAT.md") {
 		t.Errorf("missing workspace-relative heartbeat path:\n%s", joined)
 	}
-	if !strings.Contains(joined, "cron.log") {
-		t.Errorf("missing log redirect:\n%s", joined)
+	if !strings.Contains(joined, "/home/foci/logs/cron.log") {
+		t.Errorf("missing homedir-relative log path:\n%s", joined)
+	}
+	if strings.Contains(joined, "HOMEDIR") {
+		t.Errorf("HOMEDIR placeholder not replaced:\n%s", joined)
 	}
 }
 
@@ -668,14 +672,15 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 
 	// Write a template file
 	template := `# AGENT_NAME cron
-0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> /home/foci/logs/cron.log
-*/30 * * * * foci send -a AGENT_NAME "[heartbeat]" 2>&1 >> /home/foci/logs/cron.log
+0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> HOMEDIR/logs/cron.log
+*/30 * * * * foci send -a AGENT_NAME "[heartbeat]" 2>&1 >> HOMEDIR/logs/cron.log
 `
 	os.WriteFile(filepath.Join(templateDir, "crontab.template"), []byte(template), 0644)
 
 	w := &agentWizard{
 		deps: AgentNewDeps{
 			DefaultsDir: templateDir,
+			HomeDir:     "/home/foci",
 			ListFn:      func() []AgentInfo { return nil },
 		},
 		id:      "helen",
@@ -691,6 +696,9 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 	if strings.Contains(joined, "WORKSPACE") {
 		t.Errorf("WORKSPACE not replaced:\n%s", joined)
 	}
+	if strings.Contains(joined, "HOMEDIR") {
+		t.Errorf("HOMEDIR not replaced:\n%s", joined)
+	}
 	if !strings.Contains(joined, "foci branch --oneshot -a helen") {
 		t.Errorf("missing agent name substitution:\n%s", joined)
 	}
@@ -704,6 +712,7 @@ func TestGenerateCrontabStagger(t *testing.T) {
 	w := &agentWizard{
 		deps: AgentNewDeps{
 			DefaultsDir: filepath.Join(t.TempDir(), "nonexistent"),
+			HomeDir:     "/home/foci",
 			ListFn: func() []AgentInfo {
 				return []AgentInfo{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 			},
