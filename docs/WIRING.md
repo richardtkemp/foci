@@ -638,7 +638,6 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 **Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this on the next turn and can gracefully conclude rather than hitting the context limit unexpectedly.
 
-**Proactive parent compaction:** When a `no_compact` branch session hits the threshold, the agent also checks whether the parent session exceeds the compaction threshold. If so, the parent is compacted proactively. This prevents parent sessions from growing unbounded between user interactions — heartbeat branches inherit the full parent context via `LoadFull()`, so a bloated parent inflates every branch's token cost.
 
 **Branch compaction:** When `Replace()` is called on a branch session (e.g., during compaction), it preserves the `branch_meta` header with `branch_point=0`. The compacted messages are self-contained (the summary includes parent context), so subsequent `LoadFull()` loads `parent[:0] + compacted_msgs` = just the compacted messages.
 
