@@ -408,13 +408,14 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 func TestCreateWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Set up defaults directory with character files and heartbeat
+	// Set up defaults directory with character files, heartbeat, and crontab template
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
 	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("- **Name:** <!-- your name -->\n- **Emoji:** <!-- your symbol -->\n"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft content"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "prompts", "HEARTBEAT.md"), []byte("heartbeat"), 0644)
+	os.WriteFile(filepath.Join(defaultsDir, "crontab.template"), []byte("*/30 * * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log\n"), 0644)
 
 	// Create a config file to append to
 	configPath := filepath.Join(tmpDir, "foci.toml")
@@ -630,8 +631,8 @@ func TestGenerateConfigEntry(t *testing.T) {
 	}
 }
 
-func TestGenerateCrontabFallback(t *testing.T) {
-	// No template file — uses built-in fallback
+func TestGenerateCrontabMissingTemplate(t *testing.T) {
+	// No template file — should return error
 	w := &agentWizard{
 		deps: AgentNewDeps{
 			DefaultsDir: filepath.Join(t.TempDir(), "nonexistent"),
@@ -641,27 +642,12 @@ func TestGenerateCrontabFallback(t *testing.T) {
 		id:      "greek-tutor",
 		display: "Greek Tutor",
 	}
-	lines := generateCrontab(w, "/home/foci/greek-tutor")
-
-	// Should contain foci send/branch commands, not curl
-	joined := strings.Join(lines, "\n")
-	if strings.Contains(joined, "curl") {
-		t.Errorf("should not use curl, got:\n%s", joined)
+	_, err := generateCrontab(w, "/home/foci/greek-tutor")
+	if err == nil {
+		t.Fatal("expected error when template file is missing")
 	}
-	if !strings.Contains(joined, "foci send -a greek-tutor") {
-		t.Errorf("missing foci send command:\n%s", joined)
-	}
-	if !strings.Contains(joined, "foci branch --oneshot -a greek-tutor") {
-		t.Errorf("missing foci branch command:\n%s", joined)
-	}
-	if !strings.Contains(joined, "/home/foci/greek-tutor/prompts/HEARTBEAT.md") {
-		t.Errorf("missing workspace-relative heartbeat path:\n%s", joined)
-	}
-	if !strings.Contains(joined, "/home/foci/logs/cron.log") {
-		t.Errorf("missing homedir-relative log path:\n%s", joined)
-	}
-	if strings.Contains(joined, "HOMEDIR") {
-		t.Errorf("HOMEDIR placeholder not replaced:\n%s", joined)
+	if !strings.Contains(err.Error(), "crontab template") {
+		t.Errorf("error should mention crontab template, got: %v", err)
 	}
 }
 
@@ -670,8 +656,9 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 	templateDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(templateDir, 0755)
 
-	// Write a template file
+	// Write a template file with comments and crontab lines
 	template := `# AGENT_NAME cron
+# This is a comment that should be stripped
 0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> HOMEDIR/logs/cron.log
 */30 * * * * foci send -a AGENT_NAME "[heartbeat]" 2>&1 >> HOMEDIR/logs/cron.log
 `
@@ -686,8 +673,16 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 		id:      "helen",
 		display: "Helen",
 	}
-	lines := generateCrontab(w, "/home/foci/helen")
+	lines, err := generateCrontab(w, "/home/foci/helen")
+	if err != nil {
+		t.Fatalf("generateCrontab: %v", err)
+	}
 	joined := strings.Join(lines, "\n")
+
+	// Comment lines should be stripped
+	if strings.Contains(joined, "# ") {
+		t.Errorf("comment lines should be stripped:\n%s", joined)
+	}
 
 	// Placeholders should be replaced
 	if strings.Contains(joined, "AGENT_NAME") {
@@ -705,13 +700,27 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 	if !strings.Contains(joined, "/home/foci/helen/prompts/review.md") {
 		t.Errorf("missing workspace substitution:\n%s", joined)
 	}
+
+	// Should have exactly 2 lines (the two crontab entries, no comments)
+	if len(lines) != 2 {
+		t.Errorf("expected 2 lines (no comments), got %d:\n%s", len(lines), joined)
+	}
 }
 
 func TestGenerateCrontabStagger(t *testing.T) {
+	// Set up a template file with stagger-testable entries
+	tmpDir := t.TempDir()
+	os.MkdirAll(tmpDir, 0755)
+	template := `# Comment line
+*/30 * * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log
+0 4 * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/daily-memory-review.md 2>&1 >> HOMEDIR/logs/cron.log
+`
+	os.WriteFile(filepath.Join(tmpDir, "crontab.template"), []byte(template), 0644)
+
 	// 3 existing agents → offset 9 minutes
 	w := &agentWizard{
 		deps: AgentNewDeps{
-			DefaultsDir: filepath.Join(t.TempDir(), "nonexistent"),
+			DefaultsDir: tmpDir,
 			HomeDir:     "/home/foci",
 			ListFn: func() []AgentInfo {
 				return []AgentInfo{{ID: "a"}, {ID: "b"}, {ID: "c"}}
@@ -720,7 +729,10 @@ func TestGenerateCrontabStagger(t *testing.T) {
 		id:      "fourth",
 		display: "Fourth",
 	}
-	lines := generateCrontab(w, "/home/foci/fourth")
+	lines, err := generateCrontab(w, "/home/foci/fourth")
+	if err != nil {
+		t.Fatalf("generateCrontab: %v", err)
+	}
 
 	// The "0 4 * * *" daily entry should become "9 4 * * *"
 	found := false
@@ -737,9 +749,9 @@ func TestGenerateCrontabStagger(t *testing.T) {
 		t.Errorf("daily-memory-review entry not found in:\n%s", strings.Join(lines, "\n"))
 	}
 
-	// Interval entries (*/30, */45) should NOT be modified
+	// Interval entries (*/30) should NOT be modified
 	for _, line := range lines {
-		if strings.Contains(line, "memory-formation") && !strings.HasPrefix(line, "#") {
+		if strings.Contains(line, "memory-formation") {
 			if !strings.HasPrefix(line, "*/30 ") {
 				t.Errorf("interval entry should not be staggered: %s", line)
 			}
