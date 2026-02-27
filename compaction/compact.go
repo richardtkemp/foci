@@ -7,6 +7,7 @@ import (
 	"clod/anthropic"
 	"clod/log"
 	"clod/memory"
+	"clod/prompts"
 	"clod/session"
 )
 
@@ -115,14 +116,15 @@ func (c *Compactor) ShouldCompact(messages []anthropic.Message, lastUsage *anthr
 }
 
 // DefaultHandoffMessage is the default message injected after compaction.
-const DefaultHandoffMessage = "[Compaction complete. The conversation continues from here. You have full access to your tools and memory.]"
+// Loaded from prompts/compaction-handoff.md at build time.
+var DefaultHandoffMessage = prompts.CompactionHandoff()
 
 // Compact summarizes a session's history and replaces it.
 // summaryPrompt is read from a file at call time; if empty, compaction uses a
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
 func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) (string, error) {
 	if summaryPrompt == "" {
-		summaryPrompt = "Provide a concise summary of the conversation so far, capturing key decisions and context. This summary will replace the conversation history."
+		summaryPrompt = prompts.CompactionSummary()
 	}
 	if handoffMessage == "" {
 		handoffMessage = DefaultHandoffMessage
