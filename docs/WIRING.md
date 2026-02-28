@@ -218,7 +218,7 @@ Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCall
 
 ## Thought Queue (Reminders)
 
-The agent can defer thoughts for later via the `memory_remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due.
+The agent can defer thoughts for later via the `remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due. With `wake=true`, the session is actively woken at the specified time.
 
 **Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 
@@ -244,7 +244,7 @@ Working state that survives compaction but isn't permanent memory. The agent wri
 
 **Storage:** `Scratchpad` in `memory/scratchpad.go`. SQLite table `scratchpad` with columns: `agent_id`, `key` (composite primary key), `content`, `updated`. Stored in `scratchpad.db`. Scoped per-agent — each agent sees only its own entries.
 
-**Tools:** `scratchpad_write(key, content)`, `scratchpad_read(key)`, `scratchpad_clear(key)`. Agent ID injected at tool creation time.
+**Tool:** `scratchpad(action, key, content)` — single tool with action parameter (write/read/clear/list). Agent ID injected at tool creation time.
 
 **Compaction survival:** When compaction fires (`compaction/compact.go`), all scratchpad entries are serialized and appended to the post-compaction handoff message as a `[scratchpad]` block. This prevents compaction from eating working state mid-investigation.
 
@@ -380,22 +380,18 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 |------|------|-------------|
 | `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, output redaction. Regular `{{secret:}}` templates are blocked (returns error — use http_request). Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated via aisudo). |
 | `http_request` | http.go | Domain-locked HTTP requests. Secrets in headers/body validated against per-section `allowed_hosts` before sending. Cross-domain redirects blocked when secrets present. Response redacted. Binary responses (image/*, audio/*, etc.) auto-saved to temp file. `save_to` saves any response to a specific path. `save_from_json_path` extracts a value from JSON response and decodes data: URIs (base64 images from generation APIs). |
-| `tmux` | tmux.go | Manage tmux sessions — start (auto-watches by default), send keys, read pane output, list, kill, watch for inactivity, unwatch. Owned sessions persist across app restarts via state store. |
+| `tmux` | tmux.go | Manage tmux sessions — start (auto-watches by default), send keys, read pane output, list, kill, watch for inactivity, unwatch. Owned sessions persist across app restarts via state store. Autopilot mode (default on): auto-unwatches after inactivity notification, auto-watches on send. |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
 | `edit` | files.go | Find-and-replace (old_string must be unique). Syntax validation for .json, .toml, .go, .yaml/.yml, .xml, .py, .sh/.bash: rejects edits that would break a valid file, warns if file was already invalid. |
 | `web_fetch` | web.go | HTTP GET, strip HTML tags |
 | `web_search` | web.go | Brave Search API |
 | `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency) |
-| `memory_remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due |
-| `scratchpad_write` | scratchpad.go | Write working notes (key + content); survives compaction |
-| `scratchpad_read` | scratchpad.go | Read a scratchpad entry by key |
-| `scratchpad_clear` | scratchpad.go | Clear a scratchpad entry when done with it |
+| `remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
+| `scratchpad` | scratchpad.go | Working notes that survive compaction (write/read/clear/list via `action` parameter) |
 | `spawn` | spawn.go | Unified sub-call: three context modes. `none`: one-shot, no system prompt. `character_only`: one-shot with character files. `clone_current` (default): branch session with full tool access — a headless self-fork. clone_current creates branch `agent:ID:spawn:spawn-TIMESTAMP`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive clone_current blocked via context key. Concurrent clone_current limited by `max_concurrent_spawns` (default 3). Notifier wired from the same `AsyncNotifier` instance used by exec/http_request. |
-| `send_telegram` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). Routes to the chat extracted from the session key (`agent:X:chat:CHATID`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
+| `send_telegram` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`agent:X:chat:CHATID`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
 | `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. multiball branches talking to main). |
-| `schedule_wake` | schedule.go | Schedule message injection at specified time or delay. One-shot, auto-cleaned after firing. |
-| `tts` | voice.go | Convert text to speech via TTS provider (Edge TTS or OpenAI). Sends audio as Telegram voice note. Configurable rate/speed via `tts_rate`. |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
@@ -539,7 +535,7 @@ API key from `secrets.toml` under `[groq] api_key`. Endpoint and model configura
 **Outbound (TTS):**
 Two paths:
 1. **Voice mode** — session-level flag toggled via `/voice`. When on, all agent text replies are converted to voice notes via `voice.TTS.Synthesize()` before sending.
-2. **TTS tool** — the agent can explicitly call `tts(text)` to send a voice note. Works regardless of voice mode.
+2. **TTS via send_telegram** — the agent can call `send_telegram(text="...", send_as="voice")` to synthesize speech and send a voice note. Works regardless of voice mode.
 
 ```
 voice.TTS.Synthesize(text) → Edge TTS CLI or OpenRouter TTS API
@@ -658,7 +654,7 @@ Separate binary (`go build ./cmd/foci`) for scripts, cron jobs, and external too
 ## Wake
 
 - **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both. Returns 412 if no default session.
-- **Scheduled Wakes** (`schedule_wake` tool): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
+- **Scheduled Wakes** (`remind` tool with `wake=true`): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
 
 ## Session Reset Hook
 

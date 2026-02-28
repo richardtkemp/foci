@@ -1269,8 +1269,22 @@ func setupAgent(p setupParams) *agentInstance {
 		maxUploadSize = acfg.MaxUploadFileSize
 	}
 
+	// Per-agent tmux autopilot (nil = use global)
+	tmuxAutopilot := p.cfg.Tools.TmuxAutopilot
+	if acfg.TmuxAutopilot != nil {
+		tmuxAutopilot = *acfg.TmuxAutopilot
+	}
+	tmuxWatchThreshold := p.cfg.Tools.TmuxWatchThreshold
+	if acfg.TmuxWatchThreshold != "" {
+		tmuxWatchThreshold = acfg.TmuxWatchThreshold
+	}
+	tmuxWatchThresholdSec := 30
+	if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
+		tmuxWatchThresholdSec = int(d.Seconds())
+	}
+
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
-	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
+	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())
 	registry.Register(tools.NewWriteTool())
@@ -1285,14 +1299,8 @@ func setupAgent(p setupParams) *agentInstance {
 	if p.memIdx != nil {
 		registry.Register(tools.NewMemorySearchTool(p.memIdx))
 	}
-	if p.reminderStore != nil {
-		registry.Register(tools.NewMemoryRemindTool(p.reminderStore, acfg.ID))
-	}
 	if p.scratchpadStore != nil {
-		registry.Register(tools.NewScratchpadWriteTool(p.scratchpadStore, acfg.ID))
-		registry.Register(tools.NewScratchpadReadTool(p.scratchpadStore, acfg.ID))
-		registry.Register(tools.NewScratchpadClearTool(p.scratchpadStore, acfg.ID))
-		registry.Register(tools.NewScratchpadListTool(p.scratchpadStore, acfg.ID))
+		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))
 	}
 	if p.todoStore != nil {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
@@ -1355,7 +1363,7 @@ func setupAgent(p setupParams) *agentInstance {
 			return nil
 		}
 		return bot
-	}))
+	}, p.ttsProvider))
 
 	// send_to_session tool — inject messages into other sessions.
 	// sessionNotifyFn handles reply_to="session": routes the target agent's
@@ -1505,11 +1513,6 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
 
-	// TTS tool -- voice reply func is injected into tool context by the agent loop
-	if p.ttsProvider != nil {
-		registry.Register(tools.NewTTSTool(p.ttsProvider))
-	}
-
 	// Per-agent scheduled wakes
 	var wakesMu sync.Mutex
 	wakes := make(map[string]context.CancelFunc)
@@ -1518,17 +1521,17 @@ func setupAgent(p setupParams) *agentInstance {
 		go func() {
 			select {
 			case <-time.After(delay):
-				log.Infof("schedule_wake", "firing wake after %v for agent %s: %q", delay, acfg.ID, message)
+				log.Infof("remind", "firing wake after %v for agent %s: %q", delay, acfg.ID, message)
 				sk := defaultSessionKey()
 				if sk == "" {
-					log.Warnf("schedule_wake", "no default session for agent %s, skipping", acfg.ID)
+					log.Warnf("remind", "no default session for agent %s, skipping", acfg.ID)
 					return
 				}
 				resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "scheduled_wake"), sk, "[SCHEDULED WAKE]\n"+message)
 				if err != nil {
-					log.Errorf("schedule_wake", "error: %v", err)
+					log.Errorf("remind", "error: %v", err)
 				} else {
-					log.Debugf("schedule_wake", "response: %s", resp)
+					log.Debugf("remind", "response: %s", resp)
 				}
 				wakesMu.Lock()
 				delete(wakes, message)
@@ -1544,7 +1547,9 @@ func setupAgent(p setupParams) *agentInstance {
 		wakesMu.Unlock()
 		return nil
 	}
-	registry.Register(tools.NewScheduleWakeTool(wakeScheduleFn))
+	if p.reminderStore != nil {
+		registry.Register(tools.NewRemindTool(p.reminderStore, acfg.ID, wakeScheduleFn))
+	}
 
 	// Per-agent slash commands
 	lastMsgStore := command.NewLastMessageStore()

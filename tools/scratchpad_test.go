@@ -10,7 +10,7 @@ import (
 	"foci/memory"
 )
 
-func testScratchpadTools(t *testing.T) (*Tool, *Tool, *Tool) {
+func testScratchpadTool(t *testing.T) *Tool {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, err := memory.NewScratchpad(dbPath)
@@ -18,27 +18,16 @@ func testScratchpadTools(t *testing.T) (*Tool, *Tool, *Tool) {
 		t.Fatalf("NewScratchpad: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return NewScratchpadWriteTool(s, "test"), NewScratchpadReadTool(s, "test"), NewScratchpadClearTool(s, "test")
-}
-
-func testScratchpadToolsWithList(t *testing.T) (*Tool, *Tool, *Tool, *Tool) {
-	t.Helper()
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	s, err := memory.NewScratchpad(dbPath)
-	if err != nil {
-		t.Fatalf("NewScratchpad: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	return NewScratchpadWriteTool(s, "test"), NewScratchpadReadTool(s, "test"), NewScratchpadClearTool(s, "test"), NewScratchpadListTool(s, "test")
+	return NewScratchpadTool(s, "test")
 }
 
 func TestScratchpadToolWriteRead(t *testing.T) {
-	writeTool, readTool, _ := testScratchpadTools(t)
+	tool := testScratchpadTool(t)
 	ctx := context.Background()
 
 	// Write
-	params, _ := json.Marshal(map[string]string{"key": "notes", "content": "working on auth"})
-	result, err := writeTool.Execute(ctx, params)
+	params, _ := json.Marshal(map[string]string{"action": "write", "key": "notes", "content": "working on auth"})
+	result, err := tool.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -47,8 +36,8 @@ func TestScratchpadToolWriteRead(t *testing.T) {
 	}
 
 	// Read
-	params, _ = json.Marshal(map[string]string{"key": "notes"})
-	result, err = readTool.Execute(ctx, params)
+	params, _ = json.Marshal(map[string]string{"action": "read", "key": "notes"})
+	result, err = tool.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -58,10 +47,10 @@ func TestScratchpadToolWriteRead(t *testing.T) {
 }
 
 func TestScratchpadToolReadEmpty(t *testing.T) {
-	_, readTool, _ := testScratchpadTools(t)
-	params, _ := json.Marshal(map[string]string{"key": "missing"})
+	tool := testScratchpadTool(t)
+	params, _ := json.Marshal(map[string]string{"action": "read", "key": "missing"})
 
-	result, err := readTool.Execute(context.Background(), params)
+	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -71,15 +60,15 @@ func TestScratchpadToolReadEmpty(t *testing.T) {
 }
 
 func TestScratchpadToolClear(t *testing.T) {
-	writeTool, readTool, clearTool := testScratchpadTools(t)
+	tool := testScratchpadTool(t)
 	ctx := context.Background()
 
 	// Write then clear
-	params, _ := json.Marshal(map[string]string{"key": "temp", "content": "temporary"})
-	writeTool.Execute(ctx, params)
+	params, _ := json.Marshal(map[string]string{"action": "write", "key": "temp", "content": "temporary"})
+	tool.Execute(ctx, params)
 
-	params, _ = json.Marshal(map[string]string{"key": "temp"})
-	result, err := clearTool.Execute(ctx, params)
+	params, _ = json.Marshal(map[string]string{"action": "clear", "key": "temp"})
+	result, err := tool.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
@@ -88,27 +77,28 @@ func TestScratchpadToolClear(t *testing.T) {
 	}
 
 	// Verify cleared
-	result, _ = readTool.Execute(ctx, params)
+	params, _ = json.Marshal(map[string]string{"action": "read", "key": "temp"})
+	result, _ = tool.Execute(ctx, params)
 	if !strings.Contains(result, "empty") {
 		t.Errorf("after clear, read = %q", result)
 	}
 }
 
 func TestScratchpadToolWriteMissingKey(t *testing.T) {
-	writeTool, _, _ := testScratchpadTools(t)
-	params, _ := json.Marshal(map[string]string{"key": "", "content": "data"})
+	tool := testScratchpadTool(t)
+	params, _ := json.Marshal(map[string]string{"action": "write", "key": "", "content": "data"})
 
-	_, err := writeTool.Execute(context.Background(), params)
+	_, err := tool.Execute(context.Background(), params)
 	if err == nil {
 		t.Fatal("expected error for empty key")
 	}
 }
 
 func TestScratchpadToolListEmpty(t *testing.T) {
-	_, _, _, listTool := testScratchpadToolsWithList(t)
-	params := json.RawMessage("{}")
+	tool := testScratchpadTool(t)
+	params, _ := json.Marshal(map[string]string{"action": "list"})
 
-	result, err := listTool.Execute(context.Background(), params)
+	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -118,15 +108,15 @@ func TestScratchpadToolListEmpty(t *testing.T) {
 }
 
 func TestScratchpadToolListWithEntries(t *testing.T) {
-	writeTool, _, _, listTool := testScratchpadToolsWithList(t)
+	tool := testScratchpadTool(t)
 	ctx := context.Background()
 
 	// Write some entries
-	writeTool.Execute(ctx, json.RawMessage(`{"key": "notes", "content": "some data here"}`))
-	writeTool.Execute(ctx, json.RawMessage(`{"key": "context", "content": "more content for testing"}`))
+	tool.Execute(ctx, json.RawMessage(`{"action": "write", "key": "notes", "content": "some data here"}`))
+	tool.Execute(ctx, json.RawMessage(`{"action": "write", "key": "context", "content": "more content for testing"}`))
 
-	params := json.RawMessage("{}")
-	result, err := listTool.Execute(ctx, params)
+	params, _ := json.Marshal(map[string]string{"action": "list"})
+	result, err := tool.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -138,5 +128,18 @@ func TestScratchpadToolListWithEntries(t *testing.T) {
 	}
 	if !strings.Contains(result, "Scratchpad entries:") {
 		t.Errorf("missing header in result: %q", result)
+	}
+}
+
+func TestScratchpadToolUnknownAction(t *testing.T) {
+	tool := testScratchpadTool(t)
+	params, _ := json.Marshal(map[string]string{"action": "delete"})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for unknown action")
+	}
+	if !strings.Contains(err.Error(), "unknown action") {
+		t.Errorf("error = %q", err.Error())
 	}
 }

@@ -233,7 +233,7 @@ Memory system (FTS5 search over markdown files + conversation history).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `""` | Legacy: single directory containing memory markdown files. Enables `memory_search`, `memory_remind`, and scratchpad tools. |
+| `dir` | string | `""` | Legacy: single directory containing memory markdown files. Enables `memory_search`, `remind`, and `scratchpad` tools. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format (`500ms`, `2s`). |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
@@ -472,6 +472,8 @@ Tool behavior settings.
 | `tmux_memory_warn` | string | `"10%"` | Warn threshold. Sends Telegram notification. Formats: `"N%"` (% of RAM), `"Nmb"`, `"Ngb"`. |
 | `tmux_memory_critical` | string | `"20%"` | Critical threshold. Sends Telegram notification with stronger message. Same formats. |
 | `tmux_memory_kill` | string | `"30%"` | Kill threshold. Kills tmux server, notifies, cleans up tool state. Same formats. |
+| `tmux_autopilot` | bool | `true` | Auto-unwatch sessions after inactivity notification, auto-watch on send. |
+| `tmux_watch_threshold` | string | `"30s"` | Default inactivity watch threshold. Go duration format. |
 
 Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
 
