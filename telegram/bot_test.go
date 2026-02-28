@@ -830,7 +830,7 @@ func TestExtForMediaType(t *testing.T) {
 func TestSaveImage(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 
 	data := []byte("fake-jpeg-data")
 	path, err := b.saveImage(data, "image/jpeg", 12345)
@@ -859,22 +859,22 @@ func TestSaveImage(t *testing.T) {
 
 func TestSaveImageDisabled(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	// imageSaveDir not set — verify saveImage is only called when dir is set
-	if b.imageSaveDir != "" {
-		t.Error("expected empty imageSaveDir by default")
+	// receivedFilesDir not set — verify saveImage is only called when dir is set
+	if b.receivedFilesDir != "" {
+		t.Error("expected empty receivedFilesDir by default")
 	}
 
 	// Directly construct an attachment to verify no savedPath
 	att := imageAttachment{data: []byte("test"), mediaType: "image/jpeg"}
 	if att.savedPath != "" {
-		t.Error("expected empty savedPath when imageSaveDir is not set")
+		t.Error("expected empty savedPath when receivedFilesDir is not set")
 	}
 }
 
 func TestSaveImagePNG(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 
 	data := []byte("fake-png-data")
 	path, err := b.saveImage(data, "image/png", 99999)
@@ -899,7 +899,7 @@ func TestSaveImageCreatesDir(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "subdir", "images")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 
 	path, err := b.saveImage([]byte("data"), "image/jpeg", 1)
 	if err != nil {
@@ -1967,7 +1967,7 @@ func makeMsgWithNonImageDocument(userID int64, username, filename, mime string, 
 func TestReceiveMessage_VideoQueuedWithSavedPath(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Small video (under 20MB)
@@ -1987,7 +1987,7 @@ func TestReceiveMessage_VideoQueuedWithSavedPath(t *testing.T) {
 
 func TestReceiveMessage_VideoTooLarge(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = t.TempDir()
+	b.receivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
 
 	// Large video (over 20MB)
@@ -2006,7 +2006,7 @@ func TestReceiveMessage_VideoTooLarge(t *testing.T) {
 func TestReceiveMessage_VideoWithoutCaption(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Video with no caption - when download fails, message is dropped (no text, no images)
@@ -2022,7 +2022,7 @@ func TestReceiveMessage_VideoWithoutCaption(t *testing.T) {
 func TestReceiveMessage_VideoNoteQueuedWithSavedPath(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Video note with text caption
@@ -2042,7 +2042,7 @@ func TestReceiveMessage_VideoNoteQueuedWithSavedPath(t *testing.T) {
 
 func TestReceiveMessage_VideoNoteTooLarge(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = t.TempDir()
+	b.receivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
 
 	msg := makeMsgWithVideoNote(111, "owner", 25*1024*1024)
@@ -2061,7 +2061,7 @@ func TestReceiveMessage_VideoNoteTooLarge(t *testing.T) {
 func TestReceiveMessage_NonImageDocumentSaved(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Document with caption
@@ -2081,7 +2081,7 @@ func TestReceiveMessage_NonImageDocumentSaved(t *testing.T) {
 
 func TestReceiveMessage_NonImageDocumentTooLarge(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = t.TempDir()
+	b.receivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
 
 	// Document with caption
@@ -2100,7 +2100,7 @@ func TestReceiveMessage_NonImageDocumentTooLarge(t *testing.T) {
 
 func TestReceiveMessage_VideoNoSaveDir(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	// imageSaveDir not set
+	// receivedFilesDir not set
 	b.botToken = "test-token"
 
 	msg := makeMsgWithVideo(111, "owner", "Check this out!", 5*1024*1024)
@@ -2190,7 +2190,7 @@ func TestFileTooLargeError(t *testing.T) {
 func TestSaveMedia(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 
 	data := []byte("fake-mp4-data")
 	path, err := b.saveMedia(data, "video", 12345, ".mp4")
@@ -2218,7 +2218,7 @@ func TestSaveMedia(t *testing.T) {
 func TestSaveMediaDocument(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = dir
+	b.receivedFilesDir = dir
 
 	data := []byte("fake-pdf-data")
 	path, err := b.saveMedia(data, "document", 99999, ".pdf")
@@ -2238,17 +2238,17 @@ func TestSaveMediaDocument(t *testing.T) {
 
 func TestDownloadAndSaveMedia_NoSaveDir(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	// imageSaveDir not set
+	// receivedFilesDir not set
 
 	_, err := b.downloadAndSaveMedia("file_id", 1024, "video", 12345, ".mp4")
 	if err == nil {
-		t.Error("expected error when imageSaveDir not set")
+		t.Error("expected error when receivedFilesDir not set")
 	}
 }
 
 func TestDownloadAndSaveMedia_TooLarge(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.imageSaveDir = t.TempDir()
+	b.receivedFilesDir = t.TempDir()
 
 	_, err := b.downloadAndSaveMedia("file_id", 25*1024*1024, "video", 12345, ".mp4")
 	if err == nil {

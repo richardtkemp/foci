@@ -215,7 +215,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ShowToolCalls = &showPreview
 	displayWidth := 44
 	agent.DisplayWidth = &displayWidth
-	agent.ImageSaveDir = "/tmp/images"
+	agent.ReceivedFilesDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"
 	// Set optional global fields

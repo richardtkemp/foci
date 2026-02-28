@@ -45,7 +45,7 @@ config.Load(path)                                        ← validates values; l
     → auto-expose all commands as tools
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
-    → bot.SetImageSaveDir(acfg.ImageSaveDir || cfg.Telegram.ImageSaveDir)
+    → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
     → agent.RestoreVoiceMode(defaultSessionKey())           ← deferred until default chat is known
     → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store
     → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)

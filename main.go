@@ -630,8 +630,8 @@ func main() {
 			mbBot.SetShowThinking(string(cfg.Telegram.ShowThinking))
 			mbBot.SetDisplayWidth(cfg.Telegram.DisplayWidth)
 			mbBot.SetMessagesInLog(cfg.Logging.MessagesInLog)
-			if imgDir := cfg.Telegram.ImageSaveDir; imgDir != "" {
-				mbBot.SetImageSaveDir(imgDir)
+			if filesDir := cfg.Telegram.ReceivedFilesDir; filesDir != "" {
+				mbBot.SetReceivedFilesDir(filesDir)
 			}
 			if stateStore != nil {
 				ss := stateStore
@@ -2232,10 +2232,10 @@ func setupAgent(p setupParams) *agentInstance {
 		} else {
 			primaryBot.SetMessagesInLog(p.cfg.Logging.MessagesInLog)
 		}
-		if imgDir := acfg.ImageSaveDir; imgDir != "" {
-			primaryBot.SetImageSaveDir(imgDir)
-		} else if imgDir := p.cfg.Telegram.ImageSaveDir; imgDir != "" {
-			primaryBot.SetImageSaveDir(imgDir)
+		if filesDir := acfg.ReceivedFilesDir; filesDir != "" {
+			primaryBot.SetReceivedFilesDir(filesDir)
+		} else if filesDir := p.cfg.Telegram.ReceivedFilesDir; filesDir != "" {
+			primaryBot.SetReceivedFilesDir(filesDir)
 		}
 
 		// Wire cache bust alerts to this agent's bot
@@ -2350,10 +2350,10 @@ func setupAgent(p setupParams) *agentInstance {
 			} else {
 				mbBot.SetMessagesInLog(p.cfg.Logging.MessagesInLog)
 			}
-			if imgDir := acfg.ImageSaveDir; imgDir != "" {
-				mbBot.SetImageSaveDir(imgDir)
-			} else if imgDir := p.cfg.Telegram.ImageSaveDir; imgDir != "" {
-				mbBot.SetImageSaveDir(imgDir)
+			if filesDir := acfg.ReceivedFilesDir; filesDir != "" {
+				mbBot.SetReceivedFilesDir(filesDir)
+			} else if filesDir := p.cfg.Telegram.ReceivedFilesDir; filesDir != "" {
+				mbBot.SetReceivedFilesDir(filesDir)
 			}
 			if p.stateStore != nil {
 				ss := p.stateStore

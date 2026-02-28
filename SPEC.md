@@ -165,7 +165,7 @@ A WebSocket endpoint for real-time two-way voice conversation with an agent. Use
 
 ### Media Persistence
 
-When `image_save_dir` is configured (global or per-agent), received media files are saved to disk:
+When `received_files_dir` is configured (global or per-agent), received media files are saved to disk:
 - **Images:** `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext` (jpg, png, gif, webp)
 - **Videos:** `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext` (mp4, mov, webm, mkv, avi)
 - **Video notes:** `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4` (circular video messages)

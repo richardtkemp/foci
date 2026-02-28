@@ -20,12 +20,12 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `name` | string | `""` | Human-readable name (e.g. `"Clutch"`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `model` | string | `"claude-haiku-4-5"` | Anthropic model ID for API calls. |
-| `workspace` | string | `""` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). |
+| `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, embedded defaults from `prompts/branch-orientation-headless.md` or `prompts/branch-orientation-multiball.md` are used. |
 | `fork_prompt` | string | `""` | **Deprecated:** use `branch_orientation_prompt`. Path to prompt file injected into branch sessions. If `branch_orientation_prompt` is set, `fork_prompt` is ignored. |
-| `telegram_bot` | string | `""` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. |
+| `telegram_bot` | string | `$id` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. Defaults to the agent ID if a matching key exists in `[telegram.bots]`. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
 | `multiball_bot` | string | `""` | **Deprecated:** use `multiball_bots`. If set and `multiball_bots` is empty, promoted to a single-element list with a warning. |
 | `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
@@ -39,7 +39,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Per-agent override of global `[telegram] show_thinking`. Accepts bool (`true` → `"true"`, `false` → `"off"`). |
 | `display_width` | int | `44` | Character width for divider lines in thinking display. Per-agent override of global `[telegram] display_width`. |
 | `messages_in_log` | bool | nil | Per-agent override of global `[logging] messages_in_log`. Nil = use global. |
-| `image_save_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables (falls back to `[telegram] image_save_dir`). Relative paths resolve against `$HOME`. Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
+| `received_files_dir` | string | `$workspace/received_files` | Save received media (images, videos, video notes, documents) to this directory. Defaults to `$workspace/received_files`. Per-agent value overrides `[telegram] received_files_dir`. Relative paths resolve against `$HOME`. Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. If set, only these users can message this agent's bot. If empty, falls back to global `[telegram] allowed_users`. |
 | `compaction_threshold` | float | nil | Per-agent compaction threshold (0.0–1.0). Nil = use global `[sessions] compaction_threshold`. |
 | `compaction_summary_prompt` | string | `""` | Per-agent compaction summary prompt path. Empty = use global. |
@@ -181,7 +181,7 @@ Telegram bot configuration.
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden, default), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Per-agent `show_tool_calls` overrides this. Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped, default), `"compact"` (response with toggle button), `"true"` (thinking always prepended). Per-agent `show_thinking` overrides this. Accepts bool (`true` → `"true"`, `false` → `"off"`). |
 | `display_width` | int | `44` | Character width for divider lines in thinking display. Per-agent `display_width` overrides this. |
-| `image_save_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables. Per-agent `image_save_dir` overrides this. Relative paths resolve against `$HOME`. See agent `image_save_dir` for filename formats. |
+| `received_files_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables. Per-agent `received_files_dir` overrides this. Relative paths resolve against `$HOME`. See agent `received_files_dir` for filename formats. |
 
 ### `[telegram.bots.<name>]`
 

@@ -93,7 +93,7 @@ type Bot struct {
 	showThinking         string       // thinking display mode: "off", "compact", "true"
 	displayWidth         int          // character width for dividers (default 44)
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
-	imageSaveDir         string       // if non-empty, save received images to this directory
+	receivedFilesDir         string       // if non-empty, save received files to this directory
 	toolResults          sync.Map     // message ID (int64) → toolResultEntry; ephemeral, for inline keyboard expansion
 	thinkingStore        sync.Map     // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 }
@@ -168,10 +168,10 @@ func (b *Bot) SetMessagesInLog(v bool) {
 	b.messagesInLog = v
 }
 
-// SetImageSaveDir configures auto-saving of received images to disk.
+// SetReceivedFilesDir configures auto-saving of received files to disk.
 // Empty string disables saving.
-func (b *Bot) SetImageSaveDir(dir string) {
-	b.imageSaveDir = dir
+func (b *Bot) SetReceivedFilesDir(dir string) {
+	b.receivedFilesDir = dir
 }
 
 // SetStateStore configures persistent state for this bot.
@@ -592,7 +592,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			log.Errorf("telegram", "download photo: %s", b.sanitizeError(err))
 		} else {
 			att := imageAttachment{data: data, mediaType: "image/jpeg"}
-			if b.imageSaveDir != "" {
+			if b.receivedFilesDir != "" {
 				if path, err := b.saveImage(data, "image/jpeg", msg.Chat.Id); err != nil {
 					log.Warnf("telegram", "save image: %v", err)
 				} else {
@@ -607,7 +607,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			log.Errorf("telegram", "download document: %s", b.sanitizeError(err))
 		} else {
 			att := imageAttachment{data: data, mediaType: msg.Document.MimeType}
-			if b.imageSaveDir != "" {
+			if b.receivedFilesDir != "" {
 				if path, err := b.saveImage(data, msg.Document.MimeType, msg.Chat.Id); err != nil {
 					log.Warnf("telegram", "save image: %v", err)
 				} else {
@@ -1635,7 +1635,7 @@ func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType stri
 		return "", &fileTooLargeError{size: fileSize}
 	}
 
-	if b.imageSaveDir == "" {
+	if b.receivedFilesDir == "" {
 		return "", fmt.Errorf("media save directory not configured")
 	}
 
@@ -1649,11 +1649,11 @@ func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType stri
 
 // saveMedia writes media data to disk and returns the saved file path.
 func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string) (string, error) {
-	if err := os.MkdirAll(b.imageSaveDir, 0o755); err != nil {
+	if err := os.MkdirAll(b.receivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
 	filename := fmt.Sprintf("%s_%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), mediaType, chatID, ext)
-	path := filepath.Join(b.imageSaveDir, filename)
+	path := filepath.Join(b.receivedFilesDir, filename)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("write media: %w", err)
 	}
@@ -1662,12 +1662,12 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string)
 
 // saveImage writes image data to disk and returns the saved file path.
 func (b *Bot) saveImage(data []byte, mediaType string, chatID int64) (string, error) {
-	if err := os.MkdirAll(b.imageSaveDir, 0o755); err != nil {
+	if err := os.MkdirAll(b.receivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create image dir: %w", err)
 	}
 	ext := extForMediaType(mediaType)
 	filename := fmt.Sprintf("%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), chatID, ext)
-	path := filepath.Join(b.imageSaveDir, filename)
+	path := filepath.Join(b.receivedFilesDir, filename)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("write image: %w", err)
 	}
