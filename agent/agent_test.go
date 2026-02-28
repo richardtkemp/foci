@@ -3250,11 +3250,16 @@ func TestAutopilotWarningInjected(t *testing.T) {
 	}
 
 	msgs, _ := store.Load("agent:test:main")
-	// Find the autopilot warning message
+	// Find the autopilot warning folded into a tool_result message
 	found := 0
 	for _, m := range msgs {
-		if m.Role == "user" && len(m.Content) == 1 && strings.Contains(m.Content[0].Text, "[system]") && strings.Contains(m.Content[0].Text, "consecutive tool calls") {
-			found++
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "text" && strings.Contains(b.Text, "[system]") && strings.Contains(b.Text, "consecutive tool calls") {
+				found++
+			}
 		}
 	}
 	if found != 1 {
@@ -3316,8 +3321,13 @@ func TestAutopilotWarningOnlyOnce(t *testing.T) {
 	msgs, _ := store.Load("agent:test:main")
 	count := 0
 	for _, m := range msgs {
-		if m.Role == "user" && len(m.Content) == 1 && strings.Contains(m.Content[0].Text, "[system]") {
-			count++
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "text" && strings.Contains(b.Text, "[system]") {
+				count++
+			}
 		}
 	}
 	if count != 1 {
@@ -3376,8 +3386,13 @@ func TestAutopilotDisabledWhenZero(t *testing.T) {
 
 	msgs, _ := store.Load("agent:test:main")
 	for _, m := range msgs {
-		if m.Role == "user" && len(m.Content) == 1 && strings.Contains(m.Content[0].Text, "[system]") {
-			t.Error("autopilot warning injected despite threshold=0")
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "text" && strings.Contains(b.Text, "[system]") {
+				t.Error("autopilot warning injected despite threshold=0")
+			}
 		}
 	}
 }
