@@ -792,8 +792,21 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		cancel()
 	}()
 
-	// Send typing indicator
+	// Send typing indicator and keep it alive throughout the agent turn.
+	// Telegram typing expires after ~5s, so we re-send every 4s.
 	b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+	typingTicker := time.NewTicker(4 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-typingTicker.C:
+				b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+			case <-turnCtx.Done():
+				return
+			}
+		}
+	}()
+	defer typingTicker.Stop()
 
 	// Track tool calls for live visibility via send+edit pattern.
 	// Declared before ReplyFunc so the closure can reset toolMsgID
