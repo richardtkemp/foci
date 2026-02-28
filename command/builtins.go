@@ -2,10 +2,10 @@ package command
 
 import (
 	"bufio"
-	"foci/table"
 	"context"
 	"encoding/json"
 	"fmt"
+	"foci/table"
 	"os"
 	"os/exec"
 	"strconv"
@@ -982,12 +982,12 @@ Operations:
 		Execute: func(ctx context.Context, args string) (string, error) {
 			fields := strings.Fields(args)
 
-			// Default to list
-			op := "list"
-			if len(fields) > 0 {
-				op = fields[0]
-				fields = fields[1:]
+			if len(fields) == 0 {
+				return usage, nil
 			}
+
+			op := fields[0]
+			fields = fields[1:]
 
 			var params map[string]interface{}
 

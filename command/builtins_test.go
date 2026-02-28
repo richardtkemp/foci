@@ -1693,26 +1693,16 @@ func TestTmuxCommandList(t *testing.T) {
 	execFn, calls := mockTmuxExec("SESSION  W  AGE  STATUS\nwork  2w  1h  idle", nil)
 	cmd := NewTmuxCommand(execFn)
 
-	// Default (no args) → list
-	result, err := cmd.Execute(context.Background(), "")
+	// Explicit "list" arg
+	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
-		t.Fatalf("Execute: %v", err)
+		t.Fatalf("Execute list: %v", err)
 	}
 	if !strings.Contains(result, "work") {
 		t.Errorf("result = %q, want 'work'", result)
 	}
 	if len(*calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(*calls))
-	}
-	if (*calls)[0]["operation"] != "list" {
-		t.Errorf("operation = %v, want list", (*calls)[0]["operation"])
-	}
-
-	// Explicit "list" arg
-	*calls = nil
-	_, err = cmd.Execute(context.Background(), "list")
-	if err != nil {
-		t.Fatalf("Execute list: %v", err)
 	}
 	if (*calls)[0]["operation"] != "list" {
 		t.Errorf("operation = %v, want list", (*calls)[0]["operation"])
@@ -1891,6 +1881,25 @@ func TestTmuxCommandUnknownOp(t *testing.T) {
 	}
 	if !strings.Contains(result, "Usage:") {
 		t.Errorf("result = %q, want usage help", result)
+	}
+}
+
+func TestTmuxCommandNoArgsShowsUsage(t *testing.T) {
+	execFn, calls := mockTmuxExec("session1\nsession2\n", nil)
+	cmd := NewTmuxCommand(execFn)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Usage:") {
+		t.Errorf("result = %q, want usage help", result)
+	}
+	if !strings.Contains(result, "Operations:") {
+		t.Errorf("result = %q, want operations list", result)
+	}
+	if len(*calls) > 0 {
+		t.Errorf("execFn should not be called with no args, got calls: %v", *calls)
 	}
 }
 
