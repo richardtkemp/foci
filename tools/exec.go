@@ -50,7 +50,7 @@ func hasBash() bool { return execShell() == "bash" }
 func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions (foci_web_search, foci_http_request, etc.) are available for piping tool results within a single command.",
+		Description: "Run a shell command and return its output. set -e is active (stops on first error). Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions (foci_web_search, foci_http_request, etc.) are available for piping tool results within a single command.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -152,9 +152,9 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		} else {
 			defer bridge.Close()
 			if hasBash() {
-				cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+				cmd = fmt.Sprintf("set -e -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
 			} else {
-				cmd = fmt.Sprintf("source %s; %s", bridge.FuncsPath(), cmd)
+				cmd = fmt.Sprintf("set -e; source %s; %s", bridge.FuncsPath(), cmd)
 			}
 		}
 	}
@@ -225,9 +225,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
 		} else {
 			if hasBash() {
-				cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+				cmd = fmt.Sprintf("set -e -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
 			} else {
-				cmd = fmt.Sprintf("source %s; %s", bridge.FuncsPath(), cmd)
+				cmd = fmt.Sprintf("set -e; source %s; %s", bridge.FuncsPath(), cmd)
 			}
 		}
 	}
