@@ -1216,8 +1216,7 @@ func TestShowToolCalls_Off(t *testing.T) {
 
 func TestShowToolCalls_Full(t *testing.T) {
 	// When showToolCalls is "full", every tool call gets its own persistent
-	// message (never editing a previous one). The final response also goes
-	// via sendReply as a new message, not by editing the tool message.
+	// message with compact summary. The final response goes via sendReply.
 	mock := &mockClient{}
 	b := &Bot{client: mock, showToolCalls: "full"}
 
@@ -1231,19 +1230,17 @@ func TestShowToolCalls_Full(t *testing.T) {
 		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
-		text := b.formatToolCall(toolName, params)
-		sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
 
 		if b.showToolCalls == "full" {
-			// Full mode: always send a new message per tool call.
-			sent, _ := b.client.SendMessage(12345, text, sendOpts)
+			compact := formatToolCallCompact(toolName, params)
+			sent, _ := b.client.SendMessage(12345, compact, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
 			return
 		}
 
-		// Preview mode: send first, then edit subsequent.
+		text := b.formatToolCall(toolName, params)
 		if toolMsgID == 0 {
-			sent, _ := b.client.SendMessage(12345, text, sendOpts)
+			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
 		} else {
 			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
@@ -1252,10 +1249,13 @@ func TestShowToolCalls_Full(t *testing.T) {
 		}
 	}
 
-	// First tool call: new message.
+	// First tool call: new message with compact summary.
 	observer("exec", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Errorf("sends=%d, want 1", mock.sentCount())
+	}
+	if !strings.Contains(mock.lastSendText, "exec") {
+		t.Errorf("sent text should contain tool name, got: %s", mock.lastSendText)
 	}
 
 	// Second tool call: also a new message (not an edit).
@@ -1271,9 +1271,6 @@ func TestShowToolCalls_Full(t *testing.T) {
 	toolMsgMu.Lock()
 	editID := toolMsgID
 	toolMsgMu.Unlock()
-
-	// This mirrors the response delivery logic in processMessage:
-	// only "preview" mode edits the tool message with the response.
 	if editID != 0 && b.showToolCalls == "preview" {
 		t.Error("should not enter preview branch for full mode")
 	}
@@ -1284,7 +1281,7 @@ func TestShowToolCalls_Full(t *testing.T) {
 func TestFormatToolCall(t *testing.T) {
 	b := &Bot{}
 	text := b.formatToolCall("exec", json.RawMessage(`{"command":"ls -la"}`))
-	if !strings.Contains(text, "🔧") {
+	if !strings.Contains(text, "⚡") {
 		t.Error("missing tool emoji")
 	}
 	if !strings.Contains(text, "<b>exec</b>") {
@@ -1333,6 +1330,79 @@ func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
 	}
 	if !strings.Contains(text, "line1\nline2") {
 		t.Errorf("expected real newline between line1 and line2, got: %s", text)
+	}
+}
+
+// --- Compact tool call formatting ---
+
+func TestFormatToolCallCompact(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     string
+		params   string
+		contains string // expected substring in output
+		emoji    string // expected per-tool emoji
+	}{
+		{"exec", "exec", `{"command":"ls -la /tmp"}`, "ls -la /tmp", "⚡"},
+		{"web_search", "web_search", `{"query":"golang generics"}`, "golang generics", "🔍"},
+		{"web_fetch", "web_fetch", `{"url":"https://example.com/page"}`, "https://example.com/page", "🌐"},
+		{"http_request GET", "http_request", `{"url":"https://api.example.com/v1"}`, "GET https://api.example.com/v1", "📡"},
+		{"http_request POST", "http_request", `{"method":"POST","url":"https://api.example.com/v1"}`, "POST https://api.example.com/v1", "📡"},
+		{"read", "read", `{"path":"/home/user/file.txt"}`, "/home/user/file.txt", "📖"},
+		{"tmux watch", "tmux", `{"operation":"watch","name":"cc-bash","threshold_seconds":30}`, "watch cc-bash", "🖥️"},
+		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "add", "✅"},
+		{"send_telegram", "send_telegram", `{"text":"hello world, how are you doing today?"}`, "hello world", "✈️"},
+		{"spawn", "spawn", `{"prompt":"summarize this document please"}`, "summarize this document", "🐣"},
+		{"memory_search", "memory_search", `{"query":"project setup"}`, "project setup", "🧠"},
+		{"unknown tool", "custom_tool", `{"foo":"bar value"}`, "bar value", "🔧"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatToolCallCompact(tt.tool, json.RawMessage(tt.params))
+			if !strings.Contains(result, tt.emoji) {
+				t.Errorf("expected emoji %s in %q", tt.emoji, result)
+			}
+			if !strings.Contains(result, tt.tool) {
+				t.Errorf("missing tool name in %q", result)
+			}
+			if !strings.Contains(result, tt.contains) {
+				t.Errorf("expected %q in %q", tt.contains, result)
+			}
+			// Should NOT contain <pre> block (that's the full format)
+			if strings.Contains(result, "<pre>") {
+				t.Errorf("compact format should not contain <pre>, got: %s", result)
+			}
+		})
+	}
+}
+
+func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
+	result := formatToolCallCompact("exec", json.RawMessage(`{"command":"echo <script>"}`))
+	if strings.Contains(result, "<script>") {
+		t.Errorf("HTML not escaped in %q", result)
+	}
+	if !strings.Contains(result, "&lt;script&gt;") {
+		t.Errorf("expected escaped HTML in %q", result)
+	}
+}
+
+func TestFormatToolCallCompact_Truncation(t *testing.T) {
+	longCmd := strings.Repeat("x", 200)
+	result := formatToolCallCompact("exec", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longCmd)))
+	// Should be truncated to ~60 chars + "..."
+	if !strings.Contains(result, "...") {
+		t.Errorf("long command should be truncated: %s", result)
+	}
+}
+
+func TestFormatToolCallCompact_EmptyParams(t *testing.T) {
+	result := formatToolCallCompact("unknown", json.RawMessage(`{}`))
+	// Should just be the tool name with no summary; unknown tool gets 🔧
+	if !strings.Contains(result, "🔧") {
+		t.Error("missing fallback tool emoji")
+	}
+	if strings.Contains(result, ":") {
+		t.Errorf("empty params should not have colon separator, got: %s", result)
 	}
 }
 
@@ -2197,48 +2267,38 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 
 	// Simulate the ToolCallObserver closure from processAgentMessage.
 	var toolMsgID int64
-	var toolMsgText string
 	var toolMsgMu sync.Mutex
 	chatID := int64(12345)
 
 	observer := func(toolName string, params json.RawMessage) {
-		if b.showToolCalls == "off" || b.showToolCalls == "" {
-			return
-		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 
-		text := b.formatToolCall(toolName, params)
-		sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
-		if b.showToolCalls == "full" {
-			keyboard := gotgbot.InlineKeyboardMarkup{
+		compact := formatToolCallCompact(toolName, params)
+		sendOpts := &gotgbot.SendMessageOpts{
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show results", CallbackData: "tc:show:0"},
+					{Text: "Show full", CallbackData: "tc:show:0"},
 				}},
-			}
-			sendOpts.ReplyMarkup = keyboard
+			},
 		}
-		if toolMsgID == 0 {
-			sent, err := b.client.SendMessage(chatID, text, sendOpts)
-			if err != nil {
-				return
-			}
-			toolMsgID = sent.MessageId
-			toolMsgText = text
-			if b.showToolCalls == "full" {
-				b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-					ChatId:    chatID,
-					MessageId: toolMsgID,
-					ParseMode: "HTML",
-					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-							{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
-						}},
-					},
-				})
-			}
+		sent, err := b.client.SendMessage(chatID, compact, sendOpts)
+		if err != nil {
+			return
 		}
-		_ = toolMsgText
+		toolMsgID = sent.MessageId
+		// Update callback data with real message ID.
+		b.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: toolMsgID,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
+				}},
+			},
+		})
 	}
 
 	observer("exec", json.RawMessage(`{"command":"ls"}`))
@@ -2249,7 +2309,6 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 	if mock.sends != 1 {
 		t.Fatalf("expected 1 send, got %d", mock.sends)
 	}
-	// First send should have ReplyMarkup (inline keyboard)
 	if mock.lastSendOpts == nil {
 		t.Fatal("expected SendMessageOpts to be set")
 	}
@@ -2265,21 +2324,30 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 		t.Fatal("expected 1x1 inline keyboard")
 	}
 	btn := kb.InlineKeyboard[0][0]
-	if btn.Text != "Show results" {
-		t.Errorf("button text = %q, want %q", btn.Text, "Show results")
+	if btn.Text != "Show full" {
+		t.Errorf("button text = %q, want %q", btn.Text, "Show full")
 	}
 	if btn.CallbackData != "tc:show:1" {
 		t.Errorf("callback data = %q, want %q", btn.CallbackData, "tc:show:1")
+	}
+	// Sent text should be compact (no <pre> block)
+	if strings.Contains(mock.lastSendText, "<pre>") {
+		t.Errorf("compact summary should not contain <pre> block, got: %s", mock.lastSendText)
 	}
 }
 
 func TestHandleCallbackQuery_Show(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	// Pre-store a tool result.
+	// Pre-store a tool result with compact text, full input, and result.
 	var msgID int64 = 42
-	toolText := `🔧 <b>exec</b>\n<pre>ls</pre>`
-	b.toolResults.Store(msgID, toolResultEntry{toolText: toolText, result: "file1.txt\nfile2.txt"})
+	compactText := `⚡ <b>exec</b>: ls`
+	fullInput := "⚡ <b>exec</b>\n<pre>ls</pre>"
+	b.toolResults.Store(msgID, toolResultEntry{
+		compactText: compactText,
+		fullInput:   fullInput,
+		result:      "file1.txt\nfile2.txt",
+	})
 
 	cq := &gotgbot.CallbackQuery{
 		Id:   "cq1",
@@ -2301,11 +2369,14 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 	if mock.answerCBCalls != 1 {
 		t.Fatalf("expected 1 AnswerCallbackQuery call, got %d", mock.answerCBCalls)
 	}
-	// The edited text should contain the result
+	// The edited text should contain the full input and result
 	if !strings.Contains(mock.lastEditText, "Result:") {
 		t.Errorf("expected edit text to contain result, got: %s", mock.lastEditText)
 	}
-	// Button should now be "Hide results"
+	if !strings.Contains(mock.lastEditText, "exec") {
+		t.Errorf("expected edit text to contain full tool input, got: %s", mock.lastEditText)
+	}
+	// Button should now be "Hide"
 	if mock.lastEditOpts == nil {
 		t.Fatal("expected edit opts to be set")
 	}
@@ -2314,8 +2385,8 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 		t.Fatal("expected 1x1 inline keyboard")
 	}
 	btn := kb.InlineKeyboard[0][0]
-	if btn.Text != "Hide results" {
-		t.Errorf("button text = %q, want %q", btn.Text, "Hide results")
+	if btn.Text != "Hide" {
+		t.Errorf("button text = %q, want %q", btn.Text, "Hide")
 	}
 	if !strings.HasPrefix(btn.CallbackData, "tc:hide:") {
 		t.Errorf("callback data = %q, want tc:hide: prefix", btn.CallbackData)
@@ -2326,8 +2397,13 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	var msgID int64 = 42
-	toolText := `🔧 <b>exec</b>\n<pre>ls</pre>`
-	b.toolResults.Store(msgID, toolResultEntry{toolText: toolText, result: "file1.txt\nfile2.txt"})
+	compactText := `⚡ <b>exec</b>: ls`
+	fullInput := "⚡ <b>exec</b>\n<pre>ls</pre>"
+	b.toolResults.Store(msgID, toolResultEntry{
+		compactText: compactText,
+		fullInput:   fullInput,
+		result:      "file1.txt\nfile2.txt",
+	})
 
 	cq := &gotgbot.CallbackQuery{
 		Id:   "cq2",
@@ -2346,15 +2422,15 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 	if mock.edits != 1 {
 		t.Fatalf("expected 1 edit, got %d", mock.edits)
 	}
-	// The edited text should be just the tool text (collapsed)
-	if mock.lastEditText != toolText {
-		t.Errorf("expected collapsed tool text, got: %s", mock.lastEditText)
+	// The edited text should be the compact summary (collapsed)
+	if mock.lastEditText != compactText {
+		t.Errorf("expected compact text %q, got: %s", compactText, mock.lastEditText)
 	}
-	// Button should be "Show results"
+	// Button should be "Show full"
 	kb := mock.lastEditOpts.ReplyMarkup
 	btn := kb.InlineKeyboard[0][0]
-	if btn.Text != "Show results" {
-		t.Errorf("button text = %q, want %q", btn.Text, "Show results")
+	if btn.Text != "Show full" {
+		t.Errorf("button text = %q, want %q", btn.Text, "Show full")
 	}
 }
 
@@ -2364,7 +2440,8 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 
 	// Simulate what the ToolResultObserver closure does.
 	var toolMsgID int64 = 99
-	var toolMsgText = `🔧 <b>exec</b>\n<pre>ls</pre>`
+	var toolMsgText = `⚡ <b>exec</b>: ls`
+	var toolMsgFullText = "⚡ <b>exec</b>\n<pre>ls</pre>"
 	var toolMsgMu sync.Mutex
 
 	observer := func(toolName string, result string, isError bool) {
@@ -2373,12 +2450,17 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 		}
 		toolMsgMu.Lock()
 		msgID := toolMsgID
-		text := toolMsgText
+		compact := toolMsgText
+		full := toolMsgFullText
 		toolMsgMu.Unlock()
 		if msgID == 0 {
 			return
 		}
-		b.toolResults.Store(msgID, toolResultEntry{toolText: text, result: result})
+		b.toolResults.Store(msgID, toolResultEntry{
+			compactText: compact,
+			fullInput:   full,
+			result:      result,
+		})
 	}
 
 	observer("exec", "file1.txt\nfile2.txt", false)
@@ -2391,13 +2473,16 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 	if entry.result != "file1.txt\nfile2.txt" {
 		t.Errorf("stored result = %q, want %q", entry.result, "file1.txt\nfile2.txt")
 	}
-	if entry.toolText != toolMsgText {
-		t.Errorf("stored toolText = %q, want %q", entry.toolText, toolMsgText)
+	if entry.compactText != toolMsgText {
+		t.Errorf("stored compactText = %q, want %q", entry.compactText, toolMsgText)
+	}
+	if entry.fullInput != toolMsgFullText {
+		t.Errorf("stored fullInput = %q, want %q", entry.fullInput, toolMsgFullText)
 	}
 }
 
 func TestFormatToolCallWithResult_Truncation(t *testing.T) {
-	toolText := `🔧 <b>exec</b>\n<pre>ls</pre>`
+	toolText := `⚡ <b>exec</b>\n<pre>ls</pre>`
 
 	// Short result — should not be truncated
 	result := "hello"

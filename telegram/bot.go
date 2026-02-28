@@ -799,7 +799,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Declared before ReplyFunc so the closure can reset toolMsgID
 	// when intermediate text is sent (fixes message ordering).
 	var toolMsgID int64
-	var toolMsgText string // last formatted tool call HTML (for result storage)
+	var toolMsgText string     // last compact summary HTML (full mode) or full HTML (preview mode)
+	var toolMsgFullText string // last full formatted tool call HTML with JSON params (full mode only)
 	var toolMsgMu sync.Mutex
 
 	// Per-turn callbacks scoped to context -- no cross-turn races.
@@ -830,33 +831,35 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			toolMsgMu.Lock()
 			defer toolMsgMu.Unlock()
 
-			text := b.formatToolCall(toolName, params)
-			sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
-
 			// In "full" mode, every tool call gets its own persistent message
-			// with an inline keyboard for result expansion. Never edit the
-			// previous tool call message.
+			// showing a compact summary with a "Show full" button.
 			if b.showToolCalls == "full" {
-				sendOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{
-					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-						{Text: "Show results", CallbackData: "tc:show:0"},
-					}},
+				compact := formatToolCallCompact(toolName, params)
+				full := b.formatToolCall(toolName, params)
+				sendOpts := &gotgbot.SendMessageOpts{
+					ParseMode: "HTML",
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+							{Text: "Show full", CallbackData: "tc:show:0"},
+						}},
+					},
 				}
-				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, sendOpts)
+				sent, err := b.client.SendMessage(qm.msg.Chat.Id, compact, sendOpts)
 				if err != nil {
 					log.Debugf("telegram", "send tool call msg: %v", err)
 					return
 				}
 				toolMsgID = sent.MessageId
-				toolMsgText = text
+				toolMsgText = compact
+				toolMsgFullText = full
 				// Update the button callback data with the real message ID.
-				b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				b.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
 					ChatId:    qm.msg.Chat.Id,
 					MessageId: toolMsgID,
 					ParseMode: "HTML",
 					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-							{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
+							{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
 						}},
 					},
 				})
@@ -865,6 +868,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 			// "preview" mode: send first, then edit subsequent tool calls
 			// into the same message (overwriting previous).
+			text := b.formatToolCall(toolName, params)
+			sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
 			if toolMsgID == 0 {
 				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, sendOpts)
 				if err != nil {
@@ -892,12 +897,17 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			}
 			toolMsgMu.Lock()
 			msgID := toolMsgID
-			text := toolMsgText
+			compact := toolMsgText
+			full := toolMsgFullText
 			toolMsgMu.Unlock()
 			if msgID == 0 {
 				return
 			}
-			b.toolResults.Store(msgID, toolResultEntry{toolText: text, result: result})
+			b.toolResults.Store(msgID, toolResultEntry{
+				compactText: compact,
+				fullInput:   full,
+				result:      result,
+			})
 		},
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
@@ -1641,6 +1651,38 @@ func closingHTMLTag(openTag string) string {
 	return "</" + htmlTagName(openTag[1:]) + ">"
 }
 
+// toolEmoji maps tool names to per-tool display emoji.
+var toolEmoji = map[string]string{
+	"exec":             "⚡",
+	"web_fetch":        "🌐",
+	"web_search":       "🔍",
+	"http_request":     "📡",
+	"read":             "📖",
+	"write":            "✏️",
+	"edit":             "✂️",
+	"tmux":             "🖥️",
+	"todo":             "✅",
+	"send_telegram":    "✈️",
+	"memory_search":    "🧠",
+	"spawn":            "🐣",
+	"scratchpad_read":  "📋",
+	"scratchpad_write": "📋",
+	"scratchpad_list":  "📋",
+	"scratchpad_clear": "📋",
+	"tts":              "🔊",
+	"schedule_wake":    "⏰",
+	"send_to_session":  "💬",
+	"memory_remind":    "💭",
+}
+
+// emojiForTool returns the per-tool emoji, falling back to 🔧 for unknown tools.
+func emojiForTool(name string) string {
+	if e, ok := toolEmoji[name]; ok {
+		return e
+	}
+	return "🔧"
+}
+
 // formatToolCall formats a tool call for display in Telegram.
 func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
 	maxChars := b.toolCallPreviewChars
@@ -1660,7 +1702,96 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
 	// as actual newlines/tabs in the Telegram <pre> block.
 	paramStr = unescapeJSONStringLiterals(paramStr)
 	paramStr = htmlEscapeBot(paramStr)
-	return fmt.Sprintf("🔧 <b>%s</b>\n<pre>%s</pre>", htmlEscapeBot(toolName), paramStr)
+	emoji := emojiForTool(toolName)
+	return fmt.Sprintf("%s <b>%s</b>\n<pre>%s</pre>", emoji, htmlEscapeBot(toolName), paramStr)
+}
+
+// formatToolCallCompact returns a compact one-line summary for "full" mode.
+// e.g. "⚡ exec: ls -la /tmp" or "📡 http_request: GET https://example.com"
+func formatToolCallCompact(toolName string, params json.RawMessage) string {
+	emoji := emojiForTool(toolName)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(params, &m); err != nil {
+		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscapeBot(toolName))
+	}
+
+	summary := compactSummary(toolName, m)
+	if summary == "" {
+		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscapeBot(toolName))
+	}
+	return fmt.Sprintf("%s <b>%s</b>: %s", emoji, htmlEscapeBot(toolName), htmlEscapeBot(summary))
+}
+
+// compactSummary extracts the most meaningful param values for a compact display.
+func compactSummary(toolName string, m map[string]json.RawMessage) string {
+	str := func(key string) string {
+		raw, ok := m[key]
+		if !ok {
+			return ""
+		}
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			return s
+		}
+		// Not a string — use raw JSON (e.g. numbers, booleans)
+		return strings.TrimSpace(string(raw))
+	}
+
+	switch toolName {
+	case "exec":
+		return truncate(str("command"), 60)
+	case "web_fetch":
+		return truncate(str("url"), 80)
+	case "web_search", "memory_search":
+		return truncate(str("query"), 60)
+	case "http_request":
+		method := str("method")
+		if method == "" {
+			method = "GET"
+		}
+		return truncate(method+" "+str("url"), 80)
+	case "read", "write", "edit":
+		return truncate(str("path"), 80)
+	case "tmux":
+		op := str("operation")
+		name := str("name")
+		if op != "" && name != "" {
+			return op + " " + name
+		}
+		if op != "" {
+			return op
+		}
+		return truncate(str("name"), 60)
+	case "todo":
+		return str("action")
+	case "send_telegram":
+		return truncate(str("text"), 40)
+	case "spawn":
+		return truncate(str("prompt"), 40)
+	}
+
+	// Fallback: use the first string-valued param
+	for _, key := range sortedKeys(m) {
+		if v := str(key); v != "" {
+			return truncate(v, 60)
+		}
+	}
+	return ""
+}
+
+// sortedKeys returns map keys in sorted order for deterministic fallback.
+func sortedKeys(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	// sort inline to avoid import — simple insertion sort for small maps
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
 }
 
 // unescapeJSONStringLiterals replaces literal \n and \t sequences (as they
@@ -1718,35 +1849,37 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 
 	switch action {
 	case "show":
-		expanded := formatToolCallWithResult(stored.toolText, stored.result)
+		expanded := formatToolCallWithResult(stored.fullInput, stored.result)
 		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Hide results", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
+					{Text: "Hide", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
 				}},
 			},
 		})
 	case "hide":
-		b.client.EditMessageText(stored.toolText, &gotgbot.EditMessageTextOpts{
+		b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", msgID)},
+					{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", msgID)},
 				}},
 			},
 		})
 	}
 }
 
-// toolResultEntry stores both the tool call text and result for inline keyboard expansion.
+// toolResultEntry stores the compact summary, full input text, and result
+// for inline keyboard expansion in "full" mode.
 type toolResultEntry struct {
-	toolText string // the formatted tool call HTML (for collapsed state)
-	result   string // the raw tool result text
+	compactText string // compact one-line summary (collapsed state)
+	fullInput   string // full formatted tool call HTML with JSON params
+	result      string // the raw tool result text
 }
 
 // formatToolCallWithResult combines a tool call message with its result,
