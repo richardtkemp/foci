@@ -471,16 +471,24 @@ func isSystemMessage(msg string) bool {
 	return strings.HasPrefix(msg, "[KEEPALIVE]") || strings.HasPrefix(msg, "[SCHEDULED WAKE]")
 }
 
-// guardToolResult checks if a tool result exceeds the size limit.
-// If it does, writes the full output to a temp file and returns only a guard
-// message pointing to the file — no partial content is included.
-// If no limit is set or result is within the limit, returns the original result.
+func detectContentExtension(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) > 0 {
+		switch trimmed[0] {
+		case '{', '[':
+			return ".json"
+		case '#':
+			return ".md"
+		}
+	}
+	return ".txt"
+}
+
 func (a *Agent) guardToolResult(toolName string, result string) string {
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
 	}
 
-	// Result is too large — write to file
 	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
 		log.Warnf("agent", "create tool result temp dir: %v", err)
 		return result
@@ -491,7 +499,8 @@ func (a *Agent) guardToolResult(toolName string, result string) string {
 		log.Warnf("agent", "generate random filename: %v", err)
 		return result
 	}
-	filename := fmt.Sprintf("tool-result-%s-%s.txt", toolName, hex.EncodeToString(randBytes[:]))
+	ext := detectContentExtension(result)
+	filename := fmt.Sprintf("tool-result-%s-%s%s", toolName, hex.EncodeToString(randBytes[:]), ext)
 	filepath := filepath.Join(a.ToolResultTempDir, filename)
 
 	if err := os.WriteFile(filepath, []byte(result), 0o600); err != nil {

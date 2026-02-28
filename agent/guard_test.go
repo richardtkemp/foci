@@ -147,3 +147,65 @@ func TestGuardHint(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectContentExtension(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"json object", `{"foo": "bar"}`, ".json"},
+		{"json array", `[1, 2, 3]`, ".json"},
+		{"json with leading whitespace", "  \n\t{\"a\": 1}", ".json"},
+		{"markdown heading", "# Title\nContent", ".md"},
+		{"markdown heading with whitespace", "  ## Subtitle", ".md"},
+		{"plain text", "just some text", ".txt"},
+		{"empty string", "", ".txt"},
+		{"whitespace only", "   \n\t  ", ".txt"},
+		{"text starting with letter", "hello world", ".txt"},
+		{"text starting with number", "123 items", ".txt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectContentExtension(tt.content)
+			if got != tt.want {
+				t.Errorf("detectContentExtension(%q) = %q, want %q", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGuardToolResult_FileExtension(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantExt  string
+		wantHint string
+	}{
+		{"json content", `{"items": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}`, ".json", "jq"},
+		{"markdown content", "# Report\n\nA long document with details...", ".md", "mdq"},
+		{"plain text", "Output line 1\nOutput line 2\nOutput line 3", ".txt", "grep"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
+			a.guardToolResult("test", tt.content)
+
+			entries, err := os.ReadDir(tmpDir)
+			if err != nil {
+				t.Fatalf("read temp dir: %v", err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("expected 1 temp file, got %d", len(entries))
+			}
+
+			filename := entries[0].Name()
+			if !strings.HasSuffix(filename, tt.wantExt) {
+				t.Errorf("filename %q should have extension %q", filename, tt.wantExt)
+			}
+		})
+	}
+}
