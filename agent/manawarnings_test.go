@@ -40,15 +40,14 @@ func TestManaWatcherFiresAtThreshold(t *testing.T) {
 	mw := NewManaWatcher("", []int{50, 25, 10, 5})
 
 	var warned string
-	mw.CheckAndWarn("25%", func(w string) {
+	mw.CheckAndWarn("25%", "in 2h", func(w string) {
 		warned = w
 	})
 
 	if warned == "" {
 		t.Error("expected warning at 25% mana (crossed below 50% threshold)")
 	}
-	// When mana drops to 25%, we've crossed below the 50% threshold
-	if warned != "low mana: 25% remaining (threshold: 50%)" {
+	if warned != "low mana: 25% remaining (resets in 2h)" {
 		t.Errorf("warning = %q", warned)
 	}
 }
@@ -57,11 +56,11 @@ func TestManaWatcherFiresOnlyOnce(t *testing.T) {
 	mw := NewManaWatcher("", []int{50})
 
 	var count int
-	mw.CheckAndWarn("25%", func(w string) {
+	mw.CheckAndWarn("25%", "in 2h", func(w string) {
 		count++
 	})
 
-	mw.CheckAndWarn("25%", func(w string) {
+	mw.CheckAndWarn("25%", "in 2h", func(w string) {
 		count++
 	})
 
@@ -74,7 +73,7 @@ func TestManaWatcherDoesNotFireAboveThreshold(t *testing.T) {
 	mw := NewManaWatcher("", []int{50, 25})
 
 	var warned string
-	mw.CheckAndWarn("75%", func(w string) {
+	mw.CheckAndWarn("75%", "in 4h", func(w string) {
 		warned = w
 	})
 
@@ -86,7 +85,7 @@ func TestManaWatcherDoesNotFireAboveThreshold(t *testing.T) {
 func TestManaWatcherNilSafe(t *testing.T) {
 	var mw *ManaWatcher
 
-	mw.CheckAndWarn("50%", func(w string) {
+	mw.CheckAndWarn("50%", "in 2h", func(w string) {
 		t.Error("should not call warnFunc when mw is nil")
 	})
 }
@@ -95,7 +94,7 @@ func TestManaWatcherEmptyManaString(t *testing.T) {
 	mw := NewManaWatcher("", []int{50})
 
 	var called bool
-	mw.CheckAndWarn("", func(w string) {
+	mw.CheckAndWarn("", "in 2h", func(w string) {
 		called = true
 	})
 
@@ -108,7 +107,7 @@ func TestManaWatcherParseError(t *testing.T) {
 	mw := NewManaWatcher("", []int{50})
 
 	var called bool
-	mw.CheckAndWarn("invalid", func(w string) {
+	mw.CheckAndWarn("invalid", "in 2h", func(w string) {
 		called = true
 	})
 
@@ -118,7 +117,6 @@ func TestManaWatcherParseError(t *testing.T) {
 }
 
 func TestManaWatcherResetsAtMidnight(t *testing.T) {
-	// Create watcher with lastReset set to yesterday
 	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
 	mw := &ManaWatcher{
 		name:       "mana",
@@ -128,7 +126,7 @@ func TestManaWatcherResetsAtMidnight(t *testing.T) {
 	}
 
 	var warned string
-	mw.CheckAndWarn("25%", func(w string) {
+	mw.CheckAndWarn("25%", "in 2h", func(w string) {
 		warned = w
 	})
 
@@ -141,12 +139,12 @@ func TestManaWatcherCustomName(t *testing.T) {
 	mw := NewManaWatcher("juice", []int{50})
 
 	var warned string
-	mw.CheckAndWarn("25%", func(w string) {
+	mw.CheckAndWarn("25%", "in 2h", func(w string) {
 		warned = w
 	})
 
-	if warned != "low juice: 25% remaining (threshold: 50%)" {
-		t.Errorf("warning = %q, want %q", warned, "low juice: 25% remaining (threshold: 50%)")
+	if warned != "low juice: 25% remaining (resets in 2h)" {
+		t.Errorf("warning = %q, want %q", warned, "low juice: 25% remaining (resets in 2h)")
 	}
 }
 
@@ -163,42 +161,36 @@ func TestManaWatcherFiresMultipleThresholdsInOrder(t *testing.T) {
 	var warnings []string
 	warnFn := func(w string) { warnings = append(warnings, w) }
 
-	// First check at 45% — crosses 50 threshold
-	mw.CheckAndWarn("45%", warnFn)
+	mw.CheckAndWarn("45%", "in 3h", warnFn)
 	if len(warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %d", len(warnings))
 	}
-	if warnings[0] != "low mana: 45% remaining (threshold: 50%)" {
+	if warnings[0] != "low mana: 45% remaining (resets in 3h)" {
 		t.Errorf("warning[0] = %q", warnings[0])
 	}
 
-	// Second check at 20% — should cross 25 threshold (50 already fired)
-	mw.CheckAndWarn("20%", warnFn)
+	mw.CheckAndWarn("20%", "in 2h", warnFn)
 	if len(warnings) != 2 {
 		t.Fatalf("expected 2 warnings, got %d", len(warnings))
 	}
-	if warnings[1] != "low mana: 20% remaining (threshold: 25%)" {
+	if warnings[1] != "low mana: 20% remaining (resets in 2h)" {
 		t.Errorf("warning[1] = %q", warnings[1])
 	}
 
-	// Third check at 8% — should cross 10 threshold
-	mw.CheckAndWarn("8%", warnFn)
+	mw.CheckAndWarn("8%", "in 1h", warnFn)
 	if len(warnings) != 3 {
 		t.Fatalf("expected 3 warnings, got %d", len(warnings))
 	}
-	if warnings[2] != "low mana: 8% remaining (threshold: 10%)" {
+	if warnings[2] != "low mana: 8% remaining (resets in 1h)" {
 		t.Errorf("warning[2] = %q", warnings[2])
 	}
 }
 
 func TestManaWatcherSkipsSystemMessages(t *testing.T) {
-	// This tests the integration point: ManaWatcher.CheckAndWarn is only called
-	// for non-system messages. Verify the watcher itself fires correctly,
-	// as the system message gating is in agent.go's HandleMessage.
 	mw := NewManaWatcher("mana", []int{50})
 
 	var warned bool
-	mw.CheckAndWarn("25%", func(w string) { warned = true })
+	mw.CheckAndWarn("25%", "in 2h", func(w string) { warned = true })
 	if !warned {
 		t.Error("expected watcher to fire for user message scenario")
 	}
@@ -206,21 +198,34 @@ func TestManaWatcherSkipsSystemMessages(t *testing.T) {
 
 func TestManaWatcherNilWarnFunc(t *testing.T) {
 	mw := NewManaWatcher("mana", []int{50})
-	// Should not panic with nil warnFunc
-	mw.CheckAndWarn("25%", nil)
+	mw.CheckAndWarn("25%", "in 2h", nil)
 }
 
 func TestManaWatcherExactThresholdValue(t *testing.T) {
 	mw := NewManaWatcher("mana", []int{50})
 
 	var warned string
-	mw.CheckAndWarn("50%", func(w string) { warned = w })
+	mw.CheckAndWarn("50%", "in 2h 30m", func(w string) { warned = w })
 
 	if warned == "" {
 		t.Error("expected warning when mana equals threshold exactly")
 	}
-	if warned != "low mana: 50% remaining (threshold: 50%)" {
+	if warned != "low mana: 50% remaining (resets in 2h 30m)" {
 		t.Errorf("warning = %q", warned)
+	}
+}
+
+func TestManaWatcherEmptyResetTime(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50})
+
+	var warned string
+	mw.CheckAndWarn("25%", "", func(w string) { warned = w })
+
+	if warned == "" {
+		t.Error("expected warning even without reset time")
+	}
+	if warned != "low mana: 25% remaining" {
+		t.Errorf("warning = %q, want %q", warned, "low mana: 25% remaining")
 	}
 }
 
@@ -233,7 +238,7 @@ func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
 	mw.SetStore(store)
 
 	var warned bool
-	mw.CheckAndWarn("25%", func(w string) { warned = true })
+	mw.CheckAndWarn("25%", "in 2h", func(w string) { warned = true })
 
 	if !warned {
 		t.Fatal("expected warning to fire")
@@ -278,7 +283,7 @@ func TestManaWatcherRestoreLoadsFiredThreshold(t *testing.T) {
 	mw.Restore()
 
 	var firedCount int
-	mw.CheckAndWarn("20%", func(w string) { firedCount++ })
+	mw.CheckAndWarn("20%", "in 1h", func(w string) { firedCount++ })
 
 	if firedCount != 0 {
 		t.Errorf("expected no warning (thresholds already fired), got %d", firedCount)
@@ -309,7 +314,7 @@ func TestManaWatcherRestoreIgnoresStaleState(t *testing.T) {
 	mw.Restore()
 
 	var warned bool
-	mw.CheckAndWarn("25%", func(w string) { warned = true })
+	mw.CheckAndWarn("25%", "in 2h", func(w string) { warned = true })
 
 	if !warned {
 		t.Error("expected warning (stale state should be ignored)")
@@ -324,7 +329,7 @@ func TestManaWatcherPersistenceAfterRestart(t *testing.T) {
 	mw1 := NewManaWatcher("mana", []int{50, 25})
 	mw1.SetStore(store1)
 
-	mw1.CheckAndWarn("30%", func(w string) {})
+	mw1.CheckAndWarn("30%", "in 2h", func(w string) {})
 
 	store2 := state.New(statePath)
 	if err := store2.Load(); err != nil {
@@ -335,14 +340,14 @@ func TestManaWatcherPersistenceAfterRestart(t *testing.T) {
 	mw2.Restore()
 
 	var warned bool
-	mw2.CheckAndWarn("30%", func(w string) { warned = true })
+	mw2.CheckAndWarn("30%", "in 2h", func(w string) { warned = true })
 
 	if warned {
 		t.Error("should not warn again after restore (50 threshold already fired)")
 	}
 
 	var warned25 bool
-	mw2.CheckAndWarn("20%", func(w string) { warned25 = true })
+	mw2.CheckAndWarn("20%", "in 1h", func(w string) { warned25 = true })
 
 	if !warned25 {
 		t.Error("should warn for 25 threshold (not yet fired)")
@@ -359,7 +364,7 @@ func TestManaWatcherRestoreWithoutStore(t *testing.T) {
 	mw.Restore()
 
 	var warned bool
-	mw.CheckAndWarn("25%", func(w string) { warned = true })
+	mw.CheckAndWarn("25%", "in 2h", func(w string) { warned = true })
 
 	if !warned {
 		t.Error("expected warning when no store set")
@@ -374,7 +379,7 @@ func TestManaWatcherPersistenceCustomName(t *testing.T) {
 	mw := NewManaWatcher("juice", []int{50})
 	mw.SetStore(store)
 
-	mw.CheckAndWarn("25%", func(w string) {})
+	mw.CheckAndWarn("25%", "in 2h", func(w string) {})
 
 	store2 := state.New(statePath)
 	if err := store2.Load(); err != nil {
