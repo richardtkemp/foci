@@ -509,14 +509,19 @@ func main() {
 		for _, id := range agentOrder {
 			inst := agents[id]
 			sk := inst.defaultSessionKey()
-			mc, _ := inst.ag.Sessions.MessageCount(sk)
+			var mc int
+			var lastAct string
+			if sk != "" {
+				mc, _ = inst.ag.Sessions.MessageCount(sk)
+				lastAct = inst.ag.Sessions.LastActivity(sk)
+			}
 			infos = append(infos, command.AgentInfo{
 				ID:           id,
 				SessionKey:   sk,
 				Model:        inst.ag.Model,
 				Busy:         inst.ag.IsProcessing(),
 				MessageCount: mc,
-				LastActivity: inst.ag.Sessions.LastActivity(sk),
+				LastActivity: lastAct,
 			})
 		}
 		return infos
