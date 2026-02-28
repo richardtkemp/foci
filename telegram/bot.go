@@ -71,7 +71,7 @@ type Bot struct {
 	isSecondary        bool                              // true for secondary bots (multiball)
 	pool               *Pool                             // back-reference to pool (secondary bots only)
 	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
-	OnUserMessage      func()                           // fires on each inbound user message (for heartbeat interaction tracking)
+	OnUserMessage      func()                           // fires on each inbound user message (for keepalive interaction tracking)
 	OnTurnComplete     func()                           // fires after each agent turn completes (for cache warming tracking)
 	botToken           string                            // for building file download URLs
 
@@ -286,7 +286,7 @@ func (b *Bot) recordChatUsername(chatID int64, username string) {
 }
 
 // DefaultSessionKey returns the session key for the default chat.
-// Used by heartbeats, cron, and other proactive features.
+// Used by keepalive, cron, and other proactive features.
 func (b *Bot) DefaultSessionKey() string {
 	if b.agentID == "" {
 		return ""

@@ -120,7 +120,7 @@ type Agent struct {
 // TurnDetail describes one in-flight turn for shutdown diagnostics.
 type TurnDetail struct {
 	SessionKey string
-	Trigger    string // "user", "heartbeat", "wake", "scheduled_wake", "telegram", "async_notify"
+	Trigger    string // "user", "keepalive", "wake", "scheduled_wake", "telegram", "async_notify"
 	ToolName   string // currently executing tool, or empty
 	StartTime  time.Time
 }
@@ -454,9 +454,9 @@ func formatGap(d time.Duration) string {
 }
 
 // isSystemMessage returns true if the message is from a system source
-// (heartbeat, scheduled wake) rather than a human user.
+// (keepalive, scheduled wake) rather than a human user.
 func isSystemMessage(msg string) bool {
-	return strings.HasPrefix(msg, "[HEARTBEAT]") || strings.HasPrefix(msg, "[SCHEDULED WAKE]")
+	return strings.HasPrefix(msg, "[KEEPALIVE]") || strings.HasPrefix(msg, "[SCHEDULED WAKE]")
 }
 
 // guardToolResult checks if a tool result exceeds the size limit.
@@ -580,7 +580,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 // HandleMessageWithImages processes a user message with optional image attachments.
 func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, userMessage string, images []ImageData) (string, error) {
 	// Serialize turns on the same session. Without this, concurrent callers
-	// (heartbeat, tmux watch, scheduled wakes, exec auto-background) could
+	// (keepalive, tmux watch, scheduled wakes, exec auto-background) could
 	// load the same session state, run concurrent turns, and interleave their
 	// messages in the session file. This would break Anthropic's prefix-matched
 	// prompt cache — any insertion in the middle of conversation history
@@ -638,7 +638,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	mana := a.manaString()
 
 	// Check mana thresholds and notify user for active conversations only
-	// (not heartbeats or scheduled wakes)
+	// (not keepalives or scheduled wakes)
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
 		a.ManaWatcher.CheckAndWarn(mana, func(warn string) {
 			if a.ManaWarnFunc != nil {

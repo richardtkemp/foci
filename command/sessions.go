@@ -43,7 +43,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 			case "":
 				return "Usage: /sessions [list|default <chat_id>|info]\n\n" +
 					"  list              List all chat sessions for this agent\n" +
-					"  default <chat_id> Set the default session (used by heartbeats, cron)\n" +
+					"  default <chat_id> Set the default session (used by keepalive, cron)\n" +
 					"  info              Show details for the current chat's session", nil
 
 			case "list":
@@ -119,7 +119,7 @@ func sessionsListCmd(deps SessionsDeps) (string, error) {
 	for i, r := range rows {
 		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.def}
 	}
-	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n★ = default session (used by heartbeats, cron)",
+	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n★ = default session (used by keepalive, cron)",
 		deps.AgentID, len(sessions), table.Format(cols, tableRows)), nil
 }
 

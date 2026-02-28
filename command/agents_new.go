@@ -378,11 +378,11 @@ func copyCharacterFiles(defaultsDir, workspace string) error {
 		return err
 	}
 
-	// Copy heartbeat prompt if it exists
-	heartbeatSrc := filepath.Join(defaultsDir, "prompts", "HEARTBEAT.md")
-	heartbeatDst := filepath.Join(workspace, "prompts", "HEARTBEAT.md")
-	if _, err := os.Stat(heartbeatSrc); err == nil {
-		return copyFile(heartbeatSrc, heartbeatDst)
+	// Copy keepalive prompt if it exists
+	keepaliveSrc := filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md")
+	keepaliveDst := filepath.Join(workspace, "prompts", "KEEPALIVE.md")
+	if _, err := os.Stat(keepaliveSrc); err == nil {
+		return copyFile(keepaliveSrc, keepaliveDst)
 	}
 
 	return nil

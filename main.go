@@ -21,7 +21,7 @@ import (
 	"foci/command"
 	"foci/compaction"
 	"foci/config"
-	"foci/heartbeat"
+	"foci/keepalive"
 	"foci/log"
 	"foci/memory"
 	"foci/prompts"
@@ -54,7 +54,7 @@ type agentInstance struct {
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
 	tmuxClearAll func() // clears tmux tool state (watches, owned sessions)
-	hbRunner          *heartbeat.Runner                                          // heartbeat & background work timer (nil if disabled)
+	kaRunner          *keepalive.Runner                                          // keepalive & background work timer (nil if disabled)
 }
 
 // checkActivityGate parses if_active/if_inactive durations, checks them against
@@ -556,33 +556,33 @@ func main() {
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
 
-		// Heartbeat & background work runner
-		if cfg.Heartbeat.Enabled || cfg.Background.Enabled {
+		// Keepalive & background work runner
+		if cfg.Keepalive.Enabled || cfg.Background.Enabled {
 			orientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			if orientPrompt == "" {
 				orientPrompt = acfg.ForkPrompt // deprecated fallback
 			}
-			hbOrientPrompt := orientPrompt // capture for closure
-			branchFn := heartbeat.BuildBranchFunc(
+			kaOrientPrompt := orientPrompt // capture for closure
+			branchFn := keepalive.BuildBranchFunc(
 				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
 				func(branchKey, parentKey, branchType string) string {
-					return buildBranchOrientation(hbOrientPrompt, branchKey, parentKey, branchType, false)
+					return buildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false)
 				},
 				ctx,
 			)
-			inst.hbRunner = heartbeat.New(heartbeat.RunnerConfig{
+			inst.kaRunner = keepalive.New(keepalive.RunnerConfig{
 				AgentID:     acfg.ID,
-				Heartbeat:   cfg.Heartbeat,
+				Keepalive:   cfg.Keepalive,
 				Background:  cfg.Background,
 				TodoStore:   todoStore,
 				UsageClient: usageClient,
 				BranchFunc:  branchFn,
 			})
-			inst.hbRunner.Start(ctx)
+			inst.kaRunner.Start(ctx)
 
-			// Wire Telegram bot callbacks to heartbeat runner
+			// Wire Telegram bot callbacks to keepalive runner
 			if bot := botMgr.PrimaryBot(acfg.ID); bot != nil {
-				runner := inst.hbRunner
+				runner := inst.kaRunner
 				bot.OnUserMessage = func() {
 					runner.NotifyInteraction()
 				}
@@ -591,7 +591,7 @@ func main() {
 				}
 			}
 
-			log.Infof("main", "agent %q heartbeat runner started (hb=%v bg=%v)", acfg.ID, cfg.Heartbeat.Enabled, cfg.Background.Enabled)
+			log.Infof("main", "agent %q keepalive runner started (ka=%v bg=%v)", acfg.ID, cfg.Keepalive.Enabled, cfg.Background.Enabled)
 		}
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
@@ -1129,10 +1129,10 @@ func main() {
 
 	log.Infof("main", "shutting down...")
 
-	// Stop heartbeat runners — prevents new timer-triggered branches
+	// Stop keepalive runners — prevents new timer-triggered branches
 	for _, inst := range agents {
-		if inst.hbRunner != nil {
-			inst.hbRunner.Stop()
+		if inst.kaRunner != nil {
+			inst.kaRunner.Stop()
 		}
 	}
 

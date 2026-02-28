@@ -39,10 +39,10 @@ func TestReminderAddAndDue(t *testing.T) {
 	}
 }
 
-func TestReminderNextHeartbeat(t *testing.T) {
+func TestReminderNextKeepalive(t *testing.T) {
 	rs := testReminderStore(t)
 
-	if err := rs.Add("test", "think about caching", "next_heartbeat"); err != nil {
+	if err := rs.Add("test", "think about caching", "next_keepalive"); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -53,7 +53,7 @@ func TestReminderNextHeartbeat(t *testing.T) {
 	if len(reminders) != 1 {
 		t.Fatalf("expected 1 reminder, got %d", len(reminders))
 	}
-	if reminders[0].DueTag != "next_heartbeat" {
+	if reminders[0].DueTag != "next_keepalive" {
 		t.Errorf("due_tag = %q", reminders[0].DueTag)
 	}
 }
@@ -144,7 +144,7 @@ func TestResolveWhen(t *testing.T) {
 		desc  string
 	}{
 		{"now", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
-		{"next_heartbeat", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
+		{"next_keepalive", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
 		{"next_session", func(t time.Time) bool { return time.Since(t) < 5*time.Second }, "should be ~now"},
 		{"tomorrow", func(t time.Time) bool { return t.After(time.Now()) }, "should be in the future"},
 		{"2030-06-15", func(t time.Time) bool { return t.Year() == 2030 && t.Month() == 6 && t.Day() == 15 }, "should be that date"},

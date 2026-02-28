@@ -1,4 +1,4 @@
-[heartbeat] # Heartbeat Tasks
+[keepalive] # Keepalive Tasks
 
 ## Autonomy Rule
 Do whatever you think is useful or fun. You have judgment. Use it.

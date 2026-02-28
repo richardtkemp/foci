@@ -548,7 +548,7 @@ func TestProcessingDetails(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ctx := WithTrigger(context.Background(), "heartbeat")
+		ctx := WithTrigger(context.Background(), "keepalive")
 		ag.HandleMessage(ctx, "agent:test:detail", "check")
 		close(done)
 	}()
@@ -564,8 +564,8 @@ func TestProcessingDetails(t *testing.T) {
 	if d.SessionKey != "agent:test:detail" {
 		t.Errorf("session key = %q", d.SessionKey)
 	}
-	if d.Trigger != "heartbeat" {
-		t.Errorf("trigger = %q, want heartbeat", d.Trigger)
+	if d.Trigger != "keepalive" {
+		t.Errorf("trigger = %q, want keepalive", d.Trigger)
 	}
 	if d.StartTime.IsZero() {
 		t.Error("start time should not be zero")
@@ -1367,14 +1367,14 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 		t.Errorf("wake trigger should not duplicate: expected 1 occurrence, got %d", count)
 	}
 
-	// Heartbeat trigger should NOT duplicate
-	hbCtx := WithTrigger(context.Background(), "heartbeat")
-	ag.HandleMessage(hbCtx, "agent:test:hb", "Check stuff")
+	// Keepalive trigger should NOT duplicate
+	kaCtx := WithTrigger(context.Background(), "keepalive")
+	ag.HandleMessage(kaCtx, "agent:test:ka", "Check stuff")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = anthropic.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Check stuff"); count != 1 {
-		t.Errorf("heartbeat trigger should not duplicate: expected 1 occurrence, got %d", count)
+		t.Errorf("keepalive trigger should not duplicate: expected 1 occurrence, got %d", count)
 	}
 
 	// User trigger SHOULD duplicate

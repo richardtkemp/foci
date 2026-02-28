@@ -15,7 +15,7 @@ type Reminder struct {
 	ID      int64
 	Text    string
 	DueAt   time.Time
-	DueTag  string // original tag: "next_heartbeat", "tomorrow", etc.
+	DueTag  string // original tag: "next_keepalive", "tomorrow", etc.
 	Created time.Time
 }
 
@@ -99,7 +99,7 @@ func migrateReminders(db *sql.DB) error {
 }
 
 // Add creates a new reminder. The when parameter is resolved to a concrete time:
-//   - "next_heartbeat" → now (surfaced at next heartbeat)
+//   - "next_keepalive" → now (surfaced at next keepalive)
 //   - "tomorrow" → midnight tomorrow UTC
 //   - "next_session" → now (surfaced at next message)
 //   - YYYY-MM-DD → that date at midnight UTC
@@ -164,7 +164,7 @@ func resolveWhen(when string) time.Time {
 	now := time.Now().UTC()
 
 	switch when {
-	case "next_heartbeat", "next_session", "now":
+	case "next_keepalive", "next_heartbeat", "next_session", "now":
 		return now
 	case "tomorrow":
 		tomorrow := now.Add(24 * time.Hour)

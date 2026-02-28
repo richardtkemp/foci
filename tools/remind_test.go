@@ -25,15 +25,15 @@ func TestMemoryRemind(t *testing.T) {
 	tool := testRemindTool(t)
 	params, _ := json.Marshal(map[string]string{
 		"text": "check FTS5 phrase boosting",
-		"when": "next_heartbeat",
+		"when": "next_keepalive",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "next_heartbeat") {
-		t.Errorf("result = %q, expected mention of next_heartbeat", result)
+	if !strings.Contains(result, "next_keepalive") {
+		t.Errorf("result = %q, expected mention of next_keepalive", result)
 	}
 	if !strings.Contains(result, "check FTS5 phrase boosting") {
 		t.Errorf("result = %q, expected mention of text", result)

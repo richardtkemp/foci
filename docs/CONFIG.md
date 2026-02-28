@@ -55,7 +55,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
-["IDENTITY.md", "SOUL.md", "COHERENCE.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"]
+["IDENTITY.md", "SOUL.md", "COHERENCE.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "KEEPALIVE.md"]
 ```
 
 Missing files are silently skipped. The last file gets the cache breakpoint marker.
@@ -220,7 +220,7 @@ Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 All prompt fields (`compaction_summary_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
 When no config override is set, embedded defaults from `prompts/` are used:
-- `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, heartbeat)
+- `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
 - `prompts/branch-orientation-multiball.md` — user-attached multiball branches
 - `prompts/compaction-summary.md` — compaction summary prompt
 - `prompts/compaction-handoff.md` — post-compaction handoff message (`compaction_handoff_msg` default)
@@ -499,15 +499,15 @@ Each subdirectory with a `SKILL.md` is loaded. The skill name and description (f
 
 ---
 
-## `[heartbeat]`
+## `[keepalive]`
 
 Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic cache prefix warm.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable heartbeat timer. |
+| `enabled` | bool | `false` | Enable keepalive timer. |
 | `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be < 1h (Anthropic cache TTL). |
-| `prompt` | string | `"prompts/heartbeat.md"` | Path to heartbeat prompt file. |
+| `prompt` | string | `"prompts/keepalive.md"` | Path to keepalive prompt file. |
 
 ---
 
@@ -523,8 +523,8 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 | `invest_interval` | string | `"30m"` | Quiet period after mana reset to let cache invest before spending. |
 
 **Validation warnings:**
-- `background.interval > heartbeat.interval` — heartbeat resets the cache timer; background work may never trigger.
-- `heartbeat.interval > 1h` — Anthropic cache TTL is 1 hour; cache may expire between heartbeats.
+- `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
+- `keepalive.interval > 1h` — Anthropic cache TTL is 1 hour; cache may expire between keepalives.
 
 See [HEARTBEAT.md](HEARTBEAT.md) for full details on the manamometer and timer logic.
 
@@ -788,7 +788,7 @@ bot_token = "123456:ABC..."
 id = "main"
 model = "claude-sonnet-4-5"
 workspace = "/home/foci/character"
-system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"]
+system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "KEEPALIVE.md"]
 
 [telegram]
 allowed_users = ["123456789"]

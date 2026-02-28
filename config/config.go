@@ -288,11 +288,11 @@ type ModelsConfig struct {
 	Aliases map[string]string `toml:"aliases"` // shorthand → full model ID (e.g., "opus" → "claude-opus-4-6")
 }
 
-// HeartbeatConfig controls the cache keepalive timer.
-type HeartbeatConfig struct {
-	Enabled  bool   `toml:"enabled"`  // enable heartbeat timer (default: false)
+// KeepaliveConfig controls the cache keepalive timer.
+type KeepaliveConfig struct {
+	Enabled  bool   `toml:"enabled"`  // enable keepalive timer (default: false)
 	Interval string `toml:"interval"` // time since cache last warmed before firing (default: "55m")
-	Prompt   string `toml:"prompt"`   // file path to heartbeat prompt (default: "prompts/heartbeat.md")
+	Prompt   string `toml:"prompt"`   // file path to keepalive prompt (default: "prompts/keepalive.md")
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
@@ -323,7 +323,7 @@ type Config struct {
 	Environment        EnvironmentConfig  `toml:"environment"`
 	Skills             SkillsConfig       `toml:"skills"`
 	Tools              ToolsConfig        `toml:"tools"`
-	Heartbeat          HeartbeatConfig    `toml:"heartbeat"`
+	Keepalive          KeepaliveConfig    `toml:"keepalive"`
 	Background         BackgroundConfig   `toml:"background"`
 	Commands           []CommandConfig    `toml:"commands"`
 	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
@@ -765,12 +765,12 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.ShowToolCalls = ToolCallOff
 	}
 
-	// Heartbeat/background defaults
-	if cfg.Heartbeat.Interval == "" {
-		cfg.Heartbeat.Interval = "55m"
+	// Keepalive/background defaults
+	if cfg.Keepalive.Interval == "" {
+		cfg.Keepalive.Interval = "55m"
 	}
-	if cfg.Heartbeat.Prompt == "" {
-		cfg.Heartbeat.Prompt = "prompts/heartbeat.md"
+	if cfg.Keepalive.Prompt == "" {
+		cfg.Keepalive.Prompt = "prompts/keepalive.md"
 	}
 	if cfg.Background.Interval == "" {
 		cfg.Background.Interval = "5m"
@@ -784,18 +784,18 @@ func Load(path string) (*Config, error) {
 
 	cfg.ResolveAllPaths()
 
-	// Heartbeat/background validation warnings
-	if cfg.Background.Enabled && cfg.Heartbeat.Enabled {
+	// Keepalive/background validation warnings
+	if cfg.Background.Enabled && cfg.Keepalive.Enabled {
 		bgInt, _ := time.ParseDuration(cfg.Background.Interval)
-		hbInt, _ := time.ParseDuration(cfg.Heartbeat.Interval)
-		if bgInt > 0 && hbInt > 0 && bgInt > hbInt {
-			log.Warnf("config", "[background] interval %s > [heartbeat] interval %s — heartbeat resets cache timer, background work may never trigger", cfg.Background.Interval, cfg.Heartbeat.Interval)
+		kaInt, _ := time.ParseDuration(cfg.Keepalive.Interval)
+		if bgInt > 0 && kaInt > 0 && bgInt > kaInt {
+			log.Warnf("config", "[background] interval %s > [keepalive] interval %s — keepalive resets cache timer, background work may never trigger", cfg.Background.Interval, cfg.Keepalive.Interval)
 		}
 	}
-	if cfg.Heartbeat.Enabled {
-		hbInt, _ := time.ParseDuration(cfg.Heartbeat.Interval)
-		if hbInt > time.Hour {
-			log.Warnf("config", "[heartbeat] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between heartbeats", cfg.Heartbeat.Interval)
+	if cfg.Keepalive.Enabled {
+		kaInt, _ := time.ParseDuration(cfg.Keepalive.Interval)
+		if kaInt > time.Hour {
+			log.Warnf("config", "[keepalive] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between keepalives", cfg.Keepalive.Interval)
 		}
 	}
 
@@ -883,8 +883,8 @@ func (c *Config) ResolveAllPaths() {
 	if c.Sessions.CompactionSummaryPrompt != "" {
 		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)
 	}
-	if c.Heartbeat.Prompt != "" {
-		c.Heartbeat.Prompt = ResolvePath(c.Heartbeat.Prompt)
+	if c.Keepalive.Prompt != "" {
+		c.Keepalive.Prompt = ResolvePath(c.Keepalive.Prompt)
 	}
 	if c.Background.Prompt != "" {
 		c.Background.Prompt = ResolvePath(c.Background.Prompt)
