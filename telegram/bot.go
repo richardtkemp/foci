@@ -394,6 +394,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 	}
 
 	var offset int64
+	var consecutiveErrors int
+	const errorEscalateThreshold = 5 // escalate to ERROR after this many consecutive failures
+
 	// On exit, acknowledge processed updates so they aren't replayed on restart.
 	// Telegram acknowledges updates implicitly when the next getUpdates has a
 	// higher offset, so we must fire one final short-poll before returning.
@@ -438,7 +441,13 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			return
 		case res := <-ch:
 			if res.err != nil {
-				log.Errorf("telegram", "get updates: %s", b.sanitizeError(res.err))
+				consecutiveErrors++
+				sanitized := b.sanitizeError(res.err)
+				if consecutiveErrors >= errorEscalateThreshold {
+					log.Errorf("telegram", "get updates (%d consecutive failures): %s", consecutiveErrors, sanitized)
+				} else {
+					log.Debugf("telegram", "get updates (transient): %s", sanitized)
+				}
 				select {
 				case <-ctx.Done():
 					return
@@ -446,6 +455,7 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				}
 				continue
 			}
+			consecutiveErrors = 0
 
 			for _, update := range res.updates {
 				if update.UpdateId >= offset {
