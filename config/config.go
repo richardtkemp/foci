@@ -150,8 +150,7 @@ type AnthropicConfig struct {
 	Token           string `toml:"token"`
 	OAuthToken      string `toml:"oauth_token"` // OAuth access token for usage API (legacy, static)
 	BraveAPIKey     string `toml:"brave_api_key"`
-	CredentialsFile string `toml:"credentials_file"`  // path to Claude Code credentials.json (default ~/.claude/.credentials.json)
-	AutoRefresh     *bool  `toml:"auto_refresh"`      // enable OAuth token auto-refresh (nil = true when credentials_file exists)
+	CredentialsFile string `toml:"credentials_file"`  // path to Claude Code credentials.json (fallback token source)
 	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
 }

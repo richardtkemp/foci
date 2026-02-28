@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -235,30 +234,21 @@ func main() {
 		httpTimeout = 120 * time.Second
 	}
 
-	// OAuth auto-refresh: when credentials_file exists and auto_refresh is nil or true,
-	// create an OAuthManager for proactive + reactive token refresh.
-	autoRefresh := cfg.Anthropic.AutoRefresh == nil || *cfg.Anthropic.AutoRefresh
-	var oauthMgr *anthropic.OAuthManager
-	var client *anthropic.Client
-	if autoRefresh {
-		mgr, mgrErr := anthropic.NewOAuthManager(cfg.Anthropic.CredentialsFile,
-			anthropic.WithLogger(func(format string, args ...any) {
-				log.Infof("oauth", format, args...)
-			}))
-		if mgrErr != nil {
-			log.Warnf("main", "oauth auto-refresh unavailable, using static token: %v", mgrErr)
-			client = anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
-		} else {
-			oauthMgr = mgr
-			mgr.Start()
-			defer mgr.Stop()
-			client = anthropic.NewClientWithTokenFunc(mgr.Token, httpTimeout)
-			client.SetRefreshFunc(mgr.RefreshIfNeeded)
-			log.Infof("main", "oauth auto-refresh enabled (credentials: %s)", cfg.Anthropic.CredentialsFile)
+	// Token resolution: secrets.toml > foci.toml > credentials file (claude setup-token)
+	if anthropicToken == "" && cfg.Anthropic.CredentialsFile != "" {
+		if t, err := anthropic.ReadSetupToken(cfg.Anthropic.CredentialsFile); err == nil && t != "" {
+			anthropicToken = t
+			log.Infof("main", "using token from %s", cfg.Anthropic.CredentialsFile)
 		}
-	} else {
-		client = anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
 	}
+	if anthropicToken == "" {
+		log.Errorf("main", "no Anthropic token configured")
+		log.Errorf("main", "run: claude setup-token")
+		log.Errorf("main", "then add the token to secrets.toml under [anthropic] token = \"sk-ant-oat01-...\"")
+		log.Errorf("main", "or set credentials_file in foci.toml to point to ~/.claude/.credentials.json")
+		os.Exit(1)
+	}
+	client := anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
 	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
 
 	// Shared: Session store
@@ -469,33 +459,16 @@ func main() {
 	// Bot manager — owns all Telegram bots
 	botMgr := telegram.NewBotManager()
 
-	// Shared: usage client — prefer OAuthManager (auto-refreshing), fall back to credentials file or static token
-	credFile := cfg.Anthropic.CredentialsFile
-	if strings.HasPrefix(credFile, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			credFile = filepath.Join(home, credFile[2:])
-		}
+	// Shared: usage client — uses the same token as the messages API.
+	// OAuth tokens (sk-ant-oat01-*) work for both; fallback to explicit oauth_token if set.
+	usageToken := anthropicToken
+	if anthropicOAuthToken != "" {
+		usageToken = anthropicOAuthToken
 	}
-	var usageClient *anthropic.UsageClient
-	if oauthMgr != nil {
-		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-		log.Infof("main", "usage: using OAuthManager token")
-	} else if credFile != "" {
-		usageClient = anthropic.NewUsageClientWithFunc(func() string {
-			token, err := anthropic.ReadCredentialsToken(credFile)
-			if err != nil {
-				log.Debugf("main", "read credentials file: %v", err)
-				return anthropicOAuthToken // fallback to static token
-			}
-			return token
-		})
-		log.Infof("main", "usage: reading OAuth token from %s", credFile)
-	} else {
-		usageClient = anthropic.NewUsageClient(anthropicOAuthToken)
-	}
+	usageClient := anthropic.NewUsageClient(usageToken)
 
 	// Mana detection startup checks
-	for _, w := range checkManaPrereqs(credFile) {
+	for _, w := range checkManaPrereqs(usageToken) {
 		log.Warnf("main", "%s", w)
 	}
 
@@ -2848,15 +2821,10 @@ func restoreMultiballSessions(
 }
 
 // checkManaPrereqs returns warnings if mana detection prerequisites are missing.
-func checkManaPrereqs(credFile string) []string {
+func checkManaPrereqs(usageToken string) []string {
 	var warnings []string
-	if _, err := exec.LookPath("claude"); err != nil {
-		warnings = append(warnings, "mana: 'claude' not found in PATH — mana detection requires Claude Code to be installed")
-	}
-	if credFile != "" {
-		if _, err := os.Stat(credFile); os.IsNotExist(err) {
-			warnings = append(warnings, fmt.Sprintf("mana: credentials file not found at %s — mana detection requires Claude Code to be running periodically to refresh the OAuth token", credFile))
-		}
+	if usageToken == "" {
+		warnings = append(warnings, "mana: no OAuth token configured — mana detection requires a token from 'claude setup-token'")
 	}
 	return warnings
 }

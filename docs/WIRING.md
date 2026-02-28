@@ -18,12 +18,9 @@ config.Load(path)                                        ← validates values; l
   Shared resources (created once):
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
   → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
-  → [if auto_refresh] OAuthManager(credentials_file)      ← proactive + reactive token refresh
-    → mgr.Start()                                         ← background ticker refreshes 30min before expiry
-    → NewClientWithTokenFunc(mgr.Token, timeout)           ← dynamic token from OAuthManager
-    → client.SetRefreshFunc(mgr.RefreshIfNeeded)           ← 401 → reactive refresh + retry
-    → UsageClient via NewUsageClientWithFunc(mgr.Token)
-  → [else] anthropic.NewClientWithTimeout(token, timeout)  ← static API key
+  → Token resolution: secrets.toml > foci.toml > credentials_file (claude setup-token)
+  → anthropic.NewClientWithTimeout(token, timeout)         ← static long-lived token
+  → UsageClient via NewUsageClient(token)                  ← same token for usage API
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
@@ -72,7 +69,7 @@ SIGTERM/SIGINT received
   → gracefulShutdown(agents, timeout)    ← wait for in-flight agent turns
   → cancel context                        ← stops Telegram poll loops, triggers update ack
   → botMgr.Wait()                         ← block until all bots finish ack
-  → deferred closes run (OAuthManager.Stop, SQLite DBs, log files)
+  → deferred closes run (SQLite DBs, log files)
 ```
 
 ## Package Dependency Graph
@@ -296,8 +293,8 @@ Two clients:
 
 1. **MessageClient** (`client.go`) — messages API with prompt caching
    - Sends model requests with system prompt + conversation history
-   - Sets `anthropic-beta: prompt-caching-2024-07-31` for cache control
-   - OAuth tokens also include `oauth-2025-04-20` in beta header
+   - Uses long-lived OAuth token from `claude setup-token` (1-year lifetime)
+   - Sets `anthropic-beta: oauth-2025-04-20` header for OAuth token auth
 
 2. **UsageClient** (`usage.go`) — OAuth usage API
    - Queries `/api/oauth/usage` endpoint
@@ -318,8 +315,7 @@ Cache breakpoints are added **only to the API request payload**, never persisted
 
 **Requirements for cache hits:**
 - System prompt must be byte-identical across turns (workspace files don't change mid-conversation)
-- `anthropic-beta: prompt-caching-2024-07-31` header (set in `client.go`)
-- OAuth tokens also need `oauth-2025-04-20` in the beta header
+- `anthropic-beta: oauth-2025-04-20` header (set in `client.go`)
 
 **Verify in `api.jsonl`:** `cache_read > 0` on the second message in a session means caching is working.
 
