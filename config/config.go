@@ -115,6 +115,7 @@ type AgentConfig struct {
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
 	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
 	ShowThinking            *ShowThinking     `toml:"show_thinking"`             // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
+	DisplayWidth            *int              `toml:"display_width"`             // display width for dividers in Telegram (nil = use global telegram.display_width)
 	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
 	ImageSaveDir            string            `toml:"image_save_dir"`            // save received images to this directory (empty = disabled)
 	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
@@ -171,6 +172,7 @@ type TelegramConfig struct {
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 	ShowToolCalls       ToolCallDisplay               `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
 	ShowThinking        ShowThinking                 `toml:"show_thinking"`         // show thinking blocks in Telegram: "off" (default), "compact", "true"
+	DisplayWidth        int                          `toml:"display_width"`         // display width for dividers in Telegram (default 44)
 	ImageSaveDir        string                       `toml:"image_save_dir"`        // save received images to this directory (empty = disabled, per-agent overrides)
 }
 
@@ -324,6 +326,7 @@ type DefaultsConfig struct {
 	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
+	DisplayWidth        *int             `toml:"display_width"`         // default display_width (nil = use telegram.display_width)
 	SystemFiles         []string         `toml:"system_files"`          // default system file list
 }
 
@@ -873,6 +876,9 @@ func Load(path string) (*Config, error) {
 	if !md.IsDefined("telegram", "show_thinking") {
 		cfg.Telegram.ShowThinking = ShowThinkingOff
 	}
+	if cfg.Telegram.DisplayWidth == 0 {
+		cfg.Telegram.DisplayWidth = 44
+	}
 
 	// Keepalive/background defaults
 	if cfg.Keepalive.Interval == "" {
@@ -927,6 +933,10 @@ func Load(path string) (*Config, error) {
 		// ShowThinking: defaults.show_thinking → agent fallback
 		if cfg.Agents[i].ShowThinking == nil && cfg.Defaults.ShowThinking != nil {
 			cfg.Agents[i].ShowThinking = cfg.Defaults.ShowThinking
+		}
+		// DisplayWidth: defaults.display_width → agent fallback
+		if cfg.Agents[i].DisplayWidth == nil && cfg.Defaults.DisplayWidth != nil {
+			cfg.Agents[i].DisplayWidth = cfg.Defaults.DisplayWidth
 		}
 	}
 

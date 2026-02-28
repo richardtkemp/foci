@@ -91,6 +91,7 @@ type Bot struct {
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
 	showToolCalls        string       // tool call display mode: "off", "preview", "full"
 	showThinking         string       // thinking display mode: "off", "compact", "true"
+	displayWidth         int          // character width for dividers (default 44)
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	imageSaveDir         string       // if non-empty, save received images to this directory
 	toolResults          sync.Map     // message ID (int64) → toolResultEntry; ephemeral, for inline keyboard expansion
@@ -155,6 +156,11 @@ func (b *Bot) SetShowToolCalls(mode string) {
 // Accepts "off", "compact", or "true".
 func (b *Bot) SetShowThinking(mode string) {
 	b.showThinking = mode
+}
+
+// SetDisplayWidth sets the character width used for divider lines.
+func (b *Bot) SetDisplayWidth(width int) {
+	b.displayWidth = width
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -1083,7 +1089,7 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
 	responseHTML := ConvertToTelegramHTML(response)
-	divider := "\n————————————————\n\n"
+	divider := "\n" + strings.Repeat("—", b.displayWidth) + "\n\n"
 	fullHTML := thinkingHTML + divider + responseHTML
 
 	chunks := splitMessage(fullHTML, 4096)
@@ -2050,7 +2056,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML)
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.displayWidth)
 		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -2076,9 +2082,9 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 }
 
 // formatThinkingExpanded prepends thinking text above a separator, with the response below.
-func formatThinkingExpanded(thinkingText, responseHTML string) string {
+func formatThinkingExpanded(thinkingText, responseHTML string, displayWidth int) string {
 	escaped := htmlEscapeBot(thinkingText)
-	divider := "\n————————————————\n"
+	divider := "\n" + strings.Repeat("—", displayWidth) + "\n"
 	result := "<i>" + escaped + "</i>" + divider + responseHTML
 	// Telegram messages are limited to 4096 characters; truncate thinking if needed.
 	if len(result) > 4096 {
