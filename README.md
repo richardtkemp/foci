@@ -94,6 +94,7 @@ foci.toml + secrets.toml
 
 | What | Enables | Notes |
 |------|---------|-------|
+| **bash** | `set -o pipefail` in exec, tool-piping shell functions | Falls back to `sh` if absent (pipefail and shell functions unavailable) |
 | **Groq API key** | Voice input (speech-to-text) | Free tier, fast Whisper transcription |
 | **Brave Search API key** | `web_search` tool | Free tier available |
 | **edge-tts + ffmpeg** | Voice output (text-to-speech) | `pip install edge-tts`, `apt install ffmpeg` |
