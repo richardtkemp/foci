@@ -2026,3 +2026,141 @@ log_rotation = "false"
 		t.Error("Logging.LogRotation should be false (from \"false\")")
 	}
 }
+
+func TestDataDirDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[agent]
+id = "test"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	want := filepath.Join(home, "data")
+	if cfg.DataDir != want {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, want)
+	}
+}
+
+func TestDataDirExplicitNotOverridden(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+data_dir = "/opt/foci/data"
+
+[agent]
+id = "test"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.DataDir != "/opt/foci/data" {
+		t.Errorf("DataDir = %q, want /opt/foci/data", cfg.DataDir)
+	}
+}
+
+func TestAgentNameDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[[agents]]
+id = "clutch"
+
+[[agents]]
+id = "scout"
+name = "Scout Override"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agents[0].Name != "Clutch" {
+		t.Errorf("Agents[0].Name = %q, want %q", cfg.Agents[0].Name, "Clutch")
+	}
+	if cfg.Agents[1].Name != "Scout Override" {
+		t.Errorf("Agents[1].Name = %q, want %q", cfg.Agents[1].Name, "Scout Override")
+	}
+}
+
+func TestAgentMemorySourcesDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[[agents]]
+id = "clutch"
+workspace = "/home/foci/clutch"
+
+[[agents]]
+id = "scout"
+workspace = "/home/foci/scout"
+
+[[agents.memory.sources]]
+name = "custom"
+dir = "/custom/memory"
+weight = 0.5
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// clutch: should get default memory source
+	if len(cfg.Agents[0].Memory.Sources) != 1 {
+		t.Fatalf("Agents[0].Memory.Sources len = %d, want 1", len(cfg.Agents[0].Memory.Sources))
+	}
+	src := cfg.Agents[0].Memory.Sources[0]
+	if src.Name != "clutch" {
+		t.Errorf("default source name = %q, want %q", src.Name, "clutch")
+	}
+	if src.Dir != "/home/foci/clutch/memory" {
+		t.Errorf("default source dir = %q, want %q", src.Dir, "/home/foci/clutch/memory")
+	}
+	if src.Weight != 1.0 {
+		t.Errorf("default source weight = %f, want 1.0", src.Weight)
+	}
+
+	// scout: should keep explicit sources
+	if len(cfg.Agents[1].Memory.Sources) != 1 {
+		t.Fatalf("Agents[1].Memory.Sources len = %d, want 1", len(cfg.Agents[1].Memory.Sources))
+	}
+	if cfg.Agents[1].Memory.Sources[0].Name != "custom" {
+		t.Errorf("explicit source name = %q, want %q", cfg.Agents[1].Memory.Sources[0].Name, "custom")
+	}
+}
+
+func TestBotTokenSecretDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[agent]
+id = "test"
+
+[telegram.bots.primary]
+
+[telegram.bots.secondary]
+token_secret = "custom.key"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Telegram.Bots["primary"].TokenSecret != "telegram.primary" {
+		t.Errorf("primary token_secret = %q, want %q", cfg.Telegram.Bots["primary"].TokenSecret, "telegram.primary")
+	}
+	if cfg.Telegram.Bots["secondary"].TokenSecret != "custom.key" {
+		t.Errorf("secondary token_secret = %q, want %q", cfg.Telegram.Bots["secondary"].TokenSecret, "custom.key")
+	}
+}

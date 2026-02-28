@@ -17,7 +17,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | `""` | Agent identifier. Used in session keys (`agent:ID:main`). |
-| `name` | string | `""` | Human-readable name (e.g. `"Clutch"`). Used in `/voice` WebSocket agent list. |
+| `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `model` | string | `"claude-haiku-4-5"` | Anthropic model ID for API calls. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
@@ -28,7 +28,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `telegram_bot` | string | `$id` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. Defaults to the agent ID if a matching key exists in `[telegram.bots]`. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
 | `multiball_bot` | string | `""` | **Deprecated:** use `multiball_bots`. If set and `multiball_bots` is empty, promoted to a single-element list with a warning. |
-| `memory.sources` | array | `[]` | Per-agent memory directories (see below). Combined with global `[memory]` sources. |
+| `memory.sources` | array | see below | Per-agent memory directories (see below). Combined with global `[memory]` sources. When empty, defaults to a single source: `{name: $id, dir: $workspace/memory, weight: 1.0}`. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 | `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. Empty = omit (use API default). Overridable at runtime via `/effort` command. Per-session overrides persist across restarts via state store and reset when a new session starts. |
@@ -189,7 +189,7 @@ Named bot configuration for multi-agent setups. Each bot is referenced by name f
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `token_secret` | string | `""` | Key in `secrets.toml` to resolve the bot token (e.g. `"telegram.primary"`). |
+| `token_secret` | string | `telegram.<name>` | Key in `secrets.toml` to resolve the bot token. Defaults to `telegram.<bot-key-name>` (e.g. bot key `primary` → `telegram.primary`). |
 
 Example:
 ```toml
@@ -215,7 +215,7 @@ Session storage and compaction.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `""` | Directory for JSONL session files. Defaults to `data/sessions/` via `data_dir`. Relative paths resolve against `$HOME`. |
+| `dir` | string | `$data_dir/sessions` | Directory for JSONL session files. Defaults to `$data_dir/sessions/`. Relative paths resolve against `$HOME`. |
 | `compaction_threshold` | float | `0.8` | Trigger compaction when context usage exceeds this fraction (0.0–1.0). |
 | `compaction_max_tokens` | int | `4096` | Max output tokens for the compaction summary. |
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
@@ -362,7 +362,7 @@ Logging and diagnostics.
 | `level` | string | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
-| `conversation_file` | string | `""` | Path to conversation SQLite log. Defaults to `data/conversation.db` via `data_dir`. Relative paths resolve against `$HOME`. |
+| `conversation_file` | string | `$data_dir/conversation.db` | Path to conversation SQLite log. Defaults to `$data_dir/conversation.db`. Relative paths resolve against `$HOME`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 | `messages_in_log` | bool | `false` | Log user message content to the event log. When false (default), messages are logged at DEBUG level with no content for privacy. When true, messages are logged at INFO level with content (truncated to 100 chars). |
@@ -598,7 +598,7 @@ Miscellaneous top-level config keys (not in any section).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `data_dir` | string | `""` | Directory for databases, sessions, and state files. When empty, defaults to `$HOME/data/`. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
+| `data_dir` | string | `$HOME/data` | Directory for databases, sessions, and state files. Defaults to `$HOME/data/`. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
 | `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
 | `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [docs/SECRETS.md](SECRETS.md). |
 
