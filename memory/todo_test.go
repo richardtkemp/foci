@@ -52,7 +52,7 @@ func TestTodoComplete(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Finish report", "medium", "")
-	if err := store.Complete("agent1", id); err != nil {
+	if err := store.Complete("agent1", id, "done and dusted"); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -66,12 +66,15 @@ func TestTodoComplete(t *testing.T) {
 	if items[0].CompletedAt == nil {
 		t.Error("completed_at should be set")
 	}
+	if items[0].CloseReason != "done and dusted" {
+		t.Errorf("close_reason = %q, want %q", items[0].CloseReason, "done and dusted")
+	}
 }
 
 func TestTodoCompleteNotFound(t *testing.T) {
 	store := newTestTodoStore(t)
 
-	err := store.Complete("agent1", 999)
+	err := store.Complete("agent1", 999, "reason")
 	if err == nil {
 		t.Error("expected error for nonexistent todo")
 	}
@@ -126,7 +129,7 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	id1, _ := store.Add("agent1", "Open task", "medium", "")
 	id2, _ := store.Add("agent1", "Done task", "medium", "")
 	_ = id1
-	store.Complete("agent1", id2)
+	store.Complete("agent1", id2, "finished")
 
 	open, _ := store.List("agent1", "open", "")
 	done, _ := store.List("agent1", "done", "")
@@ -171,7 +174,7 @@ func TestTodoCrossAgentComplete(t *testing.T) {
 	id, _ := store.Add("agent1", "Agent 1 only", "medium", "")
 
 	// Agent 2 should not be able to complete agent 1's todo
-	err := store.Complete("agent2", id)
+	err := store.Complete("agent2", id, "reason")
 	if err == nil {
 		t.Error("expected error when completing another agent's todo")
 	}
@@ -266,7 +269,7 @@ func TestTodoCountOpenByTag(t *testing.T) {
 	store.Add("agent1", "BG task 1", "medium", "background")
 	id2, _ := store.Add("agent1", "BG task 2", "high", "background")
 	store.Add("agent1", "Regular", "low", "")
-	store.Complete("agent1", id2)
+	store.Complete("agent1", id2, "completed")
 
 	count, err := store.CountOpenByTag("agent1", "background")
 	if err != nil {

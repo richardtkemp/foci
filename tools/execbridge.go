@@ -374,7 +374,7 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
   local action="$1"; shift 2>/dev/null || true
-  local text="" priority="" tag="" query="" status="" id=""
+  local text="" priority="" tag="" query="" status="" id="" reason=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --text) text="$2"; shift 2 ;;
@@ -383,6 +383,7 @@ func generateShellFunc(t *Tool) string {
       --query) query="$2"; shift 2 ;;
       --status) status="$2"; shift 2 ;;
       --id) id="$2"; shift 2 ;;
+      --reason) reason="$2"; shift 2 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
           add|edit) text="$text $1" ;;
@@ -414,7 +415,10 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     complete)
-      foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"complete","id":$id}}')"
+      local params='{"action":"complete"}'
+      [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$reason" ] && params="$(echo "$params" | jq --arg r "$reason" '. + {reason: $r}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     edit)
       local params='{"action":"edit"}'
