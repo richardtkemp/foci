@@ -80,6 +80,117 @@ func ContextLimit(model string) int {
 	return contextLimit(model)
 }
 
+// hasToolUse returns true if the message contains any tool_use content blocks.
+func hasToolUse(msg anthropic.Message) bool {
+	for _, b := range msg.Content {
+		if b.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+// toolUseIDs returns the IDs of all tool_use blocks in the message.
+func toolUseIDs(msg anthropic.Message) []string {
+	var ids []string
+	for _, b := range msg.Content {
+		if b.Type == "tool_use" {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
+}
+
+// toolResultIDs returns the tool_use_id values of all tool_result blocks in the message.
+func toolResultIDs(msg anthropic.Message) map[string]bool {
+	ids := make(map[string]bool)
+	for _, b := range msg.Content {
+		if b.Type == "tool_result" {
+			ids[b.ToolUseID] = true
+		}
+	}
+	return ids
+}
+
+// safeSplitPoint adjusts splitIdx backward (up to maxWalkBack steps) so that
+// tool_use/tool_result pairs are not broken across the split boundary.
+// An assistant message with tool_use blocks must be followed by a user message
+// with matching tool_result blocks — splitting between them creates orphans.
+func safeSplitPoint(messages []anthropic.Message, splitIdx, maxWalkBack int) int {
+	for steps := 0; steps < maxWalkBack && splitIdx > 0; steps++ {
+		prev := messages[splitIdx-1]
+		if prev.Role != "assistant" || !hasToolUse(prev) {
+			break
+		}
+		// The message before the split is an assistant with tool_use.
+		// Its tool_results should be at splitIdx — pull it into preserved.
+		splitIdx--
+	}
+	return splitIdx
+}
+
+// repairOrphanedToolUse scans messages for assistant tool_use blocks that lack
+// matching tool_result blocks in the immediately following user message, and
+// injects synthetic error tool_results. Returns a new slice; the input is not modified.
+func repairOrphanedToolUse(messages []anthropic.Message) []anthropic.Message {
+	result := make([]anthropic.Message, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+		result = append(result, msg)
+
+		if msg.Role != "assistant" || !hasToolUse(msg) {
+			continue
+		}
+
+		useIDs := toolUseIDs(msg)
+
+		// Collect tool_result IDs from the next message (if it's a user message).
+		var matched map[string]bool
+		if i+1 < len(messages) && messages[i+1].Role == "user" {
+			matched = toolResultIDs(messages[i+1])
+		}
+
+		// Find unmatched tool_use IDs.
+		var unmatched []string
+		for _, id := range useIDs {
+			if !matched[id] {
+				unmatched = append(unmatched, id)
+			}
+		}
+		if len(unmatched) == 0 {
+			continue
+		}
+
+		log.Warnf("compaction", "repairing %d orphaned tool_use blocks", len(unmatched))
+
+		// Build synthetic tool_results.
+		var synthetic []anthropic.ContentBlock
+		for _, id := range unmatched {
+			synthetic = append(synthetic, anthropic.ToolResultBlock(
+				id, "Tool result lost (repaired during compaction)", true,
+			))
+		}
+
+		// If the next message is a user message, clone it and prepend the
+		// synthetic results so the pair stays together.
+		if i+1 < len(messages) && messages[i+1].Role == "user" {
+			next := messages[i+1]
+			combined := make([]anthropic.ContentBlock, 0, len(synthetic)+len(next.Content))
+			combined = append(combined, synthetic...)
+			combined = append(combined, next.Content...)
+			result = append(result, anthropic.Message{Role: "user", Content: combined})
+			i++ // skip the original
+		} else {
+			// No user message follows — inject a standalone user message.
+			result = append(result, anthropic.Message{
+				Role:    "user",
+				Content: synthetic,
+			})
+		}
+	}
+	return result
+}
+
 // estimateTokens gives a rough token estimate for messages.
 // ~4 chars per token is a common heuristic.
 func estimateTokens(messages []anthropic.Message) int {
@@ -158,14 +269,42 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	toSummarise := messages
 	var preserved []anthropic.Message
 	if preserveN > 0 {
-		toSummarise = messages[:len(messages)-preserveN]
-		preserved = messages[len(messages)-preserveN:]
-		log.Infof("compaction", "preserving %d messages through compaction", preserveN)
+		splitIdx := len(messages) - preserveN
+
+		// Walk the split backward (bounded) to avoid breaking tool_use/tool_result pairs.
+		maxWalkBack := c.preserveMessages
+		if maxWalkBack <= 0 {
+			maxWalkBack = 25
+		}
+		safeSplit := safeSplitPoint(messages, splitIdx, maxWalkBack)
+		if safeSplit != splitIdx {
+			log.Infof("compaction", "split adjusted from %d to %d to preserve tool_use pairs", splitIdx, safeSplit)
+		}
+		splitIdx = safeSplit
+
+		// Re-check minMessages constraint after adjustment.
+		if splitIdx < c.minMessages {
+			log.Infof("compaction", "walk-back pushed split below minMessages (%d < %d), preserving nothing", splitIdx, c.minMessages)
+			splitIdx = len(messages)
+			preserveN = 0
+		} else {
+			preserveN = len(messages) - splitIdx
+		}
+
+		if preserveN > 0 {
+			toSummarise = messages[:splitIdx]
+			preserved = messages[splitIdx:]
+			log.Infof("compaction", "preserving %d messages through compaction", preserveN)
+		}
 	}
 
+	// Repair any orphaned tool_use blocks in toSummarise before sending to API.
+	// This handles mid-session data corruption (missing tool_results).
+	repairedSummary := repairOrphanedToolUse(toSummarise)
+
 	// Ask model to summarize the conversation
-	summaryMessages := make([]anthropic.Message, len(toSummarise))
-	copy(summaryMessages, toSummarise)
+	summaryMessages := make([]anthropic.Message, len(repairedSummary))
+	copy(summaryMessages, repairedSummary)
 	summaryMessages = append(summaryMessages, anthropic.Message{
 		Role:    "user",
 		Content: anthropic.TextContent(summaryPrompt),
