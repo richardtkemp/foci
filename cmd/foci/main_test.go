@@ -211,7 +211,7 @@ func TestCLIIntegration(t *testing.T) {
 		{"send with --if-inactive=", []string{"send", "--sync", "--if-inactive=1h", "hello"}, "(if_inactive:1h) echo: hello", false},
 
 		// --if-inactive flag for branch
-		{"branch with --if-inactive", []string{"branch", "--sync", "--if-inactive", "30m", "heartbeat"}, "(if_inactive:30m) wake ok", false},
+		{"branch with --if-inactive", []string{"branch", "--sync", "--if-inactive", "30m", "keepalive"}, "(if_inactive:30m) wake ok", false},
 		{"branch with --if-inactive=", []string{"branch", "--sync", "--if-inactive=45m"}, "(if_inactive:45m) wake ok", false},
 		{"branch with --if-inactive and --oneshot", []string{"branch", "--sync", "--if-inactive", "30m", "--oneshot", "check emails"}, "(if_inactive:30m) wake ok (no_compact)", false},
 

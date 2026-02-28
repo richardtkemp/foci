@@ -46,7 +46,7 @@ messages: [only messages after branch point]
 API payload assembly: system prompt + parent.messages[:branch_point] + branch.messages
 
 **Branch orientation:** All branches (multiball, cron/wake, spawn) receive an orientation message as their first user message. The orientation tells the branch its type, keys, and communication rules:
-- **Headless** (cron, spawn, heartbeat — `direct_chat=false`): must NEVER use `send_telegram`; reports significant work or errors to parent via `send_to_session`; stays silent when nothing happened.
+- **Headless** (cron, spawn, keepalive — `direct_chat=false`): must NEVER use `send_telegram`; reports significant work or errors to parent via `send_to_session`; stays silent when nothing happened.
 - **Multiball** (`direct_chat=true`): has its own Telegram bot for direct user replies; keeps the main session informed of visible work via `send_to_session`; sends a completion summary before going idle.
 
 Default orientation text is embedded in `prompts/branch-orientation-headless.md` and `prompts/branch-orientation-multiball.md`. Config override via `branch_orientation_prompt` (per-agent or global) takes precedence. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.
@@ -549,11 +549,11 @@ Both `POST /send` and `POST /wake` accept optional activity gating fields:
 
 The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
-### Heartbeat & Background Work
+### Keepalive & Background Work
 
 Two timer-driven mechanisms run on a ~30s tick loop per agent:
 
-**Heartbeat** — Cache keepalive. Fires when `time_since(lastCacheWarmed) >= heartbeat.interval`. Creates a lightweight branch session with `no_compact` to keep the Anthropic cache prefix warm. Does no real work.
+**Keepalive** — Cache keepalive. Fires when `time_since(lastCacheWarmed) >= keepalive.interval`. Creates a lightweight branch session with `no_compact` to keep the Anthropic cache prefix warm. Does no real work.
 
 **Background work** — Mana-gated task execution. Fires when:
 1. User has been idle for `background.interval`
@@ -564,7 +564,7 @@ Creates a branch session that picks up the highest-priority background todo item
 
 **Manamometer** — Linear interpolation of expected mana over the 5-hour budget window. After `invest_interval` (default 30m) of quiet to let the cache build, the expected mana line drops linearly from 100% to 0% at window end. Work fires when actual mana exceeds expected mana. Near reset, even tiny mana is "in credit" since the budget resets soon.
 
-Config: `[heartbeat]` and `[background]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
+Config: `[keepalive]` and `[background]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
 
 ## Secrets
 

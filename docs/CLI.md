@@ -63,7 +63,7 @@ foci send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <durat
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `agent:<id>:<session>`. Default: `main`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
-| `--if-inactive <dur>` | | Skip if user was active within duration. Opposite of `--if-active` — for heartbeats that should only fire when idle. |
+| `--if-inactive <dur>` | | Skip if user was active within duration. Opposite of `--if-active` — for keepalives that should only fire when idle. |
 | `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
 | `--async` / `--no-wait` | | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--message-text <text>` | `-mt` | Explicit message text (alternative to trailing args). |
@@ -121,7 +121,7 @@ foci branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
 | `--if-active <dur>` | Skip if no real user activity within duration. |
-| `--if-inactive <dur>` | Skip if user was active within duration. For heartbeats that should only fire when idle. |
+| `--if-inactive <dur>` | Skip if user was active within duration. For keepalives that should only fire when idle. |
 | `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |
 | `--async` / `--no-wait` | Fire-and-forget mode (default). Returns immediately, response goes to Telegram. |
 | `--no-compact` | Skip compaction if context limit is reached during the branch. |
@@ -243,14 +243,14 @@ The CLI is designed for cron jobs. Both `send` and `branch` default to async mod
 # Nightly one-shot task (no compaction overhead)
 0 2 * * * /home/foci/bin/foci branch --oneshot -a clutch "nightly cleanup"
 
-# Heartbeat — only if idle for 30+ minutes (don't interrupt active conversations)
+# Keepalive — only if idle for 30+ minutes (don't interrupt active conversations)
 */30 * * * * /home/foci/bin/foci branch --oneshot --if-inactive 30m -a clutch "Check emails and calendar"
 
 # Force sync if you need the output in the cron log
 0 6 * * * /home/foci/bin/foci send --sync -a clutch "morning report" >> /var/log/foci-report.log
 ```
 
-The `--if-active` flag prevents cron jobs from running when the user hasn't interacted recently. The `--if-inactive` flag is the opposite — it skips when the user IS active, useful for heartbeat-style tasks that shouldn't interrupt conversations.
+The `--if-active` flag prevents cron jobs from running when the user hasn't interacted recently. The `--if-inactive` flag is the opposite — it skips when the user IS active, useful for keepalive-style tasks that shouldn't interrupt conversations.
 
 ## HTTP API
 
