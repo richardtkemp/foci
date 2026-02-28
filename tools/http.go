@@ -559,12 +559,6 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 		bodyStr = bwStore.Redact(bodyStr)
 	}
 
-	// Truncate body to 50k chars
-	const maxBodyLen = 50_000
-	if len(bodyStr) > maxBodyLen {
-		bodyStr = bodyStr[:maxBodyLen] + "\n... (truncated)"
-	}
-
 	return formatHeaders() + "\n" + bodyStr, nil
 }
 
