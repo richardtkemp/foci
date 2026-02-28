@@ -84,11 +84,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				if pri == "" {
 					pri = "medium"
 				}
-				tagStr := ""
-				if p.Tag != "" {
-					tagStr = fmt.Sprintf(" [%s]", p.Tag)
-				}
-				return fmt.Sprintf("Added todo #%d (%s%s): %s", id, pri, tagStr, p.Text), nil
+				return fmt.Sprintf("Added #%d (%s)", id, pri), nil
 
 			case "list":
 				items, err := store.List(agentID, p.Status, p.Tag)
