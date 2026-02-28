@@ -115,8 +115,9 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	}
 
 	var req struct {
-		Tool   string          `json:"tool"`
-		Params json.RawMessage `json:"params"`
+		Tool           string          `json:"tool"`
+		Params         json.RawMessage `json:"params"`
+		IncludeHeaders bool            `json:"include_headers,omitempty"`
 	}
 	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
 		writeResponse(conn, "", fmt.Sprintf("invalid request: %v", err))
@@ -143,7 +144,8 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	// Strip HTTP headers from http_request results so piping works cleanly.
 	// The tool returns "HTTP <status>\nHeader: val\n...\n\n<body>" — in a pipe
 	// context only the body is useful (e.g. `foci_http_request url | jq .`).
-	if req.Tool == "http_request" {
+	// Pass --include-headers to foci_http_request to keep status/headers.
+	if req.Tool == "http_request" && !req.IncludeHeaders {
 		result = stripHTTPHeaders(result)
 	}
 
@@ -304,20 +306,22 @@ func generateShellFunc(t *Tool) string {
 
 	case "http_request":
 		// URL as first arg, flags for method, headers, body, save_to
+		// --include-headers: output full HTTP status/headers + body (default: body only)
 		return fmt.Sprintf(`%s() {
 %s
-  local url="" method="GET" body="" save_to="" headers="{}"
+  local url="" method="GET" body="" save_to="" headers="{}" inc_headers=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --method) method="$2"; shift 2 ;;
       --body) body="$2"; shift 2 ;;
       --header) headers="$(echo "$headers" | jq --arg k "${2%%%%:*}" --arg v "${2#*: }" '. + {($k): $v}')"; shift 2 ;;
       --save-to) save_to="$2"; shift 2 ;;
+      --include-headers) inc_headers=true; shift ;;
       *) url="$1"; shift ;;
     esac
   done
   if [ -z "$url" ]; then
-    echo "usage: %s <url> [--method METHOD] [--header 'K: V'] [--body BODY] [--save-to PATH]" >&2
+    echo "usage: %s <url> [--method METHOD] [--header 'K: V'] [--body BODY] [--save-to PATH] [--include-headers]" >&2
     return 1
   fi
   local params
@@ -328,7 +332,7 @@ func generateShellFunc(t *Tool) string {
   if [ -n "$save_to" ]; then
     params="$(echo "$params" | jq --arg s "$save_to" '. + {save_to: $s}')"
   fi
-  foci-call "$(jq -nc --argjson p "$params" '{"tool":"http_request","params":$p}')"
+  foci-call "$(jq -nc --argjson p "$params" --argjson ih "$inc_headers" '{"tool":"http_request","params":$p,"include_headers":$ih}')"
 }
 `, name, guard, name)
 

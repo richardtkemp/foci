@@ -404,6 +404,111 @@ func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 	}
 }
 
+func TestExecBridgeHTTPRequestIncludeHeaders(t *testing.T) {
+	// When include_headers is true, the full response (status + headers + body) is returned
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "http_request",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "HTTP 200 OK\nContent-Type: application/json\n\n{\"key\":\"value\"}", nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	// Without include_headers — body only (existing behavior)
+	result, errMsg := callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://example.com"}}`)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if result != `{"key":"value"}` {
+		t.Errorf("default result = %q, want body only", result)
+	}
+
+	// With include_headers: true — full response
+	result, errMsg = callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://example.com"},"include_headers":true}`)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if !strings.HasPrefix(result, "HTTP 200 OK") {
+		t.Errorf("include_headers result should start with HTTP status, got: %q", result)
+	}
+	if !strings.Contains(result, "Content-Type: application/json") {
+		t.Errorf("include_headers result should contain headers, got: %q", result)
+	}
+	if !strings.Contains(result, `{"key":"value"}`) {
+		t.Errorf("include_headers result should contain body, got: %q", result)
+	}
+}
+
+func TestExecBridgeHTTPRequestIncludeHeadersFalse(t *testing.T) {
+	// Explicitly passing include_headers: false should strip headers (same as default)
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "http_request",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "HTTP 404 Not Found\nContent-Type: text/plain\n\nnot found", nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	result, errMsg := callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://example.com"},"include_headers":false}`)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if result != "not found" {
+		t.Errorf("result = %q, want %q", result, "not found")
+	}
+}
+
+func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
+	// Verify the generated shell function contains --include-headers handling
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "http_request",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "", nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	data, err := os.ReadFile(bridge.FuncsPath())
+	if err != nil {
+		t.Fatalf("read funcs file: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "--include-headers") {
+		t.Error("http_request shell function should support --include-headers flag")
+	}
+	if !strings.Contains(content, "inc_headers") {
+		t.Error("http_request shell function should have inc_headers variable")
+	}
+	if !strings.Contains(content, `"include_headers"`) {
+		t.Error("http_request shell function should pass include_headers in request JSON")
+	}
+}
+
 // callBridge connects to a bridge socket and sends a request, returning the result and error.
 func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) {
 	t.Helper()
