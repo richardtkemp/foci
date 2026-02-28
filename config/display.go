@@ -76,6 +76,18 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if len(agent.UsageWarnings.Thresholds) > 0 {
 		add("agent", "usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
 	}
+	// Per-agent keepalive/background
+	add("agent", "keepalive.enabled", agent.Keepalive.Enabled)
+	if agent.Keepalive.Enabled {
+		add("agent", "keepalive.interval", agent.Keepalive.Interval)
+		add("agent", "keepalive.prompt", agent.Keepalive.Prompt)
+	}
+	add("agent", "background.enabled", agent.Background.Enabled)
+	if agent.Background.Enabled {
+		add("agent", "background.interval", agent.Background.Interval)
+		add("agent", "background.prompt", agent.Background.Prompt)
+		add("agent", "background.invest_interval", agent.Background.InvestInterval)
+	}
 
 	// defaults
 	add("defaults", "model", cfg.Defaults.Model)
@@ -93,6 +105,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	}
 	if cfg.Defaults.TTSRate != 0 {
 		add("defaults", "tts_rate", cfg.Defaults.TTSRate)
+	}
+	if cfg.Defaults.ShowToolCalls != nil {
+		add("defaults", "show_tool_calls", string(*cfg.Defaults.ShowToolCalls))
 	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		add("defaults", "system_files", cfg.Defaults.SystemFiles)
@@ -336,8 +351,22 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if cfg.Defaults.TTSRate != 0 {
 		addDefault("tts_rate", cfg.Defaults.TTSRate, agent.TTSRate != cfg.Defaults.TTSRate)
 	}
+	if cfg.Defaults.ShowToolCalls != nil {
+		addDefault("show_tool_calls", string(*cfg.Defaults.ShowToolCalls), false)
+	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		addDefault("system_files", cfg.Defaults.SystemFiles, false)
+	}
+	addGlobal("keepalive", "enabled", cfg.Keepalive.Enabled)
+	if cfg.Keepalive.Enabled {
+		addGlobal("keepalive", "interval", cfg.Keepalive.Interval)
+		addGlobal("keepalive", "prompt", cfg.Keepalive.Prompt)
+	}
+	addGlobal("background", "enabled", cfg.Background.Enabled)
+	if cfg.Background.Enabled {
+		addGlobal("background", "interval", cfg.Background.Interval)
+		addGlobal("background", "prompt", cfg.Background.Prompt)
+		addGlobal("background", "invest_interval", cfg.Background.InvestInterval)
 	}
 	addGlobal("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
 	if len(cfg.Telegram.AllowedUsers) > 0 {
@@ -547,6 +576,17 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		}
 		if len(agent.UsageWarnings.Thresholds) > 0 {
 			addAgent("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
+		}
+		addAgent("keepalive.enabled", agent.Keepalive.Enabled)
+		if agent.Keepalive.Enabled {
+			addAgent("keepalive.interval", agent.Keepalive.Interval)
+			addAgent("keepalive.prompt", agent.Keepalive.Prompt)
+		}
+		addAgent("background.enabled", agent.Background.Enabled)
+		if agent.Background.Enabled {
+			addAgent("background.interval", agent.Background.Interval)
+			addAgent("background.prompt", agent.Background.Prompt)
+			addAgent("background.invest_interval", agent.Background.InvestInterval)
 		}
 		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTable(agentRows)+"\n```")
 	}

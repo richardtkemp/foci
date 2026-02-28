@@ -52,6 +52,13 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `max_concurrent_spawns` | int | `0` | Per-agent max concurrent spawns. 0 = use global `[tools] max_concurrent_spawns`. |
 | `max_upload_file_size` | int | `0` | Per-agent max file size for multipart uploads in bytes. 0 = use global `[tools] max_upload_file_size`. |
 | `usage_warnings.thresholds` | int[] | `[]` | Per-agent mana warning thresholds. When set, completely replaces global `[usage_warnings] thresholds` for this agent. |
+| `keepalive.enabled` | bool | (global) | Per-agent keepalive override. Inherits from global `[keepalive]` if not set. |
+| `keepalive.interval` | string | (global) | Per-agent keepalive interval. |
+| `keepalive.prompt` | string | (global) | Per-agent keepalive prompt file. |
+| `background.enabled` | bool | (global) | Per-agent background override. Inherits from global `[background]` if not set. |
+| `background.interval` | string | (global) | Per-agent background interval. |
+| `background.prompt` | string | (global) | Per-agent background prompt file. |
+| `background.invest_interval` | string | (global) | Per-agent invest interval. |
 
 Default `system_files` order (most-stable first for cache efficiency):
 ```
@@ -98,6 +105,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `effort` | string | `""` | Default effort level: `"low"`, `"medium"`, `"high"`. Empty = omit. |
 | `thinking` | string | `""` | Default thinking mode: `"adaptive"` or empty/`"off"`. |
 | `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |
+| `show_tool_calls` | string | nil | Default tool call display mode. Per-agent `show_tool_calls` overrides this, then falls back to `[telegram] show_tool_calls`. |
 | `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
 
 Example:
@@ -503,7 +511,7 @@ Each subdirectory with a `SKILL.md` is loaded. The skill name and description (f
 
 ## `[keepalive]`
 
-Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic cache prefix warm.
+Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic cache prefix warm. Per-agent `[agents.keepalive]` overrides these globals.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -515,7 +523,7 @@ Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic 
 
 ## `[background]`
 
-Mana-gated background work timer. Fires when the user is idle, there are open background-tagged todos, and the manamometer says spending is wise.
+Mana-gated background work timer. Fires when the user is idle, there are open background-tagged todos, and the manamometer says spending is wise. Per-agent `[agents.background]` overrides these globals.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

@@ -561,8 +561,8 @@ func main() {
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
 
-		// Keepalive & background work runner
-		if cfg.Keepalive.Enabled || cfg.Background.Enabled {
+		// Keepalive & background work runner (per-agent config, falls back to global)
+		if acfg.Keepalive.Enabled || acfg.Background.Enabled {
 			orientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			if orientPrompt == "" {
 				orientPrompt = acfg.ForkPrompt // deprecated fallback
@@ -577,8 +577,8 @@ func main() {
 			)
 			inst.kaRunner = keepalive.New(keepalive.RunnerConfig{
 				AgentID:     acfg.ID,
-				Keepalive:   cfg.Keepalive,
-				Background:  cfg.Background,
+				Keepalive:   acfg.Keepalive,
+				Background:  acfg.Background,
 				TodoStore:   todoStore,
 				UsageClient: usageClient,
 				BranchFunc:  branchFn,
@@ -596,7 +596,7 @@ func main() {
 				}
 			}
 
-			log.Infof("main", "agent %q keepalive runner started (ka=%v bg=%v)", acfg.ID, cfg.Keepalive.Enabled, cfg.Background.Enabled)
+			log.Infof("main", "agent %q keepalive runner started (ka=%v bg=%v)", acfg.ID, acfg.Keepalive.Enabled, acfg.Background.Enabled)
 		}
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
