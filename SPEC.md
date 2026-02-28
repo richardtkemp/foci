@@ -592,7 +592,7 @@ The timestamp is stored per-agent in the state store (`agent:<id>:last_user_acti
 
 ### Keepalive & Background Work
 
-Two timer-driven mechanisms run on a ~30s tick loop per agent:
+Four timer-driven mechanisms run on a ~30s tick loop per agent:
 
 **Keepalive** — Cache keepalive. Fires when `time_since(lastCacheWarmed) >= keepalive.interval`. Creates a lightweight branch session with `no_compact` to keep the Anthropic cache prefix warm. Does no real work.
 
@@ -603,9 +603,13 @@ Two timer-driven mechanisms run on a ~30s tick loop per agent:
 
 Creates a branch session that picks up the highest-priority background todo item.
 
+**Memory formation** — Periodic memory capture. Fires when `interval` (default 1h) has elapsed since last formation and user activity occurred within that window. Captures conversation memories to daily files.
+
+**Memory consolidation** — MEMORY.md curation. Fires when `consolidation_interval` (default 20h) has elapsed since last run and user was active within the last hour. Reviews daily memory files and curates MEMORY.md. Last-run timestamp persisted in state store.
+
 **Manamometer** — Linear interpolation of expected mana over the 5-hour budget window. After `invest_interval` (default 30m) of quiet to let the cache build, the expected mana line drops linearly from 100% to 0% at window end. Work fires when actual mana exceeds expected mana. Near reset, even tiny mana is "in credit" since the budget resets soon.
 
-Config: `[keepalive]` and `[background]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
+Config: `[keepalive]`, `[background]`, and `[memory_formation]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
 
 ## Secrets
 
@@ -726,7 +730,7 @@ No tool call should prevent the system from responding to interrupts. If it does
 
 `/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — foci has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
 
-**Pre-reset memory hook:** Before clearing the session, if `session_reset_prompt` is configured, the agent gets one final turn to save important context to memory files. The hook has a 60-second timeout and is non-fatal — if it fails, the reset proceeds. Branch sessions can opt out via `NoResetHook` in their branch metadata (set via `--no-reset-hook` or `--oneshot` CLI flags). The same hook fires on multiball TTL reclaim.
+**Session-end memory formation:** Before clearing the session, memory formation fires asynchronously — creating a branch from the expiring session to preserve conversation history. Configured via `[memory_formation]` section (`session_end_enabled`, `session_end_prompt`). The branch has a 120-second timeout and is non-fatal — if it fails, the reset has already proceeded. Branch sessions can opt out via `NoResetHook` in their branch metadata. The same hook fires on multiball TTL reclaim.
 
 If automatic resets are added later: never reset an active session. A session is "active" if the agent is processing a turn OR the last message was received less than N minutes ago. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow — that's the failure to avoid.
 

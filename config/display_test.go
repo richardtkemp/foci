@@ -224,7 +224,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
-	cfg.Sessions.SessionResetPrompt = "/tmp/reset.md"
 	cfg.Sessions.BranchOrientationPrompt = "/tmp/orient.md"
 	cfg.Sessions.CompactionPreserveMessages = 25
 	cfg.Memory.ReindexDebounce = "2s"

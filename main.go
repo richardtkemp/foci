@@ -143,6 +143,11 @@ func main() {
 		defer log.CloseConversation()
 	}
 
+	// Seed default prompts to ~/shared/prompts/ for user customisation
+	if home, err := os.UserHomeDir(); err == nil {
+		seedDefaultPrompts(filepath.Join(home, "shared", "prompts"))
+	}
+
 	// Load secrets (from secrets.toml alongside config file)
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	store, err := secrets.Load(secretsPath)
@@ -562,7 +567,7 @@ func main() {
 		agentOrder = append(agentOrder, acfg.ID)
 
 		// Keepalive & background work runner (per-agent config, falls back to global)
-		if acfg.Keepalive.Enabled || acfg.Background.Enabled {
+		if acfg.Keepalive.Enabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) {
 			orientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			if orientPrompt == "" {
 				orientPrompt = acfg.ForkPrompt // deprecated fallback
@@ -576,12 +581,14 @@ func main() {
 				ctx,
 			)
 			inst.kaRunner = keepalive.New(keepalive.RunnerConfig{
-				AgentID:     acfg.ID,
-				Keepalive:   acfg.Keepalive,
-				Background:  acfg.Background,
-				TodoStore:   todoStore,
-				UsageClient: usageClient,
-				BranchFunc:  branchFn,
+				AgentID:         acfg.ID,
+				Keepalive:       acfg.Keepalive,
+				Background:      acfg.Background,
+				MemoryFormation: acfg.MemoryFormation,
+				TodoStore:       todoStore,
+				UsageClient:     usageClient,
+				StateStore:      stateStore,
+				BranchFunc:      branchFn,
 			})
 			inst.kaRunner.Start(ctx)
 
@@ -652,13 +659,15 @@ func main() {
 				pool.SetSessionTTL(ttl, sessions)
 			}
 			pool.ReclaimHook = func(sessionKey string) {
-				// Determine agent from session key for the reset hook
+				// Determine agent from session key for session-end memory
 				for _, id := range agentOrder {
 					inst := agents[id]
 					prefix := "agent:" + id + ":"
 					if strings.HasPrefix(sessionKey, prefix) {
-						resetPrompt := resolveString(inst.agentCfg.SessionResetPrompt, cfg.Sessions.SessionResetPrompt)
-						fireResetHook(inst.ag, sessions, sessionKey, resetPrompt, ctx)
+						orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+						fireSessionEndMemory(inst.ag, sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
+							return buildBranchOrientation(orientPath, bk, pk, bt, false)
+						}, ctx)
 						return
 					}
 				}
@@ -1815,7 +1824,10 @@ func setupAgent(p setupParams) *agentInstance {
 		if sk == "" {
 			return fmt.Errorf("no active session to reset")
 		}
-		fireResetHook(ag, p.sessions, sk, resolveString(acfg.SessionResetPrompt, p.cfg.Sessions.SessionResetPrompt), p.ctx)
+		resetOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		fireSessionEndMemory(ag, p.sessions, sk, acfg.MemoryFormation, func(bk, pk, bt string) string {
+			return buildBranchOrientation(resetOrientPath, bk, pk, bt, false)
+		}, p.ctx)
 		if err := p.sessions.Clear(sk); err != nil {
 			return err
 		}
@@ -1880,10 +1892,8 @@ func setupAgent(p setupParams) *agentInstance {
 		// Configured prompts
 		var prompts []command.PromptInfo
 		resolvedSummaryPrompt := resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt)
-		resolvedResetPrompt := resolveString(acfg.SessionResetPrompt, p.cfg.Sessions.SessionResetPrompt)
 		resolvedHandoffMsg := resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg)
 		prompts = append(prompts, promptInfo("compaction_summary", resolvedSummaryPrompt))
-		prompts = append(prompts, promptInfo("session_reset", resolvedResetPrompt))
 		if resolvedHandoffMsg != "" {
 			prompts = append(prompts, command.PromptInfo{
 				Label:  "handoff_msg",
@@ -2381,9 +2391,12 @@ func setupAgent(p setupParams) *agentInstance {
 				pool.SetSessionTTL(ttl, p.sessions)
 				log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
 			}
-			resolvedResetPrompt := resolveString(acfg.SessionResetPrompt, p.cfg.Sessions.SessionResetPrompt)
+			reclaimOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+			reclaimMfCfg := acfg.MemoryFormation
 			pool.ReclaimHook = func(sessionKey string) {
-				fireResetHook(ag, p.sessions, sessionKey, resolvedResetPrompt, p.ctx)
+				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
+					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false)
+				}, p.ctx)
 			}
 		}
 	}
@@ -2609,6 +2622,16 @@ func resolvePromptRules(acfg config.AgentConfig, cfg *config.Config) []config.Pr
 	return cfg.PromptRules
 }
 
+// hasMemoryFormation returns true if any memory formation feature is enabled.
+// All three default to true (nil *bool = true), so returns false only when
+// all are explicitly disabled.
+func hasMemoryFormation(mf config.MemoryFormationConfig) bool {
+	intervalEnabled := mf.IntervalEnabled == nil || *mf.IntervalEnabled
+	consolidationEnabled := mf.ConsolidationEnabled == nil || *mf.ConsolidationEnabled
+	sessionEndEnabled := mf.SessionEndEnabled == nil || *mf.SessionEndEnabled
+	return intervalEnabled || consolidationEnabled || sessionEndEnabled
+}
+
 func readPromptFile(path, label string) string {
 	if path == "" {
 		return ""
@@ -2619,6 +2642,34 @@ func readPromptFile(path, label string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// seedDefaultPrompts writes embedded prompt files to dir if they don't already
+// exist. This gives users editable copies they can customise.
+func seedDefaultPrompts(dir string) {
+	promptFiles := map[string]func() string{
+		"keepalive.md":            prompts.Keepalive,
+		"background.md":          prompts.Background,
+		"memory-formation.md":    prompts.MemoryFormation,
+		"memory-consolidation.md": prompts.MemoryConsolidation,
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Warnf("main", "seed prompts: mkdir %s: %v", dir, err)
+		return
+	}
+
+	for name, fn := range promptFiles {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			continue // already exists
+		}
+		if err := os.WriteFile(path, []byte(fn()+"\n"), 0644); err != nil {
+			log.Warnf("main", "seed prompts: write %s: %v", path, err)
+			continue
+		}
+		log.Infof("main", "seeded default prompt: %s", path)
+	}
 }
 
 // buildBranchOrientation constructs orientation text for a branch session.
@@ -2654,11 +2705,15 @@ func promptInfo(label, path string) command.PromptInfo {
 	return command.PromptInfo{Label: label, Path: path, Exists: err == nil}
 }
 
-// fireResetHook sends the reset prompt to the agent before a session is cleared.
-// Checks BranchMeta.NoResetHook for branch sessions. Non-fatal: logs and returns
-// on error so the caller can proceed with the reset.
-func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, resetPromptPath string, parentCtx context.Context) {
-	prompt := readPromptFile(resetPromptPath, "reset-hook")
+// fireSessionEndMemory runs memory formation on the expiring session before it is cleared.
+// Creates an async branch from the session so the caller can proceed immediately.
+// Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
+func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, parentCtx context.Context) {
+	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
+		return
+	}
+
+	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "session-end-memory", prompts.MemoryFormation())
 	if prompt == "" {
 		return
 	}
@@ -2666,22 +2721,37 @@ func fireResetHook(ag *agent.Agent, sessions *session.Store, sessionKey string, 
 	// Check branch metadata for NoResetHook
 	meta, err := sessions.GetBranchMeta(sessionKey)
 	if err != nil {
-		log.Warnf("reset-hook", "check branch meta for %s: %v", sessionKey, err)
+		log.Warnf("session-end-memory", "check branch meta for %s: %v", sessionKey, err)
 	}
 	if meta != nil && meta.NoResetHook {
-		log.Debugf("reset-hook", "skipping for %s (no_reset_hook set)", sessionKey)
+		log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
 		return
 	}
 
-	hookCtx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
-	defer cancel()
-	hookCtx = agent.WithTrigger(hookCtx, "reset_hook")
-	hookCtx = agent.WithNoCompact(hookCtx)
-
-	log.Infof("reset-hook", "firing reset hook for %s", sessionKey)
-	if _, err := ag.HandleMessage(hookCtx, sessionKey, prompt); err != nil {
-		log.Warnf("reset-hook", "hook failed for %s: %v", sessionKey, err)
+	// Branch from expiring session so the memory formation job has conversation history.
+	// The caller proceeds immediately to clear the main session.
+	branchID := fmt.Sprintf("session-end-%d", time.Now().Unix())
+	branchKey := sessionKey + ":branch:" + branchID
+	orientText := buildOrientation(branchKey, sessionKey, "session-end-memory")
+	if err := sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
+		NoResetHook:        true,
+		OrientationMessage: orientText,
+	}); err != nil {
+		log.Errorf("session-end-memory", "branch error: %v", err)
+		return
 	}
+
+	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, branchKey)
+
+	go func() {
+		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
+		defer cancel()
+		hookCtx = agent.WithTrigger(hookCtx, "session_end_memory")
+		hookCtx = agent.WithNoCompact(hookCtx)
+		if _, err := ag.HandleMessage(hookCtx, branchKey, prompt); err != nil {
+			log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
+		}
+	}()
 }
 
 // sessionBranchAdapter wraps session.Store to implement tools.SessionBrancher.

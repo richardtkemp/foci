@@ -94,6 +94,27 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("agent", "background.prompt", agent.Background.Prompt)
 		add("agent", "background.invest_interval", agent.Background.InvestInterval)
 	}
+	// Memory formation
+	add("agent", "memory_formation.interval", agent.MemoryFormation.Interval)
+	if agent.MemoryFormation.IntervalEnabled != nil {
+		add("agent", "memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
+	}
+	if agent.MemoryFormation.IntervalPrompt != "" {
+		add("agent", "memory_formation.interval_prompt", agent.MemoryFormation.IntervalPrompt)
+	}
+	add("agent", "memory_formation.consolidation_interval", agent.MemoryFormation.ConsolidationInterval)
+	if agent.MemoryFormation.ConsolidationEnabled != nil {
+		add("agent", "memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
+	}
+	if agent.MemoryFormation.ConsolidationPrompt != "" {
+		add("agent", "memory_formation.consolidation_prompt", agent.MemoryFormation.ConsolidationPrompt)
+	}
+	if agent.MemoryFormation.SessionEndEnabled != nil {
+		add("agent", "memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
+	}
+	if agent.MemoryFormation.SessionEndPrompt != "" {
+		add("agent", "memory_formation.session_end_prompt", agent.MemoryFormation.SessionEndPrompt)
+	}
 
 	// defaults
 	add("defaults", "model", cfg.Defaults.Model)
@@ -167,9 +188,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
-	if cfg.Sessions.SessionResetPrompt != "" {
-		add("sessions", "session_reset_prompt", cfg.Sessions.SessionResetPrompt)
-	}
 	if cfg.Sessions.BranchOrientationPrompt != "" {
 		add("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
 	}
@@ -382,6 +400,17 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		addGlobal("background", "prompt", cfg.Background.Prompt)
 		addGlobal("background", "invest_interval", cfg.Background.InvestInterval)
 	}
+	addGlobal("memory_formation", "interval", cfg.MemoryFormation.Interval)
+	addGlobal("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
+	if cfg.MemoryFormation.IntervalEnabled != nil {
+		addGlobal("memory_formation", "interval_enabled", *cfg.MemoryFormation.IntervalEnabled)
+	}
+	if cfg.MemoryFormation.ConsolidationEnabled != nil {
+		addGlobal("memory_formation", "consolidation_enabled", *cfg.MemoryFormation.ConsolidationEnabled)
+	}
+	if cfg.MemoryFormation.SessionEndEnabled != nil {
+		addGlobal("memory_formation", "session_end_enabled", *cfg.MemoryFormation.SessionEndEnabled)
+	}
 	addGlobal("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
 	if len(cfg.Telegram.AllowedUsers) > 0 {
 		addGlobal("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
@@ -427,9 +456,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	addGlobal("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	addGlobal("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
-	if cfg.Sessions.SessionResetPrompt != "" {
-		addGlobal("sessions", "session_reset_prompt", cfg.Sessions.SessionResetPrompt)
-	}
 	if cfg.Sessions.BranchOrientationPrompt != "" {
 		addGlobal("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
 	}
@@ -609,6 +635,18 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 			addAgent("background.interval", agent.Background.Interval)
 			addAgent("background.prompt", agent.Background.Prompt)
 			addAgent("background.invest_interval", agent.Background.InvestInterval)
+		}
+		// Memory formation
+		addAgent("memory_formation.interval", agent.MemoryFormation.Interval)
+		if agent.MemoryFormation.IntervalEnabled != nil {
+			addAgent("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
+		}
+		addAgent("memory_formation.consolidation_interval", agent.MemoryFormation.ConsolidationInterval)
+		if agent.MemoryFormation.ConsolidationEnabled != nil {
+			addAgent("memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
+		}
+		if agent.MemoryFormation.SessionEndEnabled != nil {
+			addAgent("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
 		}
 		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTable(agentRows)+"\n```")
 	}
@@ -813,9 +851,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if cfg.Sessions.CompactionPreserveMessages == 0 {
 		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
-	}
-	if cfg.Sessions.SessionResetPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "session_reset_prompt", "\"\"", "prompt file before session clear"})
 	}
 	if cfg.Sessions.BranchOrientationPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})

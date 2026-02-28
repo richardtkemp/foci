@@ -656,20 +656,40 @@ Separate binary (`go build ./cmd/foci`) for scripts, cron jobs, and external too
 - **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both. Returns 412 if no default session.
 - **Scheduled Wakes** (`remind` tool with `wake=true`): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
 
-## Session Reset Hook
+## Session-End Memory Formation
 
-Before a session is cleared (`/reset` or multiball TTL reclaim), the agent gets one final turn to save context. Configured via `session_reset_prompt` in `[sessions]` (file path, read at fire-time).
+Before a session is cleared (`/reset` or multiball TTL reclaim), the agent captures memories asynchronously. Configured via `[memory_formation]` section (replaces `session_reset_prompt`).
 
-Flow (`fireResetHook` in `main.go`):
-1. Read prompt from file path in config; if empty or file missing, skip
-2. If empty, skip — no hook configured
-3. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip
-4. `HandleMessage(ctx, sessionKey, prompt)` with 60s timeout, trigger `"reset_hook"`, NoCompact
-5. Non-fatal: if hook fails, log warning and proceed with reset
+Flow (`fireSessionEndMemory` in `main.go`):
+1. Check `memory_formation.session_end_enabled` (nil = true, explicit false skips)
+2. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
+3. If prompt resolves to empty, skip
+4. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip
+5. Create branch from expiring session (copies conversation history)
+6. Return immediately — caller proceeds to clear the main session
+7. Async: `HandleMessage(ctx, branchKey, prompt)` with 120s timeout, trigger `"session_end_memory"`, NoCompact
 
 Entry points:
-- `/reset` command → `fireResetHook` → `Clear` → `Reload`
-- `Pool.Acquire` (TTL reclaim) → `Pool.ReclaimHook` → `fireResetHook` → clear session key
+- `/reset` command → `fireSessionEndMemory` (async) → `Clear` → `Reload`
+- `Pool.Acquire` (TTL reclaim) → `Pool.ReclaimHook` → `fireSessionEndMemory` (async) → clear session key
+
+## Memory Formation & Consolidation Timers
+
+Memory formation and consolidation run in the keepalive timer loop (30s ticks):
+
+**Interval memory formation** (`maybeMemoryFormation`):
+1. Check `interval_enabled` (nil = true)
+2. Check interval elapsed and activity occurred since last formation
+3. Resolve prompt via `prompts.ResolvePrompt`
+4. Fire branch: `branchFn("memory-formation", promptText, true)`
+
+**Consolidation** (`maybeConsolidation`):
+1. Check `consolidation_enabled` (nil = true)
+2. Check consolidation interval elapsed (persisted in state store)
+3. Check recent user activity (within 1h)
+4. Resolve prompt via `prompts.ResolvePrompt`
+5. Fire branch: `branchFn("consolidation", promptText, true)`
+6. On completion: persist timestamp to state store
 
 ## Compaction (`compaction/compact.go`)
 

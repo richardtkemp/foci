@@ -122,19 +122,6 @@ func TestOrientationBuilderIntegration(t *testing.T) {
 	}
 }
 
-func TestReadPromptFile_Missing(t *testing.T) {
-	result := readPromptFile("/nonexistent/path/to/prompt.md")
-	if result != "" {
-		t.Errorf("expected empty string for missing file, got %q", result)
-	}
-}
-
-func TestReadPromptFile_Empty(t *testing.T) {
-	result := readPromptFile("")
-	if result != "" {
-		t.Errorf("expected empty string for empty path, got %q", result)
-	}
-}
 
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
