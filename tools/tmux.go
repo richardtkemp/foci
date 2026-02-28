@@ -136,7 +136,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 
 	return &Tool{
 		Name:        "tmux",
-		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns. Sessions are automatically watched when you send to them and unwatched after inactivity is reported.",
+		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns. Sessions are automatically watched when you send to them and unwatched after inactivity is reported. Before killing: is follow-up likely? Loaded context is expensive to rebuild. Ask before killing coding agent sessions.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
