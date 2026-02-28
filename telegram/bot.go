@@ -1699,13 +1699,13 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
 	if maxChars == 0 {
 		maxChars = 450
 	}
-	// Pretty-print params, truncated
+	// Pretty-print params; truncate only in preview mode
 	paramStr := string(params)
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, params, "", "  ") == nil {
 		paramStr = pretty.String()
 	}
-	if len(paramStr) > maxChars {
+	if b.showToolCalls != "full" && len(paramStr) > maxChars {
 		paramStr = paramStr[:maxChars] + "..."
 	}
 	// Unescape literal \n and \t within JSON string values so they render
