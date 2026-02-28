@@ -1459,6 +1459,8 @@ func setupAgent(p setupParams) *agentInstance {
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
+		AutopilotThreshold:          acfg.AutopilotThreshold,
+		AutopilotPrompt:             acfg.AutopilotPrompt,
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
 	}

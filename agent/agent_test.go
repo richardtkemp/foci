@@ -3197,3 +3197,187 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 		t.Errorf("block[1].Type = %q, want 'text'", assistantMsg.Content[1].Type)
 	}
 }
+
+func TestAutopilotWarningInjected(t *testing.T) {
+	var callCount atomic.Int32
+	threshold := 3
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := int(callCount.Add(1))
+		if n <= threshold+1 {
+			// Return tool_use to keep the loop going
+			return &anthropic.MessageResponse{
+				ID:   fmt.Sprintf("msg_%d", n),
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", n),
+			Role:       "assistant",
+			Content:    anthropic.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "noop",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+
+	ag := &Agent{
+		Client:             client,
+		Sessions:           store,
+		Tools:              registry,
+		Bootstrap:          workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:              "claude-haiku-4-5",
+		AutopilotThreshold: threshold,
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	msgs, _ := store.Load("agent:test:main")
+	// Find the autopilot warning message
+	found := 0
+	for _, m := range msgs {
+		if m.Role == "user" && len(m.Content) == 1 && strings.Contains(m.Content[0].Text, "[system]") && strings.Contains(m.Content[0].Text, "consecutive tool calls") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Errorf("autopilot warnings found = %d, want 1", found)
+	}
+}
+
+func TestAutopilotWarningOnlyOnce(t *testing.T) {
+	var callCount atomic.Int32
+	totalLoops := 6
+	threshold := 2
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := int(callCount.Add(1))
+		if n <= totalLoops {
+			return &anthropic.MessageResponse{
+				ID:   fmt.Sprintf("msg_%d", n),
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", n),
+			Role:       "assistant",
+			Content:    anthropic.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "noop",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+
+	ag := &Agent{
+		Client:             client,
+		Sessions:           store,
+		Tools:              registry,
+		Bootstrap:          workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:              "claude-haiku-4-5",
+		AutopilotThreshold: threshold,
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	msgs, _ := store.Load("agent:test:main")
+	count := 0
+	for _, m := range msgs {
+		if m.Role == "user" && len(m.Content) == 1 && strings.Contains(m.Content[0].Text, "[system]") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("autopilot warnings = %d, want exactly 1 (only-once guarantee)", count)
+	}
+}
+
+func TestAutopilotDisabledWhenZero(t *testing.T) {
+	var callCount atomic.Int32
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := int(callCount.Add(1))
+		if n <= 5 {
+			return &anthropic.MessageResponse{
+				ID:   fmt.Sprintf("msg_%d", n),
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", n),
+			Role:       "assistant",
+			Content:    anthropic.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "noop",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+
+	ag := &Agent{
+		Client:             client,
+		Sessions:           store,
+		Tools:              registry,
+		Bootstrap:          workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:              "claude-haiku-4-5",
+		AutopilotThreshold: 0, // disabled
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	msgs, _ := store.Load("agent:test:main")
+	for _, m := range msgs {
+		if m.Role == "user" && len(m.Content) == 1 && strings.Contains(m.Content[0].Text, "[system]") {
+			t.Error("autopilot warning injected despite threshold=0")
+		}
+	}
+}

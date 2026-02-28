@@ -109,6 +109,8 @@ type AgentConfig struct {
 	Memory                  AgentMemoryConfig `toml:"memory"`                    // per-agent memory sources (combined with global [memory])
 	MaxToolLoops            int               `toml:"max_tool_loops"`            // max tool iterations per turn (default 25)
 	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
+	AutopilotThreshold      int               `toml:"autopilot_threshold"`       // consecutive tool loops before warning (0 = disabled, default 10)
+	AutopilotPrompt         string            `toml:"autopilot_prompt"`          // warning text injected as user message
 	Effort                  string            `toml:"effort"`                    // effort level: "low", "medium", "high" (empty = omit from request)
 	Thinking                string            `toml:"thinking"`                  // thinking mode: "off" (default), "adaptive"
 	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
@@ -322,6 +324,8 @@ type DefaultsConfig struct {
 	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
 	MaxToolLoops        int              `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
 	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
+	AutopilotThreshold  int              `toml:"autopilot_threshold"`   // default autopilot threshold (default: 10)
+	AutopilotPrompt     string           `toml:"autopilot_prompt"`      // default autopilot prompt
 	Effort              string           `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
 	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
@@ -606,6 +610,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Defaults.MaxOutputTokens == 0 {
 		cfg.Defaults.MaxOutputTokens = 8192
 	}
+	if cfg.Defaults.AutopilotThreshold == 0 && !md.IsDefined("defaults", "autopilot_threshold") {
+		cfg.Defaults.AutopilotThreshold = 10
+	}
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
@@ -622,6 +629,12 @@ func Load(path string) (*Config, error) {
 		}
 		if cfg.Agents[i].MaxOutputTokens == 0 {
 			cfg.Agents[i].MaxOutputTokens = cfg.Defaults.MaxOutputTokens
+		}
+		if cfg.Agents[i].AutopilotThreshold == 0 {
+			cfg.Agents[i].AutopilotThreshold = cfg.Defaults.AutopilotThreshold
+		}
+		if cfg.Agents[i].AutopilotPrompt == "" {
+			cfg.Agents[i].AutopilotPrompt = cfg.Defaults.AutopilotPrompt
 		}
 		if cfg.Agents[i].Effort == "" {
 			cfg.Agents[i].Effort = cfg.Defaults.Effort
