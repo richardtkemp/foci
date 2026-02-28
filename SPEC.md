@@ -287,7 +287,7 @@ By default, thinking blocks are stripped from Telegram messages. The `show_think
 
 - `"off"` (default) — thinking stripped, not shown to user
 - `"compact"` — response sent with a "Show thinking" toggle button
-- `"true"` — thinking always prepended to response, separated by `~~~~`
+- `"true"` — thinking always prepended to response (italic), separated by a divider
 
 ```toml
 [telegram]

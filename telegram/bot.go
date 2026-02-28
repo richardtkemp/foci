@@ -1003,18 +1003,16 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// a toggle button ("compact" mode).
 	thinkingText := thinkingBuf.String()
 
-	if b.showThinking == "true" && thinkingText != "" {
-		response = thinkingText + "\n~~~~\n" + response
-	}
-
 	// If we sent a tool-call message, try to edit it with the final response.
 	// Fall back to sendReply if the response is too long for a single edit
-	// or if the edit fails.
+	// or if the edit fails. Skip when thinking will be shown — thinking-aware
+	// send functions handle the full reply (preview edit can't include thinking).
+	hasThinking := thinkingText != "" && b.showThinking != "off" && b.showThinking != ""
 	toolMsgMu.Lock()
 	editID := toolMsgID
 	toolMsgMu.Unlock()
 
-	if editID != 0 && b.showToolCalls == "preview" && len(response) <= 4096 {
+	if editID != 0 && b.showToolCalls == "preview" && !hasThinking && len(response) <= 4096 {
 		htmlResp := ConvertToTelegramHTML(response)
 		_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 			ChatId:    qm.msg.Chat.Id,
@@ -1034,6 +1032,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			return
 		}
 		log.Debugf("telegram", "edit final response failed, falling back: %v", editErr)
+	}
+
+	// Full thinking: prepend italic thinking + divider to response
+	if b.showThinking == "true" && thinkingText != "" {
+		b.sendReplyWithFullThinking(qm.msg, qm.userID, response, thinkingText)
+		return
 	}
 
 	// Compact thinking: send response with "Show thinking" toggle button
@@ -1072,6 +1076,29 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 		}
 		b.sendReplyPart(msg, userID, part)
 	}
+}
+
+// sendReplyWithFullThinking sends thinking (italic) + divider + response as a single message.
+// Thinking and response are converted to HTML separately to avoid markdown interference.
+func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
+	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
+	responseHTML := ConvertToTelegramHTML(response)
+	divider := "\n————————————————\n\n"
+	fullHTML := thinkingHTML + divider + responseHTML
+
+	chunks := splitMessage(fullHTML, 4096)
+	for _, chunk := range chunks {
+		b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+	}
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		UserID:    userID,
+		Username:  msg.From.Username,
+		ChatID:    msg.Chat.Id,
+		Text:      fullHTML,
+		ParseMode: "HTML",
+		Session:   b.SessionKey(),
+	})
 }
 
 // sendReplyWithThinking sends a response with a "Show thinking" inline keyboard button.
@@ -2051,18 +2078,35 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 // formatThinkingExpanded prepends thinking text above a separator, with the response below.
 func formatThinkingExpanded(thinkingText, responseHTML string) string {
 	escaped := htmlEscapeBot(thinkingText)
-	result := escaped + "\n~~~~\n" + responseHTML
+	divider := "\n————————————————\n"
+	result := "<i>" + escaped + "</i>" + divider + responseHTML
 	// Telegram messages are limited to 4096 characters; truncate thinking if needed.
 	if len(result) > 4096 {
-		budget := 4096 - len(responseHTML) - len("\n~~~~\n") - len("\n... (truncated)")
-		if budget > 100 {
-			escaped = escaped[:budget] + "\n... (truncated)"
-		} else {
-			escaped = escaped[:100] + "\n... (truncated)"
+		budget := 4096 - len(responseHTML) - len(divider) - len("<i>") - len("</i>") - len("\n... (truncated)")
+		if budget < 100 {
+			budget = 100
 		}
-		result = escaped + "\n~~~~\n" + responseHTML
+		escaped = truncateHTMLSafe(escaped, budget) + "\n... (truncated)"
+		result = "<i>" + escaped + "</i>" + divider + responseHTML
 	}
 	return result
+}
+
+// truncateHTMLSafe truncates HTML-escaped text to maxLen bytes without splitting
+// HTML entities (e.g. &amp; &lt; &gt;). If the cut falls inside an entity, it
+// backs up to before the '&'.
+func truncateHTMLSafe(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	s = s[:maxLen]
+	// If we cut inside an HTML entity, back up to before the '&'.
+	if idx := strings.LastIndex(s, "&"); idx != -1 {
+		if !strings.Contains(s[idx:], ";") {
+			s = s[:idx]
+		}
+	}
+	return s
 }
 
 // toolResultEntry stores the compact summary, full input text, and result
