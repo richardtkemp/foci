@@ -253,7 +253,7 @@ data_dir = "$FOCI_HOME/data"
 id = "main"
 model = "$AGENT_MODEL"
 workspace = "$FOCI_HOME/character"
-heartbeat_interval = "45m"
+keepalive_interval = "45m"
 
 [telegram]
 allowed_users = ["$TELEGRAM_USER"]
@@ -359,7 +359,7 @@ What should you know about how they communicate?"
 "# How You Work
 
 You are a single-agent system. You receive messages, think about them,
-use tools when helpful, and respond. You have a heartbeat that fires
+use tools when helpful, and respond. You have a keepalive that fires
 when idle. You can read and write files, run commands, and search the web."
 
     write_if_missing "$FOCI_HOME/character/TOOLS.md" \
@@ -380,10 +380,10 @@ You have these tools available:
 Things you've learned and want to remember across sessions.
 Update this file as you learn new things about your environment and your human."
 
-    write_if_missing "$FOCI_HOME/character/HEARTBEAT.md" \
-"# Heartbeat
+    write_if_missing "$FOCI_HOME/character/KEEPALIVE.md" \
+"# Keepalive
 
-When the idle timer fires, you receive a [HEARTBEAT] message.
+When the idle timer fires, you receive a [KEEPALIVE] message.
 This is your chance to reflect, check on things, or just note that
 you're still here. If nothing needs doing, respond briefly."
 fi

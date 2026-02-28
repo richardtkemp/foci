@@ -1,4 +1,4 @@
-# Heartbeat & Background Work
+# Keepalive & Background Work
 
 Two timer-driven mechanisms keep the agent productive without wasting mana.
 
@@ -6,27 +6,27 @@ Two timer-driven mechanisms keep the agent productive without wasting mana.
 
 | Mechanism | Purpose | Trigger | Cost |
 |-----------|---------|---------|------|
-| **Heartbeat** | Cache keepalive | Cache not warmed within interval | Minimal (1 API call) |
+| **Keepalive** | Cache keepalive | Cache not warmed within interval | Minimal (1 API call) |
 | **Background work** | Task execution | User idle + open tasks + mana available | Variable (full agent turn) |
 
 Both run on a single goroutine per agent with ~30-second ticks. Neither fires during active conversation.
 
-## Heartbeat
+## Keepalive
 
-The heartbeat keeps the Anthropic cache prefix warm. Anthropic's cache TTL is ~1 hour, so the default interval is 55 minutes.
+The keepalive keeps the Anthropic cache prefix warm. Anthropic's cache TTL is ~1 hour, so the default interval is 55 minutes.
 
-When the heartbeat fires, it creates a branch session from the agent's default session. The branch shares the parent's cache prefix, so the API call warms the cache for the next real interaction. The branch runs with `no_compact` (returns immediately if context limit is hit) and does no real work.
+When the keepalive fires, it creates a branch session from the agent's default session. The branch shares the parent's cache prefix, so the API call warms the cache for the next real interaction. The branch runs with `no_compact` (returns immediately if context limit is hit) and does no real work.
 
 **When it fires:**
 ```
-if heartbeat.enabled
-   AND time_since(last_cache_warm) >= heartbeat.interval
-   AND no heartbeat already running
+if keepalive.enabled
+   AND time_since(last_cache_warm) >= keepalive.interval
+   AND no keepalive already running
 ```
 
 **What warms the cache:**
 - Any API call on the main session (user message -> response)
-- Heartbeat branch starting
+- Keepalive branch starting
 - Background branch starting
 
 ## Background Work
@@ -127,10 +127,10 @@ The background work trigger checks: `SELECT COUNT(*) FROM todos WHERE agent_id =
 ## Config
 
 ```toml
-[heartbeat]
+[keepalive]
 enabled = true
 interval = "55m"                    # time since cache last warmed
-prompt = "prompts/heartbeat.md"     # path to prompt file
+prompt = "prompts/keepalive.md"     # path to prompt file
 
 [background]
 enabled = true
@@ -141,16 +141,16 @@ invest_interval = "30m"             # quiet period after mana reset
 
 ### Validation
 
-- **Warning:** `background.interval > heartbeat.interval` -- heartbeat resets the cache timer before background interval elapses, so background work may never trigger.
-- **Warning:** `heartbeat.interval > 1h` -- Anthropic cache TTL is ~1 hour; longer interval means cache expires between heartbeats, defeating the purpose.
+- **Warning:** `background.interval > keepalive.interval` -- keepalive resets the cache timer before background interval elapses, so background work may never trigger.
+- **Warning:** `keepalive.interval > 1h` -- Anthropic cache TTL is ~1 hour; longer interval means cache expires between keepalives, defeating the purpose.
 
 ## Branch Behavior
 
-### Heartbeat branches
+### Keepalive branches
 
 - **Prompt:** Minimal cache keepalive.
 - **Flags:** `no_compact`, `no_reset_hook`
-- **Trigger context:** `"heartbeat"`
+- **Trigger context:** `"keepalive"`
 - **Telegram delivery:** None (silent).
 
 ### Background branches
@@ -163,15 +163,15 @@ invest_interval = "30m"             # quiet period after mana reset
 
 ## Shutdown
 
-Heartbeat runners are stopped first during graceful shutdown, before the HTTP server is closed. This prevents new timer-triggered branches from starting while in-flight agent turns complete.
+Keepalive runners are stopped first during graceful shutdown, before the HTTP server is closed. This prevents new timer-triggered branches from starting while in-flight agent turns complete.
 
 ## Package
 
-The implementation lives in `heartbeat/heartbeat.go`:
+The implementation lives in `keepalive/keepalive.go`:
 
 - `Runner` — manages timer state and tick loop
 - `ManaIsGood()` — exported manamometer function (used in tests)
-- `BuildBranchFunc()` — creates the bridge between heartbeat package and main's agent/session infrastructure
+- `BuildBranchFunc()` — creates the bridge between keepalive package and main's agent/session infrastructure
 - `RunnerConfig` — dependency injection struct
 
-Tests in `heartbeat/heartbeat_test.go` cover manamometer edge cases (invest period, mid-window, near-reset, past-reset, zero data).
+Tests in `keepalive/keepalive_test.go` cover manamometer edge cases (invest period, mid-window, near-reset, past-reset, zero data).
