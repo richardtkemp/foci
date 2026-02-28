@@ -84,7 +84,7 @@ func (c *Client) SetRefreshFunc(fn func(staleToken string) error) {
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 		baseURL:    "https://api.anthropic.com",
 	}
 }
