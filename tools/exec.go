@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,20 @@ const execMaxOutputBytes = 2 * 1024 * 1024 // 2MB cap on stdout/stderr to preven
 // This blocks bare sleep commands which block for up to 10s then silently
 // background — the worst of both worlds.
 var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
+
+// execShell is the shell binary used by exec. Prefer bash (needed for pipefail
+// and tool-piping shell functions); fall back to sh if bash is not installed.
+var execShell = sync.OnceValue(func() string {
+	if path, err := exec.LookPath("bash"); err == nil {
+		log.Debugf("exec", "using bash: %s", path)
+		return "bash"
+	}
+	log.Infof("exec", "bash not found, falling back to sh (pipefail and tool-piping shell functions unavailable)")
+	return "sh"
+})
+
+// hasBash reports whether the exec shell is bash.
+func hasBash() bool { return execShell() == "bash" }
 
 // NewExecTool creates an exec tool. If store is non-nil, commands get
 // secret template resolution, output redaction, and blocked path checks.
@@ -136,11 +151,15 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
 		} else {
 			defer bridge.Close()
-			cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+			if hasBash() {
+				cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+			} else {
+				cmd = fmt.Sprintf("source %s; %s", bridge.FuncsPath(), cmd)
+			}
 		}
 	}
 
-	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
+	proc := exec.CommandContext(ctx, execShell(), "-c", cmd)
 	proc.Dir = workDir
 
 	// Inject FOCI_SOCK for exec bridge
@@ -205,11 +224,15 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		if err != nil {
 			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
 		} else {
-			cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+			if hasBash() {
+				cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+			} else {
+				cmd = fmt.Sprintf("source %s; %s", bridge.FuncsPath(), cmd)
+			}
 		}
 	}
 
-	proc := exec.CommandContext(cmdCtx, "sh", "-c", cmd)
+	proc := exec.CommandContext(cmdCtx, execShell(), "-c", cmd)
 	proc.Dir = workDir
 
 	// Inject FOCI_SOCK for exec bridge
