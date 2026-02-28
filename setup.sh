@@ -151,12 +151,19 @@ if ! $DRY_RUN; then
     go build -ldflags "$LDFLAGS" -o foci ./cmd/foci/ || { error "Failed to build foci"; exit 1; }
 fi
 
+info "  Building foci-call (exec bridge helper)..."
+if ! $DRY_RUN; then
+    cd "$SCRIPT_DIR"
+    go build -o foci-call ./cmd/foci-call/ || { error "Failed to build foci-call"; exit 1; }
+fi
+
 # Install built binaries
 if ! $DRY_RUN; then
     install -m 755 "$SCRIPT_DIR/focigw" "$INSTALL_DIR/focigw"
     install -m 755 "$SCRIPT_DIR/foci" "$INSTALL_DIR/foci"
+    install -m 755 "$SCRIPT_DIR/foci-call" "$INSTALL_DIR/foci-call"
 fi
-info "  Installed focigw and foci to $INSTALL_DIR"
+info "  Installed focigw, foci, and foci-call to $INSTALL_DIR"
 
 # Write changelog (WELCOME.md) on update — not fresh install
 if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]]; then

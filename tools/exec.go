@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"syscall"
@@ -29,10 +30,12 @@ var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
 // auto-backgrounded (0 disables). notifier delivers results when an
 // auto-backgrounded command finishes (nil disables).
 // workDir sets the default working directory for commands (empty = process cwd).
-func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) *Tool {
+// registry enables the exec bridge (tool piping) — if non-nil, exported tools
+// are available as shell functions inside exec commands.
+func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated).",
+		Description: "Run a shell command and return its output. Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions (foci_web_search, foci_http_request, etc.) are available for piping tool results within a single command.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -52,12 +55,12 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir)
+			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string) (string, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) (string, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -104,28 +107,46 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	log.Debugf("exec", "running: %s (timeout=%s background=%v)", truncateCmd(p.Command, 200), timeout, p.Background)
 
-	// For explicit background mode, use the original direct approach
+	// For explicit background mode, use the original direct approach (no bridge)
 	if p.Background {
-		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir)
+		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil)
 	}
 
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
 		sk := SessionKeyFromContext(ctx)
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry)
 	}
 
-	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir)
+	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry)
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string) (string, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Create exec bridge for tool piping (skipped for background mode and nil registry)
+	var bridge *ExecBridge
+	if !background && registry != nil {
+		var err error
+		bridge, err = NewExecBridge(registry, ctx)
+		if err != nil {
+			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
+		} else {
+			defer bridge.Close()
+			cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+		}
+	}
+
 	proc := exec.CommandContext(ctx, "sh", "-c", cmd)
 	proc.Dir = workDir
+
+	// Inject FOCI_SOCK for exec bridge
+	if bridge != nil {
+		proc.Env = append(os.Environ(), "FOCI_SOCK="+bridge.SockPath())
+	}
 
 	if background {
 		proc.SysProcAttr = ChildSysProcAttrSetsid()
@@ -170,12 +191,31 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string) (string, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry) (string, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
+	// Create exec bridge for tool piping.
+	// Use context.Background() + session key so bridge survives agent turn end.
+	var bridge *ExecBridge
+	if registry != nil {
+		bridgeCtx := WithSessionKey(context.Background(), sessionKey)
+		var err error
+		bridge, err = NewExecBridge(registry, bridgeCtx)
+		if err != nil {
+			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
+		} else {
+			cmd = fmt.Sprintf("set -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
+		}
+	}
+
 	proc := exec.CommandContext(cmdCtx, "sh", "-c", cmd)
 	proc.Dir = workDir
+
+	// Inject FOCI_SOCK for exec bridge
+	if bridge != nil {
+		proc.Env = append(os.Environ(), "FOCI_SOCK="+bridge.SockPath())
+	}
 	proc.SysProcAttr = ChildSysProcAttr()
 	proc.Cancel = func() error {
 		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
@@ -220,6 +260,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		// Command finished before threshold
 		<-doneRead // Wait for output reading to complete
 		cmdCancel()
+		if bridge != nil {
+			bridge.Close()
+		}
 		return formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
 
 	case <-time.After(threshold):
@@ -231,6 +274,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		go func() {
 			defer cmdCancel()
 			defer notifier.MarkDone(sessionKey)
+			if bridge != nil {
+				defer bridge.Close()
+			}
 			err := <-done
 			<-doneRead // Wait for output reading to complete
 			result := formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
@@ -244,6 +290,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		// Agent turn cancelled — let the command continue in background
 		go func() {
 			defer cmdCancel()
+			if bridge != nil {
+				defer bridge.Close()
+			}
 			<-done
 			<-doneRead
 		}()

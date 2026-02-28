@@ -40,6 +40,7 @@ type fileAttachment struct {
 func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) *Tool {
 	return &Tool{
 		Name:        "http_request",
+		ExecExport:  true,
 		Description: "Make an HTTP request. Secrets referenced via {{secret:NAME}} in headers/body are resolved server-side and validated against allowed_hosts. Preferred over exec for API calls with secrets. Binary responses are auto-saved to files. Use save_to to save any response to a specific path.",
 		Parameters: json.RawMessage(`{
 			"type": "object",

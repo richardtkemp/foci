@@ -13,6 +13,7 @@ import (
 func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
 		Name:        "todo",
+		ExecExport:  true,
 		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",

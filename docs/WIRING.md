@@ -400,6 +400,37 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
 
+### Exec Bridge / Tool Piping (`tools/execbridge.go`)
+
+Exposes selected tools as shell functions inside `exec` calls via a per-exec unix socket. This allows unix-style composition (pipes, filters) in a single exec invocation — intermediate data never enters agent context.
+
+**Architecture:**
+```
+exec subprocess                       foci process
+┌─────────────────────┐               ┌───────────────┐
+│ foci_http_request ──┼──connect────▶ │ goroutine/conn │
+│ foci_web_fetch    ──┼──connect────▶ │ goroutine/conn │
+│ foci_spawn        ──┼──connect────▶ │ goroutine/conn │
+└─────────────────────┘               └───────────────┘
+    /tmp/foci-exec-<pid>-<n>.sock
+```
+
+**How it works:**
+1. `execDirect`/`execWithAutoBackground` create an `ExecBridge` before spawning the subprocess
+2. Bridge creates a unix socket (`/tmp/foci-exec-<pid>-<n>.sock`, 0600 perms) and a shell functions file
+3. `FOCI_SOCK` env var and `source <funcs.sh>` are injected into the command
+4. Shell functions use `jq` for JSON construction and `foci-call` binary for socket communication
+5. Bridge accepts connections and routes requests to tools with `ExecExport: true`
+6. Bridge is closed after the subprocess exits (cleanup: socket + funcs files removed)
+
+**Skipped for:** explicit `background: true` mode (daemons don't need piping).
+
+**For auto-background:** bridge context uses `context.Background()` + session key so it survives agent turn end.
+
+**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_telegram`, `spawn`.
+
+**`foci-call` binary** (`cmd/foci-call/`): Reads `FOCI_SOCK`, connects to unix socket, sends JSON request (newline-terminated), prints result to stdout or error to stderr, exits 0/1. 1MB scanner buffer.
+
 ### Tmux Memory Monitor (`tools/tmux_memory.go`)
 
 Background goroutine that checks the RSS of the tmux server process at configurable intervals. Three thresholds (warn, critical, kill) fire Telegram notifications and, at the kill threshold, run `tmux kill-server` and call `ClearAll()` on all tmux tool instances. Notifications use dedup — same threshold level won't re-fire until memory drops below it or tmux is killed.

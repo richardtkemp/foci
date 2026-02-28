@@ -310,6 +310,29 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `bitwarden_search` — search Bitwarden vault items by name/URI/folder (metadata only, no passwords)
 - `bitwarden_unlock` — unlock a vault item (requires admin approval via aisudo/Telegram), caches for TTL
 
+### Tool Piping (Exec Bridge)
+
+Selected tools are exposed as shell functions inside `exec` commands. A per-exec unix socket bridges the subprocess back to the foci process, enabling unix-style composition without consuming inference passes for intermediate results.
+
+**How it works:**
+- Each non-background exec call creates an `ExecBridge` with a unique unix socket
+- Shell functions (`foci_web_search`, `foci_http_request`, etc.) are generated and sourced at startup
+- Functions use `jq` for safe JSON argument construction and `foci-call` for socket communication
+- `set -o pipefail` is prepended to all exec commands
+
+**Exported tools** (controlled by `ExecExport: true` on the Tool struct):
+- `foci_http_request <url> [--method M] [--header 'K: V'] [--body B] [--save-to P]`
+- `foci_web_fetch <url> [--raw]`
+- `foci_web_search <query>`
+- `foci_memory_search <query>`
+- `foci_todo <action> [args...]`
+- `foci_send_telegram <text>` (also reads stdin when no args)
+- `foci_spawn <prompt> [--model M] [--context C]`
+
+**Example:** `foci_web_search "golang generics" | head -3 | foci_send_telegram`
+
+**Dependencies:** `jq` (for JSON construction in shell functions), `foci-call` binary (installed to `/usr/local/bin` by setup.sh).
+
 ### Tmux Session Monitoring
 
 The `tmux` tool includes operations for monitoring pane inactivity:

@@ -12,6 +12,7 @@ import (
 func NewMemorySearchTool(idx *memory.Index) *Tool {
 	return &Tool{
 		Name:        "memory_search",
+		ExecExport:  true,
 		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default) or recency (newest files first).",
 		Parameters: json.RawMessage(`{
 			"type": "object",

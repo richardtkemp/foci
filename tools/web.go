@@ -20,6 +20,7 @@ import (
 func NewWebFetchTool() *Tool {
 	return &Tool{
 		Name:        "web_fetch",
+		ExecExport:  true,
 		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability). Set raw=true for unprocessed HTML.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -42,6 +43,7 @@ func NewWebFetchTool() *Tool {
 func NewWebSearchTool(braveAPIKey string) *Tool {
 	return &Tool{
 		Name:        "web_search",
+		ExecExport:  true,
 		Description: "Search the web using Brave Search API. Returns titles, URLs, and descriptions.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
