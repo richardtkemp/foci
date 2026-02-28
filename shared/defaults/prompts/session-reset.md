@@ -13,7 +13,7 @@ This session is about to be cleared. Memories were update at some point within t
    - Routine checks, trivial exchanges
    - Content already in today's memory file
    - Cron job outputs (like this one)
-   - Heartbeat checks with no notable findings
+   - Keepalive checks with no notable findings
 
 **If there's notable content, append to `/home/foci/memory/YYYY-MM-DD.md`** (use today's date)
 

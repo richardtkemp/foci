@@ -11,7 +11,7 @@ type turnCallbacksKey struct{}
 // triggerKey is the context key for the turn trigger type.
 type triggerKey struct{}
 
-// WithTrigger attaches a trigger label (e.g. "user", "heartbeat") to a context.
+// WithTrigger attaches a trigger label (e.g. "user", "keepalive") to a context.
 func WithTrigger(ctx context.Context, trigger string) context.Context {
 	return context.WithValue(ctx, triggerKey{}, trigger)
 }

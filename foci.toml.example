@@ -4,7 +4,7 @@
 id = "main"
 model = "claude-haiku-4-5"
 workspace = "/path/to/your/workspace"
-heartbeat_interval = "45m"
+keepalive_interval = "45m"
 
 [anthropic]
 token = "YOUR_ANTHROPIC_TOKEN_HERE"

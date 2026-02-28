@@ -20,7 +20,7 @@ var DefaultFileOrder = []string{
 	"TOOLS.md",
 	"USER.md",
 	"MEMORY.md",
-	"HEARTBEAT.md",
+	"KEEPALIVE.md",
 }
 
 // Bootstrap loads workspace markdown files as system prompt blocks.

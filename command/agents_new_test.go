@@ -408,13 +408,13 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 func TestCreateWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Set up defaults directory with character files, heartbeat, and crontab template
+	// Set up defaults directory with character files, keepalive, and crontab template
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
 	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("- **Name:** <!-- your name -->\n- **Emoji:** <!-- your symbol -->\n"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft content"), 0644)
-	os.WriteFile(filepath.Join(defaultsDir, "prompts", "HEARTBEAT.md"), []byte("heartbeat"), 0644)
+	os.WriteFile(filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md"), []byte("keepalive"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "crontab.template"), []byte("*/30 * * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log\n"), 0644)
 
 	// Create a config file to append to
@@ -471,13 +471,13 @@ func TestCreateWorkspace(t *testing.T) {
 		t.Errorf("SOUL.md emoji not substituted: %q", soulContent)
 	}
 
-	// Check heartbeat prompt was copied
-	data, err = os.ReadFile(filepath.Join(workspace, "prompts", "HEARTBEAT.md"))
+	// Check keepalive prompt was copied
+	data, err = os.ReadFile(filepath.Join(workspace, "prompts", "KEEPALIVE.md"))
 	if err != nil {
-		t.Fatalf("read HEARTBEAT.md: %v", err)
+		t.Fatalf("read KEEPALIVE.md: %v", err)
 	}
-	if string(data) != "heartbeat" {
-		t.Errorf("HEARTBEAT.md = %q", string(data))
+	if string(data) != "keepalive" {
+		t.Errorf("KEEPALIVE.md = %q", string(data))
 	}
 
 	// Check config was appended
@@ -660,7 +660,7 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 	template := `# AGENT_NAME cron
 # This is a comment that should be stripped
 0 4 * * * foci branch --oneshot -a AGENT_NAME "$(cat WORKSPACE/prompts/review.md)" 2>&1 >> HOMEDIR/logs/cron.log
-*/30 * * * * foci send -a AGENT_NAME "[heartbeat]" 2>&1 >> HOMEDIR/logs/cron.log
+*/30 * * * * foci send -a AGENT_NAME "[keepalive]" 2>&1 >> HOMEDIR/logs/cron.log
 `
 	os.WriteFile(filepath.Join(templateDir, "crontab.template"), []byte(template), 0644)
 

@@ -6,7 +6,7 @@ A minimal agent platform in Go. One binary, ~32MB RAM, no framework.
 
 Foci runs AI agents on Telegram. Each agent has its own identity (character files), memory (daily logs + curated long-term), and tools. Agents wake fresh each session — character documents are how they become themselves again.
 
-Character files are fully configurable. Use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention (AGENTS, TOOLS, SOUL, MEMORY, HEARTBEAT), or define whatever combination suits your agent. They're just markdown files in a directory — foci loads whatever you point it at.
+Character files are fully configurable. Use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention (AGENTS, TOOLS, SOUL, MEMORY, KEEPALIVE), or define whatever combination suits your agent. They're just markdown files in a directory — foci loads whatever you point it at.
 
 Built as a ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw) (TypeScript/Node.js). Same concept, different philosophy.
 
@@ -48,7 +48,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Built-in todo list.** Persistent, priority-ranked task management the agent can use to keep its own priorities straight. Add, complete, search, remove — stored in SQLite, survives restarts. The agent tracks its own work without external tools or memory file hacks.
 
-**Cron is cron.** Scheduled tasks use the system crontab, not a built-in scheduler. Heartbeats, memory formation, daily reviews — they're all cron entries calling `foci send` or `foci branch`. Debug with `crontab -l`, edit with `crontab -e`, monitor with your existing tools. No reinvented wheels, no custom DSL, no "task engine" to learn.
+**Cron is cron.** Scheduled tasks use the system crontab, not a built-in scheduler. Keepalives, memory formation, daily reviews — they're all cron entries calling `foci send` or `foci branch`. Debug with `crontab -l`, edit with `crontab -e`, monitor with your existing tools. No reinvented wheels, no custom DSL, no "task engine" to learn.
 
 **Multi-agent, single process.** Multiple agents share one binary with separate workspaces, identities, and Telegram bots. No container overhead, no orchestration. Config is one TOML file.
 
@@ -77,7 +77,7 @@ foci.toml + secrets.toml
     │   └── Token tracking / mana monitoring
     │
     └── Background services
-        ├── Cron (memory formation, heartbeats, reviews)
+        ├── Cron (memory formation, keepalive, reviews)
         ├── Tmux memory monitor
         └── Bitwarden vault refresh
 ```
