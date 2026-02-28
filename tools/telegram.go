@@ -39,6 +39,7 @@ type TelegramSender interface {
 func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
+		ExecExport:  true,
 		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use for alerts, sharing files, or sending media.",
 		Parameters: json.RawMessage(`{
 			"type": "object",

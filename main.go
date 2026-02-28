@@ -1269,7 +1269,7 @@ func setupAgent(p setupParams) *agentInstance {
 		maxUploadSize = acfg.MaxUploadFileSize
 	}
 
-	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace))
+	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
 	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool())

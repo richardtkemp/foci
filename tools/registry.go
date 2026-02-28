@@ -14,6 +14,7 @@ type Tool struct {
 	Description string
 	Parameters  json.RawMessage
 	Execute     func(ctx context.Context, params json.RawMessage) (string, error)
+	ExecExport  bool // expose as shell function inside exec calls via ExecBridge
 }
 
 // Registry holds all registered tools.
