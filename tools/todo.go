@@ -48,6 +48,10 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				"query": {
 					"type": "string",
 					"description": "Search query (required for 'search', case-insensitive substring match)"
+				},
+				"reason": {
+					"type": "string",
+					"description": "Reason for completing the todo (required for 'complete', e.g. 'implemented in abc1234', 'no longer relevant')"
 				}
 			},
 			"required": ["action"]
@@ -61,6 +65,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				ID       int64  `json:"id"`
 				Status   string `json:"status"`
 				Query    string `json:"query"`
+				Reason   string `json:"reason"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
@@ -103,7 +108,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 						marker = "[x]"
 					}
 					tags := memory.FormatTags(item.Tags)
-					lines = append(lines, fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text))
+					line := fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text)
+					if item.Status == "done" && item.CloseReason != "" {
+						line += fmt.Sprintf(" — %s", item.CloseReason)
+					}
+					lines = append(lines, line)
 				}
 				return strings.Join(lines, "\n"), nil
 
@@ -125,7 +134,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 						marker = "[x]"
 					}
 					tags := memory.FormatTags(item.Tags)
-					lines = append(lines, fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text))
+					line := fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text)
+					if item.Status == "done" && item.CloseReason != "" {
+						line += fmt.Sprintf(" — %s", item.CloseReason)
+					}
+					lines = append(lines, line)
 				}
 				return strings.Join(lines, "\n"), nil
 
@@ -133,10 +146,13 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				if p.ID == 0 {
 					return "", fmt.Errorf("id is required for complete")
 				}
-				if err := store.Complete(agentID, p.ID); err != nil {
+				if p.Reason == "" {
+					return "", fmt.Errorf("reason is required for complete (e.g. 'implemented in abc1234', 'no longer relevant')")
+				}
+				if err := store.Complete(agentID, p.ID, p.Reason); err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("Completed todo #%d.", p.ID), nil
+				return fmt.Sprintf("Completed todo #%d: %s", p.ID, p.Reason), nil
 
 			case "edit":
 				if p.ID == 0 {

@@ -16,6 +16,7 @@ type TodoItem struct {
 	Status      string // "open" or "done"
 	Priority    string // "high", "medium", "low"
 	Tags        string // comma-separated tags (e.g. "background,daily")
+	CloseReason string // reason for completion (set when status="done")
 	AgentID     string
 	CreatedAt   time.Time
 	CompletedAt *time.Time
@@ -62,6 +63,12 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		return nil, fmt.Errorf("migrate tags: %w", err)
 	}
 
+	// Migration: add close_reason column if missing
+	if err := migrateAddCloseReason(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate close_reason: %w", err)
+	}
+
 	return &TodoStore{db: db}, nil
 }
 
@@ -96,6 +103,37 @@ func migrateAddTags(db *sql.DB) error {
 	return nil
 }
 
+// migrateAddCloseReason adds the close_reason column if it doesn't exist.
+func migrateAddCloseReason(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(todos)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasCol := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull int
+		var dfltValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == "close_reason" {
+			hasCol = true
+		}
+	}
+	if !hasCol {
+		_, err := db.Exec(`ALTER TABLE todos ADD COLUMN close_reason TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Add creates a new todo item and returns its ID.
 func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	if priority == "" {
@@ -114,7 +152,7 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 
 // List returns todo items for an agent, optionally filtered by status and/or tag.
 func (s *TodoStore) List(agentID, status, tag string) ([]TodoItem, error) {
-	query := `SELECT id, text, status, priority, tags, agent_id, created_at, completed_at FROM todos WHERE agent_id = ?`
+	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
 	if status != "" {
@@ -151,12 +189,12 @@ func (s *TodoStore) CountOpenByTag(agentID, tag string) (int, error) {
 	return count, err
 }
 
-// Complete marks a todo item as done.
-func (s *TodoStore) Complete(agentID string, id int64) error {
+// Complete marks a todo item as done with the given reason.
+func (s *TodoStore) Complete(agentID string, id int64, reason string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		`UPDATE todos SET status = 'done', completed_at = ? WHERE id = ? AND agent_id = ?`,
-		now, id, agentID,
+		`UPDATE todos SET status = 'done', completed_at = ?, close_reason = ? WHERE id = ? AND agent_id = ?`,
+		now, reason, id, agentID,
 	)
 	if err != nil {
 		return err
@@ -219,13 +257,13 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 
 	// Re-read the updated row.
 	row := s.db.QueryRow(
-		`SELECT id, text, status, priority, tags, agent_id, created_at, completed_at FROM todos WHERE id = ? AND agent_id = ?`,
+		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at FROM todos WHERE id = ? AND agent_id = ?`,
 		id, agentID,
 	)
 	var item TodoItem
 	var createdAt string
 	var completedAt sql.NullString
-	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.AgentID, &createdAt, &completedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &completedAt); err != nil {
 		return nil, fmt.Errorf("re-read after edit: %w", err)
 	}
 	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -239,7 +277,7 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 // Search returns todo items matching a case-insensitive substring query.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, text, status, priority, tags, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
+		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
 		agentID, query,
 	)
 	if err != nil {
@@ -260,7 +298,7 @@ func scanTodos(rows *sql.Rows) ([]TodoItem, error) {
 		var item TodoItem
 		var createdAt string
 		var completedAt sql.NullString
-		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.AgentID, &createdAt, &completedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &completedAt); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
