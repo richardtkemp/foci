@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"foci/log"
 
 	_ "modernc.org/sqlite"
 )
@@ -41,61 +40,20 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	if err := migrateReminders(db); err != nil {
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS reminders (
+		id       INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id TEXT    NOT NULL DEFAULT '',
+		text     TEXT    NOT NULL,
+		due_at   TEXT    NOT NULL,
+		due_tag  TEXT    NOT NULL,
+		created  TEXT    NOT NULL
+	)`)
+	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate reminders: %w", err)
+		return nil, fmt.Errorf("create reminders table: %w", err)
 	}
 
 	return &ReminderStore{db: db}, nil
-}
-
-// migrateReminders handles schema evolution for the reminders table.
-func migrateReminders(db *sql.DB) error {
-	// Check if table exists
-	var name string
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='reminders'").Scan(&name)
-	if err == sql.ErrNoRows {
-		// Fresh install
-		_, err := db.Exec(`CREATE TABLE reminders (
-			id       INTEGER PRIMARY KEY AUTOINCREMENT,
-			agent_id TEXT    NOT NULL DEFAULT '',
-			text     TEXT    NOT NULL,
-			due_at   TEXT    NOT NULL,
-			due_tag  TEXT    NOT NULL,
-			created  TEXT    NOT NULL
-		)`)
-		return err
-	}
-
-	// Table exists — check if agent_id column is present
-	var hasAgentID bool
-	rows, err := db.Query("PRAGMA table_info(reminders)")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var cname, ctype string
-		var notnull int
-		var dfltValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &cname, &ctype, &notnull, &dfltValue, &pk); err != nil {
-			return err
-		}
-		if cname == "agent_id" {
-			hasAgentID = true
-		}
-	}
-
-	if hasAgentID {
-		return nil // already migrated
-	}
-
-	// Add agent_id column with default empty string (migrates existing rows)
-	log.Infof("reminders", "migrating reminders table to add agent_id column")
-	_, err = db.Exec(`ALTER TABLE reminders ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''`)
-	return err
 }
 
 // Add creates a new reminder. The when parameter is resolved to a concrete time:
