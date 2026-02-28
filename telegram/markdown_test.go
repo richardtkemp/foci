@@ -315,6 +315,11 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "text `` more",
 			want: "text `` more",
 		},
+		{
+			name: "many inline codes beyond index 9",
+			in:   "`a` `b` `c` `d` `e` `f` `g` `h` `i` `j` `k` `l`",
+			want: "<code>a</code> <code>b</code> <code>c</code> <code>d</code> <code>e</code> <code>f</code> <code>g</code> <code>h</code> <code>i</code> <code>j</code> <code>k</code> <code>l</code>",
+		},
 	}
 
 	for _, tt := range tests {
