@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"foci/table"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -38,7 +39,7 @@ func ConvertToTelegramHTML(text string) string {
 		}
 		inner := htmlEscape(parts[1])
 		codeBlocks = append(codeBlocks, "<pre><code>"+inner+"</code></pre>")
-		return "[CODEBLOCK" + string(rune('0'+idx)) + "]"
+		return fmt.Sprintf("[CODEBLOCK%d]", idx)
 	})
 
 	// Tables: detect blocks of lines containing | with a separator row (---).
@@ -56,7 +57,7 @@ func ConvertToTelegramHTML(text string) string {
 		}
 		code := htmlEscape(parts[1])
 		inlineCodes = append(inlineCodes, "<code>"+code+"</code>")
-		return "[INLINECODE" + string(rune('0'+idx)) + "]"
+		return fmt.Sprintf("[INLINECODE%d]", idx)
 	})
 
 	// Escape & and < in the body text after extracting code blocks and inline
@@ -108,10 +109,10 @@ func ConvertToTelegramHTML(text string) string {
 
 	// Restore code blocks and inline codes
 	for i, code := range codeBlocks {
-		text = strings.ReplaceAll(text, "[CODEBLOCK"+string(rune('0'+i))+"]", code)
+		text = strings.ReplaceAll(text, fmt.Sprintf("[CODEBLOCK%d]", i), code)
 	}
 	for i, code := range inlineCodes {
-		text = strings.ReplaceAll(text, "[INLINECODE"+string(rune('0'+i))+"]", code)
+		text = strings.ReplaceAll(text, fmt.Sprintf("[INLINECODE%d]", i), code)
 	}
 
 	return text
@@ -155,7 +156,7 @@ func convertTables(text string, codeBlocks *[]string) string {
 				formatted := formatTable(tableLines, sepRe)
 				idx := len(*codeBlocks)
 				*codeBlocks = append(*codeBlocks, "<pre>"+htmlEscape(formatted)+"</pre>")
-				result = append(result, "[CODEBLOCK"+string(rune('0'+idx))+"]")
+				result = append(result, fmt.Sprintf("[CODEBLOCK%d]", idx))
 				i = tableEnd
 				continue
 			}
