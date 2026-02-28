@@ -139,6 +139,13 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 
+	// Strip HTTP headers from http_request results so piping works cleanly.
+	// The tool returns "HTTP <status>\nHeader: val\n...\n\n<body>" — in a pipe
+	// context only the body is useful (e.g. `foci_http_request url | jq .`).
+	if req.Tool == "http_request" {
+		result = stripHTTPHeaders(result)
+	}
+
 	writeResponse(conn, result, "")
 }
 
@@ -150,6 +157,16 @@ func writeResponse(conn net.Conn, result, errMsg string) {
 	data, _ := json.Marshal(resp)
 	data = append(data, '\n')
 	conn.Write(data)
+}
+
+// stripHTTPHeaders removes the HTTP status/header block from an http_request
+// result, returning only the body. The format is "HTTP <status>\n...headers...\n\n<body>".
+// If the separator isn't found, the result is returned unchanged.
+func stripHTTPHeaders(result string) string {
+	if idx := strings.Index(result, "\n\n"); idx >= 0 && strings.HasPrefix(result, "HTTP ") {
+		return result[idx+2:]
+	}
+	return result
 }
 
 func (b *ExecBridge) exportedToolCount() int {
