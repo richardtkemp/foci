@@ -260,6 +260,84 @@ func TestExecBridgeUniquePaths(t *testing.T) {
 	b2.Close()
 }
 
+func TestStripHTTPHeaders(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "standard response",
+			input: "HTTP 200 OK\nContent-Type: application/json\n\n{\"key\":\"value\"}",
+			want:  "{\"key\":\"value\"}",
+		},
+		{
+			name:  "multiple headers",
+			input: "HTTP 200 OK\nContent-Type: text/html\nContent-Length: 5\nX-Request-Id: abc\n\nhello",
+			want:  "hello",
+		},
+		{
+			name:  "no headers (not HTTP prefix)",
+			input: "just a plain result",
+			want:  "just a plain result",
+		},
+		{
+			name:  "empty body",
+			input: "HTTP 204 No Content\n\n",
+			want:  "",
+		},
+		{
+			name:  "body with newlines",
+			input: "HTTP 200 OK\nContent-Type: text/plain\n\nline1\nline2\nline3",
+			want:  "line1\nline2\nline3",
+		},
+		{
+			name:  "saved to file (no body separator)",
+			input: "HTTP 200 OK\nContent-Type: image/png\n\nSaved 1234 bytes to /tmp/foo.png",
+			want:  "Saved 1234 bytes to /tmp/foo.png",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripHTTPHeaders(tt.input)
+			if got != tt.want {
+				t.Errorf("stripHTTPHeaders() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
+	// Register a fake http_request tool that returns headers + body
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "http_request",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "HTTP 200 OK\nContent-Type: application/json\nContent-Length: 27\n\n{\"origin\":\"1.2.3.4\"}", nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	result, errMsg := callBridge(t, bridge.SockPath(), `{"tool":"http_request","params":{"url":"https://httpbin.org/get"}}`)
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	// Headers should be stripped — result should be body only
+	if strings.Contains(result, "HTTP 200") {
+		t.Errorf("result should not contain HTTP headers, got: %q", result)
+	}
+	if result != `{"origin":"1.2.3.4"}` {
+		t.Errorf("result = %q, want %q", result, `{"origin":"1.2.3.4"}`)
+	}
+}
+
 // callBridge connects to a bridge socket and sends a request, returning the result and error.
 func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) {
 	t.Helper()
