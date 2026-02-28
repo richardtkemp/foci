@@ -1215,14 +1215,16 @@ func TestShowToolCalls_Off(t *testing.T) {
 }
 
 func TestShowToolCalls_Full(t *testing.T) {
-	// When showToolCalls is "full", tool calls are sent (same as preview),
-	// but the response should NOT overwrite the tool message (it goes via sendReply).
+	// When showToolCalls is "full", every tool call gets its own persistent
+	// message (never editing a previous one). The final response also goes
+	// via sendReply as a new message, not by editing the tool message.
 	mock := &mockClient{}
 	b := &Bot{client: mock, showToolCalls: "full"}
 
 	var toolMsgID int64
 	var toolMsgMu sync.Mutex
 
+	// This mirrors the ToolCallObserver closure in processMessage.
 	observer := func(toolName string, params json.RawMessage) {
 		if b.showToolCalls == "off" || b.showToolCalls == "" {
 			return
@@ -1230,8 +1232,18 @@ func TestShowToolCalls_Full(t *testing.T) {
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 		text := b.formatToolCall(toolName, params)
+		sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
+
+		if b.showToolCalls == "full" {
+			// Full mode: always send a new message per tool call.
+			sent, _ := b.client.SendMessage(12345, text, sendOpts)
+			toolMsgID = sent.MessageId
+			return
+		}
+
+		// Preview mode: send first, then edit subsequent.
 		if toolMsgID == 0 {
-			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			sent, _ := b.client.SendMessage(12345, text, sendOpts)
 			toolMsgID = sent.MessageId
 		} else {
 			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
@@ -1240,19 +1252,22 @@ func TestShowToolCalls_Full(t *testing.T) {
 		}
 	}
 
-	// Tool calls should still be sent in "full" mode.
+	// First tool call: new message.
 	observer("exec", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Errorf("sends=%d, want 1", mock.sentCount())
 	}
 
+	// Second tool call: also a new message (not an edit).
 	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
-	if mock.editCount() != 1 {
-		t.Errorf("edits=%d, want 1", mock.editCount())
+	if mock.sentCount() != 2 {
+		t.Errorf("sends=%d, want 2 (full mode sends each tool call as new message)", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("edits=%d, want 0 (full mode should never edit previous tool call)", mock.editCount())
 	}
 
 	// Simulate response delivery: in "full" mode, response should NOT edit the tool message.
-	editsBefore := mock.editCount()
 	toolMsgMu.Lock()
 	editID := toolMsgID
 	toolMsgMu.Unlock()
@@ -1261,11 +1276,6 @@ func TestShowToolCalls_Full(t *testing.T) {
 	// only "preview" mode edits the tool message with the response.
 	if editID != 0 && b.showToolCalls == "preview" {
 		t.Error("should not enter preview branch for full mode")
-	}
-	// In full mode, we fall through to sendReply (new message).
-	// Verify no additional edits happened.
-	if mock.editCount() != editsBefore {
-		t.Errorf("edits changed: got %d, want %d (full mode should not edit tool msg with response)", mock.editCount(), editsBefore)
 	}
 }
 
