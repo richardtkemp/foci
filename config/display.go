@@ -70,8 +70,8 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if agent.MessagesInLog != nil {
 		add("agent", "messages_in_log", *agent.MessagesInLog)
 	}
-	if agent.ImageSaveDir != "" {
-		add("agent", "image_save_dir", agent.ImageSaveDir)
+	if agent.ReceivedFilesDir != "" {
+		add("agent", "received_files_dir", agent.ReceivedFilesDir)
 	}
 	if len(agent.AllowedUsers) > 0 {
 		add("agent", "allowed_users", agent.AllowedUsers)
@@ -145,8 +145,8 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
 	add("telegram", "show_thinking", cfg.Telegram.ShowThinking)
 	add("telegram", "display_width", cfg.Telegram.DisplayWidth)
-	if cfg.Telegram.ImageSaveDir != "" {
-		add("telegram", "image_save_dir", cfg.Telegram.ImageSaveDir)
+	if cfg.Telegram.ReceivedFilesDir != "" {
+		add("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
 	}
 
 	// sessions
@@ -407,8 +407,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
 	addGlobal("telegram", "show_thinking", cfg.Telegram.ShowThinking)
 	addGlobal("telegram", "display_width", cfg.Telegram.DisplayWidth)
-	if cfg.Telegram.ImageSaveDir != "" {
-		addGlobal("telegram", "image_save_dir", cfg.Telegram.ImageSaveDir)
+	if cfg.Telegram.ReceivedFilesDir != "" {
+		addGlobal("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
 	}
 	addGlobal("sessions", "dir", cfg.Sessions.Dir)
 	addGlobal("sessions", "compaction_threshold", cfg.Sessions.CompactionThreshold)
@@ -587,8 +587,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		if agent.MessagesInLog != nil {
 			addAgent("messages_in_log", *agent.MessagesInLog)
 		}
-		if agent.ImageSaveDir != "" {
-			addAgent("image_save_dir", agent.ImageSaveDir)
+		if agent.ReceivedFilesDir != "" {
+			addAgent("received_files_dir", agent.ReceivedFilesDir)
 		}
 		if len(agent.AllowedUsers) > 0 {
 			addAgent("allowed_users", agent.AllowedUsers)
@@ -681,7 +681,7 @@ type displayTelegram struct {
 	ShowToolCalls       string   `toml:"show_tool_calls"`
 	ShowThinking        string   `toml:"show_thinking"`
 	DisplayWidth        int      `toml:"display_width"`
-	ImageSaveDir        string   `toml:"image_save_dir,omitempty"`
+	ReceivedFilesDir        string   `toml:"received_files_dir,omitempty"`
 }
 
 type displayAnthropic struct {
@@ -711,7 +711,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			ShowToolCalls:       string(cfg.Telegram.ShowToolCalls),
 			ShowThinking:        string(cfg.Telegram.ShowThinking),
 			DisplayWidth:        cfg.Telegram.DisplayWidth,
-			ImageSaveDir:        cfg.Telegram.ImageSaveDir,
+			ReceivedFilesDir:        cfg.Telegram.ReceivedFilesDir,
 		},
 		Sessions:      cfg.Sessions,
 		Memory:        cfg.Memory,
@@ -788,8 +788,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if agent.Effort == "" && cfg.Defaults.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
 	}
-	if agent.ImageSaveDir == "" && cfg.Telegram.ImageSaveDir == "" {
-		opts = append(opts, availableOption{"agent", "image_save_dir", "\"\"", "save received images to this directory"})
+	if agent.ReceivedFilesDir == "" && cfg.Telegram.ReceivedFilesDir == "" {
+		opts = append(opts, availableOption{"agent", "received_files_dir", "\"\"", "save received files to this directory"})
 	}
 	if len(agent.AllowedUsers) == 0 && len(cfg.Telegram.AllowedUsers) == 0 {
 		opts = append(opts, availableOption{"agent", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})

@@ -117,7 +117,7 @@ type AgentConfig struct {
 	ShowThinking            *ShowThinking     `toml:"show_thinking"`             // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
 	DisplayWidth            *int              `toml:"display_width"`             // display width for dividers in Telegram (nil = use global telegram.display_width)
 	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
-	ImageSaveDir            string            `toml:"image_save_dir"`            // save received images to this directory (empty = disabled)
+	ReceivedFilesDir        string            `toml:"received_files_dir"`        // save received files to this directory (empty = disabled)
 	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
 	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
 	CompactionThreshold        *float64 `toml:"compaction_threshold"`         // compact at this % of context window
@@ -173,7 +173,7 @@ type TelegramConfig struct {
 	ShowToolCalls       ToolCallDisplay               `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
 	ShowThinking        ShowThinking                 `toml:"show_thinking"`         // show thinking blocks in Telegram: "off" (default), "compact", "true"
 	DisplayWidth        int                          `toml:"display_width"`         // display width for dividers in Telegram (default 44)
-	ImageSaveDir        string                       `toml:"image_save_dir"`        // save received images to this directory (empty = disabled, per-agent overrides)
+	ReceivedFilesDir    string                       `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
 }
 
 type SessionsConfig struct {
@@ -940,6 +940,25 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
+	// Apply convention-based defaults before path resolution.
+	for i := range cfg.Agents {
+		// Workspace default: $HOME/$id
+		if cfg.Agents[i].Workspace == "" {
+			home, _ := os.UserHomeDir()
+			cfg.Agents[i].Workspace = filepath.Join(home, cfg.Agents[i].ID)
+		}
+		// TelegramBot default: agent ID if a matching bot key exists
+		if cfg.Agents[i].TelegramBot == "" {
+			if _, ok := cfg.Telegram.Bots[cfg.Agents[i].ID]; ok {
+				cfg.Agents[i].TelegramBot = cfg.Agents[i].ID
+			}
+		}
+		// ReceivedFilesDir default: $workspace/received_files
+		if cfg.Agents[i].ReceivedFilesDir == "" {
+			cfg.Agents[i].ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
+		}
+	}
+
 	cfg.ResolveAllPaths()
 
 	// Keepalive/background validation warnings
@@ -1051,12 +1070,12 @@ func (c *Config) ResolveAllPaths() {
 	if c.Environment.DocsPath != "" {
 		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)
 	}
-	if c.Telegram.ImageSaveDir != "" {
-		c.Telegram.ImageSaveDir = ResolvePath(c.Telegram.ImageSaveDir)
+	if c.Telegram.ReceivedFilesDir != "" {
+		c.Telegram.ReceivedFilesDir = ResolvePath(c.Telegram.ReceivedFilesDir)
 	}
 	for i := range c.Agents {
-		if c.Agents[i].ImageSaveDir != "" {
-			c.Agents[i].ImageSaveDir = ResolvePath(c.Agents[i].ImageSaveDir)
+		if c.Agents[i].ReceivedFilesDir != "" {
+			c.Agents[i].ReceivedFilesDir = ResolvePath(c.Agents[i].ReceivedFilesDir)
 		}
 	}
 }
