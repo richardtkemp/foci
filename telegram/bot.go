@@ -102,7 +102,20 @@ type Bot struct {
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (multiball) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
 func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) (*Bot, error) {
-	api, err := gotgbot.NewBot(token, nil)
+	// Use a transport with enough connections for concurrent API calls.
+	// The default http.Transport has MaxIdleConnsPerHost=2 which is too low:
+	// GetUpdates long-poll holds 1 connection, the agent worker sends typing
+	// indicators + tool call messages on another, leaving 0 for the receiver
+	// goroutine to handle callback queries or slash commands.
+	api, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
+		BotClient: &gotgbot.BaseBotClient{
+			Client: http.Client{
+				Transport: &http.Transport{
+					MaxIdleConnsPerHost: 8,
+				},
+			},
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create telegram bot: %w", err)
 	}
