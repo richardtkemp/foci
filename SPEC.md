@@ -688,6 +688,8 @@ The Telegram listener runs on its own goroutine. It receives and queues messages
 
 Two goroutines, one channel. The agent pulls from the queue at its own pace. The receiver never waits on the agent.
 
+**HTTP connection pool:** Both goroutines share a single `http.Client` for Telegram API calls. The transport is configured with `MaxIdleConnsPerHost=8` to prevent connection pool exhaustion — the long-poll `GetUpdates` holds one connection indefinitely, and the agent worker sends typing indicators + tool call messages concurrently. With Go's default of 2 connections per host, the receiver goroutine would block waiting for a free connection whenever the agent worker was also making a request.
+
 ### Agent turns are cancellable
 
 Every agent turn gets a `context.Context`. When a cancel signal arrives (new `/stop` command, shutdown, timeout), the context is cancelled and:
