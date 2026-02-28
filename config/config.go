@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -513,6 +514,62 @@ func validate(cfg *Config) error {
 	return nil
 }
 
+// boolKeyLineRe matches a TOML key = "on"/"off"/"true"/"false" line,
+// capturing the key name, the equals sign, the quoted value, and trailing comment.
+var boolKeyLineRe = regexp.MustCompile(`(?m)^(\s*(\w+)\s*=\s*)"(?i)(on|off|true|false)"(\s*(?:#.*)?)$`)
+
+// boolKeys is the set of TOML keys that are bool-typed in the config structs.
+// Only these keys have their quoted string values normalized to native bools.
+var boolKeys = map[string]bool{
+	"duplicate_messages":   true,
+	"inject_agent_warnings": true,
+	"startup_notification": true,
+	"messages_in_log":      true,
+	"compaction_notify":    true,
+	"compaction_debug":     true,
+	"tmux_autopilot":       true,
+	"auto_refresh":         true,
+	"enable_stop_aliases":  true,
+	"enable_startup_notify": true,
+	"full_payload":         true,
+	"cache_bust_detect":    true,
+	"log_rotation":         true,
+	"ws_enabled":           true,
+	"enabled":              true,
+	"skip_security_checks": true,
+}
+
+// normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
+// strings ("on"/"off"/"true"/"false") to native TOML booleans for known bool
+// keys. This allows users to write `enabled = "on"` as an alias for
+// `enabled = true`. Only applies to keys in the boolKeys set — string fields
+// like `thinking = "off"` are not affected.
+func normalizeBoolStrings(data string) string {
+	return boolKeyLineRe.ReplaceAllStringFunc(data, func(match string) string {
+		sub := boolKeyLineRe.FindStringSubmatch(match)
+		if len(sub) < 5 {
+			return match
+		}
+		prefix := sub[1] // "  key = " including whitespace
+		key := sub[2]    // the key name
+		val := sub[3]    // on/off/true/false
+		trail := sub[4]  // trailing comment
+
+		if !boolKeys[key] {
+			return match // not a bool key, leave as-is
+		}
+
+		switch strings.ToLower(val) {
+		case "on", "true":
+			return prefix + "true" + trail
+		case "off", "false":
+			return prefix + "false" + trail
+		default:
+			return match
+		}
+	})
+}
+
 // Load reads config from the given TOML file path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -521,7 +578,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	md, err := toml.Decode(string(data), &cfg)
+	md, err := toml.Decode(normalizeBoolStrings(string(data)), &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
