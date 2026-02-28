@@ -832,25 +832,16 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 			text := b.formatToolCall(toolName, params)
 			sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
-			editOpts := &gotgbot.EditMessageTextOpts{
-				ChatId:    qm.msg.Chat.Id,
-				MessageId: toolMsgID,
-				ParseMode: "HTML",
-			}
-			// In "full" mode, add inline keyboard for result expansion.
+
+			// In "full" mode, every tool call gets its own persistent message
+			// with an inline keyboard for result expansion. Never edit the
+			// previous tool call message.
 			if b.showToolCalls == "full" {
-				// Use a placeholder callback data; will be updated with real msgID after send.
-				keyboard := gotgbot.InlineKeyboardMarkup{
+				sendOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{
 					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
 						{Text: "Show results", CallbackData: "tc:show:0"},
 					}},
 				}
-				sendOpts.ReplyMarkup = keyboard
-				editOpts.ReplyMarkup = keyboard
-			}
-
-			if toolMsgID == 0 {
-				// First tool call: send a new message
 				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, sendOpts)
 				if err != nil {
 					log.Debugf("telegram", "send tool call msg: %v", err)
@@ -859,28 +850,35 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 				toolMsgID = sent.MessageId
 				toolMsgText = text
 				// Update the button callback data with the real message ID.
-				if b.showToolCalls == "full" {
-					b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-						ChatId:    qm.msg.Chat.Id,
-						MessageId: toolMsgID,
-						ParseMode: "HTML",
-						ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-							InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-								{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
-							}},
-						},
-					})
-				}
-			} else {
-				// Subsequent tool calls: edit the existing message
-				if b.showToolCalls == "full" {
-					editOpts.ReplyMarkup = gotgbot.InlineKeyboardMarkup{
+				b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+					ChatId:    qm.msg.Chat.Id,
+					MessageId: toolMsgID,
+					ParseMode: "HTML",
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
 							{Text: "Show results", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
 						}},
-					}
+					},
+				})
+				return
+			}
+
+			// "preview" mode: send first, then edit subsequent tool calls
+			// into the same message (overwriting previous).
+			if toolMsgID == 0 {
+				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, sendOpts)
+				if err != nil {
+					log.Debugf("telegram", "send tool call msg: %v", err)
+					return
 				}
-				_, _, err := b.client.EditMessageText(text, editOpts)
+				toolMsgID = sent.MessageId
+				toolMsgText = text
+			} else {
+				_, _, err := b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+					ChatId:    qm.msg.Chat.Id,
+					MessageId: toolMsgID,
+					ParseMode: "HTML",
+				})
 				if err != nil {
 					log.Debugf("telegram", "edit tool call msg: %v", err)
 				}
