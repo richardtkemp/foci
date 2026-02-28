@@ -479,6 +479,11 @@ func detectContentExtension(content string) string {
 			return ".json"
 		case '#':
 			return ".md"
+		case '<':
+			if strings.HasPrefix(trimmed, "<?xml") || strings.HasPrefix(trimmed, "<rss") {
+				return ".xml"
+			}
+			return ".html"
 		}
 	}
 	return ".txt"
