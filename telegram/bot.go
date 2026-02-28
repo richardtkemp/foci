@@ -1653,16 +1653,16 @@ func closingHTMLTag(openTag string) string {
 
 // toolEmoji maps tool names to per-tool display emoji.
 var toolEmoji = map[string]string{
-	"exec":             "⚡",
-	"web_fetch":        "🌐",
+	"exec":             "▶️",
+	"web_fetch":        "🔗",
 	"web_search":       "🔍",
-	"http_request":     "📡",
+	"http_request":     "🌍",
 	"read":             "📖",
 	"write":            "✏️",
 	"edit":             "✂️",
-	"tmux":             "🖥️",
-	"todo":             "✅",
-	"send_telegram":    "✈️",
+	"tmux":             "🪟",
+	"todo":             "☑️",
+	"send_telegram":    "📨",
 	"memory_search":    "🧠",
 	"spawn":            "🐣",
 	"scratchpad_read":  "📋",
