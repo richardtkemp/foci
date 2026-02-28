@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"foci/log"
 
 	_ "modernc.org/sqlite"
 )
@@ -46,85 +45,22 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
-	// Migrate: if old schema exists (no agent_id), recreate with composite PK.
-	if migrateScratchpad(db) != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate scratchpad")
-	}
-
-	return &Scratchpad{db: db}, nil
-}
-
-// migrateScratchpad handles schema evolution for the scratchpad table.
-func migrateScratchpad(db *sql.DB) error {
-	// Check if table exists at all
-	var name string
-	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='scratchpad'").Scan(&name)
-	if err == sql.ErrNoRows {
-		// Fresh install — create with agent_id from the start
-		_, err := db.Exec(`CREATE TABLE scratchpad (
-			agent_id TEXT    NOT NULL DEFAULT '',
-			key      TEXT    NOT NULL,
-			content  TEXT    NOT NULL,
-			updated  TEXT    NOT NULL,
-			PRIMARY KEY (agent_id, key)
-		)`)
-		return err
-	}
-
-	// Table exists — check if agent_id column is present
-	var hasAgentID bool
-	rows, err := db.Query("PRAGMA table_info(scratchpad)")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var cname, ctype string
-		var notnull int
-		var dfltValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &cname, &ctype, &notnull, &dfltValue, &pk); err != nil {
-			return err
-		}
-		if cname == "agent_id" {
-			hasAgentID = true
-		}
-	}
-
-	if hasAgentID {
-		return nil // already migrated
-	}
-
-	// Migrate: recreate table with composite PK
-	log.Infof("scratchpad", "migrating scratchpad table to add agent_id column")
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.Exec(`CREATE TABLE scratchpad_new (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS scratchpad (
 		agent_id TEXT    NOT NULL DEFAULT '',
 		key      TEXT    NOT NULL,
 		content  TEXT    NOT NULL,
 		updated  TEXT    NOT NULL,
 		PRIMARY KEY (agent_id, key)
-	)`); err != nil {
-		return err
+	)`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create scratchpad table: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO scratchpad_new (agent_id, key, content, updated) SELECT '', key, content, updated FROM scratchpad`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DROP TABLE scratchpad`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`ALTER TABLE scratchpad_new RENAME TO scratchpad`); err != nil {
-		return err
-	}
-	return tx.Commit()
+
+	return &Scratchpad{db: db}, nil
 }
+
+
 
 // Write sets or overwrites a scratchpad entry for the given agent.
 func (s *Scratchpad) Write(agentID, key, content string) error {
