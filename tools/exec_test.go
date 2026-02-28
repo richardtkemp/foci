@@ -399,6 +399,162 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	}
 }
 
+func TestExecSecretInHTTPRequestAllowed(t *testing.T) {
+	// Secret refs inside foci_http_request should be allowed (passed as literals)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": `foci_http_request --header "Authorization: Bearer {{secret:coolify.api_token}}" "https://example.com/api" | jq '.name'`,
+	})
+
+	// Should not error — the secret ref is in foci_http_request scope
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("secret ref in foci_http_request should be allowed: %v", err)
+	}
+}
+
+func TestExecSecretInHTTPRequestMultipleArgs(t *testing.T) {
+	// Multiple secret refs, all inside foci_http_request
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": `foci_http_request --header "Authorization: {{secret:api.token}}" --header "X-Key: {{secret:api.key}}" "https://example.com"`,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("multiple secret refs in foci_http_request should be allowed: %v", err)
+	}
+}
+
+func TestExecSecretOutsideHTTPRequestBlocked(t *testing.T) {
+	// Secret ref after a pipe (outside foci_http_request scope) should be blocked
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": `foci_http_request --header "Authorization: {{secret:api.token}}" "https://example.com" | echo {{secret:api.key}}`,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error when secret ref is outside foci_http_request scope")
+	}
+	if !strings.Contains(err.Error(), "not allowed in exec") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestExecSecretInHTTPRequestAndBareBlocked(t *testing.T) {
+	// One secret in foci_http_request, another in a separate command — should block
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": `foci_http_request --header "{{secret:api.token}}" url && curl -H "{{secret:api.key}}" url2`,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error when secret ref appears in non-http_request segment")
+	}
+}
+
+func TestExecSecretInHTTPRequestWithSemicolon(t *testing.T) {
+	// Secret ref after semicolon is a new command — should block
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": `foci_http_request url; echo {{secret:leak.me}}`,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error when secret ref is after semicolon")
+	}
+}
+
+func TestExecBareSecretStillBlocked(t *testing.T) {
+	// No foci_http_request at all — secret refs should be blocked as before
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": `curl -H "Authorization: {{secret:api.token}}" https://example.com`,
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for bare secret ref without foci_http_request")
+	}
+}
+
+func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{
+			name: "single ref in http_request",
+			cmd:  `foci_http_request --header "{{secret:api.token}}" url`,
+			want: true,
+		},
+		{
+			name: "ref after pipe",
+			cmd:  `foci_http_request url | echo {{secret:x}}`,
+			want: false,
+		},
+		{
+			name: "ref in http_request before pipe, no ref after",
+			cmd:  `foci_http_request --header "{{secret:x}}" url | jq '.'`,
+			want: true,
+		},
+		{
+			name: "ref in both segments",
+			cmd:  `foci_http_request "{{secret:x}}" url | grep {{secret:y}}`,
+			want: false,
+		},
+		{
+			name: "ref after &&",
+			cmd:  `foci_http_request url && echo {{secret:x}}`,
+			want: false,
+		},
+		{
+			name: "ref after ||",
+			cmd:  `foci_http_request url || echo {{secret:x}}`,
+			want: false,
+		},
+		{
+			name: "ref after semicolon",
+			cmd:  `foci_http_request url; echo {{secret:x}}`,
+			want: false,
+		},
+		{
+			name: "no http_request at all",
+			cmd:  `echo {{secret:x}}`,
+			want: false,
+		},
+		{
+			name: "no secret refs",
+			cmd:  `foci_http_request url | jq '.'`,
+			want: true,
+		},
+		{
+			name: "multiple refs all in http_request",
+			cmd:  `foci_http_request --header "{{secret:a}}" --header "{{secret:b}}" url`,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := allSecretRefsInHTTPRequestScope(tt.cmd)
+			if got != tt.want {
+				t.Errorf("allSecretRefsInHTTPRequestScope(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExecSleepBlocked(t *testing.T) {
 	tool := NewExecTool(nil, nil, 0, nil, "", nil)
 

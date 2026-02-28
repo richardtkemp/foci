@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +25,14 @@ const execMaxOutputBytes = 2 * 1024 * 1024 // 2MB cap on stdout/stderr to preven
 // This blocks bare sleep commands which block for up to 10s then silently
 // background — the worst of both worlds.
 var sleepRegexp = regexp.MustCompile(`(?i)^\s*sleep\s+`)
+
+// secretTemplateRe matches {{secret:NAME}} templates (same as secrets.FindSecretRefs).
+var secretTemplateRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_.\-]+)\}\}`)
+
+// cmdSeparatorRe matches shell command separators: |, ;, &&, ||
+// These mark the boundary where a foci_http_request invocation ends and a new
+// command begins. Secret refs after a separator are NOT in http_request scope.
+var cmdSeparatorRe = regexp.MustCompile(`\|{1,2}|;|&&`)
 
 // execShell is the shell binary used by exec. Prefer bash (needed for pipefail
 // and tool-piping shell functions); fall back to sh if bash is not installed.
@@ -50,7 +59,7 @@ func hasBash() bool { return execShell() == "bash" }
 func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. set -e is active (stops on first error). Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions are available for piping tool results within a single command: foci_web_search, foci_web_fetch, foci_http_request, foci_memory_search, foci_send_telegram, foci_spawn, foci_todo.",
+		Description: "Run a shell command and return its output. set -e is active (stops on first error). Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Exception: {{secret:}} templates inside foci_http_request arguments are allowed (passed as literal strings for server-side resolution). Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions are available for piping tool results within a single command: foci_web_search, foci_web_fetch, foci_http_request, foci_memory_search, foci_send_telegram, foci_spawn, foci_todo.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -98,11 +107,13 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	// Block regular secret templates — secrets must not reach child processes.
 	// Bitwarden secrets (bw.*) are allowed because they're approval-gated via aisudo.
+	// Secret refs inside foci_http_request args are also allowed — the template
+	// is passed as a literal string to the tool server which resolves it safely.
 	cmd := p.Command
 	if refs := secrets.FindSecretRefs(cmd); refs != nil {
 		for _, ref := range refs {
-			if !bitwarden.IsBitwardenRef(ref) {
-				return "", fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool instead")
+			if !bitwarden.IsBitwardenRef(ref) && !allSecretRefsInHTTPRequestScope(cmd) {
+				return "", fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool or foci_http_request shell function instead")
 			}
 		}
 	}
@@ -347,6 +358,52 @@ func formatResult(output string, err error, ctx context.Context, timeout time.Du
 	}
 
 	return result
+}
+
+// allSecretRefsInHTTPRequestScope returns true if every {{secret:}} template
+// in cmd appears within a foci_http_request invocation — i.e. before any
+// shell command separator (|, ;, &&, ||) that follows the foci_http_request call.
+// This allows the exec bridge to pass secret templates as literal strings to
+// the http_request tool for server-side resolution.
+func allSecretRefsInHTTPRequestScope(cmd string) bool {
+	// Find all {{secret:...}} positions in the command
+	secretLocs := secretTemplateRe.FindAllStringIndex(cmd, -1)
+	if len(secretLocs) == 0 {
+		return true
+	}
+
+	// For each secret ref, check that it falls within a foci_http_request segment.
+	// Split the command by separators and check which segment each ref is in.
+	sepLocs := cmdSeparatorRe.FindAllStringIndex(cmd, -1)
+
+	// Build segment boundaries: [0, sep1_start], [sep1_end, sep2_start], ...
+	type segment struct{ start, end int }
+	var segments []segment
+	pos := 0
+	for _, sep := range sepLocs {
+		segments = append(segments, segment{pos, sep[0]})
+		pos = sep[1]
+	}
+	segments = append(segments, segment{pos, len(cmd)})
+
+	for _, loc := range secretLocs {
+		refStart := loc[0]
+		// Find which segment this ref is in
+		inHTTPRequest := false
+		for _, seg := range segments {
+			if refStart >= seg.start && refStart < seg.end {
+				segText := cmd[seg.start:seg.end]
+				if strings.Contains(segText, "foci_http_request") {
+					inHTTPRequest = true
+				}
+				break
+			}
+		}
+		if !inHTTPRequest {
+			return false
+		}
+	}
+	return true
 }
 
 func truncateCmd(s string, max int) string {
