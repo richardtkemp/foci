@@ -923,12 +923,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			sendIntermediateCtx(ctx, intermediateText)
 		}
 
-		// Build tool execution context: inject session key and voice reply func
-		// so tools can route async results and deliver audio without importing agent.
+		// Build tool execution context: inject session key
+		// so tools can route async results without importing agent.
 		toolCtx := tools.WithSessionKey(ctx, sessionKey)
-		if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.VoiceReplyFunc != nil {
-			toolCtx = tools.WithVoiceReplyFunc(toolCtx, tools.VoiceReplyFunc(cb.VoiceReplyFunc))
-		}
 
 		// Execute tool calls
 		var toolResults []anthropic.ContentBlock

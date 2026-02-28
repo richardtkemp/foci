@@ -91,9 +91,9 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	}
 
 	// Block bare sleep commands - they block for up to 10s then silently
-	// background, which is the worst of both worlds. Use memory_remind instead.
+	// background, which is the worst of both worlds. Use remind instead.
 	if sleepRegexp.MatchString(p.Command) {
-		return "", fmt.Errorf("sleep is not allowed via exec — use memory_remind for timed check-ins instead")
+		return "", fmt.Errorf("sleep is not allowed via exec — use remind for timed check-ins instead")
 	}
 
 	// Block regular secret templates — secrets must not reach child processes.

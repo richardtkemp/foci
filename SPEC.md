@@ -138,7 +138,7 @@ The user now has two (or more) parallel conversations with the same agent, each 
 
 **Inbound:** Receive Telegram voice notes → transcribe via Whisper API (OpenAI-compatible, via OpenRouter or local) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
 
-**Outbound:** Agent can send voice replies via a `tts` tool. Text → TTS engine (Edge TTS or similar, free) → send as Telegram voice note. Good for when the human is mobile/driving.
+**Outbound:** Agent can send voice replies via `send_telegram(text="...", send_as="voice")`. Text → TTS engine (Edge TTS or similar, free) → send as Telegram voice note. Good for when the human is mobile/driving.
 
 **Voice mode:** A session-level flag toggled by the user ("voice mode on"/"voice mode off"). When active:
 - All agent replies are sent as voice notes via TTS
@@ -212,10 +212,7 @@ Implementation: The agent turn can produce multiple Telegram messages. The first
 
 Working notes that survive compaction but aren't permanent memory. For when the agent is mid-investigation and building up context that would be catastrophic to lose but isn't worth saving to memory files.
 
-Tools:
-- `scratchpad_write(text)` — append to scratchpad
-- `scratchpad_read()` — return current scratchpad contents
-- `scratchpad_clear()` — empty the scratchpad
+Single `scratchpad` tool with `action` parameter (write/read/clear/list), `key`, and `content`.
 
 Stored in SQLite, scoped per-agent via `agent_id` column. On compaction, scratchpad contents are injected back into the post-compaction context as a system message. The agent is responsible for clearing it when done — it's working state, not knowledge.
 
@@ -246,14 +243,15 @@ spawn(prompt="Research this topic thoroughly", context="clone_current")
 
 ### Thought Queue
 
-The agent can defer thoughts for later via a `memory_remind` tool:
+The agent can defer thoughts for later via the `remind` tool:
 
 ```
-memory_remind("Look into whether FTS5 supports phrase boosting", "2h")
-memory_remind("Ask Dick about the Greece decision", "tomorrow")
+remind(text="Look into whether FTS5 supports phrase boosting", when="2h")
+remind(text="Ask Dick about the Greece decision", when="tomorrow")
+remind(text="Check deploy status", when="30m", wake=true)
 ```
 
-Reminders surface as injected context at the specified time (next session, specific date, or after a delay). Stored in SQLite, scoped per-agent via `agent_id` column. Lightweight — not a full task system, just "future me should think about this."
+By default (wake=false), reminders surface as injected context at the specified time. With wake=true, the session is actively woken — a message is fired to the agent at the specified time. Stored in SQLite, scoped per-agent via `agent_id` column. Lightweight — not a full task system, just "future me should think about this."
 
 ### Effort Parameter
 
@@ -300,12 +298,11 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
 - `web_search` — Brave Search API
 - `memory_search` — FTS5 search over memory files + conversation history (sort by relevance or recency)
-- `memory_remind` — defer a thought for later (delay, tomorrow, specific date)
+- `remind` — defer a thought for later (delay, tomorrow, specific date); wake=true actively wakes the session
+- `scratchpad` — working notes that survive compaction (write/read/clear/list)
 - `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
-- `send_telegram` — send proactive Telegram messages and media. `send_as` parameter controls file type: `"document"` (default), `"voice"`, `"video"`, `"photo"`, `"audio"`, `"animation"` (GIF).
+- `send_telegram` — send proactive Telegram messages and media. `send_as` parameter controls file type: `"document"` (default), `"voice"`, `"video"`, `"photo"`, `"audio"`, `"animation"` (GIF). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS and sends as a voice note.
 - `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat
-- `schedule_wake` — schedule a message to be sent to the session at a specific time or delay
-- `tts` — convert text to speech via TTS provider (OpenRouter, Edge TTS)
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
 - `bitwarden_search` — search Bitwarden vault items by name/URI/folder (metadata only, no passwords)
 - `bitwarden_unlock` — unlock a vault item (requires admin approval via aisudo/Telegram), caches for TTL
@@ -554,13 +551,13 @@ POST /wake
 Injects text as a user message into a branch session. When `no_compact` is true, the session returns its result instead of triggering compaction if the context limit is reached — useful for cron jobs that inherit a large parent context and shouldn't waste mana compacting.
 
 **Tool-based scheduling:**
-The `schedule_wake` tool allows the agent to schedule messages to itself:
-- `delay: "30m"` — schedule message after a duration (e.g., "30m", "2h", "1d")
-- `at: "2026-02-21T15:30:00Z"` — schedule message at ISO timestamp
+The `remind` tool with `wake=true` allows the agent to schedule messages to itself:
+- `remind(text="check status", when="30m", wake=true)` — wake after a duration
+- `remind(text="meeting", when="2026-02-21T15:30:00Z", wake=true)` — wake at ISO timestamp
 - One-shot, auto-cleaned after firing
 - Useful for self-reminders, follow-ups, or timed actions
 
-System crontab can trigger `/wake` endpoint for external scheduling. For agent-initiated delays, use the `schedule_wake` tool.
+System crontab can trigger `/wake` endpoint for external scheduling. For agent-initiated delays, use the `remind` tool with `wake=true`.
 
 ### Activity gating
 

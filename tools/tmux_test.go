@@ -29,7 +29,7 @@ func tmuxCleanup(t *testing.T, name string) {
 
 func TestTmuxStartAndList(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 	name := "foci-test-start"
 	defer tmuxCleanup(t, name)
@@ -71,7 +71,7 @@ func TestTmuxStartAndList(t *testing.T) {
 
 func TestTmuxSendAndRead(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-sendread"
@@ -117,7 +117,7 @@ func TestTmuxSendAndRead(t *testing.T) {
 
 func TestTmuxReadDefault(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-readdefault"
@@ -146,7 +146,7 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-kill"
@@ -189,7 +189,7 @@ func TestTmuxKill(t *testing.T) {
 }
 
 func TestTmuxInvalidOperation(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -206,7 +206,7 @@ func TestTmuxInvalidOperation(t *testing.T) {
 
 func TestTmuxStartNoName(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -228,7 +228,7 @@ func TestTmuxStartNoName(t *testing.T) {
 
 func TestTmuxSendNoEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-noenter"
@@ -261,7 +261,7 @@ func TestTmuxSendNoEnter(t *testing.T) {
 }
 
 func TestTmuxMissingName(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	for _, op := range []string{"send", "read", "kill"} {
@@ -277,7 +277,7 @@ func TestTmuxMissingName(t *testing.T) {
 
 func TestTmuxStartWithWorkdir(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-workdir"
@@ -331,7 +331,7 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 
 func TestTmuxWatchUnwatch(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-watch"
@@ -379,7 +379,7 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-watch-dup"
@@ -423,7 +423,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 }
 
 func TestTmuxUnwatchNotWatched(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -450,7 +450,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		wakeMsg = msg
 	})
 
-	tool, _ := NewTmuxTool(300, 30, notifier, nil, "")
+	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30)
 
 	name := "foci-test-wake"
 	defer tmuxCleanup(t, name)
@@ -514,7 +514,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	tool, _ := NewTmuxTool(300, 30, notifier, nil, "")
+	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30)
 
 	name := "foci-test-dead"
 	defer tmuxCleanup(t, name)
@@ -584,7 +584,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 }
 
 func TestTmuxWatchMissingName(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -607,8 +607,8 @@ func TestTmuxWatchMissingName(t *testing.T) {
 func TestTmuxInstanceIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _ := NewTmuxTool(300, 30, nil, nil, "")
-	toolB, _ := NewTmuxTool(300, 30, nil, nil, "")
+	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 	nameA := "foci-test-iso-a"
 	nameB := "foci-test-iso-b"
@@ -720,10 +720,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	var wakeA, wakeB atomic.Int32
 	toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeA.Add(1)
-	}), nil, "")
+	}), nil, "", false, 30)
 	toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeB.Add(1)
-	}), nil, "")
+	}), nil, "", false, 30)
 
 	nameA := "foci-test-wakeroute-a"
 	nameB := "foci-test-wakeroute-b"
@@ -811,9 +811,9 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 func TestTmuxWatchIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _ := NewTmuxTool(300, 30, nil, nil, "")
+	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
-	toolB, _ := NewTmuxTool(300, 30, nil, nil, "")
+	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-watchiso"
@@ -1235,7 +1235,7 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 
 func TestTmuxReadRaw(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-readraw"
@@ -1306,7 +1306,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
 
 	name := "foci-test-persist"
 	defer tmuxCleanup(t, name)
@@ -1352,7 +1352,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with state store - should restore owned sessions
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1374,7 +1374,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
 
 	name := "foci-test-persistkill"
 	defer tmuxCleanup(t, name)
@@ -1431,7 +1431,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
 
 	// List should detect stale sessions and clear persisted state
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1458,7 +1458,7 @@ func TestTmuxNoStateStore(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Create tool without state store (nil)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 
 	name := "foci-test-nostate"
@@ -1498,7 +1498,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state1: %v", err)
 	}
 
-	tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent")
+	tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30)
 
 	name := "foci-test-roundtrip"
 	defer tmuxCleanup(t, name)
@@ -1530,7 +1530,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state2: %v", err)
 	}
 
-	tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent")
+	tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30)
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -1553,7 +1553,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
 
 	name := "foci-test-persist-watch"
 	defer tmuxCleanup(t, name)
@@ -1630,7 +1630,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -1667,7 +1667,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
 
 	// Stale watch should have been cleaned from state
 	var watches []persistedWatch
@@ -1689,7 +1689,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
 
 	name := "foci-test-unwatch-persist"
 	defer tmuxCleanup(t, name)
@@ -1749,7 +1749,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
 
 	name := "foci-test-clearall-watch"
 	defer tmuxCleanup(t, name)
@@ -1803,7 +1803,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent")
+	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
@@ -1853,7 +1853,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("reload state: %v", err)
 	}
 
-	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent")
+	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30)
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch
@@ -1883,7 +1883,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch")
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch", false, 30)
 
 	name := "foci-test-autowatch"
 	defer tmuxCleanup(t, name)
@@ -1938,7 +1938,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch")
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch", false, 30)
 
 	name := "foci-test-nowatch"
 	defer tmuxCleanup(t, name)
@@ -1972,7 +1972,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	tmuxAvailable(t)
 
 	// No notifier — auto-watch should be silently skipped
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "")
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 
 	name := "foci-test-autowatch-nonotif"
 	defer tmuxCleanup(t, name)
@@ -1993,5 +1993,177 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	// Should not contain watch info since no notifier
 	if strings.Contains(result, "Watching") {
 		t.Errorf("result should NOT contain watch when no notifier: %q", result)
+	}
+}
+
+func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
+	tmuxAvailable(t)
+
+	var mu sync.Mutex
+	var notifications []string
+	notifier := NewAsyncNotifier(func(sk, msg string) {
+		mu.Lock()
+		notifications = append(notifications, msg)
+		mu.Unlock()
+	})
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	// autopilot=true, threshold=2s for fast test
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2)
+
+	name := "foci-test-ap-unwatch"
+	defer tmuxCleanup(t, name)
+
+	// Start session (auto-watches with 2s threshold due to autopilot)
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !strings.Contains(result, "Watching") {
+		t.Fatalf("expected auto-watch on start: %q", result)
+	}
+
+	// Wait for inactivity notification (threshold=2s, monitor polls every 2s)
+	time.Sleep(6 * time.Second)
+
+	mu.Lock()
+	gotNotification := len(notifications) > 0
+	mu.Unlock()
+
+	if !gotNotification {
+		t.Fatal("expected inactivity notification")
+	}
+
+	// Verify watch was auto-removed (autopilot)
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "list",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if strings.Contains(result, "watched") {
+		t.Errorf("expected watch to be auto-removed after inactivity (autopilot), got: %q", result)
+	}
+}
+
+func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
+	tmuxAvailable(t)
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	// autopilot=true
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30)
+
+	name := "foci-test-ap-send"
+	defer tmuxCleanup(t, name)
+
+	// Start with watch=false so session is unwatched
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "cat",
+		"watch":     false,
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send keys — should auto-watch
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "hello",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if !strings.Contains(result, "Watching") {
+		t.Errorf("expected auto-watch on send (autopilot), got: %q", result)
+	}
+
+	// Second send should NOT add another watch
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "world",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if strings.Contains(result, "Watching") {
+		t.Errorf("should not re-watch already watched session, got: %q", result)
+	}
+
+	// Cleanup
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "unwatch",
+		"name":      name,
+	})
+	tool.Execute(context.Background(), params)
+}
+
+func TestTmuxAutopilotDisabled(t *testing.T) {
+	tmuxAvailable(t)
+
+	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	// autopilot=false
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30)
+
+	name := "foci-test-no-ap"
+	defer tmuxCleanup(t, name)
+
+	// Start with watch=false
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "cat",
+		"watch":     false,
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Send keys — should NOT auto-watch when autopilot=false
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "hello",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if strings.Contains(result, "Watching") {
+		t.Errorf("should not auto-watch when autopilot=false, got: %q", result)
 	}
 }

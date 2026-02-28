@@ -815,7 +815,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			toolMsgID = 0
 			toolMsgMu.Unlock()
 		},
-		// Voice reply delivery (for TTS tool)
+		// Voice reply delivery (for voice mode)
 		VoiceReplyFunc: func(oggData []byte) {
 			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, oggData)
 		},
@@ -1179,6 +1179,21 @@ func (b *Bot) SendAnimation(filePath string) error {
 		return err
 	}
 	return b.SendAnimationToChat(chatID, filePath)
+}
+
+// SendVoiceData sends audio bytes as a Telegram voice note to the last known chat.
+func (b *Bot) SendVoiceData(audioData []byte) error {
+	chatID, err := b.lastChatID()
+	if err != nil {
+		return err
+	}
+	return b.SendVoiceDataToChat(chatID, audioData)
+}
+
+// SendVoiceDataToChat sends audio bytes as a Telegram voice note to a specific chat.
+func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
+	_, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil)
+	return err
 }
 
 // lastChatID returns the last known chat ID, or an error if none has been set.
@@ -1665,14 +1680,9 @@ var toolEmoji = map[string]string{
 	"send_telegram":    "📨",
 	"memory_search":    "🧠",
 	"spawn":            "🐣",
-	"scratchpad_read":  "📋",
-	"scratchpad_write": "📋",
-	"scratchpad_list":  "📋",
-	"scratchpad_clear": "📋",
-	"tts":              "🔊",
-	"schedule_wake":    "⏰",
+	"scratchpad":       "📋",
 	"send_to_session":  "💬",
-	"memory_remind":    "💭",
+	"remind":           "💭",
 }
 
 // emojiForTool returns the per-tool emoji, falling back to 🔧 for unknown tools.
@@ -1762,8 +1772,10 @@ func compactSummary(toolName string, m map[string]json.RawMessage) string {
 			return op
 		}
 		return truncate(str("name"), 60)
-	case "todo":
+	case "todo", "scratchpad":
 		return str("action")
+	case "remind":
+		return truncate(str("text"), 40)
 	case "send_telegram":
 		return truncate(str("text"), 40)
 	case "spawn":

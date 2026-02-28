@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"foci/voice"
 )
 
 // TelegramSender abstracts the telegram bot methods needed by the send_telegram tool.
@@ -18,6 +20,7 @@ type TelegramSender interface {
 	SendPhoto(filePath string) error
 	SendAudio(filePath string) error
 	SendAnimation(filePath string) error
+	SendVoiceData(audioData []byte) error
 
 	// Chat-targeted methods (send to a specific chat ID).
 	SendTextToChat(chatID int64, text string) error
@@ -27,6 +30,7 @@ type TelegramSender interface {
 	SendPhotoToChat(chatID int64, filePath string) error
 	SendAudioToChat(chatID int64, filePath string) error
 	SendAnimationToChat(chatID int64, filePath string) error
+	SendVoiceDataToChat(chatID int64, audioData []byte) error
 }
 
 // NewSendTelegramTool creates a tool that sends proactive messages, documents,
@@ -36,11 +40,11 @@ type TelegramSender interface {
 // The tool extracts the chat ID from the session key (format agent:X:chat:CHATID)
 // and sends to that specific chat. Falls back to the bot's default chat when the
 // session key doesn't contain a chat ID (e.g. spawn branches, cron sessions).
-func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender) *Tool {
+func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts voice.TTS) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
 		ExecExport:  true,
-		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use for alerts, sharing files, or sending media.",
+		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use send_as=\"voice\" with text (no file_path) to synthesize speech and send as a voice note. Use for alerts, sharing files, or sending media.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -85,6 +89,26 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender) *Tool
 			chatID := chatIDFromSessionKey(sessionKey)
 
 			var sent []string
+
+			// TTS synthesis: send_as="voice" + text + no file_path
+			if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
+				if tts == nil {
+					return "", fmt.Errorf("tts not configured")
+				}
+				audioData, err := tts.Synthesize(ctx, p.Text)
+				if err != nil {
+					return "", fmt.Errorf("tts: %w", err)
+				}
+				if chatID != 0 {
+					err = bot.SendVoiceDataToChat(chatID, audioData)
+				} else {
+					err = bot.SendVoiceData(audioData)
+				}
+				if err != nil {
+					return "", fmt.Errorf("send voice note: %w", err)
+				}
+				return "Sent: voice note", nil
+			}
 
 			if p.Text != "" {
 				var err error

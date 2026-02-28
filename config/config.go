@@ -96,9 +96,11 @@ type AgentConfig struct {
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
 	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
 	// Per-agent tool behaviour (0 = use global [tools] value)
-	ExecAutoBackground  int   `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
-	MaxConcurrentSpawns int   `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
-	MaxUploadFileSize   int64 `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
+	ExecAutoBackground  int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
+	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
+	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
+	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
+	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
 }
@@ -254,6 +256,8 @@ type ToolsConfig struct {
 	TmuxMemoryWarn          string `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
 	TmuxMemoryCritical      string `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
 	TmuxMemoryKill          string `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
+	TmuxAutopilot           bool   `toml:"tmux_autopilot"`             // auto-unwatch on inactivity, auto-watch on send (default true)
+	TmuxWatchThreshold      string `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 }
 
@@ -662,6 +666,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.ExecAutoBackground == 0 && !md.IsDefined("tools", "exec_auto_background") {
 		cfg.Tools.ExecAutoBackground = 10
+	}
+	if !md.IsDefined("tools", "tmux_autopilot") {
+		cfg.Tools.TmuxAutopilot = true
+	}
+	if cfg.Tools.TmuxWatchThreshold == "" {
+		cfg.Tools.TmuxWatchThreshold = "30s"
 	}
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}

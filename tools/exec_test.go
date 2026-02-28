@@ -410,8 +410,8 @@ func TestExecSleepBlocked(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for sleep command")
 	}
-	if !strings.Contains(err.Error(), "memory_remind") {
-		t.Errorf("error should mention memory_remind, got: %v", err)
+	if !strings.Contains(err.Error(), "remind") {
+		t.Errorf("error should mention remind, got: %v", err)
 	}
 }
 
@@ -426,8 +426,8 @@ func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for sleep 30s command")
 	}
-	if !strings.Contains(err.Error(), "memory_remind") {
-		t.Errorf("error should mention memory_remind, got: %v", err)
+	if !strings.Contains(err.Error(), "remind") {
+		t.Errorf("error should mention remind, got: %v", err)
 	}
 }
 
