@@ -38,10 +38,18 @@ type SpawnAgent interface {
 	HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error)
 }
 
+// spawnNoneBlacklist lists tools excluded from "none" mode spawns.
+// No character context means no awareness of communication conventions.
+var spawnNoneBlacklist = map[string]bool{
+	"send_telegram":   true,
+	"send_to_session": true,
+}
+
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
 	Client             *anthropic.Client
 	Bootstrap          SystemBlocksProvider
+	Registry           *Registry                               // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
 	Model              string                                  // parent's default model
@@ -60,7 +68,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
-		Description: "Spawn a sub-call to a model. Three context modes: 'none' (just your prompt, no system context), 'character_only' (your prompt + character files), 'clone_current' (branch session with full tool access — a headless self-fork). Use 'none'/'character_only' for one-shot queries to different models. Use 'clone_current' to delegate complex multi-step tasks that need tools.",
+		Description: "Spawn a sub-call to a model. Three context modes: 'none' (just your prompt, no system context — send_telegram and send_to_session excluded), 'character_only' (your prompt + character files), 'clone_current' (branch session — a headless self-fork). All modes have tool access. Use 'none'/'character_only' for one-shot queries to different models. Use 'clone_current' to delegate complex multi-step tasks.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -117,14 +125,16 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			switch p.Context {
 			case "none":
-				return spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout)
+				toolDefs, tools := spawnToolSet(deps.Registry, spawnNoneBlacklist)
+				return spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools)
 
 			case "character_only":
 				var system []anthropic.SystemBlock
 				if deps.Bootstrap != nil {
 					system = deps.Bootstrap.SystemBlocks()
 				}
-				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout)
+				toolDefs, tools := spawnToolSet(deps.Registry, nil)
+				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools)
 
 			case "clone_current":
 				return spawnInherit(ctx, deps, agentFn, sem, p.Prompt, timeout)
@@ -136,39 +146,119 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	}
 }
 
-// spawnOneShot makes a single API call with no tools (none/full modes).
-func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration) (string, error) {
+// spawnToolSet builds API tool definitions and a name→Tool map from the
+// registry, excluding any tools in the blacklist. Returns nil slices if
+// registry is nil.
+func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]anthropic.ToolDef, map[string]*Tool) {
+	if reg == nil {
+		return nil, nil
+	}
+	all := reg.All()
+	defs := make([]anthropic.ToolDef, 0, len(all))
+	tools := make(map[string]*Tool, len(all))
+	for _, t := range all {
+		if blacklist[t.Name] {
+			continue
+		}
+		// Exclude spawn itself to prevent recursion.
+		if t.Name == "spawn" {
+			continue
+		}
+		defs = append(defs, anthropic.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.Parameters,
+		})
+		tools[t.Name] = t
+	}
+	return defs, tools
+}
+
+const maxSpawnToolLoops = 25
+
+// spawnOneShot makes API calls with optional tool access (none/character_only modes).
+func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration, toolDefs []anthropic.ToolDef, tools map[string]*Tool) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	log.Infof("spawn", "one-shot model=%s system_blocks=%d prompt=%d chars", model, len(system), len(prompt))
+	log.Infof("spawn", "one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", model, len(system), len(toolDefs), len(prompt))
 
-	req := &anthropic.MessageRequest{
-		Model:     model,
-		MaxTokens: 16384,
-		System:    system,
-		Messages: []anthropic.Message{
-			{Role: "user", Content: anthropic.TextContent(prompt)},
-		},
+	messages := []anthropic.Message{
+		{Role: "user", Content: anthropic.TextContent(prompt)},
 	}
 
-	resp, err := client.SendMessage(callCtx, req)
-	if err != nil {
-		return "", fmt.Errorf("spawn %s: %w", model, err)
+	for i := 0; i < maxSpawnToolLoops; i++ {
+		req := &anthropic.MessageRequest{
+			Model:     model,
+			MaxTokens: 16384,
+			System:    system,
+			Messages:  messages,
+			Tools:     toolDefs,
+		}
+
+		resp, err := client.SendMessage(callCtx, req)
+		if err != nil {
+			return "", fmt.Errorf("spawn %s: %w", model, err)
+		}
+
+		cost := log.CalculateCost(model,
+			resp.Usage.InputTokens, resp.Usage.OutputTokens,
+			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+
+		log.Infof("spawn", "model=%s input=%d output=%d cost=$%.4f stop=%s",
+			model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
+
+		// If no tool use, return text.
+		if resp.StopReason != "tool_use" {
+			text := anthropic.TextOf(resp.Content)
+			if text == "" {
+				return "(empty response)", nil
+			}
+			return text, nil
+		}
+
+		// Append assistant response.
+		messages = append(messages, anthropic.Message{
+			Role:    "assistant",
+			Content: resp.Content,
+		})
+
+		// Execute tool calls.
+		var toolResults []anthropic.ContentBlock
+		for _, block := range resp.Content {
+			if block.Type != "tool_use" {
+				continue
+			}
+			if callCtx.Err() != nil {
+				return "", callCtx.Err()
+			}
+			tool, ok := tools[block.Name]
+			if !ok {
+				toolResults = append(toolResults, anthropic.ToolResultBlock(
+					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
+				))
+				continue
+			}
+			log.Debugf("spawn", "tool_use: %s", block.Name)
+			result, err := tool.Execute(callCtx, block.Input)
+			if err != nil {
+				toolResults = append(toolResults, anthropic.ToolResultBlock(
+					block.ID, fmt.Sprintf("Error: %s", err), true,
+				))
+				continue
+			}
+			toolResults = append(toolResults, anthropic.ToolResultBlock(
+				block.ID, result, false,
+			))
+		}
+
+		messages = append(messages, anthropic.Message{
+			Role:    "user",
+			Content: toolResults,
+		})
 	}
 
-	cost := log.CalculateCost(model,
-		resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
-
-	log.Infof("spawn", "done model=%s input=%d output=%d cost=$%.4f",
-		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost)
-
-	text := anthropic.TextOf(resp.Content)
-	if text == "" {
-		return "(empty response)", nil
-	}
-	return text, nil
+	return "Max tool call depth reached.", nil
 }
 
 // spawnInherit creates a branch session and runs HandleMessage on it.

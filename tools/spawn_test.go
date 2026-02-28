@@ -790,3 +790,189 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 		t.Errorf("orientation = %q", mockSessions.opts.OrientationMessage)
 	}
 }
+
+func TestSpawnOneShotWithTools(t *testing.T) {
+	// Verify one-shot modes get tool definitions and can execute tools.
+	callCount := 0
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			// First call: model uses a tool
+			if len(req.Tools) == 0 {
+				t.Error("expected tools in request")
+			}
+			return &anthropic.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_1", Name: "echo_tool", Input: json.RawMessage(`{"text":"hello"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		// Second call: model returns final text
+		return &anthropic.MessageResponse{
+			ID: "msg_2", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("Tool said: echo hello"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	reg.Register(&Tool{
+		Name:       "echo_tool",
+		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			var p struct{ Text string `json:"text"` }
+			json.Unmarshal(params, &p)
+			return "echo: " + p.Text, nil
+		},
+	})
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "character_only",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result != "Tool said: echo hello" {
+		t.Errorf("result = %q", result)
+	}
+	if callCount != 2 {
+		t.Errorf("callCount = %d, want 2", callCount)
+	}
+}
+
+func TestSpawnNoneBlacklist(t *testing.T) {
+	// Verify none mode excludes send_telegram and send_to_session.
+	var receivedReq *anthropic.MessageRequest
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID: "msg_test", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("ok"), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	for _, name := range []string{"web_search", "send_telegram", "send_to_session", "exec"} {
+		reg.Register(&Tool{
+			Name:       name,
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+			Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		})
+	}
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "none",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Check which tools were sent
+	toolNames := make(map[string]bool)
+	for _, td := range receivedReq.Tools {
+		toolNames[td.Name] = true
+	}
+
+	if !toolNames["web_search"] {
+		t.Error("web_search should be included in none mode")
+	}
+	if !toolNames["exec"] {
+		t.Error("exec should be included in none mode")
+	}
+	if toolNames["send_telegram"] {
+		t.Error("send_telegram should be blacklisted in none mode")
+	}
+	if toolNames["send_to_session"] {
+		t.Error("send_to_session should be blacklisted in none mode")
+	}
+}
+
+func TestSpawnCharacterOnlyAllTools(t *testing.T) {
+	// Verify character_only mode includes all tools (no blacklist).
+	var receivedReq *anthropic.MessageRequest
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID: "msg_test", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("ok"), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	for _, name := range []string{"web_search", "send_telegram", "send_to_session", "exec"} {
+		reg.Register(&Tool{
+			Name:       name,
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+			Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		})
+	}
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "character_only",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	toolNames := make(map[string]bool)
+	for _, td := range receivedReq.Tools {
+		toolNames[td.Name] = true
+	}
+
+	if !toolNames["send_telegram"] {
+		t.Error("send_telegram should be included in character_only mode")
+	}
+	if !toolNames["send_to_session"] {
+		t.Error("send_to_session should be included in character_only mode")
+	}
+}
+
+func TestSpawnToolSetExcludesSpawn(t *testing.T) {
+	// Verify spawn itself is excluded to prevent recursion.
+	reg := NewRegistry()
+	reg.Register(&Tool{
+		Name:       "spawn",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+	reg.Register(&Tool{
+		Name:       "exec",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+
+	defs, tools := spawnToolSet(reg, nil)
+	if len(defs) != 1 || defs[0].Name != "exec" {
+		t.Errorf("defs = %v, want [exec] only", defs)
+	}
+	if _, ok := tools["spawn"]; ok {
+		t.Error("spawn should be excluded from tool set")
+	}
+}

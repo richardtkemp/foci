@@ -1507,6 +1507,7 @@ func setupAgent(p setupParams) *agentInstance {
 	spawnDeps := tools.SpawnDeps{
 		Client:     p.client,
 		Bootstrap:  bootstrap,
+		Registry:   registry,
 		Sessions:   &sessionBranchAdapter{store: p.sessions},
 		AgentID:    acfg.ID,
 		Model:      acfg.Model,
