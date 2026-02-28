@@ -29,6 +29,7 @@ type TurnCallbacks struct {
 	VoiceReplyFunc     VoiceReplyFunc
 	ToolCallObserver   ToolCallObserver
 	ToolResultObserver ToolResultObserver
+	ThinkingObserver   func(thinking string)
 	ActivityFunc       func()
 }
 
@@ -68,6 +69,13 @@ func notifyToolCallCtx(ctx context.Context, name string, params json.RawMessage)
 func notifyToolResultCtx(ctx context.Context, name string, result string, isError bool) {
 	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ToolResultObserver != nil {
 		cb.ToolResultObserver(name, result, isError)
+	}
+}
+
+// notifyThinkingCtx calls the thinking observer via context.
+func notifyThinkingCtx(ctx context.Context, thinking string) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ThinkingObserver != nil && thinking != "" {
+		cb.ThinkingObserver(thinking)
 	}
 }
 

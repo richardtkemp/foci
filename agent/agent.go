@@ -863,6 +863,13 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		messages = append(messages, assistantMsg)
 		newMessages = append(newMessages, assistantMsg)
 
+		// Emit thinking blocks to observer (if any)
+		for _, block := range resp.Content {
+			if block.Type == "thinking" {
+				notifyThinkingCtx(ctx, block.Thinking)
+			}
+		}
+
 		if resp.StopReason != "tool_use" {
 			// Done — save all new messages and return text
 			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {

@@ -46,6 +46,38 @@ func (d *ToolCallDisplay) UnmarshalTOML(v any) error {
 	}
 }
 
+// ShowThinking controls how thinking blocks are displayed in Telegram.
+type ShowThinking string
+
+const (
+	ShowThinkingOff     ShowThinking = "off"     // thinking stripped, not shown
+	ShowThinkingCompact ShowThinking = "compact" // response with "Show thinking" toggle button
+	ShowThinkingTrue    ShowThinking = "true"    // thinking prepended to every response
+)
+
+// UnmarshalTOML accepts both string ("off"/"compact"/"true") and bool.
+func (s *ShowThinking) UnmarshalTOML(v any) error {
+	switch val := v.(type) {
+	case string:
+		switch val {
+		case "off", "compact", "true":
+			*s = ShowThinking(val)
+			return nil
+		default:
+			return fmt.Errorf("invalid show_thinking value %q (must be off, compact, true)", val)
+		}
+	case bool:
+		if val {
+			*s = ShowThinkingTrue
+		} else {
+			*s = ShowThinkingOff
+		}
+		return nil
+	default:
+		return fmt.Errorf("show_thinking must be a string (off/compact/true) or bool")
+	}
+}
+
 // AgentUsageWarningsConfig holds per-agent mana warning thresholds.
 // When set, completely replaces global [usage_warnings] thresholds.
 type AgentUsageWarningsConfig struct {
@@ -81,6 +113,7 @@ type AgentConfig struct {
 	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
 	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
+	ShowThinking            *ShowThinking     `toml:"show_thinking"`             // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
 	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
 	ImageSaveDir            string            `toml:"image_save_dir"`            // save received images to this directory (empty = disabled)
 	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
@@ -136,6 +169,7 @@ type TelegramConfig struct {
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 	ShowToolCalls       ToolCallDisplay               `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
+	ShowThinking        ShowThinking                 `toml:"show_thinking"`         // show thinking blocks in Telegram: "off" (default), "compact", "true"
 	ImageSaveDir        string                       `toml:"image_save_dir"`        // save received images to this directory (empty = disabled, per-agent overrides)
 }
 
@@ -288,6 +322,7 @@ type DefaultsConfig struct {
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
 	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
+	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
 	SystemFiles         []string         `toml:"system_files"`          // default system file list
 }
 
@@ -778,6 +813,9 @@ func Load(path string) (*Config, error) {
 	if !md.IsDefined("telegram", "show_tool_calls") {
 		cfg.Telegram.ShowToolCalls = ToolCallOff
 	}
+	if !md.IsDefined("telegram", "show_thinking") {
+		cfg.Telegram.ShowThinking = ShowThinkingOff
+	}
 
 	// Keepalive/background defaults
 	if cfg.Keepalive.Interval == "" {
@@ -828,6 +866,10 @@ func Load(path string) (*Config, error) {
 		// ShowToolCalls: defaults.show_tool_calls → agent fallback
 		if cfg.Agents[i].ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil {
 			cfg.Agents[i].ShowToolCalls = cfg.Defaults.ShowToolCalls
+		}
+		// ShowThinking: defaults.show_thinking → agent fallback
+		if cfg.Agents[i].ShowThinking == nil && cfg.Defaults.ShowThinking != nil {
+			cfg.Agents[i].ShowThinking = cfg.Defaults.ShowThinking
 		}
 	}
 

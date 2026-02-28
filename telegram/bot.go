@@ -90,9 +90,11 @@ type Bot struct {
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
 	showToolCalls        string       // tool call display mode: "off", "preview", "full"
+	showThinking         string       // thinking display mode: "off", "compact", "true"
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	imageSaveDir         string       // if non-empty, save received images to this directory
-	toolResults          sync.Map     // message ID (int64) → tool result text (string); ephemeral, for inline keyboard expansion
+	toolResults          sync.Map     // message ID (int64) → toolResultEntry; ephemeral, for inline keyboard expansion
+	thinkingStore        sync.Map     // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 }
 
 // NewBot creates a new Telegram bot.
@@ -147,6 +149,12 @@ func (b *Bot) SetToolCallPreviewChars(n int) {
 // Accepts "off", "preview", or "full".
 func (b *Bot) SetShowToolCalls(mode string) {
 	b.showToolCalls = mode
+}
+
+// SetShowThinking controls how thinking blocks are displayed in Telegram.
+// Accepts "off", "compact", or "true".
+func (b *Bot) SetShowThinking(mode string) {
+	b.showThinking = mode
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -826,6 +834,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	var toolMsgFullText string // last full formatted tool call HTML with JSON params (full mode only)
 	var toolMsgMu sync.Mutex
 
+	// Accumulate thinking blocks for the turn
+	var thinkingBuf strings.Builder
+
 	// Per-turn callbacks scoped to context -- no cross-turn races.
 	cb := &agent.TurnCallbacks{
 		// Intermediate reply delivery (deferred replies).
@@ -932,6 +943,16 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 				result:      result,
 			})
 		},
+		// Thinking block accumulator (gated by showThinking)
+		ThinkingObserver: func(thinking string) {
+			if b.showThinking == "off" || b.showThinking == "" {
+				return
+			}
+			if thinkingBuf.Len() > 0 {
+				thinkingBuf.WriteString("\n")
+			}
+			thinkingBuf.WriteString(thinking)
+		},
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
@@ -978,6 +999,14 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		return
 	}
 
+	// Show thinking: prepend thinking to response ("true" mode) or attach
+	// a toggle button ("compact" mode).
+	thinkingText := thinkingBuf.String()
+
+	if b.showThinking == "true" && thinkingText != "" {
+		response = thinkingText + "\n~~~~\n" + response
+	}
+
 	// If we sent a tool-call message, try to edit it with the final response.
 	// Fall back to sendReply if the response is too long for a single edit
 	// or if the edit fails.
@@ -1005,6 +1034,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			return
 		}
 		log.Debugf("telegram", "edit final response failed, falling back: %v", editErr)
+	}
+
+	// Compact thinking: send response with "Show thinking" toggle button
+	if b.showThinking == "compact" && thinkingText != "" {
+		b.sendReplyWithThinking(qm.msg, qm.userID, response, thinkingText)
+		return
 	}
 
 	b.sendReply(qm.msg, qm.userID, response)
@@ -1036,6 +1071,65 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 			continue
 		}
 		b.sendReplyPart(msg, userID, part)
+	}
+}
+
+// sendReplyWithThinking sends a response with a "Show thinking" inline keyboard button.
+// The thinking content is stored for later toggle via callback query.
+func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
+	responseHTML := ConvertToTelegramHTML(response)
+
+	// Send with placeholder button (msgID unknown until sent)
+	sendOpts := &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+				{Text: "Show thinking", CallbackData: "th:show:0"},
+			}},
+		},
+	}
+
+	// If response is too long to fit with a button, chunk it — send all but last
+	// chunk as plain, then send last chunk with button.
+	chunks := splitMessage(responseHTML, 4096)
+	for i, chunk := range chunks {
+		if i < len(chunks)-1 {
+			// Plain chunk without button
+			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
+				log.Debugf("telegram", "send thinking chunk: %v", err)
+			}
+			continue
+		}
+		// Last chunk — send with button
+		sent, err := b.client.SendMessage(msg.Chat.Id, chunk, sendOpts)
+		if err != nil {
+			log.Errorf("telegram", "send reply with thinking button: %v", err)
+			return
+		}
+		// Update button with real message ID and store thinking data
+		b.client.EditMessageText(chunk, &gotgbot.EditMessageTextOpts{
+			ChatId:    msg.Chat.Id,
+			MessageId: sent.MessageId,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Show thinking", CallbackData: fmt.Sprintf("th:show:%d", sent.MessageId)},
+				}},
+			},
+		})
+		b.thinkingStore.Store(sent.MessageId, thinkingEntry{
+			responseHTML: chunk,
+			thinkingText: thinkingText,
+		})
+		log.Conversation(log.ConversationEntry{
+			Direction: "sent",
+			UserID:    userID,
+			Username:  msg.From.Username,
+			ChatID:    msg.Chat.Id,
+			Text:      chunk,
+			ParseMode: "HTML",
+			Session:   b.SessionKey(),
+		})
 	}
 }
 
@@ -1853,7 +1947,8 @@ func truncate(s string, max int) string {
 	return s[:max] + "..."
 }
 
-// handleCallbackQuery processes inline keyboard button presses for tool result expansion.
+// handleCallbackQuery processes inline keyboard button presses for tool result
+// and thinking block expansion.
 func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery) {
 	if cq.Data == "" || cq.Message.GetChat().Id == 0 {
 		return
@@ -1866,7 +1961,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	}()
 
 	parts := strings.SplitN(cq.Data, ":", 3)
-	if len(parts) != 3 || parts[0] != "tc" {
+	if len(parts) != 3 {
 		return
 	}
 	action := parts[1] // "show" or "hide"
@@ -1875,7 +1970,16 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 		return
 	}
 
-	// Look up the stored tool call text and result.
+	switch parts[0] {
+	case "tc":
+		b.handleToolCallCallback(chatID, action, msgID)
+	case "th":
+		b.handleThinkingCallback(chatID, action, msgID)
+	}
+}
+
+// handleToolCallCallback handles tool call expand/collapse button presses.
+func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 	toolTextVal, ok := b.toolResults.Load(msgID)
 	if !ok {
 		return
@@ -1909,12 +2013,70 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	}
 }
 
+// handleThinkingCallback handles thinking block expand/collapse button presses.
+func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
+	val, ok := b.thinkingStore.Load(msgID)
+	if !ok {
+		return
+	}
+	entry := val.(thinkingEntry)
+
+	switch action {
+	case "show":
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML)
+		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Hide thinking", CallbackData: fmt.Sprintf("th:hide:%d", msgID)},
+				}},
+			},
+		})
+	case "hide":
+		b.client.EditMessageText(entry.responseHTML, &gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Show thinking", CallbackData: fmt.Sprintf("th:show:%d", msgID)},
+				}},
+			},
+		})
+	}
+}
+
+// formatThinkingExpanded prepends thinking text above a separator, with the response below.
+func formatThinkingExpanded(thinkingText, responseHTML string) string {
+	escaped := htmlEscapeBot(thinkingText)
+	result := escaped + "\n~~~~\n" + responseHTML
+	// Telegram messages are limited to 4096 characters; truncate thinking if needed.
+	if len(result) > 4096 {
+		budget := 4096 - len(responseHTML) - len("\n~~~~\n") - len("\n... (truncated)")
+		if budget > 100 {
+			escaped = escaped[:budget] + "\n... (truncated)"
+		} else {
+			escaped = escaped[:100] + "\n... (truncated)"
+		}
+		result = escaped + "\n~~~~\n" + responseHTML
+	}
+	return result
+}
+
 // toolResultEntry stores the compact summary, full input text, and result
 // for inline keyboard expansion in "full" mode.
 type toolResultEntry struct {
 	compactText string // compact one-line summary (collapsed state)
 	fullInput   string // full formatted tool call HTML with JSON params
 	result      string // the raw tool result text
+}
+
+// thinkingEntry stores thinking text and response HTML for compact mode toggle.
+type thinkingEntry struct {
+	responseHTML string // the original response HTML (collapsed state)
+	thinkingText string // raw thinking text
 }
 
 // formatToolCallWithResult combines a tool call message with its result,
