@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"foci/log"
 
@@ -695,6 +696,10 @@ func Load(path string) (*Config, error) {
 	if cfg.HTTP.Bind == "" {
 		cfg.HTTP.Bind = "127.0.0.1"
 	}
+	if cfg.DataDir == "" {
+		home, _ := os.UserHomeDir()
+		cfg.DataDir = filepath.Join(home, "data")
+	}
 	if cfg.Logging.Level == "" {
 		cfg.Logging.Level = "INFO"
 	}
@@ -956,6 +961,28 @@ func Load(path string) (*Config, error) {
 		// ReceivedFilesDir default: $workspace/received_files
 		if cfg.Agents[i].ReceivedFilesDir == "" {
 			cfg.Agents[i].ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
+		}
+		// Name default: capitalised ID (e.g. "clutch" → "Clutch")
+		if cfg.Agents[i].Name == "" && cfg.Agents[i].ID != "" {
+			r := []rune(cfg.Agents[i].ID)
+			r[0] = unicode.ToUpper(r[0])
+			cfg.Agents[i].Name = string(r)
+		}
+		// Memory sources default: single source at $workspace/memory
+		if len(cfg.Agents[i].Memory.Sources) == 0 {
+			cfg.Agents[i].Memory.Sources = []MemorySource{{
+				Name:   cfg.Agents[i].ID,
+				Dir:    filepath.Join(cfg.Agents[i].Workspace, "memory"),
+				Weight: 1.0,
+			}}
+		}
+	}
+
+	// Bot token_secret default: "telegram.<bot-key-name>"
+	for name, bot := range cfg.Telegram.Bots {
+		if bot.TokenSecret == "" {
+			bot.TokenSecret = "telegram." + name
+			cfg.Telegram.Bots[name] = bot
 		}
 	}
 
