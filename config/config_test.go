@@ -1963,3 +1963,66 @@ show_tool_calls = "full"
 		}
 	})
 }
+
+func TestNormalizeBoolStrings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"on to true", `enabled = "on"`, `enabled = true`},
+		{"off to false", `enabled = "off"`, `enabled = false`},
+		{"true string to bool", `enabled = "true"`, `enabled = true`},
+		{"false string to bool", `enabled = "false"`, `enabled = false`},
+		{"case insensitive", `enabled = "ON"`, `enabled = true`},
+		{"native bool unchanged", `enabled = true`, `enabled = true`},
+		{"with comment", `enabled = "on" # turn on`, `enabled = true # turn on`},
+		{"non-bool key preserved", `thinking = "off"`, `thinking = "off"`},
+		{"non-bool key on preserved", `thinking = "on"`, `thinking = "on"`},
+		{"string value preserved", `name = "hello"`, `name = "hello"`},
+		{"url preserved", `endpoint = "https://on.example.com"`, `endpoint = "https://on.example.com"`},
+		{"non-bool string preserved", `mode = "preview"`, `mode = "preview"`},
+		{"multiline bool keys", "enabled = \"on\"\nlog_rotation = \"off\"\ncache_bust_detect = true", "enabled = true\nlog_rotation = false\ncache_bust_detect = true"},
+		{"mixed bool and string keys", "enabled = \"on\"\nthinking = \"off\"", "enabled = true\nthinking = \"off\""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeBoolStrings(tt.input)
+			if got != tt.want {
+				t.Errorf("normalizeBoolStrings(%q)\n  got  %q\n  want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBoolStringConfigLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[telegram]
+enable_stop_aliases = "on"
+enable_startup_notify = "off"
+
+[environment]
+enabled = "true"
+
+[logging]
+log_rotation = "false"
+`), 0644)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Telegram.EnableStopAliases {
+		t.Error("EnableStopAliases should be true (from \"on\")")
+	}
+	if cfg.Telegram.EnableStartupNotify {
+		t.Error("EnableStartupNotify should be false (from \"off\")")
+	}
+	if !cfg.Environment.Enabled {
+		t.Error("Environment.Enabled should be true (from \"true\")")
+	}
+	if cfg.Logging.LogRotation {
+		t.Error("Logging.LogRotation should be false (from \"false\")")
+	}
+}
