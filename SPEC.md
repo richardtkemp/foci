@@ -289,13 +289,17 @@ By default, thinking blocks are stripped from Telegram messages. The `show_think
 - `"compact"` — response sent with a "Show thinking" toggle button
 - `"true"` — thinking always prepended to response (italic), separated by a divider
 
+The `display_width` config (default 44) controls the character width of divider lines used in thinking display.
+
 ```toml
 [telegram]
 show_thinking = "compact"   # global default
+display_width = 44          # divider width in characters
 
 [[agents]]
 id = "thinker"
 show_thinking = "true"      # per-agent override
+display_width = 60          # wider dividers for this agent
 ```
 
 Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).

@@ -628,6 +628,7 @@ func main() {
 			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
 			mbBot.SetShowToolCalls(string(cfg.Telegram.ShowToolCalls))
 			mbBot.SetShowThinking(string(cfg.Telegram.ShowThinking))
+			mbBot.SetDisplayWidth(cfg.Telegram.DisplayWidth)
 			mbBot.SetMessagesInLog(cfg.Logging.MessagesInLog)
 			if imgDir := cfg.Telegram.ImageSaveDir; imgDir != "" {
 				mbBot.SetImageSaveDir(imgDir)
@@ -2221,6 +2222,11 @@ func setupAgent(p setupParams) *agentInstance {
 		} else {
 			primaryBot.SetShowThinking(string(p.cfg.Telegram.ShowThinking))
 		}
+		if acfg.DisplayWidth != nil {
+			primaryBot.SetDisplayWidth(*acfg.DisplayWidth)
+		} else {
+			primaryBot.SetDisplayWidth(p.cfg.Telegram.DisplayWidth)
+		}
 		if acfg.MessagesInLog != nil {
 			primaryBot.SetMessagesInLog(*acfg.MessagesInLog)
 		} else {
@@ -2333,6 +2339,11 @@ func setupAgent(p setupParams) *agentInstance {
 				mbBot.SetShowThinking(string(*acfg.ShowThinking))
 			} else {
 				mbBot.SetShowThinking(string(p.cfg.Telegram.ShowThinking))
+			}
+			if acfg.DisplayWidth != nil {
+				mbBot.SetDisplayWidth(*acfg.DisplayWidth)
+			} else {
+				mbBot.SetDisplayWidth(p.cfg.Telegram.DisplayWidth)
 			}
 			if acfg.MessagesInLog != nil {
 				mbBot.SetMessagesInLog(*acfg.MessagesInLog)

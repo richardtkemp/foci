@@ -213,6 +213,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.StartupNotification = &boolTrue
 	showPreview := ToolCallPreview
 	agent.ShowToolCalls = &showPreview
+	displayWidth := 44
+	agent.DisplayWidth = &displayWidth
 	agent.ImageSaveDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"

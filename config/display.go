@@ -64,6 +64,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if agent.ShowThinking != nil {
 		add("agent", "show_thinking", string(*agent.ShowThinking))
 	}
+	if agent.DisplayWidth != nil {
+		add("agent", "display_width", *agent.DisplayWidth)
+	}
 	if agent.MessagesInLog != nil {
 		add("agent", "messages_in_log", *agent.MessagesInLog)
 	}
@@ -141,6 +144,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
 	add("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
 	add("telegram", "show_thinking", cfg.Telegram.ShowThinking)
+	add("telegram", "display_width", cfg.Telegram.DisplayWidth)
 	if cfg.Telegram.ImageSaveDir != "" {
 		add("telegram", "image_save_dir", cfg.Telegram.ImageSaveDir)
 	}
@@ -361,6 +365,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if cfg.Defaults.ShowThinking != nil {
 		addDefault("show_thinking", string(*cfg.Defaults.ShowThinking), false)
 	}
+	if cfg.Defaults.DisplayWidth != nil {
+		addDefault("display_width", *cfg.Defaults.DisplayWidth, false)
+	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		addDefault("system_files", cfg.Defaults.SystemFiles, false)
 	}
@@ -399,6 +406,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
 	addGlobal("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
 	addGlobal("telegram", "show_thinking", cfg.Telegram.ShowThinking)
+	addGlobal("telegram", "display_width", cfg.Telegram.DisplayWidth)
 	if cfg.Telegram.ImageSaveDir != "" {
 		addGlobal("telegram", "image_save_dir", cfg.Telegram.ImageSaveDir)
 	}
@@ -573,6 +581,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		if agent.ShowThinking != nil {
 			addAgent("show_thinking", string(*agent.ShowThinking))
 		}
+		if agent.DisplayWidth != nil {
+			addAgent("display_width", *agent.DisplayWidth)
+		}
 		if agent.MessagesInLog != nil {
 			addAgent("messages_in_log", *agent.MessagesInLog)
 		}
@@ -669,6 +680,7 @@ type displayTelegram struct {
 	LongPollTimeout     string   `toml:"long_poll_timeout"`
 	ShowToolCalls       string   `toml:"show_tool_calls"`
 	ShowThinking        string   `toml:"show_thinking"`
+	DisplayWidth        int      `toml:"display_width"`
 	ImageSaveDir        string   `toml:"image_save_dir,omitempty"`
 }
 
@@ -698,6 +710,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
 			ShowToolCalls:       string(cfg.Telegram.ShowToolCalls),
 			ShowThinking:        string(cfg.Telegram.ShowThinking),
+			DisplayWidth:        cfg.Telegram.DisplayWidth,
 			ImageSaveDir:        cfg.Telegram.ImageSaveDir,
 		},
 		Sessions:      cfg.Sessions,
@@ -768,6 +781,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if agent.ShowThinking == nil && cfg.Telegram.ShowThinking == ShowThinkingOff {
 		opts = append(opts, availableOption{"agent", "show_thinking", "(global)", "thinking display mode: off, compact, true (nil = use global)"})
+	}
+	if agent.DisplayWidth == nil {
+		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", cfg.Telegram.DisplayWidth), "display width for dividers (nil = use global)"})
 	}
 	if agent.Effort == "" && cfg.Defaults.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})

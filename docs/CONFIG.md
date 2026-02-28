@@ -37,6 +37,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Per-agent override of global `[telegram] show_tool_calls`. Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Per-agent override of global `[telegram] show_thinking`. Accepts bool (`true` → `"true"`, `false` → `"off"`). |
+| `display_width` | int | `44` | Character width for divider lines in thinking display. Per-agent override of global `[telegram] display_width`. |
 | `messages_in_log` | bool | nil | Per-agent override of global `[logging] messages_in_log`. Nil = use global. |
 | `image_save_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables (falls back to `[telegram] image_save_dir`). Relative paths resolve against `$HOME`. Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. If set, only these users can message this agent's bot. If empty, falls back to global `[telegram] allowed_users`. |
@@ -108,6 +109,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |
 | `show_tool_calls` | string | nil | Default tool call display mode. Per-agent `show_tool_calls` overrides this, then falls back to `[telegram] show_tool_calls`. |
 | `show_thinking` | string | nil | Default thinking display mode. Per-agent `show_thinking` overrides this, then falls back to `[telegram] show_thinking`. |
+| `display_width` | int | nil | Default display width for dividers. Per-agent `display_width` overrides this, then falls back to `[telegram] display_width`. |
 | `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
 
 Example:
@@ -178,6 +180,7 @@ Telegram bot configuration.
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden, default), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Per-agent `show_tool_calls` overrides this. Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped, default), `"compact"` (response with toggle button), `"true"` (thinking always prepended). Per-agent `show_thinking` overrides this. Accepts bool (`true` → `"true"`, `false` → `"off"`). |
+| `display_width` | int | `44` | Character width for divider lines in thinking display. Per-agent `display_width` overrides this. |
 | `image_save_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables. Per-agent `image_save_dir` overrides this. Relative paths resolve against `$HOME`. See agent `image_save_dir` for filename formats. |
 
 ### `[telegram.bots.<name>]`
