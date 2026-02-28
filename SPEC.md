@@ -268,7 +268,7 @@ effort = "high"    # per-agent override
 
 ### Adaptive Thinking
 
-Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history but NOT sent to Telegram (internal reasoning). Thinking tokens count toward mana — opt-in per agent.
+Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history. Thinking tokens count toward mana — opt-in per agent.
 
 ```toml
 [defaults]
@@ -280,6 +280,23 @@ thinking = "adaptive"   # per-agent override
 ```
 
 Runtime toggle: `/thinking adaptive` or `/thinking off`.
+
+#### Showing thinking in Telegram
+
+By default, thinking blocks are stripped from Telegram messages. The `show_thinking` config controls visibility:
+
+- `"off"` (default) — thinking stripped, not shown to user
+- `"compact"` — response sent with a "Show thinking" toggle button
+- `"true"` — thinking always prepended to response, separated by `~~~~`
+
+```toml
+[telegram]
+show_thinking = "compact"   # global default
+
+[[agents]]
+id = "thinker"
+show_thinking = "true"      # per-agent override
+```
 
 Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
 

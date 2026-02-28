@@ -62,6 +62,35 @@ func TestSignalActivityCtxNilSafe(t *testing.T) {
 	signalActivityCtx(context.Background())
 }
 
+func TestNotifyThinkingCtxNilSafe(t *testing.T) {
+	// Should not panic with no callbacks
+	notifyThinkingCtx(context.Background(), "some thinking")
+
+	// Should not panic with nil ThinkingObserver
+	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
+	notifyThinkingCtx(ctx, "some thinking")
+
+	// Should not call with empty thinking
+	var called bool
+	ctx = WithTurnCallbacks(context.Background(), &TurnCallbacks{
+		ThinkingObserver: func(thinking string) { called = true },
+	})
+	notifyThinkingCtx(ctx, "")
+	if called {
+		t.Error("should not call ThinkingObserver with empty thinking")
+	}
+
+	// Should call with non-empty thinking
+	var got string
+	ctx = WithTurnCallbacks(context.Background(), &TurnCallbacks{
+		ThinkingObserver: func(thinking string) { got = thinking },
+	})
+	notifyThinkingCtx(ctx, "internal reasoning")
+	if got != "internal reasoning" {
+		t.Errorf("ThinkingObserver got %q, want %q", got, "internal reasoning")
+	}
+}
+
 func TestSendVoiceCtxNilSafe(t *testing.T) {
 	// Should not panic with no callbacks
 	sendVoiceCtx(context.Background(), []byte("data"))
