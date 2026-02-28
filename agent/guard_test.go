@@ -163,6 +163,11 @@ func TestDetectContentExtension(t *testing.T) {
 		{"empty string", "", ".txt"},
 		{"whitespace only", "   \n\t  ", ".txt"},
 		{"text starting with letter", "hello world", ".txt"},
+		{"html tag", "<div>hello</div>", ".html"},
+		{"html doctype", "<!DOCTYPE html><html>", ".html"},
+		{"html with whitespace", "  <p>text</p>", ".html"},
+		{"xml declaration", "<?xml version=\"1.0\"?><root/>", ".xml"},
+		{"rss feed", "<rss version=\"2.0\"><channel>", ".xml"},
 		{"text starting with number", "123 items", ".txt"},
 	}
 
@@ -185,6 +190,8 @@ func TestGuardToolResult_FileExtension(t *testing.T) {
 	}{
 		{"json content", `{"items": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}`, ".json", "jq"},
 		{"markdown content", "# Report\n\nA long document with details...", ".md", "mdq"},
+		{"html content", "<html><body><p>Hello world</p></body></html>", ".html", "grep"},
+		{"xml content", "<?xml version=\"1.0\"?><root><item>1</item></root>", ".xml", "grep"},
 		{"plain text", "Output line 1\nOutput line 2\nOutput line 3", ".txt", "grep"},
 	}
 
