@@ -90,7 +90,7 @@ func (m *ManaWatcher) saveFiredState() {
 	}
 }
 
-func (m *ManaWatcher) CheckAndWarn(manaStr string, warnFunc func(string)) {
+func (m *ManaWatcher) CheckAndWarn(manaStr, resetTime string, warnFunc func(string)) {
 	if m == nil || warnFunc == nil || manaStr == "" {
 		return
 	}
@@ -115,7 +115,7 @@ func (m *ManaWatcher) CheckAndWarn(manaStr string, warnFunc func(string)) {
 		if mana <= threshold && !m.firedToday[threshold] {
 			m.firedToday[threshold] = true
 			m.saveFiredState()
-			warnFunc(m.formatWarning(mana, threshold))
+			warnFunc(m.formatWarning(mana, resetTime))
 			return
 		}
 	}
@@ -130,6 +130,9 @@ func (m *ManaWatcher) parseManaPercentage(manaStr string) int {
 	return pct
 }
 
-func (m *ManaWatcher) formatWarning(mana, threshold int) string {
-	return fmt.Sprintf("low %s: %d%% remaining (threshold: %d%%)", m.name, mana, threshold)
+func (m *ManaWatcher) formatWarning(mana int, resetTime string) string {
+	if resetTime != "" {
+		return fmt.Sprintf("low %s: %d%% remaining (resets %s)", m.name, mana, resetTime)
+	}
+	return fmt.Sprintf("low %s: %d%% remaining", m.name, mana)
 }
