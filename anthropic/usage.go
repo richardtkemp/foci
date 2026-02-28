@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -39,8 +38,7 @@ type UsageResponse struct {
 
 // UsageClient is a client for the Anthropic usage API (requires OAuth token)
 type UsageClient struct {
-	oauthToken string        // static token (legacy)
-	tokenFunc  func() string // dynamic token getter (preferred, overrides static)
+	oauthToken string
 	httpClient *http.Client
 	baseURL    string
 }
@@ -54,28 +52,9 @@ func NewUsageClient(oauthToken string) *UsageClient {
 	}
 }
 
-// NewUsageClientWithFunc creates a usage API client that reads the token
-// dynamically via a function. This supports auto-refreshing tokens.
-func NewUsageClientWithFunc(tokenFunc func() string) *UsageClient {
-	return &UsageClient{
-		tokenFunc:  tokenFunc,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		baseURL:    "https://api.anthropic.com",
-	}
-}
-
-// getToken returns the current OAuth token, preferring the dynamic getter.
-func (c *UsageClient) getToken() string {
-	if c.tokenFunc != nil {
-		return c.tokenFunc()
-	}
-	return c.oauthToken
-}
-
 // GetUsage retrieves the current usage from the Anthropic API
 func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
-	token := c.getToken()
-	if token == "" {
+	if c.oauthToken == "" {
 		return nil, fmt.Errorf("OAuth token not configured")
 	}
 
@@ -84,7 +63,7 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Authorization", "Bearer "+c.oauthToken)
 	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
 	httpResp, err := c.httpClient.Do(httpReq)
@@ -108,37 +87,6 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 	}
 
 	return &resp, nil
-}
-
-// ReadCredentialsToken reads the OAuth access token from a Claude Code
-// credentials file (typically ~/.claude/.credentials.json). The token
-// is auto-refreshed by Claude Code, so this should be called on each
-// usage request rather than cached at startup.
-func ReadCredentialsToken(path string) (string, error) {
-	// Expand ~ to home directory
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home dir: %w", err)
-		}
-		path = home + path[1:]
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read credentials file: %w", err)
-	}
-
-	var creds struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return "", fmt.Errorf("parse credentials: %w", err)
-	}
-
-	return creds.ClaudeAiOauth.AccessToken, nil
 }
 
 // FormatUsage returns a human-readable usage string

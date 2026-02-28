@@ -84,7 +84,7 @@ All parameters have sensible defaults. Customize only what you need. Prompt file
 
 ### Anthropic API
 
-- **Auth:** Subscription token (OAuth-style `sk-ant-oat01-...`)
+- **Auth:** Long-lived OAuth token from `claude setup-token` (`sk-ant-oat01-...`, 1-year lifetime)
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** `cache_control` with `{"type": "ephemeral"}` on system prompt blocks
 - **Streaming:** Server-sent events for responses
@@ -989,7 +989,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
 4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
-   - Anthropic API token  
+   - Anthropic OAuth token (from `claude setup-token`)
    - Telegram user ID (allowed_users)
    - Agent model (default: claude-haiku-4-5)
 5. **Character files:** Create `~/character/` with template content if files don't exist:

@@ -60,24 +60,9 @@ func (e *APIError) RetryAfterSeconds() int {
 // Client is an Anthropic API client with prompt caching support.
 type Client struct {
 	apiKey         string
-	tokenFunc      func() string                // dynamic token getter (preferred over apiKey)
-	refreshFunc    func(staleToken string) error // reactive token refresh on 401
 	httpClient     *http.Client
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for 500 retries; 0 = default 2s
-}
-
-// getToken returns the current API token, preferring the dynamic getter.
-func (c *Client) getToken() string {
-	if c.tokenFunc != nil {
-		return c.tokenFunc()
-	}
-	return c.apiKey
-}
-
-// SetRefreshFunc sets a reactive token refresh function called on 401 errors.
-func (c *Client) SetRefreshFunc(fn func(staleToken string) error) {
-	c.refreshFunc = fn
 }
 
 // NewClient creates a new Anthropic API client.
@@ -108,16 +93,6 @@ func NewClientWithBase(baseURL, apiKey string) *Client {
 	}
 }
 
-// NewClientWithTokenFunc creates a client that reads its API token dynamically
-// via a function. This supports auto-refreshing OAuth tokens.
-func NewClientWithTokenFunc(tokenFunc func() string, timeout time.Duration) *Client {
-	return &Client{
-		tokenFunc:  tokenFunc,
-		httpClient: &http.Client{Timeout: timeout},
-		baseURL:    "https://api.anthropic.com",
-	}
-}
-
 // sendOnce performs a single HTTP request to the messages API and returns the
 // parsed response, or an error. Extracted from SendMessage to support retry.
 func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, error) {
@@ -127,10 +102,8 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.getToken())
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	// prompt-caching beta removed — caching is GA as of 2024.
-	// See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
 	httpResp, err := c.httpClient.Do(httpReq)
@@ -162,15 +135,11 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 
 // SendMessage sends a message request and returns the response.
 // Retries up to 3 times on HTTP 500 errors with exponential backoff (2s, 4s, 8s).
-// On 401 with a refreshFunc configured, attempts one token refresh and retry.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-
-	// Record token before retry loop for 401 refresh detection.
-	tokenBefore := c.getToken()
 
 	const maxRetries = 3
 	backoff := c.retryBaseDelay
@@ -201,21 +170,6 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 			return nil, err
 		}
 
-		// 401 + refreshFunc → attempt one token refresh and retry.
-		if apiErr.IsAuthError() && c.refreshFunc != nil {
-			slog.Warn("anthropic: 401 received, attempting token refresh")
-			if refreshErr := c.refreshFunc(tokenBefore); refreshErr != nil {
-				slog.Warn("anthropic: token refresh failed", "error", refreshErr.Error())
-				return nil, err
-			}
-			// Retry once with the new token.
-			resp, err = c.sendOnce(ctx, body)
-			if err == nil {
-				return resp, nil
-			}
-			return nil, err
-		}
-
 		if !apiErr.IsServerError() {
 			return nil, err // non-500 errors are not retried
 		}
@@ -238,7 +192,7 @@ func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, err
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.getToken())
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 

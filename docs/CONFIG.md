@@ -159,11 +159,10 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `token` | string | `""` | Anthropic API key. Overridden by `secrets.toml` `[anthropic] token`. |
-| `oauth_token` | string | `""` | OAuth access token for the usage API. Overridden by `secrets.toml` `[anthropic] oauth_token`. |
+| `token` | string | `""` | Anthropic API key or OAuth token from `claude setup-token`. Overridden by `secrets.toml` `[anthropic] token`. |
+| `oauth_token` | string | `""` | OAuth access token for the usage API (overrides `token` for usage only). Overridden by `secrets.toml` `[anthropic] oauth_token`. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
-| `credentials_file` | string | `"~/.claude/.credentials.json"` | Path to Claude Code OAuth credentials file. Used for OAuth token auto-refresh and usage API. |
-| `auto_refresh` | bool | `nil` | Enable OAuth token auto-refresh. When `nil` (default), auto-refresh is enabled if `credentials_file` exists. Set to `false` to disable. |
+| `credentials_file` | string | `"~/.claude/.credentials.json"` | Path to Claude Code credentials file. Fallback token source when `token` is not set. Reads the `accessToken` from the `claudeAiOauth` section. |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 
