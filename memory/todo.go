@@ -48,6 +48,8 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		text         TEXT    NOT NULL,
 		status       TEXT    NOT NULL DEFAULT 'open',
 		priority     TEXT    NOT NULL DEFAULT 'medium',
+		tags         TEXT    NOT NULL DEFAULT '',
+		close_reason TEXT    NOT NULL DEFAULT '',
 		agent_id     TEXT    NOT NULL,
 		created_at   TEXT    NOT NULL,
 		completed_at TEXT
