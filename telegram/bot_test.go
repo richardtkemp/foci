@@ -1281,7 +1281,7 @@ func TestShowToolCalls_Full(t *testing.T) {
 func TestFormatToolCall(t *testing.T) {
 	b := &Bot{}
 	text := b.formatToolCall("exec", json.RawMessage(`{"command":"ls -la"}`))
-	if !strings.Contains(text, "⚡") {
+	if !strings.Contains(text, "▶️") {
 		t.Error("missing tool emoji")
 	}
 	if !strings.Contains(text, "<b>exec</b>") {
@@ -1343,15 +1343,15 @@ func TestFormatToolCallCompact(t *testing.T) {
 		contains string // expected substring in output
 		emoji    string // expected per-tool emoji
 	}{
-		{"exec", "exec", `{"command":"ls -la /tmp"}`, "ls -la /tmp", "⚡"},
+		{"exec", "exec", `{"command":"ls -la /tmp"}`, "ls -la /tmp", "▶️"},
 		{"web_search", "web_search", `{"query":"golang generics"}`, "golang generics", "🔍"},
-		{"web_fetch", "web_fetch", `{"url":"https://example.com/page"}`, "https://example.com/page", "🌐"},
-		{"http_request GET", "http_request", `{"url":"https://api.example.com/v1"}`, "GET https://api.example.com/v1", "📡"},
-		{"http_request POST", "http_request", `{"method":"POST","url":"https://api.example.com/v1"}`, "POST https://api.example.com/v1", "📡"},
+		{"web_fetch", "web_fetch", `{"url":"https://example.com/page"}`, "https://example.com/page", "🔗"},
+		{"http_request GET", "http_request", `{"url":"https://api.example.com/v1"}`, "GET https://api.example.com/v1", "🌍"},
+		{"http_request POST", "http_request", `{"method":"POST","url":"https://api.example.com/v1"}`, "POST https://api.example.com/v1", "🌍"},
 		{"read", "read", `{"path":"/home/user/file.txt"}`, "/home/user/file.txt", "📖"},
-		{"tmux watch", "tmux", `{"operation":"watch","name":"cc-bash","threshold_seconds":30}`, "watch cc-bash", "🖥️"},
-		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "add", "✅"},
-		{"send_telegram", "send_telegram", `{"text":"hello world, how are you doing today?"}`, "hello world", "✈️"},
+		{"tmux watch", "tmux", `{"operation":"watch","name":"cc-bash","threshold_seconds":30}`, "watch cc-bash", "🪟"},
+		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "add", "☑️"},
+		{"send_telegram", "send_telegram", `{"text":"hello world, how are you doing today?"}`, "hello world", "📨"},
 		{"spawn", "spawn", `{"prompt":"summarize this document please"}`, "summarize this document", "🐣"},
 		{"memory_search", "memory_search", `{"query":"project setup"}`, "project setup", "🧠"},
 		{"unknown tool", "custom_tool", `{"foo":"bar value"}`, "bar value", "🔧"},
@@ -2341,8 +2341,8 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 
 	// Pre-store a tool result with compact text, full input, and result.
 	var msgID int64 = 42
-	compactText := `⚡ <b>exec</b>: ls`
-	fullInput := "⚡ <b>exec</b>\n<pre>ls</pre>"
+	compactText := `▶️ <b>exec</b>: ls`
+	fullInput := "▶️ <b>exec</b>\n<pre>ls</pre>"
 	b.toolResults.Store(msgID, toolResultEntry{
 		compactText: compactText,
 		fullInput:   fullInput,
@@ -2397,8 +2397,8 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	var msgID int64 = 42
-	compactText := `⚡ <b>exec</b>: ls`
-	fullInput := "⚡ <b>exec</b>\n<pre>ls</pre>"
+	compactText := `▶️ <b>exec</b>: ls`
+	fullInput := "▶️ <b>exec</b>\n<pre>ls</pre>"
 	b.toolResults.Store(msgID, toolResultEntry{
 		compactText: compactText,
 		fullInput:   fullInput,
@@ -2440,8 +2440,8 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 
 	// Simulate what the ToolResultObserver closure does.
 	var toolMsgID int64 = 99
-	var toolMsgText = `⚡ <b>exec</b>: ls`
-	var toolMsgFullText = "⚡ <b>exec</b>\n<pre>ls</pre>"
+	var toolMsgText = `▶️ <b>exec</b>: ls`
+	var toolMsgFullText = "▶️ <b>exec</b>\n<pre>ls</pre>"
 	var toolMsgMu sync.Mutex
 
 	observer := func(toolName string, result string, isError bool) {
@@ -2482,7 +2482,7 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 }
 
 func TestFormatToolCallWithResult_Truncation(t *testing.T) {
-	toolText := `⚡ <b>exec</b>\n<pre>ls</pre>`
+	toolText := `▶️ <b>exec</b>\n<pre>ls</pre>`
 
 	// Short result — should not be truncated
 	result := "hello"
