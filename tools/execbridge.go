@@ -267,7 +267,14 @@ func generateShellFunc(t *Tool) string {
 		// Simple query tools: all args become the query string
 		return fmt.Sprintf(`%s() {
 %s
-  local query="$*"
+  local query=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --query) query="$2"; shift 2 ;;
+      *) query="$query $1"; shift ;;
+    esac
+  done
+  query="${query# }"
   if [ -z "$query" ]; then
     echo "usage: %s <query>" >&2
     return 1
@@ -367,28 +374,61 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
   local action="$1"; shift 2>/dev/null || true
+  local text="" priority="" tag="" query="" status="" id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --text) text="$2"; shift 2 ;;
+      --priority) priority="$2"; shift 2 ;;
+      --tag) tag="$2"; shift 2 ;;
+      --query) query="$2"; shift 2 ;;
+      --status) status="$2"; shift 2 ;;
+      --id) id="$2"; shift 2 ;;
+      *) # positional: first positional is text/query/id depending on action
+        case "$action" in
+          add|edit) text="$text $1" ;;
+          search) query="$query $1" ;;
+          complete|remove) id="$1" ;;
+        esac
+        shift ;;
+    esac
+  done
+  text="${text# }"
+  query="${query# }"
   case "$action" in
     add)
-      local text="$*" priority="" tag=""
-      foci-call "$(jq -nc --arg t "$text" '{"tool":"todo","params":{"action":"add","text":$t}}')"
+      local params='{"action":"add"}'
+      [ -n "$text" ] && params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
+      [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
+      [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     list)
-      foci-call '{"tool":"todo","params":{"action":"list"}}'
+      local params='{"action":"list"}'
+      [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
+      [ -n "$status" ] && params="$(echo "$params" | jq --arg s "$status" '. + {status: $s}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     search)
-      local query="$*"
-      foci-call "$(jq -nc --arg q "$query" '{"tool":"todo","params":{"action":"search","query":$q}}')"
+      local params='{"action":"search"}'
+      [ -n "$query" ] && params="$(echo "$params" | jq --arg q "$query" '. + {query: $q}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     complete)
-      local id="$1"
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"complete","id":$id}}')"
       ;;
+    edit)
+      local params='{"action":"edit"}'
+      [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$text" ] && params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
+      [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
+      [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
+      ;;
     remove)
-      local id="$1"
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"remove","id":$id}}')"
       ;;
     *)
-      echo "usage: %s <add|list|search|complete|remove> [args...]" >&2
+      echo "usage: %s <add|list|search|complete|edit|remove> [args...]" >&2
       return 1
       ;;
   esac
