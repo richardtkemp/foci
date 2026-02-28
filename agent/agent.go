@@ -997,6 +997,18 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			signalActivityCtx(ctx)
 		}
 
+		// Autopilot detection: fold warning into tool results to avoid
+		// a separate user message that breaks tool_use/tool_result adjacency.
+		if !autopilotWarned && autopilotThreshold > 0 && i+1 >= autopilotThreshold {
+			prompt := a.AutopilotPrompt
+			if prompt == "" {
+				prompt = defaultAutopilotPrompt
+			}
+			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[system] " + prompt})
+			autopilotWarned = true
+			log.Infof("agent", "autopilot warning injected at loop %d for session %s", i+1, sessionKey)
+		}
+
 		// Append tool results as user message
 		toolMsg := anthropic.Message{
 			Role:    "user",
@@ -1004,22 +1016,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 		messages = append(messages, toolMsg)
 		newMessages = append(newMessages, toolMsg)
-
-		// Autopilot detection: inject warning after threshold consecutive tool loops
-		if !autopilotWarned && autopilotThreshold > 0 && i+1 >= autopilotThreshold {
-			prompt := a.AutopilotPrompt
-			if prompt == "" {
-				prompt = defaultAutopilotPrompt
-			}
-			autopilotMsg := anthropic.Message{
-				Role:    "user",
-				Content: []anthropic.ContentBlock{{Type: "text", Text: "[system] " + prompt}},
-			}
-			messages = append(messages, autopilotMsg)
-			newMessages = append(newMessages, autopilotMsg)
-			autopilotWarned = true
-			log.Infof("agent", "autopilot warning injected at loop %d for session %s", i+1, sessionKey)
-		}
 	}
 
 	// Max loops reached — save what we have and return last text
