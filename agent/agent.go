@@ -3,10 +3,10 @@ package agent
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -68,15 +68,15 @@ type CacheBustFunc func(session string, prevRead, curRead int)
 
 // Agent is the core agent loop.
 type Agent struct {
-	Client    *anthropic.Client
-	Sessions  *session.Store
-	Tools     *tools.Registry
-	Bootstrap *workspace.Bootstrap
+	Client        *anthropic.Client
+	Sessions      *session.Store
+	Tools         *tools.Registry
+	Bootstrap     *workspace.Bootstrap
 	Compactor     *compaction.Compactor // nil disables auto-compaction
-	AsyncNotifier *tools.AsyncNotifier // nil disables async-pending compaction guard
+	AsyncNotifier *tools.AsyncNotifier  // nil disables async-pending compaction guard
 	Reminders     *memory.ReminderStore // nil disables reminder injection
-	AgentID   string                // unique agent identifier (for per-agent DB queries)
-	Model     string
+	AgentID       string                // unique agent identifier (for per-agent DB queries)
+	Model         string
 
 	EnvironmentBlock            string                          // pre-built environment context block (prepended first in system prompt)
 	ExtraSystemBlocks           []anthropic.SystemBlock         // additional system blocks (e.g. skills list), injected before cache marker
@@ -108,17 +108,18 @@ type Agent struct {
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 
-	processing    int32 // atomic: number of in-flight HandleMessage calls
-	turnDetailsMu sync.Mutex
-	turnDetails   map[uint64]*TurnDetail // keyed by unique turn ID
-	turnIDCounter uint64                 // atomic: monotonic turn ID
-	turnLocksMu   sync.Mutex
-	turnLocks     map[string]*sync.Mutex // per-session turn serialization
-	metaMu        sync.Mutex
-	meta          map[string]*sessionMeta // per-session metadata
-	manaCacheMu   sync.Mutex
-	manaCached    string
-	manaCacheTime time.Time
+	processing      int32 // atomic: number of in-flight HandleMessage calls
+	turnDetailsMu   sync.Mutex
+	turnDetails     map[uint64]*TurnDetail // keyed by unique turn ID
+	turnIDCounter   uint64                 // atomic: monotonic turn ID
+	turnLocksMu     sync.Mutex
+	turnLocks       map[string]*sync.Mutex // per-session turn serialization
+	metaMu          sync.Mutex
+	meta            map[string]*sessionMeta // per-session metadata
+	manaCacheMu     sync.Mutex
+	manaCached      string
+	manaResetCached string
+	manaCacheTime   time.Time
 }
 
 // TurnDetail describes one in-flight turn for shutdown diagnostics.
@@ -329,8 +330,15 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 // manaString returns a cached mana percentage string (e.g. "75%").
 // Returns empty string if UsageClient is nil or on error.
 func (a *Agent) manaString() string {
+	mana, _ := a.manaAndReset()
+	return mana
+}
+
+// manaAndReset returns cached mana percentage and reset time strings.
+// Returns empty strings if UsageClient is nil or on error.
+func (a *Agent) manaAndReset() (mana, reset string) {
 	if a.UsageClient == nil {
-		return ""
+		return "", ""
 	}
 
 	a.manaCacheMu.Lock()
@@ -338,19 +346,19 @@ func (a *Agent) manaString() string {
 
 	// Cache for 5 minutes
 	if time.Since(a.manaCacheTime) < 5*time.Minute && a.manaCached != "" {
-		return a.manaCached
+		return a.manaCached, a.manaResetCached
 	}
 
 	usage, err := a.UsageClient.GetUsage(context.Background())
 	if err != nil {
 		log.Debugf("agent", "mana fetch: %v", err)
-		return a.manaCached // return stale on error
+		return a.manaCached, a.manaResetCached // return stale on error
 	}
 
-	mana := anthropic.FormatMana(usage)
-	a.manaCached = mana
+	a.manaCached = anthropic.FormatMana(usage)
+	a.manaResetCached = anthropic.FormatManaReset(usage)
 	a.manaCacheTime = time.Now()
-	return mana
+	return a.manaCached, a.manaResetCached
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {
@@ -463,16 +471,24 @@ func isSystemMessage(msg string) bool {
 	return strings.HasPrefix(msg, "[KEEPALIVE]") || strings.HasPrefix(msg, "[SCHEDULED WAKE]")
 }
 
-// guardToolResult checks if a tool result exceeds the size limit.
-// If it does, writes the full output to a temp file and returns only a guard
-// message pointing to the file — no partial content is included.
-// If no limit is set or result is within the limit, returns the original result.
+func detectContentExtension(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) > 0 {
+		switch trimmed[0] {
+		case '{', '[':
+			return ".json"
+		case '#':
+			return ".md"
+		}
+	}
+	return ".txt"
+}
+
 func (a *Agent) guardToolResult(toolName string, result string) string {
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
 	}
 
-	// Result is too large — write to file
 	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
 		log.Warnf("agent", "create tool result temp dir: %v", err)
 		return result
@@ -483,7 +499,8 @@ func (a *Agent) guardToolResult(toolName string, result string) string {
 		log.Warnf("agent", "generate random filename: %v", err)
 		return result
 	}
-	filename := fmt.Sprintf("tool-result-%s-%s.txt", toolName, hex.EncodeToString(randBytes[:]))
+	ext := detectContentExtension(result)
+	filename := fmt.Sprintf("tool-result-%s-%s%s", toolName, hex.EncodeToString(randBytes[:]), ext)
 	filepath := filepath.Join(a.ToolResultTempDir, filename)
 
 	if err := os.WriteFile(filepath, []byte(result), 0o600); err != nil {
@@ -639,12 +656,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// Build metadata prefix and prepend to user message
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	mana := a.manaString()
+	mana, manaReset := a.manaAndReset()
 
 	// Check mana thresholds and notify user for active conversations only
 	// (not keepalives or scheduled wakes)
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
-		a.ManaWatcher.CheckAndWarn(mana, func(warn string) {
+		a.ManaWatcher.CheckAndWarn(mana, manaReset, func(warn string) {
 			if a.ManaWarnFunc != nil {
 				a.ManaWarnFunc(warn)
 			}

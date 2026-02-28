@@ -2,10 +2,10 @@ package command
 
 import (
 	"bufio"
-	"foci/table"
 	"context"
 	"encoding/json"
 	"fmt"
+	"foci/table"
 	"os"
 	"os/exec"
 	"strconv"
@@ -982,12 +982,12 @@ Operations:
 		Execute: func(ctx context.Context, args string) (string, error) {
 			fields := strings.Fields(args)
 
-			// Default to list
-			op := "list"
-			if len(fields) > 0 {
-				op = fields[0]
-				fields = fields[1:]
+			if len(fields) == 0 {
+				return usage, nil
 			}
+
+			op := fields[0]
+			fields = fields[1:]
 
 			var params map[string]interface{}
 
@@ -1305,11 +1305,14 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 
 // NewReloadCommand returns a /reload command that reloads config and system files.
 // reloadFn is a callback that performs the reload (avoids import coupling).
+// This command is human-only (SkipToolExport: true) because it changes the
+// system prompt prefix, which would cause expensive cache busts.
 func NewReloadCommand(reloadFn func() (string, error)) *Command {
 	return &Command{
-		Name:        "reload",
-		Description: "Reload config, skills, and system prompt from disk",
-		Category:    "operations",
+		Name:           "reload",
+		Description:    "Reload config, skills, and system prompt from disk",
+		Category:       "operations",
+		SkipToolExport: true,
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return reloadFn()
 		},
