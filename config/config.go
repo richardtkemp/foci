@@ -101,6 +101,9 @@ type AgentConfig struct {
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
 	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
+	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
+	Keepalive  KeepaliveConfig  `toml:"keepalive"`  // per-agent keepalive override
+	Background BackgroundConfig `toml:"background"` // per-agent background override
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
 }
@@ -276,15 +279,16 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Model               string   `toml:"model"`                 // default model (default: claude-haiku-4-5)
-	DuplicateMessages   bool     `toml:"duplicate_messages"`    // default duplicate_messages (default: false)
-	InjectAgentWarnings bool     `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
-	MaxToolLoops        int      `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
-	MaxOutputTokens     int      `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
-	Effort              string   `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
-	Thinking            string   `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
-	TTSRate             float64  `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
-	SystemFiles         []string `toml:"system_files"`          // default system file list
+	Model               string           `toml:"model"`                 // default model (default: claude-haiku-4-5)
+	DuplicateMessages   bool             `toml:"duplicate_messages"`    // default duplicate_messages (default: false)
+	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
+	MaxToolLoops        int              `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
+	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
+	Effort              string           `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
+	Thinking            string           `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
+	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
+	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
+	SystemFiles         []string         `toml:"system_files"`          // default system file list
 }
 
 // ModelsConfig holds model-related configuration.
@@ -790,6 +794,41 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Background.InvestInterval == "" {
 		cfg.Background.InvestInterval = "30m"
+	}
+
+	// Per-agent keepalive/background: inherit from global when not set per-agent.
+	// If no fields were defined (zero-value struct), copy the entire global config.
+	// If any fields were defined, fill gaps from global defaults.
+	for i := range cfg.Agents {
+		ka := &cfg.Agents[i].Keepalive
+		if *ka == (KeepaliveConfig{}) {
+			cfg.Agents[i].Keepalive = cfg.Keepalive
+		} else {
+			if ka.Interval == "" {
+				ka.Interval = cfg.Keepalive.Interval
+			}
+			if ka.Prompt == "" {
+				ka.Prompt = cfg.Keepalive.Prompt
+			}
+		}
+		bg := &cfg.Agents[i].Background
+		if *bg == (BackgroundConfig{}) {
+			cfg.Agents[i].Background = cfg.Background
+		} else {
+			if bg.Interval == "" {
+				bg.Interval = cfg.Background.Interval
+			}
+			if bg.Prompt == "" {
+				bg.Prompt = cfg.Background.Prompt
+			}
+			if bg.InvestInterval == "" {
+				bg.InvestInterval = cfg.Background.InvestInterval
+			}
+		}
+		// ShowToolCalls: defaults.show_tool_calls → agent fallback
+		if cfg.Agents[i].ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil {
+			cfg.Agents[i].ShowToolCalls = cfg.Defaults.ShowToolCalls
+		}
 	}
 
 	cfg.ResolveAllPaths()
