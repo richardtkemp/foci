@@ -50,7 +50,7 @@ func hasBash() bool { return execShell() == "bash" }
 func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. set -e is active (stops on first error). Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions (foci_web_search, foci_http_request, etc.) are available for piping tool results within a single command.",
+		Description: "Run a shell command and return its output. set -e is active (stops on first error). Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated). Shell functions are available for piping tool results within a single command: foci_web_search, foci_web_fetch, foci_http_request, foci_memory_search, foci_send_telegram, foci_spawn, foci_todo.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
