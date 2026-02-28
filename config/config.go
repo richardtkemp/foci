@@ -129,7 +129,6 @@ type AgentConfig struct {
 	CompactionNotify           *bool    `toml:"compaction_notify"`            // send Telegram notification on compaction
 	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
-	SessionResetPrompt         string   `toml:"session_reset_prompt"`         // path to prompt fired before session clear
 	// Per-agent skills and prompt rules (empty = use global)
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
 	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
@@ -140,8 +139,9 @@ type AgentConfig struct {
 	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
-	Keepalive  KeepaliveConfig  `toml:"keepalive"`  // per-agent keepalive override
-	Background BackgroundConfig `toml:"background"` // per-agent background override
+	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
+	Background      BackgroundConfig      `toml:"background"`       // per-agent background override
+	MemoryFormation MemoryFormationConfig  `toml:"memory_formation"` // per-agent memory formation override
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
 }
@@ -191,7 +191,6 @@ type SessionsConfig struct {
 	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 	CompactionDebug            bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
 	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
-	SessionResetPrompt         string  `toml:"session_reset_prompt"`          // path to prompt file fired before session clear (/reset or reclaim)
 	BranchOrientationPrompt    string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
 }
 
@@ -344,14 +343,26 @@ type ModelsConfig struct {
 type KeepaliveConfig struct {
 	Enabled  bool   `toml:"enabled"`  // enable keepalive timer (default: false)
 	Interval string `toml:"interval"` // time since cache last warmed before firing (default: "55m")
-	Prompt   string `toml:"prompt"`   // file path to keepalive prompt (default: "prompts/keepalive.md")
+	Prompt   string `toml:"prompt"`   // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
+}
+
+// MemoryFormationConfig controls automatic memory capture and consolidation.
+type MemoryFormationConfig struct {
+	IntervalEnabled       *bool  `toml:"interval_enabled"`       // periodic capture on timer (nil = true)
+	Interval              string `toml:"interval"`               // time between captures (default "1h")
+	IntervalPrompt        string `toml:"interval_prompt"`        // prompt override ("" = embedded, "none" = disabled)
+	ConsolidationEnabled  *bool  `toml:"consolidation_enabled"`  // curate MEMORY.md periodically (nil = true)
+	ConsolidationInterval string `toml:"consolidation_interval"` // min time between consolidations (default "20h")
+	ConsolidationPrompt   string `toml:"consolidation_prompt"`   // prompt override ("" = embedded, "none" = disabled)
+	SessionEndEnabled     *bool  `toml:"session_end_enabled"`    // capture on /reset and reclaim (nil = true)
+	SessionEndPrompt      string `toml:"session_end_prompt"`     // prompt override ("" = embedded, "none" = disabled)
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
 type BackgroundConfig struct {
 	Enabled        bool   `toml:"enabled"`         // enable background work timer (default: false)
 	Interval       string `toml:"interval"`        // time since last interaction before firing (default: "5m")
-	Prompt         string `toml:"prompt"`           // file path to background work prompt (default: "prompts/background.md")
+	Prompt         string `toml:"prompt"`           // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
 	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset to let cache invest (default: "30m")
 }
 
@@ -375,8 +386,9 @@ type Config struct {
 	Environment        EnvironmentConfig  `toml:"environment"`
 	Skills             SkillsConfig       `toml:"skills"`
 	Tools              ToolsConfig        `toml:"tools"`
-	Keepalive          KeepaliveConfig    `toml:"keepalive"`
-	Background         BackgroundConfig   `toml:"background"`
+	Keepalive          KeepaliveConfig       `toml:"keepalive"`
+	Background         BackgroundConfig     `toml:"background"`
+	MemoryFormation    MemoryFormationConfig `toml:"memory_formation"`
 	Commands           []CommandConfig    `toml:"commands"`
 	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
 	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
@@ -542,9 +554,12 @@ var boolKeys = map[string]bool{
 	"full_payload":         true,
 	"cache_bust_detect":    true,
 	"log_rotation":         true,
-	"ws_enabled":           true,
-	"enabled":              true,
-	"skip_security_checks": true,
+	"ws_enabled":            true,
+	"enabled":               true,
+	"skip_security_checks":  true,
+	"interval_enabled":      true,
+	"consolidation_enabled": true,
+	"session_end_enabled":   true,
 }
 
 // normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
@@ -902,18 +917,23 @@ func Load(path string) (*Config, error) {
 	if cfg.Keepalive.Interval == "" {
 		cfg.Keepalive.Interval = "55m"
 	}
-	if cfg.Keepalive.Prompt == "" {
-		cfg.Keepalive.Prompt = "prompts/keepalive.md"
-	}
+	// Keepalive.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
 	if cfg.Background.Interval == "" {
 		cfg.Background.Interval = "5m"
 	}
-	if cfg.Background.Prompt == "" {
-		cfg.Background.Prompt = "prompts/background.md"
-	}
+	// Background.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
 	if cfg.Background.InvestInterval == "" {
 		cfg.Background.InvestInterval = "30m"
 	}
+
+	// Memory formation defaults
+	if cfg.MemoryFormation.Interval == "" {
+		cfg.MemoryFormation.Interval = "1h"
+	}
+	if cfg.MemoryFormation.ConsolidationInterval == "" {
+		cfg.MemoryFormation.ConsolidationInterval = "20h"
+	}
+	// IntervalEnabled/ConsolidationEnabled/SessionEndEnabled: nil = true (resolved at runtime)
 
 	// Per-agent keepalive/background: inherit from global when not set per-agent.
 	// If no fields were defined (zero-value struct), copy the entire global config.
@@ -942,6 +962,36 @@ func Load(path string) (*Config, error) {
 			}
 			if bg.InvestInterval == "" {
 				bg.InvestInterval = cfg.Background.InvestInterval
+			}
+		}
+		// Memory formation cascade
+		mf := &cfg.Agents[i].MemoryFormation
+		if *mf == (MemoryFormationConfig{}) {
+			cfg.Agents[i].MemoryFormation = cfg.MemoryFormation
+		} else {
+			if mf.IntervalEnabled == nil && cfg.MemoryFormation.IntervalEnabled != nil {
+				mf.IntervalEnabled = cfg.MemoryFormation.IntervalEnabled
+			}
+			if mf.Interval == "" {
+				mf.Interval = cfg.MemoryFormation.Interval
+			}
+			if mf.IntervalPrompt == "" {
+				mf.IntervalPrompt = cfg.MemoryFormation.IntervalPrompt
+			}
+			if mf.ConsolidationEnabled == nil && cfg.MemoryFormation.ConsolidationEnabled != nil {
+				mf.ConsolidationEnabled = cfg.MemoryFormation.ConsolidationEnabled
+			}
+			if mf.ConsolidationInterval == "" {
+				mf.ConsolidationInterval = cfg.MemoryFormation.ConsolidationInterval
+			}
+			if mf.ConsolidationPrompt == "" {
+				mf.ConsolidationPrompt = cfg.MemoryFormation.ConsolidationPrompt
+			}
+			if mf.SessionEndEnabled == nil && cfg.MemoryFormation.SessionEndEnabled != nil {
+				mf.SessionEndEnabled = cfg.MemoryFormation.SessionEndEnabled
+			}
+			if mf.SessionEndPrompt == "" {
+				mf.SessionEndPrompt = cfg.MemoryFormation.SessionEndPrompt
 			}
 		}
 		// ShowToolCalls: defaults.show_tool_calls → agent fallback
@@ -1091,21 +1141,13 @@ func (c *Config) ResolveAllPaths() {
 	} else {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
-	if c.Sessions.SessionResetPrompt != "" {
-		c.Sessions.SessionResetPrompt = ResolvePath(c.Sessions.SessionResetPrompt)
-	}
 	if c.Sessions.BranchOrientationPrompt != "" {
 		c.Sessions.BranchOrientationPrompt = ResolvePath(c.Sessions.BranchOrientationPrompt)
 	}
 	if c.Sessions.CompactionSummaryPrompt != "" {
 		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)
 	}
-	if c.Keepalive.Prompt != "" {
-		c.Keepalive.Prompt = ResolvePath(c.Keepalive.Prompt)
-	}
-	if c.Background.Prompt != "" {
-		c.Background.Prompt = ResolvePath(c.Background.Prompt)
-	}
+	// Keepalive.Prompt and Background.Prompt: path resolution handled by prompts.ResolvePrompt at runtime.
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {
 		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)

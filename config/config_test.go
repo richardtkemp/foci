@@ -1248,7 +1248,6 @@ func TestPromptFilePathsConfig(t *testing.T) {
 id = "test"
 
 [sessions]
-session_reset_prompt = "/home/foci/shared/prompts/reset.md"
 compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -1256,9 +1255,6 @@ compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Sessions.SessionResetPrompt != "/home/foci/shared/prompts/reset.md" {
-		t.Errorf("SessionResetPrompt = %q", cfg.Sessions.SessionResetPrompt)
 	}
 	if cfg.Sessions.CompactionSummaryPrompt != "/home/foci/shared/prompts/compaction-summary.md" {
 		t.Errorf("CompactionSummaryPrompt = %q", cfg.Sessions.CompactionSummaryPrompt)
@@ -1277,9 +1273,6 @@ id = "test"
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Sessions.SessionResetPrompt != "" {
-		t.Errorf("SessionResetPrompt should default to empty, got %q", cfg.Sessions.SessionResetPrompt)
 	}
 	if cfg.Sessions.CompactionSummaryPrompt != "" {
 		t.Errorf("CompactionSummaryPrompt should default to empty, got %q", cfg.Sessions.CompactionSummaryPrompt)

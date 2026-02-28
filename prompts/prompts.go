@@ -5,7 +5,10 @@ package prompts
 
 import (
 	"embed"
+	"os"
 	"strings"
+
+	"foci/log"
 )
 
 //go:embed *.md
@@ -32,6 +35,43 @@ func CompactionSummary() string { return read("compaction-summary.md") }
 
 // CompactionHandoff returns the default post-compaction handoff message.
 func CompactionHandoff() string { return read("compaction-handoff.md") }
+
+// Keepalive returns the default keepalive ping prompt.
+func Keepalive() string { return read("keepalive.md") }
+
+// Background returns the default background work prompt.
+func Background() string { return read("background.md") }
+
+// MemoryFormation returns the default memory formation prompt.
+func MemoryFormation() string { return read("memory-formation.md") }
+
+// MemoryConsolidation returns the default memory consolidation (MEMORY.md review) prompt.
+func MemoryConsolidation() string { return read("memory-consolidation.md") }
+
+// ResolvePrompt implements 3-state prompt resolution:
+//   - path absent/unset ("" or "default"): returns embeddedDefault
+//   - path = "none": returns "" (explicitly disabled)
+//   - path = "/path/to/file": reads file; on error logs warning + returns embeddedDefault
+func ResolvePrompt(path, label, embeddedDefault string) string {
+	if path == "" || path == "default" {
+		return embeddedDefault
+	}
+	if path == "none" {
+		return ""
+	}
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			path = home + path[1:]
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Warnf("prompts", "%s: read %s: %v — using embedded default", label, path, err)
+		return embeddedDefault
+	}
+	return strings.TrimSpace(string(data))
+}
 
 // ReplaceVars performs template variable substitution on text.
 // Variables use {key} syntax. Only variables present in vars are replaced.

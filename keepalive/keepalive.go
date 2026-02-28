@@ -1,6 +1,6 @@
-// Package keepalive provides cache keepalive and mana-gated background work timers.
+// Package keepalive provides cache keepalive, background work, and memory formation timers.
 //
-// Two mechanisms run as a single goroutine with ~30s ticks:
+// Four mechanisms run as a single goroutine with ~30s ticks:
 //
 //   - Keepalive: fires when the cache hasn't been warmed within the configured interval.
 //     Creates a lightweight branch session to keep the Anthropic cache prefix alive.
@@ -8,13 +8,15 @@
 //   - Background work: fires when the user has been idle for the configured interval
 //     AND there are open background-tagged todos AND the manamometer says we can afford it.
 //     Creates a branch session that picks up the next background task.
+//
+//   - Memory formation: fires periodically to capture conversation memories to daily files.
+//
+//   - Memory consolidation: fires on a longer interval to curate MEMORY.md from daily files.
 package keepalive
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,7 +25,9 @@ import (
 	"foci/config"
 	"foci/log"
 	"foci/memory"
+	"foci/prompts"
 	"foci/session"
+	"foci/state"
 )
 
 const (
@@ -39,13 +43,15 @@ const (
 // It must handle branch creation and agent execution internally.
 type BranchFunc func(branchType, promptText string, noCompact bool)
 
-// Runner manages keepalive and background work timers for an agent.
+// Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
 	agentID     string
 	kaCfg       config.KeepaliveConfig
 	bgCfg       config.BackgroundConfig
+	mfCfg       config.MemoryFormationConfig
 	todoStore   *memory.TodoStore
 	usageClient *anthropic.UsageClient
+	stateStore  *state.Store
 	branchFn    BranchFunc
 
 	mu                sync.Mutex
@@ -53,6 +59,12 @@ type Runner struct {
 	lastInteraction   time.Time
 	keepaliveRunning  bool
 	backgroundRunning bool
+
+	// Memory formation state
+	lastMemoryFormation    time.Time
+	lastConsolidation      time.Time
+	memoryFormationRunning bool
+	consolidationRunning   bool
 
 	// Cached mana state
 	lastUsagePoll time.Time
@@ -65,28 +77,41 @@ type Runner struct {
 
 // RunnerConfig holds all the dependencies for creating a Runner.
 type RunnerConfig struct {
-	AgentID     string
-	Keepalive   config.KeepaliveConfig
-	Background  config.BackgroundConfig
-	TodoStore   *memory.TodoStore
-	UsageClient *anthropic.UsageClient
-	BranchFunc  BranchFunc
+	AgentID         string
+	Keepalive       config.KeepaliveConfig
+	Background      config.BackgroundConfig
+	MemoryFormation config.MemoryFormationConfig
+	TodoStore       *memory.TodoStore
+	UsageClient     *anthropic.UsageClient
+	StateStore      *state.Store
+	BranchFunc      BranchFunc
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
 func New(cfg RunnerConfig) *Runner {
 	now := time.Now()
-	return &Runner{
-		agentID:         cfg.AgentID,
-		kaCfg:           cfg.Keepalive,
-		bgCfg:           cfg.Background,
-		todoStore:       cfg.TodoStore,
-		usageClient:     cfg.UsageClient,
-		branchFn:        cfg.BranchFunc,
-		lastCacheWarmed: now,
-		lastInteraction: now,
-		done:            make(chan struct{}),
+	r := &Runner{
+		agentID:             cfg.AgentID,
+		kaCfg:               cfg.Keepalive,
+		bgCfg:               cfg.Background,
+		mfCfg:               cfg.MemoryFormation,
+		todoStore:           cfg.TodoStore,
+		usageClient:         cfg.UsageClient,
+		stateStore:          cfg.StateStore,
+		branchFn:            cfg.BranchFunc,
+		lastCacheWarmed:     now,
+		lastInteraction:     now,
+		lastMemoryFormation: now,
+		done:                make(chan struct{}),
 	}
+	// Restore consolidation timestamp from persistent state
+	if cfg.StateStore != nil {
+		var ts time.Time
+		if cfg.StateStore.Get("consolidation_last:"+cfg.AgentID, &ts) {
+			r.lastConsolidation = ts
+		}
+	}
+	return r
 }
 
 // Start begins the timer loop in a goroutine.
@@ -130,6 +155,8 @@ func (r *Runner) run(ctx context.Context) {
 		case <-ticker.C:
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
+			r.maybeMemoryFormation()
+			r.maybeConsolidation()
 		}
 	}
 }
@@ -154,10 +181,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) {
 		return
 	}
 
-	promptText := readPromptFile(r.kaCfg.Prompt)
-	if promptText == "" {
-		promptText = "[KEEPALIVE] Cache keepalive ping."
-	}
+	promptText := prompts.ResolvePrompt(r.kaCfg.Prompt, "keepalive", prompts.Keepalive())
 
 	r.mu.Lock()
 	r.keepaliveRunning = true
@@ -213,10 +237,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
-	promptText := readPromptFile(r.bgCfg.Prompt)
-	if promptText == "" {
-		promptText = "[BACKGROUND] Check your background todo list and work on the highest priority open item."
-	}
+	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background", prompts.Background())
 
 	r.mu.Lock()
 	r.backgroundRunning = true
@@ -234,6 +255,109 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 			r.mu.Unlock()
 		}()
 		r.branchFn("background", promptText, true)
+	}()
+}
+
+func (r *Runner) maybeMemoryFormation() {
+	if r.mfCfg.IntervalEnabled != nil && !*r.mfCfg.IntervalEnabled {
+		return
+	}
+
+	interval, err := time.ParseDuration(r.mfCfg.Interval)
+	if err != nil {
+		log.Warnf("keepalive", "bad memory formation interval %q: %v", r.mfCfg.Interval, err)
+		return
+	}
+
+	r.mu.Lock()
+	sinceLastFormation := time.Since(r.lastMemoryFormation)
+	sinceLastInteraction := time.Since(r.lastInteraction)
+	running := r.memoryFormationRunning
+	hasActivity := r.lastInteraction.After(r.lastMemoryFormation)
+	r.mu.Unlock()
+
+	if sinceLastFormation < interval || running || !hasActivity {
+		return
+	}
+
+	// Only fire if there's been recent user activity (within the interval)
+	if sinceLastInteraction > interval {
+		return
+	}
+
+	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "memory-formation", prompts.MemoryFormation())
+	if promptText == "" {
+		return
+	}
+
+	r.mu.Lock()
+	r.memoryFormationRunning = true
+	r.lastMemoryFormation = time.Now()
+	r.mu.Unlock()
+
+	log.Infof("keepalive", "firing memory formation for agent %s", r.agentID)
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.memoryFormationRunning = false
+			r.mu.Unlock()
+		}()
+		r.branchFn("memory-formation", promptText, true)
+	}()
+}
+
+func (r *Runner) maybeConsolidation() {
+	if r.mfCfg.ConsolidationEnabled != nil && !*r.mfCfg.ConsolidationEnabled {
+		return
+	}
+
+	interval, err := time.ParseDuration(r.mfCfg.ConsolidationInterval)
+	if err != nil {
+		log.Warnf("keepalive", "bad consolidation interval %q: %v", r.mfCfg.ConsolidationInterval, err)
+		return
+	}
+
+	r.mu.Lock()
+	sinceLastConsolidation := time.Since(r.lastConsolidation)
+	sinceLastInteraction := time.Since(r.lastInteraction)
+	running := r.consolidationRunning
+	r.mu.Unlock()
+
+	if sinceLastConsolidation < interval || running {
+		return
+	}
+
+	// Only consolidate if there's been recent user activity (within 1h)
+	if sinceLastInteraction > time.Hour {
+		return
+	}
+
+	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "consolidation", prompts.MemoryConsolidation())
+	if promptText == "" {
+		return
+	}
+
+	r.mu.Lock()
+	r.consolidationRunning = true
+	r.lastConsolidation = time.Now()
+	r.mu.Unlock()
+
+	log.Infof("keepalive", "firing memory consolidation for agent %s", r.agentID)
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.consolidationRunning = false
+			r.mu.Unlock()
+			// Persist consolidation timestamp
+			if r.stateStore != nil {
+				if err := r.stateStore.Set("consolidation_last:"+r.agentID, time.Now()); err != nil {
+					log.Warnf("keepalive", "persist consolidation timestamp: %v", err)
+				}
+			}
+		}()
+		r.branchFn("consolidation", promptText, true)
 	}()
 }
 
@@ -315,26 +439,6 @@ func ManaIsGood(actualMana float64, resetsAt time.Time, investInterval time.Dura
 	return actualMana > expectedMana
 }
 
-
-// readPromptFile reads a prompt from disk, returning empty string on error.
-func readPromptFile(path string) string {
-	if path == "" {
-		return ""
-	}
-	// Expand ~ to home directory
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			path = home + path[1:]
-		}
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Debugf("keepalive", "prompt file %s: %v", path, err)
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
 
 // OrientationBuilder constructs orientation text for a branch session given the
 // branch key, parent key, and branch type. Injected from main to avoid duplicating

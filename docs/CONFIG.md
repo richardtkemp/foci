@@ -228,20 +228,23 @@ Session storage and compaction.
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window, so it won't duplicate them. |
-| `session_reset_prompt` | string | `""` | Path to prompt file sent to the agent before session clear (`/reset` or multiball reclaim). Read at fire-time. Empty disables the reset hook. |
 | `branch_orientation_prompt` | string | `""` | Global default for branch orientation prompt file. Per-agent `branch_orientation_prompt` overrides this. If empty, embedded defaults from `prompts/` are used. |
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
 | `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `session_reset_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, an error is logged and the feature is skipped. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+All prompt fields (`compaction_summary_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
 When no config override is set, embedded defaults from `prompts/` are used:
 - `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
 - `prompts/branch-orientation-multiball.md` — user-attached multiball branches
 - `prompts/compaction-summary.md` — compaction summary prompt
 - `prompts/compaction-handoff.md` — post-compaction handoff message (`compaction_handoff_msg` default)
+- `prompts/keepalive.md` — keepalive ping prompt
+- `prompts/background.md` — background work prompt
+- `prompts/memory-formation.md` — memory formation prompt (interval + session-end)
+- `prompts/memory-consolidation.md` — MEMORY.md consolidation prompt
 
 ---
 
@@ -527,7 +530,7 @@ Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic 
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable keepalive timer. |
 | `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be < 1h (Anthropic cache TTL). |
-| `prompt` | string | `"prompts/keepalive.md"` | Path to keepalive prompt file. |
+| `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 
 ---
 
@@ -539,7 +542,7 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable background work timer. |
 | `interval` | string | `"5m"` | Time since last interaction before firing. |
-| `prompt` | string | `"prompts/background.md"` | Path to background work prompt file. |
+| `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 | `invest_interval` | string | `"30m"` | Quiet period after mana reset to let cache invest before spending. |
 
 **Validation warnings:**
@@ -547,6 +550,34 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 - `keepalive.interval > 1h` — Anthropic cache TTL is 1 hour; cache may expire between keepalives.
 
 See [HEARTBEAT.md](HEARTBEAT.md) for full details on the manamometer and timer logic.
+
+---
+
+## `[memory_formation]`
+
+Automatic memory capture and MEMORY.md consolidation. All three sub-features default to enabled (`nil` = `true`). Per-agent `[agents.memory_formation]` overrides these globals.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `interval_enabled` | bool | `true` | Enable periodic memory capture on timer. |
+| `interval` | string | `"1h"` | Time between interval captures. |
+| `interval_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+| `consolidation_enabled` | bool | `true` | Enable periodic MEMORY.md curation. |
+| `consolidation_interval` | string | `"20h"` | Minimum time between consolidation runs. Persisted across restarts. |
+| `consolidation_prompt` | string | `""` | Prompt override. `""` = embedded `memory-consolidation.md`, `"none"` = disabled, `/path` = custom file. |
+| `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and multiball reclaim. |
+| `session_end_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+
+All prompt fields use 3-state resolution: empty or `"default"` → embedded default from `prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
+
+**Interval memory formation** runs in the keepalive timer loop. Fires when:
+1. `interval` has elapsed since the last formation
+2. There's been user activity since the last formation
+3. The user has been active within the interval window
+
+**Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Only fires when there's been user activity within the last hour.
+
+**Session-end** fires asynchronously on `/reset` and multiball reclaim. Creates a branch from the expiring session (preserving conversation history) so the caller doesn't block.
 
 ---
 

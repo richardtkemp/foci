@@ -1,6 +1,8 @@
 package prompts
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,6 +16,10 @@ func TestEmbeddedFilesLoadNonEmpty(t *testing.T) {
 		{"BranchOrientationMultiball", BranchOrientationMultiball},
 		{"CompactionSummary", CompactionSummary},
 		{"CompactionHandoff", CompactionHandoff},
+		{"Keepalive", Keepalive},
+		{"Background", Background},
+		{"MemoryFormation", MemoryFormation},
+		{"MemoryConsolidation", MemoryConsolidation},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,5 +77,44 @@ func TestReplaceVarsEmpty(t *testing.T) {
 	got := ReplaceVars(text, nil)
 	if got != text {
 		t.Errorf("ReplaceVars with nil = %q, want %q", got, text)
+	}
+}
+
+func TestResolvePromptEmptyPath(t *testing.T) {
+	got := ResolvePrompt("", "test", "embedded-default")
+	if got != "embedded-default" {
+		t.Errorf("empty path: got %q, want %q", got, "embedded-default")
+	}
+}
+
+func TestResolvePromptDefaultKeyword(t *testing.T) {
+	got := ResolvePrompt("default", "test", "embedded-default")
+	if got != "embedded-default" {
+		t.Errorf("default keyword: got %q, want %q", got, "embedded-default")
+	}
+}
+
+func TestResolvePromptNoneKeyword(t *testing.T) {
+	got := ResolvePrompt("none", "test", "embedded-default")
+	if got != "" {
+		t.Errorf("none keyword: got %q, want empty", got)
+	}
+}
+
+func TestResolvePromptFileExists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.md")
+	os.WriteFile(path, []byte("  custom content  "), 0644)
+
+	got := ResolvePrompt(path, "test", "embedded-default")
+	if got != "custom content" {
+		t.Errorf("file exists: got %q, want %q", got, "custom content")
+	}
+}
+
+func TestResolvePromptFileMissing(t *testing.T) {
+	got := ResolvePrompt("/nonexistent/path/prompt.md", "test", "embedded-default")
+	if got != "embedded-default" {
+		t.Errorf("file missing: got %q, want %q", got, "embedded-default")
 	}
 }
