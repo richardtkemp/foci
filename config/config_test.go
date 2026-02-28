@@ -2164,3 +2164,104 @@ token_secret = "custom.key"
 		t.Errorf("secondary token_secret = %q, want %q", cfg.Telegram.Bots["secondary"].TokenSecret, "custom.key")
 	}
 }
+
+func TestAutopilotThresholdDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[agent]
+id = "test"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agents[0].AutopilotThreshold != 10 {
+		t.Errorf("AutopilotThreshold = %d, want 10", cfg.Agents[0].AutopilotThreshold)
+	}
+}
+
+func TestAutopilotThresholdExplicit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+autopilot_threshold = 5
+autopilot_prompt = "custom warning"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agents[0].AutopilotThreshold != 5 {
+		t.Errorf("AutopilotThreshold = %d, want 5", cfg.Agents[0].AutopilotThreshold)
+	}
+	if cfg.Agents[0].AutopilotPrompt != "custom warning" {
+		t.Errorf("AutopilotPrompt = %q, want %q", cfg.Agents[0].AutopilotPrompt, "custom warning")
+	}
+}
+
+func TestAutopilotThresholdPerAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[defaults]
+autopilot_threshold = 15
+autopilot_prompt = "defaults prompt"
+
+[[agents]]
+id = "a"
+
+[[agents]]
+id = "b"
+autopilot_threshold = 5
+autopilot_prompt = "agent prompt"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Agent "a" inherits from defaults
+	if cfg.Agents[0].AutopilotThreshold != 15 {
+		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].AutopilotThreshold)
+	}
+	if cfg.Agents[0].AutopilotPrompt != "defaults prompt" {
+		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].AutopilotPrompt, "defaults prompt")
+	}
+
+	// Agent "b" overrides
+	if cfg.Agents[1].AutopilotThreshold != 5 {
+		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].AutopilotThreshold)
+	}
+	if cfg.Agents[1].AutopilotPrompt != "agent prompt" {
+		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].AutopilotPrompt, "agent prompt")
+	}
+}
+
+func TestAutopilotThresholdDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[defaults]
+autopilot_threshold = 0
+
+[agent]
+id = "test"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agents[0].AutopilotThreshold != 0 {
+		t.Errorf("AutopilotThreshold = %d, want 0 (disabled)", cfg.Agents[0].AutopilotThreshold)
+	}
+}

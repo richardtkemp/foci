@@ -25,6 +25,8 @@ import (
 	"foci/workspace"
 )
 
+const defaultAutopilotPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
+
 // ImageData holds a raw image for inclusion in a message.
 type ImageData struct {
 	MediaType string // "image/jpeg", "image/png", etc.
@@ -101,6 +103,8 @@ type Agent struct {
 	ReadPromptFile              func(path, label string) string // reads prompt from file path; nil uses empty string
 	MaxToolLoops                int                             // max tool iterations per turn (default 25)
 	MaxOutputTokens             int                             // max tokens in model response (default 8192)
+	AutopilotThreshold          int                             // consecutive tool loops before warning (0 = disabled)
+	AutopilotPrompt             string                          // warning text (empty = hardcoded default)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 
@@ -733,6 +737,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	if maxOutput <= 0 {
 		maxOutput = 8192 // default
 	}
+	autopilotThreshold := a.AutopilotThreshold
+	autopilotWarned := false
 	for i := 0; i < maxLoops; i++ {
 		var reqMessages []anthropic.Message
 		if useAutoCache {
@@ -998,6 +1004,22 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 		messages = append(messages, toolMsg)
 		newMessages = append(newMessages, toolMsg)
+
+		// Autopilot detection: inject warning after threshold consecutive tool loops
+		if !autopilotWarned && autopilotThreshold > 0 && i+1 >= autopilotThreshold {
+			prompt := a.AutopilotPrompt
+			if prompt == "" {
+				prompt = defaultAutopilotPrompt
+			}
+			autopilotMsg := anthropic.Message{
+				Role:    "user",
+				Content: []anthropic.ContentBlock{{Type: "text", Text: "[system] " + prompt}},
+			}
+			messages = append(messages, autopilotMsg)
+			newMessages = append(newMessages, autopilotMsg)
+			autopilotWarned = true
+			log.Infof("agent", "autopilot warning injected at loop %d for session %s", i+1, sessionKey)
+		}
 	}
 
 	// Max loops reached — save what we have and return last text
