@@ -307,6 +307,72 @@ func TestStripHTTPHeaders(t *testing.T) {
 	}
 }
 
+func TestToolParamKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		params json.RawMessage
+		want   string
+	}{
+		{
+			name:   "single key",
+			params: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+			want:   "query",
+		},
+		{
+			name:   "multiple keys sorted",
+			params: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"body":{"type":"string"}}}`),
+			want:   "body method url",
+		},
+		{
+			name:   "empty properties",
+			params: json.RawMessage(`{"type":"object","properties":{}}`),
+			want:   "",
+		},
+		{
+			name:   "invalid JSON",
+			params: json.RawMessage(`not json`),
+			want:   "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := &Tool{Parameters: tt.params}
+			got := toolParamKeys(tool)
+			if got != tt.want {
+				t.Errorf("toolParamKeys() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShellFuncsContainJSONGuard(t *testing.T) {
+	r := testRegistry()
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	data, err := os.ReadFile(bridge.FuncsPath())
+	if err != nil {
+		t.Fatalf("read funcs file: %v", err)
+	}
+	content := string(data)
+
+	// Should contain the _foci_json helper
+	if !strings.Contains(content, "_foci_json()") {
+		t.Error("funcs file should contain _foci_json() helper")
+	}
+	// Should contain export -f for the helper
+	if !strings.Contains(content, "export -f _foci_json") {
+		t.Error("funcs file should export _foci_json")
+	}
+	// echo_tool should have a guard line with its valid key "text"
+	if !strings.Contains(content, `_foci_json "echo_tool" "text"`) {
+		t.Error("echo_tool guard should include valid key 'text'")
+	}
+}
+
 func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 	// Register a fake http_request tool that returns headers + body
 	r := NewRegistry()
