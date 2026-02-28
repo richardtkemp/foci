@@ -194,7 +194,7 @@ func (b *ExecBridge) writeShellFuncs() error {
 		fn := generateShellFunc(t)
 		if fn != "" {
 			sb.WriteString(fn)
-			sb.WriteString("\n")
+			sb.WriteString(fmt.Sprintf("export -f foci_%s\n\n", t.Name))
 		}
 	}
 
