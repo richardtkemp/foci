@@ -41,6 +41,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 					"type": "integer",
 					"description": "Todo item ID (required for 'complete', 'edit', and 'remove')"
 				},
+				"ids": {
+					"type": "array",
+					"items": {"type": "integer"},
+					"description": "Array of todo item IDs (alternative to 'id' for batch operations, used with 'complete', 'edit', 'remove')"
+				},
 				"status": {
 					"type": "string",
 					"enum": ["open", "done"],
@@ -59,14 +64,15 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
 			var p struct {
-				Action   string `json:"action"`
-				Text     string `json:"text"`
-				Priority string `json:"priority"`
-				Tag      string `json:"tag"`
-				ID       int64  `json:"id"`
-				Status   string `json:"status"`
-				Query    string `json:"query"`
-				Reason   string `json:"reason"`
+				Action   string  `json:"action"`
+				Text     string  `json:"text"`
+				Priority string  `json:"priority"`
+				Tag      string  `json:"tag"`
+				ID       int64   `json:"id"`
+				IDs      []int64 `json:"ids"`
+				Status   string  `json:"status"`
+				Query    string  `json:"query"`
+				Reason   string  `json:"reason"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return "", fmt.Errorf("parse params: %w", err)
@@ -140,22 +146,28 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return strings.Join(lines, "\n"), nil
 
 			case "complete":
-				if p.ID == 0 {
-					return "", fmt.Errorf("id is required for complete")
-				}
 				if p.Reason == "" {
 					return "", fmt.Errorf("reason is required for complete (e.g. 'implemented in abc1234', 'no longer relevant')")
 				}
-				if err := store.Complete(agentID, p.ID, p.Reason); err != nil {
+				ids, err := resolveIDs(p.ID, p.IDs)
+				if err != nil {
 					return "", err
 				}
-				return fmt.Sprintf("Completed todo #%d: %s", p.ID, p.Reason), nil
+				var results []string
+				for _, id := range ids {
+					if err := store.Complete(agentID, id, p.Reason); err != nil {
+						results = append(results, fmt.Sprintf("#%d: error: %v", id, err))
+					} else {
+						results = append(results, fmt.Sprintf("#%d: completed", id))
+					}
+				}
+				return strings.Join(results, "\n"), nil
 
 			case "edit":
-				if p.ID == 0 {
-					return "", fmt.Errorf("id is required for edit")
+				ids, err := resolveIDs(p.ID, p.IDs)
+				if err != nil {
+					return "", err
 				}
-				// Detect whether "tag" key was explicitly provided (allows setting to "").
 				var raw map[string]json.RawMessage
 				json.Unmarshal(params, &raw)
 				_, setTags := raw["tag"]
@@ -163,25 +175,36 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				if p.Text == "" && p.Priority == "" && !setTags {
 					return "", fmt.Errorf("edit requires at least one of: text, priority, tag")
 				}
-				item, err := store.Edit(agentID, p.ID, p.Text, p.Priority, p.Tag, setTags)
+				var results []string
+				for _, id := range ids {
+					item, err := store.Edit(agentID, id, p.Text, p.Priority, p.Tag, setTags)
+					if err != nil {
+						results = append(results, fmt.Sprintf("#%d: error: %v", id, err))
+					} else {
+						tags := memory.FormatTags(item.Tags)
+						marker := "[ ]"
+						if item.Status == "done" {
+							marker = "[x]"
+						}
+						results = append(results, fmt.Sprintf("#%d: updated %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text))
+					}
+				}
+				return strings.Join(results, "\n"), nil
+
+			case "remove":
+				ids, err := resolveIDs(p.ID, p.IDs)
 				if err != nil {
 					return "", err
 				}
-				tags := memory.FormatTags(item.Tags)
-				marker := "[ ]"
-				if item.Status == "done" {
-					marker = "[x]"
+				var results []string
+				for _, id := range ids {
+					if err := store.Remove(agentID, id); err != nil {
+						results = append(results, fmt.Sprintf("#%d: error: %v", id, err))
+					} else {
+						results = append(results, fmt.Sprintf("#%d: removed", id))
+					}
 				}
-				return fmt.Sprintf("Updated todo #%d: %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text), nil
-
-			case "remove":
-				if p.ID == 0 {
-					return "", fmt.Errorf("id is required for remove")
-				}
-				if err := store.Remove(agentID, p.ID); err != nil {
-					return "", err
-				}
-				return fmt.Sprintf("Removed todo #%d.", p.ID), nil
+				return strings.Join(results, "\n"), nil
 
 			default:
 				return "", fmt.Errorf("unknown action: %s (use add, list, search, complete, edit, or remove)", p.Action)
@@ -224,4 +247,17 @@ func relativeTime(t time.Time) string {
 		return "1d ago"
 	}
 	return fmt.Sprintf("%dd ago", days)
+}
+
+func resolveIDs(id int64, ids []int64) ([]int64, error) {
+	if id != 0 && len(ids) > 0 {
+		return nil, fmt.Errorf("use id or ids, not both")
+	}
+	if id != 0 {
+		return []int64{id}, nil
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("id is required")
+	}
+	return ids, nil
 }
