@@ -1,0 +1,4 @@
+{"role": "user", "content": "Oh one more thing — the backup cron should run at 3am not 2am. The DST change messed up the timing."}
+{"role": "user", "content": "Also make sure the monitoring alert threshold is 95% not 90%. We kept getting false positives."}
+{"role": "user", "content": "That's everything for today. Write up your session notes before we wrap."}
+{"role": "user", "content": "Good session. Talk tomorrow."}
