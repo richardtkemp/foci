@@ -951,7 +951,7 @@ func Load(path string) (*Config, error) {
 		cfg.Tools.SearchProvider = "anthropic"
 	}
 	if cfg.Tools.FetchProvider == "" {
-		cfg.Tools.FetchProvider = "anthropic"
+		cfg.Tools.FetchProvider = "builtin"
 	}
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
