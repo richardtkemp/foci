@@ -35,9 +35,18 @@ func (e *APIError) IsOverloaded() bool {
 	return e.StatusCode == 529
 }
 
-// IsServerError returns true if this is a 500 Internal Server Error.
-func (e *APIError) IsServerError() bool {
-	return e.StatusCode == http.StatusInternalServerError
+// IsRetryable returns true if the error is a server-side issue worth retrying.
+// Covers 500 (Internal Server Error), 502 (Bad Gateway), 503 (Service Unavailable),
+// and 529 (Overloaded — Anthropic-specific).
+func (e *APIError) IsRetryable() bool {
+	switch e.StatusCode {
+	case http.StatusInternalServerError, // 500
+		http.StatusBadGateway,        // 502
+		http.StatusServiceUnavailable, // 503
+		529:                           // Overloaded (Anthropic-specific)
+		return true
+	}
+	return false
 }
 
 // IsAuthError returns true if this is a 401 Unauthorized error.
@@ -63,7 +72,7 @@ type Client struct {
 	tokenFunc      func() (string, error) // dynamic token source (overrides apiKey)
 	httpClient     *http.Client
 	baseURL        string
-	retryBaseDelay time.Duration // initial backoff for 500 retries; 0 = default 2s
+	retryBaseDelay time.Duration // initial backoff for server error retries; 0 = default 2s
 }
 
 // resolveToken returns the token to use for API requests.
@@ -159,7 +168,8 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 }
 
 // SendMessage sends a message request and returns the response.
-// Retries up to 3 times on HTTP 500 errors with exponential backoff (2s, 4s, 8s).
+// Retries up to 3 times on retryable server errors (500, 502, 503, 529)
+// with exponential backoff (2s, 4s, 8s).
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -175,7 +185,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			slog.Warn("anthropic: retrying after 500", "attempt", attempt, "backoff", backoff.String())
+			slog.Warn("anthropic: retrying after server error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -195,8 +205,8 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 			return nil, err
 		}
 
-		if !apiErr.IsServerError() {
-			return nil, err // non-500 errors are not retried
+		if !apiErr.IsRetryable() {
+			return nil, err // non-retryable errors fail immediately
 		}
 	}
 
