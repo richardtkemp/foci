@@ -498,6 +498,8 @@ Tool behavior settings.
 | `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` clone_current sessions per agent. Limits how many headless self-forks can run simultaneously. |
 | `max_upload_file_size` | int | `52428800` | Max file size in bytes for multipart/form-data file uploads (default 50MB). |
+| `summary_context_turns` | int | `5` | Number of recent conversation turns included as context when auto-summarising oversized tool results. |
+| `summary_context_chars` | int | `6000` | Max characters of conversation context sent to Haiku for auto-summary. |
 | `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |
 | `tmux_memory_warn` | string | `"10%"` | Warn threshold. Sends Telegram notification. Formats: `"N%"` (% of RAM), `"Nmb"`, `"Ngb"`. |
 | `tmux_memory_critical` | string | `"20%"` | Critical threshold. Sends Telegram notification with stronger message. Same formats. |

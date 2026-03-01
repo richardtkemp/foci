@@ -87,6 +87,9 @@ type Agent struct {
 	DuplicateMessages           bool                            // send user text twice per API call (improves instruction following)
 	MaxResultChars              int                             // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir           string                          // where to write large tool results
+	ModelAliases                map[string]string               // for resolving "haiku" → full model ID
+	SummaryContextTurns         int                             // recent conversation turns for summary context
+	SummaryContextChars         int                             // max chars of context to send to Haiku
 	Warnings                    *WarningQueue                   // nil disables warning injection into session
 	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
 	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
@@ -501,7 +504,7 @@ func detectContentExtension(content string) string {
 	return ".txt"
 }
 
-func (a *Agent) guardToolResult(toolName string, result string) string {
+func (a *Agent) guardToolResult(ctx context.Context, toolName string, result string, messages []anthropic.Message) string {
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
 	}
@@ -518,17 +521,117 @@ func (a *Agent) guardToolResult(toolName string, result string) string {
 	}
 	ext := detectContentExtension(result)
 	filename := fmt.Sprintf("tool-result-%s-%s%s", toolName, hex.EncodeToString(randBytes[:]), ext)
-	filepath := filepath.Join(a.ToolResultTempDir, filename)
+	fpath := filepath.Join(a.ToolResultTempDir, filename)
 
-	if err := os.WriteFile(filepath, []byte(result), 0o600); err != nil {
+	if err := os.WriteFile(fpath, []byte(result), 0o600); err != nil {
 		log.Warnf("agent", "write tool result to file: %v", err)
 		return result
 	}
 
-	log.Debugf("agent", "tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, filepath)
+	log.Debugf("agent", "tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, fpath)
+
+	// Try to auto-summarise via Haiku
+	if a.Client != nil && len(a.ModelAliases) > 0 {
+		if summary := a.summariseToolResult(ctx, toolName, result, messages, fpath); summary != "" {
+			return summary
+		}
+	}
 
 	hint := guardHint(result)
-	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", len(result), a.MaxResultChars, filepath, hint)
+	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", len(result), a.MaxResultChars, fpath, hint)
+}
+
+// summariseToolResult calls Haiku to produce a summary of an oversized tool result.
+// Returns the formatted summary string, or empty string on failure (caller falls back).
+func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string, messages []anthropic.Message, savedPath string) string {
+	model := "claude-haiku-4-5"
+	if full, ok := a.ModelAliases["haiku"]; ok {
+		model = full
+	}
+
+	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
+
+	var userText string
+	if convContext != "" {
+		userText = fmt.Sprintf("<context>\n%s\n</context>\n\n<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise the important information from this tool output.",
+			convContext, toolName, result)
+	} else {
+		userText = fmt.Sprintf("<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise the important information from this tool output.",
+			toolName, result)
+	}
+
+	req := &anthropic.MessageRequest{
+		Model:     model,
+		MaxTokens: 4096,
+		System: []anthropic.SystemBlock{
+			{Type: "text", Text: "You are a tool output summarisation assistant. Summarise the tool output below, preserving key data the user likely needs based on the conversation context."},
+		},
+		Messages: []anthropic.Message{
+			{Role: "user", Content: anthropic.TextContent(userText)},
+		},
+	}
+
+	start := time.Now()
+	resp, err := a.Client.SendMessage(ctx, req)
+	if err != nil {
+		log.Warnf("agent", "auto-summary failed for %s: %v", toolName, err)
+		return ""
+	}
+
+	duration := time.Since(start)
+	cost := log.CalculateCost(model,
+		resp.Usage.InputTokens, resp.Usage.OutputTokens,
+		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+
+	log.Infof("agent", "auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
+		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
+
+	summary := anthropic.TextOf(resp.Content)
+	if summary == "" {
+		return ""
+	}
+
+	return fmt.Sprintf("[Auto-summary by %s — full output (%d chars) saved to %s]\n\n%s", model, len(result), savedPath, summary)
+}
+
+// recentContext extracts text from the last N conversation turns,
+// capped at maxChars. Skips tool_use and tool_result blocks.
+func recentContext(messages []anthropic.Message, maxTurns, maxChars int) string {
+	if maxTurns <= 0 || maxChars <= 0 || len(messages) == 0 {
+		return ""
+	}
+
+	var parts []string
+	total := 0
+	turns := 0
+	for i := len(messages) - 1; i >= 0 && turns < maxTurns; i-- {
+		msg := messages[i]
+		var text string
+		for _, block := range msg.Content {
+			if block.Type == "text" && block.Text != "" {
+				text = block.Text
+				break
+			}
+		}
+		if text == "" {
+			continue
+		}
+		turns++
+		remaining := maxChars - total
+		if len(text) > remaining {
+			text = text[:remaining]
+		}
+		parts = append(parts, fmt.Sprintf("[%s] %s", msg.Role, text))
+		total += len(text)
+		if total >= maxChars {
+			break
+		}
+	}
+	// Reverse to chronological order
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, "\n")
 }
 
 // guardHint returns a contextual suggestion for how to extract data from a
@@ -1017,7 +1120,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			}
 
 			// Guard against oversized tool results
-			guardedResult := a.guardToolResult(block.Name, result)
+			guardedResult := a.guardToolResult(ctx, block.Name, result, messages)
 			// Redact secrets from tool output
 			if a.Redact != nil {
 				guardedResult = a.Redact(guardedResult)

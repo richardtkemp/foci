@@ -416,12 +416,16 @@ When a tool returns a result exceeding a configurable character threshold (defau
 
 The tool hint is contextual: `jq` for JSON results, `mdq` for markdown, `grep`/`head`/`tail` otherwise.
 
+Before returning the guard message, the agent makes a side-call to Haiku to auto-summarise the oversized content. Recent conversation turns are included as context so the summary focuses on what the agent likely needs. If the Haiku call fails, the agent falls back to the guard message with hints. This eliminates the wasted turns the agent would otherwise spend re-reading the saved file.
+
 This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via the saved file — it just doesn't sit in context forever.
 
 ```toml
 [tools]
 max_result_chars = 15000              # max chars before writing to file
 temp_dir = "/tmp/foci-tool-results"   # where to write large results
+summary_context_turns = 5             # recent turns for auto-summary context
+summary_context_chars = 6000          # max chars of context sent to Haiku
 ```
 
 **http_request — file saves, binary handling, and auto-background:**
