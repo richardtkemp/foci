@@ -251,7 +251,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("tools", "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)
 	add("tools", "tmux_memory_critical", cfg.Tools.TmuxMemoryCritical)
 	add("tools", "tmux_memory_kill", cfg.Tools.TmuxMemoryKill)
-	add("tools", "tmux_autopilot", cfg.Tools.TmuxAutopilot)
+	add("tools", "tmux_braindead", cfg.Tools.TmuxBraindead)
 	add("tools", "tmux_watch_threshold", cfg.Tools.TmuxWatchThreshold)
 
 	// environment
@@ -506,7 +506,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("tools", "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)
 	addGlobal("tools", "tmux_memory_critical", cfg.Tools.TmuxMemoryCritical)
 	addGlobal("tools", "tmux_memory_kill", cfg.Tools.TmuxMemoryKill)
-	addGlobal("tools", "tmux_autopilot", cfg.Tools.TmuxAutopilot)
+	addGlobal("tools", "tmux_braindead", cfg.Tools.TmuxBraindead)
 	addGlobal("tools", "tmux_watch_threshold", cfg.Tools.TmuxWatchThreshold)
 	addGlobal("environment", "enabled", cfg.Environment.Enabled)
 	if cfg.Environment.DocsPath != "" {

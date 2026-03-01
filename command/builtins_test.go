@@ -1895,8 +1895,8 @@ func TestTmuxCommandNoArgsShowsUsage(t *testing.T) {
 	if !strings.Contains(result, "Usage:") {
 		t.Errorf("result = %q, want usage help", result)
 	}
-	if !strings.Contains(result, "Operations:") {
-		t.Errorf("result = %q, want operations list", result)
+	if !strings.Contains(result, "Commands:") {
+		t.Errorf("result = %q, want commands list", result)
 	}
 	if len(*calls) > 0 {
 		t.Errorf("execFn should not be called with no args, got calls: %v", *calls)

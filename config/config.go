@@ -107,8 +107,8 @@ type AgentConfig struct {
 	Memory                  AgentMemoryConfig `toml:"memory"`                    // per-agent memory sources (combined with global [memory])
 	MaxToolLoops            int               `toml:"max_tool_loops"`            // max tool iterations per turn (default 25)
 	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
-	AutopilotThreshold      int               `toml:"autopilot_threshold"`       // consecutive tool loops before warning (0 = disabled, default 10)
-	AutopilotPrompt         string            `toml:"autopilot_prompt"`          // warning text injected as user message
+	BraindeadThreshold      int               `toml:"braindead_threshold"`       // consecutive tool loops before warning (0 = disabled, default 10)
+	BraindeadPrompt         string            `toml:"braindead_prompt"`          // warning text injected as user message
 	Effort                  string            `toml:"effort"`                    // effort level: "low", "medium", "high" (empty = omit from request)
 	Thinking                string            `toml:"thinking"`                  // thinking mode: "off" (default), "adaptive"
 	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
@@ -135,7 +135,7 @@ type AgentConfig struct {
 	ExecAutoBackground  int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
 	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
-	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
+	TmuxBraindead       *bool  `toml:"tmux_braindead"`        // per-agent tmux braindead override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
@@ -294,7 +294,7 @@ type ToolsConfig struct {
 	TmuxMemoryWarn          string `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
 	TmuxMemoryCritical      string `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
 	TmuxMemoryKill          string `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
-	TmuxAutopilot           bool   `toml:"tmux_autopilot"`             // auto-unwatch on inactivity, auto-watch on send (default true)
+	TmuxBraindead           bool   `toml:"tmux_braindead"`             // auto-unwatch on inactivity, auto-watch on send (default true)
 	TmuxWatchThreshold      string `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 }
@@ -319,8 +319,8 @@ type DefaultsConfig struct {
 	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
 	MaxToolLoops        int              `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
 	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
-	AutopilotThreshold  int              `toml:"autopilot_threshold"`   // default autopilot threshold (default: 10)
-	AutopilotPrompt     string           `toml:"autopilot_prompt"`      // default autopilot prompt
+	BraindeadThreshold  int              `toml:"braindead_threshold"`   // default braindead threshold (default: 10)
+	BraindeadPrompt     string           `toml:"braindead_prompt"`      // default braindead prompt
 	Effort              string           `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
 	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
@@ -544,7 +544,7 @@ var boolKeys = map[string]bool{
 	"messages_in_log":       true,
 	"compaction_notify":     true,
 	"compaction_debug":      true,
-	"tmux_autopilot":        true,
+	"tmux_braindead":        true,
 	"auto_refresh":          true,
 	"enable_stop_aliases":   true,
 	"enable_startup_notify": true,
@@ -622,8 +622,8 @@ func Load(path string) (*Config, error) {
 	if cfg.Defaults.MaxOutputTokens == 0 {
 		cfg.Defaults.MaxOutputTokens = 8192
 	}
-	if cfg.Defaults.AutopilotThreshold == 0 && !md.IsDefined("defaults", "autopilot_threshold") {
-		cfg.Defaults.AutopilotThreshold = 10
+	if cfg.Defaults.BraindeadThreshold == 0 && !md.IsDefined("defaults", "braindead_threshold") {
+		cfg.Defaults.BraindeadThreshold = 10
 	}
 
 	// Backward compat: [agent] (singular) → single-element Agents array
@@ -642,11 +642,11 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].MaxOutputTokens == 0 {
 			cfg.Agents[i].MaxOutputTokens = cfg.Defaults.MaxOutputTokens
 		}
-		if cfg.Agents[i].AutopilotThreshold == 0 {
-			cfg.Agents[i].AutopilotThreshold = cfg.Defaults.AutopilotThreshold
+		if cfg.Agents[i].BraindeadThreshold == 0 {
+			cfg.Agents[i].BraindeadThreshold = cfg.Defaults.BraindeadThreshold
 		}
-		if cfg.Agents[i].AutopilotPrompt == "" {
-			cfg.Agents[i].AutopilotPrompt = cfg.Defaults.AutopilotPrompt
+		if cfg.Agents[i].BraindeadPrompt == "" {
+			cfg.Agents[i].BraindeadPrompt = cfg.Defaults.BraindeadPrompt
 		}
 		if cfg.Agents[i].Effort == "" {
 			cfg.Agents[i].Effort = cfg.Defaults.Effort
@@ -783,8 +783,8 @@ func Load(path string) (*Config, error) {
 	if cfg.Tools.ExecAutoBackground == 0 && !md.IsDefined("tools", "exec_auto_background") {
 		cfg.Tools.ExecAutoBackground = 10
 	}
-	if !md.IsDefined("tools", "tmux_autopilot") {
-		cfg.Tools.TmuxAutopilot = true
+	if !md.IsDefined("tools", "tmux_braindead") {
+		cfg.Tools.TmuxBraindead = true
 	}
 	if cfg.Tools.TmuxWatchThreshold == "" {
 		cfg.Tools.TmuxWatchThreshold = "30s"
