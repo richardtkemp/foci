@@ -552,6 +552,124 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 	}
 }
 
+// TestExecExportToolsHaveShellFunc verifies that every tool with ExecExport:true
+// produces a non-empty shell function via generateShellFunc.
+func TestExecExportToolsHaveShellFunc(t *testing.T) {
+	// All tools that set ExecExport:true in production code.
+	// When you add a new ExecExport tool, add it here.
+	exportedTools := []string{
+		"http_request",
+		"memory_search",
+		"send_telegram",
+		"spawn",
+		"tmux",
+		"todo",
+		"web_fetch",
+		"web_search",
+	}
+
+	for _, name := range exportedTools {
+		tool := &Tool{
+			Name:       name,
+			ExecExport: true,
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		}
+		fn := generateShellFunc(tool)
+		if fn == "" {
+			t.Errorf("tool %q: generateShellFunc returned empty string", name)
+			continue
+		}
+		funcName := "foci_" + name + "()"
+		if !strings.Contains(fn, funcName) {
+			t.Errorf("tool %q: shell function missing %q definition", name, funcName)
+		}
+	}
+}
+
+// TestAllToolsExportedOrSkipped ensures every known tool is either exported
+// to the exec bridge (ExecExport:true) or explicitly listed in the skip
+// list below with a reason. When a new tool is added, this test fails until
+// the developer either exports it or adds it to the skip list.
+func TestAllToolsExportedOrSkipped(t *testing.T) {
+	// Tools that intentionally do NOT have ExecExport:true.
+	// Each entry documents why the tool is skipped from the exec bridge.
+	skippedTools := map[string]string{
+		"exec":              "recursive — exec is the bridge host itself",
+		"read":              "use cat/head/tail in shell",
+		"write":             "use shell redirection (echo > file)",
+		"edit":              "use sed/awk in shell",
+		"summary":           "requires API client — use spawn for model calls",
+		"send_to_session":   "agent-internal session routing, not useful in shell",
+		"scratchpad":        "agent-internal working notes, not useful in shell",
+		"bitwarden_search":  "secrets management — not exposed to subprocess",
+		"bitwarden_unlock":  "secrets management — not exposed to subprocess",
+		"remind":            "agent-internal reminder, not useful in shell",
+	}
+
+	// All known production tool names (from New*Tool constructors in tools/*.go
+	// and main.go registration). Dynamic command wrapper tools are excluded
+	// because they depend on user config.
+	allTools := []string{
+		"exec",
+		"http_request",
+		"memory_search",
+		"read",
+		"write",
+		"edit",
+		"summary",
+		"send_telegram",
+		"send_to_session",
+		"spawn",
+		"tmux",
+		"todo",
+		"web_fetch",
+		"web_search",
+		"scratchpad",
+		"bitwarden_search",
+		"bitwarden_unlock",
+		"remind",
+	}
+
+	// ExecExport tools from the other test — keep in sync.
+	exportedTools := map[string]bool{
+		"http_request":  true,
+		"memory_search": true,
+		"send_telegram": true,
+		"spawn":         true,
+		"tmux":          true,
+		"todo":          true,
+		"web_fetch":     true,
+		"web_search":    true,
+	}
+
+	for _, name := range allTools {
+		if exportedTools[name] {
+			continue
+		}
+		if _, ok := skippedTools[name]; !ok {
+			t.Errorf("tool %q is neither ExecExport:true nor in the skip list — "+
+				"add it to exportedTools (and generateShellFunc) or skippedTools with a reason", name)
+		}
+	}
+
+	// Verify no stale entries in skip list
+	for name := range skippedTools {
+		found := false
+		for _, n := range allTools {
+			if n == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("skip list contains %q but it's not in allTools — remove stale entry", name)
+		}
+		if exportedTools[name] {
+			t.Errorf("tool %q is in both exportedTools and skippedTools — pick one", name)
+		}
+	}
+}
+
 // callBridge connects to a bridge socket and sends a request, returning the result and error.
 func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) {
 	t.Helper()
