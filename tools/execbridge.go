@@ -446,6 +446,36 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, guard, name)
 
+	case "summary":
+		// Prompt as argument; content from --file or stdin
+		return fmt.Sprintf(`%s() {
+%s
+  local prompt="" file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --file) file="$2"; shift 2 ;;
+      *) prompt="$prompt $1"; shift ;;
+    esac
+  done
+  prompt="${prompt# }"
+  if [ -z "$prompt" ]; then
+    echo "usage: %s <prompt> [--file PATH]" >&2
+    echo "  or: cat file | %s \"prompt\"" >&2
+    return 1
+  fi
+  if [ -z "$file" ] && [ ! -t 0 ]; then
+    file="$(mktemp /tmp/foci-summary-XXXXXX)"
+    cat > "$file"
+    trap "rm -f '$file'" EXIT
+  fi
+  if [ -z "$file" ]; then
+    echo "error: no input — provide --file or pipe stdin" >&2
+    return 1
+  fi
+  foci-call "$(jq -nc --arg f "$file" --arg p "$prompt" '{"tool":"summary","params":{"file":$f,"prompt":$p}}')"
+}
+`, name, guard, name, name)
+
 	case "spawn":
 		// prompt as args, optional --model and --context flags
 		return fmt.Sprintf(`%s() {
