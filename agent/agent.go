@@ -360,7 +360,12 @@ func (a *Agent) manaAndReset() (mana, reset string) {
 	usage, err := a.UsageClient.GetUsage(context.Background())
 	if err != nil {
 		log.Debugf("agent", "mana fetch: %v", err)
-		return a.manaCached, a.manaResetCached // return stale on error
+		// Return stale values only if cache is recent; otherwise return empty
+		// to avoid displaying dangerously outdated mana readings.
+		if time.Since(a.manaCacheTime) > 10*time.Minute {
+			return "", ""
+		}
+		return a.manaCached, a.manaResetCached
 	}
 
 	a.manaCached = anthropic.FormatMana(usage)

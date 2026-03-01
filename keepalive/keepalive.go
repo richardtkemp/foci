@@ -83,9 +83,10 @@ type Runner struct {
 	warningDispatching        bool
 
 	// Cached mana state
-	lastUsagePoll time.Time
-	cachedMana    float64 // 0-100 (100 = fully available)
-	cachedReset   time.Time
+	lastUsagePoll        time.Time
+	cachedMana           float64 // 0-100 (100 = fully available)
+	cachedReset          time.Time
+	manaStalenessTimeout time.Duration
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -113,12 +114,18 @@ type RunnerConfig struct {
 
 // New creates a runner. Call Start() to begin the timer loop.
 func New(cfg RunnerConfig) *Runner {
+	manaStaleness, err := time.ParseDuration(cfg.Background.ManaStalenessTimeout)
+	if err != nil || manaStaleness <= 0 {
+		manaStaleness = 10 * time.Minute
+	}
+
 	now := time.Now()
 	r := &Runner{
 		agentID:                  cfg.AgentID,
 		kaCfg:                    cfg.Keepalive,
 		bgCfg:                    cfg.Background,
 		mfCfg:                    cfg.MemoryFormation,
+		manaStalenessTimeout:     manaStaleness,
 		todoStore:                cfg.TodoStore,
 		usageClient:              cfg.UsageClient,
 		stateStore:               cfg.StateStore,
@@ -505,6 +512,17 @@ func (r *Runner) manaIsGood(ctx context.Context) bool {
 		r.mu.Unlock()
 	}
 
+	// Staleness guard: if the last successful poll is too old, deny spending.
+	r.mu.Lock()
+	pollAge := time.Since(r.lastUsagePoll)
+	staleThreshold := r.manaStalenessTimeout
+	r.mu.Unlock()
+
+	if r.lastUsagePoll.IsZero() || pollAge > staleThreshold {
+		log.Debugf("keepalive", "mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), staleThreshold)
+		return false
+	}
+
 	investInterval, err := time.ParseDuration(r.bgCfg.InvestInterval)
 	if err != nil {
 		investInterval = 30 * time.Minute
@@ -527,7 +545,7 @@ func (r *Runner) manaIsGood(ctx context.Context) bool {
 //  4. Return actualMana > expectedMana
 func ManaIsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration, now time.Time) bool {
 	if resetsAt.IsZero() {
-		return true // no data = allow
+		return false // no data = don't spend
 	}
 
 	timeSinceReset := manaWindow - resetsAt.Sub(now)

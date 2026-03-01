@@ -399,10 +399,11 @@ type MemoryFormationConfig struct {
 
 // BackgroundConfig controls the mana-gated background work timer.
 type BackgroundConfig struct {
-	Enabled        bool   `toml:"enabled"`         // enable background work timer (default: false)
-	Interval       string `toml:"interval"`        // time since last interaction before firing (default: "5m")
-	Prompt         string `toml:"prompt"`          // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
-	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset to let cache invest (default: "30m")
+	Enabled              bool   `toml:"enabled"`                // enable background work timer (default: false)
+	Interval             string `toml:"interval"`               // time since last interaction before firing (default: "5m")
+	Prompt               string `toml:"prompt"`                 // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
+	InvestInterval       string `toml:"invest_interval"`        // quiet period after mana reset to let cache invest (default: "30m")
+	ManaStalenessTimeout string `toml:"mana_staleness_timeout"` // max age of mana reading before considering it stale (default: "10m")
 }
 
 type Config struct {
@@ -1114,6 +1115,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Background.InvestInterval == "" {
 		cfg.Background.InvestInterval = "30m"
 	}
+	if cfg.Background.ManaStalenessTimeout == "" {
+		cfg.Background.ManaStalenessTimeout = "10m"
+	}
 
 	// Memory formation defaults
 	if cfg.MemoryFormation.Interval == "" {
@@ -1151,6 +1155,9 @@ func Load(path string) (*Config, error) {
 			}
 			if bg.InvestInterval == "" {
 				bg.InvestInterval = cfg.Background.InvestInterval
+			}
+			if bg.ManaStalenessTimeout == "" {
+				bg.ManaStalenessTimeout = cfg.Background.ManaStalenessTimeout
 			}
 		}
 		// Memory formation cascade
