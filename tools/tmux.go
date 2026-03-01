@@ -5,12 +5,14 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"foci/log"
@@ -562,17 +564,162 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 
 	log.Debugf("tmux", "kill: name=%s", name)
 
+	// Stop any watches first so the monitor goroutine doesn't fire during cleanup
+	inst.mu.Lock()
+	prefix := name + ":"
+	var toCancel []*watchedSession
+	for key, ws := range inst.watched {
+		if strings.HasPrefix(key, prefix) {
+			toCancel = append(toCancel, ws)
+			delete(inst.watched, key)
+		}
+	}
+	if len(toCancel) > 0 {
+		inst.persistWatches()
+	}
+	inst.mu.Unlock()
+	for _, ws := range toCancel {
+		ws.cancel()
+	}
+
+	// Collect child process trees before killing the session.
+	// tmux kill-session sends SIGHUP, but many processes (e.g. OpenCode)
+	// ignore it and get reparented to PID 1, running forever.
+	pids := tmuxSessionPIDs(name)
+	children := collectDescendants(pids)
+	allPIDs := append(pids, children...)
+
+	// Kill the tmux session
 	out, err := runTmux(ctx, "kill-session", "-t", name)
 	if err != nil {
 		return "", fmt.Errorf("tmux kill-session: %s %w", strings.TrimSpace(out), err)
 	}
+
+	// Clean up child processes that survived SIGHUP
+	killed := terminateProcesses(allPIDs)
 
 	inst.mu.Lock()
 	delete(inst.owned, name)
 	inst.persistOwned()
 	inst.mu.Unlock()
 
-	return fmt.Sprintf("Session killed: %s", name), nil
+	result := fmt.Sprintf("Session killed: %s", name)
+	if killed > 0 {
+		result += fmt.Sprintf(" (%d child process(es) terminated)", killed)
+		log.Infof("tmux", "kill %s: terminated %d orphaned child process(es)", name, killed)
+	}
+
+	return result, nil
+}
+
+// tmuxSessionPIDs returns the PID of each pane's shell in the given tmux session.
+func tmuxSessionPIDs(session string) []int {
+	out, err := runTmux(context.Background(), "list-panes", "-t", session, "-F", "#{pane_pid}")
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if pid, err := strconv.Atoi(line); err == nil && pid > 1 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// collectDescendants returns all descendant PIDs for the given parent PIDs
+// by walking /proc/<pid>/task/*/children recursively.
+func collectDescendants(pids []int) []int {
+	seen := make(map[int]bool)
+	var result []int
+
+	var walk func(pid int)
+	walk = func(pid int) {
+		if seen[pid] {
+			return
+		}
+		seen[pid] = true
+
+		// Read children from /proc/<pid>/task/<pid>/children
+		childrenFile := fmt.Sprintf("/proc/%d/task/%d/children", pid, pid)
+		data, err := os.ReadFile(childrenFile)
+		if err != nil {
+			return
+		}
+		for _, field := range strings.Fields(string(data)) {
+			childPID, err := strconv.Atoi(field)
+			if err != nil || childPID <= 1 {
+				continue
+			}
+			result = append(result, childPID)
+			walk(childPID)
+		}
+	}
+
+	for _, pid := range pids {
+		walk(pid)
+	}
+	return result
+}
+
+// terminateProcesses sends SIGTERM, waits up to 2 seconds, then SIGKILLs
+// any survivors. Returns the number of processes that were signaled.
+func terminateProcesses(pids []int) int {
+	if len(pids) == 0 {
+		return 0
+	}
+
+	// Send SIGTERM to all
+	var alive []int
+	for _, pid := range pids {
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.SIGTERM); err != nil {
+			continue // already dead
+		}
+		alive = append(alive, pid)
+	}
+
+	if len(alive) == 0 {
+		return 0
+	}
+
+	// Wait up to 2 seconds for graceful shutdown
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var stillAlive []int
+		for _, pid := range alive {
+			proc, err := os.FindProcess(pid)
+			if err != nil {
+				continue
+			}
+			// Signal 0 checks if process exists
+			if proc.Signal(syscall.Signal(0)) == nil {
+				stillAlive = append(stillAlive, pid)
+			}
+		}
+		if len(stillAlive) == 0 {
+			return len(alive)
+		}
+		alive = stillAlive
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// SIGKILL survivors
+	for _, pid := range alive {
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		if err := proc.Signal(syscall.SIGKILL); err == nil {
+			log.Debugf("tmux", "SIGKILL pid %d (did not exit after SIGTERM)", pid)
+		}
+	}
+
+	return len(pids)
 }
 
 func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresholdSeconds int) (string, error) {
