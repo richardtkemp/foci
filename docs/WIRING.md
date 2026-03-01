@@ -19,10 +19,10 @@ config.Load(path)                                        ← validates values; l
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
   → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
   → Token resolution (priority order):
-  →   1. Foci OAuth: NewOAuthManager(credentials_file) → auto-refresh → NewClientWithTokenFunc + NewUsageClientWithFunc
+  →   1. Foci OAuth: NewOAuthManagerFromStore(secrets.Store) → reads anthropic.oauth_* from secrets.toml → auto-refresh
   →   2. Static setup-token: anthropic.setup_token from secrets.toml → NewClientWithTimeout + NewUsageClient
   →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
-  →   4. Interactive: if no creds and stdin is terminal → RunAuthFlow() → retry from (1)
+  →   4. Interactive: if no creds and stdin is terminal → RunAuthFlow(store) → writes to secrets.toml → retry from (1)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions

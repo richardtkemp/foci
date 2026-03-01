@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -29,6 +29,13 @@ const (
 	refreshMargin    = 5 * time.Minute
 )
 
+// SecretsStore is the subset of secrets.Store used by OAuthManager.
+type SecretsStore interface {
+	Get(name string) (string, bool)
+	Set(name, value string)
+	Save() error
+}
+
 // OAuthCredentials holds the tokens from an OAuth flow.
 type OAuthCredentials struct {
 	AccessToken  string `json:"access_token"`
@@ -40,16 +47,48 @@ type OAuthCredentials struct {
 type OAuthManager struct {
 	mu         sync.RWMutex
 	creds      OAuthCredentials
-	credsPath  string
+	store      SecretsStore // non-nil for secrets.toml-backed credentials
+	readOnly   bool         // true for CC fallback — don't write back on refresh
 	httpClient *http.Client
 	tokenURL   string // overridable for testing
 	stop       context.CancelFunc
 }
 
-// NewOAuthManager loads credentials from disk and returns a manager.
-// It reads foci-native format first, falling back to Claude Code's
-// claudeAiOauth format. Returns an error if the file is missing or
-// contains no refresh token (e.g. a static setup-token).
+// NewOAuthManagerFromStore loads OAuth credentials from a secrets.Store.
+// Reads anthropic.oauth_access_token, anthropic.oauth_refresh_token,
+// and anthropic.oauth_expires_at. Returns an error if the access token
+// or refresh token is missing.
+func NewOAuthManagerFromStore(store SecretsStore) (*OAuthManager, error) {
+	accessToken, ok := store.Get("anthropic.oauth_access_token")
+	if !ok || accessToken == "" {
+		return nil, fmt.Errorf("no anthropic.oauth_access_token in secrets")
+	}
+
+	refreshToken, _ := store.Get("anthropic.oauth_refresh_token")
+	if refreshToken == "" {
+		return nil, fmt.Errorf("no anthropic.oauth_refresh_token in secrets; run: foci auth")
+	}
+
+	var expiresAt int64
+	if v, ok := store.Get("anthropic.oauth_expires_at"); ok {
+		expiresAt, _ = strconv.ParseInt(v, 10, 64)
+	}
+
+	return &OAuthManager{
+		creds: OAuthCredentials{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresAt:    expiresAt,
+		},
+		store:      store,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+		tokenURL:   OAuthTokenURL,
+	}, nil
+}
+
+// NewOAuthManager loads credentials from a JSON file on disk.
+// Used for the Claude Code credentials fallback (~/.claude/.credentials.json).
+// The manager is read-only: refreshes update in-memory state but don't write back.
 func NewOAuthManager(credsPath string) (*OAuthManager, error) {
 	credsPath = expandHome(credsPath)
 
@@ -69,7 +108,7 @@ func NewOAuthManager(credsPath string) (*OAuthManager, error) {
 
 	return &OAuthManager{
 		creds:      creds,
-		credsPath:  credsPath,
+		readOnly:   true,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		tokenURL:   OAuthTokenURL,
 	}, nil
@@ -120,6 +159,8 @@ func (m *OAuthManager) ExpiresIn() time.Duration {
 }
 
 // Refresh performs an immediate token refresh using the refresh token.
+// For store-backed managers, updated credentials are written to secrets.toml.
+// For read-only managers (CC fallback), credentials are updated in-memory only.
 func (m *OAuthManager) Refresh() error {
 	m.mu.RLock()
 	refreshToken := m.creds.RefreshToken
@@ -139,7 +180,18 @@ func (m *OAuthManager) Refresh() error {
 	m.creds = *newCreds
 	m.mu.Unlock()
 
-	return saveCredentials(m.credsPath, newCreds)
+	if m.readOnly || m.store == nil {
+		return nil
+	}
+	return saveCredsToStore(m.store, newCreds)
+}
+
+// saveCredsToStore writes OAuth credentials to the secrets store.
+func saveCredsToStore(store SecretsStore, creds *OAuthCredentials) error {
+	store.Set("anthropic.oauth_access_token", creds.AccessToken)
+	store.Set("anthropic.oauth_refresh_token", creds.RefreshToken)
+	store.Set("anthropic.oauth_expires_at", strconv.FormatInt(creds.ExpiresAt, 10))
+	return store.Save()
 }
 
 // StartRefresh starts a background goroutine that refreshes the token
@@ -220,46 +272,6 @@ func refreshAccessToken(client *http.Client, tokenURL, refreshToken string) (*OA
 		RefreshToken: tokenResp.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UnixMilli(),
 	}, nil
-}
-
-// saveCredentials atomically writes credentials to disk with 0600 permissions.
-func saveCredentials(path string, creds *OAuthCredentials) error {
-	data, err := json.Marshal(creds)
-	if err != nil {
-		return fmt.Errorf("marshal credentials: %w", err)
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create credentials dir: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".creds-*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename credentials: %w", err)
-	}
-	return nil
 }
 
 // --- PKCE helpers ---
@@ -345,10 +357,9 @@ func exchangeCodeWithURL(ctx context.Context, tokenURL, code, verifier string) (
 }
 
 // RunAuthFlow runs the interactive OAuth PKCE flow: prints an auth URL,
-// reads the authorization code from stdin, exchanges it, and saves credentials.
-func RunAuthFlow(credsPath string) error {
-	credsPath = expandHome(credsPath)
-
+// reads the authorization code from stdin, exchanges it, and saves credentials
+// to the secrets store.
+func RunAuthFlow(store SecretsStore) error {
 	verifier, challenge, err := GeneratePKCE()
 	if err != nil {
 		return fmt.Errorf("generate PKCE: %w", err)
@@ -371,10 +382,10 @@ func RunAuthFlow(credsPath string) error {
 		return fmt.Errorf("exchange code: %w", err)
 	}
 
-	if err := saveCredentials(credsPath, creds); err != nil {
+	if err := saveCredsToStore(store, creds); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 
-	fmt.Printf("Credentials saved to %s\n", credsPath)
+	fmt.Println("Credentials saved to secrets.toml")
 	return nil
 }

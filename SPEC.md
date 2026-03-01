@@ -899,7 +899,9 @@ model = "claude-haiku-4-5"
 workspace = "/home/rich/git/openclaw/workspace"
 
 [anthropic]
-setup_token = "sk-ant-oat01-..."  # static override (optional — use foci auth for OAuth PKCE)
+oauth_access_token = "sk-ant-oat01-..."   # written by foci auth, auto-updated on refresh
+oauth_refresh_token = "sk-ant-ort01-..."
+oauth_expires_at = 1772334580401
 
 [telegram]
 bot_token = "8351531463:AAH..."

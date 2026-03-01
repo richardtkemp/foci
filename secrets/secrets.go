@@ -75,6 +75,8 @@ func Load(path string) (*Store, error) {
 			switch v := value.(type) {
 			case string:
 				s.values[section+"."+key] = v
+			case int64:
+				s.values[section+"."+key] = strconv.FormatInt(v, 10)
 			case []interface{}:
 				if key == "allowed_hosts" {
 					hosts := make([]string, 0, len(v))
@@ -110,6 +112,8 @@ func flattenInto(agentID string, table map[string]interface{}, s *Store) {
 			switch tv := val.(type) {
 			case string:
 				s.agentValues[agentID][section+"."+key] = tv
+			case int64:
+				s.agentValues[agentID][section+"."+key] = strconv.FormatInt(tv, 10)
 			case []interface{}:
 				if key == "allowed_hosts" {
 					hosts := make([]string, 0, len(tv))
@@ -234,7 +238,11 @@ func (s *Store) Save() error {
 			}
 			sort.Strings(keys)
 			for _, k := range keys {
-				fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
+				if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
+					fmt.Fprintf(&buf, "%s = %s\n", k, pairs[k])
+				} else {
+					fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
+				}
 			}
 		}
 		if hosts, ok := s.allowedHosts[sec]; ok && len(hosts) > 0 {
@@ -305,7 +313,11 @@ func (s *Store) Save() error {
 					}
 					sort.Strings(keys)
 					for _, k := range keys {
-						fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
+						if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
+							fmt.Fprintf(&buf, "%s = %s\n", k, pairs[k])
+						} else {
+							fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
+						}
 					}
 				}
 				if s.agentHosts != nil {

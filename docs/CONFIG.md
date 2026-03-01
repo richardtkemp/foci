@@ -161,9 +161,10 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 |-----|------|---------|-------------|
 | `setup_token` | string | `""` | Static Anthropic setup-token. Overridden by `secrets.toml` `[anthropic] setup_token`. Used when OAuth credentials are unavailable. No auto-refresh. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
-| `credentials_file` | string | `"~/.config/foci/oauth.json"` | Path to foci's OAuth credentials file. Written by `foci auth`. Used for OAuth PKCE with auto-refresh. See [AUTH.md](AUTH.md). |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
+
+OAuth credentials (`oauth_access_token`, `oauth_refresh_token`, `oauth_expires_at`) are stored in `secrets.toml` under `[anthropic]`, managed by `foci auth` and auto-refresh. See [AUTH.md](AUTH.md).
 
 ---
 
@@ -736,7 +737,12 @@ Credentials file. Lives alongside `foci.toml`. Protected at the OS level by the 
 
 ```toml
 [anthropic]
-setup_token = "sk-ant-..."
+# Written by foci auth, auto-updated on refresh:
+oauth_access_token = "sk-ant-oat01-..."
+oauth_refresh_token = "sk-ant-ort01-..."
+oauth_expires_at = 1772334580401
+# Or static fallback (no auto-refresh):
+# setup_token = "sk-ant-..."
 
 [telegram]
 bot_token = "123456:ABC..."
