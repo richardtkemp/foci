@@ -1,38 +1,114 @@
-# Foci config — minimal example setup
+# Foci Configuration Example
+#
+# Copy this file to your agent's home directory and edit it.
+# Most settings have sensible defaults — you only need to configure
+# what's different from the defaults. See docs/CONFIG.md for full reference.
+#
+# Secrets (API keys, tokens) go in secrets.toml in the same directory.
+# See secrets.toml.example for the format.
 
-[agent]
-id = "main"
-model = "claude-haiku-4-5"
-workspace = "/path/to/your/workspace"
-keepalive_interval = "45m"
+# ─── Defaults ─────────────────────────────────────────────────────────
+# Global defaults inherited by all agents. Agents can override any of these.
+[defaults]
+model = "claude-sonnet-4-20250514"    # default model for all agents
+# effort = "low"                      # thinking effort: low, medium, high
+# thinking = "off"                    # extended thinking: off, adaptive
 
-[anthropic]
-token = "YOUR_ANTHROPIC_TOKEN_HERE"
+# ─── Agent ────────────────────────────────────────────────────────────
+# Define one or more agents. Each agent gets its own sessions, memory,
+# and Telegram bot. Most paths are derived from the agent ID automatically.
+#
+# Smart defaults (derived from agent ID):
+#   workspace  → $HOME/ID              (e.g. /home/foci/myagent)
+#   name       → capitalised ID        (e.g. "Myagent")
+#   memory     → $workspace/memory     (auto-created)
+#   telegram   → bot named "ID"        (from [telegram.bots.ID])
 
+[[agents]]
+id = "myagent"                         # unique identifier (used in session keys)
+# name = "My Agent"                    # human-readable name (defaults to capitalised id)
+# emoji = "🤖"                         # shown in Telegram notifications
+# model = "claude-sonnet-4-20250514"   # override default model for this agent
+# effort = "low"                       # override default effort
+# workspace = "/home/foci/myagent"     # agent's working directory (default: $HOME/id)
+# max_tool_loops = 25                  # max tool calls per turn
+# max_output_tokens = 16384            # max response tokens
+
+# System prompt files loaded in order (paths relative to workspace):
+system_files = [
+  "character/SOUL.md",
+  "character/CRAFT.md",
+]
+
+# Background task scheduling (optional)
+# [agents.background]
+# cron = "*/10 * * * *"               # run background tasks on this schedule
+# mana_threshold = 30                  # only run if mana > this %
+# prompt = "Check your background todo list and work on the highest priority open item."
+
+# Keepalive (optional — periodic check-in when idle)
+# [agents.keepalive]
+# cron = "0 */2 * * *"                # check in every 2 hours
+# prompt = "Check on anything that needs attention."
+
+# Compaction settings (optional)
+# [agents.compaction]
+# effort = "high"                      # use higher effort for compaction (quality matters)
+
+# ─── Anthropic ────────────────────────────────────────────────────────
+# Authentication is configured in secrets.toml. Run `foci auth` to set up
+# OAuth (recommended for Max/Pro plans) or add a setup token manually.
+# See docs/AUTH.md for details.
+
+# ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
-bot_token = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
-allowed_users = ["YOUR_TELEGRAM_USER_ID_HERE"]
+allowed_users = ["YOUR_TELEGRAM_USER_ID"]  # Telegram user IDs that can talk to the agent
 
+# Bot tokens go in secrets.toml:
+#   [telegram.bots.myagent]
+#   token = "123456:ABC-..."
+
+# Per-bot display settings (optional):
+# [telegram.bots.myagent]
+# show_tool_calls = "text"             # off, text, or full
+# show_thinking = false                # show extended thinking blocks
+# display_width = 72                   # wrap width for tool call display
+
+# ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]
-dir = "/path/to/your/sessions"
-compaction_threshold = 0.8
+# dir = "/home/foci/data/sessions"     # session JSONL storage (default: $HOME/data/sessions)
+compaction_threshold = 0.8              # compact when context reaches 80%
 
-# Load summary prompt from file (takes precedence over inline compaction_summary_prompt)
-# compaction_summary_prompt_file = "/home/foci/shared/prompts/compaction-summary.md"
+# Compaction summary prompt (loaded from file or inline):
+# compaction_summary_prompt_file = "shared/prompts/compaction-summary.md"
+# compaction_summary_prompt = "Summarise the conversation so far..."
 
-# Or inline (used if _file is not set or file is missing):
-# compaction_summary_prompt = "Please provide a concise summary of our entire conversation..."
+# ─── Skills ───────────────────────────────────────────────────────────
+# [skills]
+# dirs = ["/home/foci/shared/skills"]  # directories to scan for SKILL.md files
 
-# Per-agent override: use higher effort for compaction (compaction quality matters)
-# compaction_effort = "high"
+# ─── Memory ───────────────────────────────────────────────────────────
+# [memory]
+# dir = "/home/foci/data"              # where memory.db lives (default: data_dir)
+# Per-agent memory sources are auto-configured from workspace/memory/
 
-[environment]
-# enabled = true                          # inject environment block as first system block
-# docs_path = "/path/to/your/docs"        # platform docs directory (relative paths resolve against $HOME)
-
-[memory]
-dir = "/path/to/your/memory"
-
+# ─── HTTP ─────────────────────────────────────────────────────────────
 [http]
 port = 18791
-bind = "127.0.0.1"
+bind = "127.0.0.1"                     # listen only on localhost
+
+# ─── Voice (optional) ────────────────────────────────────────────────
+# [voice]
+# ws_enabled = true                    # enable WebSocket endpoint for voice clients
+# Voice API key goes in secrets.toml: voice.api_key = "..."
+
+# ─── Logging ──────────────────────────────────────────────────────────
+# [logging]
+# level = "info"                       # debug, info, warn, error
+# dir = "/home/foci/logs"              # log directory (default: $HOME/logs)
+# api_log = true                       # log API calls to api.jsonl
+# payload_log = false                  # log full API payloads (large!)
+
+# ─── Environment Block ───────────────────────────────────────────────
+# [environment]
+# enabled = true                       # inject environment info into system prompt
