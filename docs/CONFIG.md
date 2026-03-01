@@ -125,7 +125,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `max_summary_chars` | int | `0` | Default max chars to auto-summarise. 0 = use `[tools] max_summary_chars`. |
 | `auto_summarise` | bool | nil | Default auto-summarise setting. Nil = use `[tools] auto_summarise`. |
 | `search_provider` | string | `"anthropic"` | Default web search provider: `"anthropic"` (server-side) or `"brave"` (client-side). |
-| `fetch_provider` | string | `"builtin"` | Default web fetch provider: `"builtin"` (client-side) or `"anthropic"` (server-side). |
+| `fetch_provider` | string | `"builtin"` | Default web fetch provider: `"builtin"` (client-side) or `"anthropic"` (server-side). Builtin is default because Anthropic's server-side fetch bypasses the tool result guard and auto-summarise — raw page text (including nav, footers, etc.) goes straight into context unguarded. Builtin fetch is cleaner, guarded, and auto-summarised. |
 
 Example:
 ```toml
