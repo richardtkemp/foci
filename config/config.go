@@ -279,6 +279,14 @@ type SkillsConfig struct {
 	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
 }
 
+type ResourcesConfig struct {
+	MemoryGuardEnabled          bool    `toml:"memory_guard_enabled"`           // enable system memory guard (default true)
+	MemoryGuardInterval         string  `toml:"memory_guard_interval"`          // check interval (default "60s")
+	MemoryWarnPercent           int     `toml:"memory_warn_percent"`            // warn threshold as % of total RAM (default 25)
+	MemoryKillPercent           int     `toml:"memory_kill_percent"`            // kill threshold as % of total RAM (default 40)
+	MemoryPressureThreshold     float64 `toml:"memory_pressure_threshold"`      // PSI avg10 threshold to require before acting (default 10.0)
+}
+
 type ToolsConfig struct {
 	MaxResultChars          int    `toml:"max_result_chars"`           // max chars before writing result to file (default 15000)
 	TempDir                 string `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci-tool-results)
@@ -386,6 +394,7 @@ type Config struct {
 	ManaWarnings       ManaWarningsConfig    `toml:"usage_warnings"`
 	Environment        EnvironmentConfig     `toml:"environment"`
 	Skills             SkillsConfig          `toml:"skills"`
+	Resources          ResourcesConfig       `toml:"resources"`
 	Tools              ToolsConfig           `toml:"tools"`
 	Keepalive          KeepaliveConfig       `toml:"keepalive"`
 	Background         BackgroundConfig      `toml:"background"`
@@ -526,6 +535,20 @@ func validate(cfg *Config) error {
 		if err := ValidateMemoryThreshold(kv.v); err != nil {
 			return fmt.Errorf("[tools] %s = %q: %w", kv.k, kv.v, err)
 		}
+	}
+
+	// Resources
+	if _, err := time.ParseDuration(cfg.Resources.MemoryGuardInterval); err != nil {
+		return fmt.Errorf("[resources] memory_guard_interval = %q: %w", cfg.Resources.MemoryGuardInterval, err)
+	}
+	if cfg.Resources.MemoryWarnPercent < 0 || cfg.Resources.MemoryWarnPercent > 100 {
+		return fmt.Errorf("[resources] memory_warn_percent = %d: must be between 0 and 100", cfg.Resources.MemoryWarnPercent)
+	}
+	if cfg.Resources.MemoryKillPercent < 0 || cfg.Resources.MemoryKillPercent > 100 {
+		return fmt.Errorf("[resources] memory_kill_percent = %d: must be between 0 and 100", cfg.Resources.MemoryKillPercent)
+	}
+	if cfg.Resources.MemoryPressureThreshold < 0 {
+		return fmt.Errorf("[resources] memory_pressure_threshold = %g: must not be negative", cfg.Resources.MemoryPressureThreshold)
 	}
 
 	// Telegram
@@ -820,6 +843,22 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.RotationMaxLineSize == "" {
 		cfg.Logging.RotationMaxLineSize = "64MB"
+	}
+	// Resources defaults
+	if !md.IsDefined("resources", "memory_guard_enabled") {
+		cfg.Resources.MemoryGuardEnabled = true
+	}
+	if cfg.Resources.MemoryGuardInterval == "" {
+		cfg.Resources.MemoryGuardInterval = "60s"
+	}
+	if cfg.Resources.MemoryWarnPercent == 0 && !md.IsDefined("resources", "memory_warn_percent") {
+		cfg.Resources.MemoryWarnPercent = 25
+	}
+	if cfg.Resources.MemoryKillPercent == 0 && !md.IsDefined("resources", "memory_kill_percent") {
+		cfg.Resources.MemoryKillPercent = 40
+	}
+	if cfg.Resources.MemoryPressureThreshold == 0 && !md.IsDefined("resources", "memory_pressure_threshold") {
+		cfg.Resources.MemoryPressureThreshold = 10.0
 	}
 	// Bitwarden defaults
 	if cfg.Bitwarden.SessionFile == "" {
