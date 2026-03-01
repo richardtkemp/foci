@@ -130,9 +130,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if cfg.Defaults.InjectAgentWarnings {
 		add("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
 	}
-	if cfg.Defaults.TTSRate != 0 {
-		add("defaults", "tts_rate", cfg.Defaults.TTSRate)
-	}
 	if cfg.Defaults.ShowToolCalls != nil {
 		add("defaults", "show_tool_calls", string(*cfg.Defaults.ShowToolCalls))
 	}
@@ -368,9 +365,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	}
 	if cfg.Defaults.InjectAgentWarnings {
 		addDefault("inject_agent_warnings", cfg.Defaults.InjectAgentWarnings, false)
-	}
-	if cfg.Defaults.TTSRate != 0 {
-		addDefault("tts_rate", cfg.Defaults.TTSRate, agent.TTSRate != cfg.Defaults.TTSRate)
 	}
 	if cfg.Defaults.ShowToolCalls != nil {
 		addDefault("show_tool_calls", string(*cfg.Defaults.ShowToolCalls), false)
@@ -791,8 +785,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if len(agent.MultiballBots) == 0 {
 		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "references keys in [telegram.bots] map"})
 	}
-	if agent.TTSRate == 0 && cfg.Defaults.TTSRate == 0 {
-		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate override"})
+	if agent.TTSRate == 0 {
+		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate override (0 = use [voice] tts_rate)"})
 	}
 	// Only show agent override options when the global fallback isn't covering them.
 	if agent.StartupNotification == nil && !cfg.Telegram.EnableStartupNotify {

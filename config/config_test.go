@@ -2235,7 +2235,6 @@ braindead_threshold = 20
 braindead_prompt = "watch it"
 effort = "high"
 thinking = "adaptive"
-tts_rate = 1.5
 duplicate_messages = true
 inject_agent_warnings = true
 compaction_effort = "low"
@@ -2276,9 +2275,6 @@ effort = "low"
 	}
 	if bare.Thinking != "adaptive" {
 		t.Errorf("bare Thinking = %q", bare.Thinking)
-	}
-	if bare.TTSRate != 1.5 {
-		t.Errorf("bare TTSRate = %f", bare.TTSRate)
 	}
 	if !bare.DuplicateMessages {
 		t.Error("bare DuplicateMessages should be true")

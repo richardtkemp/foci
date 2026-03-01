@@ -112,7 +112,7 @@ type AgentConfig struct {
 	BraindeadPrompt         string            `toml:"braindead_prompt"`          // warning text injected as user message
 	Effort                  string            `toml:"effort"`                    // effort level: "low" (default), "medium", "high"
 	Thinking                string            `toml:"thinking"`                  // thinking mode: "adaptive" (default) or "off"
-	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
+	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use [voice] tts_rate)
 	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
 	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
@@ -349,7 +349,6 @@ type DefaultsConfig struct {
 	BraindeadPrompt     string           `toml:"braindead_prompt"`      // default braindead prompt
 	Effort              string           `toml:"effort"`                // default effort level: "low" (default), "medium", "high"
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "adaptive" (default) or "off"
-	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
 	DisplayWidth        *int             `toml:"display_width"`         // default display_width (nil = use telegram.display_width)
