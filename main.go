@@ -175,6 +175,10 @@ func main() {
 	if v, ok := store.Get("anthropic.token"); ok {
 		anthropicToken = v
 	}
+	anthropicAdminKey := cfg.Anthropic.AdminKey
+	if v, ok := store.Get("anthropic.admin_key"); ok {
+		anthropicAdminKey = v
+	}
 	anthropicOAuthToken := cfg.Anthropic.OAuthToken
 	if v, ok := store.Get("anthropic.oauth_token"); ok {
 		anthropicOAuthToken = v
@@ -250,6 +254,16 @@ func main() {
 	}
 	client := anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
 	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
+
+	// Admin client for usage/mana queries and token counting.
+	// Falls back to main token if admin_key is not configured.
+	adminClient := client
+	if anthropicAdminKey != "" {
+		adminClient = anthropic.NewClientWithTimeout(anthropicAdminKey, httpTimeout)
+		log.Infof("main", "using admin_key for usage and token counting")
+	} else {
+		log.Warnf("main", "no anthropic.admin_key configured — usage/mana and token counting will use the main token (may not work with setup-token auth)")
+	}
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
@@ -459,11 +473,14 @@ func main() {
 	// Bot manager — owns all Telegram bots
 	botMgr := telegram.NewBotManager()
 
-	// Shared: usage client — uses the same token as the messages API.
-	// OAuth tokens (sk-ant-oat01-*) work for both; fallback to explicit oauth_token if set.
-	usageToken := anthropicToken
-	if anthropicOAuthToken != "" {
+	// Shared: usage client — prefers admin_key (console API key), falls back to
+	// oauth_token, then main token. admin_key is the intended auth for usage queries.
+	usageToken := anthropicAdminKey
+	if usageToken == "" && anthropicOAuthToken != "" {
 		usageToken = anthropicOAuthToken
+	}
+	if usageToken == "" {
+		usageToken = anthropicToken
 	}
 	usageClient := anthropic.NewUsageClient(usageToken)
 
@@ -517,6 +534,7 @@ func main() {
 			cfg:                 cfg,
 			configPath:          configPath,
 			client:              client,
+			adminClient:         adminClient,
 			sessions:            sessions,
 			store:               store,
 			bwStore:             bwStore,
@@ -1156,6 +1174,7 @@ type setupParams struct {
 	cfg                 *config.Config
 	configPath          string
 	client              *anthropic.Client
+	adminClient         *anthropic.Client // for usage/token counting (admin_key or fallback to main)
 	sessions            *session.Store
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
@@ -1717,21 +1736,21 @@ func setupAgent(p setupParams) *agentInstance {
 
 				go func() {
 					defer wg.Done()
-					fullCount, fullErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
+					fullCount, fullErr = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						System: allSystem, Messages: messages, Tools: toolDefs,
 					})
 				}()
 				go func() {
 					defer wg.Done()
-					systemCount, systemErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
+					systemCount, systemErr = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						System: allSystem, Messages: dummyMsgs, Tools: toolDefs,
 					})
 				}()
 				go func() {
 					defer wg.Done()
-					baselineCount, baselineErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
+					baselineCount, baselineErr = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						Messages: dummyMsgs, Tools: toolDefs,
 					})
@@ -1740,7 +1759,7 @@ func setupAgent(p setupParams) *agentInstance {
 					i, sec := i, sec
 					go func() {
 						defer wg.Done()
-						rawSecCounts[i], rawSecErrs[i] = p.client.CountTokens(ctx, &anthropic.MessageRequest{
+						rawSecCounts[i], rawSecErrs[i] = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
 							Model: ag.Model, MaxTokens: maxOutput,
 							System: sec.blocks, Messages: dummyMsgs, Tools: toolDefs,
 						})

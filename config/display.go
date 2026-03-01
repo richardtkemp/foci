@@ -302,6 +302,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 
 	// anthropic (secrets redacted)
 	add("anthropic", "token", redactString(cfg.Anthropic.Token))
+	add("anthropic", "admin_key", redactString(cfg.Anthropic.AdminKey))
 	add("anthropic", "oauth_token", redactString(cfg.Anthropic.OAuthToken))
 	add("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	add("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
@@ -545,6 +546,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	}
 	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
 	addGlobal("anthropic", "token", redactString(cfg.Anthropic.Token))
+	addGlobal("anthropic", "admin_key", redactString(cfg.Anthropic.AdminKey))
 	addGlobal("anthropic", "oauth_token", redactString(cfg.Anthropic.OAuthToken))
 	addGlobal("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	addGlobal("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
@@ -718,6 +720,7 @@ type displayTelegram struct {
 
 type displayAnthropic struct {
 	Token           string `toml:"token"`
+	AdminKey        string `toml:"admin_key"`
 	OAuthToken      string `toml:"oauth_token"`
 	BraveAPIKey     string `toml:"brave_api_key"`
 	CredentialsFile string `toml:"credentials_file"`
@@ -757,6 +760,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Database:      cfg.Database,
 		Anthropic: displayAnthropic{
 			Token:           redactString(cfg.Anthropic.Token),
+			AdminKey:        redactString(cfg.Anthropic.AdminKey),
 			OAuthToken:      redactString(cfg.Anthropic.OAuthToken),
 			BraveAPIKey:     redactString(cfg.Anthropic.BraveAPIKey),
 			CredentialsFile: cfg.Anthropic.CredentialsFile,

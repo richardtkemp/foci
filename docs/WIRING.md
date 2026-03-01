@@ -19,8 +19,9 @@ config.Load(path)                                        ← validates values; l
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
   → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
   → Token resolution: secrets.toml > foci.toml > credentials_file (claude setup-token)
-  → anthropic.NewClientWithTimeout(token, timeout)         ← static long-lived token
-  → UsageClient via NewUsageClient(token)                  ← same token for usage API
+  → anthropic.NewClientWithTimeout(token, timeout)         ← messages client (OAuth setup-token)
+  → adminClient = NewClientWithTimeout(admin_key, timeout) ← usage/token counting (console API key, falls back to main)
+  → UsageClient via NewUsageClient(admin_key || token)     ← mana queries
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
@@ -289,16 +290,21 @@ The **last** block gets `cache_control: {type: "ephemeral"}`. Order matters: mos
 
 ## Anthropic API Client (`anthropic/`)
 
-Two clients:
+Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
 
 1. **MessageClient** (`client.go`) — messages API with prompt caching
    - Sends model requests with system prompt + conversation history
-   - Uses long-lived OAuth token from `claude setup-token` (1-year lifetime)
+   - Uses `anthropic.token` — OAuth setup-token from `claude setup-token` (1-year lifetime)
    - Sets `anthropic-beta: oauth-2025-04-20` header for OAuth token auth
 
-2. **UsageClient** (`usage.go`) — OAuth usage API
+2. **AdminClient** (`client.go`) — token counting
+   - Same `Client` type, different key: `anthropic.admin_key` (console API key)
+   - Used for `/v1/messages/count_tokens` endpoint
+   - Falls back to main token if admin_key is not configured
+
+3. **UsageClient** (`usage.go`) — mana/usage API
    - Queries `/api/oauth/usage` endpoint
-   - Requires OAuth token (`sk-ant-oat01-...`)
+   - Uses admin_key, falls back to oauth_token, then main token
    - Returns utilization for 5-hour window, 7-day limits, extra usage billing
 
 ## Prompt Caching

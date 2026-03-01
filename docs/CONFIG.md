@@ -155,11 +155,12 @@ The `aliases` map allows shorthand names to be resolved to full model IDs in bot
 
 ## `[anthropic]`
 
-Anthropic API credentials. Prefer `secrets.toml` for tokens.
+Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.md) for setup guide.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `token` | string | `""` | Anthropic API key or OAuth token from `claude setup-token`. Overridden by `secrets.toml` `[anthropic] token`. |
+| `admin_key` | string | `""` | Console API key for usage/mana queries and token counting. Overridden by `secrets.toml` `[anthropic] admin_key`. Falls back to main token if not set. See [docs/AUTH.md](AUTH.md). |
 | `oauth_token` | string | `""` | OAuth access token for the usage API (overrides `token` for usage only). Overridden by `secrets.toml` `[anthropic] oauth_token`. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
 | `credentials_file` | string | `"~/.claude/.credentials.json"` | Path to Claude Code credentials file. Fallback token source when `token` is not set. Reads the `accessToken` from the `claudeAiOauth` section. |
