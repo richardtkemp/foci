@@ -920,9 +920,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 					limit := compaction.ContextLimit(a.Model)
 					percent := int(float64(totalTokens) / float64(limit) * 100)
 					log.Infof("agent", "context at %d%% capacity for no_compact session", percent)
-					if a.Warnings != nil {
-						a.Warnings.Push("WARN", "agent", fmt.Sprintf("Context at ~%d%% capacity. This session cannot compact. Consider wrapping up.", percent))
-					}
 				} else {
 					oldCount := len(messages)
 					if a.CompactionNotifyFunc != nil {
