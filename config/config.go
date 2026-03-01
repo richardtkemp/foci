@@ -138,6 +138,8 @@ type AgentConfig struct {
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
 	TmuxBraindead       *bool  `toml:"tmux_braindead"`        // per-agent tmux braindead override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
+	SummaryContextTurns int    `toml:"summary_context_turns"` // recent turns for auto-summary context (0 = use global)
+	SummaryContextChars int    `toml:"summary_context_chars"` // max chars of context for auto-summary (0 = use global)
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
 	Background      BackgroundConfig      `toml:"background"`       // per-agent background override
@@ -309,6 +311,8 @@ type ToolsConfig struct {
 	TmuxBraindead           bool   `toml:"tmux_braindead"`             // auto-unwatch on inactivity, auto-watch on send (default true)
 	TmuxWatchThreshold      string `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
+	SummaryContextTurns     int    `toml:"summary_context_turns"`      // recent turns for auto-summary context (default 5)
+	SummaryContextChars     int    `toml:"summary_context_chars"`      // max chars of context for auto-summary (default 6000)
 }
 
 type PromptRule struct {
@@ -339,8 +343,10 @@ type DefaultsConfig struct {
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
 	DisplayWidth        *int             `toml:"display_width"`         // default display_width (nil = use telegram.display_width)
-	SystemFiles      []string         `toml:"system_files"`       // default system file list
-	CompactionEffort string           `toml:"compaction_effort"`  // default compaction effort (empty = use session effort)
+	SystemFiles         []string         `toml:"system_files"`          // default system file list
+	CompactionEffort    string           `toml:"compaction_effort"`     // default compaction effort (empty = use session effort)
+	SummaryContextTurns int              `toml:"summary_context_turns"` // default summary_context_turns (default 5)
+	SummaryContextChars int              `toml:"summary_context_chars"` // default summary_context_chars (default 6000)
 }
 
 // ModelsConfig holds model-related configuration.
@@ -969,6 +975,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.TmuxMemoryKill == "" {
 		cfg.Tools.TmuxMemoryKill = "30%"
+	}
+	if cfg.Tools.SummaryContextTurns == 0 {
+		cfg.Tools.SummaryContextTurns = 5
+	}
+	if cfg.Tools.SummaryContextChars == 0 {
+		cfg.Tools.SummaryContextChars = 6000
 	}
 
 	// Telegram defaults

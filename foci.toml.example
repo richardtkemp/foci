@@ -25,6 +25,8 @@ model = "claude-sonnet-4-20250514"
 # show_thinking = "off"                   # off, compact, true
 # display_width = 44                      # divider width in Telegram
 # system_files = ["character/SOUL.md"]    # default system file list
+# summary_context_turns = 5              # recent turns for auto-summary context
+# summary_context_chars = 6000           # max chars of context for auto-summary
 
 # ─── Model aliases ───────────────────────────────────────────────────
 # [models]
@@ -67,6 +69,8 @@ id = "myagent"
 # max_upload_file_size = 52428800         # 50MB
 # tmux_braindead = true
 # tmux_watch_threshold = "30s"
+# summary_context_turns = 5
+# summary_context_chars = 6000
 
 system_files = [
   "character/SOUL.md",
@@ -264,6 +268,8 @@ bind = "127.0.0.1"
 # tmux_braindead = true
 # tmux_watch_threshold = "30s"
 # max_upload_file_size = 52428800
+# summary_context_turns = 5
+# summary_context_chars = 6000
 
 # ─── Resources ────────────────────────────────────────────────────────
 # [resources]

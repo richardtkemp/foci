@@ -474,7 +474,7 @@ Wired in `main.go` after tmux memory monitor. Warning callback iterates `agents`
 
 ### Tool Result Guard
 
-If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. The agent receives only a guard message with the file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown) — no partial content is included. This prevents large results from bloating session history indefinitely.
+If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. Before returning a guard message, the agent makes a side-call to Haiku to auto-summarise the oversized content, including recent conversation context (configurable via `summary_context_turns` and `summary_context_chars`). The agent receives the summary plus a reference to the saved file for deeper inspection. If the Haiku call fails (API error, context cancelled), falls back to the original guard message with file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown). This prevents large results from bloating session history while giving the agent useful visibility into the content.
 
 ## Slash Commands (`command/`)
 
