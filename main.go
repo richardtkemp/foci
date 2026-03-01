@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -924,8 +923,14 @@ func main() {
 
 				if resp != "" {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
-						if err := bot.SendText(resp); err != nil {
-							log.Errorf("http", "async send telegram delivery: %v", err)
+						if chatID := tools.ChatIDFromSessionKey(sessionKey); chatID != 0 {
+							if err := bot.SendTextToChat(chatID, resp); err != nil {
+								log.Errorf("http", "async send telegram delivery to chat %d: %v", chatID, err)
+							}
+						} else {
+							if err := bot.SendText(resp); err != nil {
+								log.Errorf("http", "async send telegram delivery: %v", err)
+							}
 						}
 					}
 				}
@@ -1086,7 +1091,11 @@ func main() {
 
 				if resp != "" && !silent {
 					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
-						if err := bot.SendText(resp); err != nil {
+						if chatID := tools.ChatIDFromSessionKey(branchKey); chatID != 0 {
+							if err := bot.SendTextToChat(chatID, resp); err != nil {
+								log.Errorf("wake", "async telegram delivery to chat %d: %v", chatID, err)
+							}
+						} else if err := bot.SendText(resp); err != nil {
 							log.Errorf("wake", "async telegram delivery: %v", err)
 						}
 					}
@@ -1315,9 +1324,10 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent tool registry
 	registry := tools.NewRegistry()
 
-	// Async notifier: delivers results from auto-backgrounded exec commands
-	// and tmux watch inactivity alerts to the agent session.
-	// The response is delivered to Telegram via the primary bot's SendText.
+	// Async notifier: delivers results from auto-backgrounded exec commands,
+	// tmux watch inactivity alerts, and send_to_session (reply_to=caller)
+	// to the agent session. Extracts chat ID from the session key for
+	// per-user chat routing.
 	notifier := tools.NewAsyncNotifier(func(originSession, message string) {
 		go func() {
 			// Route to the originating session; fall back to default if unknown
@@ -1347,8 +1357,17 @@ func setupAgent(p setupParams) *agentInstance {
 				log.Warnf("async_notify", "no primary bot for agent %s, response not delivered", acfg.ID)
 				return
 			}
-			if err := bot.SendText(resp); err != nil {
-				log.Errorf("async_notify", "telegram delivery: %v", err)
+			// Extract chat ID from session key (agent:X:chat:CHATID) for
+			// per-user chat routing. Falls back to bot's default chat if
+			// the session key doesn't contain a chat segment.
+			if chatID := tools.ChatIDFromSessionKey(target); chatID != 0 {
+				if err := bot.SendTextToChat(chatID, resp); err != nil {
+					log.Errorf("async_notify", "telegram delivery to chat %d: %v", chatID, err)
+				}
+			} else {
+				if err := bot.SendText(resp); err != nil {
+					log.Errorf("async_notify", "telegram delivery: %v", err)
+				}
 			}
 		}()
 	})
@@ -1509,13 +1528,9 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 
 			// Extract chat ID from session key (agent:X:chat:CHATID) for
-			// targeted delivery. Falls back to bot's default chat if the
-			// session key doesn't contain a chat segment.
-			var chatID int64
-			if len(parts) >= 4 && parts[2] == "chat" {
-				chatID, _ = strconv.ParseInt(parts[3], 10, 64)
-			}
-			if chatID != 0 {
+			// per-user chat routing. Falls back to bot's default chat if
+			// the session key doesn't contain a chat segment.
+			if chatID := tools.ChatIDFromSessionKey(targetSessionKey); chatID != 0 {
 				if err := bot.SendTextToChat(chatID, resp); err != nil {
 					log.Errorf("session_notify", "telegram delivery to chat %d: %v", chatID, err)
 				}
@@ -1687,6 +1702,43 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewTmuxCommand(tmuxTool.Execute))
+	if p.todoStore != nil {
+		todoListFn := func(tag string) ([]command.TodoItem, error) {
+			items, err := p.todoStore.List(acfg.ID, "open", tag)
+			if err != nil {
+				return nil, err
+			}
+			result := make([]command.TodoItem, len(items))
+			for i, item := range items {
+				result[i] = command.TodoItem{
+					ID:       item.ID,
+					Text:     item.Text,
+					Status:   item.Status,
+					Priority: item.Priority,
+					Tags:     item.Tags,
+				}
+			}
+			return result, nil
+		}
+		todoSearchFn := func(query string) ([]command.TodoItem, error) {
+			items, err := p.todoStore.Search(acfg.ID, query)
+			if err != nil {
+				return nil, err
+			}
+			result := make([]command.TodoItem, len(items))
+			for i, item := range items {
+				result[i] = command.TodoItem{
+					ID:       item.ID,
+					Text:     item.Text,
+					Status:   item.Status,
+					Priority: item.Priority,
+					Tags:     item.Tags,
+				}
+			}
+			return result, nil
+		}
+		cmds.Register(command.NewTodoCommand(todoListFn, todoSearchFn))
+	}
 	// Token count cache for /context (persists across calls, invalidated when context changes)
 	var (
 		tcCacheMu     sync.Mutex

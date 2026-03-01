@@ -1503,11 +1503,11 @@ func TestContextCommandCountingAPIError(t *testing.T) {
 func TestSecretsListTable(t *testing.T) {
 	store := &mockSecretsStore{
 		data: map[string]string{
-			"anthropic.setup_token":     "x",
-			"telegram.clutch":     "x",
-			"telegram.clutchling": "x",
-			"telegram.scout":      "x",
-			"brave.api_key":       "x",
+			"anthropic.setup_token": "x",
+			"telegram.clutch":       "x",
+			"telegram.clutchling":   "x",
+			"telegram.scout":        "x",
+			"brave.api_key":         "x",
 		},
 		allowedHosts: map[string][]string{
 			"anthropic": {"api.anthropic.com"},
@@ -1913,5 +1913,260 @@ func TestTmuxCommandError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tmux not running") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestTodoCommandEmpty(t *testing.T) {
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return nil, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result != "No open todos." {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestTodoCommandSorting(t *testing.T) {
+	items := []TodoItem{
+		{ID: 1, Text: "Low priority task", Status: "open", Priority: "low", Tags: ""},
+		{ID: 2, Text: "High priority task", Status: "open", Priority: "high", Tags: ""},
+		{ID: 3, Text: "Medium priority task", Status: "open", Priority: "medium", Tags: ""},
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Check order: high should appear before medium before low
+	highIdx := strings.Index(result, "#2")
+	mediumIdx := strings.Index(result, "#3")
+	lowIdx := strings.Index(result, "#1")
+	if highIdx > mediumIdx || mediumIdx > lowIdx {
+		t.Errorf("items not sorted by priority (high→medium→low):\n%s", result)
+	}
+
+	// Check emoji prefixes
+	if !strings.Contains(result, "🔴 #2 [high]") {
+		t.Errorf("missing high priority emoji in:\n%s", result)
+	}
+	if !strings.Contains(result, "🟡 #3 [medium]") {
+		t.Errorf("missing medium priority emoji in:\n%s", result)
+	}
+	if !strings.Contains(result, "🟢 #1 [low]") {
+		t.Errorf("missing low priority emoji in:\n%s", result)
+	}
+}
+
+func TestTodoCommandBackgroundFiltering(t *testing.T) {
+	items := []TodoItem{
+		{ID: 1, Text: "Regular task", Status: "open", Priority: "high", Tags: ""},
+		{ID: 2, Text: "Background task", Status: "open", Priority: "low", Tags: "background"},
+		{ID: 3, Text: "Multi-tag task", Status: "open", Priority: "medium", Tags: "daily,background"},
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show regular task and header indicating background items hidden
+	if !strings.Contains(result, "Regular task") {
+		t.Errorf("missing regular task in:\n%s", result)
+	}
+	if !strings.Contains(result, "hiding 2 background items") {
+		t.Errorf("missing background count in:\n%s", result)
+	}
+	if strings.Contains(result, "Background task") {
+		t.Errorf("background task should be hidden:\n%s", result)
+	}
+	if strings.Contains(result, "Multi-tag task") {
+		t.Errorf("multi-tag background task should be hidden:\n%s", result)
+	}
+}
+
+func TestTodoCommandAllIncludesBackground(t *testing.T) {
+	items := []TodoItem{
+		{ID: 1, Text: "Regular task", Status: "open", Priority: "high", Tags: ""},
+		{ID: 2, Text: "Background task", Status: "open", Priority: "low", Tags: "background"},
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "all")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show both tasks
+	if !strings.Contains(result, "Regular task") {
+		t.Errorf("missing regular task in:\n%s", result)
+	}
+	if !strings.Contains(result, "Background task") {
+		t.Errorf("background task should be visible with 'all':\n%s", result)
+	}
+	if !strings.Contains(result, "including 1 background") {
+		t.Errorf("missing background count in:\n%s", result)
+	}
+}
+
+func TestTodoCommandLimit(t *testing.T) {
+	var items []TodoItem
+	for i := 0; i < 25; i++ {
+		items = append(items, TodoItem{
+			ID:       int64(100 + i),
+			Text:     fmt.Sprintf("Task %d", i),
+			Status:   "open",
+			Priority: "medium",
+			Tags:     "",
+		})
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show "showing 20 of 25"
+	if !strings.Contains(result, "showing 20 of 25") {
+		t.Errorf("missing limit indicator in:\n%s", result)
+	}
+	// Count the number of lines with task entries
+	taskCount := strings.Count(result, "🟡 #")
+	if taskCount != 20 {
+		t.Errorf("expected 20 tasks shown, got %d in:\n%s", taskCount, result)
+	}
+}
+
+func TestTodoCommandSearch(t *testing.T) {
+	items := []TodoItem{
+		{ID: 1, Text: "Security: read tool blocked paths", Status: "open", Priority: "high", Tags: ""},
+		{ID: 2, Text: "Bug: per-user chat routing", Status: "open", Priority: "medium", Tags: ""},
+		{ID: 3, Text: "Feature: new dashboard", Status: "open", Priority: "low", Tags: ""},
+		{ID: 4, Text: "Done task", Status: "done", Priority: "low", Tags: ""},
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) {
+			var matched []TodoItem
+			for _, item := range items {
+				if strings.Contains(strings.ToLower(item.Text), strings.ToLower(query)) {
+					matched = append(matched, item)
+				}
+			}
+			return matched, nil
+		},
+	)
+
+	result, err := cmd.Execute(context.Background(), "search security")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show only security task
+	if !strings.Contains(result, "Security") {
+		t.Errorf("missing security result in:\n%s", result)
+	}
+	if strings.Contains(result, "Bug:") {
+		t.Errorf("bug task should not appear in search:\n%s", result)
+	}
+	// Should not include done task
+	if strings.Contains(result, "Done task") {
+		t.Errorf("done task should be filtered from search:\n%s", result)
+	}
+}
+
+func TestTodoCommandSearchNoMatch(t *testing.T) {
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return nil, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "search nonexistent")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, `No todos matching "nonexistent"`) {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestTodoCommandSearchEmptyQuery(t *testing.T) {
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return nil, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "search")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Usage:") {
+		t.Errorf("expected usage for empty search query, got: %q", result)
+	}
+}
+
+func TestTodoCommandOnlyBackgroundItems(t *testing.T) {
+	items := []TodoItem{
+		{ID: 1, Text: "Background task 1", Status: "open", Priority: "low", Tags: "background"},
+		{ID: 2, Text: "Background task 2", Status: "open", Priority: "low", Tags: "background"},
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should indicate no visible todos with background count
+	if !strings.Contains(result, "No open todos (2 background items hidden)") {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestTodoCommandTextTruncation(t *testing.T) {
+	longText := "This is a very long todo item text that should be truncated to approximately 77 characters to keep the output readable in the terminal"
+	items := []TodoItem{
+		{ID: 1, Text: longText, Status: "open", Priority: "high", Tags: ""},
+	}
+	cmd := NewTodoCommand(
+		func(tag string) ([]TodoItem, error) { return items, nil },
+		func(query string) ([]TodoItem, error) { return nil, nil },
+	)
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// The line should end with "..."
+	if !strings.Contains(result, "...") {
+		t.Errorf("expected truncation with '...' in:\n%s", result)
+	}
+	// Full text should not appear
+	if strings.Contains(result, longText) {
+		t.Errorf("text should be truncated:\n%s", result)
 	}
 }
