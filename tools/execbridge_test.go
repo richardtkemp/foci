@@ -509,6 +509,49 @@ func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 	}
 }
 
+func TestExecBridgeTmuxShellFunc(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "tmux",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"},"name":{"type":"string"},"command":{"type":"string"},"workdir":{"type":"string"},"watch":{"type":"boolean"},"keys":{"type":"string"},"enter":{"type":"boolean"},"lines":{"type":"integer"},"window":{"type":"integer"},"threshold_seconds":{"type":"integer"},"raw":{"type":"boolean"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "ok", nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	data, err := os.ReadFile(bridge.FuncsPath())
+	if err != nil {
+		t.Fatalf("read funcs file: %v", err)
+	}
+	content := string(data)
+
+	// Should contain function definition
+	if !strings.Contains(content, "foci_tmux()") {
+		t.Error("funcs file should contain foci_tmux()")
+	}
+	// Should contain export
+	if !strings.Contains(content, "export -f foci_tmux") {
+		t.Error("funcs file should export foci_tmux")
+	}
+	// Should contain subcommands
+	for _, sub := range []string{"start)", "send)", "read)", "list)", "kill)", "watch)", "unwatch)"} {
+		if !strings.Contains(content, sub) {
+			t.Errorf("foci_tmux should handle subcommand %s", sub)
+		}
+	}
+	// Should support stdin piping for send
+	if !strings.Contains(content, "! -t 0") {
+		t.Error("foci_tmux send should support stdin piping")
+	}
+}
+
 // callBridge connects to a bridge socket and sends a request, returning the result and error.
 func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) {
 	t.Helper()

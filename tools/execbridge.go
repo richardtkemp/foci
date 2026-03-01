@@ -472,6 +472,83 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, guard, name)
 
+	case "tmux":
+		// Subcommand-style dispatch (same pattern as todo)
+		return fmt.Sprintf(`%s() {
+%s
+  local op="$1"; shift 2>/dev/null || true
+  local name="" command="" workdir="" watch="" keys="" enter="" lines="" window="" threshold="" raw=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --command) command="$2"; shift 2 ;;
+      --workdir) workdir="$2"; shift 2 ;;
+      --watch) watch="$2"; shift 2 ;;
+      --keys) keys="$2"; shift 2 ;;
+      --enter) enter="$2"; shift 2 ;;
+      --lines) lines="$2"; shift 2 ;;
+      --window) window="$2"; shift 2 ;;
+      --threshold) threshold="$2"; shift 2 ;;
+      --raw) raw=true; shift ;;
+      *) shift ;;
+    esac
+  done
+  case "$op" in
+    start)
+      local params='{"operation":"start"}'
+      [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
+      [ -n "$command" ] && params="$(echo "$params" | jq --arg c "$command" '. + {command: $c}')"
+      [ -n "$workdir" ] && params="$(echo "$params" | jq --arg w "$workdir" '. + {workdir: $w}')"
+      [ -n "$watch" ] && params="$(echo "$params" | jq --argjson w "$watch" '. + {watch: $w}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
+      ;;
+    send)
+      local params='{"operation":"send"}'
+      [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
+      if [ -n "$keys" ]; then
+        params="$(echo "$params" | jq --arg k "$keys" '. + {keys: $k}')"
+      elif [ ! -t 0 ]; then
+        keys="$(cat)"
+        params="$(echo "$params" | jq --arg k "$keys" '. + {keys: $k}')"
+      fi
+      [ -n "$enter" ] && params="$(echo "$params" | jq --argjson e "$enter" '. + {enter: $e}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
+      ;;
+    read)
+      local params='{"operation":"read"}'
+      [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
+      [ -n "$lines" ] && params="$(echo "$params" | jq --argjson l "$lines" '. + {lines: $l}')"
+      [ -n "$raw" ] && params="$(echo "$params" | jq '. + {raw: true}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
+      ;;
+    list)
+      foci-call '{"tool":"tmux","params":{"operation":"list"}}'
+      ;;
+    kill)
+      local params='{"operation":"kill"}'
+      [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
+      ;;
+    watch)
+      local params='{"operation":"watch"}'
+      [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
+      [ -n "$window" ] && params="$(echo "$params" | jq --argjson w "$window" '. + {window: $w}')"
+      [ -n "$threshold" ] && params="$(echo "$params" | jq --argjson t "$threshold" '. + {threshold_seconds: $t}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
+      ;;
+    unwatch)
+      local params='{"operation":"unwatch"}'
+      [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
+      ;;
+    *)
+      echo "usage: %s <start|send|read|list|kill|watch|unwatch> [args...]" >&2
+      return 1
+      ;;
+  esac
+}
+`, name, guard, name)
+
 	default:
 		// Generic: JSON passthrough handles the common case;
 		// fall back to treating $1 as raw JSON params
