@@ -19,7 +19,8 @@ type Compactor struct {
 	threshold        float64 // fraction of context window (e.g. 0.8)
 	maxTokens        int
 	minMessages      int
-	preserveMessages int // preserve last N messages through compaction (0 disables)
+	preserveMessages int                // preserve last N messages through compaction (0 disables)
+	effort           string             // effort level for compaction API call (empty = omit)
 	Scratchpad       *memory.Scratchpad // nil disables scratchpad injection
 	AgentID          string             // agent ID for per-agent scratchpad queries
 }
@@ -48,6 +49,12 @@ func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Co
 		c.preserveMessages = preserveMessages
 	}
 	c.checkConfig()
+	return c
+}
+
+// WithEffort sets the effort level for compaction API calls.
+func (c *Compactor) WithEffort(effort string) *Compactor {
+	c.effort = effort
 	return c
 }
 
@@ -310,13 +317,17 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		Content: anthropic.TextContent(summaryPrompt),
 	})
 
-	log.Debugf("compaction", "summary request: model=%s max_tokens=%d messages=%d", c.model, c.maxTokens, len(summaryMessages))
-	resp, err := c.client.SendMessage(ctx, &anthropic.MessageRequest{
+	log.Debugf("compaction", "summary request: model=%s max_tokens=%d messages=%d effort=%s", c.model, c.maxTokens, len(summaryMessages), c.effort)
+	req := &anthropic.MessageRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
 		System:    system,
 		Messages:  summaryMessages,
-	})
+	}
+	if c.effort != "" {
+		req.Output = &anthropic.OutputConfig{Effort: c.effort}
+	}
+	resp, err := c.client.SendMessage(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("summarize for compaction: %w", err)
 	}

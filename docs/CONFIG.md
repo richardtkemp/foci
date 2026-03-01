@@ -49,6 +49,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `compaction_notify` | bool | nil | Per-agent compaction notification. Nil = use global. |
 | `compaction_debug` | bool | nil | Per-agent compaction debug. Nil = use global. When true, sends compaction summary as a Telegram file attachment. |
 | `compaction_preserve_messages` | int | nil | Per-agent message preservation count. Nil = use global `[sessions] compaction_preserve_messages`. |
+| `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. Empty = use session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
 | `session_reset_prompt` | string | `""` | Per-agent reset prompt path. Empty = use global `[sessions] session_reset_prompt`. |
 | `skills_dirs` | string[] | `[]` | Per-agent skill directories. Empty = use global `[skills] dirs`. |
 | `prompt_rules` | array | `[]` | Per-agent prompt rules. Empty = use global `[[prompt_rules]]`. |

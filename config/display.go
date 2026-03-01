@@ -2,8 +2,8 @@ package config
 
 import (
 	"bytes"
-	"foci/table"
 	"fmt"
+	"foci/table"
 	"sort"
 	"strings"
 
@@ -78,6 +78,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	}
 	if agent.CompactionPreserveMessages != nil {
 		add("agent", "compaction_preserve_messages", *agent.CompactionPreserveMessages)
+	}
+	if agent.CompactionEffort != "" {
+		add("agent", "compaction_effort", agent.CompactionEffort)
 	}
 	if len(agent.UsageWarnings.Thresholds) > 0 {
 		add("agent", "usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
@@ -612,6 +615,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		if agent.CompactionPreserveMessages != nil {
 			addAgent("compaction_preserve_messages", *agent.CompactionPreserveMessages)
 		}
+		if agent.CompactionEffort != "" {
+			addAgent("compaction_effort", agent.CompactionEffort)
+		}
 		if len(agent.UsageWarnings.Thresholds) > 0 {
 			addAgent("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
 		}
@@ -709,7 +715,7 @@ type displayTelegram struct {
 	ShowToolCalls       string   `toml:"show_tool_calls"`
 	ShowThinking        string   `toml:"show_thinking"`
 	DisplayWidth        int      `toml:"display_width"`
-	ReceivedFilesDir        string   `toml:"received_files_dir,omitempty"`
+	ReceivedFilesDir    string   `toml:"received_files_dir,omitempty"`
 }
 
 type displayAnthropic struct {
@@ -736,7 +742,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			ShowToolCalls:       string(cfg.Telegram.ShowToolCalls),
 			ShowThinking:        string(cfg.Telegram.ShowThinking),
 			DisplayWidth:        cfg.Telegram.DisplayWidth,
-			ReceivedFilesDir:        cfg.Telegram.ReceivedFilesDir,
+			ReceivedFilesDir:    cfg.Telegram.ReceivedFilesDir,
 		},
 		Sessions:      cfg.Sessions,
 		Memory:        cfg.Memory,
@@ -809,6 +815,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if agent.Effort == "" && cfg.Defaults.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
+	}
+	if agent.CompactionEffort == "" {
+		opts = append(opts, availableOption{"agent", "compaction_effort", "\"\"", "effort for compaction API calls (empty = use session effort)"})
 	}
 	if agent.ReceivedFilesDir == "" && cfg.Telegram.ReceivedFilesDir == "" {
 		opts = append(opts, availableOption{"agent", "received_files_dir", "\"\"", "save received files to this directory"})
@@ -909,7 +918,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	return "Unset/default config options:\n\n" + table.Format(cols, tableRows)
 }
-
 
 func redactString(s string) string {
 	if s == "" {

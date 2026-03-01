@@ -129,6 +129,7 @@ type AgentConfig struct {
 	CompactionNotify           *bool    `toml:"compaction_notify"`            // send Telegram notification on compaction
 	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
+	CompactionEffort           string   `toml:"compaction_effort"`            // effort for compaction API calls (empty = use session effort)
 	// Per-agent skills and prompt rules (empty = use global)
 	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
 	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
@@ -141,13 +142,13 @@ type AgentConfig struct {
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
 	Background      BackgroundConfig      `toml:"background"`       // per-agent background override
-	MemoryFormation MemoryFormationConfig  `toml:"memory_formation"` // per-agent memory formation override
+	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // per-agent memory formation override
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
 }
 
 type AnthropicConfig struct {
-	SetupToken      string `toml:"setup_token"`       // static setup-token (fallback when OAuth not available)
+	SetupToken      string `toml:"setup_token"` // static setup-token (fallback when OAuth not available)
 	BraveAPIKey     string `toml:"brave_api_key"`
 	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
@@ -170,7 +171,7 @@ type TelegramConfig struct {
 	MultiballSessionTTL string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
-	ShowToolCalls       ToolCallDisplay               `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
+	ShowToolCalls       ToolCallDisplay              `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
 	ShowThinking        ShowThinking                 `toml:"show_thinking"`         // show thinking blocks in Telegram: "off" (default), "compact", "true"
 	DisplayWidth        int                          `toml:"display_width"`         // display width for dividers in Telegram (default 44)
 	ReceivedFilesDir    string                       `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
@@ -359,38 +360,38 @@ type MemoryFormationConfig struct {
 type BackgroundConfig struct {
 	Enabled        bool   `toml:"enabled"`         // enable background work timer (default: false)
 	Interval       string `toml:"interval"`        // time since last interaction before firing (default: "5m")
-	Prompt         string `toml:"prompt"`           // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
+	Prompt         string `toml:"prompt"`          // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
 	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset to let cache invest (default: "30m")
 }
 
 type Config struct {
-	DataDir            string             `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
-	Defaults           DefaultsConfig     `toml:"defaults"` // global defaults for agent-specific fields
-	Models             ModelsConfig       `toml:"models"`   // model aliases and related config
-	Agent              AgentConfig        `toml:"agent"`    // legacy: single agent
-	Agents             []AgentConfig      `toml:"agents"`   // multi-agent: array of agents
-	Anthropic          AnthropicConfig    `toml:"anthropic"`
-	Telegram           TelegramConfig     `toml:"telegram"`
-	Sessions           SessionsConfig     `toml:"sessions"`
-	Memory             MemoryConfig       `toml:"memory"`
-	Database           DatabaseConfig     `toml:"database"`
-	HTTP               HTTPConfig         `toml:"http"`
-	Logging            LoggingConfig      `toml:"logging"`
-	Voice              VoiceConfig        `toml:"voice"`
-	Bitwarden          BitwardenConfig    `toml:"bitwarden"`
-	Cache              CacheConfig        `toml:"cache"`
-	ManaWarnings       ManaWarningsConfig `toml:"usage_warnings"`
-	Environment        EnvironmentConfig  `toml:"environment"`
-	Skills             SkillsConfig       `toml:"skills"`
-	Tools              ToolsConfig        `toml:"tools"`
+	DataDir            string                `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
+	Defaults           DefaultsConfig        `toml:"defaults"` // global defaults for agent-specific fields
+	Models             ModelsConfig          `toml:"models"`   // model aliases and related config
+	Agent              AgentConfig           `toml:"agent"`    // legacy: single agent
+	Agents             []AgentConfig         `toml:"agents"`   // multi-agent: array of agents
+	Anthropic          AnthropicConfig       `toml:"anthropic"`
+	Telegram           TelegramConfig        `toml:"telegram"`
+	Sessions           SessionsConfig        `toml:"sessions"`
+	Memory             MemoryConfig          `toml:"memory"`
+	Database           DatabaseConfig        `toml:"database"`
+	HTTP               HTTPConfig            `toml:"http"`
+	Logging            LoggingConfig         `toml:"logging"`
+	Voice              VoiceConfig           `toml:"voice"`
+	Bitwarden          BitwardenConfig       `toml:"bitwarden"`
+	Cache              CacheConfig           `toml:"cache"`
+	ManaWarnings       ManaWarningsConfig    `toml:"usage_warnings"`
+	Environment        EnvironmentConfig     `toml:"environment"`
+	Skills             SkillsConfig          `toml:"skills"`
+	Tools              ToolsConfig           `toml:"tools"`
 	Keepalive          KeepaliveConfig       `toml:"keepalive"`
-	Background         BackgroundConfig     `toml:"background"`
+	Background         BackgroundConfig      `toml:"background"`
 	MemoryFormation    MemoryFormationConfig `toml:"memory_formation"`
-	Commands           []CommandConfig    `toml:"commands"`
-	PromptRules        []PromptRule       `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
-	WelcomeFile        string             `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
-	SkipSecurityChecks bool               `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
-	DefinedKeys        map[string]bool    `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
+	Commands           []CommandConfig       `toml:"commands"`
+	PromptRules        []PromptRule          `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
+	WelcomeFile        string                `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
+	SkipSecurityChecks bool                  `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
+	DefinedKeys        map[string]bool       `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
 }
 
 // validate checks semantic validity of config values after parsing and defaults.
@@ -538,19 +539,19 @@ var boolKeyLineRe = regexp.MustCompile(`(?m)^(\s*(\w+)\s*=\s*)"(?i)(on|off|true|
 // boolKeys is the set of TOML keys that are bool-typed in the config structs.
 // Only these keys have their quoted string values normalized to native bools.
 var boolKeys = map[string]bool{
-	"duplicate_messages":   true,
+	"duplicate_messages":    true,
 	"inject_agent_warnings": true,
-	"startup_notification": true,
-	"messages_in_log":      true,
-	"compaction_notify":    true,
-	"compaction_debug":     true,
-	"tmux_autopilot":       true,
-	"auto_refresh":         true,
-	"enable_stop_aliases":  true,
+	"startup_notification":  true,
+	"messages_in_log":       true,
+	"compaction_notify":     true,
+	"compaction_debug":      true,
+	"tmux_autopilot":        true,
+	"auto_refresh":          true,
+	"enable_stop_aliases":   true,
 	"enable_startup_notify": true,
-	"full_payload":         true,
-	"cache_bust_detect":    true,
-	"log_rotation":         true,
+	"full_payload":          true,
+	"cache_bust_detect":     true,
+	"log_rotation":          true,
 	"ws_enabled":            true,
 	"enabled":               true,
 	"skip_security_checks":  true,
