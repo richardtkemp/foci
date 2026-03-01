@@ -30,6 +30,8 @@ type mockClient struct {
 	lastEditOpts   *gotgbot.EditMessageTextOpts // last EditMessageText opts
 	lastEditText   string                    // last EditMessageText text
 	answerCBCalls  int                       // counts AnswerCallbackQuery calls
+	editErr        error                     // error to return from EditMessageText
+	editErrOnce    bool                      // if true, only return editErr on first call
 }
 
 func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMessageOpts) (*gotgbot.Message, error) {
@@ -47,6 +49,13 @@ func (m *mockClient) EditMessageText(text string, opts *gotgbot.EditMessageTextO
 	m.edits++
 	m.lastEditText = text
 	m.lastEditOpts = opts
+	if m.editErr != nil {
+		err := m.editErr
+		if m.editErrOnce {
+			m.editErr = nil
+		}
+		return nil, false, err
+	}
 	return &gotgbot.Message{}, true, nil
 }
 
@@ -2431,6 +2440,36 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 	btn := kb.InlineKeyboard[0][0]
 	if btn.Text != "Show full" {
 		t.Errorf("button text = %q, want %q", btn.Text, "Show full")
+	}
+}
+
+func TestHandleCommandCallback_HTMLFallback(t *testing.T) {
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name: "test",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "result with <bad> html & stuff", nil
+		},
+	})
+
+	b, mock := testBot([]string{"111"}, reg)
+
+	// First EditMessageText call (HTML) fails, second (plain text) succeeds
+	mock.editErr = fmt.Errorf("Bad Request: can't parse entities")
+	mock.editErrOnce = true
+
+	b.handleCommandCallback(context.Background(), 12345, 1, "/test")
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+
+	// Should have tried twice: once HTML, once plain text
+	if mock.edits != 2 {
+		t.Fatalf("expected 2 edits (HTML + fallback), got %d", mock.edits)
+	}
+	// The last edit should be plain text (no ParseMode)
+	if mock.lastEditOpts != nil && mock.lastEditOpts.ParseMode != "" {
+		t.Errorf("fallback edit should have no ParseMode, got %q", mock.lastEditOpts.ParseMode)
 	}
 }
 

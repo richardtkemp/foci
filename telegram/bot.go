@@ -2210,11 +2210,18 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 
 	log.Debugf("telegram", "command callback %q dispatched", cmdText)
 
-	b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
+	_, _, err := b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 		ChatId:    chatID,
 		MessageId: msgID,
 		ParseMode: "HTML",
 	})
+	if err != nil {
+		log.Debugf("telegram", "command callback HTML edit failed: %v, retrying as plain text", err)
+		b.client.EditMessageText(result, &gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: msgID,
+		})
+	}
 }
 
 // handleToolCallCallback handles tool call expand/collapse button presses.
