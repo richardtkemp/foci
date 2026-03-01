@@ -71,9 +71,23 @@ func TestManaIsGood_JustAfterInvest(t *testing.T) {
 }
 
 func TestManaIsGood_ZeroReset(t *testing.T) {
-	// No reset time = allow
-	if !ManaIsGood(50, time.Time{}, 30*time.Minute, time.Now()) {
-		t.Error("expected mana good when reset time is zero (no data)")
+	// No reset time = don't spend (no data = deny)
+	if ManaIsGood(50, time.Time{}, 30*time.Minute, time.Now()) {
+		t.Error("expected mana NOT good when reset time is zero (no data)")
+	}
+}
+
+func TestManaIsGood_StalenessGuard(t *testing.T) {
+	// ManaIsGood with zero reset → false (no data = don't spend)
+	if ManaIsGood(50, time.Time{}, 30*time.Minute, time.Now()) {
+		t.Error("ManaIsGood should return false for zero reset time")
+	}
+
+	// ManaIsGood with valid reset and good mana → true
+	now := time.Now()
+	resetsAt := now.Add(2 * time.Minute) // near end of window
+	if !ManaIsGood(50, resetsAt, 30*time.Minute, now) {
+		t.Error("ManaIsGood should return true with valid data near end of window")
 	}
 }
 

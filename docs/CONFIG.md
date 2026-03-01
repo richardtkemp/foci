@@ -569,6 +569,7 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 | `interval` | string | `"5m"` | Time since last interaction before firing. |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 | `invest_interval` | string | `"30m"` | Quiet period after mana reset to let cache invest before spending. |
+| `mana_staleness_timeout` | string | `"10m"` | Max age of mana usage reading before considering it stale. Stale readings block background spending. |
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
