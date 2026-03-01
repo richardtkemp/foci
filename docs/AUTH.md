@@ -1,72 +1,94 @@
 # Authentication Setup
 
-Foci uses two separate Anthropic tokens with different roles.
+Foci authenticates with Anthropic via OAuth PKCE. A single token handles both conversations (Messages API) and usage/mana queries — no separate admin key needed.
 
-## The Two Tokens
-
-### `anthropic.token` — Conversations (required)
-
-OAuth setup-token from a Claude Max subscription. Used for the Messages API (all conversations and model interactions).
-
-- Token format: `sk-ant-oat01-...`
-- Lifetime: 1 year
-- Billing: draws from Max plan subscription quota (mana)
-- Source: `claude setup-token` command
-
-### `anthropic.admin_key` — Admin/Usage (optional)
-
-Console API key from console.anthropic.com. Used for usage/mana queries and token counting. This is a standard API key, not an OAuth token.
-
-- Token format: `sk-ant-api03-...`
-- Billing: prepaid API credits (separate from Max plan)
-- Source: console.anthropic.com > Settings > API Keys
-- Used for: `/mana` command, `/context` token counts, usage warning thresholds
-
-**Why separate?** The setup-token authenticates against the Max subscription for conversations. The console API key authenticates against the admin/billing API for usage queries and the free token counting endpoint. These are different authentication contexts — the setup-token may not have access to admin endpoints, and the console key should not be used for conversations (it would bill to prepaid credits instead of the Max plan).
-
-## Setup
-
-### Step 1: Get the conversation token
-
-Run `claude setup-token` in a terminal. This opens a browser for OAuth authentication and outputs a token.
+## Quick Start
 
 ```
-$ claude setup-token
-# Browser opens → authenticate → token printed
-sk-ant-oat01-...
+foci auth
 ```
 
-### Step 2: Get the admin API key
+This opens an OAuth authorization URL, prompts for the code, and saves credentials to `~/.claude/.credentials.json`. The token auto-refreshes in the background while foci is running.
 
-1. Go to [console.anthropic.com](https://console.anthropic.com)
-2. Navigate to Settings > API Keys
-3. Create a new key (any name, e.g. "foci-admin")
-4. Copy the key (`sk-ant-api03-...`)
+## How It Works
 
-### Step 3: Store both in secrets.toml
+1. **`foci auth`** generates a PKCE challenge, prints an authorization URL
+2. You open the URL in a browser and authenticate with your Claude account
+3. Paste the authorization code back into the terminal
+4. Foci exchanges the code for access + refresh tokens and saves them to disk
+5. On startup, foci loads the credentials file and starts background token refresh
+
+## Credentials File
+
+Default: `~/.claude/.credentials.json`
+
+Foci reads two formats:
+
+**Foci-native format** (written by `foci auth`):
+```json
+{"access_token":"...","refresh_token":"...","expires_at":1771770729992}
+```
+
+**Claude Code format** (written by `claude` CLI):
+```json
+{"claudeAiOauth":{"accessToken":"...","refreshToken":"...","expiresAt":1771770729992}}
+```
+
+If you already use Claude Code, foci can use its credentials file directly — just point `credentials_file` at it.
+
+## Configuration
+
+In `foci.toml`:
+```toml
+[anthropic]
+credentials_file = "~/.claude/.credentials.json"  # default
+```
+
+### `foci auth` flags
+
+```
+foci auth [--credentials-file PATH] [--config PATH]
+```
+
+- `--credentials-file` — save credentials to this path (overrides config)
+- `--config` — read `credentials_file` from this foci.toml
+
+## Static Token Override
+
+For automation or when OAuth is impractical, you can use a static token in `secrets.toml`:
 
 ```toml
 [anthropic]
 token = "sk-ant-oat01-..."
-admin_key = "sk-ant-api03-..."
 ```
 
-Alternatively, if using `credentials_file` (fallback for the main token):
+When `anthropic.token` is set (in secrets.toml or foci.toml), foci uses it directly without OAuth. No auto-refresh occurs.
+
+## Token Scopes
+
+The OAuth flow requests these scopes:
+- `org:create_api_key` — API key creation
+- `user:profile` — user profile access
+- `user:inference` — model inference (conversations)
+
+## Auto-Refresh
+
+When using OAuth credentials, foci refreshes the token ~5 minutes before expiry. The refresh runs in the background — no manual intervention needed. Updated credentials are atomically written to disk (temp file + rename, 0600 permissions).
+
+## Migration from Two-Token Model
+
+If you previously used `admin_key` or `oauth_token`, remove them from your config:
 
 ```toml
+# secrets.toml — before
 [anthropic]
+token = "sk-ant-oat01-..."
 admin_key = "sk-ant-api03-..."
+
+# secrets.toml — after (remove both, use OAuth instead)
+# Or keep just token for static override:
+[anthropic]
+token = "sk-ant-oat01-..."
 ```
 
-With `credentials_file` configured in `foci.toml`, the main token is read from `~/.claude/.credentials.json` automatically. Only `admin_key` needs to be in secrets.toml.
-
-## What Happens Without admin_key
-
-If `admin_key` is not configured:
-
-- A warning is logged at startup
-- Mana/usage checks fall back to the main token (may not work with setup-token auth)
-- Token counting falls back to the main token (may not work with setup-token auth)
-- All conversations and model interactions work normally
-
-The main token is the only required credential. Everything else degrades gracefully.
+Then run `foci auth` to set up OAuth credentials. The single OAuth token replaces both the conversation token and the admin key.
