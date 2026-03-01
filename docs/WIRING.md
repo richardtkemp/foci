@@ -413,6 +413,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `edit` | files.go | Find-and-replace (old_string must be unique). Syntax validation for .json, .toml, .go, .yaml/.yml, .xml, .py, .sh/.bash: rejects edits that would break a valid file, warns if file was already invalid. |
 | `web_fetch` | web.go | HTTP GET, strip HTML tags |
 | `web_search` | web.go | Brave Search API |
+| `summary` | summary.go | Summarize/extract from large files via Haiku call |
 | `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency) |
 | `remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
 | `scratchpad` | scratchpad.go | Working notes that survive compaction (write/read/clear/list via `action` parameter) |

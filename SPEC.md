@@ -319,6 +319,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `edit` — find-and-replace in files (with syntax validation for .json, .toml, .go, .yaml/.yml, .xml, .py, .sh/.bash)
 - `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
 - `web_search` — Brave Search API
+- `summary` — summarize/extract from a file via Haiku without loading it into context
 - `memory_search` — FTS5 search over memory files + conversation history (sort by relevance or recency)
 - `remind` — defer a thought for later (delay, tomorrow, specific date); wake=true actively wakes the session
 - `scratchpad` — working notes that survive compaction (write/read/clear/list)
