@@ -767,17 +767,21 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// type on phone keyboards. Only treated as a command if it matches a
 	// registered command; otherwise falls through to the agent as normal text.
 	if text != "" && strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
-		dotCmd := "/" + strings.ToLower(strings.TrimSpace(text))[1:]
-		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
-		cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
-		if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
-			b.sendCommandKeyboard(msg.Chat.Id, dotCmd[1:], opts)
-			return
-		}
-		if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
-			log.Debugf("telegram", "dot-command %s → %s dispatched", text, dotCmd)
-			b.sendReply(msg, userID, result)
-			return
+		dotText := strings.ToLower(strings.TrimSpace(text))[1:]
+		cmdName, _, _ := strings.Cut(dotText, " ")
+		if b.commands.Get(cmdName) != nil || b.isStopCommand("/"+cmdName) {
+			dotCmd := "/" + dotText
+			cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
+			cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
+			if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
+				b.sendCommandKeyboard(msg.Chat.Id, cmdName, opts)
+				return
+			}
+			if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
+				log.Debugf("telegram", "dot-command %s → %s dispatched", text, dotCmd)
+				b.sendReply(msg, userID, result)
+				return
+			}
 		}
 		// Not a valid command — fall through to agent
 	}
