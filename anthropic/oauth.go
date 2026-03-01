@@ -1,3 +1,5 @@
+// OAuth PKCE flow based on https://gist.github.com/changjonathanc/9f9d635b2f8692e0520a884eaf098351
+// (Anthropic OAuth CLI by changjonathanc)
 package anthropic
 
 import (
