@@ -138,6 +138,9 @@ type AgentConfig struct {
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
 	TmuxBraindead       *bool  `toml:"tmux_braindead"`        // per-agent tmux braindead override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
+	MaxResultChars      int    `toml:"max_result_chars"`      // max chars before writing to file (0 = use global)
+	MaxSummaryChars     int    `toml:"max_summary_chars"`     // max chars to auto-summarise (0 = use global)
+	AutoSummarise       *bool  `toml:"auto_summarise"`        // auto-summarise oversized results (nil = use global)
 	SummaryContextTurns int    `toml:"summary_context_turns"` // recent turns for auto-summary context (0 = use global)
 	SummaryContextChars int    `toml:"summary_context_chars"` // max chars of context for auto-summary (0 = use global)
 	SearchProvider      string `toml:"search_provider"`       // "anthropic" or "brave" (empty = use global)
@@ -299,11 +302,11 @@ type ToolsConfig struct {
 	TmuxRows                int    `toml:"tmux_rows"`                  // tmux window rows on start (default 30)
 	ExecAutoBackground      int    `toml:"exec_auto_background"`       // seconds before auto-backgrounding exec (default 10, 0 disables)
 	ExecDefaultTimeout      int    `toml:"exec_default_timeout"`       // default timeout for exec commands in seconds (default 30)
-	ExecMaxOutputChars      int    `toml:"exec_max_output_chars"`      // max chars in exec output before truncation (default 100000)
+	MaxSummaryChars         int    `toml:"max_summary_chars"`          // max chars to auto-summarise (default 300000; larger results skip Haiku)
+	AutoSummarise           bool   `toml:"auto_summarise"`             // auto-summarise oversized results via Haiku (default true)
 	TmuxCommandTimeout      string `toml:"tmux_command_timeout"`       // timeout for tmux control commands (default "5s")
 	WebFetchTimeout         string `toml:"web_fetch_timeout"`          // HTTP timeout for web fetch (default "30s")
 	WebFetchMaxBytes        int    `toml:"web_fetch_max_bytes"`        // max bytes to read from web fetch (default 1048576 = 1MB)
-	WebFetchMaxChars        int    `toml:"web_fetch_max_chars"`        // max chars in web fetch output before truncation (default 50000)
 	WebSearchTimeout        string `toml:"web_search_timeout"`         // HTTP timeout for web search (default "15s")
 	MaxConcurrentSpawns     int    `toml:"max_concurrent_spawns"`      // max concurrent spawn inherit sessions per agent (default 3)
 	ToolCallPreviewChars    int    `toml:"tool_call_preview_chars"`    // max chars for tool call param preview in Telegram (default 450)
@@ -355,6 +358,9 @@ type DefaultsConfig struct {
 	DisplayWidth        *int             `toml:"display_width"`         // default display_width (nil = use telegram.display_width)
 	SystemFiles         []string         `toml:"system_files"`          // default system file list
 	CompactionEffort    string           `toml:"compaction_effort"`     // default compaction effort (empty = use session effort)
+	MaxResultChars      int              `toml:"max_result_chars"`      // default max_result_chars (default 15000)
+	MaxSummaryChars     int              `toml:"max_summary_chars"`     // default max_summary_chars (default 300000)
+	AutoSummarise       *bool            `toml:"auto_summarise"`        // default auto_summarise (nil = use [tools] value)
 	SummaryContextTurns int              `toml:"summary_context_turns"` // default summary_context_turns (default 5)
 	SummaryContextChars int              `toml:"summary_context_chars"` // default summary_context_chars (default 6000)
 	SearchProvider      string           `toml:"search_provider"`       // default search provider: "anthropic" (default) or "brave"
@@ -922,6 +928,9 @@ func Load(path string) (*Config, error) {
 	if cfg.Tools.ExecAutoBackground == 0 && !md.IsDefined("tools", "exec_auto_background") {
 		cfg.Tools.ExecAutoBackground = 10
 	}
+	if !md.IsDefined("tools", "auto_summarise") {
+		cfg.Tools.AutoSummarise = true
+	}
 	if !md.IsDefined("tools", "tmux_braindead") {
 		cfg.Tools.TmuxBraindead = true
 	}
@@ -964,8 +973,8 @@ func Load(path string) (*Config, error) {
 	if cfg.Tools.ExecDefaultTimeout == 0 {
 		cfg.Tools.ExecDefaultTimeout = 30
 	}
-	if cfg.Tools.ExecMaxOutputChars == 0 {
-		cfg.Tools.ExecMaxOutputChars = 100000
+	if cfg.Tools.MaxSummaryChars == 0 {
+		cfg.Tools.MaxSummaryChars = 300000
 	}
 	if cfg.Tools.TmuxCommandTimeout == "" {
 		cfg.Tools.TmuxCommandTimeout = "5s"
@@ -975,9 +984,6 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.WebFetchMaxBytes == 0 {
 		cfg.Tools.WebFetchMaxBytes = 1048576 // 1MB
-	}
-	if cfg.Tools.WebFetchMaxChars == 0 {
-		cfg.Tools.WebFetchMaxChars = 50000
 	}
 	if cfg.Tools.WebSearchTimeout == "" {
 		cfg.Tools.WebSearchTimeout = "15s"

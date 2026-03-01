@@ -1753,11 +1753,13 @@ func setupAgent(p setupParams) *agentInstance {
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
 		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:           acfg.DuplicateMessages,
-		MaxResultChars:              p.cfg.Tools.MaxResultChars,
+		MaxResultChars:              resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
 		ToolResultTempDir:           p.cfg.Tools.TempDir,
 		ModelAliases:                p.cfg.Models.Aliases,
 		SummaryContextTurns:         resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
 		SummaryContextChars:         resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
+		MaxSummaryChars:             resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
+		AutoSummarise:               resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
 		StateStore:                  p.stateStore,
 		UsageClient:                 p.usageClient,
 		PromptRules:                 agent.CompilePromptRules(resolvePromptRules(acfg, p.cfg)),
@@ -2961,6 +2963,14 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 func resolveInt(perAgent, global int) int {
 	if perAgent != 0 {
 		return perAgent
+	}
+	return global
+}
+
+// resolveBoolPtr returns the per-agent value if non-nil, otherwise the global default.
+func resolveBoolPtr(perAgent *bool, global bool) bool {
+	if perAgent != nil {
+		return *perAgent
 	}
 	return global
 }

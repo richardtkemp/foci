@@ -54,6 +54,9 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `session_reset_prompt` | string | `""` | Per-agent reset prompt path. Empty = use global `[sessions] session_reset_prompt`. |
 | `skills_dirs` | string[] | `[]` | Per-agent skill directories. Empty = use global `[skills] dirs`. |
 | `prompt_rules` | array | `[]` | Per-agent prompt rules. Empty = use global `[[prompt_rules]]`. |
+| `max_result_chars` | int | `0` | Per-agent max chars before writing to file. 0 = use global `[tools] max_result_chars`. |
+| `max_summary_chars` | int | `0` | Per-agent max chars to auto-summarise. 0 = use global `[tools] max_summary_chars`. |
+| `auto_summarise` | bool | nil | Per-agent auto-summarise override. Nil = use global `[tools] auto_summarise`. |
 | `exec_auto_background` | int | `0` | Per-agent exec auto-background seconds. 0 = use global `[tools] exec_auto_background`. |
 | `max_concurrent_spawns` | int | `0` | Per-agent max concurrent spawns. 0 = use global `[tools] max_concurrent_spawns`. |
 | `max_upload_file_size` | int | `0` | Per-agent max file size for multipart uploads in bytes. 0 = use global `[tools] max_upload_file_size`. |
@@ -117,6 +120,9 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `show_thinking` | string | nil | Default thinking display mode. Per-agent `show_thinking` overrides this, then falls back to `[telegram] show_thinking`. |
 | `display_width` | int | nil | Default display width for dividers. Per-agent `display_width` overrides this, then falls back to `[telegram] display_width`. |
 | `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
+| `max_result_chars` | int | `0` | Default max chars before writing to file. 0 = use `[tools] max_result_chars`. |
+| `max_summary_chars` | int | `0` | Default max chars to auto-summarise. 0 = use `[tools] max_summary_chars`. |
+| `auto_summarise` | bool | nil | Default auto-summarise setting. Nil = use `[tools] auto_summarise`. |
 | `search_provider` | string | `"anthropic"` | Default web search provider: `"anthropic"` (server-side) or `"brave"` (client-side). |
 | `fetch_provider` | string | `"anthropic"` | Default web fetch provider: `"anthropic"` (server-side) or `"builtin"` (client-side). |
 
@@ -486,17 +492,17 @@ Tool behavior settings.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). |
+| `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). Per-agent override via `[[agents]]`. |
 | `temp_dir` | string | `"/tmp/foci-tool-results"` | Directory for large tool result files. |
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. |
 | `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |
-| `exec_max_output_chars` | int | `100000` | Max characters in exec output before truncation. |
+| `max_summary_chars` | int | `300000` | Max chars to auto-summarise via Haiku. Results larger than this are saved to file with hints but skip the summary call. Per-agent override via `[[agents]]`. |
+| `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via Haiku. Set `false` to skip summary calls entirely (results are saved to file with hints instead). Per-agent override via `[[agents]]`. |
 | `tmux_command_timeout` | string | `"5s"` | Timeout for tmux control commands. Go duration format. |
 | `web_fetch_timeout` | string | `"30s"` | HTTP timeout for web fetch operations. Go duration format. |
 | `web_fetch_max_bytes` | int | `1048576` | Max bytes to read from web fetch (1MB default). |
-| `web_fetch_max_chars` | int | `50000` | Max characters in web fetch output before truncation. |
 | `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` clone_current sessions per agent. Limits how many headless self-forks can run simultaneously. |
 | `max_upload_file_size` | int | `52428800` | Max file size in bytes for multipart/form-data file uploads (default 50MB). |
