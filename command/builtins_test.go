@@ -836,7 +836,7 @@ func TestLogCommand(t *testing.T) {
 func TestErrorsCommand(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "test.log")
-	content := "INFO normal\nERROR bad thing\nINFO ok\nWARN warning\nINFO fine\n"
+	content := "2026-03-01T00:00:00Z INFO  [test] normal\n2026-03-01T00:00:01Z ERROR [test] bad thing\n2026-03-01T00:00:02Z INFO  [test] ok\n2026-03-01T00:00:03Z WARN  [test] warning\n2026-03-01T00:00:04Z INFO  [test] fine\n"
 	os.WriteFile(logPath, []byte(content), 0644)
 
 	cmd := NewErrorsCommand(logPath)
