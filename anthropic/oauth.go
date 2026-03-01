@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -289,8 +290,12 @@ func GeneratePKCE() (verifier, challenge string, err error) {
 	return verifier, challenge, nil
 }
 
-// BuildAuthURL returns the full OAuth authorization URL with PKCE challenge.
-func BuildAuthURL(challenge string) string {
+// BuildAuthURL returns the full OAuth authorization URL with PKCE challenge
+// and a random state parameter for CSRF protection.
+func BuildAuthURL(challenge string) (authURL, state string) {
+	buf := make([]byte, 16)
+	rand.Read(buf) // crypto/rand never fails on supported platforms
+	state = base64.RawURLEncoding.EncodeToString(buf)
 	params := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {OAuthClientID},
@@ -298,8 +303,9 @@ func BuildAuthURL(challenge string) string {
 		"scope":                 {OAuthScopes},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"state":                 {state},
 	}
-	return OAuthAuthURL + "?" + params.Encode()
+	return OAuthAuthURL + "?" + params.Encode(), state
 }
 
 // ExchangeCode exchanges an authorization code for tokens.
@@ -365,16 +371,22 @@ func RunAuthFlow(store SecretsStore) error {
 		return fmt.Errorf("generate PKCE: %w", err)
 	}
 
-	authURL := BuildAuthURL(challenge)
+	authURL, state := BuildAuthURL(challenge)
 	fmt.Println("Open this URL in your browser to authenticate:")
 	fmt.Println()
 	fmt.Println("  " + authURL)
 	fmt.Println()
 	fmt.Print("Paste the authorization code: ")
 
-	var code string
-	if _, err := fmt.Scanln(&code); err != nil {
+	var raw string
+	if _, err := fmt.Scanln(&raw); err != nil {
 		return fmt.Errorf("read code: %w", err)
+	}
+
+	// Anthropic returns "code#state" — split and verify state for CSRF protection.
+	code, returnedState, _ := strings.Cut(raw, "#")
+	if returnedState != state {
+		return fmt.Errorf("state mismatch (CSRF check failed)")
 	}
 
 	creds, err := ExchangeCode(context.Background(), code, verifier)

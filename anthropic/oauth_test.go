@@ -75,10 +75,10 @@ func TestGeneratePKCE(t *testing.T) {
 }
 
 func TestBuildAuthURL(t *testing.T) {
-	url := BuildAuthURL("test-challenge")
+	authURL, state := BuildAuthURL("test-challenge")
 
-	if !strings.HasPrefix(url, OAuthAuthURL+"?") {
-		t.Errorf("URL should start with auth URL, got %q", url)
+	if !strings.HasPrefix(authURL, OAuthAuthURL+"?") {
+		t.Errorf("URL should start with auth URL, got %q", authURL)
 	}
 	for _, param := range []string{
 		"response_type=code",
@@ -86,12 +86,18 @@ func TestBuildAuthURL(t *testing.T) {
 		"code_challenge=test-challenge",
 		"code_challenge_method=S256",
 	} {
-		if !strings.Contains(url, param) {
-			t.Errorf("URL missing param %q: %s", param, url)
+		if !strings.Contains(authURL, param) {
+			t.Errorf("URL missing param %q: %s", param, authURL)
 		}
 	}
-	if !strings.Contains(url, "scope=") {
+	if !strings.Contains(authURL, "scope=") {
 		t.Error("URL missing scope param")
+	}
+	if state == "" {
+		t.Error("state should be non-empty")
+	}
+	if !strings.Contains(authURL, "state="+state) {
+		t.Errorf("URL missing matching state param: %s", authURL)
 	}
 }
 
