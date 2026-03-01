@@ -147,9 +147,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # multiball_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
 # message_queue_size = 64
 # long_poll_timeout = "65s"
-# show_tool_calls = "off"                 # off, preview, full
-# show_thinking = "off"                   # off, compact, true
-# display_width = 44
 # received_files_dir = ""                 # save received files (per-agent overrides)
 
 # Bot definitions (tokens go in secrets.toml):

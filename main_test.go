@@ -244,9 +244,9 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 				Workspace: "/tmp/test",
 			}
 			cfg := &config.Config{
-				Telegram: config.TelegramConfig{
-					ShowToolCalls: tt.toolCalls,
-					ShowThinking:  tt.thinking,
+				Defaults: config.DefaultsConfig{
+					ShowToolCalls: &tt.toolCalls,
+					ShowThinking:  &tt.thinking,
 				},
 				Logging: config.LoggingConfig{
 					EventFile: "/tmp/foci.log",
@@ -276,9 +276,9 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 		ShowThinking:  ptr(config.ShowThinkingTrue),
 	}
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			ShowToolCalls: config.ToolCallOff,
-			ShowThinking:  config.ShowThinkingOff,
+		Defaults: config.DefaultsConfig{
+			ShowToolCalls: ptr(config.ToolCallOff),
+			ShowThinking:  ptr(config.ShowThinkingOff),
 		},
 		Logging: config.LoggingConfig{
 			EventFile: "/tmp/foci.log",
@@ -477,10 +477,12 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 		ReceivedFilesDir: "/agent/files",
 	}
 	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			ShowToolCalls: ptr(config.ToolCallOff),
+			ShowThinking:  ptr(config.ShowThinkingOff),
+			DisplayWidth:  ptr(44),
+		},
 		Telegram: config.TelegramConfig{
-			ShowToolCalls:    config.ToolCallOff,
-			ShowThinking:     config.ShowThinkingOff,
-			DisplayWidth:     44,
 			ReceivedFilesDir: "/global/files",
 		},
 		Logging: config.LoggingConfig{
@@ -508,14 +510,16 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	}
 }
 
-func TestApplyAgentDisplaySettings_FallsBackToGlobal(t *testing.T) {
+func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 	bot := telegram.NewBotForTest()
-	acfg := config.AgentConfig{} // all nil/zero — should fall back to global
+	acfg := config.AgentConfig{} // all nil/zero — should fall back to defaults
 	cfg := &config.Config{
+		Defaults: config.DefaultsConfig{
+			ShowToolCalls: ptr(config.ToolCallPreview),
+			ShowThinking:  ptr(config.ShowThinkingTrue),
+			DisplayWidth:  ptr(60),
+		},
 		Telegram: config.TelegramConfig{
-			ShowToolCalls:    config.ToolCallPreview,
-			ShowThinking:     config.ShowThinkingTrue,
-			DisplayWidth:     60,
 			ReceivedFilesDir: "/global/files",
 		},
 		Logging: config.LoggingConfig{
@@ -527,13 +531,13 @@ func TestApplyAgentDisplaySettings_FallsBackToGlobal(t *testing.T) {
 
 	stc, st, dw, mil, rfd := bot.DisplaySettings()
 	if stc != "preview" {
-		t.Errorf("ShowToolCalls = %q, want %q (global fallback)", stc, "preview")
+		t.Errorf("ShowToolCalls = %q, want %q (defaults fallback)", stc, "preview")
 	}
 	if st != "true" {
-		t.Errorf("ShowThinking = %q, want %q (global fallback)", st, "true")
+		t.Errorf("ShowThinking = %q, want %q (defaults fallback)", st, "true")
 	}
 	if dw != 60 {
-		t.Errorf("DisplayWidth = %d, want 60 (global fallback)", dw)
+		t.Errorf("DisplayWidth = %d, want 60 (defaults fallback)", dw)
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")
@@ -563,15 +567,15 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 
 func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	bot := telegram.NewBotForTest()
-	// Only override ShowToolCalls; rest falls back to global
+	// Only override ShowToolCalls; rest falls back to defaults
 	acfg := config.AgentConfig{
 		ShowToolCalls: ptr(config.ToolCallFull),
 	}
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			ShowToolCalls: config.ToolCallOff,
-			ShowThinking:  config.ShowThinkingCompact,
-			DisplayWidth:  44,
+		Defaults: config.DefaultsConfig{
+			ShowToolCalls: ptr(config.ToolCallOff),
+			ShowThinking:  ptr(config.ShowThinkingCompact),
+			DisplayWidth:  ptr(44),
 		},
 		Logging: config.LoggingConfig{
 			MessagesInLog: true,
@@ -585,10 +589,10 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 		t.Errorf("ShowToolCalls = %q, want %q (agent override)", stc, "full")
 	}
 	if st != "compact" {
-		t.Errorf("ShowThinking = %q, want %q (global fallback)", st, "compact")
+		t.Errorf("ShowThinking = %q, want %q (defaults fallback)", st, "compact")
 	}
 	if dw != 44 {
-		t.Errorf("DisplayWidth = %d, want 44 (global fallback)", dw)
+		t.Errorf("DisplayWidth = %d, want 44 (defaults fallback)", dw)
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")

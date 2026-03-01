@@ -66,18 +66,24 @@ type agentInstance struct {
 func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *config.Config) {
 	if acfg.ShowToolCalls != nil {
 		bot.SetShowToolCalls(string(*acfg.ShowToolCalls))
+	} else if cfg.Defaults.ShowToolCalls != nil {
+		bot.SetShowToolCalls(string(*cfg.Defaults.ShowToolCalls))
 	} else {
-		bot.SetShowToolCalls(string(cfg.Telegram.ShowToolCalls))
+		bot.SetShowToolCalls(string(config.ToolCallOff))
 	}
 	if acfg.ShowThinking != nil {
 		bot.SetShowThinking(string(*acfg.ShowThinking))
+	} else if cfg.Defaults.ShowThinking != nil {
+		bot.SetShowThinking(string(*cfg.Defaults.ShowThinking))
 	} else {
-		bot.SetShowThinking(string(cfg.Telegram.ShowThinking))
+		bot.SetShowThinking(string(config.ShowThinkingOff))
 	}
 	if acfg.DisplayWidth != nil {
 		bot.SetDisplayWidth(*acfg.DisplayWidth)
+	} else if cfg.Defaults.DisplayWidth != nil {
+		bot.SetDisplayWidth(*cfg.Defaults.DisplayWidth)
 	} else {
-		bot.SetDisplayWidth(cfg.Telegram.DisplayWidth)
+		bot.SetDisplayWidth(44)
 	}
 	if acfg.MessagesInLog != nil {
 		bot.SetMessagesInLog(*acfg.MessagesInLog)
@@ -793,9 +799,21 @@ func main() {
 				mbBot.SetTTS(ttsProvider)
 			}
 			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
-			mbBot.SetShowToolCalls(string(cfg.Telegram.ShowToolCalls))
-			mbBot.SetShowThinking(string(cfg.Telegram.ShowThinking))
-			mbBot.SetDisplayWidth(cfg.Telegram.DisplayWidth)
+			if cfg.Defaults.ShowToolCalls != nil {
+				mbBot.SetShowToolCalls(string(*cfg.Defaults.ShowToolCalls))
+			} else {
+				mbBot.SetShowToolCalls(string(config.ToolCallOff))
+			}
+			if cfg.Defaults.ShowThinking != nil {
+				mbBot.SetShowThinking(string(*cfg.Defaults.ShowThinking))
+			} else {
+				mbBot.SetShowThinking(string(config.ShowThinkingOff))
+			}
+			if cfg.Defaults.DisplayWidth != nil {
+				mbBot.SetDisplayWidth(*cfg.Defaults.DisplayWidth)
+			} else {
+				mbBot.SetDisplayWidth(44)
+			}
 			mbBot.SetMessagesInLog(cfg.Logging.MessagesInLog)
 			if filesDir := cfg.Telegram.ReceivedFilesDir; filesDir != "" {
 				mbBot.SetReceivedFilesDir(filesDir)
@@ -2769,13 +2787,17 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
 	// Visibility: resolve effective show_tool_calls and show_thinking
-	toolCalls := cfg.Telegram.ShowToolCalls
+	toolCalls := config.ToolCallOff
 	if acfg.ShowToolCalls != nil {
 		toolCalls = *acfg.ShowToolCalls
+	} else if cfg.Defaults.ShowToolCalls != nil {
+		toolCalls = *cfg.Defaults.ShowToolCalls
 	}
-	thinking := cfg.Telegram.ShowThinking
+	thinking := config.ShowThinkingOff
 	if acfg.ShowThinking != nil {
 		thinking = *acfg.ShowThinking
+	} else if cfg.Defaults.ShowThinking != nil {
+		thinking = *cfg.Defaults.ShowThinking
 	}
 	var toolDesc, thinkDesc string
 	switch toolCalls {

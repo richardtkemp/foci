@@ -177,10 +177,12 @@ type TelegramConfig struct {
 	MultiballSessionTTL string                       `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
-	ShowToolCalls       ToolCallDisplay              `toml:"show_tool_calls"`       // show tool call messages in Telegram: "off" (default), "preview", "full"
-	ShowThinking        ShowThinking                 `toml:"show_thinking"`         // show thinking blocks in Telegram: "off" (default), "compact", "true"
-	DisplayWidth        int                          `toml:"display_width"`         // display width for dividers in Telegram (default 44)
 	ReceivedFilesDir    string                       `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
+
+	// Deprecated: these are migrated to [defaults] in Load(). Kept for TOML decoding of old configs.
+	LegacyShowToolCalls ToolCallDisplay `toml:"show_tool_calls"` // deprecated: use [defaults] show_tool_calls
+	LegacyShowThinking  ShowThinking   `toml:"show_thinking"`   // deprecated: use [defaults] show_thinking
+	LegacyDisplayWidth  int            `toml:"display_width"`   // deprecated: use [defaults] display_width
 }
 
 type SessionsConfig struct {
@@ -353,9 +355,9 @@ type DefaultsConfig struct {
 	BraindeadPrompt     string           `toml:"braindead_prompt"`      // default braindead prompt
 	Effort              string           `toml:"effort"`                // default effort level: "low" (default), "medium", "high"
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "adaptive" (default) or "off"
-	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
-	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
-	DisplayWidth        *int             `toml:"display_width"`         // default display_width (nil = use telegram.display_width)
+	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (default: "off")
+	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (default: "off")
+	DisplayWidth        *int             `toml:"display_width"`         // default display_width (default: 44)
 	SystemFiles         []string         `toml:"system_files"`          // default system file list
 	CompactionEffort    string           `toml:"compaction_effort"`     // default compaction effort (empty = use session effort)
 	MaxResultChars      int              `toml:"max_result_chars"`      // default max_result_chars (default 15000)
@@ -1044,14 +1046,40 @@ func Load(path string) (*Config, error) {
 	if !md.IsDefined("telegram", "enable_startup_notify") {
 		cfg.Telegram.EnableStartupNotify = true
 	}
-	if !md.IsDefined("telegram", "show_tool_calls") {
-		cfg.Telegram.ShowToolCalls = ToolCallOff
+	// Migrate deprecated [telegram] display settings to [defaults].
+	if md.IsDefined("telegram", "show_tool_calls") {
+		log.Warnf("config", "telegram.show_tool_calls is deprecated — move to [defaults] show_tool_calls")
+		if cfg.Defaults.ShowToolCalls == nil {
+			v := cfg.Telegram.LegacyShowToolCalls
+			cfg.Defaults.ShowToolCalls = &v
+		}
 	}
-	if !md.IsDefined("telegram", "show_thinking") {
-		cfg.Telegram.ShowThinking = ShowThinkingOff
+	if md.IsDefined("telegram", "show_thinking") {
+		log.Warnf("config", "telegram.show_thinking is deprecated — move to [defaults] show_thinking")
+		if cfg.Defaults.ShowThinking == nil {
+			v := cfg.Telegram.LegacyShowThinking
+			cfg.Defaults.ShowThinking = &v
+		}
 	}
-	if cfg.Telegram.DisplayWidth == 0 {
-		cfg.Telegram.DisplayWidth = 44
+	if md.IsDefined("telegram", "display_width") {
+		log.Warnf("config", "telegram.display_width is deprecated — move to [defaults] display_width")
+		if cfg.Defaults.DisplayWidth == nil {
+			v := cfg.Telegram.LegacyDisplayWidth
+			cfg.Defaults.DisplayWidth = &v
+		}
+	}
+	// Default display settings in [defaults] when not set.
+	if cfg.Defaults.ShowToolCalls == nil {
+		v := ToolCallOff
+		cfg.Defaults.ShowToolCalls = &v
+	}
+	if cfg.Defaults.ShowThinking == nil {
+		v := ShowThinkingOff
+		cfg.Defaults.ShowThinking = &v
+	}
+	if cfg.Defaults.DisplayWidth == nil {
+		v := 44
+		cfg.Defaults.DisplayWidth = &v
 	}
 
 	// Keepalive/background defaults
