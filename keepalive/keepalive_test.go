@@ -169,7 +169,8 @@ func TestBackgroundRunningGuard(t *testing.T) {
 }
 
 func TestBackgroundCooldown(t *testing.T) {
-	// Verify that background work respects cooldown interval after completion.
+	// Verify that background work respects cooldown interval after the
+	// previous session ENDS, not when it started.
 	var mu sync.Mutex
 	calls := 0
 
@@ -191,11 +192,11 @@ func TestBackgroundCooldown(t *testing.T) {
 	// First call should fire
 	r.maybeBackgroundWork(context.Background())
 
-	// Wait for goroutine to complete
+	// Wait for goroutine to complete (sets lastBackgroundEnded)
 	time.Sleep(50 * time.Millisecond)
 
 	// Immediately try again — should be blocked by cooldown
-	// (lastBackgroundStarted was <1s ago)
+	// (lastBackgroundEnded was <1s ago)
 	r.maybeBackgroundWork(context.Background())
 
 	time.Sleep(50 * time.Millisecond)
@@ -206,6 +207,47 @@ func TestBackgroundCooldown(t *testing.T) {
 
 	if got != 1 {
 		t.Errorf("expected 1 background call (cooldown should block second), got %d", got)
+	}
+}
+
+func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
+	// A session that runs for longer than the interval should NOT block the
+	// next session from starting immediately after it finishes. The cooldown
+	// is measured from when the session ended, not when it started.
+	var mu sync.Mutex
+	calls := 0
+
+	r := &Runner{
+		agentID: "test",
+		bgCfg: config.BackgroundConfig{
+			Enabled:  true,
+			Interval: "1s",
+		},
+		lastInteraction: time.Now().Add(-5 * time.Second),
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			// Simulate a session that runs longer than the interval
+			time.Sleep(100 * time.Millisecond)
+		},
+		done: make(chan struct{}),
+	}
+
+	// First call fires — runs for 100ms (simulating a long session)
+	r.maybeBackgroundWork(context.Background())
+
+	// Wait for it to finish
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify lastBackgroundEnded was set after the session finished
+	r.mu.Lock()
+	endedAge := time.Since(r.lastBackgroundEnded)
+	r.mu.Unlock()
+
+	// lastBackgroundEnded should be very recent (< 200ms ago, not 300ms+ ago)
+	if endedAge > 200*time.Millisecond {
+		t.Errorf("lastBackgroundEnded is %v old, expected < 200ms (should be set at end, not start)", endedAge)
 	}
 }
 

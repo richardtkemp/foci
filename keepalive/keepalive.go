@@ -59,7 +59,7 @@ type Runner struct {
 	lastInteraction       time.Time
 	keepaliveRunning      bool
 	backgroundRunning     bool
-	lastBackgroundStarted time.Time // when the last background session began
+	lastBackgroundEnded time.Time // when the last background session finished
 
 	// Memory formation state
 	lastMemoryFormation    time.Time
@@ -215,7 +215,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	r.mu.Lock()
 	elapsed := time.Since(r.lastInteraction)
 	running := r.backgroundRunning
-	sinceLastBg := time.Since(r.lastBackgroundStarted)
+	sinceLastBgEnd := time.Since(r.lastBackgroundEnded)
 	r.mu.Unlock()
 
 	if running {
@@ -227,10 +227,10 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	}
 
 	// Enforce cooldown: don't start a new background session sooner than the
-	// configured interval after the previous one started. This prevents rapid
+	// configured interval after the previous one ended. This prevents rapid
 	// self-chaining where each completed session immediately triggers the next,
 	// accumulating orphaned child processes (e.g. coding agents in tmux).
-	if !r.lastBackgroundStarted.IsZero() && sinceLastBg < interval {
+	if !r.lastBackgroundEnded.IsZero() && sinceLastBgEnd < interval {
 		return
 	}
 
@@ -255,7 +255,6 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 
 	r.mu.Lock()
 	r.backgroundRunning = true
-	r.lastBackgroundStarted = time.Now()
 	r.lastCacheWarmed = time.Now()
 	r.mu.Unlock()
 
@@ -265,6 +264,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		defer func() {
 			r.mu.Lock()
 			r.backgroundRunning = false
+			r.lastBackgroundEnded = time.Now()
 			r.mu.Unlock()
 		}()
 		r.branchFn("background", promptText, true)
