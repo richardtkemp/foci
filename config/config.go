@@ -223,6 +223,7 @@ type LoggingConfig struct {
 	Level                 string `toml:"level"`
 	EventFile             string `toml:"event_file"`
 	APIFile               string `toml:"api_file"`
+	APIDB                 string `toml:"api_db"`              // SQLite API call log path (empty = disabled, default: {data_dir}/api.db)
 	ConversationFile      string `toml:"conversation_file"`
 	FullPayload           bool   `toml:"full_payload"`            // write full API payloads to api-payload.jsonl
 	PayloadFile           string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
@@ -836,6 +837,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
+	}
+	if cfg.Logging.APIDB == "" && !md.IsDefined("logging", "api_db") {
+		cfg.Logging.APIDB = cfg.DataPath("api.db")
 	}
 	if cfg.Logging.CacheBustIdleMinutes == 0 && !md.IsDefined("logging", "cache_bust_idle_minutes") {
 		cfg.Logging.CacheBustIdleMinutes = 10
