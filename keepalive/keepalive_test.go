@@ -1,9 +1,13 @@
 package keepalive
 
 import (
+	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
+
+	"foci/config"
 )
 
 func TestManaIsGood_InCredit(t *testing.T) {
@@ -119,6 +123,121 @@ func TestOrientationBuilderIntegration(t *testing.T) {
 	text := builder("branch:1", "parent:1", "keepalive")
 	if !containsAll(text, "branch:1", "parent:1", "keepalive") {
 		t.Errorf("builder missing values: %s", text)
+	}
+}
+
+func TestBackgroundRunningGuard(t *testing.T) {
+	// Verify the backgroundRunning flag prevents concurrent dispatch.
+	var mu sync.Mutex
+	calls := 0
+
+	r := &Runner{
+		agentID: "test",
+		bgCfg: config.BackgroundConfig{
+			Enabled:  true,
+			Interval: "1s",
+		},
+		lastInteraction: time.Now().Add(-2 * time.Second), // idle for 2s (> 1s interval)
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			time.Sleep(100 * time.Millisecond)
+		},
+		done: make(chan struct{}),
+	}
+
+	// First call should fire
+	r.maybeBackgroundWork(context.Background())
+
+	// Wait for goroutine to start
+	time.Sleep(20 * time.Millisecond)
+
+	// Second call while first is still running should be skipped
+	r.maybeBackgroundWork(context.Background())
+
+	// Wait for first to complete
+	time.Sleep(200 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+
+	if got != 1 {
+		t.Errorf("expected 1 background call (guard should block second), got %d", got)
+	}
+}
+
+func TestBackgroundCooldown(t *testing.T) {
+	// Verify that background work respects cooldown interval after completion.
+	var mu sync.Mutex
+	calls := 0
+
+	r := &Runner{
+		agentID: "test",
+		bgCfg: config.BackgroundConfig{
+			Enabled:  true,
+			Interval: "1s",
+		},
+		lastInteraction: time.Now().Add(-2 * time.Second),
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+		done: make(chan struct{}),
+	}
+
+	// First call should fire
+	r.maybeBackgroundWork(context.Background())
+
+	// Wait for goroutine to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Immediately try again — should be blocked by cooldown
+	// (lastBackgroundStarted was <1s ago)
+	r.maybeBackgroundWork(context.Background())
+
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+
+	if got != 1 {
+		t.Errorf("expected 1 background call (cooldown should block second), got %d", got)
+	}
+}
+
+func TestBackgroundNoSelfChaining(t *testing.T) {
+	// Verify background completion does NOT reset lastInteraction.
+	r := &Runner{
+		agentID: "test",
+		bgCfg: config.BackgroundConfig{
+			Enabled:  true,
+			Interval: "1s",
+		},
+		lastInteraction: time.Now().Add(-2 * time.Second),
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			// no-op
+		},
+		done: make(chan struct{}),
+	}
+
+	interactionBefore := r.lastInteraction
+
+	r.maybeBackgroundWork(context.Background())
+
+	// Wait for goroutine
+	time.Sleep(50 * time.Millisecond)
+
+	r.mu.Lock()
+	interactionAfter := r.lastInteraction
+	r.mu.Unlock()
+
+	if !interactionAfter.Equal(interactionBefore) {
+		t.Errorf("background completion should not reset lastInteraction: before=%v after=%v",
+			interactionBefore, interactionAfter)
 	}
 }
 
