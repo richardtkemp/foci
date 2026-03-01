@@ -71,8 +71,8 @@ type Bot struct {
 	isSecondary        bool                              // true for secondary bots (multiball)
 	pool               *Pool                             // back-reference to pool (secondary bots only)
 	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
-	OnUserMessage      func()                           // fires on each inbound user message (for keepalive interaction tracking)
-	OnTurnComplete     func()                           // fires after each agent turn completes (for cache warming tracking)
+	OnUserMessage      func()                            // fires on each inbound user message (for keepalive interaction tracking)
+	OnTurnComplete     func()                            // fires after each agent turn completes (for cache warming tracking)
 	botToken           string                            // for building file download URLs
 
 	transcriber       voice.STT // nil = voice notes not supported
@@ -93,7 +93,7 @@ type Bot struct {
 	showThinking         string       // thinking display mode: "off", "compact", "true"
 	displayWidth         int          // character width for dividers (default 44)
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
-	receivedFilesDir         string       // if non-empty, save received files to this directory
+	receivedFilesDir     string       // if non-empty, save received files to this directory
 	toolResults          sync.Map     // message ID (int64) → toolResultEntry; ephemeral, for inline keyboard expansion
 	thinkingStore        sync.Map     // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 }
@@ -1247,6 +1247,18 @@ func (b *Bot) SendNotification(text string) {
 // SendStartupNotification sends a startup notification to the last known chat.
 // Skips silently if no chat ID is available (expected on first run or fresh state).
 func (b *Bot) SendStartupNotification(agentID string) {
+	b.SendStartupNotificationWithDiagnosis(agentID, nil)
+}
+
+// StartupDiagnosis is an interface for the diagnosis result from the startup package.
+// Using an interface avoids importing the startup package (would create a cycle).
+type StartupDiagnosis interface {
+	FormatNotification() string
+}
+
+// SendStartupNotificationWithDiagnosis sends a startup notification with optional diagnosis info.
+// If diagnosis is nil or produces no additional text, sends a simple restart message.
+func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis StartupDiagnosis) {
 	b.chatMu.Lock()
 	chatID := b.chatID
 	b.chatMu.Unlock()
@@ -1261,6 +1273,12 @@ func (b *Bot) SendStartupNotification(agentID string) {
 		botName = "foci"
 	}
 	text := fmt.Sprintf("%s restarted at %s", botName, time.Now().Format("15:04:05"))
+
+	if diagnosis != nil {
+		if extra := diagnosis.FormatNotification(); extra != "" {
+			text = fmt.Sprintf("%s\n\n%s", text, extra)
+		}
+	}
 
 	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
 		log.Errorf("telegram", "send startup notification: %s", b.sanitizeError(err))
@@ -1844,21 +1862,21 @@ func closingHTMLTag(openTag string) string {
 
 // toolEmoji maps tool names to per-tool display emoji.
 var toolEmoji = map[string]string{
-	"exec":             "▶️",
-	"web_fetch":        "🔗",
-	"web_search":       "🔍",
-	"http_request":     "🌍",
-	"read":             "📖",
-	"write":            "✏️",
-	"edit":             "✂️",
-	"tmux":             "🪟",
-	"todo":             "☑️",
-	"send_telegram":    "📨",
-	"memory_search":    "🧠",
-	"spawn":            "🐣",
-	"scratchpad":       "📋",
-	"send_to_session":  "💬",
-	"remind":           "💭",
+	"exec":            "▶️",
+	"web_fetch":       "🔗",
+	"web_search":      "🔍",
+	"http_request":    "🌍",
+	"read":            "📖",
+	"write":           "✏️",
+	"edit":            "✂️",
+	"tmux":            "🪟",
+	"todo":            "☑️",
+	"send_telegram":   "📨",
+	"memory_search":   "🧠",
+	"spawn":           "🐣",
+	"scratchpad":      "📋",
+	"send_to_session": "💬",
+	"remind":          "💭",
 }
 
 // emojiForTool returns the per-tool emoji, falling back to 🔧 for unknown tools.

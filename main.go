@@ -29,6 +29,7 @@ import (
 	"foci/secrets/bitwarden"
 	"foci/session"
 	"foci/skills"
+	"foci/startup"
 	"foci/state"
 	"foci/telegram"
 	"foci/tools"
@@ -807,6 +808,19 @@ func main() {
 	// Start all bots
 	botMgr.StartAll(ctx)
 
+	// Diagnose restart type (clean/crash/reboot) and gather diagnostics
+	var diagnosis *startup.DiagnosisResult
+	logsDir := filepath.Dir(cfg.Logging.EventFile)
+	if logsDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			logsDir = filepath.Join(home, "logs")
+		}
+	}
+	diagnosis = startup.DiagnoseRestart(stateStore, startTime, logsDir)
+	if diagnosis.Class != startup.ClassClean && diagnosis.Class != startup.ClassUnknown {
+		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
+	}
+
 	// Send startup notifications to users via Telegram
 	// Per-agent startup_notification overrides global enable_startup_notify
 	for _, id := range agentOrder {
@@ -817,7 +831,7 @@ func main() {
 		}
 		if enabled {
 			if bot := botMgr.PrimaryBot(id); bot != nil {
-				bot.SendStartupNotification(id)
+				bot.SendStartupNotificationWithDiagnosis(id, diagnosis)
 			}
 		}
 	}
@@ -1225,6 +1239,11 @@ func main() {
 		shutdownTimeout = 30 * time.Second
 	}
 	gracefulShutdown(agents, shutdownTimeout)
+
+	// Record clean shutdown timestamp for crash detection on next startup
+	if err := startup.RecordCleanShutdown(stateStore); err != nil {
+		log.Warnf("main", "record clean shutdown: %v", err)
+	}
 
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
 	cancel()

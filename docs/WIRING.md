@@ -69,10 +69,32 @@ config.Load(path)                                        ← validates values; l
 SIGTERM/SIGINT received
   → close HTTP server
   → gracefulShutdown(agents, timeout)    ← wait for in-flight agent turns
+  → startup.RecordCleanShutdown()        ← record timestamp for crash detection
   → cancel context                        ← stops Telegram poll loops, triggers update ack
   → botMgr.Wait()                         ← block until all bots finish ack
   → deferred closes run (SQLite DBs, log files)
 ```
+
+## Startup Diagnosis (`startup/diagnosis.go`)
+
+On startup, classifies the restart type and includes diagnostics in the startup notification:
+
+```
+DiagnoseRestart(stateStore, startTime, logsDir)
+  → read system:last_clean_shutdown from state store
+  → read /proc/uptime for system uptime
+  → classify:
+     - clean: shutdown < 5 min before startup
+     - crash: shutdown > 5 min, system uptime > gap
+     - reboot: system uptime < shutdown gap (system restarted)
+     - unknown: no prior shutdown record
+  → for crash/reboot: gatherDiagnostics() scans foci.log for ERROR/FATAL lines
+  → return DiagnosisResult{Class, Diagnostics, Summary}
+```
+
+**Telegram notification:** `SendStartupNotificationWithDiagnosis` appends the formatted diagnosis to the standard restart message. Clean restarts get no extra text. Crashes show "⚠️ Unexpected restart" with error lines. Reboots show "🔄 System reboot detected".
+
+**State key:** `system:last_clean_shutdown` holds Unix timestamp of last graceful shutdown.
 
 ## Package Dependency Graph
 
@@ -88,6 +110,7 @@ main
  ├── memory        → modernc.org/sqlite, fsnotify/v4 (file watching for auto-reindex)
  ├── voice         → log, gorilla/websocket
  ├── skills        → log (leaf package)
+ ├── startup       → log, state (leaf package for crash detection)
  ├── tools         → anthropic, log, memory, secrets, voice
  ├── workspace     → anthropic
  ├── prompts       (no deps — embedded .md files)
@@ -97,7 +120,7 @@ main
  └── telegram      → agent, command, log, table, voice
 ```
 
-No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
+No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
 
 ## The Agent Loop (`agent/agent.go`)
 
