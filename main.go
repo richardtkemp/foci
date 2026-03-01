@@ -1334,7 +1334,15 @@ func setupAgent(p setupParams) *agentInstance {
 			if resp == "" {
 				return
 			}
-			bot := p.botMgr.PrimaryBot(acfg.ID)
+			var bot *telegram.Bot
+			if strings.Contains(target, ":multiball:") {
+				if mb := p.botMgr.BotForSession(target); mb != nil {
+					bot = mb
+				}
+			}
+			if bot == nil {
+				bot = p.botMgr.PrimaryBot(acfg.ID)
+			}
 			if bot == nil {
 				log.Warnf("async_notify", "no primary bot for agent %s, response not delivered", acfg.ID)
 				return
@@ -1486,7 +1494,15 @@ func setupAgent(p setupParams) *agentInstance {
 				return
 			}
 
-			bot := p.botMgr.PrimaryBot(targetAgentID)
+			var bot *telegram.Bot
+			if strings.Contains(targetSessionKey, ":multiball:") {
+				if mb := p.botMgr.BotForSession(targetSessionKey); mb != nil {
+					bot = mb
+				}
+			}
+			if bot == nil {
+				bot = p.botMgr.PrimaryBot(targetAgentID)
+			}
 			if bot == nil {
 				log.Warnf("session_notify", "no primary bot for agent %s, response not delivered", targetAgentID)
 				return
