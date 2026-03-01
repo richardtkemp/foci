@@ -89,9 +89,12 @@ func TestFormatConfig(t *testing.T) {
 	cfg, agent := testConfig()
 	result := FormatConfig(cfg, agent)
 
-	// Check table header
-	if !strings.Contains(result, "SECTION") || !strings.Contains(result, "KEY") || !strings.Contains(result, "VALUE") {
+	// Should have KEY/VALUE headers (no SECTION column — sections are headers)
+	if !strings.Contains(result, "KEY") || !strings.Contains(result, "VALUE") {
 		t.Error("missing table header columns")
+	}
+	if strings.Contains(result, "SECTION") {
+		t.Error("SECTION column should not appear — sections are now headers")
 	}
 
 	// Check separator line
@@ -99,14 +102,14 @@ func TestFormatConfig(t *testing.T) {
 		t.Error("missing table separator")
 	}
 
-	// Check sections appear as values in SECTION column
+	// Check sections appear as [section] headers
 	for _, section := range []string{
 		"agent", "telegram", "sessions", "memory",
 		"logging", "http", "tools", "environment",
 		"database", "anthropic",
 	} {
-		if !strings.Contains(result, section) {
-			t.Errorf("missing section %q", section)
+		if !strings.Contains(result, "["+section+"]") {
+			t.Errorf("missing section header [%s]", section)
 		}
 	}
 
@@ -271,10 +274,10 @@ func TestFormatConfigGrouped(t *testing.T) {
 	if !strings.Contains(tables[0], "Global") {
 		t.Errorf("first table should be Global:\n%s", tables[0])
 	}
-	// Global should contain non-agent sections
+	// Global should contain non-agent sections as [section] headers
 	for _, section := range []string{"telegram", "sessions", "logging", "tools"} {
-		if !strings.Contains(tables[0], section) {
-			t.Errorf("Global table missing section %q", section)
+		if !strings.Contains(tables[0], "["+section+"]") {
+			t.Errorf("Global table missing section header [%s]", section)
 		}
 	}
 	// Global should NOT contain agent-specific data
@@ -348,6 +351,63 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// defaults.max_tool_loops is set and NOT overridden → no annotation
 	if strings.Contains(global, "25 (overridden)") || strings.Contains(global, "25 (default)") {
 		t.Errorf("max_tool_loops should have no annotation:\n%s", global)
+	}
+}
+
+func TestFormatTableBySection(t *testing.T) {
+	rows := []configRow{
+		{"alpha", "key1", "val1"},
+		{"alpha", "key2", "val2"},
+		{"beta", "key3", "val3"},
+		{"alpha", "key4", "val4"}, // alpha appears again — should still be grouped under first alpha
+	}
+	result := formatTableBySection(rows)
+
+	// Should have section headers
+	if !strings.Contains(result, "[alpha]") {
+		t.Error("missing [alpha] header")
+	}
+	if !strings.Contains(result, "[beta]") {
+		t.Error("missing [beta] header")
+	}
+	// Should NOT have SECTION column
+	if strings.Contains(result, "SECTION") {
+		t.Error("should not have SECTION column")
+	}
+	// alpha section should contain all three alpha keys
+	for _, key := range []string{"key1", "key2", "key4"} {
+		if !strings.Contains(result, key) {
+			t.Errorf("missing key %q", key)
+		}
+	}
+	// beta section should contain key3
+	if !strings.Contains(result, "key3") {
+		t.Error("missing key3")
+	}
+	// Sections should appear in insertion order: alpha before beta
+	alphaIdx := strings.Index(result, "[alpha]")
+	betaIdx := strings.Index(result, "[beta]")
+	if alphaIdx >= betaIdx {
+		t.Error("[alpha] should appear before [beta]")
+	}
+}
+
+func TestFormatAvailableDeduplication(t *testing.T) {
+	cfg, agent := testConfig()
+	// Ensure both agent and sessions have branch_orientation_prompt unset
+	agent.BranchOrientationPrompt = ""
+	cfg.Sessions.BranchOrientationPrompt = ""
+	// Ensure both agent and defaults have system_files unset
+	agent.SystemFiles = nil
+	cfg.Defaults.SystemFiles = nil
+
+	result := FormatAvailable(cfg, agent)
+
+	// branch_orientation_prompt appears in both agent and sessions sections,
+	// but after deduplication only the sessions entry should remain.
+	branchCount := strings.Count(result, "branch_orientation_prompt")
+	if branchCount > 1 {
+		t.Errorf("branch_orientation_prompt appears %d times, expected 1 after dedup", branchCount)
 	}
 }
 
