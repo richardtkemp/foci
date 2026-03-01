@@ -20,7 +20,6 @@ thinking = "adaptive"                     # adaptive (default), off
 # braindead_prompt = ""                   # warning text injected at threshold
 # duplicate_messages = false              # send user text twice per API call
 # inject_agent_warnings = false           # inject warnings/errors into session
-# tts_rate = 0.0                          # TTS speech rate (0 = use voice config)
 # show_tool_calls = "off"                 # off, preview, full
 # show_thinking = "off"                   # off, compact, true
 # display_width = 44                      # divider width in Telegram
