@@ -15,13 +15,13 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
 		Name:        "todo",
 		ExecExport:  true,
-		Description: "Manage a persistent todo list. Supports adding, listing, searching, completing, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
+		Description: "Manage a persistent todo list. Supports adding, listing, searching, getting, completing, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["add", "list", "search", "complete", "edit", "remove"],
+					"enum": ["add", "list", "search", "get", "complete", "edit", "remove"],
 					"description": "The operation to perform"
 				},
 				"text": {
@@ -39,7 +39,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"id": {
 					"type": "integer",
-					"description": "Todo item ID (required for 'complete', 'edit', and 'remove')"
+					"description": "Todo item ID (required for 'get', 'complete', 'edit', and 'remove')"
 				},
 				"ids": {
 					"type": "array",
@@ -145,6 +145,25 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				}
 				return strings.Join(lines, "\n"), nil
 
+			case "get":
+				if p.ID == 0 {
+					return "", fmt.Errorf("id is required for get")
+				}
+				item, err := store.Get(agentID, p.ID)
+				if err != nil {
+					return "", fmt.Errorf("get todo: %w", err)
+				}
+				marker := "[ ]"
+				if item.Status == "done" {
+					marker = "[x]"
+				}
+				tags := memory.FormatTags(item.Tags)
+				line := fmt.Sprintf("#%d %s [%s]%s %s %s", item.ID, marker, item.Priority, tags, item.Text, formatTodoTimestamp(*item))
+				if item.Status == "done" && item.CloseReason != "" {
+					line += fmt.Sprintf(" — %s", item.CloseReason)
+				}
+				return line, nil
+
 			case "complete":
 				if p.Reason == "" {
 					return "", fmt.Errorf("reason is required for complete (e.g. 'implemented in abc1234', 'no longer relevant')")
@@ -207,7 +226,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return strings.Join(results, "\n"), nil
 
 			default:
-				return "", fmt.Errorf("unknown action: %s (use add, list, search, complete, edit, or remove)", p.Action)
+				return "", fmt.Errorf("unknown action: %s (use add, list, search, get, complete, edit, or remove)", p.Action)
 			}
 		},
 	}

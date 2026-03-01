@@ -238,6 +238,31 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 	return &item, nil
 }
 
+// Get returns a single todo item by ID.
+func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
+	row := s.db.QueryRow(
+		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE id = ? AND agent_id = ?`,
+		id, agentID,
+	)
+	var item TodoItem
+	var createdAt string
+	var updatedAt string
+	var completedAt sql.NullString
+	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("todo #%d not found", id)
+		}
+		return nil, err
+	}
+	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	if completedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, completedAt.String)
+		item.CompletedAt = &t
+	}
+	return &item, nil
+}
+
 // Search returns todo items matching a case-insensitive substring query.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	rows, err := s.db.Query(
