@@ -84,7 +84,7 @@ All parameters have sensible defaults. Customize only what you need. Prompt file
 
 ### Anthropic API
 
-- **Auth:** Two tokens — OAuth setup-token for conversations, console API key for usage/admin. See [docs/AUTH.md](docs/AUTH.md).
+- **Auth:** OAuth PKCE with auto-refresh, or static token override. See [docs/AUTH.md](docs/AUTH.md).
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** `cache_control` with `{"type": "ephemeral"}` on system prompt blocks
 - **Streaming:** Server-sent events for responses
@@ -899,8 +899,7 @@ model = "claude-haiku-4-5"
 workspace = "/home/rich/git/openclaw/workspace"
 
 [anthropic]
-token = "sk-ant-oat01-..."
-oauth_token = "sk-ant-oat01-..."  # OAuth token for /usage command
+token = "sk-ant-oat01-..."  # static override (optional — use foci auth for OAuth PKCE)
 
 [telegram]
 bot_token = "8351531463:AAH..."
@@ -989,7 +988,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
 4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
-   - Anthropic OAuth token (from `claude setup-token`)
+   - Anthropic OAuth (via `foci auth` or static token)
    - Telegram user ID (allowed_users)
    - Agent model (default: claude-haiku-4-5)
 5. **Character files:** Create `~/character/` with template content if files don't exist:

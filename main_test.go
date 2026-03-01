@@ -332,26 +332,6 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 	}
 }
 
-func TestCheckManaPrereqs_NoToken(t *testing.T) {
-	warnings := checkManaPrereqs("")
-	found := false
-	for _, w := range warnings {
-		if strings.Contains(w, "no OAuth token") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected warning about missing token, got %v", warnings)
-	}
-}
-
-func TestCheckManaPrereqs_HasToken(t *testing.T) {
-	warnings := checkManaPrereqs("sk-ant-oat01-test")
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings with valid token, got %v", warnings)
-	}
-}
-
 // ========== readPromptFile tests ==========
 
 func TestReadPromptFile_LoadsFile(t *testing.T) {

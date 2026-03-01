@@ -30,6 +30,31 @@ func ReadSetupToken(path string) (string, error) {
 	return creds.ClaudeAiOauth.AccessToken, nil
 }
 
+// ReadCredentials reads the full OAuth credentials from a Claude Code
+// credentials file, including refresh token and expiry. Returns the
+// access token, refresh token, and expiry (unix milliseconds).
+func ReadCredentials(path string) (accessToken, refreshToken string, expiresAt int64, err error) {
+	path = expandHome(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("read credentials file: %w", err)
+	}
+
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+			ExpiresAt    int64  `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return "", "", 0, fmt.Errorf("parse credentials: %w", err)
+	}
+
+	return creds.ClaudeAiOauth.AccessToken, creds.ClaudeAiOauth.RefreshToken, creds.ClaudeAiOauth.ExpiresAt, nil
+}
+
 // expandHome resolves ~ to the user's home directory.
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {

@@ -159,11 +159,9 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `token` | string | `""` | Anthropic API key or OAuth token from `claude setup-token`. Overridden by `secrets.toml` `[anthropic] token`. |
-| `admin_key` | string | `""` | Console API key for usage/mana queries and token counting. Overridden by `secrets.toml` `[anthropic] admin_key`. Falls back to main token if not set. See [docs/AUTH.md](AUTH.md). |
-| `oauth_token` | string | `""` | OAuth access token for the usage API (overrides `token` for usage only). Overridden by `secrets.toml` `[anthropic] oauth_token`. |
+| `token` | string | `""` | Static Anthropic API key or OAuth token. Overridden by `secrets.toml` `[anthropic] token`. When set, disables OAuth auto-refresh. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
-| `credentials_file` | string | `"~/.claude/.credentials.json"` | Path to Claude Code credentials file. Fallback token source when `token` is not set. Reads the `accessToken` from the `claudeAiOauth` section. |
+| `credentials_file` | string | `"~/.claude/.credentials.json"` | Path to OAuth credentials file (foci-native or Claude Code format). Used for OAuth PKCE with auto-refresh when `token` is not set. See [AUTH.md](AUTH.md). |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 
@@ -739,7 +737,6 @@ Credentials file. Lives alongside `foci.toml`. Protected at the OS level by the 
 ```toml
 [anthropic]
 token = "sk-ant-..."
-oauth_token = "sk-ant-oat01-..."
 
 [telegram]
 bot_token = "123456:ABC..."

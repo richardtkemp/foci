@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -91,6 +92,29 @@ func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive stri
 }
 
 func main() {
+	// Handle "foci auth" subcommand before normal flag parsing
+	if len(os.Args) >= 2 && os.Args[1] == "auth" {
+		authFlags := flag.NewFlagSet("auth", flag.ExitOnError)
+		credsFile := authFlags.String("credentials-file", "", "path to save credentials (default: from config or ~/.claude/.credentials.json)")
+		configFile := authFlags.String("config", "", "path to foci.toml (to read credentials_file)")
+		authFlags.Parse(os.Args[2:])
+
+		path := *credsFile
+		if path == "" && *configFile != "" {
+			if c, err := config.Load(*configFile); err == nil && c.Anthropic.CredentialsFile != "" {
+				path = c.Anthropic.CredentialsFile
+			}
+		}
+		if path == "" {
+			path = "~/.claude/.credentials.json"
+		}
+		if err := anthropic.RunAuthFlow(path); err != nil {
+			fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	configPath := config.ParseFlags()
 
 	cfg, err := config.Load(configPath)
@@ -175,14 +199,6 @@ func main() {
 	if v, ok := store.Get("anthropic.token"); ok {
 		anthropicToken = v
 	}
-	anthropicAdminKey := cfg.Anthropic.AdminKey
-	if v, ok := store.Get("anthropic.admin_key"); ok {
-		anthropicAdminKey = v
-	}
-	anthropicOAuthToken := cfg.Anthropic.OAuthToken
-	if v, ok := store.Get("anthropic.oauth_token"); ok {
-		anthropicOAuthToken = v
-	}
 	braveKey := cfg.Anthropic.BraveAPIKey
 	if v, ok := store.Get("brave.api_key"); ok {
 		braveKey = v
@@ -238,32 +254,61 @@ func main() {
 		httpTimeout = 120 * time.Second
 	}
 
-	// Token resolution: secrets.toml > foci.toml > credentials file (claude setup-token)
-	if anthropicToken == "" && cfg.Anthropic.CredentialsFile != "" {
-		if t, err := anthropic.ReadSetupToken(cfg.Anthropic.CredentialsFile); err == nil && t != "" {
-			anthropicToken = t
-			log.Infof("main", "using token from %s", cfg.Anthropic.CredentialsFile)
-		}
-	}
-	if anthropicToken == "" {
-		log.Errorf("main", "no Anthropic token configured")
-		log.Errorf("main", "run: claude setup-token")
-		log.Errorf("main", "then add the token to secrets.toml under [anthropic] token = \"sk-ant-oat01-...\"")
-		log.Errorf("main", "or set credentials_file in foci.toml to point to ~/.claude/.credentials.json")
-		os.Exit(1)
-	}
-	client := anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
-	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
+	// Token resolution: static token (secrets.toml/foci.toml) or OAuth PKCE credentials file
+	var client *anthropic.Client
+	var usageClient *anthropic.UsageClient
+	var oauthMgr *anthropic.OAuthManager
 
-	// Admin client for usage/mana queries and token counting.
-	// Falls back to main token if admin_key is not configured.
-	adminClient := client
-	if anthropicAdminKey != "" {
-		adminClient = anthropic.NewClientWithTimeout(anthropicAdminKey, httpTimeout)
-		log.Infof("main", "using admin_key for usage and token counting")
-	} else {
-		log.Warnf("main", "no anthropic.admin_key configured — usage/mana and token counting will use the main token (may not work with setup-token auth)")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	credsFile := cfg.Anthropic.CredentialsFile
+	if credsFile == "" {
+		credsFile = "~/.claude/.credentials.json"
 	}
+
+	if anthropicToken != "" {
+		// Static token path — simple client with fixed token
+		client = anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
+		usageClient = anthropic.NewUsageClient(anthropicToken)
+		log.Infof("main", "using static token from secrets.toml/foci.toml")
+	} else {
+		// OAuth PKCE path — try loading credentials file
+		mgr, err := anthropic.NewOAuthManager(credsFile)
+		if err != nil {
+			// Check if stdin is a terminal — if so, run interactive auth
+			if fi, statErr := os.Stdin.Stat(); statErr == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+				log.Infof("main", "no credentials found, starting interactive auth flow")
+				if authErr := anthropic.RunAuthFlow(credsFile); authErr != nil {
+					log.Fatalf("main", "auth flow failed: %v", authErr)
+				}
+				mgr, err = anthropic.NewOAuthManager(credsFile)
+				if err != nil {
+					log.Fatalf("main", "load credentials after auth: %v", err)
+				}
+			} else {
+				log.Errorf("main", "no Anthropic token configured and no valid credentials file")
+				log.Errorf("main", "run: foci auth")
+				log.Errorf("main", "or add a token to secrets.toml under [anthropic] token = \"sk-ant-oat01-...\"")
+				os.Exit(1)
+			}
+		}
+		oauthMgr = mgr
+
+		// Refresh now if token is near expiry
+		if oauthMgr.ExpiresIn() < 5*time.Minute {
+			log.Infof("main", "token near expiry, refreshing")
+			if err := oauthMgr.Refresh(); err != nil {
+				log.Fatalf("main", "initial token refresh: %v", err)
+			}
+		}
+
+		oauthMgr.StartRefresh(ctx)
+		client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
+		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
+		log.Infof("main", "using OAuth credentials from %s (expires in %s)", credsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+	}
+	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
@@ -465,29 +510,10 @@ func main() {
 		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	startTime := time.Now()
 
 	// Bot manager — owns all Telegram bots
 	botMgr := telegram.NewBotManager()
-
-	// Shared: usage client — prefers admin_key (console API key), falls back to
-	// oauth_token, then main token. admin_key is the intended auth for usage queries.
-	usageToken := anthropicAdminKey
-	if usageToken == "" && anthropicOAuthToken != "" {
-		usageToken = anthropicOAuthToken
-	}
-	if usageToken == "" {
-		usageToken = anthropicToken
-	}
-	usageClient := anthropic.NewUsageClient(usageToken)
-
-	// Mana detection startup checks
-	for _, w := range checkManaPrereqs(usageToken) {
-		log.Warnf("main", "%s", w)
-	}
 
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
@@ -530,29 +556,27 @@ func main() {
 		}
 
 		inst := setupAgent(setupParams{
-			acfg:                acfg,
-			cfg:                 cfg,
-			configPath:          configPath,
-			client:              client,
-			adminClient:         adminClient,
-			sessions:            sessions,
-			store:               store,
-			bwStore:             bwStore,
-			stateStore:          stateStore,
-			memIdx:              agentMemIdx,
-			reminderStore:       reminderStore,
-			scratchpadStore:     scratchpadStore,
-			todoStore:           todoStore,
-			sttProvider:         sttProvider,
-			ttsProvider:         ttsProvider,
-			braveKey:            braveKey,
-			anthropicOAuthToken: anthropicOAuthToken,
-			usageClient:         usageClient,
-			botMgr:              botMgr,
-			startTime:           startTime,
-			ctx:                 ctx,
-			agentListFn:         agentListFn,
-			agentResolverFn:     agentResolverFn,
+			acfg:            acfg,
+			cfg:             cfg,
+			configPath:      configPath,
+			client:          client,
+			sessions:        sessions,
+			store:           store,
+			bwStore:         bwStore,
+			stateStore:      stateStore,
+			memIdx:          agentMemIdx,
+			reminderStore:   reminderStore,
+			scratchpadStore: scratchpadStore,
+			todoStore:       todoStore,
+			sttProvider:     sttProvider,
+			ttsProvider:     ttsProvider,
+			braveKey:        braveKey,
+			usageClient:     usageClient,
+			botMgr:          botMgr,
+			startTime:       startTime,
+			ctx:             ctx,
+			agentListFn:     agentListFn,
+			agentResolverFn: agentResolverFn,
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
@@ -1170,29 +1194,27 @@ func main() {
 
 // setupParams holds the shared resources needed by each agent.
 type setupParams struct {
-	acfg                config.AgentConfig
-	cfg                 *config.Config
-	configPath          string
-	client              *anthropic.Client
-	adminClient         *anthropic.Client // for usage/token counting (admin_key or fallback to main)
-	sessions            *session.Store
-	store               *secrets.Store
-	bwStore             *bitwarden.Store
-	stateStore          *state.Store
-	memIdx              *memory.Index
-	reminderStore       *memory.ReminderStore
-	scratchpadStore     *memory.Scratchpad
-	todoStore           *memory.TodoStore
-	sttProvider         voice.STT
-	ttsProvider         voice.TTS
-	braveKey            string
-	anthropicOAuthToken string
-	usageClient         *anthropic.UsageClient
-	botMgr              *telegram.BotManager
-	startTime           time.Time
-	ctx                 context.Context
-	agentListFn         func() []command.AgentInfo
-	agentResolverFn     func(agentID string) *agentInstance
+	acfg            config.AgentConfig
+	cfg             *config.Config
+	configPath      string
+	client          *anthropic.Client
+	sessions        *session.Store
+	store           *secrets.Store
+	bwStore         *bitwarden.Store
+	stateStore      *state.Store
+	memIdx          *memory.Index
+	reminderStore   *memory.ReminderStore
+	scratchpadStore *memory.Scratchpad
+	todoStore       *memory.TodoStore
+	sttProvider     voice.STT
+	ttsProvider     voice.TTS
+	braveKey        string
+	usageClient     *anthropic.UsageClient
+	botMgr          *telegram.BotManager
+	startTime       time.Time
+	ctx             context.Context
+	agentListFn     func() []command.AgentInfo
+	agentResolverFn func(agentID string) *agentInstance
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
@@ -1736,21 +1758,21 @@ func setupAgent(p setupParams) *agentInstance {
 
 				go func() {
 					defer wg.Done()
-					fullCount, fullErr = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
+					fullCount, fullErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						System: allSystem, Messages: messages, Tools: toolDefs,
 					})
 				}()
 				go func() {
 					defer wg.Done()
-					systemCount, systemErr = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
+					systemCount, systemErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						System: allSystem, Messages: dummyMsgs, Tools: toolDefs,
 					})
 				}()
 				go func() {
 					defer wg.Done()
-					baselineCount, baselineErr = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
+					baselineCount, baselineErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						Messages: dummyMsgs, Tools: toolDefs,
 					})
@@ -1759,7 +1781,7 @@ func setupAgent(p setupParams) *agentInstance {
 					i, sec := i, sec
 					go func() {
 						defer wg.Done()
-						rawSecCounts[i], rawSecErrs[i] = p.adminClient.CountTokens(ctx, &anthropic.MessageRequest{
+						rawSecCounts[i], rawSecErrs[i] = p.client.CountTokens(ctx, &anthropic.MessageRequest{
 							Model: ag.Model, MaxTokens: maxOutput,
 							System: sec.blocks, Messages: dummyMsgs, Tools: toolDefs,
 						})
@@ -2839,11 +2861,3 @@ func restoreMultiballSessions(
 	}
 }
 
-// checkManaPrereqs returns warnings if mana detection prerequisites are missing.
-func checkManaPrereqs(usageToken string) []string {
-	var warnings []string
-	if usageToken == "" {
-		warnings = append(warnings, "mana: no OAuth token configured — mana detection requires a token from 'claude setup-token'")
-	}
-	return warnings
-}

@@ -60,9 +60,19 @@ func (e *APIError) RetryAfterSeconds() int {
 // Client is an Anthropic API client with prompt caching support.
 type Client struct {
 	apiKey         string
+	tokenFunc      func() (string, error) // dynamic token source (overrides apiKey)
 	httpClient     *http.Client
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for 500 retries; 0 = default 2s
+}
+
+// resolveToken returns the token to use for API requests.
+// If tokenFunc is set, it calls the function; otherwise returns the static apiKey.
+func (c *Client) resolveToken() (string, error) {
+	if c.tokenFunc != nil {
+		return c.tokenFunc()
+	}
+	return c.apiKey, nil
 }
 
 // NewClient creates a new Anthropic API client.
@@ -83,6 +93,16 @@ func NewClientWithTimeout(apiKey string, timeout time.Duration) *Client {
 	}
 }
 
+// NewClientWithTokenFunc creates a client that calls tokenFunc for each request
+// to get the current Bearer token. Used with OAuthManager for auto-refreshing tokens.
+func NewClientWithTokenFunc(tokenFunc func() (string, error), timeout time.Duration) *Client {
+	return &Client{
+		tokenFunc:  tokenFunc,
+		httpClient: &http.Client{Timeout: timeout},
+		baseURL:    "https://api.anthropic.com",
+	}
+}
+
 // NewClientWithBase creates a client with a custom base URL (for testing).
 func NewClientWithBase(baseURL, apiKey string) *Client {
 	return &Client{
@@ -96,13 +116,18 @@ func NewClientWithBase(baseURL, apiKey string) *Client {
 // sendOnce performs a single HTTP request to the messages API and returns the
 // parsed response, or an error. Extracted from SendMessage to support retry.
 func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, error) {
+	token, err := c.resolveToken()
+	if err != nil {
+		return nil, fmt.Errorf("resolve token: %w", err)
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
@@ -181,6 +206,11 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 // CountTokens calls the /v1/messages/count_tokens endpoint to get exact
 // input token counts for a request. The endpoint is free (no tokens billed).
 func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, error) {
+	token, err := c.resolveToken()
+	if err != nil {
+		return 0, fmt.Errorf("resolve token: %w", err)
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return 0, fmt.Errorf("marshal request: %w", err)
@@ -192,7 +222,7 @@ func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, err
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 

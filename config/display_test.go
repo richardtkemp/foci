@@ -11,7 +11,6 @@ func testConfig() (*Config, AgentConfig) {
 	cfg := &Config{
 		Anthropic: AnthropicConfig{
 			Token:           "sk-ant-secret",
-			OAuthToken:      "oauth-secret",
 			BraveAPIKey:     "brave-secret",
 			CredentialsFile: "/home/user/.credentials.json",
 			HTTPTimeout:     "120s",
@@ -132,9 +131,6 @@ func TestFormatConfigSecretRedaction(t *testing.T) {
 	// Secrets must be redacted
 	if strings.Contains(result, "sk-ant-secret") {
 		t.Error("anthropic token not redacted")
-	}
-	if strings.Contains(result, "oauth-secret") {
-		t.Error("oauth token not redacted")
 	}
 	if strings.Contains(result, "brave-secret") {
 		t.Error("brave api key not redacted")
