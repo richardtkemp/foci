@@ -258,8 +258,8 @@ func TestSendMessageServerError(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatal("expected *APIError")
 	}
-	if !apiErr.IsServerError() {
-		t.Error("expected IsServerError() == true")
+	if !apiErr.IsRetryable() {
+		t.Error("expected IsRetryable() == true for 500")
 	}
 	if apiErr.IsRateLimit() {
 		t.Error("500 should not be IsRateLimit")

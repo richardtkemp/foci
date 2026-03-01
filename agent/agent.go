@@ -809,8 +809,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				}
 				return "", fmt.Errorf("rate limited — mana exhausted")
 			}
-			// Detect 500 server errors and return a friendly message.
-			if errors.As(err, &apiErr) && apiErr.IsServerError() {
+			// Detect retryable server errors (500/502/503/529) and return a friendly message.
+			// By this point, the client has already retried 3 times.
+			if errors.As(err, &apiErr) && apiErr.IsRetryable() {
 				log.Debugf("agent", "server error detail: %s", err)
 				log.Warnf("agent", "API server error (status %d)", apiErr.StatusCode)
 				if a.RateLimitFunc != nil {
