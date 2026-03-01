@@ -22,6 +22,18 @@ func TriggerFromContext(ctx context.Context) string {
 	return s
 }
 
+// isUserTrigger returns true if the trigger represents a human-initiated message
+// (typed in Telegram, spoken via voice, or sent via HTTP /send).
+// Returns false for system-initiated triggers (keepalive, wake, cron, warnings, etc.).
+func isUserTrigger(trigger string) bool {
+	switch trigger {
+	case "", "user", "telegram", "voice":
+		return true
+	default:
+		return false
+	}
+}
+
 // TurnCallbacks holds per-turn callbacks scoped to a context.
 // Using context avoids cross-turn races from mutable Agent fields.
 type TurnCallbacks struct {

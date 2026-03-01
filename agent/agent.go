@@ -849,7 +849,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	reminderBlock := a.collectReminders()
 	msgBody := imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
-	if a.DuplicateMessages && (trigger == "" || trigger == "user") {
+	if a.DuplicateMessages && isUserTrigger(trigger) {
 		msgBody = userMessage + "\n\n" + userMessage
 	}
 	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
