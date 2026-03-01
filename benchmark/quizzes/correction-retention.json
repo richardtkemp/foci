@@ -4,7 +4,11 @@
     "category": "correction_retention",
     "question": "What is the current database pool size in config.yaml?",
     "expected": "30",
-    "wrong_if": ["10", "25", "20"],
+    "wrong_if": [
+      "10",
+      "25",
+      "20"
+    ],
     "notes": "Started at 10, changed to 25, corrected to 20, then bumped to 30 during debugging"
   },
   {
@@ -19,7 +23,9 @@
     "category": "correction_retention",
     "question": "What is the current deploy target host in deploy.sh?",
     "expected": "deploy-prod.internal",
-    "wrong_if": ["deploy-staging.internal"],
+    "wrong_if": [
+      "deploy-staging.internal"
+    ],
     "notes": "Changed from deploy-staging.internal to deploy-prod.internal"
   },
   {
@@ -27,7 +33,9 @@
     "category": "correction_retention",
     "question": "What is the redis TTL in config.yaml?",
     "expected": "300",
-    "wrong_if": ["600"],
+    "wrong_if": [
+      "600"
+    ],
     "notes": "Changed to 600 then reverted to 300"
   },
   {
@@ -35,7 +43,10 @@
     "category": "correction_retention",
     "question": "What version is the app set to in config.yaml?",
     "expected": "3.0.0",
-    "wrong_if": ["2.4.1", "2.5.0"],
+    "wrong_if": [
+      "2.4.1",
+      "2.5.0"
+    ],
     "notes": "Original 2.4.1, changed to 2.5.0, corrected to 3.0.0"
   },
   {
@@ -43,7 +54,9 @@
     "category": "correction_retention",
     "question": "What department is hpatel in?",
     "expected": "Operations",
-    "wrong_if": ["Engineering"],
+    "wrong_if": [
+      "Engineering"
+    ],
     "notes": "Initially added as Engineering, corrected to Operations"
   },
   {
@@ -51,7 +64,10 @@
     "category": "correction_retention",
     "question": "What monitoring service did we add to docker-compose.yaml?",
     "expected": "Grafana Alloy",
-    "wrong_if": ["Prometheus", "prometheus"],
+    "wrong_if": [
+      "Prometheus",
+      "prometheus"
+    ],
     "notes": "Initially added Prometheus, then replaced with Grafana Alloy"
   },
   {
@@ -59,7 +75,30 @@
     "category": "correction_retention",
     "question": "What ports does the nginx service expose in docker-compose.yaml?",
     "expected": "443 only",
-    "wrong_if": ["80 and 443", "443 and 80"],
+    "wrong_if": [
+      "80 and 443",
+      "443 and 80"
+    ],
     "notes": "Removed port 80, kept only 443"
+  },
+  {
+    "id": "backup-cron-time",
+    "category": "correction_retention",
+    "question": "What time should the backup cron run?",
+    "expected": "3am",
+    "wrong_if": [
+      "2am"
+    ],
+    "notes": "Changed from 2am to 3am due to DST - mentioned at end of session"
+  },
+  {
+    "id": "monitoring-threshold",
+    "category": "correction_retention",
+    "question": "What is the monitoring alert threshold?",
+    "expected": "95%",
+    "wrong_if": [
+      "90%"
+    ],
+    "notes": "Changed from 90% to 95% to reduce false positives - mentioned at end of session"
   }
 ]
