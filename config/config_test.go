@@ -1765,8 +1765,8 @@ id = "default"
 	if cfg.Agents[0].Thinking != "adaptive" {
 		t.Errorf("agent thinker: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
 	}
-	if cfg.Agents[1].Thinking != "" {
-		t.Errorf("agent default: Thinking = %q, want empty", cfg.Agents[1].Thinking)
+	if cfg.Agents[1].Thinking != "adaptive" {
+		t.Errorf("agent default: Thinking = %q, want %q (inherited from defaults)", cfg.Agents[1].Thinking, "adaptive")
 	}
 }
 

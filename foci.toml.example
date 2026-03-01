@@ -12,8 +12,8 @@
 # Global defaults inherited by all agents. Per-agent values override these.
 [defaults]
 model = "claude-sonnet-4-20250514"
-# effort = "low"                          # low, medium, high
-# thinking = "off"                        # off, adaptive
+effort = "low"                            # low (default), medium, high
+thinking = "adaptive"                     # adaptive (default), off
 # max_tool_loops = 25
 # max_output_tokens = 8192
 # braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
