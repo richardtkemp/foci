@@ -107,12 +107,21 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 				}
 
 				key := fmt.Sprintf("%s:%d", pw.Session, pw.Window)
+
+				// Capture initial content hash to avoid false activity reset on first poll.
+				var initialHash [md5.Size]byte
+				if initOut, initErr := runTmux(context.Background(), "capture-pane", "-t",
+					fmt.Sprintf("%s:%d", pw.Session, pw.Window), "-p"); initErr == nil {
+					initialHash = md5.Sum([]byte(normalizePaneContent(initOut)))
+				}
+
 				monCtx, cancel := context.WithCancel(context.Background())
 				ws := &watchedSession{
 					session:         pw.Session,
 					window:          pw.Window,
 					threshold:       time.Duration(pw.ThresholdSecs) * time.Second,
 					lastActivity:    time.Now(),
+					lastContent:     initialHash,
 					notifier:        notifier,
 					agentSessionKey: pw.AgentSessionKey,
 					autopilot:       autopilot,
@@ -583,12 +592,21 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		return "", fmt.Errorf("session %s is already being watched", key)
 	}
 
+	// Capture initial pane content so the first poll doesn't reset the
+	// activity timer by seeing a "changed" hash (zero-value → real hash).
+	var initialHash [md5.Size]byte
+	if out, err := runTmux(context.Background(), "capture-pane", "-t",
+		fmt.Sprintf("%s:%d", name, window), "-p"); err == nil {
+		initialHash = md5.Sum([]byte(normalizePaneContent(out)))
+	}
+
 	monCtx, cancel := context.WithCancel(context.Background())
 	ws := &watchedSession{
 		session:         name,
 		window:          window,
 		threshold:       time.Duration(thresholdSeconds) * time.Second,
 		lastActivity:    time.Now(),
+		lastContent:     initialHash,
 		notifier:        inst.notifier,
 		agentSessionKey: SessionKeyFromContext(ctx),
 		autopilot:       inst.autopilot,
