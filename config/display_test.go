@@ -15,6 +15,11 @@ func testConfig() (*Config, AgentConfig) {
 			HTTPTimeout:     "120s",
 			UsageAPITimeout: "10s",
 		},
+		Defaults: DefaultsConfig{
+			ShowToolCalls: func() *ToolCallDisplay { v := ToolCallPreview; return &v }(),
+			ShowThinking:  func() *ShowThinking { v := ShowThinkingOff; return &v }(),
+			DisplayWidth:  func() *int { v := 44; return &v }(),
+		},
 		Telegram: TelegramConfig{
 			BotToken:            "bot-token-secret",
 			AllowedUsers:        []string{"alice"},
@@ -23,7 +28,6 @@ func testConfig() (*Config, AgentConfig) {
 			MultiballSessionTTL: "60m",
 			MessageQueueSize:    64,
 			LongPollTimeout:     "65s",
-			ShowToolCalls:       ToolCallPreview,
 		},
 		Sessions: SessionsConfig{
 			Dir:                   "/data/sessions",
@@ -56,12 +60,11 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxRows:                30,
 			ExecAutoBackground:      10,
 			ExecDefaultTimeout:      30,
-			ExecMaxOutputChars:      100000,
+			MaxSummaryChars:         300000,
 			TmuxCommandTimeout:      "5s",
 			WebFetchTimeout:         "30s",
 			WebFetchMaxBytes:        1048576,
-			WebFetchMaxChars:        50000,
-			WebSearchTimeout:        "15s",
+				WebSearchTimeout:        "15s",
 			MaxConcurrentSpawns:     3,
 			ToolCallPreviewChars:    450,
 			TmuxMemoryCheckInterval: "5m",
@@ -206,6 +209,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.StartupNotification = &boolTrue
 	showPreview := ToolCallPreview
 	agent.ShowToolCalls = &showPreview
+	showCompact := ShowThinkingCompact
+	agent.ShowThinking = &showCompact
 	displayWidth := 44
 	agent.DisplayWidth = &displayWidth
 	agent.ReceivedFilesDir = "/tmp/images"

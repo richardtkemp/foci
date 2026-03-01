@@ -1036,11 +1036,10 @@ busy_timeout = "10s"
 
 [tools]
 exec_default_timeout = 60
-exec_max_output_chars = 200000
+max_summary_chars = 500000
 tmux_command_timeout = "10s"
 web_fetch_timeout = "45s"
 web_fetch_max_bytes = 2097152
-web_fetch_max_chars = 100000
 web_search_timeout = "20s"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -1080,8 +1079,8 @@ web_search_timeout = "20s"
 	if cfg.Tools.ExecDefaultTimeout != 60 {
 		t.Errorf("Tools.ExecDefaultTimeout = %d, want 60", cfg.Tools.ExecDefaultTimeout)
 	}
-	if cfg.Tools.ExecMaxOutputChars != 200000 {
-		t.Errorf("Tools.ExecMaxOutputChars = %d, want 200000", cfg.Tools.ExecMaxOutputChars)
+	if cfg.Tools.MaxSummaryChars != 500000 {
+		t.Errorf("Tools.MaxSummaryChars = %d, want 500000", cfg.Tools.MaxSummaryChars)
 	}
 	if cfg.Tools.TmuxCommandTimeout != "10s" {
 		t.Errorf("Tools.TmuxCommandTimeout = %q, want 10s", cfg.Tools.TmuxCommandTimeout)
@@ -1091,9 +1090,6 @@ web_search_timeout = "20s"
 	}
 	if cfg.Tools.WebFetchMaxBytes != 2097152 {
 		t.Errorf("Tools.WebFetchMaxBytes = %d, want 2097152", cfg.Tools.WebFetchMaxBytes)
-	}
-	if cfg.Tools.WebFetchMaxChars != 100000 {
-		t.Errorf("Tools.WebFetchMaxChars = %d, want 100000", cfg.Tools.WebFetchMaxChars)
 	}
 	if cfg.Tools.WebSearchTimeout != "20s" {
 		t.Errorf("Tools.WebSearchTimeout = %q, want 20s", cfg.Tools.WebSearchTimeout)
@@ -1148,8 +1144,8 @@ token = "test-token"
 	if cfg.Tools.ExecDefaultTimeout != 30 {
 		t.Errorf("default Tools.ExecDefaultTimeout = %d, want 30", cfg.Tools.ExecDefaultTimeout)
 	}
-	if cfg.Tools.ExecMaxOutputChars != 100000 {
-		t.Errorf("default Tools.ExecMaxOutputChars = %d, want 100000", cfg.Tools.ExecMaxOutputChars)
+	if cfg.Tools.MaxSummaryChars != 300000 {
+		t.Errorf("default Tools.MaxSummaryChars = %d, want 300000", cfg.Tools.MaxSummaryChars)
 	}
 	if cfg.Tools.TmuxCommandTimeout != "5s" {
 		t.Errorf("default Tools.TmuxCommandTimeout = %q, want 5s", cfg.Tools.TmuxCommandTimeout)
@@ -1159,9 +1155,6 @@ token = "test-token"
 	}
 	if cfg.Tools.WebFetchMaxBytes != 1048576 {
 		t.Errorf("default Tools.WebFetchMaxBytes = %d, want 1048576", cfg.Tools.WebFetchMaxBytes)
-	}
-	if cfg.Tools.WebFetchMaxChars != 50000 {
-		t.Errorf("default Tools.WebFetchMaxChars = %d, want 50000", cfg.Tools.WebFetchMaxChars)
 	}
 	if cfg.Tools.WebSearchTimeout != "15s" {
 		t.Errorf("default Tools.WebSearchTimeout = %q, want 15s", cfg.Tools.WebSearchTimeout)
@@ -1828,8 +1821,12 @@ id = "b"
 		if *cfg.Agents[0].ShowToolCalls != ToolCallFull {
 			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].ShowToolCalls, ToolCallFull)
 		}
-		if cfg.Agents[1].ShowToolCalls != nil {
-			t.Errorf("agent b: ShowToolCalls should be nil, got %q", *cfg.Agents[1].ShowToolCalls)
+		// Agent b inherits ShowToolCalls from [defaults] (ToolCallOff)
+		if cfg.Agents[1].ShowToolCalls == nil {
+			t.Fatal("agent b: ShowToolCalls should be non-nil (inherited from defaults)")
+		}
+		if *cfg.Agents[1].ShowToolCalls != ToolCallOff {
+			t.Errorf("agent b: ShowToolCalls = %q, want %q (inherited from defaults)", *cfg.Agents[1].ShowToolCalls, ToolCallOff)
 		}
 	})
 
@@ -1854,25 +1851,25 @@ show_tool_calls = true
 		}
 	})
 
-	// Global telegram section
-	t.Run("global string", func(t *testing.T) {
+	// Defaults section
+	t.Run("defaults string", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[telegram]
+[defaults]
 show_tool_calls = "full"
 `), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Telegram.ShowToolCalls != ToolCallFull {
-			t.Errorf("Telegram.ShowToolCalls = %q, want %q", cfg.Telegram.ShowToolCalls, ToolCallFull)
+		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallFull {
+			t.Errorf("Defaults.ShowToolCalls = %v, want %q", cfg.Defaults.ShowToolCalls, ToolCallFull)
 		}
 	})
 
-	// Global default (not set)
-	t.Run("global default", func(t *testing.T) {
+	// Global default (not set) — defaults to ToolCallOff
+	t.Run("defaults default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(``), 0644)
@@ -1880,8 +1877,52 @@ show_tool_calls = "full"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Telegram.ShowToolCalls != ToolCallOff {
-			t.Errorf("Telegram.ShowToolCalls = %q, want %q", cfg.Telegram.ShowToolCalls, ToolCallOff)
+		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallOff {
+			t.Errorf("Defaults.ShowToolCalls = %v, want %q", cfg.Defaults.ShowToolCalls, ToolCallOff)
+		}
+	})
+
+	// Migration from [telegram] to [defaults]
+	t.Run("telegram migration", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[telegram]
+show_tool_calls = "full"
+show_thinking = "compact"
+display_width = 80
+`), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallFull {
+			t.Errorf("Defaults.ShowToolCalls = %v, want %q (migrated from telegram)", cfg.Defaults.ShowToolCalls, ToolCallFull)
+		}
+		if cfg.Defaults.ShowThinking == nil || *cfg.Defaults.ShowThinking != ShowThinkingCompact {
+			t.Errorf("Defaults.ShowThinking = %v, want %q (migrated from telegram)", cfg.Defaults.ShowThinking, ShowThinkingCompact)
+		}
+		if cfg.Defaults.DisplayWidth == nil || *cfg.Defaults.DisplayWidth != 80 {
+			t.Errorf("Defaults.DisplayWidth = %v, want 80 (migrated from telegram)", cfg.Defaults.DisplayWidth)
+		}
+	})
+
+	// Migration: [defaults] takes precedence over [telegram]
+	t.Run("defaults overrides telegram migration", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[defaults]
+show_tool_calls = "preview"
+[telegram]
+show_tool_calls = "full"
+`), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallPreview {
+			t.Errorf("Defaults.ShowToolCalls = %v, want %q (defaults should win over telegram)", cfg.Defaults.ShowToolCalls, ToolCallPreview)
 		}
 	})
 }

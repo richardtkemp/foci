@@ -133,6 +133,12 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if cfg.Defaults.ShowToolCalls != nil {
 		add("defaults", "show_tool_calls", string(*cfg.Defaults.ShowToolCalls))
 	}
+	if cfg.Defaults.ShowThinking != nil {
+		add("defaults", "show_thinking", string(*cfg.Defaults.ShowThinking))
+	}
+	if cfg.Defaults.DisplayWidth != nil {
+		add("defaults", "display_width", *cfg.Defaults.DisplayWidth)
+	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		add("defaults", "system_files", cfg.Defaults.SystemFiles)
 	}
@@ -160,9 +166,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
 	add("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
 	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
-	add("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
-	add("telegram", "show_thinking", cfg.Telegram.ShowThinking)
-	add("telegram", "display_width", cfg.Telegram.DisplayWidth)
 	if cfg.Telegram.ReceivedFilesDir != "" {
 		add("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
 	}
@@ -423,9 +426,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
 	addGlobal("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
 	addGlobal("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
-	addGlobal("telegram", "show_tool_calls", cfg.Telegram.ShowToolCalls)
-	addGlobal("telegram", "show_thinking", cfg.Telegram.ShowThinking)
-	addGlobal("telegram", "display_width", cfg.Telegram.DisplayWidth)
 	if cfg.Telegram.ReceivedFilesDir != "" {
 		addGlobal("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
 	}
@@ -702,9 +702,6 @@ type displayTelegram struct {
 	MultiballSessionTTL string   `toml:"multiball_session_ttl"`
 	MessageQueueSize    int      `toml:"message_queue_size"`
 	LongPollTimeout     string   `toml:"long_poll_timeout"`
-	ShowToolCalls       string   `toml:"show_tool_calls"`
-	ShowThinking        string   `toml:"show_thinking"`
-	DisplayWidth        int      `toml:"display_width"`
 	ReceivedFilesDir    string   `toml:"received_files_dir,omitempty"`
 }
 
@@ -729,9 +726,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			MultiballSessionTTL: cfg.Telegram.MultiballSessionTTL,
 			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
 			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
-			ShowToolCalls:       string(cfg.Telegram.ShowToolCalls),
-			ShowThinking:        string(cfg.Telegram.ShowThinking),
-			DisplayWidth:        cfg.Telegram.DisplayWidth,
 			ReceivedFilesDir:    cfg.Telegram.ReceivedFilesDir,
 		},
 		Sessions:      cfg.Sessions,
@@ -794,14 +788,18 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if agent.StartupNotification == nil && !cfg.Telegram.EnableStartupNotify {
 		opts = append(opts, availableOption{"agent", "startup_notification", "(global)", "send startup notification (nil = use global)"})
 	}
-	if agent.ShowToolCalls == nil && cfg.Telegram.ShowToolCalls == ToolCallOff {
-		opts = append(opts, availableOption{"agent", "show_tool_calls", "(global)", "tool call display mode: off, preview, full (nil = use global)"})
+	if agent.ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil && *cfg.Defaults.ShowToolCalls == ToolCallOff {
+		opts = append(opts, availableOption{"agent", "show_tool_calls", "(defaults)", "tool call display mode: off, preview, full (nil = use defaults)"})
 	}
-	if agent.ShowThinking == nil && cfg.Telegram.ShowThinking == ShowThinkingOff {
-		opts = append(opts, availableOption{"agent", "show_thinking", "(global)", "thinking display mode: off, compact, true (nil = use global)"})
+	if agent.ShowThinking == nil && cfg.Defaults.ShowThinking != nil && *cfg.Defaults.ShowThinking == ShowThinkingOff {
+		opts = append(opts, availableOption{"agent", "show_thinking", "(defaults)", "thinking display mode: off, compact, true (nil = use defaults)"})
 	}
 	if agent.DisplayWidth == nil {
-		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", cfg.Telegram.DisplayWidth), "display width for dividers (nil = use global)"})
+		dw := 44
+		if cfg.Defaults.DisplayWidth != nil {
+			dw = *cfg.Defaults.DisplayWidth
+		}
+		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use defaults)"})
 	}
 	if agent.Effort == "" && cfg.Defaults.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
