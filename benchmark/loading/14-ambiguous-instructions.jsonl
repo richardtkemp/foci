@@ -1,0 +1,10 @@
+{"seq": 1, "message": "Clean up the config.", "purpose": "ambiguous_instruction"}
+{"seq": 2, "message": "I meant remove the commented-out sections and sort the keys alphabetically.", "purpose": "clarify_instruction"}
+{"seq": 3, "message": "Make the deploy script better.", "purpose": "ambiguous_instruction"}
+{"seq": 4, "message": "By better I mean add proper logging — each step should echo what it's doing.", "purpose": "clarify_instruction"}
+{"seq": 5, "message": "Fix the CSV.", "purpose": "ambiguous_instruction"}
+{"seq": 6, "message": "The CSV has duplicate entries for user 'jsmith' — remove the older one (lower ID).", "purpose": "clarify_instruction"}
+{"seq": 7, "message": "Update the docs.", "purpose": "ambiguous_instruction"}
+{"seq": 8, "message": "Specifically, add a section to README about the notification service we planned.", "purpose": "clarify_instruction"}
+{"seq": 9, "message": "Can you check on the thing Sarah mentioned?", "purpose": "vague_reference_recall"}
+{"seq": 10, "message": "What did I ask you to do with the CSV earlier?", "purpose": "instruction_recall"}

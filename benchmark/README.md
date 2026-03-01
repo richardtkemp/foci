@@ -50,4 +50,19 @@ Score = (accuracy × 2) - (confabulation × 5) + (honest_fail × 1)
 - `loading/` — scripted message sequences
 - `run.py` — harness script
 
-See `memory/compaction-benchmark-spec.md` for the full design document.
+## Coverage
+
+**Loading sequences (197 messages across 19 sequences):**
+- File operations, investigation, distractors, corrections, debugging
+- Docker tasks, context overload, config changes, user preferences
+- Multi-step task planning, error investigation, people/context
+- Tangents and returns, ambiguous instructions, numbers/specifics
+- Contradictions, rapid-fire recall, dependency chains, end-of-day wrap
+
+**Quiz categories (48 questions across 8 banks):**
+- Factual recall, correction retention, cross-reference, negative knowledge
+- People/context, numbers/specifics, architecture decisions, preferences
+
+Key design principle: many loading messages establish a fact then *correct* it later.
+The quiz tests whether the agent remembers the *corrected* version, not the original.
+This directly measures compaction quality — poor compaction preserves the wrong version.

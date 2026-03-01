@@ -1,0 +1,66 @@
+[
+  {
+    "id": "sms-provider",
+    "category": "architecture",
+    "question": "What SMS provider did we choose for the notification service?",
+    "expected": "messagebird",
+    "setup_phase": "multi_step_task",
+    "notes": "Changed from Twilio to MessageBird"
+  },
+  {
+    "id": "notification-retries",
+    "category": "architecture",
+    "question": "How many retries does the notification service use for failed sends?",
+    "expected": "5",
+    "setup_phase": "multi_step_task",
+    "notes": "Corrected from 3 to 5, starting at 2 seconds"
+  },
+  {
+    "id": "migration-tool",
+    "category": "architecture",
+    "question": "What database migration tool do we use?",
+    "expected": "golang-migrate",
+    "setup_phase": "contradictions",
+    "notes": "Switched from Flyway to golang-migrate"
+  },
+  {
+    "id": "postgres-version",
+    "category": "architecture",
+    "question": "What PostgreSQL version are we running?",
+    "expected": "16",
+    "setup_phase": "contradictions",
+    "notes": "Upgraded from 14 to 16"
+  },
+  {
+    "id": "num-environments",
+    "category": "architecture",
+    "question": "How many environments do we have and what are they?",
+    "expected": "3",
+    "setup_phase": "contradictions",
+    "notes": "Staging, production, QA (added last quarter)"
+  },
+  {
+    "id": "circuit-breaker-threshold",
+    "category": "architecture",
+    "question": "What's the circuit breaker threshold for the notification-to-SES connection?",
+    "expected": "5 failures in 30 seconds",
+    "setup_phase": "dependency_chain",
+    "notes": "Open after 5 failures in 30s, half-open after 60s"
+  },
+  {
+    "id": "redis-failure-impact",
+    "category": "architecture",
+    "question": "If Redis goes down, what happens to the auth service?",
+    "expected": "falls back to db-only",
+    "setup_phase": "dependency_chain",
+    "notes": "DB-only mode, 10x latency increase"
+  },
+  {
+    "id": "redis-host-final",
+    "category": "architecture",
+    "question": "What redis host did we configure?",
+    "expected": "redis.internal",
+    "setup_phase": "config_changes",
+    "notes": "Changed from localhost, port corrected to 6379"
+  }
+]

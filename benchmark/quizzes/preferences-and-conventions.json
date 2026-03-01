@@ -1,0 +1,34 @@
+[
+  {
+    "id": "indent-style",
+    "category": "preferences",
+    "question": "What indentation style did we settle on?",
+    "expected": "2 spaces",
+    "setup_phase": "user_preferences",
+    "notes": "Changed from 4-width tabs to 2 spaces"
+  },
+  {
+    "id": "branch-naming",
+    "category": "preferences",
+    "question": "What's our branch naming convention?",
+    "expected": "feature/ticket-description",
+    "setup_phase": "user_preferences",
+    "notes": "e.g. feature/API-123-add-auth"
+  },
+  {
+    "id": "deploy-meaning",
+    "category": "preferences",
+    "question": "When I say 'deploy', what do I mean?",
+    "expected": "staging",
+    "setup_phase": "user_preferences",
+    "notes": "Push to staging first, not production"
+  },
+  {
+    "id": "commit-emoji",
+    "category": "preferences",
+    "question": "Should commit messages include emoji?",
+    "expected": "no",
+    "setup_phase": "user_preferences",
+    "notes": "Plain text only, conventional commits format"
+  }
+]

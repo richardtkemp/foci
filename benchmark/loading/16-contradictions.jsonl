@@ -1,0 +1,10 @@
+{"seq": 1, "message": "We're using PostgreSQL 14 for the main database.", "purpose": "establish_fact"}
+{"seq": 2, "message": "The database migration tool is Flyway.", "purpose": "establish_fact"}
+{"seq": 3, "message": "Oh actually we switched to golang-migrate last month. Flyway was too heavy.", "purpose": "correction"}
+{"seq": 4, "message": "We upgraded to PostgreSQL 16 during the last maintenance window.", "purpose": "supersede_fact"}
+{"seq": 5, "message": "The CI pipeline runs on GitHub Actions.", "purpose": "establish_fact"}
+{"seq": 6, "message": "We have two environments: staging and production.", "purpose": "establish_fact"}
+{"seq": 7, "message": "Actually three — we added a QA environment last quarter for the security team.", "purpose": "correction"}
+{"seq": 8, "message": "What PostgreSQL version are we on?", "purpose": "superseded_recall"}
+{"seq": 9, "message": "What migration tool do we use?", "purpose": "corrected_recall"}
+{"seq": 10, "message": "How many environments do we have and what are they?", "purpose": "corrected_recall"}

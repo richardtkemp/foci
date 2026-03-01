@@ -1,0 +1,42 @@
+[
+  {
+    "id": "prod-nodes",
+    "category": "numbers",
+    "question": "How many production nodes do we have?",
+    "expected": "6",
+    "setup_phase": "numbers_and_specifics",
+    "notes": "Corrected from 5 to 6"
+  },
+  {
+    "id": "cloud-budget",
+    "category": "numbers",
+    "question": "What's the monthly cloud infrastructure budget?",
+    "expected": "4200",
+    "setup_phase": "numbers_and_specifics",
+    "notes": "$4,200/month"
+  },
+  {
+    "id": "rate-limit-auth",
+    "category": "numbers",
+    "question": "What's the target API rate limit for authenticated users?",
+    "expected": "2000",
+    "setup_phase": "numbers_and_specifics",
+    "notes": "Changed from 1000 to 2000 for Acme launch"
+  },
+  {
+    "id": "log-retention-prod",
+    "category": "numbers",
+    "question": "What's the log retention period for production?",
+    "expected": "90",
+    "setup_phase": "numbers_and_specifics",
+    "notes": "90 days production, 30 days staging"
+  },
+  {
+    "id": "sla-uptime",
+    "category": "numbers",
+    "question": "What's our uptime SLA with Acme Corp?",
+    "expected": "99.9",
+    "setup_phase": "people_and_context",
+    "notes": "Corrected from 99.95% to 99.9%"
+  }
+]

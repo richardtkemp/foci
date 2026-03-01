@@ -1,0 +1,50 @@
+[
+  {
+    "id": "auth-owner",
+    "category": "people_context",
+    "question": "Who owns the auth service?",
+    "expected": "marcus",
+    "setup_phase": "people_and_context",
+    "notes": "Established in sequence 12"
+  },
+  {
+    "id": "deploy-freeze",
+    "category": "people_context",
+    "question": "When does the deploy freeze end?",
+    "expected": "january 3",
+    "setup_phase": "people_and_context",
+    "notes": "Dec 15 to Jan 3"
+  },
+  {
+    "id": "gateway-migration",
+    "category": "people_context",
+    "question": "Who told us about the API gateway migration?",
+    "expected": "sarah",
+    "setup_phase": "people_and_context",
+    "notes": "Sarah from platform team"
+  },
+  {
+    "id": "monitoring-stack",
+    "category": "people_context",
+    "question": "What monitoring stack are we migrating to?",
+    "expected": "grafana",
+    "setup_phase": "people_and_context",
+    "notes": "Grafana + Mimir, migrating off Datadog"
+  },
+  {
+    "id": "key-rotation-deadline",
+    "category": "people_context",
+    "question": "Who said we need to rotate service account keys, and by when?",
+    "expected": "james",
+    "setup_phase": "people_and_context",
+    "notes": "James from security, end of month"
+  },
+  {
+    "id": "acme-launch-buffer",
+    "category": "people_context",
+    "question": "The Acme launch is January 15th. What date did we set as the buffer deadline?",
+    "expected": "january 12",
+    "setup_phase": "end_of_day",
+    "notes": "Corrected from Jan 10 to Jan 12"
+  }
+]
