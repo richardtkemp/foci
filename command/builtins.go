@@ -894,7 +894,7 @@ func NewErrorsCommand(eventLogPath string) *Command {
 				}
 			}
 			result, err := tailFileFiltered(eventLogPath, n, func(line string) bool {
-				return strings.Contains(line, "ERROR") || strings.Contains(line, "WARN")
+				return strings.Contains(line, " ERROR ") || strings.Contains(line, " WARN ")
 			})
 			if err != nil || result == "Log file not found." || result == "No matching lines." {
 				return result, err
