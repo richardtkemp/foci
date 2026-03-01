@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"foci/secrets"
 )
 
-func NewReadTool() *Tool {
+func NewReadTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file. Returns file contents with line numbers.",
@@ -22,11 +25,13 @@ func NewReadTool() *Tool {
 			},
 			"required": ["path"]
 		}`),
-		Execute: readFile,
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return readFile(ctx, params, store)
+		},
 	}
 }
 
-func NewWriteTool() *Tool {
+func NewWriteTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
@@ -44,11 +49,13 @@ func NewWriteTool() *Tool {
 			},
 			"required": ["path", "content"]
 		}`),
-		Execute: writeFile,
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return writeFile(ctx, params, store)
+		},
 	}
 }
 
-func NewEditTool() *Tool {
+func NewEditTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -70,16 +77,37 @@ func NewEditTool() *Tool {
 			},
 			"required": ["path", "old_string", "new_string"]
 		}`),
-		Execute: editFile,
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return editFile(ctx, params, store)
+		},
 	}
 }
 
-func readFile(ctx context.Context, params json.RawMessage) (string, error) {
+// checkBlockedPath resolves the path to absolute and checks against blocked paths.
+func checkBlockedPath(store *secrets.Store, path string) error {
+	if store == nil {
+		return nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if store.IsBlockedPath(abs) {
+		return fmt.Errorf("access denied: path is restricted")
+	}
+	return nil
+}
+
+func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	if err := checkBlockedPath(store, p.Path); err != nil {
+		return "", err
 	}
 
 	data, err := os.ReadFile(p.Path)
@@ -103,13 +131,17 @@ func readFile(ctx context.Context, params json.RawMessage) (string, error) {
 	return out.String(), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage) (string, error) {
+func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	if err := checkBlockedPath(store, p.Path); err != nil {
+		return "", err
 	}
 
 	if err := os.WriteFile(p.Path, []byte(p.Content), 0644); err != nil {
@@ -119,7 +151,7 @@ func writeFile(ctx context.Context, params json.RawMessage) (string, error) {
 	return fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage) (string, error) {
+func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
@@ -127,6 +159,10 @@ func editFile(ctx context.Context, params json.RawMessage) (string, error) {
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
+	}
+
+	if err := checkBlockedPath(store, p.Path); err != nil {
+		return "", err
 	}
 
 	data, err := os.ReadFile(p.Path)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/secrets"
 )
 
 func TestReadFile(t *testing.T) {
@@ -14,7 +16,7 @@ func TestReadFile(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("line one\nline two\nline three\n"), 0644)
 
-	tool := NewReadTool()
+	tool := NewReadTool(nil)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -32,7 +34,7 @@ func TestReadFile(t *testing.T) {
 }
 
 func TestReadFileMissing(t *testing.T) {
-	tool := NewReadTool()
+	tool := NewReadTool(nil)
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/file.txt"})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -45,7 +47,7 @@ func TestWriteFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "output.txt")
 
-	tool := NewWriteTool()
+	tool := NewWriteTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":    path,
 		"content": "hello world",
@@ -70,7 +72,7 @@ func TestWriteFileOverwrite(t *testing.T) {
 	path := filepath.Join(dir, "file.txt")
 	os.WriteFile(path, []byte("old content"), 0644)
 
-	tool := NewWriteTool()
+	tool := NewWriteTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":    path,
 		"content": "new content",
@@ -89,7 +91,7 @@ func TestEditFile(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("hello world, hello"), 0644)
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 
 	// "hello world" is unique, should work
 	params, _ := json.Marshal(map[string]interface{}{
@@ -117,7 +119,7 @@ func TestEditFileNotFound(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("foo bar baz"), 0644)
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "nonexistent string",
@@ -138,7 +140,7 @@ func TestEditFileNonUnique(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("aaa bbb aaa"), 0644)
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "aaa",
@@ -155,7 +157,7 @@ func TestEditFileNonUnique(t *testing.T) {
 }
 
 func TestEditFileMissing(t *testing.T) {
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       "/nonexistent/file.txt",
 		"old_string": "x",
@@ -173,7 +175,7 @@ func TestEditFileSyntaxValidToValid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "old"}`), 0644)
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "old",
@@ -199,7 +201,7 @@ func TestEditFileSyntaxValidToInvalid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"}`), 0644)
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"}`,
@@ -226,7 +228,7 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"`), 0644)  // missing closing brace
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"`,
@@ -247,7 +249,7 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": bad}`), 0644)  // already invalid
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "bad",
@@ -268,7 +270,7 @@ func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("hello"), 0644)
 
-	tool := NewEditTool()
+	tool := NewEditTool(nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "hello",
@@ -294,7 +296,7 @@ func TestReadLargeFile(t *testing.T) {
 	}
 	os.WriteFile(path, []byte(sb.String()), 0644)
 
-	tool := NewReadTool()
+	tool := NewReadTool(nil)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -304,5 +306,113 @@ func TestReadLargeFile(t *testing.T) {
 
 	if !strings.Contains(result, "truncated") {
 		t.Error("expected truncation notice for large file")
+	}
+}
+
+// loadTestStore creates a secrets store with the default blocked paths.
+func loadTestStore(t *testing.T) *secrets.Store {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "secrets.toml")
+	os.WriteFile(path, []byte("[test]\nkey = \"val\"\n"), 0644)
+	s, err := secrets.Load(path)
+	if err != nil {
+		t.Fatalf("load store: %v", err)
+	}
+	return s
+}
+
+func TestReadBlockedSecretsToml(t *testing.T) {
+	store := loadTestStore(t)
+	tool := NewReadTool(store)
+	params, _ := json.Marshal(map[string]string{"path": "secrets.toml"})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error reading secrets.toml")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestReadBlockedSecretsTomlFullPath(t *testing.T) {
+	store := loadTestStore(t)
+	tool := NewReadTool(store)
+	params, _ := json.Marshal(map[string]string{"path": "/home/user/config/secrets.toml"})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error reading full path to secrets.toml")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestReadBlockedProcEnviron(t *testing.T) {
+	store := loadTestStore(t)
+	tool := NewReadTool(store)
+	params, _ := json.Marshal(map[string]string{"path": "/proc/self/environ"})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error reading /proc/self/environ")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestWriteBlockedSecretsToml(t *testing.T) {
+	store := loadTestStore(t)
+	tool := NewWriteTool(store)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    "secrets.toml",
+		"content": "malicious content",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error writing secrets.toml")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestEditBlockedSecretsToml(t *testing.T) {
+	store := loadTestStore(t)
+	tool := NewEditTool(store)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       "secrets.toml",
+		"old_string": "old",
+		"new_string": "new",
+	})
+
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error editing secrets.toml")
+	}
+	if !strings.Contains(err.Error(), "access denied") {
+		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestReadAllowedWithStore(t *testing.T) {
+	store := loadTestStore(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "allowed.txt")
+	os.WriteFile(path, []byte("safe content\n"), 0644)
+
+	tool := NewReadTool(store)
+	params, _ := json.Marshal(map[string]string{"path": path})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("allowed read should succeed: %v", err)
+	}
+	if !strings.Contains(result, "safe content") {
+		t.Errorf("result = %q, want safe content", result)
 	}
 }

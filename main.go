@@ -1325,9 +1325,9 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
 	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
 	registry.Register(tmuxTool)
-	registry.Register(tools.NewReadTool())
-	registry.Register(tools.NewWriteTool())
-	registry.Register(tools.NewEditTool())
+	registry.Register(tools.NewReadTool(agentStore))
+	registry.Register(tools.NewWriteTool(agentStore))
+	registry.Register(tools.NewEditTool(agentStore))
 	registry.Register(tools.NewWebFetchTool())
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 	if p.braveKey != "" {
