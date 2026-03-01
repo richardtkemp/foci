@@ -23,6 +23,9 @@ compaction_threshold = 0.8
 # Or inline (used if _file is not set or file is missing):
 # compaction_summary_prompt = "Please provide a concise summary of our entire conversation..."
 
+# Per-agent override: use higher effort for compaction (compaction quality matters)
+# compaction_effort = "high"
+
 [environment]
 # enabled = true                          # inject environment block as first system block
 # docs_path = "/path/to/your/docs"        # platform docs directory (relative paths resolve against $HOME)

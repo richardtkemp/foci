@@ -53,8 +53,8 @@ type agentInstance struct {
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
-	tmuxClearAll func() // clears tmux tool state (watches, owned sessions)
-	kaRunner          *keepalive.Runner                                          // keepalive & background work timer (nil if disabled)
+	tmuxClearAll      func()            // clears tmux tool state (watches, owned sessions)
+	kaRunner          *keepalive.Runner // keepalive & background work timer (nil if disabled)
 }
 
 // applyAgentDisplaySettings sets per-agent display settings on a bot,
@@ -1417,6 +1417,9 @@ func setupAgent(p setupParams) *agentInstance {
 		p.cfg.Sessions.CompactionMinMessages,
 		preserveMessages,
 	)
+	if acfg.CompactionEffort != "" {
+		compactor.WithEffort(acfg.CompactionEffort)
+	}
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.AgentID = acfg.ID
 
@@ -2693,8 +2696,8 @@ func readPromptFile(path, label string) string {
 func seedDefaultPrompts(dir string) {
 	promptFiles := map[string]func() string{
 		"keepalive.md":            prompts.Keepalive,
-		"background.md":          prompts.Background,
-		"memory-formation.md":    prompts.MemoryFormation,
+		"background.md":           prompts.Background,
+		"memory-formation.md":     prompts.MemoryFormation,
 		"memory-consolidation.md": prompts.MemoryConsolidation,
 	}
 
@@ -2892,4 +2895,3 @@ func restoreMultiballSessions(
 		log.Infof("main", "restored %d multiball session(s) from state", restored)
 	}
 }
-

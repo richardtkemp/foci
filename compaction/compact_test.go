@@ -726,11 +726,11 @@ func TestSafeSplitPointNoToolUse(t *testing.T) {
 
 func TestSafeSplitPointBreaksPair(t *testing.T) {
 	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},       // 0
-		{Role: "assistant", Content: anthropic.TextContent("a0")},  // 1
-		{Role: "user", Content: anthropic.TextContent("u1")},       // 2
-		toolUseMsg("toolu_1"),                                       // 3: assistant tool_use
-		toolResultMsg("toolu_1"),                                    // 4: user tool_result
+		{Role: "user", Content: anthropic.TextContent("u0")},      // 0
+		{Role: "assistant", Content: anthropic.TextContent("a0")}, // 1
+		{Role: "user", Content: anthropic.TextContent("u1")},      // 2
+		toolUseMsg("toolu_1"),    // 3: assistant tool_use
+		toolResultMsg("toolu_1"), // 4: user tool_result
 		{Role: "assistant", Content: anthropic.TextContent("done")}, // 5
 	}
 	// Split at 4 would separate tool_use (3) from tool_result (4).
@@ -745,9 +745,9 @@ func TestSafeSplitPointConsecutiveToolPairs(t *testing.T) {
 	// In a corrupt session, two assistant tool_use messages in a row.
 	msgs := []anthropic.Message{
 		{Role: "user", Content: anthropic.TextContent("u0")},
-		toolUseMsg("toolu_A"), // 1: assistant tool_use (corrupt — no result follows)
-		toolUseMsg("toolu_B"), // 2: assistant tool_use
-		toolResultMsg("toolu_B"), // 3: user tool_result
+		toolUseMsg("toolu_A"),                                       // 1: assistant tool_use (corrupt — no result follows)
+		toolUseMsg("toolu_B"),                                       // 2: assistant tool_use
+		toolResultMsg("toolu_B"),                                    // 3: user tool_result
 		{Role: "assistant", Content: anthropic.TextContent("done")}, // 4
 	}
 	// Split at 3: prev is toolUseMsg("toolu_B") → walk to 2.
@@ -763,10 +763,10 @@ func TestSafeSplitPointBounded(t *testing.T) {
 	// Walk-back bounded by maxWalkBack.
 	msgs := []anthropic.Message{
 		{Role: "user", Content: anthropic.TextContent("u0")},
-		toolUseMsg("toolu_A"), // 1
-		toolUseMsg("toolu_B"), // 2
-		toolUseMsg("toolu_C"), // 3
-		toolResultMsg("toolu_C"), // 4
+		toolUseMsg("toolu_A"),                                       // 1
+		toolUseMsg("toolu_B"),                                       // 2
+		toolUseMsg("toolu_C"),                                       // 3
+		toolResultMsg("toolu_C"),                                    // 4
 		{Role: "assistant", Content: anthropic.TextContent("done")}, // 5
 	}
 	// Split at 4, maxWalkBack=2 → walks to 3, then 2, stops (2 steps).
@@ -1040,5 +1040,104 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 	// Preserved messages should be present after handoff
 	if msgs[3].Role != "assistant" || anthropic.TextOf(msgs[3].Content) != "reply" {
 		t.Errorf("preserved[0] = role=%q text=%q", msgs[3].Role, anthropic.TextOf(msgs[3].Content))
+	}
+}
+
+func TestCompactWithEffortOverride(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c.WithEffort("high")
+	_, err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	body := string(capturedBody)
+	if !strings.Contains(body, `"effort":"high"`) {
+		t.Errorf("API request body should contain effort=high, got: %s", body)
+	}
+	if !strings.Contains(body, `"output_config"`) {
+		t.Errorf("API request body should contain output_config, got: %s", body)
+	}
+}
+
+func TestCompactWithoutEffortOverride(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "agent:test:main"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
+		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+	}
+
+	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	// Not setting effort — should omit from request
+	_, err := c.Compact(context.Background(), sessionKey, nil, "", "")
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	body := string(capturedBody)
+	if strings.Contains(body, `"effort"`) {
+		t.Errorf("API request body should not contain effort when not set, got: %s", body)
+	}
+	if strings.Contains(body, `"output_config"`) {
+		t.Errorf("API request body should not contain output_config when effort not set, got: %s", body)
+	}
+}
+
+func TestWithEffort(t *testing.T) {
+	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	if c.effort != "" {
+		t.Errorf("initial effort = %q, want empty", c.effort)
+	}
+
+	c.WithEffort("high")
+	if c.effort != "high" {
+		t.Errorf("after WithEffort, effort = %q, want high", c.effort)
+	}
+
+	c.WithEffort("")
+	if c.effort != "" {
+		t.Errorf("after clearing, effort = %q, want empty", c.effort)
 	}
 }
