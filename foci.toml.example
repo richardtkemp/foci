@@ -196,6 +196,7 @@ bind = "127.0.0.1"
 # level = "info"                          # debug, info, warn, error
 # event_file = "foci.log"
 # api_file = "api.jsonl"
+# api_db = ""                             # SQLite API call log (default: {data_dir}/api.db, empty = disabled)
 # conversation_file = ""
 # full_payload = false
 # payload_file = "api-payload.jsonl"

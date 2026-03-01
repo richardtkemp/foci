@@ -117,6 +117,20 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 	log.Infof("summary", "model=%s input=%d output=%d cost=$%.4f duration=%s",
 		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
+	log.API(log.APIEntry{
+		Timestamp:  start.UTC(),
+		Session:    SessionKeyFromContext(ctx),
+		Model:      model,
+		Input:      resp.Usage.InputTokens,
+		Output:     resp.Usage.OutputTokens,
+		CacheRead:  resp.Usage.CacheReadInputTokens,
+		CacheWrite: resp.Usage.CacheCreationInputTokens,
+		CostUSD:    cost,
+		DurationMS: duration.Milliseconds(),
+		StopReason: resp.StopReason,
+		CallType:   "summary",
+	})
+
 	text := anthropic.TextOf(resp.Content)
 	if text == "" {
 		return "(empty response)", nil

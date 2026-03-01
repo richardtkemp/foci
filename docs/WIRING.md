@@ -7,7 +7,8 @@ How the pieces connect. Read this before touching the code.
 ```
 config.Load(path)                                        ← validates values; logs to stderr + buffer
   → log.Init(cfg.Logging)                                ← opens event file, replays buffered events
-  → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite
+  → log.InitAPIDB(cfg.Logging.APIDB)                     ← SQLite API call log (api.db)
+  → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite conversation log
   → secrets.Load(secretsPath)                            ← secrets.toml overrides foci.toml
   → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
     → DefaultExecutor{SessionFile: cfg.SessionFile} — bitwarden user reads its own session file
@@ -352,17 +353,21 @@ Data flow:
 
 **Two-phase init:** Before `log.Init()`, events go to stderr and are buffered in memory. When `Init()` opens the event file, buffered events are replayed to it. This ensures config-load warnings (e.g. unknown keys) appear in the log file despite being emitted before the file path is known.
 
-Three outputs:
+Four outputs:
 
 1. **Event log** (`foci.log` + stderr): `2026-02-21T03:52:39Z INFO  [telegram] message from rich: hello`
    - Use: `log.Infof("component", "format", args...)`
    - Levels: DEBUG < INFO < WARN < ERROR
 
-2. **API log** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, cost_usd, duration_ms.
+2. **API log — JSONL** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, cost_usd, duration_ms.
    - Use: `log.API(log.APIEntry{...})`
    - Queryable with `jq`
 
-3. **Conversation log** (`conversation.db`): SQLite database logging exact Telegram messages sent and received. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
+3. **API log — SQLite** (`api.db`): Same data as JSONL but in a `api_calls` table with indexes on `ts` and `session`. Includes `call_type` column (conversation, compaction, summary, spawn).
+   - Written automatically by `log.API()` when `api_db` is configured
+   - Queryable: `sqlite3 api.db "SELECT call_type, count(*) FROM api_calls GROUP BY call_type"`
+
+4. **Conversation log** (`conversation.db`): SQLite database logging exact Telegram messages sent and received. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`
    - Queryable with `sqlite3 conversation.db "SELECT * FROM messages"`
    - Useful for debugging formatting (see exact markdown sent vs plain text fallback)

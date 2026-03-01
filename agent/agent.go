@@ -1021,6 +1021,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			CostUSD:    cost,
 			DurationMS: duration.Milliseconds(),
 			StopReason: resp.StopReason,
+			CallType:   "conversation",
 		})
 
 		// Full payload logging (opt-in)

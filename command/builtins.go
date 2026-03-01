@@ -95,7 +95,8 @@ type apiEntry struct {
 	CostUSD      float64   `json:"cost_usd"`
 	DurationMS   int64     `json:"duration_ms"`
 	StopReason   string    `json:"stop_reason"`
-	IsCompaction bool      `json:"is_compaction"`
+	CallType     string    `json:"call_type"`
+	IsCompaction bool      `json:"is_compaction"` // deprecated: use CallType
 }
 
 // categoryCosts computes per-category cost breakdown from API log entries.
@@ -171,7 +172,7 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 				if e.Session == info.SessionKey {
 					sessionCost += e.CostUSD
 					sessionCalls++
-					if !e.IsCompaction {
+					if e.CallType == "conversation" || (e.CallType == "" && !e.IsCompaction) {
 						contextTokens = e.Input + e.CacheRead + e.CacheWrite
 					}
 				}

@@ -2,6 +2,7 @@ package log
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -545,6 +546,167 @@ func TestPayloadLog(t *testing.T) {
 	if !strings.Contains(string(data), "test-model") {
 		t.Errorf("payload missing model: %s", string(data))
 	}
+}
+
+func TestAPIDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	// Insert entries of different call types
+	entries := []APIEntry{
+		{
+			Timestamp:  time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
+			Session:    "agent:main:chat:123",
+			Model:      "claude-haiku-4-5",
+			Input:      1000,
+			Output:     200,
+			CacheRead:  500,
+			CacheWrite: 300,
+			CostUSD:    0.005,
+			DurationMS: 1200,
+			StopReason: "end_turn",
+			CallType:   "conversation",
+		},
+		{
+			Timestamp:  time.Date(2026, 3, 1, 10, 1, 0, 0, time.UTC),
+			Session:    "agent:main:chat:123",
+			Model:      "claude-haiku-4-5",
+			Input:      2000,
+			Output:     400,
+			CostUSD:    0.01,
+			DurationMS: 2400,
+			StopReason: "end_turn",
+			CallType:   "compaction",
+		},
+		{
+			Timestamp:  time.Date(2026, 3, 1, 10, 2, 0, 0, time.UTC),
+			Session:    "agent:main:chat:123",
+			Model:      "claude-haiku-4-5",
+			Input:      500,
+			Output:     100,
+			CostUSD:    0.002,
+			DurationMS: 800,
+			StopReason: "end_turn",
+			CallType:   "summary",
+		},
+		{
+			Timestamp:   time.Date(2026, 3, 1, 10, 3, 0, 0, time.UTC),
+			Session:     "agent:main:spawn:456",
+			Model:       "claude-sonnet-4-5",
+			Input:       3000,
+			Output:      600,
+			CostUSD:     0.02,
+			DurationMS:  3600,
+			StopReason:  "end_turn",
+			CallType:    "spawn",
+			SessionFile: "/data/sessions/agent/main/spawn/456.jsonl",
+		},
+	}
+
+	for _, e := range entries {
+		apiLog.insert(e)
+	}
+
+	// Query by call_type
+	rows, err := apiLog.db.Query("SELECT call_type, count(*) FROM api_calls GROUP BY call_type ORDER BY call_type")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var ct string
+		var n int
+		if err := rows.Scan(&ct, &n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		counts[ct] = n
+	}
+
+	if counts["conversation"] != 1 {
+		t.Errorf("conversation count = %d, want 1", counts["conversation"])
+	}
+	if counts["compaction"] != 1 {
+		t.Errorf("compaction count = %d, want 1", counts["compaction"])
+	}
+	if counts["summary"] != 1 {
+		t.Errorf("summary count = %d, want 1", counts["summary"])
+	}
+	if counts["spawn"] != 1 {
+		t.Errorf("spawn count = %d, want 1", counts["spawn"])
+	}
+
+	// Verify session_file was stored
+	var sf sql.NullString
+	err = apiLog.db.QueryRow("SELECT session_file FROM api_calls WHERE call_type = 'spawn'").Scan(&sf)
+	if err != nil {
+		t.Fatalf("query session_file: %v", err)
+	}
+	if !sf.Valid || sf.String != "/data/sessions/agent/main/spawn/456.jsonl" {
+		t.Errorf("session_file = %v, want /data/sessions/agent/main/spawn/456.jsonl", sf)
+	}
+
+	// Verify session_file is NULL for entries without it
+	err = apiLog.db.QueryRow("SELECT session_file FROM api_calls WHERE call_type = 'conversation'").Scan(&sf)
+	if err != nil {
+		t.Fatalf("query session_file: %v", err)
+	}
+	if sf.Valid {
+		t.Errorf("session_file should be NULL for conversation, got %q", sf.String)
+	}
+
+	// Query by session index
+	var total int
+	err = apiLog.db.QueryRow("SELECT count(*) FROM api_calls WHERE session = 'agent:main:chat:123'").Scan(&total)
+	if err != nil {
+		t.Fatalf("query by session: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("session count = %d, want 3", total)
+	}
+}
+
+func TestAPIDBCallTypeBackfill(t *testing.T) {
+	// Test that api() backfills CallType from IsCompaction
+	dbPath := filepath.Join(t.TempDir(), "test_backfill.db")
+
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	// Old-style entry with IsCompaction
+	SetAPIWriter(nil) // no JSONL
+	std.api(APIEntry{
+		Timestamp:    time.Now().UTC(),
+		Session:      "test",
+		Model:        "test",
+		IsCompaction: true,
+	})
+
+	var ct string
+	err := apiLog.db.QueryRow("SELECT call_type FROM api_calls").Scan(&ct)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if ct != "compaction" {
+		t.Errorf("call_type = %q, want compaction", ct)
+	}
+}
+
+func TestAPIDBDisabled(t *testing.T) {
+	// With no API DB initialized, API() should not panic
+	old := apiLog
+	apiLog = nil
+	defer func() { apiLog = old }()
+
+	API(APIEntry{Session: "test", CallType: "conversation"})
+	// No panic = pass
 }
 
 func TestPreInitFilteredByLevel(t *testing.T) {

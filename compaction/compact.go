@@ -339,17 +339,17 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{
-		Timestamp:    start.UTC(),
-		Session:      sessionKey,
-		Model:        c.model,
-		Input:        resp.Usage.InputTokens,
-		Output:       resp.Usage.OutputTokens,
-		CacheRead:    resp.Usage.CacheReadInputTokens,
-		CacheWrite:   resp.Usage.CacheCreationInputTokens,
-		CostUSD:      cost,
-		DurationMS:   duration.Milliseconds(),
-		StopReason:   resp.StopReason,
-		IsCompaction: true,
+		Timestamp:  start.UTC(),
+		Session:    sessionKey,
+		Model:      c.model,
+		Input:      resp.Usage.InputTokens,
+		Output:     resp.Usage.OutputTokens,
+		CacheRead:  resp.Usage.CacheReadInputTokens,
+		CacheWrite: resp.Usage.CacheCreationInputTokens,
+		CostUSD:    cost,
+		DurationMS: duration.Milliseconds(),
+		StopReason: resp.StopReason,
+		CallType:   "compaction",
 	})
 
 	summary := anthropic.TextOf(resp.Content)

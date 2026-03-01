@@ -1,6 +1,7 @@
 package log
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // Level represents a log severity level.
@@ -53,17 +56,22 @@ func ParseLevel(s string) Level {
 
 // APIEntry is a structured record for one Anthropic API request.
 type APIEntry struct {
-	Timestamp    time.Time `json:"ts"`
-	Session      string    `json:"session"`
-	Model        string    `json:"model"`
-	Input        int       `json:"input"`
-	Output       int       `json:"output"`
-	CacheRead    int       `json:"cache_read"`
-	CacheWrite   int       `json:"cache_write"`
-	CostUSD      float64   `json:"cost_usd"`
-	DurationMS   int64     `json:"duration_ms"`
-	StopReason   string    `json:"stop_reason"`
-	IsCompaction bool      `json:"is_compaction,omitempty"`
+	Timestamp   time.Time `json:"ts"`
+	Session     string    `json:"session"`
+	Model       string    `json:"model"`
+	Input       int       `json:"input"`
+	Output      int       `json:"output"`
+	CacheRead   int       `json:"cache_read"`
+	CacheWrite  int       `json:"cache_write"`
+	CostUSD     float64   `json:"cost_usd"`
+	DurationMS  int64     `json:"duration_ms"`
+	StopReason  string    `json:"stop_reason"`
+	CallType    string    `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
+	SessionFile string    `json:"session_file,omitempty"` // path to session JSONL file
+	SessionLine int       `json:"session_line,omitempty"` // line number in session file (conversation calls)
+
+	// Deprecated: use CallType == "compaction" instead.
+	IsCompaction bool `json:"is_compaction,omitempty"`
 }
 
 // PayloadEntry is a full API request/response record.
@@ -90,6 +98,16 @@ type Logger struct {
 	initialized bool      // true after Init completes
 	mu          sync.Mutex
 }
+
+// apiDB is the SQLite API call log (separate from the main Logger to
+// match the conversation.go pattern — independent init/close lifecycle).
+type apiDB struct {
+	db   *sql.DB
+	stmt *sql.Stmt
+	mu   sync.Mutex
+}
+
+var apiLog *apiDB
 
 // std is the global logger instance.
 var std = &Logger{level: INFO, eventOut: os.Stderr}
@@ -161,6 +179,69 @@ func Init(cfg Config) error {
 	std.mu.Unlock()
 
 	return nil
+}
+
+// InitAPIDB opens (or creates) the SQLite API call log.
+func InitAPIDB(path string) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return fmt.Errorf("open api db: %w", err)
+	}
+
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return fmt.Errorf("set WAL mode: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		db.Close()
+		return fmt.Errorf("set busy timeout: %w", err)
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS api_calls (
+		id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts                 DATETIME NOT NULL,
+		session            TEXT NOT NULL,
+		model              TEXT NOT NULL,
+		input_tokens       INTEGER,
+		output_tokens      INTEGER,
+		cache_read_tokens  INTEGER,
+		cache_write_tokens INTEGER,
+		cost_usd           REAL,
+		duration_ms        INTEGER,
+		stop_reason        TEXT,
+		call_type          TEXT NOT NULL,
+		session_file       TEXT,
+		session_line       INTEGER
+	)`)
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("create api_calls table: %w", err)
+	}
+
+	// Indexes for common queries
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`)
+
+	stmt, err := db.Prepare(`INSERT INTO api_calls
+		(ts, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("prepare insert: %w", err)
+	}
+
+	apiLog = &apiDB{db: db, stmt: stmt}
+	return nil
+}
+
+// CloseAPIDB closes the SQLite API call log.
+func CloseAPIDB() {
+	if apiLog != nil {
+		apiLog.stmt.Close()
+		apiLog.db.Close()
+		apiLog = nil
+	}
 }
 
 // Close closes log files.
@@ -264,20 +345,55 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	}
 }
 
-// api writes a structured API log entry.
+// api writes a structured API log entry to JSONL and SQLite.
 func (l *Logger) api(entry APIEntry) {
+	// Backfill CallType from deprecated IsCompaction if needed
+	if entry.CallType == "" && entry.IsCompaction {
+		entry.CallType = "compaction"
+	}
+	if entry.CallType == "" {
+		entry.CallType = "conversation"
+	}
+
+	// JSONL (backward compatible)
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	if l.apiFile != nil {
+		if data, err := json.Marshal(entry); err == nil {
+			l.apiFile.Write(append(data, '\n'))
+		}
+	}
+	l.mu.Unlock()
 
-	if l.apiFile == nil {
-		return
+	// SQLite
+	if apiLog != nil {
+		apiLog.insert(entry)
+	}
+}
+
+func (a *apiDB) insert(entry APIEntry) {
+	ts := entry.Timestamp.UTC().Format(time.RFC3339)
+
+	var sessionFile *string
+	if entry.SessionFile != "" {
+		sessionFile = &entry.SessionFile
+	}
+	var sessionLine *int
+	if entry.SessionLine > 0 {
+		sessionLine = &entry.SessionLine
 	}
 
-	data, err := json.Marshal(entry)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.stmt.Exec(
+		ts, entry.Session, entry.Model,
+		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
+		entry.CostUSD, entry.DurationMS, entry.StopReason,
+		entry.CallType, sessionFile, sessionLine,
+	)
 	if err != nil {
-		return
+		std.event(ERROR, "api_db", "insert error: %v", err)
 	}
-	l.apiFile.Write(append(data, '\n'))
 }
 
 // payload writes a full API request/response record.

@@ -372,6 +372,7 @@ Logging and diagnostics.
 | `level` | string | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`. |
 | `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
+| `api_db` | string | `$data_dir/api.db` | SQLite API call log. All API calls logged with `call_type` (conversation, compaction, summary, spawn). Empty string disables. |
 | `conversation_file` | string | `$data_dir/conversation.db` | Path to conversation SQLite log. Defaults to `$data_dir/conversation.db`. Relative paths resolve against `$HOME`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
@@ -678,8 +679,9 @@ With no path fields set, files auto-organize under `$HOME`:
 ```
 $HOME/
   logs/foci.log          ← event log
-  logs/api.jsonl         ← API call log
+  logs/api.jsonl         ← API call log (JSONL)
   logs/api-payload.jsonl ← full payload log (if enabled)
+  data/api.db            ← API call log (SQLite)
   data/conversation.db   ← conversation SQLite log
   data/sessions/         ← session JSONL files
   data/state.json        ← persistent state

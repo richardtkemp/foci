@@ -277,17 +277,33 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 			Tools:     toolDefs,
 		}
 
+		start := time.Now()
 		resp, err := client.SendMessage(callCtx, req)
 		if err != nil {
 			return "", fmt.Errorf("spawn %s: %w", model, err)
 		}
 
+		duration := time.Since(start)
 		cost := log.CalculateCost(model,
 			resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
 		log.Infof("spawn", "model=%s input=%d output=%d cost=$%.4f stop=%s",
 			model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
+
+		log.API(log.APIEntry{
+			Timestamp:  start.UTC(),
+			Session:    SessionKeyFromContext(ctx),
+			Model:      model,
+			Input:      resp.Usage.InputTokens,
+			Output:     resp.Usage.OutputTokens,
+			CacheRead:  resp.Usage.CacheReadInputTokens,
+			CacheWrite: resp.Usage.CacheCreationInputTokens,
+			CostUSD:    cost,
+			DurationMS: duration.Milliseconds(),
+			StopReason: resp.StopReason,
+			CallType:   "spawn",
+		})
 
 		// If no tool use, return text.
 		if resp.StopReason != "tool_use" {

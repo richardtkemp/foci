@@ -206,6 +206,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("logging", "level", cfg.Logging.Level)
 	add("logging", "event_file", cfg.Logging.EventFile)
 	add("logging", "api_file", cfg.Logging.APIFile)
+	add("logging", "api_db", cfg.Logging.APIDB)
 	add("logging", "conversation_file", cfg.Logging.ConversationFile)
 	add("logging", "full_payload", cfg.Logging.FullPayload)
 	if cfg.Logging.PayloadFile != "" {
@@ -462,6 +463,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("logging", "level", cfg.Logging.Level)
 	addGlobal("logging", "event_file", cfg.Logging.EventFile)
 	addGlobal("logging", "api_file", cfg.Logging.APIFile)
+	addGlobal("logging", "api_db", cfg.Logging.APIDB)
 	addGlobal("logging", "conversation_file", cfg.Logging.ConversationFile)
 	addGlobal("logging", "full_payload", cfg.Logging.FullPayload)
 	if cfg.Logging.PayloadFile != "" {

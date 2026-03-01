@@ -730,14 +730,14 @@ Levels: DEBUG, INFO, WARN, ERROR. Default: INFO. Configurable in TOML.
 
 Also writes to stderr so `tmux capture-pane` and `journalctl` (if run as a unit) work naturally.
 
-### API log (`api.jsonl`)
-Structured JSONL, one object per API request. For debugging cache behaviour, tracking costs, auditing usage.
+### API log (`api.jsonl` + `api.db`)
+Structured JSONL, one object per API request. For debugging cache behaviour, tracking costs, auditing usage. Also written to SQLite (`api.db`) with indexes on `ts` and `session`, plus a `call_type` column distinguishing conversation, compaction, summary, and spawn calls.
 
 ```json
-{"ts":"2026-02-21T03:52:41Z","session":"agent:main:main","model":"claude-haiku-4-5","input":1119,"output":164,"cache_read":0,"cache_write":1119,"cost_usd":0.003,"duration_ms":1240}
+{"ts":"2026-02-21T03:52:41Z","session":"agent:main:main","model":"claude-haiku-4-5","input":1119,"output":164,"cache_read":0,"cache_write":1119,"cost_usd":0.003,"duration_ms":1240,"call_type":"conversation"}
 ```
 
-Searchable with `jq`. The agent can query its own API logs via tools.
+Searchable with `jq` (JSONL) or `sqlite3 api.db` (SQLite). The agent can query its own API logs via tools.
 
 **Full payload logging:** Optional — records complete API request/response bodies (system prompt, messages, tool calls, full response). Off by default (large files, contains conversation content). Enable in config:
 

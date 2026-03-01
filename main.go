@@ -192,6 +192,14 @@ func main() {
 		defer stopRotation()
 	}
 
+	// API call log (SQLite)
+	if cfg.Logging.APIDB != "" {
+		if err := log.InitAPIDB(cfg.Logging.APIDB); err != nil {
+			log.Fatalf("main", "init API db: %v", err)
+		}
+		defer log.CloseAPIDB()
+	}
+
 	// Conversation log (SQLite)
 	if cfg.Logging.ConversationFile != "" {
 		if err := log.InitConversation(cfg.Logging.ConversationFile); err != nil {
