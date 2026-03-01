@@ -18,12 +18,22 @@ type SessionChatInfo struct {
 	IsDefault    bool
 }
 
+// SessionIndexInfo holds session index data for display.
+type SessionIndexInfo struct {
+	SessionKey       string
+	CreatedAt        time.Time
+	ParentSessionKey string
+	SessionType      string
+	Status           string
+}
+
 // SessionsDeps holds dependencies for the /sessions command.
 type SessionsDeps struct {
 	AgentID       string
 	ListFn        func() ([]SessionChatInfo, error)
 	SetDefaultFn  func(chatID int64) error
 	DefaultChatFn func() int64
+	IndexFn       func(sessionType, status string) ([]SessionIndexInfo, error) // nil = index not available
 }
 
 // NewSessionsCommand creates the /sessions command for managing per-chat sessions.
@@ -41,10 +51,11 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			switch subcmd {
 			case "":
-				return "Usage: /sessions [list|default <chat_id>|info]\n\n" +
+				return "Usage: /sessions [list|default <chat_id>|info|index]\n\n" +
 					"  list              List all chat sessions for this agent\n" +
 					"  default <chat_id> Set the default session (used by keepalive, cron)\n" +
-					"  info              Show details for the current chat's session", nil
+					"  info              Show details for the current chat's session\n" +
+					"  index [type] [status]  Query session index (all agents)", nil
 
 			case "list":
 				return sessionsListCmd(deps)
@@ -63,15 +74,29 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 				chatID, _ := ctx.Value(ChatIDKey{}).(int64)
 				return sessionsInfoCmd(deps, chatID)
 
+			case "index":
+				var typeFilter, statusFilter string
+				if len(parts) > 1 {
+					typeFilter = parts[1]
+				}
+				if len(parts) > 2 {
+					statusFilter = parts[2]
+				}
+				return sessionsIndexCmd(deps, typeFilter, statusFilter)
+
 			default:
-				return "Usage: /sessions [list|default <chat_id>|info]", nil
+				return "Usage: /sessions [list|default <chat_id>|info|index]", nil
 			}
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
-			return []KeyboardOption{
+			opts := []KeyboardOption{
 				{Label: "list", Data: "list"},
 				{Label: "info", Data: "info"},
 			}
+			if deps.IndexFn != nil {
+				opts = append(opts, KeyboardOption{Label: "index", Data: "index"})
+			}
+			return opts
 		},
 	}
 }
@@ -187,4 +212,72 @@ func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 
 	fmt.Fprintf(&sb, "Session: agent:%s:chat:%d (new — no messages yet)", deps.AgentID, chatID)
 	return sb.String(), nil
+}
+
+func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string) (string, error) {
+	if deps.IndexFn == nil {
+		return "Session index not available.", nil
+	}
+
+	entries, err := deps.IndexFn(typeFilter, statusFilter)
+	if err != nil {
+		return "", fmt.Errorf("query session index: %w", err)
+	}
+	if len(entries) == 0 {
+		msg := "No sessions found"
+		if typeFilter != "" || statusFilter != "" {
+			msg += " matching filters"
+		}
+		return msg + ".", nil
+	}
+
+	cols := []table.Column{
+		{Header: "Session Key"},
+		{Header: "Type"},
+		{Header: "Status"},
+		{Header: "Created"},
+		{Header: "Parent"},
+	}
+	tableRows := make([][]string, len(entries))
+	for i, e := range entries {
+		created := "—"
+		if !e.CreatedAt.IsZero() {
+			created = e.CreatedAt.Format("Jan 02 15:04")
+		}
+		parent := "—"
+		if e.ParentSessionKey != "" {
+			// Shorten parent key for display
+			parent = shortenSessionKey(e.ParentSessionKey)
+		}
+		tableRows[i] = []string{
+			shortenSessionKey(e.SessionKey),
+			e.SessionType,
+			e.Status,
+			created,
+			parent,
+		}
+	}
+
+	filterDesc := ""
+	if typeFilter != "" {
+		filterDesc += " type=" + typeFilter
+	}
+	if statusFilter != "" {
+		filterDesc += " status=" + statusFilter
+	}
+	if filterDesc != "" {
+		filterDesc = " (" + strings.TrimSpace(filterDesc) + ")"
+	}
+
+	return fmt.Sprintf("Session Index — %d sessions%s\n\n```\n%s\n```",
+		len(entries), filterDesc, table.Format(cols, tableRows)), nil
+}
+
+// shortenSessionKey abbreviates a session key for table display.
+// "agent:mybot:chat:5970082313" → "mybot:chat:5970082313"
+func shortenSessionKey(key string) string {
+	if strings.HasPrefix(key, "agent:") {
+		return key[len("agent:"):]
+	}
+	return key
 }

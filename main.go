@@ -371,6 +371,39 @@ func main() {
 		log.Infof("main", "injected restart markers into %d active session(s)", n)
 	}
 
+	// Shared: Session index (SQLite-backed metadata index of all session files)
+	sessionIndexPath := cfg.DataPath("session_index.db")
+	sessionIndex, err := session.NewSessionIndex(sessionIndexPath)
+	if err != nil {
+		log.Errorf("main", "create session index: %v (session index disabled)", err)
+	} else {
+		defer sessionIndex.Close()
+		// Rebuild index from disk on startup
+		if n, err := sessionIndex.Rebuild(sessions); err != nil {
+			log.Warnf("main", "rebuild session index: %v", err)
+		} else {
+			log.Infof("main", "session index: %d sessions indexed", n)
+		}
+		// Wire lifecycle events from session store to index
+		sessions.OnSessionEvent(func(e session.SessionEvent) {
+			switch e.Status {
+			case session.SessionStatusActive:
+				sessionIndex.Upsert(session.SessionIndexEntry{
+					SessionKey:       e.Key,
+					FilePath:         e.FilePath,
+					CreatedAt:        e.CreatedAt,
+					ParentSessionKey: e.ParentKey,
+					SessionType:      e.Type,
+					Status:           session.SessionStatusActive,
+				})
+			case session.SessionStatusCompacted:
+				sessionIndex.SetStatus(e.Key, session.SessionStatusCompacted)
+			case session.SessionStatusCleared:
+				sessionIndex.SetStatus(e.Key, session.SessionStatusCleared)
+			}
+		})
+	}
+
 	// Shared: State persistence (JSON file in data dir)
 	statePath := cfg.DataPath("state.json")
 	stateStore := state.New(statePath)
@@ -626,6 +659,7 @@ func main() {
 			scratchpadStore: scratchpadStore,
 			todoStore:       todoStore,
 			toolDetailStore: toolDetailStore,
+			sessionIndex:    sessionIndex,
 			sttProvider:     sttProvider,
 			ttsProvider:     ttsProvider,
 			braveKey:        braveKey,
@@ -1410,6 +1444,7 @@ type setupParams struct {
 	scratchpadStore *memory.Scratchpad
 	todoStore       *memory.TodoStore
 	toolDetailStore *telegram.ToolDetailStore
+	sessionIndex    *session.SessionIndex
 	sttProvider     voice.STT
 	ttsProvider     voice.TTS
 	braveKey        string
@@ -2372,6 +2407,31 @@ func setupAgent(p setupParams) *agentInstance {
 			var chatID int64
 			p.stateStore.Get("agent:"+acfg.ID+":default_chat", &chatID)
 			return chatID
+		},
+		IndexFn: func(sessionType, status string) ([]command.SessionIndexInfo, error) {
+			if p.sessionIndex == nil {
+				return nil, fmt.Errorf("session index not available")
+			}
+			opts := session.QueryOptions{
+				SessionType: session.SessionType(sessionType),
+				Status:      session.SessionStatus(status),
+				Limit:       50,
+			}
+			entries, err := p.sessionIndex.Query(opts)
+			if err != nil {
+				return nil, err
+			}
+			var result []command.SessionIndexInfo
+			for _, e := range entries {
+				result = append(result, command.SessionIndexInfo{
+					SessionKey:       e.SessionKey,
+					CreatedAt:        e.CreatedAt,
+					ParentSessionKey: e.ParentSessionKey,
+					SessionType:      string(e.SessionType),
+					Status:           string(e.Status),
+				})
+			}
+			return result, nil
 		},
 	}))
 	cmds.Register(command.NewSecretsCommand(p.store))
