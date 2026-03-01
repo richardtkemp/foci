@@ -530,7 +530,7 @@ func TestInjectRestartMarkersRecentFile(t *testing.T) {
 		t.Errorf("marker role = %q, want user", marker.Role)
 	}
 	text := anthropic.TextOf(marker.Content)
-	if !strings.Contains(text, "[System restarted at ") {
+	if !strings.Contains(text, "SYSTEM RESTART") {
 		t.Errorf("marker text = %q, want restart marker", text)
 	}
 }

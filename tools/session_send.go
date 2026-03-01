@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"foci/anthropic"
 	"foci/log"
+	"foci/prompts"
 )
 
 // SessionAppender appends a message to a session.
@@ -70,9 +72,12 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 
 			originSession := SessionKeyFromContext(ctx)
 
-			// Tag the message with its origin and context reminder.
-			// The recipient may relay this to their user, who won't have seen the raw message.
-			tagged := fmt.Sprintf("[Message from session %s]\n\n%s\n\n[Note: this message is only visible to you, not to your user. If you mention it to them, provide full context (what happened, why, where, any files produced) since they likely don't have it.]", originSession, p.Message)
+			// Tag the message with its origin, timestamp, and context reminder.
+			tagged := prompts.FormatInjectedMessage(
+				fmt.Sprintf("MESSAGE FROM SESSION %s", originSession),
+				time.Now(),
+				p.Message,
+			)
 
 			log.Infof("send_to_session", "from=%s to=%s reply_to=%s len=%d", originSession, p.SessionKey, p.ReplyTo, len(p.Message))
 

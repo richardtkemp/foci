@@ -57,7 +57,7 @@ func TestSendToSession(t *testing.T) {
 		t.Errorf("msg role = %q, want user", store.msg.Role)
 	}
 	text := anthropic.TextOf(store.msg.Content)
-	if !strings.Contains(text, "[Message from session agent:test:multiball:mb-111]") {
+	if !strings.Contains(text, "MESSAGE FROM SESSION agent:test:multiball:mb-111") {
 		t.Errorf("expected origin tag, got %q", text)
 	}
 	if !strings.Contains(text, "Here are the results of my research.") {
