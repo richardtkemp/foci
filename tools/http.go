@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -775,4 +776,63 @@ func buildMultipartBody(files []fileAttachment, formFields map[string]string, ma
 	}
 
 	return &buf, w.FormDataContentType(), nil
+}
+
+// isPrivateIP checks whether a hostname resolves to a private/loopback/link-local
+// address. Used to block SSRF in isolated spawn contexts.
+func isPrivateIP(hostname string) bool {
+	// Check well-known names first
+	if hostname == "localhost" {
+		return true
+	}
+
+	ips, err := net.LookupHost(hostname)
+	if err != nil {
+		return false // can't resolve — let the request fail naturally
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return true
+		}
+		// AWS/cloud metadata endpoint
+		if ip.Equal(net.ParseIP("169.254.169.254")) {
+			return true
+		}
+	}
+	return false
+}
+
+// NewIsolatedHTTPRequestTool creates an http_request tool that blocks requests
+// to private/loopback/link-local IP addresses. Used in spawn none-mode to prevent SSRF.
+func NewIsolatedHTTPRequestTool(base *Tool) *Tool {
+	return &Tool{
+		Name:        base.Name,
+		Description: base.Description,
+		Parameters:  base.Parameters,
+		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
+			var p struct {
+				URL string `json:"url"`
+			}
+			if err := json.Unmarshal(input, &p); err != nil {
+				return "", fmt.Errorf("parse input: %w", err)
+			}
+
+			parsed, err := url.Parse(p.URL)
+			if err != nil {
+				return "", fmt.Errorf("invalid URL: %w", err)
+			}
+
+			hostname := parsed.Hostname()
+			if isPrivateIP(hostname) {
+				return "", fmt.Errorf("requests to private/loopback addresses are blocked in isolated mode")
+			}
+
+			return base.Execute(ctx, input)
+		},
+	}
 }
