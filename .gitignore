@@ -2,6 +2,7 @@
 /focigw
 foci.toml
 sessions/
+tasks/
 workspace/*.md
 *.log
 api.jsonl
