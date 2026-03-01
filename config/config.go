@@ -84,7 +84,8 @@ func (s *ShowThinking) UnmarshalTOML(v any) error {
 // AgentUsageWarningsConfig holds per-agent mana warning thresholds.
 // When set, completely replaces global [usage_warnings] thresholds.
 type AgentUsageWarningsConfig struct {
-	Thresholds []int `toml:"thresholds"` // mana percentages to warn at (replaces global, not merged)
+	Thresholds       []int `toml:"thresholds"`        // mana percentages to warn at (replaces global, not merged)
+	RestoreThreshold *int  `toml:"restore_threshold"` // inject session notice when mana restores to 100% (nil=use global, 0=disabled)
 }
 
 // AgentMemoryConfig holds per-agent memory sources.
@@ -276,8 +277,9 @@ type CacheConfig struct {
 }
 
 type ManaWarningsConfig struct {
-	Name       string `toml:"name"`       // what to call quota (default "mana")
-	Thresholds []int  `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	Name             string `toml:"name"`              // what to call quota (default "mana")
+	Thresholds       []int  `toml:"thresholds"`        // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	RestoreThreshold int    `toml:"restore_threshold"` // inject session notice when mana restores to 100% after being below this (0=disabled)
 }
 
 type EnvironmentConfig struct {
@@ -517,11 +519,17 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("[usage_warnings] thresholds[%d] = %d: must be between 0 and 100", i, t)
 		}
 	}
+	if cfg.ManaWarnings.RestoreThreshold < 0 || cfg.ManaWarnings.RestoreThreshold > 100 {
+		return fmt.Errorf("[usage_warnings] restore_threshold = %d: must be between 0 and 100", cfg.ManaWarnings.RestoreThreshold)
+	}
 	for _, a := range cfg.Agents {
 		for i, t := range a.UsageWarnings.Thresholds {
 			if t < 0 || t > 100 {
 				return fmt.Errorf("agent %q [usage_warnings] thresholds[%d] = %d: must be between 0 and 100", a.ID, i, t)
 			}
+		}
+		if a.UsageWarnings.RestoreThreshold != nil && (*a.UsageWarnings.RestoreThreshold < 0 || *a.UsageWarnings.RestoreThreshold > 100) {
+			return fmt.Errorf("agent %q [usage_warnings] restore_threshold = %d: must be between 0 and 100", a.ID, *a.UsageWarnings.RestoreThreshold)
 		}
 	}
 

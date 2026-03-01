@@ -371,6 +371,107 @@ func TestManaWatcherRestoreWithoutStore(t *testing.T) {
 	}
 }
 
+func TestManaRestoreNotification(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50, 25})
+	mw.SetRestoreThreshold(40)
+
+	// At 30%, below restore threshold — seenBelow should be set
+	mw.CheckAndWarn("30%", "", func(w string) {})
+	if msg := mw.CheckRestore("30%"); msg != "" {
+		t.Error("should not restore at 30%")
+	}
+
+	// At 100%, should fire restore
+	if msg := mw.CheckRestore("100%"); msg == "" {
+		t.Error("expected restore notification at 100%")
+	} else if msg != "mana restored to 100% (was below 40% earlier)" {
+		t.Errorf("restore msg = %q", msg)
+	}
+
+	// Should not fire again
+	if msg := mw.CheckRestore("100%"); msg != "" {
+		t.Error("should not fire restore twice")
+	}
+}
+
+func TestManaRestoreNotFiredWithoutDrop(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50})
+	mw.SetRestoreThreshold(40)
+
+	// Never dropped below 40%
+	mw.CheckAndWarn("60%", "", func(w string) {})
+	if msg := mw.CheckRestore("100%"); msg != "" {
+		t.Error("should not fire restore without prior drop below threshold")
+	}
+}
+
+func TestManaRestoreDisabledByDefault(t *testing.T) {
+	mw := NewManaWatcher("mana", []int{50})
+	// restoreThreshold = 0 (default)
+
+	mw.CheckAndWarn("10%", "", func(w string) {})
+	if msg := mw.CheckRestore("100%"); msg != "" {
+		t.Error("should not fire restore when threshold is 0")
+	}
+}
+
+func TestManaRestoreNilSafe(t *testing.T) {
+	var mw *ManaWatcher
+	if msg := mw.CheckRestore("100%"); msg != "" {
+		t.Error("should return empty for nil watcher")
+	}
+}
+
+func TestManaRestoreResetsAtMidnight(t *testing.T) {
+	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
+	mw := &ManaWatcher{
+		name:             "mana",
+		thresholds:       []int{50},
+		restoreThreshold: 40,
+		firedToday:       map[int]bool{},
+		seenBelow:        true,
+		firedRestore:     true,
+		lastReset:        yesterday,
+	}
+
+	// After midnight reset, seenBelow and firedRestore should clear
+	mw.CheckAndWarn("30%", "", func(w string) {})
+	// Now seenBelow should be set again (30% < 40%)
+	if msg := mw.CheckRestore("100%"); msg == "" {
+		t.Error("expected restore after midnight reset and new drop")
+	}
+}
+
+func TestManaRestorePersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	store := state.New(statePath)
+
+	mw := NewManaWatcher("mana", []int{50})
+	mw.SetStore(store)
+	mw.SetRestoreThreshold(40)
+
+	// Drop below threshold and restore
+	mw.CheckAndWarn("30%", "", func(w string) {})
+	mw.CheckRestore("100%")
+
+	// Load in new instance
+	store2 := state.New(statePath)
+	if err := store2.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	mw2 := NewManaWatcher("mana", []int{50})
+	mw2.SetStore(store2)
+	mw2.SetRestoreThreshold(40)
+	mw2.Restore()
+
+	// Should not fire again (firedRestore persisted)
+	if msg := mw2.CheckRestore("100%"); msg != "" {
+		t.Error("should not fire restore after restart (already fired today)")
+	}
+}
+
 func TestManaWatcherPersistenceCustomName(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")

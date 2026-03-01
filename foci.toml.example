@@ -106,6 +106,7 @@ system_files = [
 # Per-agent usage warnings:
 # [agents.usage_warnings]
 # thresholds = [50, 25, 10, 5]
+# restore_threshold = 40                  # override global restore_threshold
 
 # Per-agent background task scheduling:
 # [agents.background]
@@ -244,6 +245,7 @@ bind = "127.0.0.1"
 # [usage_warnings]
 # name = "mana"
 # thresholds = [50, 25, 10, 5]
+# restore_threshold = 40                  # inject session notice when mana restores to 100% after being below this (0=disabled)
 
 # ─── Environment ─────────────────────────────────────────────────────
 # [environment]

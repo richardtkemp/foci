@@ -1827,6 +1827,12 @@ func setupAgent(p setupParams) *agentInstance {
 		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
 		ag.ManaWatcher.SetStore(p.stateStore)
 		ag.ManaWatcher.Restore()
+		// Mana restore notification: per-agent overrides global
+		restoreThreshold := p.cfg.ManaWarnings.RestoreThreshold
+		if acfg.UsageWarnings.RestoreThreshold != nil {
+			restoreThreshold = *acfg.UsageWarnings.RestoreThreshold
+		}
+		ag.ManaWatcher.SetRestoreThreshold(restoreThreshold)
 	}
 
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.

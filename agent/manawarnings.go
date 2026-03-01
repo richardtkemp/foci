@@ -12,17 +12,22 @@ import (
 )
 
 type ManaWatcher struct {
-	name       string
-	thresholds []int
-	firedToday map[int]bool
-	mu         sync.Mutex
-	lastReset  time.Time
-	store      *state.Store
+	name             string
+	thresholds       []int
+	restoreThreshold int // fire restore notice when mana was below this then hits 100% (0=disabled)
+	firedToday       map[int]bool
+	seenBelow        bool // mana was seen below restoreThreshold today
+	firedRestore     bool // restore notice already fired today
+	mu               sync.Mutex
+	lastReset        time.Time
+	store            *state.Store
 }
 
 type manaWatcherState struct {
-	FiredToday map[int]bool
-	LastReset  time.Time
+	FiredToday   map[int]bool
+	LastReset    time.Time
+	SeenBelow    bool
+	FiredRestore bool
 }
 
 func NewManaWatcher(name string, thresholds []int) *ManaWatcher {
@@ -50,6 +55,17 @@ func (m *ManaWatcher) SetStore(store *state.Store) {
 	m.store = store
 }
 
+// SetRestoreThreshold enables restore notification when mana reaches 100%
+// after being seen below the given threshold. Set to 0 to disable.
+func (m *ManaWatcher) SetRestoreThreshold(pct int) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.restoreThreshold = pct
+}
+
 func (m *ManaWatcher) Restore() {
 	if m == nil {
 		return
@@ -73,6 +89,8 @@ func (m *ManaWatcher) Restore() {
 		if m.firedToday == nil {
 			m.firedToday = make(map[int]bool)
 		}
+		m.seenBelow = state.SeenBelow
+		m.firedRestore = state.FiredRestore
 	}
 }
 
@@ -82,8 +100,10 @@ func (m *ManaWatcher) saveFiredState() {
 	}
 	key := "mana:" + m.name
 	state := manaWatcherState{
-		FiredToday: m.firedToday,
-		LastReset:  m.lastReset,
+		FiredToday:   m.firedToday,
+		LastReset:    m.lastReset,
+		SeenBelow:    m.seenBelow,
+		FiredRestore: m.firedRestore,
 	}
 	if err := m.store.Set(key, state); err != nil {
 		log.Errorf("mana", "persist fired state: %v", err)
@@ -103,12 +123,20 @@ func (m *ManaWatcher) CheckAndWarn(manaStr, resetTime string, warnFunc func(stri
 
 	if today.After(m.lastReset) {
 		m.firedToday = make(map[int]bool)
+		m.seenBelow = false
+		m.firedRestore = false
 		m.lastReset = today
 	}
 
 	mana := m.parseManaPercentage(manaStr)
 	if mana < 0 {
 		return
+	}
+
+	// Track if mana drops below restore threshold
+	if m.restoreThreshold > 0 && mana <= m.restoreThreshold && !m.seenBelow {
+		m.seenBelow = true
+		m.saveFiredState()
 	}
 
 	for _, threshold := range m.thresholds {
@@ -119,6 +147,32 @@ func (m *ManaWatcher) CheckAndWarn(manaStr, resetTime string, warnFunc func(stri
 			return
 		}
 	}
+}
+
+// CheckRestore checks if mana has restored to 100% after being below the
+// restore threshold. Returns a notification message if so, empty string otherwise.
+// This is separate from CheckAndWarn so it can be injected into the session
+// rather than sent to Telegram.
+func (m *ManaWatcher) CheckRestore(manaStr string) string {
+	if m == nil || manaStr == "" || m.restoreThreshold == 0 {
+		return ""
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.seenBelow || m.firedRestore {
+		return ""
+	}
+
+	mana := m.parseManaPercentage(manaStr)
+	if mana < 100 {
+		return ""
+	}
+
+	m.firedRestore = true
+	m.saveFiredState()
+	return fmt.Sprintf("%s restored to 100%% (was below %d%% earlier)", m.name, m.restoreThreshold)
 }
 
 func (m *ManaWatcher) parseManaPercentage(manaStr string) int {
