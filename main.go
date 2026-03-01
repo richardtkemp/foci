@@ -95,7 +95,7 @@ func main() {
 	// Handle "foci auth" subcommand before normal flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		authFlags := flag.NewFlagSet("auth", flag.ExitOnError)
-		credsFile := authFlags.String("credentials-file", "", "path to save credentials (default: from config or ~/.claude/.credentials.json)")
+		credsFile := authFlags.String("credentials-file", "", "path to save credentials (default: from config or ~/.config/foci/oauth.json)")
 		configFile := authFlags.String("config", "", "path to foci.toml (to read credentials_file)")
 		authFlags.Parse(os.Args[2:])
 
@@ -106,7 +106,7 @@ func main() {
 			}
 		}
 		if path == "" {
-			path = "~/.claude/.credentials.json"
+			path = "~/.config/foci/oauth.json"
 		}
 		if err := anthropic.RunAuthFlow(path); err != nil {
 			fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
@@ -195,9 +195,9 @@ func main() {
 	command.ChildSysProcAttr = tools.ChildSysProcAttr
 
 	// Resolve shared credentials: secrets.toml overrides foci.toml
-	anthropicToken := cfg.Anthropic.Token
-	if v, ok := store.Get("anthropic.token"); ok {
-		anthropicToken = v
+	setupToken := cfg.Anthropic.SetupToken
+	if v, ok := store.Get("anthropic.setup_token"); ok {
+		setupToken = v
 	}
 	braveKey := cfg.Anthropic.BraveAPIKey
 	if v, ok := store.Get("brave.api_key"); ok {
@@ -254,7 +254,10 @@ func main() {
 		httpTimeout = 120 * time.Second
 	}
 
-	// Token resolution: static token (secrets.toml/foci.toml) or OAuth PKCE credentials file
+	// Token resolution priority:
+	// 1. Foci's own OAuth credentials file (credentials_file or default ~/.config/foci/oauth.json)
+	// 2. Static setup-token from secrets.toml / foci.toml
+	// 3. Claude Code credentials at ~/.claude/.credentials.json (read-only fallback)
 	var client *anthropic.Client
 	var usageClient *anthropic.UsageClient
 	var oauthMgr *anthropic.OAuthManager
@@ -262,51 +265,61 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	credsFile := cfg.Anthropic.CredentialsFile
-	if credsFile == "" {
-		credsFile = "~/.claude/.credentials.json"
+	fociCredsFile := cfg.Anthropic.CredentialsFile
+	if fociCredsFile == "" {
+		fociCredsFile = "~/.config/foci/oauth.json"
 	}
+	const ccCredsFile = "~/.claude/.credentials.json"
 
-	if anthropicToken != "" {
-		// Static token path — simple client with fixed token
-		client = anthropic.NewClientWithTimeout(anthropicToken, httpTimeout)
-		usageClient = anthropic.NewUsageClient(anthropicToken)
-		log.Infof("main", "using static token from secrets.toml/foci.toml")
-	} else {
-		// OAuth PKCE path — try loading credentials file
-		mgr, err := anthropic.NewOAuthManager(credsFile)
-		if err != nil {
-			// Check if stdin is a terminal — if so, run interactive auth
-			if fi, statErr := os.Stdin.Stat(); statErr == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
-				log.Infof("main", "no credentials found, starting interactive auth flow")
-				if authErr := anthropic.RunAuthFlow(credsFile); authErr != nil {
-					log.Fatalf("main", "auth flow failed: %v", authErr)
-				}
-				mgr, err = anthropic.NewOAuthManager(credsFile)
-				if err != nil {
-					log.Fatalf("main", "load credentials after auth: %v", err)
-				}
-			} else {
-				log.Errorf("main", "no Anthropic token configured and no valid credentials file")
-				log.Errorf("main", "run: foci auth")
-				log.Errorf("main", "or add a token to secrets.toml under [anthropic] token = \"sk-ant-oat01-...\"")
-				os.Exit(1)
-			}
-		}
+	// Try source 1: foci's own OAuth credentials
+	if mgr, err := anthropic.NewOAuthManager(fociCredsFile); err == nil {
 		oauthMgr = mgr
-
-		// Refresh now if token is near expiry
 		if oauthMgr.ExpiresIn() < 5*time.Minute {
-			log.Infof("main", "token near expiry, refreshing")
 			if err := oauthMgr.Refresh(); err != nil {
 				log.Fatalf("main", "initial token refresh: %v", err)
 			}
 		}
-
 		oauthMgr.StartRefresh(ctx)
 		client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
 		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-		log.Infof("main", "using OAuth credentials from %s (expires in %s)", credsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+		log.Infof("main", "using foci OAuth token from %s (expires in %s, auto-refresh active)", fociCredsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+	} else if setupToken != "" {
+		// Source 2: static setup-token
+		client = anthropic.NewClientWithTimeout(setupToken, httpTimeout)
+		usageClient = anthropic.NewUsageClient(setupToken)
+		log.Infof("main", "using static setup-token from secrets.toml")
+	} else if mgr, err := anthropic.NewOAuthManager(ccCredsFile); err == nil {
+		// Source 3: Claude Code credentials (read-only fallback)
+		oauthMgr = mgr
+		if oauthMgr.ExpiresIn() < 5*time.Minute {
+			if err := oauthMgr.Refresh(); err != nil {
+				log.Fatalf("main", "initial token refresh (Claude Code fallback): %v", err)
+			}
+		}
+		oauthMgr.StartRefresh(ctx)
+		client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
+		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
+		log.Infof("main", "using Claude Code credentials from %s (fallback, read-only, expires in %s)", ccCredsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+	} else {
+		// No credentials found — try interactive auth or exit
+		if fi, statErr := os.Stdin.Stat(); statErr == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+			log.Infof("main", "no credentials found, starting interactive auth flow")
+			if authErr := anthropic.RunAuthFlow(fociCredsFile); authErr != nil {
+				log.Fatalf("main", "auth flow failed: %v", authErr)
+			}
+			mgr, err := anthropic.NewOAuthManager(fociCredsFile)
+			if err != nil {
+				log.Fatalf("main", "load credentials after auth: %v", err)
+			}
+			oauthMgr = mgr
+			oauthMgr.StartRefresh(ctx)
+			client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
+			usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
+			log.Infof("main", "using foci OAuth token from %s (expires in %s, auto-refresh active)", fociCredsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+		} else {
+			log.Errorf("main", "no Anthropic token found — run: foci auth")
+			os.Exit(1)
+		}
 	}
 	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
 

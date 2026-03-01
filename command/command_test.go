@@ -251,7 +251,7 @@ func TestRestartCommand(t *testing.T) {
 
 func TestSecretsCommand(t *testing.T) {
 	store := &mockSecretsStore{data: map[string]string{
-		"anthropic.token": "sk-ant-123",
+		"anthropic.setup_token": "sk-ant-123",
 		"custom.api_key":  "key-456",
 	}}
 	cmd := NewSecretsCommand(store)

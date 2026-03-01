@@ -155,7 +155,7 @@ func TestSetSecretNames(t *testing.T) {
 	}
 
 	// Set secret names
-	b.SetSecretNames([]string{"anthropic.token", "github.pat"}, false)
+	b.SetSecretNames([]string{"anthropic.setup_token", "github.pat"}, false)
 
 	blocks = b.SystemBlocks()
 	// Should have 2 blocks: IDENTITY + secrets
@@ -165,8 +165,8 @@ func TestSetSecretNames(t *testing.T) {
 
 	// Secrets block should contain the names
 	secretsBlock := blocks[len(blocks)-1]
-	if !strings.Contains(secretsBlock.Text, "anthropic.token") {
-		t.Errorf("secrets block missing anthropic.token: %q", secretsBlock.Text)
+	if !strings.Contains(secretsBlock.Text, "anthropic.setup_token") {
+		t.Errorf("secrets block missing anthropic.setup_token: %q", secretsBlock.Text)
 	}
 	if !strings.Contains(secretsBlock.Text, "github.pat") {
 		t.Errorf("secrets block missing github.pat: %q", secretsBlock.Text)

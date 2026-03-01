@@ -159,9 +159,9 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `token` | string | `""` | Static Anthropic API key or OAuth token. Overridden by `secrets.toml` `[anthropic] token`. When set, disables OAuth auto-refresh. |
+| `setup_token` | string | `""` | Static Anthropic setup-token. Overridden by `secrets.toml` `[anthropic] setup_token`. Used when OAuth credentials are unavailable. No auto-refresh. |
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
-| `credentials_file` | string | `"~/.claude/.credentials.json"` | Path to OAuth credentials file (foci-native or Claude Code format). Used for OAuth PKCE with auto-refresh when `token` is not set. See [AUTH.md](AUTH.md). |
+| `credentials_file` | string | `"~/.config/foci/oauth.json"` | Path to foci's OAuth credentials file. Written by `foci auth`. Used for OAuth PKCE with auto-refresh. See [AUTH.md](AUTH.md). |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 
@@ -736,7 +736,7 @@ Credentials file. Lives alongside `foci.toml`. Protected at the OS level by the 
 
 ```toml
 [anthropic]
-token = "sk-ant-..."
+setup_token = "sk-ant-..."
 
 [telegram]
 bot_token = "123456:ABC..."
@@ -793,7 +793,7 @@ allowed_hosts = ["api.fotini.com"]
 
 In this example, agent `fotini` sees `custom.github_token = "ghp_fotini_account"` (override) and inherits `custom.allowed_hosts` from the global section. It also gets the additional `myapi.token` secret. Other agents see the global `ghp_default` value and do not see `myapi.token`.
 
-Per-agent scoping applies to: exec `{{secret:NAME}}` templates, `http_request` secret resolution, output redaction, and system prompt secret names. Built-in credential resolution (anthropic.token, telegram bot tokens, brave API key) remains global — these are process-wide settings.
+Per-agent scoping applies to: exec `{{secret:NAME}}` templates, `http_request` secret resolution, output redaction, and system prompt secret names. Built-in credential resolution (anthropic.setup_token, telegram bot tokens, brave API key) remains global — these are process-wide settings.
 
 ---
 
@@ -821,7 +821,7 @@ level = "INFO"
 With `secrets.toml`:
 ```toml
 [anthropic]
-token = "sk-ant-..."
+setup_token = "sk-ant-..."
 
 [telegram]
 bot_token = "123456:ABC..."

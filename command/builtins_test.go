@@ -1503,7 +1503,7 @@ func TestContextCommandCountingAPIError(t *testing.T) {
 func TestSecretsListTable(t *testing.T) {
 	store := &mockSecretsStore{
 		data: map[string]string{
-			"anthropic.token":     "x",
+			"anthropic.setup_token":     "x",
 			"telegram.clutch":     "x",
 			"telegram.clutchling": "x",
 			"telegram.scout":      "x",
