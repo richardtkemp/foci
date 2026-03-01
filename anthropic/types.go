@@ -14,8 +14,18 @@ type ImageSource struct {
 	Data      string `json:"data"`       // base64-encoded image data
 }
 
+// knownBlockTypes lists content block types fully modeled by struct fields.
+// Server tool types (server_tool_use, web_search_tool_result, web_fetch_tool_result)
+// are NOT in this set — they use Raw passthrough.
+var knownBlockTypes = map[string]bool{
+	"text": true, "image": true, "tool_use": true, "tool_result": true,
+	"thinking": true, "redacted_thinking": true,
+}
+
 // ContentBlock is a block of content in a message or response.
-// Covers text, image, tool_use, tool_result, thinking, and redacted_thinking block types.
+// Known types (text, image, tool_use, tool_result, thinking, redacted_thinking)
+// are modeled by struct fields. Unknown types (server_tool_use, web_search_tool_result,
+// web_fetch_tool_result) are preserved verbatim via the Raw field.
 type ContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
@@ -24,19 +34,105 @@ type ContentBlock struct {
 	Data         string          `json:"data,omitempty"`      // redacted_thinking: encrypted thinking data
 	Source       *ImageSource    `json:"source,omitempty"`    // image: base64 source
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
-	ID           string          `json:"id,omitempty"`        // tool_use: block ID
-	Name         string          `json:"name,omitempty"`      // tool_use: tool name
-	Input        json.RawMessage `json:"input,omitempty"`     // tool_use: parameters
+	ID           string          `json:"id,omitempty"`        // tool_use / server_tool_use: block ID
+	Name         string          `json:"name,omitempty"`      // tool_use / server_tool_use: tool name
+	Input        json.RawMessage `json:"input,omitempty"`     // tool_use / server_tool_use: parameters
 	ToolUseID    string          `json:"tool_use_id,omitempty"` // tool_result: references tool_use block
 	Content      string          `json:"content,omitempty"`   // tool_result: result text
 	IsError      bool            `json:"is_error,omitempty"`  // tool_result: error flag
+	Raw          json.RawMessage `json:"-"`                   // complete JSON for passthrough (server tool blocks)
 }
 
-// ToolDef defines a tool for the API request.
+// contentBlockAlias avoids infinite recursion in custom marshal/unmarshal.
+type contentBlockAlias ContentBlock
+
+// UnmarshalJSON stores the raw JSON for all block types, then populates struct fields.
+// For unknown types (server tool blocks), Raw is authoritative — struct unmarshal errors
+// are tolerated since server tool JSON may have fields that clash with struct tags
+// (e.g. "content" is a string in tool_result but an array in web_search_tool_result).
+func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
+	cb.Raw = append(json.RawMessage(nil), data...)
+
+	// Extract the type first to determine error handling strategy.
+	var peek struct{ Type string `json:"type"` }
+	json.Unmarshal(data, &peek)
+
+	type alias contentBlockAlias
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		if knownBlockTypes[peek.Type] {
+			return err // fail hard for known types
+		}
+		// Unknown type: struct unmarshal may fail on field type mismatches.
+		// Populate only the Type field from peek; Raw is authoritative.
+		cb.Type = peek.Type
+		// Try to extract common fields (id, name, input) that don't clash.
+		var common struct {
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}
+		json.Unmarshal(data, &common)
+		cb.ID = common.ID
+		cb.Name = common.Name
+		cb.Input = common.Input
+		return nil
+	}
+	*cb = ContentBlock(a)
+	cb.Raw = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+// MarshalJSON uses Raw for unknown block types (preserves encrypted_content etc.),
+// and normal struct marshaling for known types.
+func (cb ContentBlock) MarshalJSON() ([]byte, error) {
+	if len(cb.Raw) > 0 && !knownBlockTypes[cb.Type] {
+		return cb.Raw, nil
+	}
+	type alias contentBlockAlias
+	return json.Marshal(alias(cb))
+}
+
+// ToolDef can represent either a custom tool or a server tool.
+// Custom tools have name/description/input_schema.
+// Server tools have type/name and provider-specific fields.
+// Use NewCustomTool() or NewServerTool() constructors.
 type ToolDef struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	raw json.RawMessage
+}
+
+// MarshalJSON serializes the tool definition.
+func (t ToolDef) MarshalJSON() ([]byte, error) { return t.raw, nil }
+
+// UnmarshalJSON deserializes a tool definition.
+func (t *ToolDef) UnmarshalJSON(data []byte) error {
+	t.raw = append(json.RawMessage(nil), data...)
+	return nil
+}
+
+// Name returns the tool name from the raw JSON (works for both custom and server tools).
+func (t ToolDef) Name() string {
+	var v struct{ Name string `json:"name"` }
+	json.Unmarshal(t.raw, &v)
+	return v.Name
+}
+
+// NewCustomTool creates a ToolDef for a client-side tool.
+func NewCustomTool(name, description string, inputSchema json.RawMessage) ToolDef {
+	m := map[string]interface{}{
+		"name":         name,
+		"description":  description,
+		"input_schema": json.RawMessage(inputSchema),
+	}
+	raw, _ := json.Marshal(m)
+	return ToolDef{raw: raw}
+}
+
+// NewServerTool creates a ToolDef for an Anthropic server-side tool.
+// The config map is serialized directly (e.g. type, name, max_uses, allowed_domains).
+func NewServerTool(config map[string]interface{}) ToolDef {
+	raw, _ := json.Marshal(config)
+	return ToolDef{raw: raw}
 }
 
 // OutputConfig controls output generation parameters.

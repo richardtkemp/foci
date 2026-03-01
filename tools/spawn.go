@@ -185,11 +185,7 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]anthropic.ToolDef
 		if t.Name == "spawn" {
 			continue
 		}
-		defs = append(defs, anthropic.ToolDef{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.Parameters,
-		})
+		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
 		tools[t.Name] = t
 	}
 	return defs, tools
@@ -209,11 +205,7 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 		if t.Name == "spawn" {
 			continue
 		}
-		defs = append(defs, anthropic.ToolDef{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.Parameters,
-		})
+		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
 		switch t.Name {
 		case "read":
 			tools[t.Name] = NewIsolatedReadTool(nil, baseDir)

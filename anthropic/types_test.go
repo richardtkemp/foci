@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -127,7 +128,7 @@ func TestMessageRequestJSON(t *testing.T) {
 			{Role: "user", Content: TextContent("hi")},
 		},
 		Tools: []ToolDef{
-			{Name: "exec", Description: "run cmd", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			NewCustomTool("exec", "run cmd", json.RawMessage(`{"type":"object"}`)),
 		},
 	}
 
@@ -142,8 +143,8 @@ func TestMessageRequestJSON(t *testing.T) {
 	if decoded.Model != "claude-haiku-4-5" {
 		t.Errorf("Model = %q", decoded.Model)
 	}
-	if len(decoded.Tools) != 1 || decoded.Tools[0].Name != "exec" {
-		t.Errorf("Tools = %+v", decoded.Tools)
+	if len(decoded.Tools) != 1 || decoded.Tools[0].Name() != "exec" {
+		t.Errorf("Tools name = %q, want exec", decoded.Tools[0].Name())
 	}
 }
 
@@ -311,3 +312,207 @@ func TestTextOfOnlyThinking(t *testing.T) {
 		t.Errorf("TextOf = %q, want empty (thinking-only response)", got)
 	}
 }
+
+func TestNewCustomToolJSON(t *testing.T) {
+	td := NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`))
+	if td.Name() != "exec" {
+		t.Errorf("Name() = %q, want %q", td.Name(), "exec")
+	}
+
+	data, err := json.Marshal(td)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]interface{}
+	json.Unmarshal(data, &raw)
+	if raw["name"] != "exec" {
+		t.Errorf("name = %v", raw["name"])
+	}
+	if raw["description"] != "run commands" {
+		t.Errorf("description = %v", raw["description"])
+	}
+	if raw["input_schema"] == nil {
+		t.Error("input_schema missing")
+	}
+}
+
+func TestNewServerToolJSON(t *testing.T) {
+	td := NewServerTool(map[string]interface{}{
+		"type":            "web_search_20250305",
+		"name":            "web_search",
+		"max_uses":        5,
+		"allowed_domains": []string{"example.com"},
+	})
+	if td.Name() != "web_search" {
+		t.Errorf("Name() = %q, want %q", td.Name(), "web_search")
+	}
+
+	data, err := json.Marshal(td)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]interface{}
+	json.Unmarshal(data, &raw)
+	if raw["type"] != "web_search_20250305" {
+		t.Errorf("type = %v", raw["type"])
+	}
+	if raw["name"] != "web_search" {
+		t.Errorf("name = %v", raw["name"])
+	}
+	// max_uses should be present (JSON number)
+	if raw["max_uses"] == nil {
+		t.Error("max_uses missing")
+	}
+}
+
+func TestToolDefRoundTrip(t *testing.T) {
+	original := NewServerTool(map[string]interface{}{
+		"type": "web_search_20250305",
+		"name": "web_search",
+	})
+	data, _ := json.Marshal(original)
+
+	var decoded ToolDef
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Name() != "web_search" {
+		t.Errorf("Name() = %q after round-trip", decoded.Name())
+	}
+
+	data2, _ := json.Marshal(decoded)
+	if string(data) != string(data2) {
+		t.Errorf("round-trip mismatch:\n  got:  %s\n  want: %s", data2, data)
+	}
+}
+
+func TestContentBlockServerToolPassthrough(t *testing.T) {
+	// Simulate a server_tool_use block with fields not modeled by the struct.
+	serverJSON := `{
+		"type": "server_tool_use",
+		"id": "srvtoolu_abc",
+		"name": "web_search",
+		"input": {"query": "golang generics"}
+	}`
+
+	var block ContentBlock
+	if err := json.Unmarshal([]byte(serverJSON), &block); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Struct fields should be populated from known JSON keys
+	if block.Type != "server_tool_use" {
+		t.Errorf("Type = %q", block.Type)
+	}
+	if block.ID != "srvtoolu_abc" {
+		t.Errorf("ID = %q", block.ID)
+	}
+	if block.Name != "web_search" {
+		t.Errorf("Name = %q", block.Name)
+	}
+
+	// Raw should be preserved
+	if len(block.Raw) == 0 {
+		t.Fatal("Raw is empty")
+	}
+
+	// Marshal should use Raw (preserving original JSON structure)
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var roundTrip map[string]interface{}
+	json.Unmarshal(data, &roundTrip)
+	if roundTrip["type"] != "server_tool_use" {
+		t.Errorf("round-trip type = %v", roundTrip["type"])
+	}
+	if roundTrip["id"] != "srvtoolu_abc" {
+		t.Errorf("round-trip id = %v", roundTrip["id"])
+	}
+}
+
+func TestContentBlockWebSearchResultPassthrough(t *testing.T) {
+	// Simulate a web_search_tool_result with encrypted_content and other unknown fields.
+	resultJSON := `{
+		"type": "web_search_tool_result",
+		"tool_use_id": "srvtoolu_abc",
+		"content": [
+			{
+				"type": "web_search_result",
+				"title": "Example",
+				"url": "https://example.com",
+				"encrypted_content": "ENCRYPTED_BASE64_DATA",
+				"page_age": "2025-01-15"
+			}
+		]
+	}`
+
+	var block ContentBlock
+	if err := json.Unmarshal([]byte(resultJSON), &block); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if block.Type != "web_search_tool_result" {
+		t.Errorf("Type = %q", block.Type)
+	}
+
+	// Marshal should use Raw — preserving encrypted_content
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	output := string(data)
+	if !strings.Contains(output, "encrypted_content") {
+		t.Error("encrypted_content lost during round-trip")
+	}
+	if !strings.Contains(output, "ENCRYPTED_BASE64_DATA") {
+		t.Error("encrypted_content value lost during round-trip")
+	}
+	if !strings.Contains(output, "page_age") {
+		t.Error("page_age lost during round-trip")
+	}
+}
+
+func TestContentBlockKnownTypeUsesStruct(t *testing.T) {
+	// Known types should marshal from struct fields, not Raw.
+	block := ContentBlock{Type: "text", Text: "hello"}
+
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	json.Unmarshal(data, &decoded)
+	if decoded["type"] != "text" {
+		t.Errorf("type = %v", decoded["type"])
+	}
+	if decoded["text"] != "hello" {
+		t.Errorf("text = %v", decoded["text"])
+	}
+}
+
+func TestContentBlockToolUseRoundTrip(t *testing.T) {
+	// Ensure tool_use (a known type) still works after adding custom marshal.
+	original := ContentBlock{
+		Type:  "tool_use",
+		ID:    "tu_123",
+		Name:  "exec",
+		Input: json.RawMessage(`{"command":"ls"}`),
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded ContentBlock
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if decoded.Type != "tool_use" || decoded.ID != "tu_123" || decoded.Name != "exec" {
+		t.Errorf("decoded = %+v", decoded)
+	}
+}
+

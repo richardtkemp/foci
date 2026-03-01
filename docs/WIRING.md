@@ -146,14 +146,16 @@ The core of the system. Two entry points:
 5. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
    prepend EnvironmentBlock if set        ← runtime context block
    append ExtraSystemBlocks               ← skills, etc.
-6. tools.ToolDefs()                       ← registry → []ToolDef
+6. tools.ToolDefs() + append ServerTools   ← registry → []ToolDef (includes server tools)
 7. LOOP (max 25 iterations):
    a. logCacheDebug(system, messages, model)  ← warns if system < min threshold
    b. client.SendMessage(system, messages, tools)
    c. log event + log API entry
-   d. if stop_reason == "end_turn" → save & check compaction & return text
-   e. if stop_reason == "tool_use":
-      - execute each tool via registry (check ctx.Err() between calls)
+   d. notify observers for server_tool_use / web_search_tool_result / web_fetch_tool_result blocks
+   e. if stop_reason == "pause_turn" → append assistant msg, continue loop (server will resume)
+   f. if stop_reason == "end_turn" → save & check compaction & return text
+   g. if stop_reason == "tool_use":
+      - execute each tool_use via registry (skip server_tool_use — already executed)
       - append assistant msg + tool_result msg
       - goto 7a
 8. sessions.AppendAll(sessionKey, newMessages)
@@ -377,8 +379,8 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
 | `write` | files.go | Create/overwrite files |
 | `edit` | files.go | Find-and-replace (old_string must be unique). Syntax validation for .json, .toml, .go, .yaml/.yml, .xml, .py, .sh/.bash: rejects edits that would break a valid file, warns if file was already invalid. |
-| `web_fetch` | web.go | HTTP GET, strip HTML tags |
-| `web_search` | web.go | Brave Search API |
+| `web_fetch` | web.go / server | Fetch web content (server-side default, client-side fallback) |
+| `web_search` | web.go / server | Web search (server-side default, Brave fallback) |
 | `summary` | summary.go | Summarize/extract from large files via Haiku call |
 | `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency) |
 | `remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |

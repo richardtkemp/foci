@@ -118,6 +118,8 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `show_thinking` | string | nil | Default thinking display mode. Per-agent `show_thinking` overrides this, then falls back to `[telegram] show_thinking`. |
 | `display_width` | int | nil | Default display width for dividers. Per-agent `display_width` overrides this, then falls back to `[telegram] display_width`. |
 | `system_files` | string[] | `[]` | Default system file list (empty = per-agent only). |
+| `search_provider` | string | `"anthropic"` | Default web search provider: `"anthropic"` (server-side) or `"brave"` (client-side). |
+| `fetch_provider` | string | `"anthropic"` | Default web fetch provider: `"anthropic"` (server-side) or `"builtin"` (client-side). |
 
 Example:
 ```toml
@@ -506,6 +508,14 @@ Tool behavior settings.
 | `tmux_memory_kill` | string | `"30%"` | Kill threshold. Kills tmux server, notifies, cleans up tool state. Same formats. |
 | `tmux_braindead` | bool | `true` | Auto-unwatch sessions after inactivity notification, auto-watch on send. |
 | `tmux_watch_threshold` | string | `"30s"` | Default inactivity watch threshold. Go duration format. |
+| `search_provider` | string | `"anthropic"` | Web search provider: `"anthropic"` (server-side, default) or `"brave"` (client-side, needs `brave_api_key`). Per-agent override via `[[agents]]`. |
+| `fetch_provider` | string | `"anthropic"` | Web fetch provider: `"anthropic"` (server-side, default) or `"builtin"` (client-side). Per-agent override via `[[agents]]`. |
+| `web_search_max_uses` | int | `0` | Max Anthropic web searches per API call. `0` = unlimited. Only applies when `search_provider = "anthropic"`. |
+| `web_search_allowed_domains` | string[] | `[]` | Domain whitelist for Anthropic web search. Mutually exclusive with `web_search_blocked_domains`. |
+| `web_search_blocked_domains` | string[] | `[]` | Domain blacklist for Anthropic web search. Mutually exclusive with `web_search_allowed_domains`. |
+| `web_fetch_max_uses` | int | `0` | Max Anthropic web fetches per API call. `0` = unlimited. Only applies when `fetch_provider = "anthropic"`. |
+| `web_fetch_allowed_domains` | string[] | `[]` | Domain whitelist for Anthropic web fetch. Mutually exclusive with `web_fetch_blocked_domains`. |
+| `web_fetch_blocked_domains` | string[] | `[]` | Domain blacklist for Anthropic web fetch. Mutually exclusive with `web_fetch_allowed_domains`. |
 
 The `summary` tool uses `claude-haiku-4-5` hardcoded (always cheap/fast) and has no configurable options.
 
