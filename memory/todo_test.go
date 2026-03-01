@@ -3,6 +3,7 @@ package memory
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestTodoAddAndList(t *testing.T) {
@@ -418,6 +419,87 @@ func TestTodoEditNothingToUpdate(t *testing.T) {
 	_, err := store.Edit("agent1", id, "", "", "", false)
 	if err == nil {
 		t.Error("expected error when nothing to update")
+	}
+}
+
+func TestTodoUpdatedAtOnAdd(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	before := time.Now().UTC()
+	id, _ := store.Add("agent1", "Task", "medium", "")
+	after := time.Now().UTC()
+
+	items, _ := store.List("agent1", "", "")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	item := items[0]
+	if item.ID != id {
+		t.Errorf("ID = %d, want %d", item.ID, id)
+	}
+	if item.CreatedAt.IsZero() {
+		t.Error("created_at should be set")
+	}
+	if item.UpdatedAt.IsZero() {
+		t.Error("updated_at should be set")
+	}
+	if item.CreatedAt.Before(before) || item.CreatedAt.After(after) {
+		t.Errorf("created_at = %v, expected between %v and %v", item.CreatedAt, before, after)
+	}
+	if item.UpdatedAt.Before(before) || item.UpdatedAt.After(after) {
+		t.Errorf("updated_at = %v, expected between %v and %v", item.UpdatedAt, before, after)
+	}
+}
+
+func TestTodoUpdatedAtOnEdit(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Original", "medium", "")
+	items, _ := store.List("agent1", "", "")
+	originalUpdatedAt := items[0].UpdatedAt
+
+	time.Sleep(10 * time.Millisecond)
+
+	_, err := store.Edit("agent1", id, "Updated", "", "", false)
+	if err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+
+	items, _ = store.List("agent1", "", "")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].UpdatedAt.Equal(originalUpdatedAt) {
+		t.Errorf("updated_at should change on edit, got %v (same as before)", items[0].UpdatedAt)
+	}
+	if items[0].Text != "Updated" {
+		t.Errorf("text = %q, want %q", items[0].Text, "Updated")
+	}
+}
+
+func TestTodoUpdatedAtOnComplete(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Task", "medium", "")
+	items, _ := store.List("agent1", "", "")
+	originalUpdatedAt := items[0].UpdatedAt
+
+	time.Sleep(10 * time.Millisecond)
+
+	err := store.Complete("agent1", id, "done")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	items, _ = store.List("agent1", "done", "")
+	if len(items) != 1 {
+		t.Fatalf("expected 1 done item, got %d", len(items))
+	}
+	if items[0].UpdatedAt.Equal(originalUpdatedAt) {
+		t.Errorf("updated_at should change on complete, got %v (same as before)", items[0].UpdatedAt)
+	}
+	if items[0].CompletedAt == nil {
+		t.Error("completed_at should be set")
 	}
 }
 

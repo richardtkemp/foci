@@ -19,6 +19,7 @@ type TodoItem struct {
 	CloseReason string // reason for completion (set when status="done")
 	AgentID     string
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
 	CompletedAt *time.Time
 }
 
@@ -59,6 +60,35 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		return nil, fmt.Errorf("create todos table: %w", err)
 	}
 
+	var hasUpdatedAt bool
+	rows, err := db.Query("PRAGMA table_info(todos)")
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("check table info: %w", err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			db.Close()
+			return nil, fmt.Errorf("scan table info: %w", err)
+		}
+		if name == "updated_at" {
+			hasUpdatedAt = true
+		}
+	}
+	rows.Close()
+
+	if !hasUpdatedAt {
+		if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("add updated_at column: %w", err)
+		}
+	}
+
 	return &TodoStore{db: db}, nil
 }
 
@@ -69,8 +99,8 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		`INSERT INTO todos (text, status, priority, tags, agent_id, created_at) VALUES (?, 'open', ?, ?, ?, ?)`,
-		text, priority, tags, agentID, now,
+		`INSERT INTO todos (text, status, priority, tags, agent_id, created_at, updated_at) VALUES (?, 'open', ?, ?, ?, ?, ?)`,
+		text, priority, tags, agentID, now, now,
 	)
 	if err != nil {
 		return 0, err
@@ -80,7 +110,7 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 
 // List returns todo items for an agent, optionally filtered by status and/or tag.
 func (s *TodoStore) List(agentID, status, tag string) ([]TodoItem, error) {
-	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at FROM todos WHERE agent_id = ?`
+	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
 	if status != "" {
@@ -121,8 +151,8 @@ func (s *TodoStore) CountOpenByTag(agentID, tag string) (int, error) {
 func (s *TodoStore) Complete(agentID string, id int64, reason string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(
-		`UPDATE todos SET status = 'done', completed_at = ?, close_reason = ? WHERE id = ? AND agent_id = ?`,
-		now, reason, id, agentID,
+		`UPDATE todos SET status = 'done', completed_at = ?, updated_at = ?, close_reason = ? WHERE id = ? AND agent_id = ?`,
+		now, now, reason, id, agentID,
 	)
 	if err != nil {
 		return err
@@ -171,6 +201,10 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 		return nil, fmt.Errorf("nothing to update")
 	}
 
+	now := time.Now().UTC().Format(time.RFC3339)
+	setClauses = append(setClauses, "updated_at = ?")
+	args = append(args, now)
+
 	query := "UPDATE todos SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND agent_id = ?"
 	args = append(args, id, agentID)
 
@@ -185,16 +219,18 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 
 	// Re-read the updated row.
 	row := s.db.QueryRow(
-		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at FROM todos WHERE id = ? AND agent_id = ?`,
+		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE id = ? AND agent_id = ?`,
 		id, agentID,
 	)
 	var item TodoItem
 	var createdAt string
+	var updatedAt string
 	var completedAt sql.NullString
-	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &completedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 		return nil, fmt.Errorf("re-read after edit: %w", err)
 	}
 	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)
 		item.CompletedAt = &t
@@ -205,7 +241,7 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 // Search returns todo items matching a case-insensitive substring query.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
+		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
 		agentID, query,
 	)
 	if err != nil {
@@ -225,11 +261,13 @@ func scanTodos(rows *sql.Rows) ([]TodoItem, error) {
 	for rows.Next() {
 		var item TodoItem
 		var createdAt string
+		var updatedAt string
 		var completedAt sql.NullString
-		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &completedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 		if completedAt.Valid {
 			t, _ := time.Parse(time.RFC3339, completedAt.String)
 			item.CompletedAt = &t
