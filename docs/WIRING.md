@@ -28,6 +28,7 @@ config.Load(path)                                        ← validates values; l
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
   → memory: ReminderStore + Scratchpad + TodoStore       ← shared across agents (scoped per-agent via agent_id)
   → memory.NewIndex                                      ← shared OR per-agent (see below)
+  → telegram.NewToolDetailStore(tool_details.db)           ← shared; persists inline keyboard expansion data across restarts
   → voice STT/TTS providers                              ← shared across agents
   → telegram.NewBotManager()
 
@@ -234,7 +235,7 @@ Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCall
 
 **Inline result expansion (full mode only):** In "full" mode, each tool call message includes a "Show results" inline keyboard button. Pressing it expands the message to include the tool's output (truncated to fit Telegram's 4096-char limit). "Hide results" collapses back.
 
-- `ToolResultObserver` callback fires after each tool execution (both success and error), storing the result in `Bot.toolResults` (`sync.Map`, message ID → `toolResultEntry`). Ephemeral — no persistence needed.
+- `ToolResultObserver` callback fires after each tool execution (both success and error), storing the result in `Bot.toolResults` (`sync.Map`, message ID → `toolResultEntry`). Write-through: if `ToolDetailStore` is set, also persists to SQLite (`tool_details.db`) so inline keyboard expansions survive restarts. On startup, `SetToolDetailStore` loads entries <48h old into the in-memory map. Periodic idle cleanup (10min tick, runs when all users idle) expires old entries and runs `PRAGMA incremental_vacuum`.
 - `handleCallbackQuery` processes `tc:show:<msgID>` / `tc:hide:<msgID>` button presses, editing the message and answering the callback query. Also handles `cmd:/name args` for inline keyboard command selections.
 - `pollUpdates` requests `AllowedUpdates: ["message", "callback_query"]` to receive button press events.
 

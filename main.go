@@ -494,6 +494,20 @@ func main() {
 		defer todoStore.Close()
 	}
 
+	// Shared: Tool call detail persistence (for show_tool_calls=full inline keyboard expansion)
+	toolDetailDbPath := cfg.DataPath("tool_details.db")
+	toolDetailStore, err := telegram.NewToolDetailStore(toolDetailDbPath)
+	if err != nil {
+		log.Errorf("main", "create tool detail store: %v (inline keyboard expansion will not persist)", err)
+	} else {
+		// Expire old entries and vacuum on startup (cleanup from previous run)
+		toolDetailStore.ExpireAndVacuum()
+		defer func() {
+			toolDetailStore.ExpireAndVacuum()
+			toolDetailStore.Close()
+		}()
+	}
+
 	// Shared: Voice providers
 	var sttProvider voice.STT
 	var ttsProvider voice.TTS
@@ -611,6 +625,7 @@ func main() {
 			reminderStore:   reminderStore,
 			scratchpadStore: scratchpadStore,
 			todoStore:       todoStore,
+			toolDetailStore: toolDetailStore,
 			sttProvider:     sttProvider,
 			ttsProvider:     ttsProvider,
 			braveKey:        braveKey,
@@ -743,6 +758,9 @@ func main() {
 			if filesDir := cfg.Telegram.ReceivedFilesDir; filesDir != "" {
 				mbBot.SetReceivedFilesDir(filesDir)
 			}
+			if toolDetailStore != nil {
+				mbBot.SetToolDetailStore(toolDetailStore)
+			}
 			if stateStore != nil {
 				ss := stateStore
 				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
@@ -860,6 +878,37 @@ func main() {
 			memGuard.Start(ctx)
 			defer memGuard.Stop()
 		}
+	}
+
+	// Periodic tool detail cleanup — expire old entries when all users are idle
+	if toolDetailStore != nil {
+		go func() {
+			ticker := time.NewTicker(10 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					// Only run cleanup when all users are idle (>10min since last message)
+					allIdle := true
+					for _, id := range agentOrder {
+						inst := agents[id]
+						sk := inst.defaultSessionKey()
+						if sk == "" {
+							continue
+						}
+						if t := inst.ag.LastUserMessageTime(sk); !t.IsZero() && time.Since(t) < 10*time.Minute {
+							allIdle = false
+							break
+						}
+					}
+					if allIdle {
+						toolDetailStore.ExpireAndVacuum()
+					}
+				}
+			}
+		}()
 	}
 
 	// Intercept SIGINT/SIGTERM before starting bots.
@@ -1360,6 +1409,7 @@ type setupParams struct {
 	reminderStore   *memory.ReminderStore
 	scratchpadStore *memory.Scratchpad
 	todoStore       *memory.TodoStore
+	toolDetailStore *telegram.ToolDetailStore
 	sttProvider     voice.STT
 	ttsProvider     voice.TTS
 	braveKey        string
@@ -2369,6 +2419,9 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 			primaryBot.SetStateStore(p.stateStore, botKey)
 		}
+		if p.toolDetailStore != nil {
+			primaryBot.SetToolDetailStore(p.toolDetailStore)
+		}
 
 		if p.sttProvider != nil {
 			primaryBot.SetTranscriber(p.sttProvider)
@@ -2473,6 +2526,9 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 			applyAgentDisplaySettings(mbBot, acfg, p.cfg)
+			if p.toolDetailStore != nil {
+				mbBot.SetToolDetailStore(p.toolDetailStore)
+			}
 			if p.stateStore != nil {
 				ss := p.stateStore
 				mbBot.OnSessionKeyChange = func(username, sessionKey string) {

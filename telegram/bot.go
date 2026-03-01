@@ -94,8 +94,9 @@ type Bot struct {
 	displayWidth         int          // character width for dividers (default 44)
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	receivedFilesDir     string       // if non-empty, save received files to this directory
-	toolResults          sync.Map     // message ID (int64) → toolResultEntry; ephemeral, for inline keyboard expansion
-	thinkingStore        sync.Map     // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
+	toolResults          sync.Map            // message ID (int64) → toolResultEntry; for inline keyboard expansion
+	thinkingStore        sync.Map            // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
+	toolDetailStore      *ToolDetailStore    // nil = no persistence; write-through to SQLite
 }
 
 // NewBot creates a new Telegram bot.
@@ -185,6 +186,26 @@ func (b *Bot) SetMessagesInLog(v bool) {
 // Empty string disables saving.
 func (b *Bot) SetReceivedFilesDir(dir string) {
 	b.receivedFilesDir = dir
+}
+
+// SetToolDetailStore sets the persistent store for tool call details.
+// On startup, loads entries <48h old into the in-memory map.
+func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
+	b.toolDetailStore = store
+	if store == nil {
+		return
+	}
+	entries, err := store.LoadAll()
+	if err != nil {
+		log.Warnf("telegram", "load tool details: %v", err)
+		return
+	}
+	for id, entry := range entries {
+		b.toolResults.Store(id, entry)
+	}
+	if len(entries) > 0 {
+		log.Infof("telegram", "restored %d tool call details from disk", len(entries))
+	}
 }
 
 // DisplaySettings returns the current display settings for inspection/testing.
@@ -990,6 +1011,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 				fullInput:   full,
 				result:      result,
 			})
+			if b.toolDetailStore != nil {
+				b.toolDetailStore.Store(msgID, compact, full, result)
+			}
 		},
 		// Thinking block accumulator (gated by showThinking)
 		ThinkingObserver: func(thinking string) {
