@@ -104,38 +104,21 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 
 ### Multi-Bot Sessions (/multiball)
 
-An agent can have multiple Telegram bots assigned — one primary, the rest secondary. Secondary bots are idle until needed. Bots can be assigned per-agent or to a shared pool that any agent can use as fallback.
+`/multiball` forks a session to a secondary Telegram bot — same agent, same context snapshot, parallel thread. Bots can be per-agent or shared pool. See [docs/MULTIBALL.md](docs/MULTIBALL.md) for bot pool config, session lifecycle, routing, and use cases.
 
 ```toml
 [[agents]]
 id = "clutch"
 telegram_bot = "primary"
 multiball_bots = ["clutchling", "clutchling2"]  # per-agent pool
-allowed_users = ["5970082313", "1234567"]       # only these users (overrides global)
-
-[[agents]]
-id = "research"
-telegram_bot = "secondary"
-# no allowed_users — falls back to global [telegram] allowed_users
 
 [telegram]
-allowed_users = ["5970082313"]                   # global default
 multiball_bots = ["spare1", "spare2"]            # shared pool (fallback for any agent)
 ```
 
 **Acquisition priority:** per-agent pool first, shared pool as fallback. Released bots return to whichever pool they came from.
 
-**`/multiball` (alias `/mb`):**
-1. Fork the current session (cache-sharing branch)
-2. Acquire the least-recently-used bot (per-agent pool first, then shared pool)
-3. That bot sends the user a Telegram message: "🎱 Forked from main. What do you need?" (plain Telegram message, not an agent turn — no tokens spent)
-4. All subsequent messages to that bot route to the forked session
-
-The user now has two (or more) parallel conversations with the same agent, each in its own Telegram chat, sharing the cached prefix. When the fork is done, `/done` in that chat detaches the bot and returns it to the pool.
-
-**Restart survival:** The `bot → session_key` mapping is persisted in the state store (`multiball:<telegram_username>` → `<session_key>`). On restart, mappings are restored if the session file still exists on disk. Stale mappings (session file deleted) are cleaned up automatically.
-
-**Why:** Sometimes you want to ask a side question without derailing the main conversation. Or run parallel investigations. Each gets its own chat window — no interleaving, no confusion.
+**Restart survival:** The `bot → session_key` mapping is persisted in the state store. On restart, mappings are restored if the session file still exists on disk. Stale mappings are cleaned up automatically.
 
 ### Voice (Telegram Voice Notes)
 
@@ -644,48 +627,12 @@ Config: `[keepalive]`, `[background]`, and `[memory_formation]` sections. See [d
 
 ## Secrets
 
-Secrets never pass through agent context. The agent cannot read, echo, or exfiltrate credentials.
+Secrets never pass through agent context. The agent cannot read, echo, or exfiltrate credentials. See [docs/SECRETS.md](docs/SECRETS.md) for the full security model, OS-level protection, domain locking, Bitwarden integration, and setup instructions.
 
 ### Principle
 Credentials are loaded once at startup into process memory. Built-in integrations (Anthropic, Telegram, Brave Search) use them directly from Go structs. The agent interacts with tools, tools use credentials internally — the agent never constructs auth headers or sees token values.
 
-### Architecture
-
-**`secrets.toml`** — separate from main config, protected by OS-level group permissions. See [docs/SECRETS.md](docs/SECRETS.md) for full details.
-
-**OS-level protection (primary):**
-
-- `secrets.toml` owned by `root:foci-secrets`, mode `0660`
-- Main foci process has `foci-secrets` as a supplementary group (via systemd `SupplementaryGroups`)
-- All child processes (exec tool, tmux tool, script commands) have supplementary groups dropped — they run with only the primary `foci` group
-- The OS kernel denies access regardless of how the path is specified (encoding tricks, globs, interpreter string construction all fail)
-- Requires `AmbientCapabilities=CAP_SETGID` in the systemd unit for `setgroups()` to work
-
-**Defence-in-depth layers:**
-
-1. **Built-in integrations** — Anthropic client, Telegram bot, etc. receive credentials via Go structs at init. Agent calls tools; tools use credentials internally. Zero exposure.
-
-2. **Exec template references** — For ad-hoc commands the agent can reference secrets by name:
-   ```
-   curl -H "Authorization: Bearer {{secret:custom.github_token}}" https://api.github.com/...
-   ```
-   Foci resolves `{{secret:NAME}}` before spawning the subprocess. The agent sees the template, never the value. Unresolved references are an error (not silently passed through).
-
-3. **Output redaction** — Exec tool output is scanned for known secret patterns and redacted before returning to the agent. Catches accidental leaks from `env`, error messages, config dumps, etc.
-
-4. **Blocked paths** — The exec tool refuses to read `secrets.toml`, `/proc/self/environ`, and any path matching a configurable blocklist. String-match check as additional layer.
-
-5. **Startup security checks** — At startup, verifies file ownership, permissions, and group membership. Warns if misconfigured (does not block startup). Disable with `skip_security_checks = true`.
-
-**Bitwarden vault integration (optional):**
-
-A dynamic secret store backed by the Bitwarden CLI, with a two-tier aisudo approval model:
-- **Metadata (list)** — `sudo -u bitwarden bw list items` is allowlisted in aisudo, runs without approval. Caches item names, URIs, folders, usernames. Refreshed on a configurable interval.
-- **Passwords (get)** — `sudo -u bitwarden bw get password <id>` requires Telegram approval via aisudo. Blocks until approved or denied. Cached with configurable TTL.
-- **Template syntax** — `{{secret:bw.ITEM_UUID}}` in http_request headers/body. Host validation uses the vault item's URI fields.
-- **Dedicated system user** — `bitwarden` user owns the CLI session state and session file. Not root. Foci never reads the session token — each `bw` command reads the session file as the bitwarden user.
-
-**Per-agent secrets:**
+### Per-agent secrets
 
 Secrets in `secrets.toml` are global by default. Agents can have their own overrides via `[agents.ID]` sections:
 ```toml

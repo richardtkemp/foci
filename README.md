@@ -44,7 +44,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Prompt repetition.** Based on [research showing that repeating the input prompt improves LLM accuracy](https://arxiv.org/abs/2512.14982) without increasing output tokens or latency, foci can automatically duplicate user messages in API calls. Configurable per-agent (`duplicate_messages`), skipped for system triggers like cron wakes.
 
-**Multiball.** When one conversation isn't enough, `/multiball` forks your session to a second Telegram bot — same agent, same context, parallel thread. Useful when you have more thoughts than a single-threaded chat can contain. Both sessions share the cached prefix, so the fork is cheap. The secondary bot has its own conversation that you can take in a different direction while the original continues.
+**Multiball.** `/multiball` forks your session to a second Telegram bot — same agent, same context, parallel thread. Both sessions share the cached prefix, so the fork is cheap. See [docs/MULTIBALL.md](docs/MULTIBALL.md) for bot pool config, session lifecycle, and routing details.
 
 **Built-in todo list.** Persistent, priority-ranked task management the agent can use to keep its own priorities straight. Add, complete, search, remove — stored in SQLite, survives restarts. The agent tracks its own work without external tools or memory file hacks.
 
@@ -54,7 +54,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **First-class coding agent support.** Tmux management and coding agent orchestration are built-in tools, not CLI-based skills the agent has to parse. The agent can start sessions, send instructions, watch for inactivity, and read output through structured tool calls — simpler to use, therefore more reliable.
 
-**OS-level secret isolation.** Secrets live in a file readable only by a dedicated group. Child processes (exec, coding agents) have that group dropped — they can use secret templates but never read the values directly. Secrets are domain-locked: a GitHub token can only be sent to `api.github.com`. Bitwarden vault integration adds approval-gated dynamic secrets with TTLs and host restriction.
+**OS-level secret isolation.** Secrets live in a file readable only by a dedicated group. Child processes have that group dropped — they can use secret templates but never read the values directly. Secrets are domain-locked, output is redacted, and Bitwarden vault integration adds approval-gated dynamic secrets. See [docs/SECRETS.md](docs/SECRETS.md) for the full security model.
 
 ## Architecture
 
