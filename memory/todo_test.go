@@ -425,9 +425,9 @@ func TestTodoEditNothingToUpdate(t *testing.T) {
 func TestTodoUpdatedAtOnAdd(t *testing.T) {
 	store := newTestTodoStore(t)
 
-	before := time.Now().UTC()
+	before := time.Now().UTC().Truncate(time.Second)
 	id, _ := store.Add("agent1", "Task", "medium", "")
-	after := time.Now().UTC()
+	after := time.Now().UTC().Truncate(time.Second).Add(time.Second)
 
 	items, _ := store.List("agent1", "", "")
 	if len(items) != 1 {
@@ -458,7 +458,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 	items, _ := store.List("agent1", "", "")
 	originalUpdatedAt := items[0].UpdatedAt
 
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 
 	_, err := store.Edit("agent1", id, "Updated", "", "", false)
 	if err != nil {
@@ -484,7 +484,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	items, _ := store.List("agent1", "", "")
 	originalUpdatedAt := items[0].UpdatedAt
 
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(1100 * time.Millisecond)
 
 	err := store.Complete("agent1", id, "done")
 	if err != nil {
