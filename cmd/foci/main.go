@@ -7,8 +7,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"foci/anthropic"
+	"foci/secrets"
 )
 
 const defaultAddr = "127.0.0.1:18791"
@@ -84,6 +88,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle "foci auth" before normal command dispatch — it doesn't need a gateway.
+	if os.Args[1] == "auth" {
+		if err := cmdAuth(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Parse --addr from global args (before command)
 	allArgs := os.Args[1:]
 	addrFlag, allArgs := parseAddrFlag(allArgs)
@@ -118,6 +131,9 @@ func main() {
 		} else {
 			err = cmdCommand(base, append(args, "/ping"))
 		}
+	case "auth":
+		// Already handled above main dispatch, but list here for completeness.
+		err = cmdAuth(args)
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -136,6 +152,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage: foci <command> [args...]
 
 Commands:
+  auth                 Authenticate with Anthropic (OAuth PKCE flow)
   send <text>          Send a message to the agent (main session)
   branch [text]        Trigger a branch session
                          --no-compact      Skip compaction if context limit reached
@@ -610,6 +627,47 @@ Liveness check (shorthand for 'foci command /ping').
 Flags:
   -a, --agent <id>        Target agent (env: FOCI_AGENT)
 `)
+}
+
+func authUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: foci auth [--config <path>]
+
+Authenticate with Anthropic using the OAuth PKCE flow.
+Credentials are saved to secrets.toml alongside foci.toml.
+
+Flags:
+  --config <path>       Path to foci.toml (used to locate secrets.toml)
+                        Default: foci.toml in current directory
+`)
+}
+
+func cmdAuth(args []string) error {
+	if wantsHelp(args) {
+		authUsage()
+		return nil
+	}
+
+	// Parse --config flag
+	configPath := "foci.toml"
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--config" && i+1 < len(args) {
+			configPath = args[i+1]
+			i++
+		} else if strings.HasPrefix(args[i], "--config=") {
+			configPath = args[i][len("--config="):]
+		}
+	}
+
+	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	store, err := secrets.Load(secretsPath)
+	if err != nil {
+		return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
+	}
+	if err := anthropic.RunAuthFlow(store); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Credentials saved to %s\n", secretsPath)
+	return nil
 }
 
 func postJSON(url string, body interface{}) error {
