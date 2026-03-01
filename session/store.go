@@ -23,8 +23,9 @@ type SessionMeta struct {
 
 // Store is a JSONL-backed session store.
 type Store struct {
-	dir string
-	mu  sync.Mutex
+	dir     string
+	mu      sync.Mutex
+	onEvent func(SessionEvent)
 }
 
 // NewStore creates a session store rooted at dir.
@@ -134,10 +135,11 @@ func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
 
 	// Write session metadata on new files
 	if !exists {
+		now := time.Now().UTC()
 		log.Infof("session", "session created key=%s", key)
 		meta := SessionMeta{
 			Type:      "session_meta",
-			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			CreatedAt: now.Format(time.RFC3339),
 		}
 		metaData, err := json.Marshal(meta)
 		if err != nil {
@@ -146,6 +148,13 @@ func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
 		if _, err := f.Write(append(metaData, '\n')); err != nil {
 			return fmt.Errorf("write session meta: %w", err)
 		}
+		s.fireEvent(SessionEvent{
+			Key:       key,
+			Type:      ClassifySessionKey(key),
+			Status:    SessionStatusActive,
+			FilePath:  path,
+			CreatedAt: now,
+		})
 	}
 
 	data, err := json.Marshal(msg)
@@ -188,6 +197,10 @@ func (s *Store) Clear(key string) error {
 	}
 	if err == nil {
 		log.Infof("session", "session cleared key=%s", key)
+		s.fireEvent(SessionEvent{
+			Key:    key,
+			Status: SessionStatusCleared,
+		})
 	}
 	return err
 }
@@ -280,6 +293,10 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 		}
 	}
 	log.Infof("session", "session replaced key=%s messages=%d", key, len(msgs))
+	s.fireEvent(SessionEvent{
+		Key:    key,
+		Status: SessionStatusCompacted,
+	})
 	return nil
 }
 
@@ -548,4 +565,126 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 	}
 
 	return sessions, nil
+}
+
+// SessionEvent describes a lifecycle event on a session.
+type SessionEvent struct {
+	Key       string
+	Type      SessionType
+	Status    SessionStatus
+	ParentKey string // for branches
+	FilePath  string
+	CreatedAt time.Time
+}
+
+// OnSessionEvent is an optional callback fired on session lifecycle events.
+// Set this before any concurrent use of the Store.
+func (s *Store) OnSessionEvent(fn func(SessionEvent)) {
+	s.onEvent = fn
+}
+
+func (s *Store) fireEvent(e SessionEvent) {
+	if s.onEvent != nil {
+		s.onEvent(e)
+	}
+}
+
+// ClassifySessionKey determines the SessionType from a session key.
+func ClassifySessionKey(key string) SessionType {
+	parts := splitKeyParts(key)
+	if len(parts) < 3 {
+		return SessionTypeUnknown
+	}
+	// Check for ":branch:" segment (session-end memory branches like agent:X:multiball:Y:branch:Z)
+	for i := 2; i < len(parts)-1; i++ {
+		if parts[i] == "branch" {
+			return SessionTypeBranch
+		}
+	}
+	switch parts[2] {
+	case "chat":
+		return SessionTypeChat
+	case "multiball":
+		return SessionTypeMultiball
+	case "spawn":
+		return SessionTypeSpawn
+	case "cron":
+		return SessionTypeCron
+	default:
+		return SessionTypeUnknown
+	}
+}
+
+// splitKeyParts splits a session key on colons.
+func splitKeyParts(key string) []string {
+	return strings.Split(key, ":")
+}
+
+// ScanAllSessions walks all non-archive session files and returns index entries.
+func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var entries []SessionIndexEntry
+	err := filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
+			return nil
+		}
+		if isArchiveFile(filepath.Base(path)) {
+			return nil
+		}
+
+		rel, err := filepath.Rel(s.dir, path)
+		if err != nil {
+			return nil
+		}
+		rel = strings.TrimSuffix(rel, ".jsonl")
+		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+
+		stype := ClassifySessionKey(key)
+
+		// Determine created_at from session metadata or file mtime
+		var createdAt time.Time
+		if meta := s.getStoredCreatedAt(key); meta != "" {
+			if t, err := time.Parse(time.RFC3339, meta); err == nil {
+				createdAt = t
+			}
+		}
+		if createdAt.IsZero() {
+			createdAt = info.ModTime()
+		}
+
+		// Determine parent from branch_meta
+		var parentKey string
+		bm, _ := s.readBranchMeta(key)
+		if bm != nil {
+			parentKey = bm.ParentKey
+		}
+
+		// Determine status: if archives exist, this file has been compacted
+		status := SessionStatusActive
+		basePath := path
+		ext := filepath.Ext(basePath)
+		stem := strings.TrimSuffix(basePath, ext)
+		if _, err := os.Stat(stem + ".1" + ext); err == nil {
+			status = SessionStatusCompacted
+		}
+
+		entries = append(entries, SessionIndexEntry{
+			SessionKey:       key,
+			FilePath:         path,
+			CreatedAt:        createdAt,
+			ParentSessionKey: parentKey,
+			SessionType:      stype,
+			Status:           status,
+		})
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		return entries, err
+	}
+	return entries, nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"foci/anthropic"
 	"foci/log"
@@ -81,6 +82,14 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 
 	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v orientation=%v",
 		branchKey, parentKey, meta.BranchPoint, opts.NoResetHook, opts.OrientationMessage != "")
+	s.fireEvent(SessionEvent{
+		Key:       branchKey,
+		Type:      ClassifySessionKey(branchKey),
+		Status:    SessionStatusActive,
+		ParentKey: parentKey,
+		FilePath:  path,
+		CreatedAt: time.Now().UTC(),
+	})
 	return nil
 }
 

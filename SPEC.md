@@ -80,6 +80,10 @@ session_reset_prompt = ""                # path to reset prompt file (empty = di
 
 All parameters have sensible defaults. Customize only what you need. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
+### Session Metadata Index
+
+A SQLite index (`session_index.db`) tracks all session files with metadata: session key, file path, created timestamp, parent session key (for branches), session type (chat/multiball/spawn/cron/branch), and status (active/compacted/cleared). Rebuilt from disk on startup by scanning all non-archive `.jsonl` files. Updated in real-time via lifecycle hooks on the session store (create, compact, clear). Queryable via `/sessions index [type] [status]`.
+
 ## Communication
 
 ### Anthropic API
@@ -856,6 +860,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/sessions` or `/sessions list` — list all per-chat sessions for this agent. Shows chat ID, username, message count, last active time, and which is the default (★).
 - `/sessions default <chat_id>` — set a specific chat as the default session (used by heartbeats, cron, proactive features).
 - `/sessions info` — show details for the current chat's session (chat ID, default status, message count, username).
+- `/sessions index [type] [status]` — query the session metadata index (all agents). Optional filters: type (chat/multiball/spawn/cron/branch), status (active/compacted/cleared). Shows session key, type, status, created time, and parent session.
 
 **Agents:**
 - `/agents` - list active agent sessions with status, model, and message counts

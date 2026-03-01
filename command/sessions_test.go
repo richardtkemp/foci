@@ -214,6 +214,117 @@ func TestSessionsNoArgsShowsUsage(t *testing.T) {
 	}
 }
 
+func TestSessionsIndexWithResults(t *testing.T) {
+	now := time.Now().UTC()
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(sessionType, status string) ([]SessionIndexInfo, error) {
+		all := []SessionIndexInfo{
+			{SessionKey: "agent:bot:chat:123", CreatedAt: now, SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:spawn:spawn-456", CreatedAt: now.Add(-time.Hour), ParentSessionKey: "agent:bot:chat:123", SessionType: "spawn", Status: "active"},
+			{SessionKey: "agent:bot:cron:bg-789", CreatedAt: now.Add(-2 * time.Hour), SessionType: "cron", Status: "compacted"},
+		}
+		var filtered []SessionIndexInfo
+		for _, e := range all {
+			if sessionType != "" && e.SessionType != sessionType {
+				continue
+			}
+			if status != "" && e.Status != status {
+				continue
+			}
+			filtered = append(filtered, e)
+		}
+		return filtered, nil
+	}
+	cmd := NewSessionsCommand(deps)
+
+	// All entries
+	result, err := cmd.Execute(context.Background(), "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "3 sessions") {
+		t.Errorf("expected 3 sessions, got %q", result)
+	}
+	if !strings.Contains(result, "bot:chat:123") {
+		t.Errorf("expected chat session in output, got %q", result)
+	}
+	if !strings.Contains(result, "spawn") {
+		t.Errorf("expected spawn type in output, got %q", result)
+	}
+
+	// Filter by type
+	result, err = cmd.Execute(context.Background(), "index chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "1 sessions") {
+		t.Errorf("expected 1 session filtered by type, got %q", result)
+	}
+
+	// Filter by type and status
+	result, err = cmd.Execute(context.Background(), "index cron compacted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "1 sessions") {
+		t.Errorf("expected 1 session filtered by type+status, got %q", result)
+	}
+}
+
+func TestSessionsIndexEmpty(t *testing.T) {
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(sessionType, status string) ([]SessionIndexInfo, error) {
+		return nil, nil
+	}
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "No sessions found") {
+		t.Errorf("expected no sessions message, got %q", result)
+	}
+}
+
+func TestSessionsIndexNotAvailable(t *testing.T) {
+	deps := testSessionsDeps(nil, 0) // IndexFn is nil
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "not available") {
+		t.Errorf("expected not available message, got %q", result)
+	}
+}
+
+func TestSessionsKeyboardIncludesIndex(t *testing.T) {
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(string, string) ([]SessionIndexInfo, error) { return nil, nil }
+	cmd := NewSessionsCommand(deps)
+	opts := cmd.KeyboardOptions(context.Background())
+	found := false
+	for _, o := range opts {
+		if o.Data == "index" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected 'index' in keyboard options when IndexFn is set")
+	}
+}
+
+func TestSessionsKeyboardExcludesIndexWhenNil(t *testing.T) {
+	deps := testSessionsDeps(nil, 0) // IndexFn is nil
+	cmd := NewSessionsCommand(deps)
+	opts := cmd.KeyboardOptions(context.Background())
+	for _, o := range opts {
+		if o.Data == "index" {
+			t.Error("did not expect 'index' in keyboard when IndexFn is nil")
+		}
+	}
+}
+
 func TestSessionsListError(t *testing.T) {
 	deps := SessionsDeps{
 		AgentID: "test",
