@@ -1203,6 +1203,32 @@ func main() {
 		}()
 	}
 
+	// Check for first-run onboarding — inject prompt for new agents
+	for _, agentID := range agentOrder {
+		inst := agents[agentID]
+		if msg := checkFirstRun(stateStore, inst.agentCfg); msg != "" {
+			agentID := agentID // capture for goroutine
+			go func() {
+				sk := inst.defaultSessionKey()
+				if sk == "" {
+					log.Warnf("main", "no default session for first-run injection on %s, skipping", agentID)
+					return
+				}
+				firstRunCtx := agent.WithTrigger(ctx, "first_run")
+				firstRunCtx = agent.WithNoCompact(firstRunCtx)
+				if _, err := inst.ag.HandleMessage(firstRunCtx, sk, msg); err != nil {
+					log.Errorf("main", "first-run turn for %s failed: %v", agentID, err)
+					return
+				}
+				// Mark first-run as completed after one successful turn
+				if err := stateStore.Set("agent:"+agentID+":first_run_completed", true); err != nil {
+					log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
+				}
+				log.Infof("main", "first-run onboarding completed for %s", agentID)
+			}()
+		}
+	}
+
 	// Wait for signal
 	<-sigCh
 
@@ -2586,6 +2612,49 @@ func gracefulShutdown(agents map[string]*agentInstance, timeout time.Duration) {
 			time.Sleep(tickInterval)
 		}
 	}
+}
+
+// checkFirstRun determines whether a first-run onboarding prompt should be
+// injected for an agent. Returns the prompt message if injection is needed,
+// empty string otherwise. Handles migration for existing installs by checking
+// whether character files have been modified from defaults.
+func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
+	if stateStore == nil {
+		return ""
+	}
+
+	key := "agent:" + acfg.ID + ":first_run_completed"
+
+	// Already completed — nothing to do
+	var completed bool
+	if stateStore.Get(key, &completed) && completed {
+		return ""
+	}
+
+	// Migration check: if character files have been customized, this is an
+	// existing install. Auto-set the flag silently.
+	soulPath := filepath.Join(acfg.Workspace, "character", "SOUL.md")
+	if data, err := os.ReadFile(soulPath); err == nil {
+		content := string(data)
+		// Default template SOUL.md contains "<!-- your name -->" placeholder.
+		// If the file exists and doesn't contain this, the user has customized it.
+		if !strings.Contains(content, "<!-- your name -->") {
+			log.Infof("main", "agent %s: character files customized, auto-completing first-run", acfg.ID)
+			if err := stateStore.Set(key, true); err != nil {
+				log.Errorf("main", "set first_run_completed for %s: %v", acfg.ID, err)
+			}
+			return ""
+		}
+	}
+
+	// First run — inject the onboarding prompt
+	prompt := prompts.FirstRun()
+	if prompt == "" {
+		return ""
+	}
+
+	log.Infof("main", "agent %s: first run detected, injecting onboarding prompt", acfg.ID)
+	return prompt
 }
 
 // injectWelcomeFile checks for a welcome/changelog file written by setup.sh
