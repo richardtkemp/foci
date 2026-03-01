@@ -1417,6 +1417,14 @@ func main() {
 	// Wait for signal
 	<-sigCh
 
+	// Record clean shutdown immediately — before graceful shutdown wait.
+	// If a second SIGTERM arrives during graceful shutdown (e.g. systemd
+	// TimeoutStopSec), Go's default handler kills the process. Recording
+	// now ensures the next startup sees this as a clean shutdown.
+	if err := startup.RecordCleanShutdown(stateStore); err != nil {
+		log.Warnf("main", "record clean shutdown: %v", err)
+	}
+
 	log.Infof("main", "shutting down...")
 
 	// Stop keepalive runners — prevents new timer-triggered branches
@@ -1443,11 +1451,6 @@ func main() {
 		shutdownTimeout = 30 * time.Second
 	}
 	gracefulShutdown(agents, shutdownTimeout)
-
-	// Record clean shutdown timestamp for crash detection on next startup
-	if err := startup.RecordCleanShutdown(stateStore); err != nil {
-		log.Warnf("main", "record clean shutdown: %v", err)
-	}
 
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
 	cancel()
