@@ -119,9 +119,16 @@ Setup handles everything: system user creation, secrets group, Go build, systemd
 ## Documentation
 
 - [SPEC.md](SPEC.md) — Full specification (source of truth)
+- [docs/INSTALL.md](docs/INSTALL.md) — End-to-end installation guide
 - [docs/CONFIG.md](docs/CONFIG.md) — Configuration reference
+- [docs/AUTH.md](docs/AUTH.md) — Authentication and OAuth setup
 - [docs/SECRETS.md](docs/SECRETS.md) — Secret management and Bitwarden integration
+- [docs/CACHING.md](docs/CACHING.md) — Cache architecture and preservation
+- [docs/MULTIBALL.md](docs/MULTIBALL.md) — Parallel conversations (session forking)
 - [docs/WIRING.md](docs/WIRING.md) — Internal architecture and wiring
+- [docs/CLI.md](docs/CLI.md) — CLI reference
+- [docs/TOOL-PIPING.md](docs/TOOL-PIPING.md) — Shell function tool chaining
+- [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) — System dependencies
 
 ## Stats
 
