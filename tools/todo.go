@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"foci/memory"
 )
@@ -104,7 +105,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 						marker = "[x]"
 					}
 					tags := memory.FormatTags(item.Tags)
-					line := fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text)
+					line := fmt.Sprintf("#%d %s [%s]%s %s %s", item.ID, marker, item.Priority, tags, item.Text, formatTodoTimestamp(item))
 					if item.Status == "done" && item.CloseReason != "" {
 						line += fmt.Sprintf(" — %s", item.CloseReason)
 					}
@@ -130,7 +131,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 						marker = "[x]"
 					}
 					tags := memory.FormatTags(item.Tags)
-					line := fmt.Sprintf("#%d %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text)
+					line := fmt.Sprintf("#%d %s [%s]%s %s %s", item.ID, marker, item.Priority, tags, item.Text, formatTodoTimestamp(item))
 					if item.Status == "done" && item.CloseReason != "" {
 						line += fmt.Sprintf(" — %s", item.CloseReason)
 					}
@@ -187,4 +188,40 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			}
 		},
 	}
+}
+
+func formatTodoTimestamp(item memory.TodoItem) string {
+	if item.Status == "done" && item.CompletedAt != nil {
+		return "(done " + relativeTime(*item.CompletedAt) + ")"
+	}
+	if !item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() && !item.UpdatedAt.Equal(item.CreatedAt) {
+		return "(updated " + relativeTime(item.UpdatedAt) + ")"
+	}
+	return "(created " + relativeTime(item.CreatedAt) + ")"
+}
+
+func relativeTime(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1m ago"
+		}
+		return fmt.Sprintf("%dm ago", m)
+	}
+	if d < 24*time.Hour {
+		h := int(d.Hours())
+		if h == 1 {
+			return "1h ago"
+		}
+		return fmt.Sprintf("%dh ago", h)
+	}
+	days := int(d.Hours() / 24)
+	if days == 1 {
+		return "1d ago"
+	}
+	return fmt.Sprintf("%dd ago", days)
 }
