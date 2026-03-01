@@ -3192,7 +3192,7 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 	}
 }
 
-func TestAutopilotWarningInjected(t *testing.T) {
+func TestBraindeadWarningInjected(t *testing.T) {
 	var callCount atomic.Int32
 	threshold := 3
 
@@ -3262,7 +3262,7 @@ func TestAutopilotWarningInjected(t *testing.T) {
 	}
 }
 
-func TestAutopilotWarningOnlyOnce(t *testing.T) {
+func TestBraindeadWarningOnlyOnce(t *testing.T) {
 	var callCount atomic.Int32
 	totalLoops := 6
 	threshold := 2
@@ -3331,7 +3331,7 @@ func TestAutopilotWarningOnlyOnce(t *testing.T) {
 	}
 }
 
-func TestAutopilotDisabledWhenZero(t *testing.T) {
+func TestBraindeadDisabledWhenZero(t *testing.T) {
 	var callCount atomic.Int32
 
 	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {

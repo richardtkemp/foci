@@ -2039,7 +2039,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	}
 }
 
-func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
+func TestTmuxBraindeadAutoUnwatch(t *testing.T) {
 	tmuxAvailable(t)
 
 	var mu sync.Mutex
@@ -2056,14 +2056,14 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	// autopilot=true, threshold=2s for fast test
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2)
+	// braindead=true, threshold=2s for fast test
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-braindead-unwatch", true, 2)
 
 	name := "foci-test-ap-unwatch"
 	tmuxCleanup(t, name) // clean up stale sessions from prior crashed runs
 	defer tmuxCleanup(t, name)
 
-	// Start session (auto-watches with 2s threshold due to autopilot)
+	// Start session (auto-watches with 2s threshold due to braindead)
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
 		"name":      name,
@@ -2088,7 +2088,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		t.Fatal("expected inactivity notification")
 	}
 
-	// Verify watch was auto-removed (autopilot)
+	// Verify watch was auto-removed (braindead)
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "list",
 	})
@@ -2097,11 +2097,11 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	if strings.Contains(result, "watched") {
-		t.Errorf("expected watch to be auto-removed after inactivity (autopilot), got: %q", result)
+		t.Errorf("expected watch to be auto-removed after inactivity (braindead), got: %q", result)
 	}
 }
 
-func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
+func TestTmuxBraindeadAutoWatchOnSend(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
@@ -2111,8 +2111,8 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	// autopilot=true
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30)
+	// braindead=true
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-braindead-send", true, 30)
 
 	name := "foci-test-ap-send"
 	defer tmuxCleanup(t, name)
@@ -2142,7 +2142,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 	if !strings.Contains(result, "Watching") {
-		t.Errorf("expected auto-watch on send (autopilot), got: %q", result)
+		t.Errorf("expected auto-watch on send (braindead), got: %q", result)
 	}
 
 	// Second send should NOT add another watch
@@ -2167,7 +2167,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	tool.Execute(context.Background(), params)
 }
 
-func TestTmuxAutopilotDisabled(t *testing.T) {
+func TestTmuxBraindeadDisabled(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
@@ -2177,8 +2177,8 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	// autopilot=false
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30)
+	// braindead=false
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-braindead", false, 30)
 
 	name := "foci-test-no-ap"
 	defer tmuxCleanup(t, name)
@@ -2197,7 +2197,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	// Send keys — should NOT auto-watch when autopilot=false
+	// Send keys — should NOT auto-watch when braindead=false
 	params, _ = json.Marshal(map[string]interface{}{
 		"operation": "send",
 		"name":      name,
@@ -2208,6 +2208,6 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 	if strings.Contains(result, "Watching") {
-		t.Errorf("should not auto-watch when autopilot=false, got: %q", result)
+		t.Errorf("should not auto-watch when braindead=false, got: %q", result)
 	}
 }

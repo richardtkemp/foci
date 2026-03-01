@@ -16,8 +16,8 @@ model = "claude-sonnet-4-20250514"
 # thinking = "off"                        # off, adaptive
 # max_tool_loops = 25
 # max_output_tokens = 8192
-# autopilot_threshold = 10               # consecutive tool loops before warning (0 = disabled)
-# autopilot_prompt = ""                   # warning text injected at threshold
+# braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
+# braindead_prompt = ""                   # warning text injected at threshold
 # duplicate_messages = false              # send user text twice per API call
 # inject_agent_warnings = false           # inject warnings/errors into session
 # tts_rate = 0.0                          # TTS speech rate (0 = use voice config)
@@ -45,8 +45,8 @@ id = "myagent"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # max_tool_loops = 25
 # max_output_tokens = 16384
-# autopilot_threshold = 10
-# autopilot_prompt = ""
+# braindead_threshold = 10
+# braindead_prompt = ""
 # duplicate_messages = false
 # inject_agent_warnings = false
 # tts_rate = 0.0
@@ -65,7 +65,7 @@ id = "myagent"
 # exec_auto_background = 10              # seconds before auto-backgrounding exec
 # max_concurrent_spawns = 3
 # max_upload_file_size = 52428800         # 50MB
-# tmux_autopilot = true
+# tmux_braindead = true
 # tmux_watch_threshold = "30s"
 
 system_files = [
@@ -258,7 +258,7 @@ bind = "127.0.0.1"
 # tmux_memory_warn = "10%"
 # tmux_memory_critical = "20%"
 # tmux_memory_kill = "30%"
-# tmux_autopilot = true
+# tmux_braindead = true
 # tmux_watch_threshold = "30s"
 # max_upload_file_size = 52428800
 

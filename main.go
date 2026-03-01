@@ -1352,10 +1352,10 @@ func setupAgent(p setupParams) *agentInstance {
 		maxUploadSize = acfg.MaxUploadFileSize
 	}
 
-	// Per-agent tmux autopilot (nil = use global)
-	tmuxAutopilot := p.cfg.Tools.TmuxAutopilot
-	if acfg.TmuxAutopilot != nil {
-		tmuxAutopilot = *acfg.TmuxAutopilot
+	// Per-agent tmux braindead (nil = use global)
+	tmuxBraindead := p.cfg.Tools.TmuxBraindead
+	if acfg.TmuxBraindead != nil {
+		tmuxBraindead = *acfg.TmuxBraindead
 	}
 	tmuxWatchThreshold := p.cfg.Tools.TmuxWatchThreshold
 	if acfg.TmuxWatchThreshold != "" {
@@ -1367,7 +1367,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
-	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
+	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxBraindead, tmuxWatchThresholdSec)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore))
@@ -1531,8 +1531,8 @@ func setupAgent(p setupParams) *agentInstance {
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
-		AutopilotThreshold:          acfg.AutopilotThreshold,
-		AutopilotPrompt:             acfg.AutopilotPrompt,
+		BraindeadWarningThreshold:   acfg.BraindeadThreshold,
+		BraindeadWarningPrompt:      acfg.BraindeadPrompt,
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
 	}

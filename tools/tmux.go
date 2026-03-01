@@ -28,7 +28,7 @@ type watchedSession struct {
 	lastActivity    time.Time
 	notifier        *AsyncNotifier
 	agentSessionKey string // agent session that started the watch (for async delivery)
-	autopilot       bool   // auto-unwatch after inactivity notification
+	braindead       bool   // auto-unwatch after inactivity notification
 	ctx             context.Context
 	cancel          context.CancelFunc
 	done            chan struct{}
@@ -50,7 +50,7 @@ type tmuxInstance struct {
 	notifier          *AsyncNotifier
 	cols              int
 	rows              int
-	autopilot         bool // auto-unwatch on inactivity, auto-watch on send
+	braindead         bool // auto-unwatch on inactivity, auto-watch on send
 	watchThresholdSec int  // default watch threshold in seconds from config
 	stateStore        *state.Store // nil = no persistence
 	stateKey          string       // key prefix for persisted owned sessions
@@ -62,11 +62,11 @@ type tmuxInstance struct {
 // when a watched session exceeds its inactivity threshold (nil disables).
 // Each call returns an independent tool instance with its own session tracking.
 // stateStore and stateKey enable persistence of owned sessions across restarts.
-// autopilot enables auto-unwatch on inactivity and auto-watch on send.
+// braindead enables auto-unwatch on inactivity and auto-watch on send.
 // watchThresholdSec sets the default watch threshold in seconds.
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int) (*Tool, func()) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, braindead bool, watchThresholdSec int) (*Tool, func()) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
 	}
@@ -76,7 +76,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		notifier:          notifier,
 		cols:              cols,
 		rows:              rows,
-		autopilot:         autopilot,
+		braindead:         braindead,
 		watchThresholdSec: watchThresholdSec,
 		stateStore:        stateStore,
 		stateKey:          stateKey,
@@ -124,7 +124,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 					lastContent:     initialHash,
 					notifier:        notifier,
 					agentSessionKey: pw.AgentSessionKey,
-					autopilot:       autopilot,
+					braindead:       braindead,
 					ctx:             monCtx,
 					cancel:          cancel,
 					done:            make(chan struct{}),
@@ -405,8 +405,8 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 
 	result := "Keys sent."
 
-	// Autopilot: auto-watch after send if not already watched
-	if inst.autopilot && inst.notifier != nil {
+	// Braindead: auto-watch after send if not already watched
+	if inst.braindead && inst.notifier != nil {
 		inst.mu.Lock()
 		alreadyWatched := false
 		prefix := name + ":"
@@ -421,9 +421,9 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 		if !alreadyWatched {
 			watchResult, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
 			if watchErr != nil {
-				log.Warnf("tmux", "autopilot: auto-watch failed for %s: %v", name, watchErr)
+				log.Warnf("tmux", "braindead: auto-watch failed for %s: %v", name, watchErr)
 			} else {
-				log.Debugf("tmux", "autopilot: auto-watching %s after send", name)
+				log.Debugf("tmux", "braindead: auto-watching %s after send", name)
 				result += "\n" + watchResult
 			}
 		}
@@ -609,7 +609,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		lastContent:     initialHash,
 		notifier:        inst.notifier,
 		agentSessionKey: SessionKeyFromContext(ctx),
-		autopilot:       inst.autopilot,
+		braindead:       inst.braindead,
 		ctx:             monCtx,
 		cancel:          cancel,
 		done:            make(chan struct{}),
@@ -862,9 +862,9 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 					msg := fmt.Sprintf("[TMUX WATCH] Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold)
 					ws.notifier.Notify(ws.agentSessionKey, msg)
 
-					if ws.autopilot {
+					if ws.braindead {
 						// Auto-unwatch: remove from watched map and exit goroutine
-						log.Infof("tmux", "autopilot: auto-unwatched %s after inactivity", ws.session)
+						log.Infof("tmux", "braindead: auto-unwatched %s after inactivity", ws.session)
 						inst.mu.Lock()
 						delete(inst.watched, key)
 						inst.persistWatches()
