@@ -2494,6 +2494,42 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
+	// Visibility: resolve effective show_tool_calls and show_thinking
+	toolCalls := cfg.Telegram.ShowToolCalls
+	if acfg.ShowToolCalls != nil {
+		toolCalls = *acfg.ShowToolCalls
+	}
+	thinking := cfg.Telegram.ShowThinking
+	if acfg.ShowThinking != nil {
+		thinking = *acfg.ShowThinking
+	}
+	var toolDesc, thinkDesc string
+	switch toolCalls {
+	case config.ToolCallOff:
+		toolDesc = "Tool calls are hidden from the user — narrate important actions in your replies."
+	case config.ToolCallPreview:
+		toolDesc = "Tool calls are shown as brief previews (tool name only) — the user sees what tools you use but not the details."
+	case config.ToolCallFull:
+		toolDesc = "Tool calls are fully visible — the user can see your tool inputs and outputs."
+	}
+	switch thinking {
+	case config.ShowThinkingOff:
+		thinkDesc = "Your thinking is hidden from the user."
+	case config.ShowThinkingCompact:
+		thinkDesc = "Your thinking is available behind a toggle button."
+	case config.ShowThinkingTrue:
+		thinkDesc = "Your thinking is shown inline before each response."
+	}
+	if toolDesc != "" || thinkDesc != "" {
+		b.WriteString("\n## Visibility\n")
+		if toolDesc != "" {
+			b.WriteString(toolDesc + "\n")
+		}
+		if thinkDesc != "" {
+			b.WriteString(thinkDesc + "\n")
+		}
+	}
+
 	return b.String()
 }
 
