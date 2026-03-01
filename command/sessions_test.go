@@ -245,7 +245,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	if !strings.Contains(result, "3 sessions") {
 		t.Errorf("expected 3 sessions, got %q", result)
 	}
-	if !strings.Contains(result, "bot:chat:123") {
+	if !strings.Contains(result, "bot/chat:123") {
 		t.Errorf("expected chat session in output, got %q", result)
 	}
 	if !strings.Contains(result, "spawn") {
@@ -321,6 +321,47 @@ func TestSessionsKeyboardExcludesIndexWhenNil(t *testing.T) {
 	for _, o := range opts {
 		if o.Data == "index" {
 			t.Error("did not expect 'index' in keyboard when IndexFn is nil")
+		}
+	}
+}
+
+func TestSessionsListCurrentMarker(t *testing.T) {
+	now := time.Now().UTC()
+	sessions := []SessionChatInfo{
+		{ChatID: 111, Username: "alice", MessageCount: 5, LastActivity: now},
+		{ChatID: 222, Username: "bob", MessageCount: 3, LastActivity: now},
+	}
+	cmd := NewSessionsCommand(testSessionsDeps(sessions, 222)) // 222 is default
+	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(111))
+	result, err := cmd.Execute(ctx, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "◉") {
+		t.Errorf("expected current marker ◉ in output, got %q", result)
+	}
+	if !strings.Contains(result, "★") {
+		t.Errorf("expected default marker ★ in output, got %q", result)
+	}
+	if !strings.Contains(result, "◉ = current") {
+		t.Errorf("expected legend for ◉, got %q", result)
+	}
+}
+
+func TestShortenSessionKey(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"agent:mybot:chat:5970082313", "mybot/chat:59700823…"},
+		{"agent:mybot:branch:abc123-def456", "mybot/branch:abc123-d…"},
+		{"agent:bot:cron:bg-789", "bot/cron:bg-789"}, // short ID, no truncation
+		{"agent:bot:chat:123", "bot/chat:123"},         // short ID, no truncation
+		{"raw-key", "raw-key"},                          // no agent: prefix
+	}
+	for _, tt := range tests {
+		got := shortenSessionKey(tt.input)
+		if got != tt.want {
+			t.Errorf("shortenSessionKey(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }

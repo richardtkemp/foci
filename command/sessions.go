@@ -58,7 +58,8 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 					"  index [type] [status]  Query session index (all agents)", nil
 
 			case "list":
-				return sessionsListCmd(deps)
+				chatID, _ := ctx.Value(ChatIDKey{}).(int64)
+				return sessionsListCmd(deps, chatID)
 
 			case "default":
 				if len(parts) < 2 {
@@ -101,7 +102,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 	}
 }
 
-func sessionsListCmd(deps SessionsDeps) (string, error) {
+func sessionsListCmd(deps SessionsDeps, currentChatID int64) (string, error) {
 	sessions, err := deps.ListFn()
 	if err != nil {
 		return "", fmt.Errorf("list sessions: %w", err)
@@ -113,7 +114,7 @@ func sessionsListCmd(deps SessionsDeps) (string, error) {
 	defaultChat := deps.DefaultChatFn()
 
 	type row struct {
-		chatID, username, msgs, active, def string
+		chatID, username, msgs, active, flags string
 	}
 	rows := make([]row, len(sessions))
 	for i, s := range sessions {
@@ -131,11 +132,14 @@ func sessionsListCmd(deps SessionsDeps) (string, error) {
 		} else {
 			r.active = s.LastActivity.Format("15:04 UTC")
 		}
-		if s.ChatID == defaultChat {
-			r.def = "★"
-		} else {
-			r.def = ""
+		var flags []string
+		if s.ChatID == currentChatID {
+			flags = append(flags, "◉")
 		}
+		if s.ChatID == defaultChat {
+			flags = append(flags, "★")
+		}
+		r.flags = strings.Join(flags, " ")
 		rows[i] = r
 	}
 
@@ -144,13 +148,13 @@ func sessionsListCmd(deps SessionsDeps) (string, error) {
 		{Header: "User"},
 		{Header: "Msgs", Align: table.AlignRight},
 		{Header: "Active"},
-		{Header: "Def"},
+		{Header: ""},
 	}
 	tableRows := make([][]string, len(rows))
 	for i, r := range rows {
-		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.def}
+		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.flags}
 	}
-	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n★ = default session (used by keepalive, cron)",
+	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n◉ = current  ★ = default (keepalive, cron)",
 		deps.AgentID, len(sessions), table.Format(cols, tableRows)), nil
 }
 
@@ -274,10 +278,24 @@ func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string) (strin
 }
 
 // shortenSessionKey abbreviates a session key for table display.
-// "agent:mybot:chat:5970082313" → "mybot:chat:5970082313"
+// "agent:mybot:chat:5970082313" → "mybot/chat:597…"
+// "agent:mybot:branch:abc123-def456" → "mybot/branch:abc123…"
 func shortenSessionKey(key string) string {
-	if strings.HasPrefix(key, "agent:") {
-		return key[len("agent:"):]
+	if !strings.HasPrefix(key, "agent:") {
+		return key
 	}
-	return key
+	rest := key[len("agent:"):]
+	// Split into agent name and session part
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) != 2 {
+		return rest
+	}
+	agentName := parts[0]
+	sessionPart := parts[1] // e.g. "chat:5970082313" or "branch:abc123-def456"
+	// Truncate long IDs (chat IDs, UUIDs)
+	typeParts := strings.SplitN(sessionPart, ":", 2)
+	if len(typeParts) == 2 && len(typeParts[1]) > 8 {
+		typeParts[1] = typeParts[1][:8] + "…"
+	}
+	return agentName + "/" + strings.Join(typeParts, ":")
 }
