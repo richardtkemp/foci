@@ -1,9 +1,0 @@
-id,username,email,department,start_date,active
-1,jsmith,john.smith@example.com,Engineering,2023-01-15,true
-2,mjones,mary.jones@example.com,Marketing,2022-06-01,true
-3,bwilson,bob.wilson@example.com,Engineering,2023-03-20,false
-4,alee,alice.lee@example.com,Finance,2021-11-10,true
-5,cgarcia,carlos.garcia@example.com,Engineering,2024-01-05,true
-6,dkim,diana.kim@example.com,Marketing,2023-08-15,true
-7,ewright,emma.wright@example.com,Finance,2022-04-22,true
-8,fchen,frank.chen@example.com,Operations,2023-12-01,true

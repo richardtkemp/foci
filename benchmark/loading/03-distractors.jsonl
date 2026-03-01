@@ -1,7 +1,0 @@
-{"seq": 16, "message": "By the way, what do you think about the latest developments in quantum computing?", "purpose": "distractor"}
-{"seq": 17, "message": "Interesting. Anyway, I had a weird dream about debugging code last night. Do you think that means anything?", "purpose": "distractor"}
-{"seq": 18, "message": "Have you ever thought about what makes a good variable name? I feel like there's an art to it.", "purpose": "distractor"}
-{"seq": 19, "message": "My cat just walked across my keyboard. Classic.", "purpose": "distractor"}
-{"seq": 20, "message": "What's your opinion on tabs vs spaces?", "purpose": "distractor"}
-{"seq": 21, "message": "OK back to work. Where were we with the widget-api?", "purpose": "context_recovery"}
-{"seq": 22, "message": "Right, the monitoring setup. Can you check what we put in the monitoring config?", "purpose": "recall_after_distraction"}
