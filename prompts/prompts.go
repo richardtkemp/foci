@@ -48,6 +48,9 @@ func MemoryFormation() string { return read("memory-formation.md") }
 // MemoryConsolidation returns the default memory consolidation (MEMORY.md review) prompt.
 func MemoryConsolidation() string { return read("memory-consolidation.md") }
 
+// FirstRun returns the onboarding prompt injected on an agent's first session.
+func FirstRun() string { return read("first-run.md") }
+
 // ResolvePrompt implements 3-state prompt resolution:
 //   - path absent/unset ("" or "default"): returns embeddedDefault
 //   - path = "none": returns "" (explicitly disabled)
