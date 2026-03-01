@@ -598,6 +598,10 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 	// Clean up child processes that survived SIGHUP
 	killed := terminateProcesses(allPIDs)
 
+	// If no sessions remain, kill the server to avoid an orphaned tmux
+	// server process. This is safe: we only kill when the server is empty.
+	serverKilled := maybeKillTmuxServer(ctx)
+
 	inst.mu.Lock()
 	delete(inst.owned, name)
 	inst.persistOwned()
@@ -608,8 +612,40 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 		result += fmt.Sprintf(" (%d child process(es) terminated)", killed)
 		log.Infof("tmux", "kill %s: terminated %d orphaned child process(es)", name, killed)
 	}
+	if serverKilled {
+		log.Infof("tmux", "kill %s: no sessions remain, killed tmux server", name)
+	}
 
 	return result, nil
+}
+
+// maybeKillTmuxServer kills the tmux server if no sessions remain.
+// Returns true if the server was killed.
+func maybeKillTmuxServer(ctx context.Context) bool {
+	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		// "no server running" or "no sessions" means it's already gone
+		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
+			return false
+		}
+		// If list-sessions failed for another reason, the server may still
+		// be alive but empty. Try kill-server defensively.
+		if _, kerr := runTmux(ctx, "kill-server"); kerr == nil {
+			return true
+		}
+		return false
+	}
+	// Sessions still exist — leave the server alone.
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) != "" {
+			return false
+		}
+	}
+	// No sessions remain — kill the server.
+	if _, err := runTmux(ctx, "kill-server"); err == nil {
+		return true
+	}
+	return false
 }
 
 // tmuxSessionPIDs returns the PID of each pane's shell in the given tmux session.
