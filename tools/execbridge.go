@@ -392,7 +392,7 @@ func generateShellFunc(t *Tool) string {
         case "$action" in
           add|edit) text="$text $1" ;;
           search) query="$query $1" ;;
-          complete|remove) id="$1" ;;
+          get|complete|remove) id="$1" ;;
         esac
         shift ;;
     esac
@@ -418,6 +418,9 @@ func generateShellFunc(t *Tool) string {
       [ -n "$query" ] && params="$(echo "$params" | jq --arg q "$query" '. + {query: $q}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
+    get)
+      foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"get","id":$id}}')"
+      ;;
     complete)
       local params='{"action":"complete"}'
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
@@ -436,7 +439,7 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"remove","id":$id}}')"
       ;;
     *)
-      echo "usage: %s <add|list|search|complete|edit|remove> [args...]" >&2
+      echo "usage: %s <add|list|search|get|complete|edit|remove> [args...]" >&2
       return 1
       ;;
   esac
