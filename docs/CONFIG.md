@@ -125,7 +125,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `max_summary_chars` | int | `0` | Default max chars to auto-summarise. 0 = use `[tools] max_summary_chars`. |
 | `auto_summarise` | bool | nil | Default auto-summarise setting. Nil = use `[tools] auto_summarise`. |
 | `search_provider` | string | `"anthropic"` | Default web search provider: `"anthropic"` (server-side) or `"brave"` (client-side). |
-| `fetch_provider` | string | `"anthropic"` | Default web fetch provider: `"anthropic"` (server-side) or `"builtin"` (client-side). |
+| `fetch_provider` | string | `"builtin"` | Default web fetch provider: `"builtin"` (client-side) or `"anthropic"` (server-side). |
 
 Example:
 ```toml
@@ -513,7 +513,7 @@ Tool behavior settings.
 | `tmux_braindead` | bool | `true` | Auto-unwatch sessions after inactivity notification, auto-watch on send. |
 | `tmux_watch_threshold` | string | `"30s"` | Default inactivity watch threshold. Go duration format. |
 | `search_provider` | string | `"anthropic"` | Web search provider: `"anthropic"` (server-side, default) or `"brave"` (client-side, needs `brave_api_key`). Per-agent override via `[[agents]]`. |
-| `fetch_provider` | string | `"anthropic"` | Web fetch provider: `"anthropic"` (server-side, default) or `"builtin"` (client-side). Per-agent override via `[[agents]]`. |
+| `fetch_provider` | string | `"builtin"` | Web fetch provider: `"builtin"` (client-side, default) or `"anthropic"` (server-side). Per-agent override via `[[agents]]`. |
 | `web_search_max_uses` | int | `0` | Max Anthropic web searches per API call. `0` = unlimited. Only applies when `search_provider = "anthropic"`. |
 | `web_search_allowed_domains` | string[] | `[]` | Domain whitelist for Anthropic web search. Mutually exclusive with `web_search_blocked_domains`. |
 | `web_search_blocked_domains` | string[] | `[]` | Domain blacklist for Anthropic web search. Mutually exclusive with `web_search_allowed_domains`. |

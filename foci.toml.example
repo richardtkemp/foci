@@ -30,7 +30,7 @@ thinking = "adaptive"                     # adaptive (default), off
 # summary_context_turns = 5              # recent turns for auto-summary context
 # summary_context_chars = 6000           # max chars of context for auto-summary
 # search_provider = "anthropic"          # "anthropic" (default) or "brave"
-# fetch_provider = "anthropic"           # "anthropic" (default) or "builtin"
+# fetch_provider = "builtin"            # "builtin" (default) or "anthropic"
 
 # ─── Model aliases ───────────────────────────────────────────────────
 # [models]
@@ -278,7 +278,7 @@ bind = "127.0.0.1"
 # summary_context_turns = 5
 # summary_context_chars = 6000
 # search_provider = "anthropic"              # "anthropic" (server-side, default) or "brave" (needs brave_api_key)
-# fetch_provider = "anthropic"               # "anthropic" (server-side, default) or "builtin" (client-side)
+# fetch_provider = "builtin"                  # "builtin" (client-side, default) or "anthropic" (server-side)
 # web_search_max_uses = 0                    # max searches per API call (0 = unlimited, anthropic provider only)
 # web_search_allowed_domains = []            # domain whitelist (mutually exclusive with blocked)
 # web_search_blocked_domains = []            # domain blacklist
