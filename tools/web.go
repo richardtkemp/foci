@@ -93,15 +93,9 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
-	const maxLen = 50_000
-
 	// Raw mode: return unprocessed HTML
 	if p.Raw {
-		text := string(body)
-		if len(text) > maxLen {
-			text = text[:maxLen] + "\n... (truncated)"
-		}
-		return text, nil
+		return string(body), nil
 	}
 
 	// Try readability extraction, then convert to markdown
@@ -122,10 +116,6 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 		} else {
 			md = string(body)
 		}
-	}
-
-	if len(md) > maxLen {
-		md = md[:maxLen] + "\n... (truncated)"
 	}
 
 	return md, nil

@@ -268,10 +268,10 @@ key = "value"
 	}
 }
 
-func TestExecOutputTruncation(t *testing.T) {
+func TestExecOutputNoTruncation(t *testing.T) {
 	tool := NewExecTool(nil, nil, 0, nil, "", nil)
 
-	// Generate output >100k chars
+	// Generate output >100k chars — exec no longer truncates (guardToolResult handles it)
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "python3 -c 'print(\"x\" * 110000)'",
 		"timeout": 10,
@@ -281,11 +281,11 @@ func TestExecOutputTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "truncated") {
-		t.Errorf("expected truncation notice in long output")
+	if strings.Contains(result, "truncated") {
+		t.Errorf("exec should no longer truncate output (guardToolResult handles it)")
 	}
-	if len(result) > 110_000 {
-		t.Errorf("result length = %d, expected truncated", len(result))
+	if len(result) < 110_000 {
+		t.Errorf("result length = %d, expected full output", len(result))
 	}
 }
 
