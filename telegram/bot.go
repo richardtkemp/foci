@@ -187,6 +187,19 @@ func (b *Bot) SetReceivedFilesDir(dir string) {
 	b.receivedFilesDir = dir
 }
 
+// DisplaySettings returns the current display settings for inspection/testing.
+func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string) {
+	return b.showToolCalls, b.showThinking, b.displayWidth, b.messagesInLog, b.receivedFilesDir
+}
+
+// NewBotForTest creates a Bot without connecting to the Telegram API.
+// For use in tests outside the telegram package.
+func NewBotForTest() *Bot {
+	return &Bot{
+		queue: make(chan queuedMessage, 64),
+	}
+}
+
 // SetStateStore configures persistent state for this bot.
 // key is used as the prefix for state keys (e.g. "bot:mybot").
 func (b *Bot) SetStateStore(store *state.Store, key string) {
