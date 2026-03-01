@@ -113,15 +113,20 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 		os.Remove(tmpPath) // clean up on error
 	}()
 
-	// Create archive file.
-	archivePath := archiveName(path, archiveDir)
-	archiveFile, err := os.Create(archivePath)
+	// Create temp archive file (renamed to final name after scanning determines timestamps).
+	tmpArchive, err := os.CreateTemp(archiveDir, ".rotate-archive-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create archive %s: %w", archivePath, err)
+		return fmt.Errorf("create temp archive: %w", err)
 	}
-	gzw := gzip.NewWriter(archiveFile)
+	tmpArchivePath := tmpArchive.Name()
+	defer func() {
+		tmpArchive.Close()
+		os.Remove(tmpArchivePath) // clean up on error
+	}()
+	gzw := gzip.NewWriter(tmpArchive)
 
 	archivedLines := 0
+	var archiveFirst, archiveLast time.Time
 	scanner = bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, maxLineSize), maxLineSize)
 
@@ -133,6 +138,12 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 			gzw.Write(line)
 			gzw.Write([]byte("\n"))
 			archivedLines++
+			if archiveFirst.IsZero() || ts.Before(archiveFirst) {
+				archiveFirst = ts
+			}
+			if ts.After(archiveLast) {
+				archiveLast = ts
+			}
 		} else {
 			// Recent or unparseable → keep
 			tmpFile.Write(line)
@@ -141,23 +152,27 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	}
 	if err := scanner.Err(); err != nil {
 		gzw.Close()
-		archiveFile.Close()
-		os.Remove(archivePath)
+		os.Remove(tmpArchivePath)
 		return fmt.Errorf("scan: %w", err)
 	}
 
 	// Finalize gzip.
 	if err := gzw.Close(); err != nil {
-		archiveFile.Close()
-		os.Remove(archivePath)
+		os.Remove(tmpArchivePath)
 		return fmt.Errorf("gzip close: %w", err)
 	}
-	archiveFile.Close()
+	tmpArchive.Close()
 
 	// If nothing was archived, remove the empty archive.
 	if archivedLines == 0 {
-		os.Remove(archivePath)
+		os.Remove(tmpArchivePath)
 		return nil
+	}
+
+	// Rename temp archive to final name with timestamp range.
+	archivePath := archiveName(path, archiveDir, archiveFirst, archiveLast)
+	if err := os.Rename(tmpArchivePath, archivePath); err != nil {
+		return fmt.Errorf("rename archive: %w", err)
 	}
 
 	// Close temp file and atomically replace the original.
@@ -170,18 +185,19 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	return nil
 }
 
-// archiveName returns the archive path for a log file.
-// e.g. api-payload.jsonl → archive/api-payload-2026-02-25.jsonl.gz
+// archiveName returns the archive path for a log file using the time range
+// of archived content. This prevents overwrites on same-day restarts.
 //
-//	foci.log       → archive/foci-2026-02-25.log.gz
-func archiveName(path, archiveDir string) string {
+// e.g. foci.log → archive/foci-2026-03-01T17:00:00Z--2026-03-01T19:15:00Z.log.gz
+func archiveName(path, archiveDir string, first, last time.Time) string {
 	base := filepath.Base(path)
-	date := time.Now().UTC().Format("2006-01-02")
+	ext := filepath.Ext(base)              // .jsonl or .log
+	name := strings.TrimSuffix(base, ext)  // api-payload or foci
 
-	ext := filepath.Ext(base)            // .jsonl or .log
-	name := strings.TrimSuffix(base, ext) // api-payload or foci
+	startStr := first.UTC().Format("2006-01-02T15:04:05Z")
+	endStr := last.UTC().Format("2006-01-02T15:04:05Z")
 
-	return filepath.Join(archiveDir, fmt.Sprintf("%s-%s%s.gz", name, date, ext))
+	return filepath.Join(archiveDir, fmt.Sprintf("%s-%s--%s%s.gz", name, startStr, endStr, ext))
 }
 
 // parseTimestamp dispatches to the right parser based on file extension.

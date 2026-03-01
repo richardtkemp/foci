@@ -204,22 +204,34 @@ func TestRotateFileMissing(t *testing.T) {
 }
 
 func TestRotateFileArchiveNaming(t *testing.T) {
+	first := time.Date(2026, 3, 1, 17, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 3, 1, 19, 15, 0, 0, time.UTC)
+
 	tests := []struct {
 		path string
-		want string // suffix only (date varies)
+		want string
 	}{
-		{"api-payload.jsonl", "api-payload-DATE.jsonl.gz"},
-		{"foci.log", "foci-DATE.log.gz"},
-		{"api.jsonl", "api-DATE.jsonl.gz"},
+		{"api-payload.jsonl", "api-payload-2026-03-01T17:00:00Z--2026-03-01T19:15:00Z.jsonl.gz"},
+		{"foci.log", "foci-2026-03-01T17:00:00Z--2026-03-01T19:15:00Z.log.gz"},
+		{"api.jsonl", "api-2026-03-01T17:00:00Z--2026-03-01T19:15:00Z.jsonl.gz"},
 	}
 
-	date := time.Now().UTC().Format("2006-01-02")
 	for _, tt := range tests {
-		got := filepath.Base(archiveName(tt.path, "/archive"))
-		want := strings.Replace(tt.want, "DATE", date, 1)
-		if got != want {
-			t.Errorf("archiveName(%q) = %q, want %q", tt.path, got, want)
+		got := filepath.Base(archiveName(tt.path, "/archive", first, last))
+		if got != tt.want {
+			t.Errorf("archiveName(%q) = %q, want %q", tt.path, got, tt.want)
 		}
+	}
+}
+
+func TestRotateFileArchiveNamingSpansDays(t *testing.T) {
+	first := time.Date(2026, 2, 28, 23, 0, 0, 0, time.UTC)
+	last := time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)
+
+	got := filepath.Base(archiveName("foci.log", "/archive", first, last))
+	want := "foci-2026-02-28T23:00:00Z--2026-03-01T01:30:00Z.log.gz"
+	if got != want {
+		t.Errorf("archiveName = %q, want %q", got, want)
 	}
 }
 
