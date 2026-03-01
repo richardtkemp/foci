@@ -57,6 +57,38 @@ type agentInstance struct {
 	kaRunner          *keepalive.Runner                                          // keepalive & background work timer (nil if disabled)
 }
 
+// applyAgentDisplaySettings sets per-agent display settings on a bot,
+// falling back to global config when the agent field is nil/empty.
+// Used for primary bots, per-agent multiball bots, and shared pool bots
+// acquired or restored for a specific agent.
+func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *config.Config) {
+	if acfg.ShowToolCalls != nil {
+		bot.SetShowToolCalls(string(*acfg.ShowToolCalls))
+	} else {
+		bot.SetShowToolCalls(string(cfg.Telegram.ShowToolCalls))
+	}
+	if acfg.ShowThinking != nil {
+		bot.SetShowThinking(string(*acfg.ShowThinking))
+	} else {
+		bot.SetShowThinking(string(cfg.Telegram.ShowThinking))
+	}
+	if acfg.DisplayWidth != nil {
+		bot.SetDisplayWidth(*acfg.DisplayWidth)
+	} else {
+		bot.SetDisplayWidth(cfg.Telegram.DisplayWidth)
+	}
+	if acfg.MessagesInLog != nil {
+		bot.SetMessagesInLog(*acfg.MessagesInLog)
+	} else {
+		bot.SetMessagesInLog(cfg.Logging.MessagesInLog)
+	}
+	if filesDir := acfg.ReceivedFilesDir; filesDir != "" {
+		bot.SetReceivedFilesDir(filesDir)
+	} else if filesDir := cfg.Telegram.ReceivedFilesDir; filesDir != "" {
+		bot.SetReceivedFilesDir(filesDir)
+	}
+}
+
 // checkActivityGate parses if_active/if_inactive durations, checks them against
 // isActive, and writes a skip JSON response if the gate blocks the request.
 // Returns true if the request should continue, false if it was skipped or errored.
@@ -769,7 +801,7 @@ func main() {
 	// For each secondary bot, check if a saved session key exists and the session
 	// file is still active. If so, restore the session key and re-wire the agent.
 	if stateStore != nil {
-		restoreMultiballSessions(botMgr, stateStore, sessions, agents, agentOrder)
+		restoreMultiballSessions(botMgr, stateStore, sessions, agents, agentOrder, cfg)
 	}
 
 	// Start all bots
@@ -2061,6 +2093,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 		// Re-wire the bot to this agent (needed when acquired from shared pool)
 		secBot.SetAgentAndCommands(ag, cmds)
+		applyAgentDisplaySettings(secBot, acfg, p.cfg)
 
 		// Determine parent session: use the requesting chat's session
 		parentKey := defaultSessionKey()
@@ -2247,31 +2280,7 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 		primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
-		if acfg.ShowToolCalls != nil {
-			primaryBot.SetShowToolCalls(string(*acfg.ShowToolCalls))
-		} else {
-			primaryBot.SetShowToolCalls(string(p.cfg.Telegram.ShowToolCalls))
-		}
-		if acfg.ShowThinking != nil {
-			primaryBot.SetShowThinking(string(*acfg.ShowThinking))
-		} else {
-			primaryBot.SetShowThinking(string(p.cfg.Telegram.ShowThinking))
-		}
-		if acfg.DisplayWidth != nil {
-			primaryBot.SetDisplayWidth(*acfg.DisplayWidth)
-		} else {
-			primaryBot.SetDisplayWidth(p.cfg.Telegram.DisplayWidth)
-		}
-		if acfg.MessagesInLog != nil {
-			primaryBot.SetMessagesInLog(*acfg.MessagesInLog)
-		} else {
-			primaryBot.SetMessagesInLog(p.cfg.Logging.MessagesInLog)
-		}
-		if filesDir := acfg.ReceivedFilesDir; filesDir != "" {
-			primaryBot.SetReceivedFilesDir(filesDir)
-		} else if filesDir := p.cfg.Telegram.ReceivedFilesDir; filesDir != "" {
-			primaryBot.SetReceivedFilesDir(filesDir)
-		}
+		applyAgentDisplaySettings(primaryBot, acfg, p.cfg)
 
 		// Wire cache bust alerts to this agent's bot
 		if ag.CacheBustDetect {
@@ -2365,31 +2374,7 @@ func setupAgent(p setupParams) *agentInstance {
 				mbBot.SetTTS(p.ttsProvider)
 			}
 			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
-			if acfg.ShowToolCalls != nil {
-				mbBot.SetShowToolCalls(string(*acfg.ShowToolCalls))
-			} else {
-				mbBot.SetShowToolCalls(string(p.cfg.Telegram.ShowToolCalls))
-			}
-			if acfg.ShowThinking != nil {
-				mbBot.SetShowThinking(string(*acfg.ShowThinking))
-			} else {
-				mbBot.SetShowThinking(string(p.cfg.Telegram.ShowThinking))
-			}
-			if acfg.DisplayWidth != nil {
-				mbBot.SetDisplayWidth(*acfg.DisplayWidth)
-			} else {
-				mbBot.SetDisplayWidth(p.cfg.Telegram.DisplayWidth)
-			}
-			if acfg.MessagesInLog != nil {
-				mbBot.SetMessagesInLog(*acfg.MessagesInLog)
-			} else {
-				mbBot.SetMessagesInLog(p.cfg.Logging.MessagesInLog)
-			}
-			if filesDir := acfg.ReceivedFilesDir; filesDir != "" {
-				mbBot.SetReceivedFilesDir(filesDir)
-			} else if filesDir := p.cfg.Telegram.ReceivedFilesDir; filesDir != "" {
-				mbBot.SetReceivedFilesDir(filesDir)
-			}
+			applyAgentDisplaySettings(mbBot, acfg, p.cfg)
 			if p.stateStore != nil {
 				ss := p.stateStore
 				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
@@ -2808,6 +2793,7 @@ func restoreMultiballSessions(
 	sessions *session.Store,
 	agents map[string]*agentInstance,
 	agentOrder []string,
+	cfg *config.Config,
 ) {
 	// Collect all pools to iterate
 	type poolInfo struct {
@@ -2850,6 +2836,7 @@ func restoreMultiballSessions(
 			agentID := extractAgentID(savedKey)
 			if inst, ok := agents[agentID]; ok {
 				bot.SetAgentAndCommands(inst.ag, inst.cmds)
+				applyAgentDisplaySettings(bot, inst.agentCfg, cfg)
 			}
 
 			// Copy chatID from primary bot so notifications work
