@@ -69,9 +69,7 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Anthropic.BraveAPIKey != "brave-key" {
 		t.Errorf("Anthropic.BraveAPIKey = %q", cfg.Anthropic.BraveAPIKey)
 	}
-	if cfg.Telegram.BotToken != "123:ABC" {
-		t.Errorf("Telegram.BotToken = %q", cfg.Telegram.BotToken)
-	}
+	// telegram.bot_token is deprecated — it still parses but is not used
 	if len(cfg.Telegram.AllowedUsers) != 2 || cfg.Telegram.AllowedUsers[0] != "111" {
 		t.Errorf("Telegram.AllowedUsers = %v", cfg.Telegram.AllowedUsers)
 	}
@@ -81,9 +79,7 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Sessions.CompactionThreshold != 0.7 {
 		t.Errorf("Sessions.CompactionThreshold = %f, want 0.7", cfg.Sessions.CompactionThreshold)
 	}
-	if cfg.Memory.Dir != "/tmp/memory" {
-		t.Errorf("Memory.Dir = %q", cfg.Memory.Dir)
-	}
+	// memory.dir is deprecated — it still parses but is not used
 	if cfg.HTTP.Port != 9999 {
 		t.Errorf("HTTP.Port = %d, want 9999", cfg.HTTP.Port)
 	}
@@ -434,32 +430,12 @@ func TestResolveBotToken(t *testing.T) {
 		}
 	})
 
-	t.Run("legacy format: telegram.bot_token in secrets", func(t *testing.T) {
-		cfg := &Config{
-			Telegram: TelegramConfig{
-				BotToken: "config-token",
-			},
-		}
-		secrets := mockSecrets{
-			"telegram.bot_token": "secret-token",
-		}
-
-		// Unknown bot name falls through to legacy
-		if got := cfg.ResolveBotToken("anything", secrets); got != "secret-token" {
-			t.Errorf("ResolveBotToken(anything) = %q, want %q", got, "secret-token")
-		}
-	})
-
-	t.Run("legacy format: telegram.bot_token in config", func(t *testing.T) {
-		cfg := &Config{
-			Telegram: TelegramConfig{
-				BotToken: "config-token",
-			},
-		}
+	t.Run("unknown bot returns empty", func(t *testing.T) {
+		cfg := &Config{}
 		secrets := mockSecrets{}
 
-		if got := cfg.ResolveBotToken("anything", secrets); got != "config-token" {
-			t.Errorf("ResolveBotToken(anything) = %q, want %q", got, "config-token")
+		if got := cfg.ResolveBotToken("anything", secrets); got != "" {
+			t.Errorf("ResolveBotToken(anything) = %q, want empty", got)
 		}
 	})
 }
@@ -2405,8 +2381,9 @@ func TestExampleConfigKeysValid(t *testing.T) {
 
 	// Keys intentionally absent from the example. Add a comment explaining why.
 	exampleSkipKeys := map[string]bool{
-		// Legacy (to be removed — see task: remove cfg.Agent and telegram.bot_token)
+		// Deprecated — kept for TOML decode but no longer used
 		"telegram.bot_token": true,
+		"memory.dir":         true,
 		// Secrets (belong in secrets.toml)
 		"anthropic.setup_token":   true,
 		"anthropic.brave_api_key": true,

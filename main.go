@@ -433,8 +433,6 @@ func main() {
 		for _, src := range cfg.Memory.Sources {
 			globalMemSources[src.Name] = memory.SourceConfig{Dir: src.Dir, Weight: src.Weight}
 		}
-	} else if cfg.Memory.Dir != "" {
-		globalMemSources["memory"] = memory.SourceConfig{Dir: cfg.Memory.Dir, Weight: 1.0}
 	}
 
 	// Parse debounce delay

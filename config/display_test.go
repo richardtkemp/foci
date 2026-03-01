@@ -21,7 +21,6 @@ func testConfig() (*Config, AgentConfig) {
 			DisplayWidth:  func() *int { v := 44; return &v }(),
 		},
 		Telegram: TelegramConfig{
-			BotToken:            "bot-token-secret",
 			AllowedUsers:        []string{"alice"},
 			EnableStopAliases:   true,
 			EnableStartupNotify: true,
@@ -36,7 +35,6 @@ func testConfig() (*Config, AgentConfig) {
 			CompactionMinMessages: 4,
 		},
 		Memory: MemoryConfig{
-			Dir:                "/data/memory",
 			ConversationWeight: 0.1,
 			SearchLimit:        20,
 		},
@@ -327,7 +325,6 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 		"defaults.max_tool_loops":    true,
 		"defaults.max_output_tokens": true,
 		"telegram":                   true,
-		"telegram.bot_token":         true,
 		"telegram.allowed_users":     true,
 		"sessions":                   true,
 		"sessions.dir":               true,
