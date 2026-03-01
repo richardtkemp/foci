@@ -2595,7 +2595,7 @@ func setupAgent(p setupParams) *agentInstance {
 		// Wire mana threshold warnings to Telegram
 		if ag.ManaWatcher != nil {
 			ag.ManaWarnFunc = func(warn string) {
-				log.Warnf("mana", "%s", warn)
+				log.Infof("mana", "%s", warn)
 				primaryBot.SendNotification("⚠️ " + warn)
 			}
 		}

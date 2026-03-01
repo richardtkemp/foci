@@ -157,9 +157,6 @@ func (g *MemoryGuard) checkOnce() {
 		g.warnFired = true // skip separate warn
 		g.mu.Unlock()
 
-		log.Errorf("memory_guard", "user RSS %dMB / %dMB (%.1f%%) exceeds kill threshold %d%% (pressure=%.1f) — killing largest process",
-			userMB, totalMB, pct, g.cfg.KillPercent, pressure)
-
 		g.doKill(userMB, totalMB, pct, pressure)
 		return
 	}
@@ -195,15 +192,15 @@ func (g *MemoryGuard) doKill(userMB, totalMB int64, pct, pressure float64) {
 	if err != nil {
 		log.Errorf("memory_guard", "find largest process: %v", err)
 		if g.warnFn != nil {
-			g.warnFn(fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%), pressure=%.1f — could not find process to kill: %v",
-				userMB, totalMB, pct, pressure, err))
+			g.warnFn(fmt.Sprintf("system memory CRITICAL: user RSS %dMB / %dMB (%.1f%%), pressure=%.1f (threshold %.1f) — could not find process to kill: %v",
+				userMB, totalMB, pct, pressure, g.cfg.PressureThreshold, err))
 		}
 		return
 	}
 
 	rssMB := rssKB / 1024
-	msg := fmt.Sprintf("system memory KILL: user RSS %dMB / %dMB (%.1f%%), pressure=%.1f — killing %s (pid %d, %dMB RSS)",
-		userMB, totalMB, pct, pressure, comm, pid, rssMB)
+	msg := fmt.Sprintf("system memory KILL: user RSS %dMB / %dMB (%.1f%%), pressure=%.1f (threshold %.1f) — killing %s (pid %d, %dMB RSS)",
+		userMB, totalMB, pct, pressure, g.cfg.PressureThreshold, comm, pid, rssMB)
 	log.Errorf("memory_guard", "%s", msg)
 	if g.warnFn != nil {
 		g.warnFn(msg)
