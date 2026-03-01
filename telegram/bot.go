@@ -530,13 +530,22 @@ func (b *Bot) isStopCommand(cmd string) bool {
 	return false
 }
 
-// receiveMessage handles an incoming message on the receiver goroutine.
-// Slash commands execute immediately. Agent messages are queued.
+func formatUserInfo(user *gotgbot.User) string {
+	id := fmt.Sprintf("%d", user.Id)
+	if user.Username != "" {
+		return fmt.Sprintf("%s (%s)", id, user.Username)
+	}
+	if user.FirstName != "" {
+		return fmt.Sprintf("%s (%s)", id, user.FirstName)
+	}
+	return id
+}
+
 func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
 	if !b.allowedUsers[userID] {
-		log.Warnf("telegram", "rejected message from user %s (%s)", userID, msg.From.Username)
+		log.Warnf("telegram", "rejected message from %s", formatUserInfo(msg.From))
 		return
 	}
 
@@ -604,7 +613,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 				b.sendReply(msg, userID, "Could not transcribe voice note.")
 				return
 			}
-			log.Infof("telegram", "voice transcription from %s: %s", msg.From.Username, truncate(transcript, 100))
+			log.Infof("telegram", "voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
 			text = "[voice] " + transcript
 		}
 	}
@@ -701,9 +710,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		logText = fmt.Sprintf("[%d image(s)] %s", len(images), text)
 	}
 	if b.messagesInLog {
-		log.Infof("telegram", "message from %s: %s", msg.From.Username, truncate(logText, 100))
+		log.Infof("telegram", "message from %s: %s", formatUserInfo(msg.From), truncate(logText, 100))
 	} else {
-		log.Debugf("telegram", "message from %s", msg.From.Username)
+		log.Debugf("telegram", "message from %s", formatUserInfo(msg.From))
 	}
 
 	// Log received message — use per-chat session key for primary bots
@@ -787,15 +796,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Replying would cause spurious "idle" messages on restart when stale
 	// Telegram updates are replayed.
 	if b.isSecondary && b.SessionKey() == "" {
-		log.Debugf("telegram", "dropping message to idle secondary bot from %s", msg.From.Username)
+		log.Debugf("telegram", "dropping message to idle secondary bot from %s", formatUserInfo(msg.From))
 		return
 	}
 
-	// Queue for the agent worker
 	select {
 	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, images: images}:
 	default:
-		log.Warnf("telegram", "message queue full, dropping message from %s", msg.From.Username)
+		log.Warnf("telegram", "message queue full, dropping message from %s", formatUserInfo(msg.From))
 		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
 	}
 }
