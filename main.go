@@ -1790,6 +1790,7 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxOutputTokens:             acfg.MaxOutputTokens,
 		BraindeadWarningThreshold:   acfg.BraindeadThreshold,
 		BraindeadWarningPrompt:      acfg.BraindeadPrompt,
+		TurnLockWarnThreshold:       parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
 	}
@@ -3006,6 +3007,18 @@ func resolveBoolPtr(perAgent *bool, global bool) bool {
 		return *perAgent
 	}
 	return global
+}
+
+// parseDurationDefault parses a Go duration string, returning fallback on error or empty.
+func parseDurationDefault(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 // resolveString returns the per-agent value if non-empty, otherwise global.

@@ -18,6 +18,7 @@ thinking = "adaptive"                     # adaptive (default), off
 # max_output_tokens = 8192
 # braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
 # braindead_prompt = ""                   # warning text injected at threshold
+# turn_lock_warn_threshold = "3m"         # warn if turn lock wait exceeds this duration
 # duplicate_messages = false              # send user text twice per API call
 # inject_agent_warnings = false           # inject warnings/errors into session
 # show_tool_calls = "off"                 # off, preview, full
@@ -53,6 +54,7 @@ id = "myagent"
 # max_output_tokens = 16384
 # braindead_threshold = 10
 # braindead_prompt = ""
+# turn_lock_warn_threshold = "3m"
 # duplicate_messages = false
 # inject_agent_warnings = false
 # tts_rate = 0.0
