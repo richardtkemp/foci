@@ -24,10 +24,8 @@ Core agent settings. Use `[[agents]]` for one or more agents.
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, embedded defaults from `prompts/branch-orientation-headless.md` or `prompts/branch-orientation-multiball.md` are used. |
-| `fork_prompt` | string | `""` | **Deprecated:** use `branch_orientation_prompt`. Path to prompt file injected into branch sessions. If `branch_orientation_prompt` is set, `fork_prompt` is ignored. |
 | `telegram_bot` | string | `$id` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. Defaults to the agent ID if a matching key exists in `[telegram.bots]`. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
-| `multiball_bot` | string | `""` | **Deprecated:** use `multiball_bots`. If set and `multiball_bots` is empty, promoted to a single-element list with a warning. |
 | `memory.sources` | array | see below | Per-agent memory directories (see below). Combined with global `[memory]` sources. When empty, defaults to a single source: `{name: $id, dir: $workspace/memory, weight: 1.0}`. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
@@ -185,7 +183,6 @@ Telegram bot configuration.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `bot_token` | string | `""` | Legacy single-bot token. Overridden by `secrets.toml` `[telegram] bot_token`. |
 | `allowed_users` | string[] | `[]` | Global default: Telegram user IDs allowed to interact with bots. Per-agent `allowed_users` overrides this. |
 | `enable_startup_notify` | bool | `true` | Send a startup notification when the service starts. Can be overridden per-agent with `startup_notification`. |
 | `multiball_bots` | string[] | `[]` | Shared multiball pool: references keys in `[telegram.bots]` map. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
@@ -261,7 +258,6 @@ Memory system (FTS5 search over markdown files + conversation history).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dir` | string | `""` | Legacy: single directory containing memory markdown files. Enables `memory_search`, `remind`, and `scratchpad` tools. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format (`500ms`, `2s`). |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
@@ -801,7 +797,7 @@ All secrets override their corresponding `foci.toml` values.
 
 ### `allowed_hosts`
 
-Each section can include an `allowed_hosts` array restricting which hosts that section's secrets can be sent to via the `http_request` tool. Secrets without `allowed_hosts` can only be used in exec commands (deprecated).
+Each section can include an `allowed_hosts` array restricting which hosts that section's secrets can be sent to via the `http_request` tool. Secrets without `allowed_hosts` can only be used in exec commands.
 
 ```toml
 [myapi]
