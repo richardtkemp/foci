@@ -269,18 +269,20 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
+	now := time.Now()
+
 	r.mu.Lock()
-	sinceLastFormation := time.Since(r.lastMemoryFormation)
+	lastFormation := r.lastMemoryFormation
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.memoryFormationRunning
 	hasActivity := r.lastInteraction.After(r.lastMemoryFormation)
 	r.mu.Unlock()
 
-	if sinceLastFormation < interval || running || !hasActivity {
+	nextFire := lastFormation.Truncate(interval).Add(interval)
+	if now.Before(nextFire) || running || !hasActivity {
 		return
 	}
 
-	// Only fire if there's been recent user activity (within the interval)
 	if sinceLastInteraction > interval {
 		return
 	}
@@ -292,7 +294,7 @@ func (r *Runner) maybeMemoryFormation() {
 
 	r.mu.Lock()
 	r.memoryFormationRunning = true
-	r.lastMemoryFormation = time.Now()
+	r.lastMemoryFormation = now
 	r.mu.Unlock()
 
 	log.Infof("keepalive", "firing memory formation for agent %s", r.agentID)
@@ -318,17 +320,19 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
+	now := time.Now()
+
 	r.mu.Lock()
-	sinceLastConsolidation := time.Since(r.lastConsolidation)
+	lastConsolidation := r.lastConsolidation
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.consolidationRunning
 	r.mu.Unlock()
 
-	if sinceLastConsolidation < interval || running {
+	nextFire := lastConsolidation.Truncate(interval).Add(interval)
+	if now.Before(nextFire) || running {
 		return
 	}
 
-	// Only consolidate if there's been recent user activity (within 1h)
 	if sinceLastInteraction > time.Hour {
 		return
 	}
@@ -340,7 +344,7 @@ func (r *Runner) maybeConsolidation() {
 
 	r.mu.Lock()
 	r.consolidationRunning = true
-	r.lastConsolidation = time.Now()
+	r.lastConsolidation = now
 	r.mu.Unlock()
 
 	log.Infof("keepalive", "firing memory consolidation for agent %s", r.agentID)
@@ -350,7 +354,6 @@ func (r *Runner) maybeConsolidation() {
 			r.mu.Lock()
 			r.consolidationRunning = false
 			r.mu.Unlock()
-			// Persist consolidation timestamp
 			if r.stateStore != nil {
 				if err := r.stateStore.Set("consolidation_last:"+r.agentID, time.Now()); err != nil {
 					log.Warnf("keepalive", "persist consolidation timestamp: %v", err)
@@ -438,7 +441,6 @@ func ManaIsGood(actualMana float64, resetsAt time.Time, investInterval time.Dura
 
 	return actualMana > expectedMana
 }
-
 
 // OrientationBuilder constructs orientation text for a branch session given the
 // branch key, parent key, and branch type. Injected from main to avoid duplicating
