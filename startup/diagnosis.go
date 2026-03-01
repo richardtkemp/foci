@@ -36,11 +36,14 @@ type DiagnosisResult struct {
 	Summary      string
 }
 
+// GetSystemUptime returns the system uptime. Replaceable for testing.
+var GetSystemUptime = getSystemUptime
+
 func DiagnoseRestart(st *state.Store, startTime time.Time, logsDir string) *DiagnosisResult {
 	var shutdownUnix int64
 	hasShutdown := st.Get(StateKeyLastCleanShutdown, &shutdownUnix)
 
-	systemUptime, err := getSystemUptime()
+	systemUptime, err := GetSystemUptime()
 	if err != nil {
 		log.Debugf("startup", "could not read system uptime: %v", err)
 	}

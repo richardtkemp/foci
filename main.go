@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -624,11 +625,7 @@ func main() {
 
 		// Keepalive & background work runner (per-agent config, falls back to global)
 		if acfg.Keepalive.Enabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) {
-			orientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
-			if orientPrompt == "" {
-				orientPrompt = acfg.ForkPrompt // deprecated fallback
-			}
-			kaOrientPrompt := orientPrompt // capture for closure
+			kaOrientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			branchFn := keepalive.BuildBranchFunc(
 				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
 				func(branchKey, parentKey, branchType string) string {
@@ -810,7 +807,7 @@ func main() {
 	// Diagnose restart type (clean/crash/reboot) and gather diagnostics
 	var diagnosis *startup.DiagnosisResult
 	logsDir := filepath.Dir(cfg.Logging.EventFile)
-	if logsDir == "" {
+	if logsDir == "" || logsDir == "." {
 		if home, err := os.UserHomeDir(); err == nil {
 			logsDir = filepath.Join(home, "logs")
 		}
@@ -922,15 +919,9 @@ func main() {
 				}
 
 				if resp != "" {
-					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
-						if chatID := tools.ChatIDFromSessionKey(sessionKey); chatID != 0 {
-							if err := bot.SendTextToChat(chatID, resp); err != nil {
-								log.Errorf("http", "async send telegram delivery to chat %d: %v", chatID, err)
-							}
-						} else {
-							if err := bot.SendText(resp); err != nil {
-								log.Errorf("http", "async send telegram delivery: %v", err)
-							}
+					if bot := botMgr.BotForSessionOrPrimary(sessionKey, inst.id); bot != nil {
+						if err := bot.SendText(resp); err != nil {
+							log.Errorf("http", "async send telegram delivery: %v", err)
 						}
 					}
 				}
@@ -1059,9 +1050,6 @@ func main() {
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
 		orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
-		if orientPath == "" {
-			orientPath = inst.agentCfg.ForkPrompt // deprecated fallback
-		}
 		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false)
 		branchErr := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        req.NoResetHook,
@@ -1090,12 +1078,8 @@ func main() {
 				}
 
 				if resp != "" && !silent {
-					if bot := botMgr.PrimaryBot(inst.id); bot != nil {
-						if chatID := tools.ChatIDFromSessionKey(branchKey); chatID != 0 {
-							if err := bot.SendTextToChat(chatID, resp); err != nil {
-								log.Errorf("wake", "async telegram delivery to chat %d: %v", chatID, err)
-							}
-						} else if err := bot.SendText(resp); err != nil {
+					if bot := botMgr.BotForSessionOrPrimary(branchKey, inst.id); bot != nil {
+						if err := bot.SendText(resp); err != nil {
 							log.Errorf("wake", "async telegram delivery: %v", err)
 						}
 					}
@@ -1324,10 +1308,9 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent tool registry
 	registry := tools.NewRegistry()
 
-	// Async notifier: delivers results from auto-backgrounded exec commands,
-	// tmux watch inactivity alerts, and send_to_session (reply_to=caller)
-	// to the agent session. Extracts chat ID from the session key for
-	// per-user chat routing.
+	// Async notifier: delivers results from auto-backgrounded exec commands
+	// and tmux watch inactivity alerts to the agent session.
+	// The response is delivered to Telegram via the primary bot's SendText.
 	notifier := tools.NewAsyncNotifier(func(originSession, message string) {
 		go func() {
 			// Route to the originating session; fall back to default if unknown
@@ -1344,30 +1327,13 @@ func setupAgent(p setupParams) *agentInstance {
 			if resp == "" {
 				return
 			}
-			var bot *telegram.Bot
-			if strings.Contains(target, ":multiball:") {
-				if mb := p.botMgr.BotForSession(target); mb != nil {
-					bot = mb
-				}
-			}
+			bot := p.botMgr.BotForSessionOrPrimary(target, acfg.ID)
 			if bot == nil {
-				bot = p.botMgr.PrimaryBot(acfg.ID)
-			}
-			if bot == nil {
-				log.Warnf("async_notify", "no primary bot for agent %s, response not delivered", acfg.ID)
+				log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", acfg.ID, target)
 				return
 			}
-			// Extract chat ID from session key (agent:X:chat:CHATID) for
-			// per-user chat routing. Falls back to bot's default chat if
-			// the session key doesn't contain a chat segment.
-			if chatID := tools.ChatIDFromSessionKey(target); chatID != 0 {
-				if err := bot.SendTextToChat(chatID, resp); err != nil {
-					log.Errorf("async_notify", "telegram delivery to chat %d: %v", chatID, err)
-				}
-			} else {
-				if err := bot.SendText(resp); err != nil {
-					log.Errorf("async_notify", "telegram delivery: %v", err)
-				}
+			if err := bot.SendText(resp); err != nil {
+				log.Errorf("async_notify", "telegram delivery: %v", err)
 			}
 		}()
 	})
@@ -1471,14 +1437,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent send_telegram tool (closure captures this agent's bot)
 	registry.Register(tools.NewSendTelegramTool(func(sessionKey string) tools.TelegramSender {
-		// For multiball sessions, use the multiball bot that owns this session
-		if strings.Contains(sessionKey, ":multiball:") {
-			if mb := p.botMgr.BotForSession(sessionKey); mb != nil {
-				return mb
-			}
-		}
-		// Default: primary bot
-		bot := p.botMgr.PrimaryBot(acfg.ID)
+		bot := p.botMgr.BotForSessionOrPrimary(sessionKey, acfg.ID)
 		if bot == nil {
 			return nil
 		}
@@ -1513,24 +1472,20 @@ func setupAgent(p setupParams) *agentInstance {
 				return
 			}
 
-			var bot *telegram.Bot
-			if strings.Contains(targetSessionKey, ":multiball:") {
-				if mb := p.botMgr.BotForSession(targetSessionKey); mb != nil {
-					bot = mb
-				}
-			}
+			bot := p.botMgr.BotForSessionOrPrimary(targetSessionKey, targetAgentID)
 			if bot == nil {
-				bot = p.botMgr.PrimaryBot(targetAgentID)
-			}
-			if bot == nil {
-				log.Warnf("session_notify", "no primary bot for agent %s, response not delivered", targetAgentID)
+				log.Warnf("session_notify", "no bot for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
 				return
 			}
 
 			// Extract chat ID from session key (agent:X:chat:CHATID) for
-			// per-user chat routing. Falls back to bot's default chat if
-			// the session key doesn't contain a chat segment.
-			if chatID := tools.ChatIDFromSessionKey(targetSessionKey); chatID != 0 {
+			// targeted delivery. Falls back to bot's default chat if the
+			// session key doesn't contain a chat segment.
+			var chatID int64
+			if len(parts) >= 4 && parts[2] == "chat" {
+				chatID, _ = strconv.ParseInt(parts[3], 10, 64)
+			}
+			if chatID != 0 {
 				if err := bot.SendTextToChat(chatID, resp); err != nil {
 					log.Errorf("session_notify", "telegram delivery to chat %d: %v", chatID, err)
 				}
@@ -1562,7 +1517,7 @@ func setupAgent(p setupParams) *agentInstance {
 		AgentID:                     acfg.ID,
 		Model:                       acfg.Model,
 		ExtraSystemBlocks:           extraSystemBlocks,
-		CacheStrategy:               "auto",
+		CacheStrategy:               p.cfg.Cache.Strategy,
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
 		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:           acfg.DuplicateMessages,
@@ -1576,9 +1531,8 @@ func setupAgent(p setupParams) *agentInstance {
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
-		BraindeadWarningEnable:      *acfg.BraindeadWarningEnable,
-		BraindeadWarningThreshold:   acfg.BraindeadWarningThreshold,
-		BraindeadWarningPrompt:      acfg.BraindeadWarningPrompt,
+		AutopilotThreshold:          acfg.AutopilotThreshold,
+		AutopilotPrompt:             acfg.AutopilotPrompt,
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
 	}
@@ -1615,7 +1569,7 @@ func setupAgent(p setupParams) *agentInstance {
 		manaThresholds = acfg.UsageWarnings.Thresholds
 	}
 	if len(manaThresholds) > 0 {
-		ag.ManaWatcher = agent.NewManaWatcher("mana", manaThresholds)
+		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
 		ag.ManaWatcher.SetStore(p.stateStore)
 		ag.ManaWatcher.Restore()
 	}
@@ -1623,9 +1577,6 @@ func setupAgent(p setupParams) *agentInstance {
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
 	// Uses lazy getter for agent since ag is assigned later in this function.
 	spawnOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
-	if spawnOrientPath == "" {
-		spawnOrientPath = acfg.ForkPrompt // deprecated fallback
-	}
 	spawnDeps := tools.SpawnDeps{
 		Client:     p.client,
 		Bootstrap:  bootstrap,
@@ -1703,43 +1654,6 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewTmuxCommand(tmuxTool.Execute))
-	if p.todoStore != nil {
-		todoListFn := func(tag string) ([]command.TodoItem, error) {
-			items, err := p.todoStore.List(acfg.ID, "open", tag)
-			if err != nil {
-				return nil, err
-			}
-			result := make([]command.TodoItem, len(items))
-			for i, item := range items {
-				result[i] = command.TodoItem{
-					ID:       item.ID,
-					Text:     item.Text,
-					Status:   item.Status,
-					Priority: item.Priority,
-					Tags:     item.Tags,
-				}
-			}
-			return result, nil
-		}
-		todoSearchFn := func(query string) ([]command.TodoItem, error) {
-			items, err := p.todoStore.Search(acfg.ID, query)
-			if err != nil {
-				return nil, err
-			}
-			result := make([]command.TodoItem, len(items))
-			for i, item := range items {
-				result[i] = command.TodoItem{
-					ID:       item.ID,
-					Text:     item.Text,
-					Status:   item.Status,
-					Priority: item.Priority,
-					Tags:     item.Tags,
-				}
-			}
-			return result, nil
-		}
-		cmds.Register(command.NewTodoCommand(todoListFn, todoSearchFn))
-	}
 	// Token count cache for /context (persists across calls, invalidated when context changes)
 	var (
 		tcCacheMu     sync.Mutex
@@ -2050,10 +1964,6 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		resolvedOrientPrompt := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		prompts = append(prompts, promptInfo("branch_orientation", resolvedOrientPrompt))
-		if acfg.ForkPrompt != "" {
-			prompts = append(prompts, promptInfo("fork_prompt (deprecated)", acfg.ForkPrompt))
-		}
-
 		// Build set of configured paths for tagging files
 		configuredPaths := make(map[string]bool)
 		for _, pi := range prompts {
@@ -2105,23 +2015,27 @@ func setupAgent(p setupParams) *agentInstance {
 	}))
 	cmds.Register(command.NewHelpCommand(cmds))
 
-	// Dynamic mana command
+	// Dynamic mana command (configurable name: /mana, /juice, /credits, etc.)
+	manaName := p.cfg.ManaWarnings.Name
+	if manaName == "" {
+		manaName = "mana"
+	}
 	manaFn := func(ctx context.Context) (string, error) {
 		usage, err := p.usageClient.GetUsage(ctx)
 		if err != nil {
-			return fmt.Sprintf("Error fetching mana: %v", err), nil
+			return fmt.Sprintf("Error fetching %s: %v", manaName, err), nil
 		}
 		percent := anthropic.FormatMana(usage)
 		if percent == "" {
-			return "mana: unknown", nil
+			return fmt.Sprintf("%s: unknown", manaName), nil
 		}
-		result := fmt.Sprintf("mana: %s remaining", percent)
+		result := fmt.Sprintf("%s: %s remaining", manaName, percent)
 		if reset := anthropic.FormatManaReset(usage); reset != "" {
 			result += fmt.Sprintf(" (resets %s)", reset)
 		}
 		return result, nil
 	}
-	cmds.Register(command.NewManaCommand("mana", manaFn))
+	cmds.Register(command.NewManaCommand(manaName, manaFn))
 
 	// /usage — hidden alias for the mana command
 	cmds.Register(&command.Command{
@@ -2196,9 +2110,6 @@ func setupAgent(p setupParams) *agentInstance {
 		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
 
 		orientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
-		if orientPath == "" {
-			orientPath = acfg.ForkPrompt // deprecated fallback
-		}
 		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true)
 		if err := p.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			OrientationMessage: orientText,

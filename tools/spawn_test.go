@@ -854,21 +854,43 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	}
 }
 
-func TestSpawnNoneBlacklist(t *testing.T) {
-	// Verify none mode excludes send_telegram and send_to_session.
-	var receivedReq *anthropic.MessageRequest
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		receivedReq = req
-		return &anthropic.MessageResponse{
-			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("ok"), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
-		}
-	})
-	defer server.Close()
+func TestSpawnNoneToolAllowlist(t *testing.T) {
+	// This test ensures every tool registered in the system is explicitly
+	// classified as either allowed or blocked for none-mode spawns.
+	// If you add a new tool and this test fails, you MUST decide:
+	//   - Is the tool safe in an isolated sandbox (no shell access, no
+	//     external communication)? Add it to allowedInNone.
+	//   - Can it escape the sandbox or communicate externally?
+	//     Add it to spawnNoneBlacklist in spawn.go.
 
+	// Tools that should be available in none-mode spawns.
+	// These are safe within the file-tool sandbox (no shell access,
+	// no external communication, no sandbox escape).
+	allowedInNone := map[string]bool{
+		"read":             true,
+		"write":            true,
+		"edit":             true,
+		"web_fetch":        true,
+		"web_search":       true,
+		"http_request":     true,
+		"memory_search":    true,
+		"bitwarden_search": true,
+		"bitwarden_unlock": true,
+		"remind":           true,
+	}
+
+	// Register every tool that exists in the real system.
 	reg := NewRegistry()
-	for _, name := range []string{"web_search", "send_telegram", "send_to_session", "exec"} {
+	allTools := []string{
+		"exec", "tmux",
+		"read", "write", "edit",
+		"web_fetch", "web_search", "http_request",
+		"memory_search", "scratchpad", "todo",
+		"bitwarden_search", "bitwarden_unlock",
+		"send_telegram", "send_to_session",
+		"remind", "spawn",
+	}
+	for _, name := range allTools {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
@@ -876,36 +898,46 @@ func TestSpawnNoneBlacklist(t *testing.T) {
 		})
 	}
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
-	tool := NewSpawnTool(deps, nil)
+	_, tools := spawnIsolatedToolSet(reg, spawnNoneBlacklist, "/tmp/test-sandbox")
 
-	params, _ := json.Marshal(map[string]string{
-		"prompt":  "test",
-		"context": "none",
-	})
-	_, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	// Verify every tool is either allowed or blocked — no unclassified tools.
+	for _, name := range allTools {
+		if name == "spawn" {
+			// spawn is always excluded (hardcoded in spawnIsolatedToolSet)
+			if _, ok := tools[name]; ok {
+				t.Errorf("spawn should never be included in spawn tool sets")
+			}
+			continue
+		}
+		_, isAllowed := tools[name]
+		_, isBlocked := spawnNoneBlacklist[name]
+		if !isAllowed && !isBlocked {
+			t.Errorf("tool %q is neither allowed nor blacklisted for none-mode spawns — "+
+				"add it to allowedInNone in this test (if safe) or spawnNoneBlacklist in spawn.go (if not)", name)
+		}
+		if isAllowed && isBlocked {
+			t.Errorf("tool %q is both allowed and blacklisted — check spawnNoneBlacklist", name)
+		}
 	}
 
-	// Check which tools were sent
-	toolNames := make(map[string]bool)
-	for _, td := range receivedReq.Tools {
-		toolNames[td.Name] = true
+	// Verify the exact set of allowed tools matches expectations.
+	for name := range allowedInNone {
+		if _, ok := tools[name]; !ok {
+			t.Errorf("tool %q should be allowed in none-mode but is missing", name)
+		}
+	}
+	for name := range tools {
+		if !allowedInNone[name] {
+			t.Errorf("tool %q is available in none-mode but not in allowedInNone — "+
+				"either add it to allowedInNone (if safe) or to spawnNoneBlacklist (if not)", name)
+		}
 	}
 
-	if !toolNames["web_search"] {
-		t.Error("web_search should be included in none mode")
-	}
-	if !toolNames["exec"] {
-		t.Error("exec should be included in none mode")
-	}
-	if toolNames["send_telegram"] {
-		t.Error("send_telegram should be blacklisted in none mode")
-	}
-	if toolNames["send_to_session"] {
-		t.Error("send_to_session should be blacklisted in none mode")
+	// Verify blacklisted tools are actually excluded.
+	for name := range spawnNoneBlacklist {
+		if _, ok := tools[name]; ok {
+			t.Errorf("tool %q is blacklisted but still available in none-mode", name)
+		}
 	}
 }
 

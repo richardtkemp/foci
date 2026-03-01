@@ -21,7 +21,7 @@ pip install yq                 # TOML/YAML/XML querying (used by query skill)
 ## 1. Clone the Repository
 
 ```bash
-cd /home/rich/git  # or wherever you keep repos
+cd ~/src  # or wherever you keep repos
 git clone https://github.com/richardtkemp/foci.git
 cd foci
 ```

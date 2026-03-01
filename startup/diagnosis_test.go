@@ -103,6 +103,57 @@ func TestDiagnoseRestart_FutureShutdown(t *testing.T) {
 	}
 }
 
+func TestDiagnoseRestart_Reboot(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	st := state.New(statePath)
+	if err := st.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	startTime := time.Now()
+	// Shutdown was 1 hour ago
+	shutdownTime := startTime.Add(-1 * time.Hour)
+	if err := st.Set(StateKeyLastCleanShutdown, shutdownTime.Unix()); err != nil {
+		t.Fatalf("set shutdown time: %v", err)
+	}
+
+	// Inject uptime shorter than the gap (simulates reboot)
+	orig := GetSystemUptime
+	GetSystemUptime = func() (time.Duration, error) {
+		return 10 * time.Minute, nil
+	}
+	defer func() { GetSystemUptime = orig }()
+
+	result := DiagnoseRestart(st, startTime, tmpDir)
+
+	if result.Class != ClassReboot {
+		t.Errorf("expected ClassReboot, got %s (summary: %s)", result.Class, result.Summary)
+	}
+}
+
+func TestDiagnoseRestart_RebootNoRecord(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "state.json")
+	st := state.New(statePath)
+	if err := st.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	// No prior shutdown record + very short uptime → reboot
+	orig := GetSystemUptime
+	GetSystemUptime = func() (time.Duration, error) {
+		return 2 * time.Minute, nil
+	}
+	defer func() { GetSystemUptime = orig }()
+
+	result := DiagnoseRestart(st, time.Now(), tmpDir)
+
+	if result.Class != ClassReboot {
+		t.Errorf("expected ClassReboot, got %s (summary: %s)", result.Class, result.Summary)
+	}
+}
+
 func TestRecordCleanShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"foci/log"
@@ -115,6 +116,18 @@ func (m *BotManager) BotForSession(sessionKey string) *Bot {
 	}
 
 	return nil
+}
+
+// BotForSessionOrPrimary returns the multiball bot owning sessionKey if it's
+// a multiball session, otherwise the agent's primary bot. Returns nil if
+// neither is available.
+func (m *BotManager) BotForSessionOrPrimary(sessionKey, agentID string) *Bot {
+	if strings.Contains(sessionKey, ":multiball:") {
+		if mb := m.BotForSession(sessionKey); mb != nil {
+			return mb
+		}
+	}
+	return m.PrimaryBot(agentID)
 }
 
 // AcquireMultiball tries to acquire a multiball bot for the given agent.

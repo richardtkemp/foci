@@ -374,7 +374,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if name == "" {
 		return "", fmt.Errorf("name is required for send")
 	}
-	if keys == "" && (enter == false) {
+	if keys == "" && !enter {
 		return "", fmt.Errorf("keys is required for send (or set enter=true to send just Enter)")
 	}
 	if !inst.owns(name) {

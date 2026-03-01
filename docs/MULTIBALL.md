@@ -10,7 +10,7 @@ Single-threaded chat breaks down when you have multiple trains of thought. You'r
 
 ```
 You:    /multiball
-Agent:  Forked to @clutchling_bot — same context, separate thread.
+Agent:  Forked to @wand_bot — same context, separate thread.
 ```
 
 The fork creates a new session on a **secondary Telegram bot** (configured as a multiball bot). The forked session:
@@ -22,23 +22,33 @@ The fork creates a new session on a **secondary Telegram bot** (configured as a 
 
 ### Bot Pool
 
-Multiball bots are configured in `foci.toml`:
+Multiball bots are configured in `foci.toml`. Bots are defined in `[telegram.bots]` (tokens in `secrets.toml`), then referenced by name:
 
 ```toml
-[[telegram.multiball_bots]]
-token_secret = "telegram.clutchling"   # references secrets.toml
+# Per-agent multiball bots:
+[[agents]]
+id = "myagent"
+multiball_bots = ["wand", "crystal"]
 
-[[telegram.multiball_bots]]
-token_secret = "telegram.focibot"      # shared pool bot
+# Or shared pool (available to all agents):
+[telegram]
+multiball_bots = ["wand", "crystal"]
+
+# Bot definitions:
+[telegram.bots.wand]
+token_secret = "telegram.wand"
+
+[telegram.bots.crystal]
+token_secret = "telegram.crystal"
 ```
 
-Bots can be **per-agent** (dedicated) or **shared** (allocated from a pool). When all bots are in use, the fork request queues until one is released.
+Bots can be **per-agent** (dedicated) or **shared** (allocated from a pool). When all bots are in use, the fork request fails immediately.
 
 ### Session Lifecycle
 
 - `/multiball` or `/mb` — fork from current session
-- The forked session lives until it's explicitly killed or times out
-- `/kill` in the multiball session ends it and returns the bot to the pool
+- The forked session lives until it times out (configured via `multiball_session_ttl`, default 60m idle)
+- When the TTL expires, the bot is reclaimed and returned to the pool
 - Sessions survive service restarts (restored from disk)
 
 ## Agent-Side
@@ -70,4 +80,3 @@ All messages from a multiball session route through the correct bot — tool out
 - **Parallel investigations**: debug in one thread, research in another
 - **Context separation**: keep a long-running task clean while handling ad-hoc questions
 - **Testing**: fork to test a risky operation without polluting the main session
-- **Background delegation**: `spawn` with `clone_current` creates headless multiball sessions for autonomous work
