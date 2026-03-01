@@ -464,7 +464,7 @@ exec subprocess                       foci process
 
 Background goroutine that checks the RSS of the tmux server process at configurable intervals. Three thresholds (warn, critical, kill) fire Telegram notifications and, at the kill threshold, run `tmux kill-server` and call `ClearAll()` on all tmux tool instances. Notifications use dedup — same threshold level won't re-fire until memory drops below it or tmux is killed.
 
-Wired in `main.go` after agent setup. Notification callback sends to agents whose `inject_agent_warnings` is false (agents with injection see warnings via their WarningQueue — passively on next turn, or proactively via the keepalive runner's `maybeWarningDispatch`). Cleanup callback calls `tmuxClearAll` on each agent instance (stored on `agentInstance` struct).
+Wired in `main.go` after agent setup. Notification callback sends to agents whose `inject_agent_warnings` is false (agents with injection see warnings via their WarningQueue — proactively dispatched as independent agent turns via the keepalive runner's `maybeWarningDispatch`). Cleanup callback calls `tmuxClearAll` on each agent instance (stored on `agentInstance` struct).
 
 ### System Memory Guard (`resources/memory_guard.go`)
 
@@ -739,7 +739,7 @@ Memory formation and consolidation run in the keepalive timer loop (30s ticks):
 6. Drain warnings, format as `[proactive system warnings]\n- ...\n- ...`
 7. Dispatch in goroutine: `warningDispatchFn(text)`, clear `warningDispatching` on return
 
-Interacts correctly with passive drain: if a user message arrives first, `collectWarnings()` drains the queue and `Pending()` returns false on next tick. If proactive drain fires first, `collectWarnings()` finds nothing. `Drain()` is atomic.
+Warnings are only delivered via this proactive dispatch path — they always fire as independent agent turns rather than being bundled into user messages. This ensures the agent processes and responds to warnings before handling the next user message.
 
 ## Compaction (`compaction/compact.go`)
 
@@ -756,7 +756,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 **Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone_current, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
 
-**Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this on the next turn (passively via `collectWarnings()` or proactively via `maybeWarningDispatch()`) and can gracefully conclude rather than hitting the context limit unexpectedly.
+**Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this via `maybeWarningDispatch()` on the next keepalive tick and can gracefully conclude rather than hitting the context limit unexpectedly.
 
 
 **Branch compaction:** When `Replace()` is called on a branch session (e.g., during compaction), it preserves the `branch_meta` header with `branch_point=0`. The compacted messages are self-contained (the summary includes parent context), so subsequent `LoadFull()` loads `parent[:0] + compacted_msgs` = just the compacted messages.
