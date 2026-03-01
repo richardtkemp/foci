@@ -111,6 +111,7 @@ type AgentConfig struct {
 	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
 	BraindeadThreshold      int               `toml:"braindead_threshold"`       // consecutive tool loops before warning (0 = disabled, default 10)
 	BraindeadPrompt         string            `toml:"braindead_prompt"`          // warning text injected as user message
+	TurnLockWarnThreshold   string            `toml:"turn_lock_warn_threshold"`  // warn if turn lock wait exceeds this duration (Go duration, default "3m")
 	Effort                  string            `toml:"effort"`                    // effort level: "low" (default), "medium", "high"
 	Thinking                string            `toml:"thinking"`                  // thinking mode: "adaptive" (default) or "off"
 	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use [voice] tts_rate)
@@ -353,8 +354,9 @@ type DefaultsConfig struct {
 	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
 	MaxToolLoops        int              `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
 	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
-	BraindeadThreshold  int              `toml:"braindead_threshold"`   // default braindead threshold (default: 10)
-	BraindeadPrompt     string           `toml:"braindead_prompt"`      // default braindead prompt
+	BraindeadThreshold    int              `toml:"braindead_threshold"`       // default braindead threshold (default: 10)
+	BraindeadPrompt       string           `toml:"braindead_prompt"`          // default braindead prompt
+	TurnLockWarnThreshold string           `toml:"turn_lock_warn_threshold"`  // default turn lock warn threshold (default: "3m")
 	Effort              string           `toml:"effort"`                // default effort level: "low" (default), "medium", "high"
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "adaptive" (default) or "off"
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (default: "off")
@@ -770,6 +772,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Defaults.BraindeadThreshold == 0 && !md.IsDefined("defaults", "braindead_threshold") {
 		cfg.Defaults.BraindeadThreshold = 10
+	}
+	if cfg.Defaults.TurnLockWarnThreshold == "" {
+		cfg.Defaults.TurnLockWarnThreshold = "3m"
 	}
 	if cfg.Defaults.Thinking == "" && !md.IsDefined("defaults", "thinking") {
 		cfg.Defaults.Thinking = "adaptive"

@@ -32,6 +32,7 @@ Core agent settings. Use `[[agents]]` for one or more agents.
 | `braindead_warning_enable` | bool | `true` | Enable braindead warning injection. `false` disables. Per-agent override of `[defaults] braindead_warning_enable`. |
 | `braindead_warning_threshold` | int | `10` | Consecutive tool-call loops before injecting a braindead warning. `0` disables. Per-agent override of `[defaults] braindead_warning_threshold`. |
 | `braindead_warning_prompt` | string | `""` | Custom warning text injected when the threshold is hit. Empty uses a hardcoded default. Per-agent override of `[defaults] braindead_warning_prompt`. |
+| `turn_lock_warn_threshold` | string | `"3m"` | Warn if turn lock wait exceeds this duration. Go duration format (e.g. `"3m"`, `"30s"`). `proactive_warning` triggers are excluded from this warning. |
 | `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. Empty = omit (use API default). Overridable at runtime via `/effort` command. Per-session overrides persist across restarts via state store and reset when a new session starts. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` enables adaptive extended thinking (Opus 4.6). Empty or `"off"` = disabled. Overridable at runtime via `/thinking` command. Per-session overrides persist across restarts via state store. Thinking tokens count toward mana. |
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
@@ -113,6 +114,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `braindead_warning_enable` | bool | `true` | Enable braindead warning. `false` disables. |
 | `braindead_warning_threshold` | int | `10` | Default consecutive tool loops before braindead warning. `0` disables. |
 | `braindead_warning_prompt` | string | `""` | Default braindead warning text. Empty uses hardcoded default. |
+| `turn_lock_warn_threshold` | string | `"3m"` | Default turn lock warn threshold. Go duration format. |
 | `effort` | string | `"low"` | Default effort level: `"low"`, `"medium"`, `"high"`. |
 | `thinking` | string | `"adaptive"` | Default thinking mode: `"adaptive"` or `"off"`. |
 | `show_tool_calls` | string | `"off"` | Default tool call display mode: `"off"`, `"preview"`, `"full"`. Per-agent `show_tool_calls` overrides this. |

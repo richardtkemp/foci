@@ -111,6 +111,7 @@ type Agent struct {
 	BraindeadWarningEnable      bool                            // enable braindead warning (default true)
 	BraindeadWarningThreshold   int                             // consecutive tool loops before warning (0 = disabled)
 	BraindeadWarningPrompt      string                          // warning text (empty = hardcoded default)
+	TurnLockWarnThreshold       time.Duration                   // warn if turn lock wait exceeds this (default 3m)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 	ServerTools                 []anthropic.ToolDef             // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
@@ -775,7 +776,11 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	lockStart := time.Now()
 	sessionLock.Lock()
 	lockDur := time.Since(lockStart)
-	if lockDur > 100*time.Millisecond {
+	warnThreshold := a.TurnLockWarnThreshold
+	if warnThreshold <= 0 {
+		warnThreshold = 3 * time.Minute
+	}
+	if lockDur > warnThreshold && waiterTrigger != "proactive_warning" {
 		// Find the holder's details from in-flight turns
 		holder := ""
 		for _, td := range a.ProcessingDetails() {
