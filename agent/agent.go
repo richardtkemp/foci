@@ -894,7 +894,11 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	useAutoCache := a.CacheStrategy == "auto"
 
 	if useAutoCache {
-		// Auto caching: strip all cache_control from system blocks — top-level handles it.
+		// Auto caching: strip intermediate cache_control from system blocks,
+		// but keep an explicit breakpoint on the last system block so tools+system
+		// are cached as a stable prefix that survives message changes (e.g. compaction).
+		// Anthropic docs confirm auto+explicit breakpoints are compatible:
+		// the explicit breakpoint uses one of 4 available slots.
 		if len(a.ExtraSystemBlocks) > 0 {
 			system = append(system, a.ExtraSystemBlocks...)
 		}
@@ -902,6 +906,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		copy(cleanSystem, system)
 		for i := range cleanSystem {
 			cleanSystem[i].CacheControl = nil
+		}
+		if len(cleanSystem) > 0 {
+			cleanSystem[len(cleanSystem)-1].CacheControl = anthropic.Ephemeral()
 		}
 		system = cleanSystem
 	} else if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
