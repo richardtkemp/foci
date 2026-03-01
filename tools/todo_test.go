@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/memory"
@@ -159,6 +160,100 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 	items, _ := store.List("agent1", "done", "")
 	if len(items) != 1 {
 		t.Errorf("expected 1 done item, got %d", len(items))
+	}
+}
+
+func TestTodoToolGet(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Test task", "high", "urgent")
+
+	params := map[string]interface{}{
+		"action": "get",
+		"id":     id,
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if result == "" {
+		t.Error("expected non-empty result")
+	}
+	if !strings.Contains(result, "#") || !strings.Contains(result, "Test task") {
+		t.Errorf("result should contain id and text, got: %s", result)
+	}
+	if !strings.Contains(result, "[high]") {
+		t.Errorf("result should contain priority, got: %s", result)
+	}
+	if !strings.Contains(result, "{urgent}") {
+		t.Errorf("result should contain tag, got: %s", result)
+	}
+}
+
+func TestTodoToolGetCompleted(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Done task", "medium", "")
+	store.Complete("agent1", id, "finished")
+
+	params := map[string]interface{}{
+		"action": "get",
+		"id":     id,
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(result, "[x]") {
+		t.Errorf("completed item should show [x], got: %s", result)
+	}
+	if !strings.Contains(result, "finished") {
+		t.Errorf("result should contain close reason, got: %s", result)
+	}
+}
+
+func TestTodoToolGetNotFound(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	params := map[string]interface{}{
+		"action": "get",
+		"id":     9999,
+	}
+	_, err := executeTodoTool(tool, params)
+	if err == nil {
+		t.Error("expected error for non-existent id")
+	}
+}
+
+func TestTodoToolGetMissingId(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	params := map[string]interface{}{
+		"action": "get",
+	}
+	_, err := executeTodoTool(tool, params)
+	if err == nil {
+		t.Error("expected error when id is missing")
+	}
+}
+
+func TestTodoToolGetWrongAgent(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent2", "Other agent task", "high", "")
+
+	params := map[string]interface{}{
+		"action": "get",
+		"id":     id,
+	}
+	_, err := executeTodoTool(tool, params)
+	if err == nil {
+		t.Error("expected error when getting todo from different agent")
 	}
 }
 
