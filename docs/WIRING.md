@@ -331,22 +331,9 @@ Two `cache_control: ephemeral` breakpoints per API request: one on the system pr
 
 ## Secrets (`secrets/`)
 
-Loaded from `secrets.toml` (same directory as `foci.toml`). Format:
+Loaded from `secrets.toml` (same directory as `foci.toml`). Stored as flat keys: `anthropic.setup_token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup. See [SECRETS.md](SECRETS.md) for the full security model, OS-level protection, setup, and Bitwarden configuration.
 
-```toml
-[anthropic]
-token = "sk-ant-oat01-..."
-
-[telegram]
-bot_token = "123:ABC"
-
-[custom]
-github_token = "ghp_..."
-```
-
-Stored as flat keys: `anthropic.setup_token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup.
-
-Features:
+Data flow:
 - **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in exec (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in exec (approval-gated via aisudo).
 - **Domain locking:** `allowed_hosts` per section restricts which hosts a secret can be sent to via `http_request`. `secrets.FindSecretRefs()` extracts template refs; `store.CheckHostAllowed()` validates the target URL (userinfo-safe via `url.Parse().Hostname()`)
 - **Output redaction:** Secret values in command/response output → `[REDACTED]` (skips values < 4 chars)
@@ -601,7 +588,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 
 ## Multiball (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
-Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix.
+Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix. See [MULTIBALL.md](MULTIBALL.md) for user-facing docs (bot pool config, session lifecycle, use cases).
 
 **Config** (`foci.toml`):
 ```toml
@@ -652,17 +639,17 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 ## HTTP Gateway (`main.go`)
 
-Endpoints for external integration (used by `foci` CLI). All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent (backward compat).
+Endpoints for external integration. All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent.
 
-- `POST /send` — `{"agent": "clutch", "text": "...", "if_active": "8h"}` — message to agent's default session. Returns 412 if no default session exists yet. Optional `if_active` / `if_inactive` for activity gating.
-- `GET /status?agent=clutch` — dispatches `/status` for the specified agent
-- `POST /command` — `{"agent": "clutch", "command": "/ping"}` — dispatches slash command
-- `POST /wake` — `{"agent": "clutch", "text": "morning routine", "no_compact": true, "if_active": "12h"}` — branch from default session for cron. Returns 412 if no default session. Optional `if_active` / `if_inactive` for activity gating.
-- `GET /voice?api_key=KEY` — WebSocket upgrade for real-time voice conversation (see Voice WebSocket section). Enabled when `[voice] ws_enabled = true`.
+- `POST /send` — message to agent's default session (activity-gated). Returns 412 if no default session.
+- `GET /status` — dispatches `/status` for the specified agent
+- `POST /command` — dispatches slash command (bypasses agent context)
+- `POST /wake` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session.
+- `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[voice] ws_enabled = true`.
 
 ## CLI Tool (`cmd/foci/`)
 
-Separate binary (`go build ./cmd/foci`) for scripts, cron jobs, and external tools. Binary name: `foci`. Commands: `send`, `branch`, `status`, `eval`, `command`, `ping`. Talks to the HTTP gateway (`focigw`) at `FOCI_ADDR` (default `127.0.0.1:18791`). Both `send` and `branch` support `--if-active <duration>` (skip if inactive) and `--if-inactive <duration>` (skip if active) for activity gating.
+Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints for scripts and cron jobs. See [docs/CLI.md](CLI.md) for the full command reference, flags, environment variables, and cron integration examples.
 
 ## Wake
 
