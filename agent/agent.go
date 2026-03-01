@@ -90,6 +90,8 @@ type Agent struct {
 	ModelAliases                map[string]string               // for resolving "haiku" → full model ID
 	SummaryContextTurns         int                             // recent conversation turns for summary context
 	SummaryContextChars         int                             // max chars of context to send to Haiku
+	MaxSummaryChars             int                             // max chars to auto-summarise (skip Haiku above this)
+	AutoSummarise               bool                            // enable auto-summarise of oversized tool results (default true)
 	Warnings                    *WarningQueue                   // nil disables warning injection into session
 	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
 	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
@@ -531,8 +533,8 @@ func (a *Agent) guardToolResult(ctx context.Context, toolName string, result str
 
 	log.Debugf("agent", "tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, fpath)
 
-	// Try to auto-summarise via Haiku
-	if a.Client != nil && len(a.ModelAliases) > 0 {
+	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
+	if a.AutoSummarise && a.Client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || len(result) <= a.MaxSummaryChars) {
 		if summary := a.summariseToolResult(ctx, toolName, result, messages, fpath); summary != "" {
 			return summary
 		}

@@ -300,6 +300,7 @@ func TestGuardToolResult_AutoSummary(t *testing.T) {
 		MaxResultChars:      10,
 		ToolResultTempDir:   tmpDir,
 		Client:              client,
+		AutoSummarise:       true,
 		ModelAliases:        nil, // no aliases → skip summary
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
@@ -313,6 +314,26 @@ func TestGuardToolResult_AutoSummary(t *testing.T) {
 	_ = mock
 }
 
+func TestGuardToolResult_SkipsSummaryAboveMaxSummaryChars(t *testing.T) {
+	tmpDir := t.TempDir()
+	bigResult := strings.Repeat("x", 200)
+
+	a := &Agent{
+		MaxResultChars:      10,
+		ToolResultTempDir:   tmpDir,
+		Client:              &anthropic.Client{},
+		AutoSummarise:       true,
+		ModelAliases:        map[string]string{"haiku": "claude-haiku-4-5"},
+		MaxSummaryChars:     50, // result (200 chars) exceeds this → skip summary
+		SummaryContextTurns: 5,
+		SummaryContextChars: 6000,
+	}
+	got := a.guardToolResult(context.Background(), "test", bigResult, nil)
+	if !strings.Contains(got, "Result too large") {
+		t.Error("expected fallback guard message when result exceeds MaxSummaryChars")
+	}
+}
+
 func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
 	tmpDir := t.TempDir()
 	bigResult := strings.Repeat("x", 100)
@@ -320,6 +341,7 @@ func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
 	a := &Agent{
 		MaxResultChars:      10,
 		ToolResultTempDir:   tmpDir,
+		AutoSummarise:       true,
 		Client:              nil, // no client → skip summary
 		ModelAliases:        map[string]string{"haiku": "claude-haiku-4-5"},
 		SummaryContextTurns: 5,
@@ -451,6 +473,25 @@ func TestRecentContext_SkipsToolBlocks(t *testing.T) {
 	// tool_use and tool_result messages have no text block, so they're skipped
 	if strings.Contains(got, "file1") {
 		t.Error("should not include tool_result content")
+	}
+}
+
+func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	bigResult := strings.Repeat("x", 200)
+
+	a := &Agent{
+		MaxResultChars:      10,
+		ToolResultTempDir:   tmpDir,
+		Client:              &anthropic.Client{},
+		AutoSummarise:       false, // disabled → skip summary
+		ModelAliases:        map[string]string{"haiku": "claude-haiku-4-5"},
+		SummaryContextTurns: 5,
+		SummaryContextChars: 6000,
+	}
+	got := a.guardToolResult(context.Background(), "test", bigResult, nil)
+	if !strings.Contains(got, "Result too large") {
+		t.Error("expected fallback guard message when AutoSummarise is false")
 	}
 }
 
