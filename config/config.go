@@ -148,7 +148,8 @@ type AgentConfig struct {
 
 type AnthropicConfig struct {
 	Token           string `toml:"token"`
-	OAuthToken      string `toml:"oauth_token"` // OAuth access token for usage API (legacy, static)
+	AdminKey        string `toml:"admin_key"`         // console API key for usage/mana and token counting
+	OAuthToken      string `toml:"oauth_token"`       // OAuth access token for usage API (legacy, static)
 	BraveAPIKey     string `toml:"brave_api_key"`
 	CredentialsFile string `toml:"credentials_file"`  // path to Claude Code credentials.json (fallback token source)
 	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")

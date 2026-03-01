@@ -84,7 +84,7 @@ All parameters have sensible defaults. Customize only what you need. Prompt file
 
 ### Anthropic API
 
-- **Auth:** Long-lived OAuth token from `claude setup-token` (`sk-ant-oat01-...`, 1-year lifetime)
+- **Auth:** Two tokens — OAuth setup-token for conversations, console API key for usage/admin. See [docs/AUTH.md](docs/AUTH.md).
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** `cache_control` with `{"type": "ephemeral"}` on system prompt blocks
 - **Streaming:** Server-sent events for responses
