@@ -486,6 +486,8 @@ Tool behavior settings.
 | `tmux_braindead` | bool | `true` | Auto-unwatch sessions after inactivity notification, auto-watch on send. |
 | `tmux_watch_threshold` | string | `"30s"` | Default inactivity watch threshold. Go duration format. |
 
+The `summary` tool uses `claude-haiku-4-5` hardcoded (always cheap/fast) and has no configurable options.
+
 Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
 
 ---
