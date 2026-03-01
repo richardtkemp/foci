@@ -308,7 +308,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("prompt_rules", fmt.Sprintf("(%d rules)", len(cfg.PromptRules)), "")
 	}
 
-	return formatTable(rows)
+	return formatTableBySection(rows)
 }
 
 // FormatConfigGrouped returns per-group config tables, each wrapped in a
@@ -539,7 +539,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	}
 
 	var tables []string
-	tables = append(tables, "```\nGlobal\n"+formatTable(globalRows)+"\n```")
+	tables = append(tables, "```\nGlobal\n"+formatTableBySection(globalRows)+"\n```")
 
 	// Current agent table
 	{
@@ -626,24 +626,43 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		if agent.MemoryFormation.SessionEndEnabled != nil {
 			addAgent("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
 		}
-		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTable(agentRows)+"\n```")
+		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTableBySection(agentRows)+"\n```")
 	}
 
 	return tables
 }
 
-// formatTable renders config rows as an aligned columnar table.
-func formatTable(rows []configRow) string {
+// formatTableBySection groups rows by Section and emits a separate table for
+// each group, headed by [section]. Each table has only KEY/VALUE columns.
+// Section order is preserved from insertion.
+func formatTableBySection(rows []configRow) string {
+	// Collect sections in insertion order.
+	var sections []string
+	seen := map[string]bool{}
+	grouped := map[string][]configRow{}
+	for _, r := range rows {
+		if !seen[r.Section] {
+			seen[r.Section] = true
+			sections = append(sections, r.Section)
+		}
+		grouped[r.Section] = append(grouped[r.Section], r)
+	}
+
 	cols := []table.Column{
-		{Header: "SECTION"},
 		{Header: "KEY"},
 		{Header: "VALUE"},
 	}
-	tableRows := make([][]string, len(rows))
-	for i, r := range rows {
-		tableRows[i] = []string{r.Section, r.Key, r.Value}
+
+	var parts []string
+	for _, sec := range sections {
+		sRows := grouped[sec]
+		tableRows := make([][]string, len(sRows))
+		for i, r := range sRows {
+			tableRows[i] = []string{r.Key, r.Value}
+		}
+		parts = append(parts, "["+sec+"]\n"+table.Format(cols, tableRows))
 	}
-	return table.Format(cols, tableRows)
+	return strings.Join(parts, "\n\n")
 }
 
 // formatValue converts a config value to its display string.
@@ -878,6 +897,27 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		return "All config options are set."
 	}
 
+	// Deduplicate: if a key appears in both "agent" and another section,
+	// keep only the non-agent entry to avoid redundant display.
+	nonAgentKeys := map[string]bool{}
+	for _, o := range opts {
+		if o.Section != "agent" {
+			nonAgentKeys[o.Key] = true
+		}
+	}
+	deduped := opts[:0]
+	for _, o := range opts {
+		if o.Section == "agent" && nonAgentKeys[o.Key] {
+			continue
+		}
+		deduped = append(deduped, o)
+	}
+	opts = deduped
+
+	if len(opts) == 0 {
+		return "All config options are set."
+	}
+
 	// Sort by section, then key within section.
 	sort.Slice(opts, func(i, j int) bool {
 		if opts[i].Section != opts[j].Section {
@@ -886,17 +926,33 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		return opts[i].Key < opts[j].Key
 	})
 
+	// Group by section, emit a separate 3-column table per section.
+	var sections []string
+	seen := map[string]bool{}
+	grouped := map[string][]availableOption{}
+	for _, o := range opts {
+		if !seen[o.Section] {
+			seen[o.Section] = true
+			sections = append(sections, o.Section)
+		}
+		grouped[o.Section] = append(grouped[o.Section], o)
+	}
+
 	cols := []table.Column{
-		{Header: "SECTION"},
 		{Header: "KEY"},
 		{Header: "DEFAULT"},
 		{Header: "DESCRIPTION"},
 	}
-	tableRows := make([][]string, len(opts))
-	for i, o := range opts {
-		tableRows[i] = []string{o.Section, o.Key, o.Default, o.Description}
+	var parts []string
+	for _, sec := range sections {
+		sOpts := grouped[sec]
+		tableRows := make([][]string, len(sOpts))
+		for i, o := range sOpts {
+			tableRows[i] = []string{o.Key, o.Default, o.Description}
+		}
+		parts = append(parts, "["+sec+"]\n"+table.Format(cols, tableRows))
 	}
-	return "Unset/default config options:\n\n" + table.Format(cols, tableRows)
+	return "Unset/default config options:\n\n" + strings.Join(parts, "\n\n")
 }
 
 func redactString(s string) string {
