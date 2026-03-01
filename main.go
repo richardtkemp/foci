@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
+
 	"strings"
 	"sync"
 	"syscall"
@@ -1504,13 +1504,10 @@ func setupAgent(p setupParams) *agentInstance {
 				return
 			}
 
-			// Extract chat ID from session key (agent:X:chat:CHATID) for
-			// targeted delivery. Falls back to bot's default chat if the
-			// session key doesn't contain a chat segment.
-			var chatID int64
-			if len(parts) >= 4 && parts[2] == "chat" {
-				chatID, _ = strconv.ParseInt(parts[3], 10, 64)
-			}
+			// Extract chat ID from session key for targeted delivery.
+			// Supports both "agent:X:chat:CHATID" and legacy "agent:X:CHATID".
+			// Falls back to bot's default chat if no chat ID found.
+			chatID := tools.ChatIDFromSessionKey(targetSessionKey)
 			if chatID != 0 {
 				if err := bot.SendTextToChat(chatID, resp); err != nil {
 					log.Errorf("session_notify", "telegram delivery to chat %d: %v", chatID, err)
