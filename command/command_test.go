@@ -353,6 +353,77 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 	})
 }
 
+func TestLookupChainKeyboard(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name: "tmux",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "executed: " + args, nil
+		},
+		ChainKeyboard: func(ctx context.Context, subcommand string) []KeyboardOption {
+			if subcommand == "kill" {
+				return []KeyboardOption{
+					{Label: "sess-1", Data: "kill sess-1"},
+					{Label: "sess-2", Data: "kill sess-2"},
+				}
+			}
+			return nil
+		},
+	})
+	r.Register(&Command{
+		Name:    "ping",
+		Execute: func(ctx context.Context, args string) (string, error) { return "pong", nil },
+		// No ChainKeyboard
+	})
+
+	ctx := context.Background()
+
+	// Bare subcommand with chain → returns options
+	name, opts, ok := r.LookupChainKeyboard(ctx, "/tmux kill")
+	if !ok {
+		t.Fatal("expected chain keyboard for /tmux kill")
+	}
+	if name != "tmux" {
+		t.Errorf("name = %q, want tmux", name)
+	}
+	if len(opts) != 2 {
+		t.Fatalf("got %d options, want 2", len(opts))
+	}
+	if opts[0].Label != "sess-1" {
+		t.Errorf("opts[0].Label = %q", opts[0].Label)
+	}
+
+	// Subcommand with no chain options → no chain
+	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux list")
+	if ok {
+		t.Error("should not chain for /tmux list (ChainKeyboard returns nil)")
+	}
+
+	// Full args (already has parameter) → no chain
+	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux kill mysession")
+	if ok {
+		t.Error("should not chain when full args provided")
+	}
+
+	// Bare command (no subcommand) → no chain
+	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux")
+	if ok {
+		t.Error("should not chain for bare command with no subcommand")
+	}
+
+	// Command without ChainKeyboard → no chain
+	_, _, ok = r.LookupChainKeyboard(ctx, "/ping something")
+	if ok {
+		t.Error("should not chain for command without ChainKeyboard")
+	}
+
+	// Not a command → no chain
+	_, _, ok = r.LookupChainKeyboard(ctx, "regular message")
+	if ok {
+		t.Error("should not chain for non-command")
+	}
+}
+
 func TestAll(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Command{Name: "beta"})

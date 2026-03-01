@@ -2473,6 +2473,67 @@ func TestHandleCommandCallback_HTMLFallback(t *testing.T) {
 	}
 }
 
+func TestHandleCommandCallback_Chain(t *testing.T) {
+	reg := command.NewRegistry()
+	reg.Register(&command.Command{
+		Name: "tmux",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "executed: " + args, nil
+		},
+		ChainKeyboard: func(ctx context.Context, subcommand string) []command.KeyboardOption {
+			if subcommand == "kill" {
+				return []command.KeyboardOption{
+					{Label: "sess-a", Data: "kill sess-a"},
+					{Label: "sess-b", Data: "kill sess-b"},
+				}
+			}
+			return nil
+		},
+	})
+
+	b, mock := testBot([]string{"111"}, reg)
+
+	// Callback for "/tmux kill" (bare subcommand) should chain to a second keyboard
+	b.handleCommandCallback(context.Background(), 12345, 1, "/tmux kill")
+
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+
+	if mock.edits != 1 {
+		t.Fatalf("expected 1 edit, got %d", mock.edits)
+	}
+	if mock.lastEditOpts == nil {
+		t.Fatal("expected edit opts")
+	}
+
+	// Should have inline keyboard with 2 buttons
+	kb := mock.lastEditOpts.ReplyMarkup
+	if len(kb.InlineKeyboard) == 0 {
+		t.Fatal("expected inline keyboard rows")
+	}
+	totalButtons := 0
+	for _, row := range kb.InlineKeyboard {
+		totalButtons += len(row)
+	}
+	if totalButtons != 2 {
+		t.Fatalf("expected 2 buttons, got %d", totalButtons)
+	}
+
+	// Check button data format
+	btn := kb.InlineKeyboard[0][0]
+	if btn.Text != "sess-a" {
+		t.Errorf("button text = %q, want sess-a", btn.Text)
+	}
+	if btn.CallbackData != "cmd:/tmux kill sess-a" {
+		t.Errorf("callback data = %q, want cmd:/tmux kill sess-a", btn.CallbackData)
+	}
+
+	// Message text should be the prompt
+	if !strings.Contains(mock.lastEditText, "/tmux kill") {
+		t.Errorf("edit text = %q, want to contain /tmux kill", mock.lastEditText)
+	}
+}
+
 func TestToolResultObserver_StoresResult(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.showToolCalls = "full"

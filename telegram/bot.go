@@ -2195,6 +2195,12 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 	cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, "")
 	cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, chatID)
 
+	// Check if this bare subcommand needs a chained keyboard (e.g. /tmux kill → pick session)
+	if parentName, opts, ok := b.commands.LookupChainKeyboard(cmdCtx, cmdText); ok {
+		b.editMessageWithKeyboard(chatID, msgID, parentName, cmdText, opts)
+		return
+	}
+
 	result, ok := b.commands.Dispatch(cmdCtx, cmdText)
 	if !ok {
 		result = "Unknown command: " + cmdText
@@ -2222,6 +2228,45 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 			MessageId: msgID,
 		})
 	}
+}
+
+// editMessageWithKeyboard replaces the message with a chained inline keyboard.
+func (b *Bot) editMessageWithKeyboard(chatID, msgID int64, parentName, cmdText string, opts []command.KeyboardOption) {
+	// Group options by row
+	rowMap := make(map[int][]command.KeyboardOption)
+	for _, o := range opts {
+		rowMap[o.Row] = append(rowMap[o.Row], o)
+	}
+	maxRow := 0
+	for r := range rowMap {
+		if r > maxRow {
+			maxRow = r
+		}
+	}
+	var rows [][]gotgbot.InlineKeyboardButton
+	for r := 0; r <= maxRow; r++ {
+		ropts := rowMap[r]
+		if len(ropts) == 0 {
+			continue
+		}
+		var buttons []gotgbot.InlineKeyboardButton
+		for _, o := range ropts {
+			buttons = append(buttons, gotgbot.InlineKeyboardButton{
+				Text:         o.Label,
+				CallbackData: fmt.Sprintf("cmd:/%s %s", parentName, o.Data),
+			})
+		}
+		rows = append(rows, buttons)
+	}
+
+	display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
+	b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
+		ChatId:    chatID,
+		MessageId: msgID,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: rows,
+		},
+	})
 }
 
 // handleToolCallCallback handles tool call expand/collapse button presses.
