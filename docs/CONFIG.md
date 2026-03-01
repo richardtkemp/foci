@@ -61,6 +61,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `max_concurrent_spawns` | int | `0` | Per-agent max concurrent spawns. 0 = use global `[tools] max_concurrent_spawns`. |
 | `max_upload_file_size` | int | `0` | Per-agent max file size for multipart uploads in bytes. 0 = use global `[tools] max_upload_file_size`. |
 | `usage_warnings.thresholds` | int[] | `[]` | Per-agent mana warning thresholds. When set, completely replaces global `[usage_warnings] thresholds` for this agent. |
+| `usage_warnings.restore_threshold` | int | (global) | Per-agent mana restore threshold. Inject session notice when mana restores to 100% after being below this. 0 = disabled. |
 | `keepalive.enabled` | bool | (global) | Per-agent keepalive override. Inherits from global `[keepalive]` if not set. |
 | `keepalive.interval` | string | (global) | Per-agent keepalive interval. |
 | `keepalive.prompt` | string | (global) | Per-agent keepalive prompt file. |

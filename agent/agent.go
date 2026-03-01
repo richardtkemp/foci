@@ -831,12 +831,17 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 	// Check mana thresholds and notify user for active conversations only
 	// (not keepalives or scheduled wakes)
+	var manaRestoreNote string
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
 		a.ManaWatcher.CheckAndWarn(mana, manaReset, func(warn string) {
 			if a.ManaWarnFunc != nil {
 				a.ManaWarnFunc(warn)
 			}
 		})
+		if msg := a.ManaWatcher.CheckRestore(mana); msg != "" {
+			manaRestoreNote = "[" + msg + "]\n"
+			log.Infof("mana", "restore: %s", msg)
+		}
 	}
 
 	// Annotate with saved image paths so the agent knows where files are
@@ -849,7 +854,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 	metaPrefix := buildMetaPrefix(now, turnModel, mana, sm)
 	reminderBlock := a.collectReminders()
-	msgBody := imagePaths + userMessage
+	msgBody := manaRestoreNote + imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && isUserTrigger(trigger) {
 		msgBody = userMessage + "\n\n" + userMessage
