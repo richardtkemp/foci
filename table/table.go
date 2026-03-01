@@ -199,6 +199,9 @@ func FormatWidth(cols []Column, rows [][]string, maxWidth int) string {
 			totalWidth += 2
 		}
 	}
+	if totalWidth > maxWidth {
+		totalWidth = maxWidth
+	}
 
 	var b strings.Builder
 	writeCell := func(s string, colWidth int, align int) {

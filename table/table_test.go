@@ -328,6 +328,15 @@ func TestFormatWidth(t *testing.T) {
 	if zero != normal {
 		t.Error("FormatWidth with 0 should delegate to Format")
 	}
+
+	// Separator must not overflow even when columns can't shrink further.
+	tiny := FormatWidth(cols, rows, 12)
+	for _, line := range strings.Split(tiny, "\n") {
+		w := DisplayWidth(line)
+		if w > 12 {
+			t.Errorf("line exceeds maxWidth 12 (width %d): %q", w, line)
+		}
+	}
 }
 
 func TestDisplayWidthMultipleTabs(t *testing.T) {
