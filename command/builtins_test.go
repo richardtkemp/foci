@@ -447,6 +447,7 @@ func TestModelCommand(t *testing.T) {
 		func(context.Context) string { return model },
 		func(_ context.Context, m string) { model = m },
 		resolveModel,
+		nil,
 	)
 
 	// Show current

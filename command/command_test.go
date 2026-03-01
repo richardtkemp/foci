@@ -151,6 +151,208 @@ func TestLevenshtein(t *testing.T) {
 	}
 }
 
+func TestLookupKeyboard(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name: "model",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "executed: " + args, nil
+		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "haiku", Data: "haiku"},
+				{Label: "sonnet", Data: "sonnet"},
+				{Label: "opus", Data: "opus"},
+			}
+		},
+	})
+	r.Register(&Command{
+		Name: "ping",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			return "pong", nil
+		},
+		// No KeyboardOptions — should never return keyboard
+	})
+
+	ctx := context.Background()
+
+	// Bare command with keyboard options → returns keyboard
+	name, opts, ok := r.LookupKeyboard(ctx, "/model")
+	if !ok {
+		t.Fatal("expected keyboard for bare /model")
+	}
+	if name != "model" {
+		t.Errorf("name = %q, want model", name)
+	}
+	if len(opts) != 3 {
+		t.Fatalf("got %d options, want 3", len(opts))
+	}
+	if opts[0].Label != "haiku" || opts[0].Data != "haiku" {
+		t.Errorf("opts[0] = %+v", opts[0])
+	}
+
+	// Command with args → no keyboard (execute normally)
+	_, _, ok = r.LookupKeyboard(ctx, "/model sonnet")
+	if ok {
+		t.Error("should not return keyboard when args provided")
+	}
+
+	// Command without keyboard options → no keyboard
+	_, _, ok = r.LookupKeyboard(ctx, "/ping")
+	if ok {
+		t.Error("should not return keyboard for command without KeyboardOptions")
+	}
+
+	// Unknown command → no keyboard
+	_, _, ok = r.LookupKeyboard(ctx, "/unknown")
+	if ok {
+		t.Error("should not return keyboard for unknown command")
+	}
+
+	// Not a command → no keyboard
+	_, _, ok = r.LookupKeyboard(ctx, "regular message")
+	if ok {
+		t.Error("should not return keyboard for non-command")
+	}
+
+	// Dispatch still works with args (keyboard doesn't block normal dispatch)
+	result, dispatched := r.Dispatch(ctx, "/model opus")
+	if !dispatched {
+		t.Fatal("expected dispatch to succeed")
+	}
+	if result != "executed: opus" {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestLookupKeyboardCaseInsensitive(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name:    "effort",
+		Execute: func(ctx context.Context, args string) (string, error) { return "", nil },
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{{Label: "low", Data: "low"}}
+		},
+	})
+
+	_, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT")
+	if !ok {
+		t.Error("keyboard lookup should be case-insensitive")
+	}
+}
+
+func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
+	// Verify the builtin commands that should have keyboards do have them
+	t.Run("effort", func(t *testing.T) {
+		cmd := NewEffortCommand(
+			func(context.Context) string { return "medium" },
+			func(context.Context, string) {},
+		)
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("effort command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 3 {
+			t.Fatalf("got %d options, want 3", len(opts))
+		}
+		// Check current value is marked
+		found := false
+		for _, o := range opts {
+			if strings.Contains(o.Label, "✓") {
+				found = true
+				if !strings.HasPrefix(o.Label, "medium") {
+					t.Errorf("wrong option marked: %q", o.Label)
+				}
+			}
+		}
+		if !found {
+			t.Error("current effort should be marked with ✓")
+		}
+	})
+
+	t.Run("thinking", func(t *testing.T) {
+		cmd := NewThinkingCommand(
+			func(context.Context) string { return "adaptive" },
+			func(context.Context, string) {},
+		)
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("thinking command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 2 {
+			t.Fatalf("got %d options, want 2", len(opts))
+		}
+	})
+
+	t.Run("config", func(t *testing.T) {
+		cmd := NewConfigCommand(func(args string) (string, error) { return args, nil })
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("config command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 3 {
+			t.Fatalf("got %d options, want 3", len(opts))
+		}
+	})
+
+	t.Run("model_with_aliases", func(t *testing.T) {
+		aliases := map[string]string{
+			"haiku":  "claude-haiku-4-5",
+			"sonnet": "claude-sonnet-4-6",
+			"opus":   "claude-opus-4-6",
+		}
+		cmd := NewModelCommand(
+			func(context.Context) string { return "claude-sonnet-4-6" },
+			func(context.Context, string) {},
+			func(s string) string { return s },
+			aliases,
+		)
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("model command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 3 {
+			t.Fatalf("got %d options, want 3", len(opts))
+		}
+		// sonnet should be marked as current
+		found := false
+		for _, o := range opts {
+			if strings.Contains(o.Label, "✓") {
+				found = true
+				if !strings.HasPrefix(o.Label, "sonnet") {
+					t.Errorf("wrong option marked: %q", o.Label)
+				}
+			}
+		}
+		if !found {
+			t.Error("current model alias should be marked with ✓")
+		}
+	})
+
+	t.Run("model_no_aliases", func(t *testing.T) {
+		cmd := NewModelCommand(
+			func(context.Context) string { return "claude-opus-4-6" },
+			func(context.Context, string) {},
+			func(s string) string { return s },
+			nil,
+		)
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 3 {
+			t.Fatalf("got %d options, want 3", len(opts))
+		}
+		// opus should be marked
+		found := false
+		for _, o := range opts {
+			if strings.Contains(o.Label, "✓") && strings.HasPrefix(o.Label, "opus") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("current model should be marked with ✓")
+		}
+	})
+}
+
 func TestAll(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Command{Name: "beta"})

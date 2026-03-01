@@ -803,6 +803,8 @@ Enabled by default (`log_rotation = true`). Disable with `log_rotation = false` 
 
 Messages starting with `/` are intercepted before reaching the agent. They execute immediately - never queued behind an in-flight agent turn. This is a hard architectural constraint: commands must bypass the agent reply pipeline entirely.
 
+**Inline keyboards:** Commands that accept parameters (`/model`, `/thinking`, `/effort`, `/config`, `/sessions`, `/tmux`) show an inline keyboard with available options when invoked bare (no arguments). Tapping a button executes the command with that argument and edits the message to show the result. Typed commands with arguments (e.g. `/model sonnet`) still work as before — the keyboard is only shown when no args are provided. Uses the same `InlineKeyboardMarkup` + callback query mechanism as tool call expansion. Callback data format: `cmd:/name args`.
+
 ### Built-in commands
 
 **Session:**

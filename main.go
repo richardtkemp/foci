@@ -1943,6 +1943,7 @@ func setupAgent(p setupParams) *agentInstance {
 		func(ctx context.Context) string { return ag.SessionModel(sessionKeyFromCtx(ctx)) },
 		func(ctx context.Context, m string) { ag.SetSessionModel(sessionKeyFromCtx(ctx), m) },
 		resolveModelFn,
+		p.cfg.Models.Aliases,
 	))
 
 	cmds.Register(command.NewEffortCommand(

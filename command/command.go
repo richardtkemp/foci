@@ -8,6 +8,13 @@ import (
 	"sync"
 )
 
+// KeyboardOption represents a button in an inline keyboard for a command.
+type KeyboardOption struct {
+	Label string // Button text shown to user
+	Data  string // Callback data suffix (appended to "cmd:/name ")
+	Row   int    // Which row this button goes in (0-indexed)
+}
+
 // Command is a slash command that executes outside the agent pipeline.
 type Command struct {
 	Name           string
@@ -16,6 +23,10 @@ type Command struct {
 	Execute        func(ctx context.Context, args string) (string, error)
 	SkipToolExport bool // if true, not exposed as an agent tool
 	Hidden         bool // if true, excluded from /help and BotFather registration
+
+	// KeyboardOptions returns inline keyboard buttons to show when the command
+	// is invoked bare (no arguments). nil means no keyboard — execute normally.
+	KeyboardOptions func(ctx context.Context) []KeyboardOption
 }
 
 // WizardHandler is implemented by interactive wizards that take over message routing.
@@ -57,6 +68,36 @@ func (r *Registry) All() []*Command {
 		return cmds[i].Name < cmds[j].Name
 	})
 	return cmds
+}
+
+// LookupKeyboard checks if a bare command (no args) has inline keyboard options.
+// Returns (command_name, options, true) if a keyboard should be shown, or ("", nil, false) otherwise.
+func (r *Registry) LookupKeyboard(ctx context.Context, text string) (string, []KeyboardOption, bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return "", nil, false
+	}
+
+	stripped := text[1:]
+	name, args, _ := strings.Cut(stripped, " ")
+	name = strings.ToLower(name)
+	args = strings.TrimSpace(args)
+
+	if args != "" {
+		return "", nil, false
+	}
+
+	cmd := r.commands[name]
+	if cmd == nil || cmd.KeyboardOptions == nil {
+		return "", nil, false
+	}
+
+	opts := cmd.KeyboardOptions(ctx)
+	if len(opts) == 0 {
+		return "", nil, false
+	}
+
+	return name, opts, true
 }
 
 // Dispatch parses a "/command args" string, looks up the command, and executes it.

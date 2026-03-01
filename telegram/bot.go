@@ -785,6 +785,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		// Pass userID and chatID to command via context
 		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
 		cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
+
+		// Check for inline keyboard (bare command, no args)
+		if name, opts, ok := b.commands.LookupKeyboard(cmdCtx, text); ok {
+			log.Debugf("telegram", "command /%s showing keyboard (%d options)", name, len(opts))
+			b.sendCommandKeyboard(msg.Chat.Id, name, opts)
+			return
+		}
+
 		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
 			log.Debugf("telegram", "command %s dispatched", text)
 			b.sendReply(msg, userID, result)
@@ -2032,8 +2040,39 @@ func truncate(s string, max int) string {
 	return s[:max] + "..."
 }
 
+// sendCommandKeyboard sends an inline keyboard message for a bare slash command.
+func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, opts []command.KeyboardOption) {
+	// Group options by row
+	rowMap := make(map[int][]gotgbot.InlineKeyboardButton)
+	maxRow := 0
+	for _, opt := range opts {
+		data := fmt.Sprintf("cmd:/%s %s", cmdName, opt.Data)
+		rowMap[opt.Row] = append(rowMap[opt.Row], gotgbot.InlineKeyboardButton{
+			Text:         opt.Label,
+			CallbackData: data,
+		})
+		if opt.Row > maxRow {
+			maxRow = opt.Row
+		}
+	}
+
+	rows := make([][]gotgbot.InlineKeyboardButton, 0, maxRow+1)
+	for i := 0; i <= maxRow; i++ {
+		if buttons, ok := rowMap[i]; ok {
+			rows = append(rows, buttons)
+		}
+	}
+
+	label := fmt.Sprintf("/%s:", cmdName)
+	b.client.SendMessage(chatID, label, &gotgbot.SendMessageOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: rows,
+		},
+	})
+}
+
 // handleCallbackQuery processes inline keyboard button presses for tool result
-// and thinking block expansion.
+// and thinking block expansion, and command keyboard selections.
 func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery) {
 	if cq.Data == "" || cq.Message.GetChat().Id == 0 {
 		return
@@ -2044,6 +2083,13 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	defer func() {
 		b.client.AnswerCallbackQuery(cq.Id, nil)
 	}()
+
+	// Command keyboard callbacks: "cmd:/name args"
+	if strings.HasPrefix(cq.Data, "cmd:") {
+		cmdText := cq.Data[4:] // strip "cmd:" prefix
+		b.handleCommandCallback(ctx, chatID, cq.Message.GetMessageId(), cmdText)
+		return
+	}
 
 	parts := strings.SplitN(cq.Data, ":", 3)
 	if len(parts) != 3 {
@@ -2061,6 +2107,34 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	case "th":
 		b.handleThinkingCallback(chatID, action, msgID)
 	}
+}
+
+// handleCommandCallback executes a command from an inline keyboard press
+// and edits the original message to show the result.
+func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cmdText string) {
+	cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, "")
+	cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, chatID)
+
+	result, ok := b.commands.Dispatch(cmdCtx, cmdText)
+	if !ok {
+		result = "Unknown command: " + cmdText
+	}
+
+	// Strip multi-message separators for edit (edit replaces single message)
+	result = strings.ReplaceAll(result, "\x00", "\n\n")
+
+	display := ConvertToTelegramHTML(result)
+	if len(display) > 4096 {
+		display = display[:4090] + "\n..."
+	}
+
+	log.Debugf("telegram", "command callback %q dispatched", cmdText)
+
+	b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
+		ChatId:    chatID,
+		MessageId: msgID,
+		ParseMode: "HTML",
+	})
 }
 
 // handleToolCallCallback handles tool call expand/collapse button presses.
