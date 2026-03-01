@@ -1849,6 +1849,8 @@ func NewSecretsCommand(store SecretsStore) *Command {
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "list", Data: "list"},
+				{Label: "set", Data: "set"},
+				{Label: "remove", Data: "remove"},
 			}
 		},
 		Execute: func(ctx context.Context, args string) (string, error) {

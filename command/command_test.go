@@ -532,6 +532,19 @@ func TestSecretsCommand(t *testing.T) {
 	if cmd.SkipToolExport != true {
 		t.Error("secrets command must have SkipToolExport=true")
 	}
+	if cmd.KeyboardOptions == nil {
+		t.Fatal("secrets command should have KeyboardOptions")
+	}
+	opts := cmd.KeyboardOptions(context.Background())
+	wantLabels := []string{"list", "set", "remove"}
+	if len(opts) != len(wantLabels) {
+		t.Fatalf("got %d keyboard options, want %d", len(opts), len(wantLabels))
+	}
+	for i, want := range wantLabels {
+		if opts[i].Label != want || opts[i].Data != want {
+			t.Errorf("option %d = {%q, %q}, want {%q, %q}", i, opts[i].Label, opts[i].Data, want, want)
+		}
+	}
 
 	// List
 	result, err := cmd.Execute(context.Background(), "list")
