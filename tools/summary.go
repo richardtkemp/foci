@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"foci/anthropic"
@@ -13,7 +14,18 @@ import (
 
 // NewSummaryTool creates a tool that summarizes/extracts information from a file
 // via a Haiku call without loading the full content into the agent's context.
-func NewSummaryTool(client *anthropic.Client) *Tool {
+// modelAliases maps short names (e.g. "haiku") to full model IDs; used to
+// resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
+func NewSummaryTool(client *anthropic.Client, modelAliases map[string]string) *Tool {
+	resolveModel := func(alias string) string {
+		if modelAliases != nil {
+			if full, ok := modelAliases[strings.ToLower(alias)]; ok {
+				return full
+			}
+		}
+		return alias
+	}
+
 	return &Tool{
 		Name:        "summary",
 		Description: "Summarize or extract specific information from a file using a fast Haiku call. Use this instead of read for large files when you only need specific information, not the full content.",
@@ -32,12 +44,12 @@ func NewSummaryTool(client *anthropic.Client) *Tool {
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return summaryExecute(ctx, params, client)
+			return summaryExecute(ctx, params, client, resolveModel)
 		},
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client *anthropic.Client) (string, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client *anthropic.Client, resolveModel func(string) string) (string, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -73,7 +85,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 		}
 	}
 
-	const model = "claude-haiku-4-5"
+	model := resolveModel("haiku")
 	start := time.Now()
 
 	req := &anthropic.MessageRequest{

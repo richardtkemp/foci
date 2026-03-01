@@ -2188,6 +2188,125 @@ id = "test"
 	}
 }
 
+func TestAgentExplicitZeroNotOverwritten(t *testing.T) {
+	// An agent that explicitly sets braindead_threshold = 0 should NOT
+	// have it overwritten by the defaults value. This tests the IsDefined
+	// fix in the reflect-based defaults waterfall.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[defaults]
+braindead_threshold = 15
+
+[[agents]]
+id = "explicit-zero"
+braindead_threshold = 0
+
+[[agents]]
+id = "inherits"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Agent that explicitly set 0 should keep 0
+	if cfg.Agents[0].BraindeadThreshold != 0 {
+		t.Errorf("explicit-zero agent: BraindeadThreshold = %d, want 0", cfg.Agents[0].BraindeadThreshold)
+	}
+
+	// Agent that didn't set it should inherit 15
+	if cfg.Agents[1].BraindeadThreshold != 15 {
+		t.Errorf("inherits agent: BraindeadThreshold = %d, want 15", cfg.Agents[1].BraindeadThreshold)
+	}
+}
+
+func TestApplyDefaultsReflect(t *testing.T) {
+	// Verify that the reflect-based waterfall copies all DefaultsConfig fields.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[defaults]
+model = "claude-opus-4-6"
+max_tool_loops = 50
+max_output_tokens = 16384
+braindead_threshold = 20
+braindead_prompt = "watch it"
+effort = "high"
+thinking = "adaptive"
+tts_rate = 1.5
+duplicate_messages = true
+inject_agent_warnings = true
+compaction_effort = "low"
+system_files = ["A.md", "B.md"]
+
+[[agents]]
+id = "bare"
+
+[[agents]]
+id = "override"
+model = "claude-haiku-4-5"
+effort = "low"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	bare := cfg.Agents[0]
+	if bare.Model != "claude-opus-4-6" {
+		t.Errorf("bare Model = %q", bare.Model)
+	}
+	if bare.MaxToolLoops != 50 {
+		t.Errorf("bare MaxToolLoops = %d", bare.MaxToolLoops)
+	}
+	if bare.MaxOutputTokens != 16384 {
+		t.Errorf("bare MaxOutputTokens = %d", bare.MaxOutputTokens)
+	}
+	if bare.BraindeadThreshold != 20 {
+		t.Errorf("bare BraindeadThreshold = %d", bare.BraindeadThreshold)
+	}
+	if bare.BraindeadPrompt != "watch it" {
+		t.Errorf("bare BraindeadPrompt = %q", bare.BraindeadPrompt)
+	}
+	if bare.Effort != "high" {
+		t.Errorf("bare Effort = %q", bare.Effort)
+	}
+	if bare.Thinking != "adaptive" {
+		t.Errorf("bare Thinking = %q", bare.Thinking)
+	}
+	if bare.TTSRate != 1.5 {
+		t.Errorf("bare TTSRate = %f", bare.TTSRate)
+	}
+	if !bare.DuplicateMessages {
+		t.Error("bare DuplicateMessages should be true")
+	}
+	if !bare.InjectAgentWarnings {
+		t.Error("bare InjectAgentWarnings should be true")
+	}
+	if bare.CompactionEffort != "low" {
+		t.Errorf("bare CompactionEffort = %q", bare.CompactionEffort)
+	}
+	if len(bare.SystemFiles) != 2 || bare.SystemFiles[0] != "A.md" {
+		t.Errorf("bare SystemFiles = %v", bare.SystemFiles)
+	}
+
+	// Override agent keeps its own values
+	override := cfg.Agents[1]
+	if override.Model != "claude-haiku-4-5" {
+		t.Errorf("override Model = %q, want claude-haiku-4-5", override.Model)
+	}
+	if override.Effort != "low" {
+		t.Errorf("override Effort = %q, want low", override.Effort)
+	}
+	// But inherits defaults for fields it didn't set
+	if override.MaxToolLoops != 50 {
+		t.Errorf("override MaxToolLoops = %d, want 50 (from defaults)", override.MaxToolLoops)
+	}
+}
+
 func TestExampleConfigKeysValid(t *testing.T) {
 	// Validates that foci.toml.example contains exactly the right config keys.
 	// If you add a new config field, this test will fail until you either:

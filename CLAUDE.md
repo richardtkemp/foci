@@ -33,5 +33,5 @@ All tests are self-contained except `anthropic/cache_test.go` which needs `ANTHR
 
 - **Tests:** Write tests for all new functionality. Cover happy path, edge cases, and error conditions.
 - **Docs:** Update `docs/CONFIG.md` for any new config options. Update `docs/WIRING.md` for any architectural or flow changes.
-- **Config:** New behaviour should be configurable where appropriate. Add fields to the relevant config struct with TOML tags and sensible defaults.
+- **Config:** No magic numbers in code. Thresholds, intervals, model names, percentages, limits — anything that might reasonably vary per deployment — must be a config field with a sensible default. Add fields to the relevant config struct with TOML tags.
 - **Config scope:** All config keys should be available both globally (in `[defaults]` or top-level sections) AND per-agent (in `[[agents]]`), unless it genuinely doesn't make sense per-agent (e.g. `workspace`, `id`). Per-agent values override global. This is the design principle — don't add global-only config unless there's a clear reason.

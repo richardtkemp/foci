@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -590,6 +591,82 @@ func normalizeBoolStrings(data string) string {
 	})
 }
 
+// agentDefinedFields parses TOML metadata keys to determine which fields each
+// [[agents]] array element explicitly defines. Returns a slice (one entry per
+// agent) of sets of TOML field names.
+func agentDefinedFields(md toml.MetaData) []map[string]bool {
+	var result []map[string]bool
+	var current map[string]bool
+
+	for _, key := range md.Keys() {
+		parts := []string(key)
+		if len(parts) == 0 || parts[0] != "agents" {
+			continue
+		}
+		if len(parts) == 1 {
+			// Start of a new [[agents]] block
+			current = make(map[string]bool)
+			result = append(result, current)
+			continue
+		}
+		if current != nil {
+			current[parts[1]] = true
+		}
+	}
+	return result
+}
+
+// applyDefaultsToAgent copies fields from defaults to agent where the agent
+// field is zero-value and was not explicitly set in the TOML file.
+// Fields are matched by TOML tag name between DefaultsConfig and AgentConfig.
+func applyDefaultsToAgent(agent *AgentConfig, defaults *DefaultsConfig, defined map[string]bool) {
+	dv := reflect.ValueOf(defaults).Elem()
+	dt := dv.Type()
+	av := reflect.ValueOf(agent).Elem()
+	at := av.Type()
+
+	// Build AgentConfig field index by TOML tag
+	agentFieldByTag := make(map[string]int, at.NumField())
+	for i := 0; i < at.NumField(); i++ {
+		tag := at.Field(i).Tag.Get("toml")
+		if tag != "" && tag != "-" {
+			agentFieldByTag[tag] = i
+		}
+	}
+
+	for i := 0; i < dt.NumField(); i++ {
+		tag := dt.Field(i).Tag.Get("toml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		ai, ok := agentFieldByTag[tag]
+		if !ok {
+			continue // DefaultsConfig field has no matching AgentConfig field
+		}
+
+		af := av.Field(ai)
+		df := dv.Field(i)
+
+		// Skip if agent explicitly defined this field in TOML
+		if defined[tag] {
+			continue
+		}
+
+		// Skip if agent value is already non-zero
+		if !af.IsZero() {
+			continue
+		}
+
+		// Skip if default is also zero (nothing to copy)
+		if df.IsZero() {
+			continue
+		}
+
+		af.Set(df)
+	}
+}
+
 // Load reads config from the given TOML file path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -631,44 +708,19 @@ func Load(path string) (*Config, error) {
 		cfg.Agents = []AgentConfig{cfg.Agent}
 	}
 
-	// Apply [defaults] to all agents (agent value > global default > hardcoded)
+	// Apply [defaults] to all agents (agent value > global default > hardcoded).
+	// Uses reflect to iterate DefaultsConfig fields and copy to matching
+	// AgentConfig fields when the agent value is zero and wasn't explicitly
+	// set in the TOML file. This means adding new fields to DefaultsConfig
+	// with matching TOML tags in AgentConfig "just works" — no new if-blocks.
+	perAgentDefined := agentDefinedFields(md)
 	for i := range cfg.Agents {
-		if cfg.Agents[i].Model == "" {
-			cfg.Agents[i].Model = cfg.Defaults.Model
+		var defined map[string]bool
+		if i < len(perAgentDefined) {
+			defined = perAgentDefined[i]
 		}
-		if cfg.Agents[i].MaxToolLoops == 0 {
-			cfg.Agents[i].MaxToolLoops = cfg.Defaults.MaxToolLoops
-		}
-		if cfg.Agents[i].MaxOutputTokens == 0 {
-			cfg.Agents[i].MaxOutputTokens = cfg.Defaults.MaxOutputTokens
-		}
-		if cfg.Agents[i].BraindeadThreshold == 0 {
-			cfg.Agents[i].BraindeadThreshold = cfg.Defaults.BraindeadThreshold
-		}
-		if cfg.Agents[i].BraindeadPrompt == "" {
-			cfg.Agents[i].BraindeadPrompt = cfg.Defaults.BraindeadPrompt
-		}
-		if cfg.Agents[i].Effort == "" {
-			cfg.Agents[i].Effort = cfg.Defaults.Effort
-		}
-		if cfg.Agents[i].Thinking == "" {
-			cfg.Agents[i].Thinking = cfg.Defaults.Thinking
-		}
-		if cfg.Agents[i].TTSRate == 0 {
-			cfg.Agents[i].TTSRate = cfg.Defaults.TTSRate
-		}
-		if len(cfg.Agents[i].SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) > 0 {
-			cfg.Agents[i].SystemFiles = cfg.Defaults.SystemFiles
-		}
-		if !cfg.Agents[i].DuplicateMessages && cfg.Defaults.DuplicateMessages {
-			cfg.Agents[i].DuplicateMessages = true
-		}
-		if cfg.Agents[i].CompactionEffort == "" {
-			cfg.Agents[i].CompactionEffort = cfg.Defaults.CompactionEffort
-		}
-		if !cfg.Agents[i].InjectAgentWarnings && cfg.Defaults.InjectAgentWarnings {
-			cfg.Agents[i].InjectAgentWarnings = true
-		}
+		applyDefaultsToAgent(&cfg.Agents[i], &cfg.Defaults, defined)
+
 		if cfg.Agents[i].BranchOrientationPrompt != "" {
 			cfg.Agents[i].BranchOrientationPrompt = ResolvePath(cfg.Agents[i].BranchOrientationPrompt)
 		}
