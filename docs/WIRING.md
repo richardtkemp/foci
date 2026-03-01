@@ -474,7 +474,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 
 **Two types:**
 1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
-   - `/mana` — check quota remaining (configurable name via `[mana_warnings] name`; `/usage` is a hidden alias)
+   - `/mana` — check quota remaining (`/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 

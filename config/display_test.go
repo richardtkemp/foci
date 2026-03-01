@@ -26,9 +26,9 @@ func testConfig() (*Config, AgentConfig) {
 			ShowToolCalls:       ToolCallPreview,
 		},
 		Sessions: SessionsConfig{
-			Dir:                 "/data/sessions",
-			CompactionThreshold: 0.8,
-			CompactionMaxTokens: 4096,
+			Dir:                   "/data/sessions",
+			CompactionThreshold:   0.8,
+			CompactionMaxTokens:   4096,
 			CompactionMinMessages: 4,
 		},
 		Memory: MemoryConfig{
@@ -69,18 +69,17 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxMemoryCritical:      "20%",
 			TmuxMemoryKill:          "30%",
 		},
-		Environment: EnvironmentConfig{Enabled: true},
-		Cache:       CacheConfig{Strategy: "auto"},
-		ManaWarnings: ManaWarningsConfig{Name: "mana"},
-		Database:    DatabaseConfig{BusyTimeout: "5s"},
+		Environment:  EnvironmentConfig{Enabled: true},
+		ManaWarnings: ManaWarningsConfig{},
+		Database:     DatabaseConfig{BusyTimeout: "5s"},
 	}
 	agent := AgentConfig{
-		ID:                "test-agent",
-		Model:             "claude-haiku-4-5",
-		Workspace:         "/home/user/workspace",
+		ID:        "test-agent",
+		Model:     "claude-haiku-4-5",
+		Workspace: "/home/user/workspace",
 
-		MaxToolLoops:      25,
-		MaxOutputTokens:   8192,
+		MaxToolLoops:    25,
+		MaxOutputTokens: 8192,
 	}
 	return cfg, agent
 }
@@ -103,8 +102,7 @@ func TestFormatConfig(t *testing.T) {
 	for _, section := range []string{
 		"agent", "telegram", "sessions", "memory",
 		"logging", "http", "tools", "environment",
-		"cache", "usage_warnings", "database",
-		"anthropic",
+		"database", "anthropic",
 	} {
 		if !strings.Contains(result, section) {
 			t.Errorf("missing section %q", section)
@@ -244,12 +242,12 @@ func TestFormatAvailableAllSet(t *testing.T) {
 func TestFormatConfigGrouped(t *testing.T) {
 	cfg, agent := testConfig()
 	cfg.Agents = []AgentConfig{agent, {
-		ID:                "second-agent",
-		Model:             "claude-sonnet-4-6",
-		Workspace:         "/home/user/workspace2",
+		ID:        "second-agent",
+		Model:     "claude-sonnet-4-6",
+		Workspace: "/home/user/workspace2",
 
-		MaxToolLoops:      25,
-		MaxOutputTokens:   8192,
+		MaxToolLoops:    25,
+		MaxOutputTokens: 8192,
 	}}
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -301,37 +299,37 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	cfg, _ := testConfig()
 	// Set defaults as Load() would.
 	cfg.Defaults = DefaultsConfig{
-		Model:             "claude-haiku-4-5",
+		Model: "claude-haiku-4-5",
 
-		MaxToolLoops:      25,
-		MaxOutputTokens:   8192,
+		MaxToolLoops:    25,
+		MaxOutputTokens: 8192,
 	}
 	// Agent overrides model from the default.
 	agent := AgentConfig{
-		ID:                "test-agent",
-		Model:             "claude-sonnet-4-6",
-		Workspace:         "/home/user/workspace",
+		ID:        "test-agent",
+		Model:     "claude-sonnet-4-6",
+		Workspace: "/home/user/workspace",
 
-		MaxToolLoops:      25,
-		MaxOutputTokens:   8192,
+		MaxToolLoops:    25,
+		MaxOutputTokens: 8192,
 	}
 	cfg.Agents = []AgentConfig{agent}
 
 	// Simulate TOML metadata: model is explicitly set, some others are not (hardcoded default).
 	cfg.DefinedKeys = map[string]bool{
-		"defaults":                    true,
-		"defaults.model":              true,
-		"defaults.max_tool_loops":     true,
-		"defaults.max_output_tokens":  true,
-		"telegram":                    true,
-		"telegram.bot_token":          true,
-		"telegram.allowed_users":      true,
-		"sessions":                    true,
-		"sessions.dir":                true,
-		"logging":                     true,
-		"logging.level":               true,
-		"http":                        true,
-		"http.port":                   true,
+		"defaults":                   true,
+		"defaults.model":             true,
+		"defaults.max_tool_loops":    true,
+		"defaults.max_output_tokens": true,
+		"telegram":                   true,
+		"telegram.bot_token":         true,
+		"telegram.allowed_users":     true,
+		"sessions":                   true,
+		"sessions.dir":               true,
+		"logging":                    true,
+		"logging.level":              true,
+		"http":                       true,
+		"http.port":                  true,
 	}
 
 	tables := FormatConfigGrouped(cfg, agent)

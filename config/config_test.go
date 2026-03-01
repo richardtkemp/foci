@@ -142,12 +142,9 @@ token = "test-token"
 	if cfg.Logging.APIFile != wantAPIFile {
 		t.Errorf("default Logging.APIFile = %q, want %q", cfg.Logging.APIFile, wantAPIFile)
 	}
-	if cfg.ManaWarnings.Name != "mana" {
-		t.Errorf("default ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "mana")
-	}
 }
 
-func TestLoadCustomManaName(t *testing.T) {
+func TestLoadCustomManaThresholds(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -157,7 +154,6 @@ id = "test"
 token = "test-token"
 
 [usage_warnings]
-name = "juice"
 thresholds = [50, 25, 10]
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -167,9 +163,6 @@ thresholds = [50, 25, 10]
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.ManaWarnings.Name != "juice" {
-		t.Errorf("ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "juice")
-	}
 	if len(cfg.ManaWarnings.Thresholds) != 3 {
 		t.Errorf("len(Thresholds) = %d, want 3", len(cfg.ManaWarnings.Thresholds))
 	}
@@ -846,20 +839,6 @@ func TestValidateLoggingLevel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "BOGUS") {
 		t.Errorf("error = %q, want mention of BOGUS", err.Error())
-	}
-}
-
-func TestValidateCacheStrategy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
-
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for invalid cache strategy")
-	}
-	if !strings.Contains(err.Error(), "invalid") {
-		t.Errorf("error = %q, want mention of invalid", err.Error())
 	}
 }
 

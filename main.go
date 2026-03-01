@@ -1562,7 +1562,7 @@ func setupAgent(p setupParams) *agentInstance {
 		AgentID:                     acfg.ID,
 		Model:                       acfg.Model,
 		ExtraSystemBlocks:           extraSystemBlocks,
-		CacheStrategy:               p.cfg.Cache.Strategy,
+		CacheStrategy:               "auto",
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
 		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:           acfg.DuplicateMessages,
@@ -1615,7 +1615,7 @@ func setupAgent(p setupParams) *agentInstance {
 		manaThresholds = acfg.UsageWarnings.Thresholds
 	}
 	if len(manaThresholds) > 0 {
-		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
+		ag.ManaWatcher = agent.NewManaWatcher("mana", manaThresholds)
 		ag.ManaWatcher.SetStore(p.stateStore)
 		ag.ManaWatcher.Restore()
 	}
@@ -2105,27 +2105,23 @@ func setupAgent(p setupParams) *agentInstance {
 	}))
 	cmds.Register(command.NewHelpCommand(cmds))
 
-	// Dynamic mana command (configurable name: /mana, /juice, /credits, etc.)
-	manaName := p.cfg.ManaWarnings.Name
-	if manaName == "" {
-		manaName = "mana"
-	}
+	// Dynamic mana command
 	manaFn := func(ctx context.Context) (string, error) {
 		usage, err := p.usageClient.GetUsage(ctx)
 		if err != nil {
-			return fmt.Sprintf("Error fetching %s: %v", manaName, err), nil
+			return fmt.Sprintf("Error fetching mana: %v", err), nil
 		}
 		percent := anthropic.FormatMana(usage)
 		if percent == "" {
-			return fmt.Sprintf("%s: unknown", manaName), nil
+			return "mana: unknown", nil
 		}
-		result := fmt.Sprintf("%s: %s remaining", manaName, percent)
+		result := fmt.Sprintf("mana: %s remaining", percent)
 		if reset := anthropic.FormatManaReset(usage); reset != "" {
 			result += fmt.Sprintf(" (resets %s)", reset)
 		}
 		return result, nil
 	}
-	cmds.Register(command.NewManaCommand(manaName, manaFn))
+	cmds.Register(command.NewManaCommand("mana", manaFn))
 
 	// /usage — hidden alias for the mana command
 	cmds.Register(&command.Command{

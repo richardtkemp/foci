@@ -260,13 +260,8 @@ type BitwardenConfig struct {
 	CleanupInterval string `toml:"cleanup_interval"` // how often to purge expired values (default "1m")
 }
 
-type CacheConfig struct {
-	Strategy string `toml:"strategy"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
-}
-
 type ManaWarningsConfig struct {
-	Name       string `toml:"name"`       // what to call quota (default "mana")
-	Thresholds []int  `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	Thresholds []int `toml:"thresholds"` // mana percentages to warn at (e.g. [50, 25, 10, 5])
 }
 
 type EnvironmentConfig struct {
@@ -381,7 +376,6 @@ type Config struct {
 	Logging            LoggingConfig         `toml:"logging"`
 	Voice              VoiceConfig           `toml:"voice"`
 	Bitwarden          BitwardenConfig       `toml:"bitwarden"`
-	Cache              CacheConfig           `toml:"cache"`
 	ManaWarnings       ManaWarningsConfig    `toml:"usage_warnings"`
 	Environment        EnvironmentConfig     `toml:"environment"`
 	Skills             SkillsConfig          `toml:"skills"`
@@ -448,12 +442,6 @@ func validate(cfg *Config) error {
 		if _, err := time.ParseDuration(cfg.Bitwarden.CleanupInterval); err != nil {
 			return fmt.Errorf("[bitwarden] cleanup_interval = %q: %w", cfg.Bitwarden.CleanupInterval, err)
 		}
-	}
-
-	// Cache
-	validStrategies := map[string]bool{"auto": true, "explicit": true}
-	if !validStrategies[cfg.Cache.Strategy] {
-		return fmt.Errorf("[cache] strategy = %q: must be \"auto\" or \"explicit\"", cfg.Cache.Strategy)
 	}
 
 	// Memory sources
@@ -781,12 +769,6 @@ func Load(path string) (*Config, error) {
 		cfg.Bitwarden.CleanupInterval = "1m"
 	}
 
-	if cfg.Cache.Strategy == "" {
-		cfg.Cache.Strategy = "auto"
-	}
-	if cfg.ManaWarnings.Name == "" {
-		cfg.ManaWarnings.Name = "mana"
-	}
 	if cfg.Tools.MaxResultChars == 0 {
 		cfg.Tools.MaxResultChars = 15000
 	}
@@ -913,7 +895,7 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.ShowThinking = ShowThinkingOff
 	}
 	if cfg.Telegram.DisplayWidth == 0 {
-		cfg.Telegram.DisplayWidth = 44
+		cfg.Telegram.DisplayWidth = 32
 	}
 
 	// Keepalive/background defaults

@@ -40,7 +40,7 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `startup_notification` | bool | `true` | Send a startup notification ("botname restarted at HH:MM:SS") when the service starts. Per-agent override of global `enable_startup_notify`. Set to `false` for silent bots (e.g. cron-only agents). |
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Per-agent override of global `[telegram] show_tool_calls`. Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Per-agent override of global `[telegram] show_thinking`. Accepts bool (`true` → `"true"`, `false` → `"off"`). |
-| `display_width` | int | `44` | Character width for divider lines in thinking display. Per-agent override of global `[telegram] display_width`. |
+| `display_width` | int | `32` | Character width for divider lines in thinking display. Per-agent override of global `[telegram] display_width`. |
 | `messages_in_log` | bool | nil | Per-agent override of global `[logging] messages_in_log`. Nil = use global. |
 | `received_files_dir` | string | `$workspace/received_files` | Save received media (images, videos, video notes, documents) to this directory. Defaults to `$workspace/received_files`. Per-agent value overrides `[telegram] received_files_dir`. Relative paths resolve against `$HOME`. Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. If set, only these users can message this agent's bot. If empty, falls back to global `[telegram] allowed_users`. |
@@ -186,7 +186,7 @@ Telegram bot configuration.
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden, default), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Per-agent `show_tool_calls` overrides this. Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped, default), `"compact"` (response with toggle button), `"true"` (thinking always prepended). Per-agent `show_thinking` overrides this. Accepts bool (`true` → `"true"`, `false` → `"off"`). |
-| `display_width` | int | `44` | Character width for divider lines in thinking display. Per-agent `display_width` overrides this. |
+| `display_width` | int | `32` | Character width for divider lines in thinking display. Per-agent `display_width` overrides this. |
 | `received_files_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables. Per-agent `received_files_dir` overrides this. Relative paths resolve against `$HOME`. See agent `received_files_dir` for filename formats. |
 
 ### `[telegram.bots.<name>]`
@@ -436,18 +436,6 @@ secret_ttl = "30m"
 ```
 
 See [docs/SECRETS.md](SECRETS.md) for the full security model and URI-based host validation.
-
----
-
-## `[cache]`
-
-Prompt caching strategy.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `strategy` | string | `"auto"` | `"auto"`: top-level `cache_control` on the request body — Anthropic automatically caches the optimal prefix. `"explicit"`: manual breakpoints on last system block + second-to-last message (legacy). |
-
-`auto` is recommended. It requires no breakpoint management and handles growing conversations automatically. `explicit` gives fine-grained control but is fragile (breakpoints can accumulate or shift if not carefully managed).
 
 ---
 
