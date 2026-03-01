@@ -26,7 +26,7 @@ func NewReadTool(store *secrets.Store) *Tool {
 			"required": ["path"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return readFile(ctx, params, store)
+			return readFile(ctx, params, store, "")
 		},
 	}
 }
@@ -50,7 +50,7 @@ func NewWriteTool(store *secrets.Store) *Tool {
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return writeFile(ctx, params, store)
+			return writeFile(ctx, params, store, "")
 		},
 	}
 }
@@ -78,9 +78,114 @@ func NewEditTool(store *secrets.Store) *Tool {
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return editFile(ctx, params, store)
+			return editFile(ctx, params, store, "")
 		},
 	}
+}
+
+func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
+	return &Tool{
+		Name:        "read",
+		Description: "Read the contents of a file. Returns file contents with line numbers.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"path": {
+					"type": "string",
+					"description": "Path to the file to read"
+				}
+			},
+			"required": ["path"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return readFile(ctx, params, store, baseDir)
+		},
+	}
+}
+
+func NewIsolatedWriteTool(store *secrets.Store, baseDir string) *Tool {
+	return &Tool{
+		Name:        "write",
+		Description: "Create or overwrite a file with the given content.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"path": {
+					"type": "string",
+					"description": "Path to the file to write"
+				},
+				"content": {
+					"type": "string",
+					"description": "Content to write to the file"
+				}
+			},
+			"required": ["path", "content"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return writeFile(ctx, params, store, baseDir)
+		},
+	}
+}
+
+func NewIsolatedEditTool(store *secrets.Store, baseDir string) *Tool {
+	return &Tool{
+		Name:        "edit",
+		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"path": {
+					"type": "string",
+					"description": "Path to the file to edit"
+				},
+				"old_string": {
+					"type": "string",
+					"description": "Text to find (must be unique in file)"
+				},
+				"new_string": {
+					"type": "string",
+					"description": "Replacement text"
+				}
+			},
+			"required": ["path", "old_string", "new_string"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return editFile(ctx, params, store, baseDir)
+		},
+	}
+}
+
+func resolveAndValidatePath(path, baseDir string) (string, error) {
+	if baseDir == "" {
+		return path, nil
+	}
+
+	evalBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve base dir: %w", err)
+	}
+
+	var resolved string
+	if filepath.IsAbs(path) {
+		return "", fmt.Errorf("absolute paths not allowed in isolated mode")
+	}
+
+	resolved = filepath.Join(baseDir, path)
+	resolved = filepath.Clean(resolved)
+
+	evalResolved, err := filepath.EvalSymlinks(resolved)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if evalResolved != "" {
+		resolved = evalResolved
+	}
+
+	if !strings.HasPrefix(resolved, evalBase+string(filepath.Separator)) && resolved != evalBase {
+		return "", fmt.Errorf("path traversal outside isolated directory not allowed")
+	}
+
+	return resolved, nil
 }
 
 // checkBlockedPath resolves the path to absolute and checks against blocked paths.
@@ -98,7 +203,7 @@ func checkBlockedPath(store *secrets.Store, path string) error {
 	return nil
 }
 
-func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
+func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
@@ -106,11 +211,16 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store)
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
-	if err := checkBlockedPath(store, p.Path); err != nil {
+	resolved, err := resolveAndValidatePath(p.Path, baseDir)
+	if err != nil {
 		return "", err
 	}
 
-	data, err := os.ReadFile(p.Path)
+	if err := checkBlockedPath(store, resolved); err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
 	}
@@ -131,7 +241,7 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store)
 	return out.String(), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
+func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -140,18 +250,23 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
-	if err := checkBlockedPath(store, p.Path); err != nil {
+	resolved, err := resolveAndValidatePath(p.Path, baseDir)
+	if err != nil {
 		return "", err
 	}
 
-	if err := os.WriteFile(p.Path, []byte(p.Content), 0644); err != nil {
+	if err := checkBlockedPath(store, resolved); err != nil {
+		return "", err
+	}
+
+	if err := os.WriteFile(resolved, []byte(p.Content), 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
 
 	return fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store) (string, error) {
+func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
@@ -161,11 +276,16 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store)
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
-	if err := checkBlockedPath(store, p.Path); err != nil {
+	resolved, err := resolveAndValidatePath(p.Path, baseDir)
+	if err != nil {
 		return "", err
 	}
 
-	data, err := os.ReadFile(p.Path)
+	if err := checkBlockedPath(store, resolved); err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
 	}
@@ -180,18 +300,16 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store)
 		return "", fmt.Errorf("old_string found %d times in %s (must be unique)", count, p.Path)
 	}
 
-	// Syntax validation: check before and after
 	preErr := checkSyntax(p.Path, data)
 	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
 
 	if preErr == nil {
-		// File was valid before — reject if edit breaks it
 		if postErr := checkSyntax(p.Path, []byte(newContent)); postErr != nil {
 			return "", fmt.Errorf("edit rejected — would introduce syntax error: %v", postErr)
 		}
 	}
 
-	if err := os.WriteFile(p.Path, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(resolved, []byte(newContent), 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
 

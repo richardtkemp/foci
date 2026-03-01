@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"foci/anthropic"
@@ -49,12 +52,12 @@ var spawnNoneBlacklist = map[string]bool{
 type SpawnDeps struct {
 	Client             *anthropic.Client
 	Bootstrap          SystemBlocksProvider
-	Registry           *Registry                               // tool registry for one-shot tool access
+	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
-	Model              string                                  // parent's default model
-	MaxInherit         int                                     // semaphore size (from config)
-	Notifier           *AsyncNotifier                          // async result delivery for inherit mode
+	Model              string                                   // parent's default model
+	MaxInherit         int                                      // semaphore size (from config)
+	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
 	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
 }
 
@@ -125,8 +128,20 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			switch p.Context {
 			case "none":
-				toolDefs, tools := spawnToolSet(deps.Registry, spawnNoneBlacklist)
-				return spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools)
+				tempDir, err := os.MkdirTemp("", "foci-spawn-*")
+				if err != nil {
+					return "", fmt.Errorf("create temp dir: %w", err)
+				}
+				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnNoneBlacklist, tempDir)
+				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools)
+				if err != nil {
+					return "", err
+				}
+				filesCreated := listCreatedFiles(tempDir)
+				if filesCreated != "" {
+					result += "\n\n---\nFiles created in " + tempDir + "/:\n" + filesCreated
+				}
+				return result, nil
 
 			case "character_only":
 				var system []anthropic.SystemBlock
@@ -160,7 +175,6 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]anthropic.ToolDef
 		if blacklist[t.Name] {
 			continue
 		}
-		// Exclude spawn itself to prevent recursion.
 		if t.Name == "spawn" {
 			continue
 		}
@@ -172,6 +186,74 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]anthropic.ToolDef
 		tools[t.Name] = t
 	}
 	return defs, tools
+}
+
+func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir string) ([]anthropic.ToolDef, map[string]*Tool) {
+	if reg == nil {
+		return nil, nil
+	}
+	all := reg.All()
+	defs := make([]anthropic.ToolDef, 0, len(all))
+	tools := make(map[string]*Tool, len(all))
+	for _, t := range all {
+		if blacklist[t.Name] {
+			continue
+		}
+		if t.Name == "spawn" {
+			continue
+		}
+		defs = append(defs, anthropic.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.Parameters,
+		})
+		switch t.Name {
+		case "read":
+			tools[t.Name] = NewIsolatedReadTool(nil, baseDir)
+		case "write":
+			tools[t.Name] = NewIsolatedWriteTool(nil, baseDir)
+		case "edit":
+			tools[t.Name] = NewIsolatedEditTool(nil, baseDir)
+		case "exec":
+			tools[t.Name] = NewExecTool(nil, nil, 0, nil, baseDir, nil)
+		default:
+			tools[t.Name] = t
+		}
+	}
+	return defs, tools
+}
+
+func listCreatedFiles(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	var out strings.Builder
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&out, "  %s (%s)\n", e.Name(), formatBytes(info.Size()))
+	}
+	return out.String()
+}
+
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for n/div >= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 const maxSpawnToolLoops = 25

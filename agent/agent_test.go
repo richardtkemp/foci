@@ -1975,16 +1975,10 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("expected 10 messages (uncompacted), got %d", len(msgs))
 		}
 
-		// Warning should have been pushed about context capacity
+		// No warning should be pushed for no_compact sessions (removed in 63f8f6b2)
 		warned := warnings.Drain()
-		if len(warned) != 1 {
-			t.Fatalf("expected 1 warning, got %d", len(warned))
-		}
-		if !strings.Contains(warned[0], "85%") {
-			t.Errorf("warning = %q, want contains '85%%'", warned[0])
-		}
-		if !strings.Contains(warned[0], "cannot compact") {
-			t.Errorf("warning = %q, want contains 'cannot compact'", warned[0])
+		if len(warned) != 0 {
+			t.Fatalf("expected 0 warnings for no_compact session, got %d: %v", len(warned), warned)
 		}
 	})
 
