@@ -224,8 +224,11 @@ type LoggingConfig struct {
 	PayloadFile           string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
 	CacheBustDetect       bool   `toml:"cache_bust_detect"`       // alert when cache_read drops >50% vs previous request
 	CacheBustIdleMinutes  int    `toml:"cache_bust_idle_minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
-	WarningMaxPerWindow   int    `toml:"warning_max_per_window"`  // max identical warnings per window before suppression (default 3)
-	WarningWindowDuration string `toml:"warning_window_duration"` // time window for warning dedup (default "5m")
+	WarningMaxPerWindow              int    `toml:"warning_max_per_window"`               // max identical warnings per window before suppression (default 3)
+	WarningWindowDuration            string `toml:"warning_window_duration"`              // time window for warning dedup (default "5m")
+	WarningProactiveActiveInterval   string `toml:"warning_proactive_active_interval"`    // min interval between proactive warning turns when user is active (default "5m")
+	WarningProactiveInactiveInterval string `toml:"warning_proactive_inactive_interval"`  // min interval when user is inactive (default "1h")
+	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold"` // user is "active" if last message within this window (default "10m")
 	LogRotation           bool   `toml:"log_rotation"`            // enable built-in log rotation (default true)
 	RotationPeriod        string `toml:"rotation_period"`         // how often to rotate (default "24h")
 	RetentionPeriod       string `toml:"retention_period"`        // keep lines newer than this (default "48h")
@@ -424,6 +427,15 @@ func validate(cfg *Config) error {
 	}
 	if _, err := time.ParseDuration(cfg.Logging.WarningWindowDuration); err != nil {
 		return fmt.Errorf("[logging] warning_window_duration = %q: %w", cfg.Logging.WarningWindowDuration, err)
+	}
+	if _, err := time.ParseDuration(cfg.Logging.WarningProactiveActiveInterval); err != nil {
+		return fmt.Errorf("[logging] warning_proactive_active_interval = %q: %w", cfg.Logging.WarningProactiveActiveInterval, err)
+	}
+	if _, err := time.ParseDuration(cfg.Logging.WarningProactiveInactiveInterval); err != nil {
+		return fmt.Errorf("[logging] warning_proactive_inactive_interval = %q: %w", cfg.Logging.WarningProactiveInactiveInterval, err)
+	}
+	if _, err := time.ParseDuration(cfg.Logging.WarningProactiveActivityThreshold); err != nil {
+		return fmt.Errorf("[logging] warning_proactive_activity_threshold = %q: %w", cfg.Logging.WarningProactiveActivityThreshold, err)
 	}
 	if _, err := time.ParseDuration(cfg.Logging.RotationPeriod); err != nil {
 		return fmt.Errorf("[logging] rotation_period = %q: %w", cfg.Logging.RotationPeriod, err)
@@ -787,6 +799,15 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Logging.WarningWindowDuration == "" {
 		cfg.Logging.WarningWindowDuration = "5m"
+	}
+	if cfg.Logging.WarningProactiveActiveInterval == "" {
+		cfg.Logging.WarningProactiveActiveInterval = "5m"
+	}
+	if cfg.Logging.WarningProactiveInactiveInterval == "" {
+		cfg.Logging.WarningProactiveInactiveInterval = "1h"
+	}
+	if cfg.Logging.WarningProactiveActivityThreshold == "" {
+		cfg.Logging.WarningProactiveActivityThreshold = "10m"
 	}
 	if !md.IsDefined("logging", "log_rotation") {
 		cfg.Logging.LogRotation = true

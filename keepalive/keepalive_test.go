@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/agent"
 	"foci/config"
 )
 
@@ -280,6 +281,200 @@ func TestBackgroundNoSelfChaining(t *testing.T) {
 	if !interactionAfter.Equal(interactionBefore) {
 		t.Errorf("background completion should not reset lastInteraction: before=%v after=%v",
 			interactionBefore, interactionAfter)
+	}
+}
+
+// --- Warning dispatch tests ---
+
+func TestWarningDispatch_NilQueue_Skips(t *testing.T) {
+	calls := 0
+	r := &Runner{
+		agentID:           "test",
+		warningDispatchFn: func(text string) { calls++ },
+		done:              make(chan struct{}),
+	}
+	r.maybeWarningDispatch()
+	if calls != 0 {
+		t.Errorf("expected 0 dispatch calls with nil queue, got %d", calls)
+	}
+}
+
+func TestWarningDispatch_EmptyQueue_Skips(t *testing.T) {
+	calls := 0
+	q := agent.NewWarningQueue(0, 0)
+	r := &Runner{
+		agentID:           "test",
+		warningQueue:      q,
+		warningDispatchFn: func(text string) { calls++ },
+		done:              make(chan struct{}),
+	}
+	r.maybeWarningDispatch()
+	if calls != 0 {
+		t.Errorf("expected 0 dispatch calls with empty queue, got %d", calls)
+	}
+}
+
+func TestWarningDispatch_ActiveUser_RateLimit(t *testing.T) {
+	q := agent.NewWarningQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	r := &Runner{
+		agentID:                  "test",
+		warningQueue:             q,
+		warningActiveInterval:    5 * time.Minute,
+		warningInactiveInterval:  1 * time.Hour,
+		warningActivityThreshold: 10 * time.Minute,
+		lastUserMessageTimeFn:    func() time.Time { return time.Now() }, // active user
+		warningDispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+		done: make(chan struct{}),
+	}
+
+	// First dispatch should fire
+	q.Push("WARN", "test", "disk full")
+	r.maybeWarningDispatch()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("first dispatch: expected 1 call, got %d", got)
+	}
+
+	// Second dispatch immediately should be rate-limited (5m not elapsed)
+	q.Push("WARN", "test", "disk still full")
+	r.maybeWarningDispatch()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got = calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("second dispatch: expected still 1 call (rate limited), got %d", got)
+	}
+}
+
+func TestWarningDispatch_InactiveUser_RateLimit(t *testing.T) {
+	q := agent.NewWarningQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	r := &Runner{
+		agentID:                  "test",
+		warningQueue:             q,
+		warningActiveInterval:    5 * time.Minute,
+		warningInactiveInterval:  1 * time.Hour,
+		warningActivityThreshold: 10 * time.Minute,
+		lastUserMessageTimeFn:    func() time.Time { return time.Now().Add(-30 * time.Minute) }, // inactive user
+		warningDispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+		done: make(chan struct{}),
+	}
+
+	// First dispatch should fire (no prior dispatch)
+	q.Push("WARN", "test", "disk full")
+	r.maybeWarningDispatch()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("first dispatch: expected 1 call, got %d", got)
+	}
+
+	// Second dispatch should be rate-limited (1h not elapsed)
+	q.Push("WARN", "test", "still full")
+	r.maybeWarningDispatch()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got = calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("second dispatch: expected still 1 (1h rate limit), got %d", got)
+	}
+}
+
+func TestWarningDispatch_Dispatches(t *testing.T) {
+	q := agent.NewWarningQueue(0, 0)
+	var mu sync.Mutex
+	var dispatched string
+
+	r := &Runner{
+		agentID:                  "test",
+		warningQueue:             q,
+		warningActiveInterval:    0, // no rate limit for test
+		warningInactiveInterval:  0,
+		warningActivityThreshold: 10 * time.Minute,
+		lastUserMessageTimeFn:    func() time.Time { return time.Now() },
+		warningDispatchFn: func(text string) {
+			mu.Lock()
+			dispatched = text
+			mu.Unlock()
+		},
+		done: make(chan struct{}),
+	}
+
+	q.Push("WARN", "disk", "filesystem 95% full")
+	q.Push("ERROR", "tmux", "OOM killed")
+	r.maybeWarningDispatch()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := dispatched
+	mu.Unlock()
+
+	if !containsAll(got, "[proactive system warnings]", "filesystem 95% full", "OOM killed") {
+		t.Errorf("dispatched text missing expected content: %q", got)
+	}
+}
+
+func TestWarningDispatch_ConcurrentGuard(t *testing.T) {
+	q := agent.NewWarningQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	r := &Runner{
+		agentID:                  "test",
+		warningQueue:             q,
+		warningActiveInterval:    0,
+		warningInactiveInterval:  0,
+		warningActivityThreshold: 10 * time.Minute,
+		lastUserMessageTimeFn:    func() time.Time { return time.Now() },
+		warningDispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			time.Sleep(200 * time.Millisecond) // simulate slow dispatch
+		},
+		done: make(chan struct{}),
+	}
+
+	q.Push("WARN", "test", "first")
+	r.maybeWarningDispatch()
+	time.Sleep(20 * time.Millisecond) // let goroutine start
+
+	// Push more and try again while first is still dispatching
+	q.Push("WARN", "test", "second")
+	r.maybeWarningDispatch()
+
+	time.Sleep(300 * time.Millisecond) // wait for first to finish
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+
+	if got != 1 {
+		t.Errorf("expected 1 dispatch (concurrent guard should block second), got %d", got)
 	}
 }
 

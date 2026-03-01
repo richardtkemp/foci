@@ -148,6 +148,23 @@ func (q *WarningQueue) Drain() []string {
 	return result
 }
 
+// Pending returns true if there are queued warnings or suppressed warnings
+// that would produce summary lines on Drain(). Used by proactive dispatch
+// to check without draining.
+func (q *WarningQueue) Pending() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.warnings) > 0 {
+		return true
+	}
+	for _, b := range q.buckets {
+		if b.suppressedSinceDrain > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Len returns the number of queued warnings.
 func (q *WarningQueue) Len() int {
 	q.mu.Lock()
