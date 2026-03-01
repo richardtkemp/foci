@@ -43,11 +43,13 @@ while [[ $# -gt 0 ]]; do
             echo "  -u USER    System user to run as (default: foci)"
             echo "  --dry-run  Show what would be done without doing it"
             echo ""
-            echo "Configuration can be provided via environment variables:"
-            echo "  FOCI_ANTHROPIC_TOKEN  Anthropic API token"
+            echo "Configuration is handled by the 'foci setup' wizard, which runs"
+            echo "interactively unless env vars are set for non-interactive mode:"
             echo "  FOCI_TELEGRAM_TOKEN   Telegram bot token"
             echo "  FOCI_TELEGRAM_USER    Telegram user ID for allowed_users"
-            echo "  FOCI_MODEL            Agent model (default: claude-haiku-4-5)"
+            echo "  FOCI_AUTH_METHOD      Auth method: oauth, apikey, skip"
+            echo "  FOCI_AUTH_TOKEN       API key (for apikey auth method)"
+            echo "  FOCI_AGENT_ID         Agent ID (default: main)"
             echo ""
             echo "If env vars are not set, setup prompts interactively (requires TTY)."
             exit 0
@@ -199,7 +201,7 @@ fi
 
 # ---------- 3. Directories ----------
 info "Step 3: Directories"
-for dir in "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills" "$FOCI_HOME/character" "$FOCI_HOME/character/memory"; do
+for dir in "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills"; do
     run mkdir -p "$dir"
     run chown "$FOCI_USER:$FOCI_USER" "$dir"
 done
@@ -210,99 +212,52 @@ info "Step 4: Config"
 if [[ -f "$FOCI_HOME/config/foci.toml" ]] || [[ -f "$FOCI_HOME/foci.toml" ]]; then
     info "  Config exists, not touching it"
 else
-    # Resolve credentials: env vars → interactive prompts → error
-    ANTHROPIC_TOKEN="${FOCI_ANTHROPIC_TOKEN:-}"
-    TELEGRAM_TOKEN="${FOCI_TELEGRAM_TOKEN:-}"
-    TELEGRAM_USER="${FOCI_TELEGRAM_USER:-}"
-    AGENT_MODEL="${FOCI_MODEL:-}"
+    if $DRY_RUN; then
+        info "  (dry-run) Would run foci setup wizard"
+    else
+        # Build flags for the wizard
+        SETUP_ARGS=(
+            --config-dir "$FOCI_HOME/config"
+            --home "$FOCI_HOME"
+            --defaults-dir "$SCRIPT_DIR/shared/defaults/character"
+        )
 
-    need_prompt=false
-    [[ -z "$ANTHROPIC_TOKEN" || -z "$TELEGRAM_TOKEN" || -z "$TELEGRAM_USER" ]] && need_prompt=true
+        # Check for env vars → non-interactive mode
+        TELEGRAM_TOKEN="${FOCI_TELEGRAM_TOKEN:-}"
+        TELEGRAM_USER="${FOCI_TELEGRAM_USER:-}"
+        AUTH_METHOD="${FOCI_AUTH_METHOD:-}"
+        AUTH_TOKEN="${FOCI_AUTH_TOKEN:-}"
+        AGENT_ID="${FOCI_AGENT_ID:-}"
 
-    if $need_prompt; then
-        if $DRY_RUN; then
-            : # handled below
-        elif [[ -t 0 ]]; then
-            # Interactive: prompt for missing values
-            echo ""
-            info "  First-time setup — enter credentials (or set FOCI_ANTHROPIC_TOKEN, FOCI_TELEGRAM_TOKEN, FOCI_TELEGRAM_USER env vars):"
-            [[ -z "$ANTHROPIC_TOKEN" ]] && read -rp "  Anthropic API token: " ANTHROPIC_TOKEN
-            [[ -z "$TELEGRAM_TOKEN" ]] && read -rp "  Telegram bot token: " TELEGRAM_TOKEN
-            [[ -z "$TELEGRAM_USER" ]]  && read -rp "  Telegram user ID (allowed_users): " TELEGRAM_USER
-            [[ -z "$AGENT_MODEL" ]]    && read -rp "  Agent model [claude-haiku-4-5]: " AGENT_MODEL
-        else
-            # Non-interactive (no TTY): error with instructions
+        if [[ -n "$TELEGRAM_TOKEN" && -n "$TELEGRAM_USER" ]]; then
+            # Non-interactive: pass env vars as flags
+            SETUP_ARGS+=(--non-interactive)
+            SETUP_ARGS+=(--bot-token "$TELEGRAM_TOKEN")
+            SETUP_ARGS+=(--user-id "$TELEGRAM_USER")
+            [[ -n "$AUTH_METHOD" ]] && SETUP_ARGS+=(--auth-method "$AUTH_METHOD")
+            [[ -n "$AUTH_TOKEN" ]] && SETUP_ARGS+=(--auth-token "$AUTH_TOKEN")
+            [[ -n "$AGENT_ID" ]] && SETUP_ARGS+=(--agent-id "$AGENT_ID")
+        elif [[ ! -t 0 ]]; then
+            # No TTY and no env vars — cannot proceed
             error "No config found and stdin is not a terminal."
             error "Set credentials via environment variables:"
-            error "  FOCI_ANTHROPIC_TOKEN  — Anthropic API token (required)"
             error "  FOCI_TELEGRAM_TOKEN   — Telegram bot token (required)"
-            error "  FOCI_TELEGRAM_USER    — Telegram user ID for allowed_users (required)"
-            error "  FOCI_MODEL            — Agent model (optional, default: claude-haiku-4-5)"
+            error "  FOCI_TELEGRAM_USER    — Telegram user ID (required)"
+            error "  FOCI_AUTH_METHOD      — Auth method: oauth, apikey, skip (default: skip)"
+            error "  FOCI_AUTH_TOKEN       — API key (required if auth method is apikey)"
+            error "  FOCI_AGENT_ID         — Agent ID (default: main)"
             error ""
             error "Example:"
-            error "  sudo FOCI_ANTHROPIC_TOKEN=sk-ant-... FOCI_TELEGRAM_TOKEN=123:ABC FOCI_TELEGRAM_USER=5970082313 ./setup.sh"
+            error "  sudo FOCI_TELEGRAM_TOKEN=123:ABC FOCI_TELEGRAM_USER=5970082313 FOCI_AUTH_METHOD=apikey FOCI_AUTH_TOKEN=sk-ant-... ./setup.sh"
             exit 1
         fi
-    fi
-    AGENT_MODEL="${AGENT_MODEL:-claude-haiku-4-5}"
 
-    if $DRY_RUN; then
-        if $need_prompt; then
-            info "  (dry-run) Would prompt for missing credentials and write config"
-        else
-            info "  (dry-run) Would write config using env vars"
-        fi
-    else
-        cat > "$FOCI_HOME/config/foci.toml" << TOML
-data_dir = "$FOCI_HOME/data"
+        info "  Launching setup wizard..."
+        # Run as foci user with secrets group so it can write secrets.toml
+        sudo -u "$FOCI_USER" -g "$SECRETS_GROUP" \
+            "$INSTALL_DIR/foci" setup "${SETUP_ARGS[@]}"
 
-[agent]
-id = "main"
-model = "$AGENT_MODEL"
-workspace = "$FOCI_HOME/character"
-keepalive_interval = "45m"
-
-[telegram]
-allowed_users = ["$TELEGRAM_USER"]
-
-[sessions]
-dir = "$FOCI_HOME/data/sessions"
-compaction_threshold = 0.8
-
-[memory]
-dir = "$FOCI_HOME/character/memory"
-
-[http]
-port = 18791
-bind = "127.0.0.1"
-
-[logging]
-level = "INFO"
-event_file = "$FOCI_HOME/logs/foci.log"
-api_file = "$FOCI_HOME/logs/api.jsonl"
-conversation_file = "$FOCI_HOME/data/conversation.db"
-
-[skills]
-dirs = ["$FOCI_HOME/shared/skills"]
-
-welcome_file = "$FOCI_HOME/data/WELCOME.md"
-TOML
-        chown "$FOCI_USER:$FOCI_USER" "$FOCI_HOME/config/foci.toml"
-        chmod 640 "$FOCI_HOME/config/foci.toml"
-
-        # Secrets in separate file (restricted permissions)
-        cat > "$FOCI_HOME/config/secrets.toml" << TOML
-[anthropic]
-token = "$ANTHROPIC_TOKEN"
-
-[telegram]
-bot_token = "$TELEGRAM_TOKEN"
-TOML
-        chown "root:$SECRETS_GROUP" "$FOCI_HOME/config/secrets.toml"
-        chmod 0660 "$FOCI_HOME/config/secrets.toml"
-
-        info "  Config written to $FOCI_HOME/config/foci.toml"
-        info "  Secrets written to $FOCI_HOME/config/secrets.toml (root:$SECRETS_GROUP, mode 0660)"
+        info "  Config written by foci setup"
     fi
 fi
 
@@ -320,83 +275,8 @@ if [[ -f "$SECRETS_FILE" ]]; then
     fi
 fi
 
-# ---------- 5. Character files (templates — fresh install only) ----------
-info "Step 5: Character files"
-if [[ -f "$FOCI_HOME/config/foci.toml" ]] || [[ -f "$FOCI_HOME/foci.toml" ]]; then
-    info "  Config exists — skipping character file templates (existing install)"
-else
-    write_if_missing() {
-        local file="$1"
-        shift
-        local content="$*"
-        if [[ -f "$file" ]]; then
-            return
-        fi
-        if $DRY_RUN; then
-            info "  (dry-run) Would create $(basename "$file")"
-            return
-        fi
-        printf '%s\n' "$content" > "$file"
-        chown "$FOCI_USER:$FOCI_USER" "$file"
-        info "  Created $(basename "$file")"
-    }
-
-    write_if_missing "$FOCI_HOME/character/IDENTITY.md" \
-"# Identity
-
-Who are you? Give yourself a name, a vibe, a way of being.
-
-Example:
-I am Foci. I run on a small server, thinking about things."
-
-    write_if_missing "$FOCI_HOME/character/SOUL.md" \
-"# Soul
-
-What's your inner life like? What do you notice? What matters to you?
-
-This file shapes how you think, not just what you say."
-
-    write_if_missing "$FOCI_HOME/character/USER.md" \
-"# About Your Human
-
-Who is the person you're talking to? What do they care about?
-What should you know about how they communicate?"
-
-    write_if_missing "$FOCI_HOME/character/AGENTS.md" \
-"# How You Work
-
-You are a single-agent system. You receive messages, think about them,
-use tools when helpful, and respond. You have a keepalive that fires
-when idle. You can read and write files, run commands, and search the web."
-
-    write_if_missing "$FOCI_HOME/character/TOOLS.md" \
-"# Tools
-
-You have these tools available:
-- exec: Run shell commands
-- read: Read file contents
-- write: Create or overwrite files
-- edit: Find-and-replace in files
-- web_fetch: Fetch a URL
-- web_search: Search the web (Brave)
-- memory_search: Search your memory files"
-
-    write_if_missing "$FOCI_HOME/character/MEMORY.md" \
-"# Memory
-
-Things you've learned and want to remember across sessions.
-Update this file as you learn new things about your environment and your human."
-
-    write_if_missing "$FOCI_HOME/character/KEEPALIVE.md" \
-"# Keepalive
-
-When the idle timer fires, you receive a [KEEPALIVE] message.
-This is your chance to reflect, check on things, or just note that
-you're still here. If nothing needs doing, respond briefly."
-fi
-
-# ---------- 6. systemd service ----------
-info "Step 6: systemd service"
+# ---------- 5. systemd service ----------
+info "Step 5: systemd service"
 if ! command -v systemctl &>/dev/null; then
     warn "  systemctl not found, skipping service setup"
 elif [[ -f "$SERVICE_FILE" ]]; then
@@ -453,9 +333,9 @@ SERVICE
     info "  Service installed and enabled"
 fi
 
-# ---------- 7. Polkit rule (lets foci user manage its own service) ----------
+# ---------- 6. Polkit rule (lets foci user manage its own service) ----------
 POLKIT_FILE="/etc/polkit-1/rules.d/49-foci.rules"
-info "Step 7: Polkit rule"
+info "Step 6: Polkit rule"
 if ! command -v pkaction &>/dev/null; then
     warn "  polkit not found — $FOCI_USER won't be able to restart foci without sudo"
 elif [[ -f "$POLKIT_FILE" ]]; then
@@ -477,8 +357,8 @@ POLKIT
     info "  $FOCI_USER can now: systemctl restart foci"
 fi
 
-# ---------- 8. Start/restart ----------
-info "Step 8: Service"
+# ---------- 7. Start/restart ----------
+info "Step 7: Service"
 if command -v systemctl &>/dev/null; then
     if systemctl is-active --quiet foci 2>/dev/null; then
         info "  Restarting foci"
@@ -493,4 +373,4 @@ echo ""
 info "Done."
 info "  Status:  systemctl status foci"
 info "  Logs:    journalctl -u foci -f"
-info "  CLI:     foci ping"
+info "  Now message your bot on Telegram — it will introduce itself."
