@@ -29,6 +29,7 @@ func NewSummaryTool(client *anthropic.Client, modelAliases map[string]string) *T
 	return &Tool{
 		Name:        "summary",
 		Description: "Summarize or extract specific information from a file using a fast Haiku call. Use this instead of read for large files when you only need specific information, not the full content.",
+		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
