@@ -735,9 +735,10 @@ type ToolInfo struct {
 // NewToolsCommand returns a /tools command listing registered tools.
 func NewToolsCommand(listFn func() []ToolInfo) *Command {
 	return &Command{
-		Name:        "tools",
-		Description: "List registered tools",
-		Category:    "session",
+		Name:           "tools",
+		Description:    "List registered tools",
+		Category:       "session",
+		SkipToolExport: true,
 		Execute: func(ctx context.Context, args string) (string, error) {
 			tools := listFn()
 			if len(tools) == 0 {

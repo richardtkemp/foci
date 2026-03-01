@@ -643,6 +643,10 @@ func TestToolsCommand(t *testing.T) {
 		}
 	})
 
+	if !cmd.SkipToolExport {
+		t.Error("SkipToolExport should be true — /tools must not be exposed as an agent tool")
+	}
+
 	result, _ := cmd.Execute(context.Background(), "")
 	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
 		t.Errorf("result not wrapped in code block:\n%s", result)
