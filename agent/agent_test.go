@@ -1386,6 +1386,38 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	if count := strings.Count(text, "Do the thing"); count != 2 {
 		t.Errorf("user trigger should duplicate: expected 2 occurrences, got %d", count)
 	}
+
+	// Telegram trigger SHOULD duplicate (human-typed messages)
+	tgCtx := WithTrigger(context.Background(), "telegram")
+	ag.HandleMessage(tgCtx, "agent:test:tg", "Say something")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Say something"); count != 2 {
+		t.Errorf("telegram trigger should duplicate: expected 2 occurrences, got %d", count)
+	}
+
+	// Voice trigger SHOULD duplicate (human-spoken messages)
+	voiceCtx := WithTrigger(context.Background(), "voice")
+	ag.HandleMessage(voiceCtx, "agent:test:voice", "Tell me")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = anthropic.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Tell me"); count != 2 {
+		t.Errorf("voice trigger should duplicate: expected 2 occurrences, got %d", count)
+	}
+
+	// System triggers should NOT duplicate
+	for _, sysT := range []string{"proactive_warning", "async_notify", "session_notify", "scheduled_wake", "restart", "first_run"} {
+		sysCtx := WithTrigger(context.Background(), sysT)
+		ag.HandleMessage(sysCtx, "agent:test:sys:"+sysT, "System msg")
+
+		lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+		text = anthropic.TextOf(lastMsg.Content)
+		if count := strings.Count(text, "System msg"); count != 1 {
+			t.Errorf("%s trigger should not duplicate: expected 1 occurrence, got %d", sysT, count)
+		}
+	}
 }
 
 func TestRepairInterruptedToolCalls(t *testing.T) {
