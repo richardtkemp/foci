@@ -31,35 +31,57 @@ cd foci
 1. Message [@BotFather](https://t.me/BotFather) on Telegram
 2. Send `/newbot`, follow the prompts
 3. Save the bot token (format: `123456789:AAF-...`)
-4. Send `/setcommands` to BotFather, select your bot, then paste:
+4. Optionally send `/setcommands` to BotFather, select your bot, then paste:
    ```
    status - Dashboard overview
    reset - Clear session history
    model - Show or switch model
    ```
-5. Find your Telegram user ID: message [@userinfobot](https://t.me/userinfobot)
 
 ## 3. Run Setup
 
-The setup script creates a system user, builds binaries, sets up systemd, and handles permissions:
+The setup script creates a system user, builds binaries, sets up systemd, and launches the `foci setup` wizard for interactive configuration:
 
 ```bash
-# Interactive (prompts for tokens):
-sudo ./setup.sh -u foci
-
-# Or pass config via environment:
-FOCI_ANTHROPIC_TOKEN="sk-ant-..." \
-FOCI_TELEGRAM_TOKEN="123456789:AAF-..." \
-FOCI_TELEGRAM_USER="YOUR_USER_ID" \
 sudo ./setup.sh -u foci
 ```
 
-This creates:
+The wizard prompts for:
+- **Bot token** — paste the token from @BotFather
+- **Authentication** — OAuth (recommended for subscribers), API key, or skip
+- **User ID** — auto-detected by messaging your bot, or entered manually
+- **Agent ID** — a short name for your agent (default: `main`)
+- **Character files** — use default templates or import from an existing directory
+
+Setup creates:
 - System user `foci` with home at `/home/foci`
 - Binaries at `/usr/local/bin/` (`focigw`, `foci`, `foci-call`)
 - Systemd service `foci`
 - Config at `/home/foci/config/foci.toml`
-- Secrets at `/home/foci/config/secrets.toml` (restricted permissions)
+- Secrets at `/home/foci/config/secrets.toml` (restricted permissions: `root:foci-secrets`, mode `0660`)
+- Character files at `/home/foci/<agent-id>/character/`
+
+### Non-interactive setup
+
+Pass configuration via environment variables for automated or CI installs:
+
+```bash
+FOCI_TELEGRAM_TOKEN="123456789:AAF-..." \
+FOCI_TELEGRAM_USER="5970082313" \
+FOCI_AUTH_METHOD="apikey" \
+FOCI_AUTH_TOKEN="sk-ant-..." \
+FOCI_AGENT_ID="myagent" \
+sudo ./setup.sh -u foci
+```
+
+Available env vars:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token |
+| `FOCI_TELEGRAM_USER` | Yes | Your Telegram user ID |
+| `FOCI_AUTH_METHOD` | No | `oauth`, `apikey`, or `skip` (default: `skip`) |
+| `FOCI_AUTH_TOKEN` | If apikey | Anthropic API key |
+| `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 
 ### Dry run
 
@@ -69,68 +91,28 @@ Preview what setup would do without making changes:
 sudo ./setup.sh -u foci --dry-run
 ```
 
-## 4. Authenticate with Anthropic
+### Re-running the wizard
 
-Foci uses OAuth to authenticate with your Claude subscription (Max/Pro). Run:
-
-```bash
-foci auth --config /home/foci/config/foci.toml
-```
-
-This opens a URL — authenticate in your browser, paste the code back. See [AUTH.md](AUTH.md) for details and alternative auth methods.
-
-## 5. Configure Your Agent
-
-Edit `/home/foci/config/foci.toml`. The example config (`foci.toml.example`) has all options documented. Minimum required:
-
-```toml
-[[agents]]
-id = "myagent"
-system_files = ["character/SOUL.md"]
-
-[telegram]
-allowed_users = ["YOUR_TELEGRAM_USER_ID"]
-```
-
-Bot tokens go in `secrets.toml`:
-
-```toml
-[telegram.bots.myagent]
-token = "123456789:AAF-..."
-```
-
-## 6. Create Character Files
-
-Character files define your agent's identity. Create the workspace and at least one file:
+To re-run the setup wizard after initial install (e.g. to reconfigure):
 
 ```bash
-sudo -u foci mkdir -p /home/foci/myagent/character
-sudo -u foci tee /home/foci/myagent/character/SOUL.md << 'EOF'
-# Who I Am
-
-I am a helpful AI assistant. I communicate clearly and directly.
-EOF
+sudo -u foci -g foci-secrets foci setup \
+    --config-dir /home/foci/config \
+    --home /home/foci \
+    --defaults-dir /path/to/foci/shared/defaults/character
 ```
 
-See the README for more on character file conventions.
-
-## 7. Start and Verify
+## 4. Verify
 
 ```bash
-# Start the service
-sudo systemctl start foci
-
-# Check it's running
+# Check the service
 sudo systemctl status foci
 
 # Check logs
 sudo journalctl -u foci -f
-
-# Ping from CLI
-foci ping
 ```
 
-Now message your bot on Telegram. It should respond.
+Now message your bot on Telegram — it will introduce itself and guide you through setting up its identity.
 
 ## Updating
 
@@ -141,6 +123,8 @@ cd /path/to/foci
 git pull
 sudo ./setup.sh -u foci
 ```
+
+On update, setup generates a changelog (`WELCOME.md`) that the agent summarises and sends to you via Telegram.
 
 ## Directory Layout
 
@@ -161,15 +145,12 @@ After setup, the foci user's home looks like:
   logs/
     foci.log               ← event log
     api.jsonl              ← API call log
-  myagent/                 ← agent workspace (one per agent)
-    character/             ← identity files
+  <agent-id>/              ← agent workspace (one per agent)
+    character/             ← identity files (SOUL.md, CRAFT.md, etc.)
     memory/                ← daily memory files
 ```
 
 ## Troubleshooting
-
-### "unknown command: auth"
-Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. Re-run `setup.sh` if needed.
 
 ### Bot doesn't respond
 1. Check the service is running: `systemctl status foci`
@@ -187,6 +168,9 @@ sudo chmod 660 /home/foci/config/secrets.toml
 
 ### Build errors
 Ensure Go 1.22+: `go version`. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
+
+### "unknown command: setup"
+Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. Re-run `setup.sh` to rebuild.
 
 ## Next Steps
 
