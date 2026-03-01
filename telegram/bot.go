@@ -955,6 +955,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 				toolMsgID = sent.MessageId
 				toolMsgText = compact
 				toolMsgFullText = full
+				// Store entry immediately so "Show full" works while tool is running.
+				b.toolResults.Store(toolMsgID, toolResultEntry{
+					compactText: compact,
+					fullInput:   full,
+					chatID:      qm.msg.Chat.Id,
+				})
 				// Update the button callback data with the real message ID.
 				b.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
 					ChatId:    qm.msg.Chat.Id,
@@ -1006,13 +1012,40 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			if msgID == 0 {
 				return
 			}
+
+			// Check if user already expanded this message while the tool was running.
+			var wasExpanded bool
+			var chatID int64
+			if prev, ok := b.toolResults.Load(msgID); ok {
+				entry := prev.(toolResultEntry)
+				wasExpanded = entry.expanded
+				chatID = entry.chatID
+			}
+
 			b.toolResults.Store(msgID, toolResultEntry{
 				compactText: compact,
 				fullInput:   full,
 				result:      result,
+				expanded:    wasExpanded,
+				chatID:      chatID,
 			})
 			if b.toolDetailStore != nil {
 				b.toolDetailStore.Store(msgID, compact, full, result)
+			}
+
+			// If user already clicked "Show full", update the message with actual results.
+			if wasExpanded && chatID != 0 {
+				expanded := formatToolCallWithResult(full, result)
+				b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+					ChatId:    chatID,
+					MessageId: msgID,
+					ParseMode: "HTML",
+					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+							{Text: "Hide", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
+						}},
+					},
+				})
 			}
 		},
 		// Thinking block accumulator (gated by showThinking)
@@ -2171,7 +2204,17 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatToolCallWithResult(stored.fullInput, stored.result)
+		var expanded string
+		if stored.result == "" {
+			// Tool still running — show params with placeholder.
+			expanded = formatToolCallWithResult(stored.fullInput, "⏳ Running...")
+		} else {
+			expanded = formatToolCallWithResult(stored.fullInput, stored.result)
+		}
+		// Mark as expanded so ToolResultObserver can update when result arrives.
+		stored.expanded = true
+		stored.chatID = chatID
+		b.toolResults.Store(msgID, stored)
 		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -2183,6 +2226,8 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 			},
 		})
 	case "hide":
+		stored.expanded = false
+		b.toolResults.Store(msgID, stored)
 		b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -2270,7 +2315,9 @@ func truncateHTMLSafe(s string, maxLen int) string {
 type toolResultEntry struct {
 	compactText string // compact one-line summary (collapsed state)
 	fullInput   string // full formatted tool call HTML with JSON params
-	result      string // the raw tool result text
+	result      string // the raw tool result text (empty while tool is running)
+	expanded    bool   // true if user clicked "Show full" before result arrived
+	chatID      int64  // chat where the message lives (for deferred edits)
 }
 
 // thinkingEntry stores thinking text and response HTML for compact mode toggle.
