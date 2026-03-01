@@ -18,7 +18,7 @@ func writeSecrets(t *testing.T, content string) string {
 func TestLoadAndGet(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-ant-oat01-test"
+setup_token = "sk-ant-oat01-test"
 
 [telegram]
 bot_token = "123:ABC"
@@ -40,7 +40,7 @@ openrouter_key = "sk-or-v1-test"
 		name string
 		want string
 	}{
-		{"anthropic.token", "sk-ant-oat01-test"},
+		{"anthropic.setup_token", "sk-ant-oat01-test"},
 		{"telegram.bot_token", "123:ABC"},
 		{"brave.api_key", "BSA-test"},
 		{"custom.github_token", "ghp_test123"},
@@ -86,7 +86,7 @@ func TestLoadInvalid(t *testing.T) {
 func TestNames(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "x"
+setup_token = "x"
 
 [custom]
 b_key = "y"
@@ -99,7 +99,7 @@ a_key = "z"
 		t.Fatalf("Names() len = %d, want 3", len(names))
 	}
 	// Should be sorted
-	if names[0] != "anthropic.token" || names[1] != "custom.a_key" || names[2] != "custom.b_key" {
+	if names[0] != "anthropic.setup_token" || names[1] != "custom.a_key" || names[2] != "custom.b_key" {
 		t.Errorf("Names() = %v", names)
 	}
 }
@@ -164,7 +164,7 @@ key = "val"
 func TestRedact(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-ant-oat01-supersecret"
+setup_token = "sk-ant-oat01-supersecret"
 
 [custom]
 api_key = "BSA-mykey123"
@@ -294,7 +294,7 @@ func TestSetAndSave(t *testing.T) {
 	}
 
 	s.Set("custom.api_key", "sk-test-123")
-	s.Set("anthropic.token", "sk-ant-456")
+	s.Set("anthropic.setup_token", "sk-ant-456")
 
 	if err := s.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -310,9 +310,9 @@ func TestSetAndSave(t *testing.T) {
 	if !ok || v != "sk-test-123" {
 		t.Errorf("custom.api_key = %q, ok=%v", v, ok)
 	}
-	v, ok = s2.Get("anthropic.token")
+	v, ok = s2.Get("anthropic.setup_token")
 	if !ok || v != "sk-ant-456" {
-		t.Errorf("anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 }
 
@@ -353,7 +353,7 @@ key2 = "val2"
 func TestLoadWithAllowedHosts(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-ant-test"
+setup_token = "sk-ant-test"
 allowed_hosts = ["api.anthropic.com", "api.example.com"]
 
 [custom]
@@ -370,9 +370,9 @@ allowed_hosts = ["api.locked.com"]
 	}
 
 	// Values should still load correctly
-	v, ok := s.Get("anthropic.token")
+	v, ok := s.Get("anthropic.setup_token")
 	if !ok || v != "sk-ant-test" {
-		t.Errorf("anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 	v, ok = s.Get("custom.github_token")
 	if !ok || v != "ghp_test123" {
@@ -384,9 +384,9 @@ allowed_hosts = ["api.locked.com"]
 	}
 
 	// AllowedHosts should return correct lists
-	hosts := s.AllowedHosts("anthropic.token")
+	hosts := s.AllowedHosts("anthropic.setup_token")
 	if len(hosts) != 2 || hosts[0] != "api.anthropic.com" || hosts[1] != "api.example.com" {
-		t.Errorf("AllowedHosts(anthropic.token) = %v", hosts)
+		t.Errorf("AllowedHosts(anthropic.setup_token) = %v", hosts)
 	}
 
 	hosts = s.AllowedHosts("locked.api_key")
@@ -757,7 +757,7 @@ func TestCheckSecurityGroupName(t *testing.T) {
 func TestLoadPerAgentSecrets(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-global"
+setup_token = "sk-global"
 
 [custom]
 github_token = "ghp_global"
@@ -777,9 +777,9 @@ allowed_hosts = ["api.fotini.com"]
 	}
 
 	// Global values still accessible on root store
-	v, ok := s.Get("anthropic.token")
+	v, ok := s.Get("anthropic.setup_token")
 	if !ok || v != "sk-global" {
-		t.Errorf("global anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("global anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 
 	// ForAgent returns merged view
@@ -798,9 +798,9 @@ allowed_hosts = ["api.fotini.com"]
 	}
 
 	// Global fallback
-	v, ok = fs.Get("anthropic.token")
+	v, ok = fs.Get("anthropic.setup_token")
 	if !ok || v != "sk-global" {
-		t.Errorf("fotini anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("fotini anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 
 	// Agent-specific allowed_hosts
@@ -836,7 +836,7 @@ api_key = "alpha_key"
 func TestForAgentFallbackToGlobal(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-global"
+setup_token = "sk-global"
 
 [custom]
 key_a = "val_a"
@@ -858,7 +858,7 @@ key_a = "beta_a"
 	if v != "val_b" {
 		t.Errorf("expected val_b, got %q", v)
 	}
-	v, _ = bs.Get("anthropic.token")
+	v, _ = bs.Get("anthropic.setup_token")
 	if v != "sk-global" {
 		t.Errorf("expected sk-global, got %q", v)
 	}
@@ -903,7 +903,7 @@ private = "bob_secret"
 func TestForAgentNames(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-global"
+setup_token = "sk-global"
 
 [custom]
 key = "val"
@@ -915,7 +915,7 @@ extra = "extra_val"
 	gs := s.ForAgent("gamma")
 	names := gs.Names()
 
-	expected := []string{"anthropic.token", "custom.extra", "custom.key"}
+	expected := []string{"anthropic.setup_token", "custom.extra", "custom.key"}
 	if len(names) != len(expected) {
 		t.Fatalf("Names() = %v, want %v", names, expected)
 	}
@@ -983,7 +983,7 @@ agent_key = "supersecretagent"
 func TestForAgentNoSection(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-global"
+setup_token = "sk-global"
 
 [custom]
 key = "val"
@@ -993,9 +993,9 @@ key = "val"
 	// Agent with no section gets all globals
 	ns := s.ForAgent("nonexistent")
 
-	v, ok := ns.Get("anthropic.token")
+	v, ok := ns.Get("anthropic.setup_token")
 	if !ok || v != "sk-global" {
-		t.Errorf("nonexistent agent anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("nonexistent agent anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 	v, ok = ns.Get("custom.key")
 	if !ok || v != "val" {
@@ -1012,7 +1012,7 @@ func TestLoadPerAgentBackwardCompat(t *testing.T) {
 	// Existing secrets.toml without [agents.*] works unchanged
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-ant-test"
+setup_token = "sk-ant-test"
 
 [custom]
 github_token = "ghp_test"
@@ -1023,9 +1023,9 @@ allowed_hosts = ["api.github.com"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	v, ok := s.Get("anthropic.token")
+	v, ok := s.Get("anthropic.setup_token")
 	if !ok || v != "sk-ant-test" {
-		t.Errorf("anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 	v, ok = s.Get("custom.github_token")
 	if !ok || v != "ghp_test" {
@@ -1038,16 +1038,16 @@ allowed_hosts = ["api.github.com"]
 
 	// ForAgent on a store with no agent sections still works
 	fs := s.ForAgent("anyagent")
-	v, ok = fs.Get("anthropic.token")
+	v, ok = fs.Get("anthropic.setup_token")
 	if !ok || v != "sk-ant-test" {
-		t.Errorf("ForAgent anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("ForAgent anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 }
 
 func TestSavePreservesAgentSections(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
-token = "sk-global"
+setup_token = "sk-global"
 
 [agents.fotini.custom]
 api_key = "fotini_key"
@@ -1069,9 +1069,9 @@ allowed_hosts = ["api.fotini.com"]
 	}
 
 	// Global preserved
-	v, ok := s2.Get("anthropic.token")
+	v, ok := s2.Get("anthropic.setup_token")
 	if !ok || v != "sk-global" {
-		t.Errorf("anthropic.token = %q, ok=%v", v, ok)
+		t.Errorf("anthropic.setup_token = %q, ok=%v", v, ok)
 	}
 
 	// Agent values preserved through save/load

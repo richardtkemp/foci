@@ -22,7 +22,7 @@ workspace = "/tmp/workspace"
 
 
 [anthropic]
-token = "sk-ant-oat01-test"
+setup_token = "sk-ant-oat01-test"
 brave_api_key = "brave-key"
 
 [telegram]
@@ -61,8 +61,8 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Agent.Workspace != "/tmp/workspace" {
 		t.Errorf("Agent.Workspace = %q", cfg.Agent.Workspace)
 	}
-	if cfg.Anthropic.Token != "sk-ant-oat01-test" {
-		t.Errorf("Anthropic.Token = %q", cfg.Anthropic.Token)
+	if cfg.Anthropic.SetupToken != "sk-ant-oat01-test" {
+		t.Errorf("Anthropic.SetupToken = %q", cfg.Anthropic.SetupToken)
 	}
 	if cfg.Anthropic.BraveAPIKey != "brave-key" {
 		t.Errorf("Anthropic.BraveAPIKey = %q", cfg.Anthropic.BraveAPIKey)

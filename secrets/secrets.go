@@ -21,7 +21,7 @@ var defaultBlockedPaths = []string{
 }
 
 // Store holds secrets loaded from secrets.toml.
-// Values are stored as flat keys: "anthropic.token", "custom.github_token", etc.
+// Values are stored as flat keys: "anthropic.setup_token", "custom.github_token", etc.
 type Store struct {
 	path         string
 	values       map[string]string
@@ -159,7 +159,7 @@ func (s *Store) ForAgent(agentID string) *Store {
 	}
 }
 
-// Get returns a secret value by its flat key (e.g. "anthropic.token").
+// Get returns a secret value by its flat key (e.g. "anthropic.setup_token").
 func (s *Store) Get(name string) (string, bool) {
 	v, ok := s.values[name]
 	return v, ok
@@ -349,7 +349,7 @@ func FindSecretRefs(text string) []string {
 }
 
 // AllowedHosts returns the allowed_hosts list for the section of the given
-// secret name. For example, "anthropic.token" returns allowedHosts["anthropic"].
+// secret name. For example, "anthropic.setup_token" returns allowedHosts["anthropic"].
 // Returns nil if no allowed_hosts are configured for that section.
 func (s *Store) AllowedHosts(name string) []string {
 	parts := strings.SplitN(name, ".", 2)

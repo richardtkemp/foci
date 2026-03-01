@@ -301,7 +301,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("database", "busy_timeout", cfg.Database.BusyTimeout)
 
 	// anthropic (secrets redacted)
-	add("anthropic", "token", redactString(cfg.Anthropic.Token))
+	add("anthropic", "setup_token", redactString(cfg.Anthropic.SetupToken))
 	add("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	add("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
 	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
@@ -543,7 +543,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		addGlobal("voice", "tts_rate", cfg.Voice.TTSRate)
 	}
 	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
-	addGlobal("anthropic", "token", redactString(cfg.Anthropic.Token))
+	addGlobal("anthropic", "setup_token", redactString(cfg.Anthropic.SetupToken))
 	addGlobal("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	addGlobal("anthropic", "credentials_file", cfg.Anthropic.CredentialsFile)
 	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
@@ -715,7 +715,7 @@ type displayTelegram struct {
 }
 
 type displayAnthropic struct {
-	Token           string `toml:"token"`
+	SetupToken      string `toml:"setup_token"`
 	BraveAPIKey     string `toml:"brave_api_key"`
 	CredentialsFile string `toml:"credentials_file"`
 	HTTPTimeout     string `toml:"http_timeout"`
@@ -753,7 +753,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Voice:         cfg.Voice,
 		Database:      cfg.Database,
 		Anthropic: displayAnthropic{
-			Token:           redactString(cfg.Anthropic.Token),
+			SetupToken:      redactString(cfg.Anthropic.SetupToken),
 			BraveAPIKey:     redactString(cfg.Anthropic.BraveAPIKey),
 			CredentialsFile: cfg.Anthropic.CredentialsFile,
 			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,

@@ -147,9 +147,9 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	Token           string `toml:"token"`
+	SetupToken      string `toml:"setup_token"`       // static setup-token (fallback when OAuth not available)
 	BraveAPIKey     string `toml:"brave_api_key"`
-	CredentialsFile string `toml:"credentials_file"`  // path to credentials file (OAuth PKCE or Claude Code format)
+	CredentialsFile string `toml:"credentials_file"`  // path to foci's OAuth credentials file (default ~/.config/foci/oauth.json)
 	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
 }

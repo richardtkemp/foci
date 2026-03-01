@@ -664,7 +664,7 @@ github_token = "ghp_default"
 [agents.fotini.custom]
 github_token = "ghp_fotini_account"
 ```
-Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (exec templates, http_request, redaction, system prompt secret names).
+Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.setup_token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (exec templates, http_request, redaction, system prompt secret names).
 
 ### What the agent knows about secrets
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
@@ -899,7 +899,7 @@ model = "claude-haiku-4-5"
 workspace = "/home/rich/git/openclaw/workspace"
 
 [anthropic]
-token = "sk-ant-oat01-..."  # static override (optional — use foci auth for OAuth PKCE)
+setup_token = "sk-ant-oat01-..."  # static override (optional — use foci auth for OAuth PKCE)
 
 [telegram]
 bot_token = "8351531463:AAH..."

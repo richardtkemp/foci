@@ -10,7 +10,7 @@ import (
 func testConfig() (*Config, AgentConfig) {
 	cfg := &Config{
 		Anthropic: AnthropicConfig{
-			Token:           "sk-ant-secret",
+			SetupToken:      "sk-ant-secret",
 			BraveAPIKey:     "brave-secret",
 			CredentialsFile: "/home/user/.credentials.json",
 			HTTPTimeout:     "120s",

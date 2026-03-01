@@ -18,10 +18,11 @@ config.Load(path)                                        ← validates values; l
   Shared resources (created once):
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
   → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
-  → Token resolution: static token (secrets.toml/foci.toml) OR OAuth PKCE (credentials_file)
-  →   Static: NewClientWithTimeout(token) + NewUsageClient(token)
-  →   OAuth:  NewOAuthManager(credsFile) → auto-refresh → NewClientWithTokenFunc(mgr.Token) + NewUsageClientWithFunc(mgr.Token)
-  →   Interactive: if no creds and stdin is terminal → RunAuthFlow() → retry OAuth
+  → Token resolution (priority order):
+  →   1. Foci OAuth: NewOAuthManager(credentials_file) → auto-refresh → NewClientWithTokenFunc + NewUsageClientWithFunc
+  →   2. Static setup-token: anthropic.setup_token from secrets.toml → NewClientWithTimeout + NewUsageClient
+  →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
+  →   4. Interactive: if no creds and stdin is terminal → RunAuthFlow() → retry from (1)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
@@ -341,7 +342,7 @@ bot_token = "123:ABC"
 github_token = "ghp_..."
 ```
 
-Stored as flat keys: `anthropic.token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup.
+Stored as flat keys: `anthropic.setup_token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup.
 
 Features:
 - **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in exec (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in exec (approval-gated via aisudo).
