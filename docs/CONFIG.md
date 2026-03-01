@@ -379,6 +379,9 @@ Logging and diagnostics.
 | `cache_bust_idle_minutes` | int | `10` | Suppress cache bust alerts if the session was idle longer than this many minutes. Anthropic's cache TTL is 5 min, so any gap >10 min means the cache expired naturally — not a genuine bust. |
 | `warning_max_per_window` | int | `3` | Max identical warnings allowed per time window before suppression. Set to `0` to disable rate-limiting. |
 | `warning_window_duration` | string | `"5m"` | Time window for warning deduplication. Go duration format (`30s`, `5m`, `1h`). |
+| `warning_proactive_active_interval` | string | `"5m"` | Min interval between proactive warning turns when user is active. Go duration format. |
+| `warning_proactive_inactive_interval` | string | `"1h"` | Min interval between proactive warning turns when user is inactive. Go duration format. |
+| `warning_proactive_activity_threshold` | string | `"10m"` | User is "active" if last message within this window. Go duration format. |
 | `log_rotation` | bool | `true` | Enable built-in log rotation. |
 | `rotation_period` | string | `"24h"` | How often to check and rotate logs. Go duration format. |
 | `retention_period` | string | `"48h"` | Keep lines newer than this in the active log. Older lines archived to gzip. |

@@ -272,6 +272,85 @@ func TestWarningQueue_Dedup_DrainPrunesExpired(t *testing.T) {
 	}
 }
 
+// --- Pending() tests ---
+
+func TestWarningQueue_Pending_Empty(t *testing.T) {
+	q := NewWarningQueue(0, 0)
+	if q.Pending() {
+		t.Error("Pending() on empty queue should be false")
+	}
+}
+
+func TestWarningQueue_Pending_WithWarnings(t *testing.T) {
+	q := NewWarningQueue(0, 0)
+	q.Push("WARN", "test", "something happened")
+	if !q.Pending() {
+		t.Error("Pending() with queued warnings should be true")
+	}
+}
+
+func TestWarningQueue_Pending_SuppressedOnly(t *testing.T) {
+	q, _ := newTestQueue(1, 5*time.Minute)
+
+	// One allowed, two suppressed
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // suppressed
+	q.Push("WARN", "test", "error") // suppressed
+
+	// Drain the queued warning (but not summaries — Drain handles both)
+	// After drain, suppressed count resets, so Pending should be false.
+	warnings := q.Drain()
+	if len(warnings) != 2 { // 1 allowed + 1 summary
+		t.Fatalf("Drain() got %d, want 2", len(warnings))
+	}
+
+	// Push more suppressed (within same window, bucket still at max)
+	q.Push("WARN", "test", "error") // suppressed
+	if !q.Pending() {
+		t.Error("Pending() should be true when only suppressed warnings exist")
+	}
+}
+
+func TestWarningQueue_Pending_AfterDrain(t *testing.T) {
+	q := NewWarningQueue(0, 0)
+	q.Push("WARN", "test", "something")
+	q.Drain()
+	if q.Pending() {
+		t.Error("Pending() after Drain() should be false")
+	}
+}
+
+// --- LastUserMessageTime tests ---
+
+func TestLastUserMessageTime_Default(t *testing.T) {
+	a := &Agent{}
+	got := a.LastUserMessageTime("test-session")
+	if !got.IsZero() {
+		t.Errorf("LastUserMessageTime for new session = %v, want zero", got)
+	}
+}
+
+func TestLastUserMessageTime_AfterSeed(t *testing.T) {
+	a := &Agent{}
+	sm := a.getSessionMeta("test-session")
+	now := time.Now()
+	sm.lastMessageTime = now
+
+	got := a.LastUserMessageTime("test-session")
+	if !got.Equal(now) {
+		t.Errorf("LastUserMessageTime = %v, want %v", got, now)
+	}
+}
+
+func TestIsSystemMessage_ProactiveWarnings(t *testing.T) {
+	if !isSystemMessage("[proactive system warnings]\n- [WARN] disk full") {
+		t.Error("isSystemMessage should recognize proactive system warnings prefix")
+	}
+	if isSystemMessage("Hello, how are you?") {
+		t.Error("isSystemMessage should not match regular messages")
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		d    time.Duration

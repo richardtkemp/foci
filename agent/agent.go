@@ -466,10 +466,21 @@ func formatGap(d time.Duration) string {
 	return fmt.Sprintf("%dd%dh", days, hours)
 }
 
+// LastUserMessageTime returns the last user message time for the session.
+// Used by keepalive proactive warning dispatch to determine user activity.
+func (a *Agent) LastUserMessageTime(sessionKey string) time.Time {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.lastMessageTime
+}
+
 // isSystemMessage returns true if the message is from a system source
-// (keepalive, scheduled wake) rather than a human user.
+// (keepalive, scheduled wake, proactive warnings) rather than a human user.
 func isSystemMessage(msg string) bool {
-	return strings.HasPrefix(msg, "[KEEPALIVE]") || strings.HasPrefix(msg, "[SCHEDULED WAKE]")
+	return strings.HasPrefix(msg, "[KEEPALIVE]") ||
+		strings.HasPrefix(msg, "[SCHEDULED WAKE]") ||
+		strings.HasPrefix(msg, "[proactive system warnings]")
 }
 
 func detectContentExtension(content string) string {

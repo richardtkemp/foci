@@ -43,6 +43,11 @@ const (
 // It must handle branch creation and agent execution internally.
 type BranchFunc func(branchType, promptText string, noCompact bool)
 
+// WarningDispatchFunc is called to dispatch a proactive warning turn.
+// It receives the formatted warning text and should inject it as a user message
+// into the agent's default session, triggering a full agent turn.
+type WarningDispatchFunc func(warningText string)
+
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
 	agentID     string
@@ -67,6 +72,16 @@ type Runner struct {
 	memoryFormationRunning bool
 	consolidationRunning   bool
 
+	// Proactive warning dispatch state
+	warningQueue              *agent.WarningQueue
+	warningDispatchFn         WarningDispatchFunc
+	warningActiveInterval     time.Duration
+	warningInactiveInterval   time.Duration
+	warningActivityThreshold  time.Duration
+	lastUserMessageTimeFn     func() time.Time
+	lastWarningDispatch       time.Time
+	warningDispatching        bool
+
 	// Cached mana state
 	lastUsagePoll time.Time
 	cachedMana    float64 // 0-100 (100 = fully available)
@@ -86,24 +101,38 @@ type RunnerConfig struct {
 	UsageClient     *anthropic.UsageClient
 	StateStore      *state.Store
 	BranchFunc      BranchFunc
+
+	// Proactive warning dispatch
+	WarningQueue              *agent.WarningQueue
+	WarningDispatchFn         WarningDispatchFunc
+	WarningActiveInterval     time.Duration
+	WarningInactiveInterval   time.Duration
+	WarningActivityThreshold  time.Duration
+	LastUserMessageTimeFn     func() time.Time
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
 func New(cfg RunnerConfig) *Runner {
 	now := time.Now()
 	r := &Runner{
-		agentID:             cfg.AgentID,
-		kaCfg:               cfg.Keepalive,
-		bgCfg:               cfg.Background,
-		mfCfg:               cfg.MemoryFormation,
-		todoStore:           cfg.TodoStore,
-		usageClient:         cfg.UsageClient,
-		stateStore:          cfg.StateStore,
-		branchFn:            cfg.BranchFunc,
-		lastCacheWarmed:     now,
-		lastInteraction:     now,
-		lastMemoryFormation: now,
-		done:                make(chan struct{}),
+		agentID:                  cfg.AgentID,
+		kaCfg:                    cfg.Keepalive,
+		bgCfg:                    cfg.Background,
+		mfCfg:                    cfg.MemoryFormation,
+		todoStore:                cfg.TodoStore,
+		usageClient:              cfg.UsageClient,
+		stateStore:               cfg.StateStore,
+		branchFn:                 cfg.BranchFunc,
+		warningQueue:             cfg.WarningQueue,
+		warningDispatchFn:        cfg.WarningDispatchFn,
+		warningActiveInterval:    cfg.WarningActiveInterval,
+		warningInactiveInterval:  cfg.WarningInactiveInterval,
+		warningActivityThreshold: cfg.WarningActivityThreshold,
+		lastUserMessageTimeFn:    cfg.LastUserMessageTimeFn,
+		lastCacheWarmed:          now,
+		lastInteraction:          now,
+		lastMemoryFormation:      now,
+		done:                     make(chan struct{}),
 	}
 	// Restore consolidation timestamp from persistent state
 	if cfg.StateStore != nil {
@@ -158,6 +187,7 @@ func (r *Runner) run(ctx context.Context) {
 			r.maybeBackgroundWork(ctx)
 			r.maybeMemoryFormation()
 			r.maybeConsolidation()
+			r.maybeWarningDispatch()
 		}
 	}
 }
@@ -374,6 +404,68 @@ func (r *Runner) maybeConsolidation() {
 			}
 		}()
 		r.branchFn("consolidation", promptText, true)
+	}()
+}
+
+// maybeWarningDispatch checks for pending warnings and dispatches them proactively
+// as a user-role message. Rate limited by user activity: active interval if the user
+// has been recently active, inactive interval otherwise.
+func (r *Runner) maybeWarningDispatch() {
+	if r.warningQueue == nil || r.warningDispatchFn == nil {
+		return
+	}
+
+	if !r.warningQueue.Pending() {
+		return
+	}
+
+	r.mu.Lock()
+	dispatching := r.warningDispatching
+	sinceLastDispatch := time.Since(r.lastWarningDispatch)
+	r.mu.Unlock()
+
+	if dispatching {
+		return
+	}
+
+	// Determine rate limit interval based on user activity
+	interval := r.warningInactiveInterval
+	if r.lastUserMessageTimeFn != nil {
+		lastMsg := r.lastUserMessageTimeFn()
+		if !lastMsg.IsZero() && time.Since(lastMsg) < r.warningActivityThreshold {
+			interval = r.warningActiveInterval
+		}
+	}
+
+	if sinceLastDispatch < interval {
+		return
+	}
+
+	// Drain and format
+	warnings := r.warningQueue.Drain()
+	if len(warnings) == 0 {
+		return
+	}
+
+	text := "[proactive system warnings]"
+	for _, w := range warnings {
+		text += "\n- " + w
+	}
+
+	r.mu.Lock()
+	r.warningDispatching = true
+	r.lastWarningDispatch = time.Now()
+	r.mu.Unlock()
+
+	log.Infof("keepalive", "dispatching %d proactive warnings for agent %s", len(warnings), r.agentID)
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.warningDispatching = false
+			r.mu.Unlock()
+		}()
+		r.warningDispatchFn(text)
 	}()
 }
 

@@ -376,6 +376,15 @@ Three thresholds (all configurable as `%` of RAM, `mb`, or `gb`):
 
 Notifications go to agents whose `inject_agent_warnings` is false. Dedup prevents spam: same threshold only fires once until memory drops below it or tmux is killed.
 
+### Warning Injection
+
+When `inject_agent_warnings` is enabled, WARN/ERROR log events are pushed into the agent's `WarningQueue` and surfaced in two ways:
+
+- **Passive:** warnings are drained and prepended to the next user message as `[system warnings]` blocks. This is the default path — warnings piggyback on existing interaction.
+- **Proactive:** the keepalive runner checks `WarningQueue.Pending()` every 30s and, if warnings are waiting, injects them as a `[proactive system warnings]` user message that triggers a full agent turn. Rate limited by user activity: 1 per `warning_proactive_active_interval` (default 5m) if the user is active, 1 per `warning_proactive_inactive_interval` (default 1h) if inactive. Activity is determined by `LastUserMessageTime()` vs `warning_proactive_activity_threshold` (default 10m). The agent response is delivered to Telegram.
+
+Proactive dispatch ensures critical warnings (disk full, tmux OOM) reach the agent immediately rather than sitting unnoticed until the next user message.
+
 ### Tool Result Guard
 
 When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), foci does NOT inject the full result into session history. Instead:
