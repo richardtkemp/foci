@@ -67,6 +67,12 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 				return "Usage: /sessions [list|default <chat_id>|info]", nil
 			}
 		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "list", Data: "list"},
+				{Label: "info", Data: "info"},
+			}
+		},
 	}
 }
 

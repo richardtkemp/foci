@@ -571,8 +571,9 @@ func NewResetCommand(resetFn func() error) *Command {
 
 // NewModelCommand returns a /model command to show or switch the model.
 // getModel returns current model; setModel switches it; resolveModel resolves aliases.
+// modelAliases provides the alias map for keyboard options (may be nil).
 // Callbacks receive the command's context so callers can resolve per-session state.
-func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string), resolveModel func(string) string) *Command {
+func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string), resolveModel func(string) string, modelAliases map[string]string) *Command {
 	return &Command{
 		Name:        "model",
 		Description: "Show or switch model",
@@ -584,6 +585,37 @@ func NewModelCommand(getModel func(context.Context) string, setModel func(contex
 			resolved := resolveModel(args)
 			setModel(ctx, resolved)
 			return fmt.Sprintf("Model switched to: %s", resolved), nil
+		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			current := getModel(ctx)
+			if len(modelAliases) > 0 {
+				// Use aliases sorted alphabetically
+				names := make([]string, 0, len(modelAliases))
+				for alias := range modelAliases {
+					names = append(names, alias)
+				}
+				sort.Strings(names)
+				var opts []KeyboardOption
+				for _, alias := range names {
+					label := alias
+					if modelAliases[alias] == current {
+						label += " ✓"
+					}
+					opts = append(opts, KeyboardOption{Label: label, Data: alias})
+				}
+				return opts
+			}
+			// Fallback: show common model names
+			models := []string{"haiku", "sonnet", "opus"}
+			var opts []KeyboardOption
+			for _, m := range models {
+				label := m
+				if strings.Contains(current, m) {
+					label += " ✓"
+				}
+				opts = append(opts, KeyboardOption{Label: label, Data: m})
+			}
+			return opts
 		},
 	}
 }
@@ -626,6 +658,19 @@ func NewEffortCommand(getEffort func(context.Context) string, setEffort func(con
 				return fmt.Sprintf("Invalid effort level: %q\n%s", args, optionsLine), nil
 			}
 		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			current := getEffort(ctx)
+			levels := []string{"low", "medium", "high"}
+			opts := make([]KeyboardOption, len(levels))
+			for i, l := range levels {
+				label := l
+				if l == current {
+					label += " ✓"
+				}
+				opts[i] = KeyboardOption{Label: label, Data: l}
+			}
+			return opts
+		},
 	}
 }
 
@@ -663,6 +708,19 @@ func NewThinkingCommand(getThinking func(context.Context) string, setThinking fu
 			default:
 				return fmt.Sprintf("Invalid thinking mode: %q\n%s", args, optionsLine), nil
 			}
+		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			current := getThinking(ctx)
+			opts := []KeyboardOption{
+				{Label: "off", Data: "off"},
+				{Label: "adaptive", Data: "adaptive"},
+			}
+			for i := range opts {
+				if opts[i].Data == current || (current == "" && opts[i].Data == "off") {
+					opts[i].Label += " ✓"
+				}
+			}
+			return opts
 		},
 	}
 }
@@ -707,6 +765,13 @@ func NewConfigCommand(configFn func(args string) (string, error)) *Command {
 		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return configFn(args)
+		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "toml", Data: "toml"},
+				{Label: "table", Data: "table"},
+				{Label: "available", Data: "available"},
+			}
 		},
 	}
 }
@@ -975,6 +1040,13 @@ Commands: list, start, send, read, kill, watch, unwatch`
 		Description:    "Manage tmux sessions — start, send, read, list, kill, watch, unwatch",
 		Category:       "observability",
 		SkipToolExport: true,
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "list", Data: "list"},
+				{Label: "start", Data: "start"},
+				{Label: "kill", Data: "kill"},
+			}
+		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			fields := strings.Fields(args)
 

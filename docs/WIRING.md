@@ -235,8 +235,10 @@ Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCall
 **Inline result expansion (full mode only):** In "full" mode, each tool call message includes a "Show results" inline keyboard button. Pressing it expands the message to include the tool's output (truncated to fit Telegram's 4096-char limit). "Hide results" collapses back.
 
 - `ToolResultObserver` callback fires after each tool execution (both success and error), storing the result in `Bot.toolResults` (`sync.Map`, message ID → `toolResultEntry`). Ephemeral — no persistence needed.
-- `handleCallbackQuery` processes `tc:show:<msgID>` / `tc:hide:<msgID>` button presses, editing the message and answering the callback query.
+- `handleCallbackQuery` processes `tc:show:<msgID>` / `tc:hide:<msgID>` button presses, editing the message and answering the callback query. Also handles `cmd:/name args` for inline keyboard command selections.
 - `pollUpdates` requests `AllowedUpdates: ["message", "callback_query"]` to receive button press events.
+
+**Inline keyboard commands:** Commands with a `KeyboardOptions` field (`/model`, `/thinking`, `/effort`, `/config`, `/sessions`, `/tmux`) show an inline keyboard when invoked bare. `LookupKeyboard()` checks for this before `Dispatch()`. `sendCommandKeyboard()` builds and sends the keyboard. Callback data format: `cmd:/name args`. `handleCommandCallback()` executes the command and edits the message to show the result.
 
 ## Thought Queue (Reminders)
 

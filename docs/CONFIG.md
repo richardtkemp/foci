@@ -577,6 +577,8 @@ All prompt fields use 3-state resolution: empty or `"default"` → embedded defa
 
 Custom slash commands. Each entry is a `[[commands]]` table array.
 
+**Inline keyboards:** Built-in commands with parameters (`/model`, `/thinking`, `/effort`, `/config`, `/sessions`, `/tmux`) show inline keyboard buttons when invoked bare. No configuration needed.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | required | Command name (without `/`). |
