@@ -1044,9 +1044,53 @@ Commands: list, start, send, read, kill, watch, unwatch`
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "list", Data: "list"},
-				{Label: "start", Data: "start"},
 				{Label: "kill", Data: "kill"},
+				{Label: "read", Data: "read"},
+				{Label: "watch", Data: "watch"},
 			}
+		},
+		ChainKeyboard: func(ctx context.Context, subcommand string) []KeyboardOption {
+			switch subcommand {
+			case "kill", "read", "watch":
+			default:
+				return nil
+			}
+			// List owned + watched sessions to build dynamic buttons
+			listParams, _ := json.Marshal(map[string]interface{}{"operation": "list"})
+			result, err := execFn(ctx, listParams)
+			if err != nil || result == "No tmux sessions." {
+				return nil
+			}
+			var opts []KeyboardOption
+			seen := make(map[string]bool)
+			for _, line := range strings.Split(result, "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" || strings.HasPrefix(line, "SESSION") {
+					continue
+				}
+				fields := strings.Fields(line)
+				if len(fields) == 0 {
+					continue
+				}
+				name := fields[0]
+				if seen[name] {
+					continue
+				}
+				seen[name] = true
+				// For kill/read: show owned and watched sessions
+				// Find status field (4th field: owned/watched/idle)
+				status := ""
+				if len(fields) >= 4 {
+					status = fields[3]
+				}
+				if status == "owned" || status == "watched" {
+					opts = append(opts, KeyboardOption{
+						Label: name,
+						Data:  subcommand + " " + name,
+					})
+				}
+			}
+			return opts
 		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			fields := strings.Fields(args)

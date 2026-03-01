@@ -27,6 +27,11 @@ type Command struct {
 	// KeyboardOptions returns inline keyboard buttons to show when the command
 	// is invoked bare (no arguments). nil means no keyboard — execute normally.
 	KeyboardOptions func(ctx context.Context) []KeyboardOption
+
+	// ChainKeyboard returns a second set of keyboard options when a subcommand
+	// needs a parameter (e.g. /tmux kill → which session?). The subcommand arg
+	// is the first argument (e.g. "kill"). nil means no chaining.
+	ChainKeyboard func(ctx context.Context, subcommand string) []KeyboardOption
 }
 
 // WizardHandler is implemented by interactive wizards that take over message routing.
@@ -93,6 +98,42 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string) (string, []K
 	}
 
 	opts := cmd.KeyboardOptions(ctx)
+	if len(opts) == 0 {
+		return "", nil, false
+	}
+
+	return name, opts, true
+}
+
+// LookupChainKeyboard checks if a command callback text (e.g. "/tmux kill") needs
+// a second keyboard to select a parameter. Returns (command_name, options, true)
+// if chaining should occur, or ("", nil, false) otherwise.
+func (r *Registry) LookupChainKeyboard(ctx context.Context, text string) (string, []KeyboardOption, bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "/") {
+		return "", nil, false
+	}
+
+	stripped := text[1:]
+	name, args, _ := strings.Cut(stripped, " ")
+	name = strings.ToLower(name)
+	args = strings.TrimSpace(args)
+
+	// Chain only fires for a bare subcommand (exactly one word, no further args)
+	if args == "" {
+		return "", nil, false
+	}
+	sub, extra, _ := strings.Cut(args, " ")
+	if strings.TrimSpace(extra) != "" {
+		return "", nil, false // already has full args
+	}
+
+	cmd := r.commands[name]
+	if cmd == nil || cmd.ChainKeyboard == nil {
+		return "", nil, false
+	}
+
+	opts := cmd.ChainKeyboard(ctx, sub)
 	if len(opts) == 0 {
 		return "", nil, false
 	}
