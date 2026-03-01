@@ -536,8 +536,11 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	if !strings.Contains(wakeMsg, name) {
 		t.Errorf("wake message = %q, want to contain session name %q", wakeMsg, name)
 	}
-	if !strings.Contains(wakeMsg, "[TMUX WATCH]") {
-		t.Errorf("wake message = %q, want to contain [TMUX WATCH]", wakeMsg)
+	if !strings.Contains(wakeMsg, "TMUX WATCH") {
+		t.Errorf("wake message = %q, want to contain TMUX WATCH", wakeMsg)
+	}
+	if !strings.Contains(wakeMsg, "injected by the system") {
+		t.Errorf("wake message = %q, want to contain context note", wakeMsg)
 	}
 
 	// Cleanup
