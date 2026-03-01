@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -813,7 +814,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 		// Second call: model returns final text
 		return &anthropic.MessageResponse{
 			ID: "msg_2", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Tool said: echo hello"),
+			Content:    anthropic.TextContent("Tool said: echo hello"),
 			StopReason: "end_turn",
 			Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
 		}
@@ -825,7 +826,9 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 		Name:       "echo_tool",
 		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			var p struct{ Text string `json:"text"` }
+			var p struct {
+				Text string `json:"text"`
+			}
 			json.Unmarshal(params, &p)
 			return "echo: " + p.Text, nil
 		},
@@ -955,7 +958,6 @@ func TestSpawnCharacterOnlyAllTools(t *testing.T) {
 }
 
 func TestSpawnToolSetExcludesSpawn(t *testing.T) {
-	// Verify spawn itself is excluded to prevent recursion.
 	reg := NewRegistry()
 	reg.Register(&Tool{
 		Name:       "spawn",
@@ -975,4 +977,259 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 	if _, ok := tools["spawn"]; ok {
 		t.Error("spawn should be excluded from tool set")
 	}
+}
+
+func TestSpawnNoneCreatesTempDir(t *testing.T) {
+	var spawnTempDir string
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return &anthropic.MessageResponse{
+			ID: "msg_test", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("Done."), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "none",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if strings.Contains(result, "Files created in /tmp/foci-spawn-") {
+		spawnTempDir = extractTempDir(result)
+	}
+	_ = spawnTempDir
+}
+
+func TestSpawnNoneIsolationWritesToTempDir(t *testing.T) {
+	callCount := 0
+	var spawnTempDir string
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			return &anthropic.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"output.txt","content":"test data"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID: "msg_2", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("File written."), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	reg.Register(NewWriteTool(nil))
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "none",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result, "File written.") {
+		t.Errorf("expected result, got %q", result)
+	}
+
+	if !strings.Contains(result, "Files created in /tmp/foci-spawn-") {
+		t.Errorf("expected file list in result, got %q", result)
+	}
+
+	spawnTempDir = extractTempDir(result)
+	if spawnTempDir == "" {
+		t.Fatal("failed to extract temp dir from result")
+	}
+
+	data, err := os.ReadFile(spawnTempDir + "/output.txt")
+	if err != nil {
+		t.Fatalf("read file in temp dir: %v", err)
+	}
+	if string(data) != "test data" {
+		t.Errorf("file content = %q", string(data))
+	}
+}
+
+func TestSpawnNoneIsolationBlocksAbsolutePath(t *testing.T) {
+	callCount := 0
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			return &anthropic.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"/tmp/malicious.txt","content":"bad"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID: "msg_2", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("Error received."), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	reg.Register(NewWriteTool(nil))
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "none",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result, "Error received.") {
+		t.Errorf("expected result, got %q", result)
+	}
+}
+
+func TestSpawnNoneIsolationBlocksTraversal(t *testing.T) {
+	callCount := 0
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			return &anthropic.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"../../../tmp/escape.txt","content":"bad"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID: "msg_2", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("Error received."), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	reg.Register(NewWriteTool(nil))
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "none",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result, "Error received.") {
+		t.Errorf("expected result, got %q", result)
+	}
+}
+
+func TestSpawnNoneFileListMultiple(t *testing.T) {
+	callCount := 0
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			return &anthropic.MessageResponse{
+				ID: "msg_1", Type: "message", Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"a.txt","content":"aaa"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		if callCount == 2 {
+			return &anthropic.MessageResponse{
+				ID: "msg_2", Type: "message", Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "tool_use", ID: "tu_2", Name: "write", Input: json.RawMessage(`{"path":"b.txt","content":"bbbbb"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		return &anthropic.MessageResponse{
+			ID: "msg_3", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("Files written."), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 30, OutputTokens: 15},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	reg.Register(NewWriteTool(nil))
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "test",
+		"context": "none",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result, "a.txt") {
+		t.Errorf("expected a.txt in file list, got %q", result)
+	}
+	if !strings.Contains(result, "b.txt") {
+		t.Errorf("expected b.txt in file list, got %q", result)
+	}
+	if !strings.Contains(result, "3 B") && !strings.Contains(result, "5 B") {
+		t.Errorf("expected file sizes in file list, got %q", result)
+	}
+}
+
+func extractTempDir(result string) string {
+	marker := "Files created in "
+	idx := strings.Index(result, marker)
+	if idx == -1 {
+		return ""
+	}
+	start := idx + len(marker)
+	end := strings.Index(result[start:], "/:")
+	if end == -1 {
+		return ""
+	}
+	return result[start : start+end]
 }

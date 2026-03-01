@@ -228,7 +228,7 @@ spawn(prompt="Research this topic thoroughly", context="clone_current")
 
 **Context modes:**
 
-- **`none`** — just the prompt, no system context, no tools. One-shot cold call. Cheapest option for simple questions.
+- **`none`** — just the prompt, no system context. One-shot cold call with tool access. Tools run in an isolated temp directory (`/tmp/foci-spawn-*`). File writes are sandboxed: absolute paths and `../` traversal are blocked. Any created files are listed in the spawn result with sizes. Good for tasks that need file output without workspace access.
 - **`full`** — character files + prompt, no tools. One-shot call with full personality context. Good for tasks that need "you" without tool access.
 - **`clone_current`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. Always runs asynchronously — returns an immediate acknowledgment and delivers the result via `AsyncNotifier` when complete.
 
