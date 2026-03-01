@@ -2017,6 +2017,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2)
 
 	name := "foci-test-ap-unwatch"
+	tmuxCleanup(t, name) // clean up stale sessions from prior crashed runs
 	defer tmuxCleanup(t, name)
 
 	// Start session (auto-watches with 2s threshold due to autopilot)
