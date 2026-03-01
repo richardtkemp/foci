@@ -221,8 +221,6 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 			tools[t.Name] = NewIsolatedWriteTool(nil, baseDir)
 		case "edit":
 			tools[t.Name] = NewIsolatedEditTool(nil, baseDir)
-		case "exec":
-			tools[t.Name] = NewExecTool(nil, nil, 0, nil, baseDir, nil)
 		case "http_request":
 			tools[t.Name] = NewIsolatedHTTPRequestTool(t)
 		default:

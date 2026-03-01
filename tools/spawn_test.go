@@ -898,7 +898,13 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 		})
 	}
 
-	_, tools := spawnIsolatedToolSet(reg, spawnNoneBlacklist, "/tmp/test-sandbox")
+	defs, tools := spawnIsolatedToolSet(reg, spawnNoneBlacklist, "/tmp/test-sandbox")
+
+	// Build a set of tool names present in the API schema (defs).
+	defNames := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		defNames[d.Name] = true
+	}
 
 	// Verify every tool is either allowed or blocked — no unclassified tools.
 	for _, name := range allTools {
@@ -906,6 +912,9 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 			// spawn is always excluded (hardcoded in spawnIsolatedToolSet)
 			if _, ok := tools[name]; ok {
 				t.Errorf("spawn should never be included in spawn tool sets")
+			}
+			if defNames[name] {
+				t.Errorf("spawn should not appear in tool schema")
 			}
 			continue
 		}
@@ -933,10 +942,27 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 		}
 	}
 
-	// Verify blacklisted tools are actually excluded.
+	// Verify blacklisted tools are excluded from BOTH the tools map and the
+	// API schema (defs). Previously only the tools map was checked, so a
+	// blacklisted tool could still appear in the schema sent to the model.
 	for name := range spawnNoneBlacklist {
 		if _, ok := tools[name]; ok {
-			t.Errorf("tool %q is blacklisted but still available in none-mode", name)
+			t.Errorf("tool %q is blacklisted but still available in none-mode tools map", name)
+		}
+		if defNames[name] {
+			t.Errorf("tool %q is blacklisted but still appears in none-mode tool schema", name)
+		}
+	}
+
+	// Verify defs and tools map are consistent — every def has a handler.
+	for _, d := range defs {
+		if _, ok := tools[d.Name]; !ok {
+			t.Errorf("tool %q has a schema definition but no handler in tools map", d.Name)
+		}
+	}
+	for name := range tools {
+		if !defNames[name] {
+			t.Errorf("tool %q has a handler but no schema definition", name)
 		}
 	}
 }
