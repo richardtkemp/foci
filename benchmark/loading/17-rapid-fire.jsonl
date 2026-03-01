@@ -1,8 +1,0 @@
-{"seq": 1, "message": "Quick questions: what's the database pool size from the config?", "purpose": "rapid_recall"}
-{"seq": 2, "message": "How many users total in the CSV?", "purpose": "rapid_recall"}
-{"seq": 3, "message": "What port did we set the API to?", "purpose": "rapid_recall_corrected"}
-{"seq": 4, "message": "Who owns auth?", "purpose": "rapid_recall_people"}
-{"seq": 5, "message": "What's our uptime SLA?", "purpose": "rapid_recall_corrected"}
-{"seq": 6, "message": "SMS provider?", "purpose": "rapid_recall_corrected"}
-{"seq": 7, "message": "How many retry attempts for the notification service?", "purpose": "rapid_recall_corrected"}
-{"seq": 8, "message": "Good, you remembered. Let's move on.", "purpose": "filler"}

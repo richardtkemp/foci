@@ -174,6 +174,38 @@ Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. R
 
 ## Next Steps
 
+### First message
+
+Open Telegram and message your bot. On first run, the agent will introduce itself, ask your name and communication preferences, and learn about you — interests, work, style. It updates its character files based on what you share. Take a few minutes to help it understand who you are.
+
+### Character files
+
+Your agent's identity lives in `~foci/<agent-id>/character/`. The onboarding conversation fills these in, but you can edit them directly anytime:
+
+- **SOUL.md** — inner life, values, what it notices
+- **CRAFT.md** — how the agent communicates and works
+- **COHERENCE.md** — consistency guidelines
+- **USER.md** — about you
+- **MEMORY.md** — learned knowledge that persists across sessions
+
+### Skills
+
+Skills are capability bundles — a `SKILL.md` file that teaches the agent how to use specific tools or workflows. Place them in `~foci/shared/skills/skillname/SKILL.md`.
+
+### Memory
+
+The agent writes daily notes to `~foci/<agent-id>/memory/YYYY-MM-DD.md`. These are searchable and form its long-term memory. MEMORY.md holds curated lessons that load every session.
+
+### Keepalive
+
+When idle, the agent receives periodic `[KEEPALIVE]` messages — a chance to reflect, check on things, or note it's still running. Configure the interval in `foci.toml`.
+
+### Commands
+
+In Telegram, type `/help` to see available slash commands: `/status`, `/model`, `/thinking`, `/effort`, and more.
+
+### Further reading
+
 - [AUTH.md](AUTH.md) — detailed authentication setup
 - [CONFIG.md](CONFIG.md) — full configuration reference
 - [WIRING.md](WIRING.md) — how components connect

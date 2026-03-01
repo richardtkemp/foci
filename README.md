@@ -105,16 +105,10 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for a full list of suggested sy
 ## Quick Start
 
 ```bash
-# Clone and run setup (builds, installs, creates user, configures, starts service)
-git clone https://github.com/richardtkemp/foci.git
-cd foci
-sudo ./setup.sh -u foci
-
-# setup.sh is idempotent — re-run to update
-sudo ./setup.sh -u foci
+git clone https://github.com/richardtkemp/foci.git && cd foci && sudo ./setup.sh -u foci
 ```
 
-Setup handles everything: system user creation, secrets group, Go build, systemd service, config generation (interactive or via env vars), directory structure, and character file templates. See `setup.sh --help` for options.
+See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next steps.
 
 ## Documentation
 

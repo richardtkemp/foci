@@ -1,8 +1,0 @@
-{"seq": 1, "message": "OK let's wrap up. What did we accomplish today?", "purpose": "session_summary"}
-{"seq": 2, "message": "What's still outstanding that we need to pick up tomorrow?", "purpose": "outstanding_recall"}
-{"seq": 3, "message": "Top 3 priorities for tomorrow?", "purpose": "priority_recall"}
-{"seq": 4, "message": "Anything we said we'd do 'later' that I might forget?", "purpose": "deferred_recall"}
-{"seq": 5, "message": "Don't forget James said keys need rotating by end of month.", "purpose": "reinforce_deadline"}
-{"seq": 6, "message": "One more thing — the Acme launch date is January 15th. Everything needs to be ready by Jan 10th for buffer.", "purpose": "establish_deadline"}
-{"seq": 7, "message": "Actually Jan 12th is enough buffer. Jan 10th is too aggressive.", "purpose": "deadline_correction"}
-{"seq": 8, "message": "OK that's it for today. Good session.", "purpose": "session_end"}
