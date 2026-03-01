@@ -89,16 +89,13 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	}
 	// Per-agent keepalive/background
 	add("agent", "keepalive.enabled", agent.Keepalive.Enabled)
-	if agent.Keepalive.Enabled {
-		add("agent", "keepalive.interval", agent.Keepalive.Interval)
-		add("agent", "keepalive.prompt", agent.Keepalive.Prompt)
-	}
+	add("agent", "keepalive.interval", agent.Keepalive.Interval)
+	add("agent", "keepalive.prompt", agent.Keepalive.Prompt)
 	add("agent", "background.enabled", agent.Background.Enabled)
-	if agent.Background.Enabled {
-		add("agent", "background.interval", agent.Background.Interval)
-		add("agent", "background.prompt", agent.Background.Prompt)
-		add("agent", "background.invest_interval", agent.Background.InvestInterval)
-	}
+	add("agent", "background.interval", agent.Background.Interval)
+	add("agent", "background.prompt", agent.Background.Prompt)
+	add("agent", "background.invest_interval", agent.Background.InvestInterval)
+	add("agent", "background.mana_staleness_timeout", agent.Background.ManaStalenessTimeout)
 	// Memory formation
 	add("agent", "memory_formation.interval", agent.MemoryFormation.Interval)
 	if agent.MemoryFormation.IntervalEnabled != nil {
@@ -388,16 +385,13 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 		addDefault("system_files", cfg.Defaults.SystemFiles, false)
 	}
 	addGlobal("keepalive", "enabled", cfg.Keepalive.Enabled)
-	if cfg.Keepalive.Enabled {
-		addGlobal("keepalive", "interval", cfg.Keepalive.Interval)
-		addGlobal("keepalive", "prompt", cfg.Keepalive.Prompt)
-	}
+	addGlobal("keepalive", "interval", cfg.Keepalive.Interval)
+	addGlobal("keepalive", "prompt", cfg.Keepalive.Prompt)
 	addGlobal("background", "enabled", cfg.Background.Enabled)
-	if cfg.Background.Enabled {
-		addGlobal("background", "interval", cfg.Background.Interval)
-		addGlobal("background", "prompt", cfg.Background.Prompt)
-		addGlobal("background", "invest_interval", cfg.Background.InvestInterval)
-	}
+	addGlobal("background", "interval", cfg.Background.Interval)
+	addGlobal("background", "prompt", cfg.Background.Prompt)
+	addGlobal("background", "invest_interval", cfg.Background.InvestInterval)
+	addGlobal("background", "mana_staleness_timeout", cfg.Background.ManaStalenessTimeout)
 	addGlobal("memory_formation", "interval", cfg.MemoryFormation.Interval)
 	addGlobal("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
 	if cfg.MemoryFormation.IntervalEnabled != nil {
@@ -613,16 +607,13 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 			addAgent("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
 		}
 		addAgent("keepalive.enabled", agent.Keepalive.Enabled)
-		if agent.Keepalive.Enabled {
-			addAgent("keepalive.interval", agent.Keepalive.Interval)
-			addAgent("keepalive.prompt", agent.Keepalive.Prompt)
-		}
+		addAgent("keepalive.interval", agent.Keepalive.Interval)
+		addAgent("keepalive.prompt", agent.Keepalive.Prompt)
 		addAgent("background.enabled", agent.Background.Enabled)
-		if agent.Background.Enabled {
-			addAgent("background.interval", agent.Background.Interval)
-			addAgent("background.prompt", agent.Background.Prompt)
-			addAgent("background.invest_interval", agent.Background.InvestInterval)
-		}
+		addAgent("background.interval", agent.Background.Interval)
+		addAgent("background.prompt", agent.Background.Prompt)
+		addAgent("background.invest_interval", agent.Background.InvestInterval)
+		addAgent("background.mana_staleness_timeout", agent.Background.ManaStalenessTimeout)
 		// Memory formation
 		addAgent("memory_formation.interval", agent.MemoryFormation.Interval)
 		if agent.MemoryFormation.IntervalEnabled != nil {

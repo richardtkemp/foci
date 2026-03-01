@@ -125,6 +125,53 @@ func TestFormatConfig(t *testing.T) {
 	}
 }
 
+func TestFormatConfigBackgroundFieldsAlwaysShown(t *testing.T) {
+	cfg, agent := testConfig()
+	// Background is disabled — fields should still appear
+	agent.Background.Enabled = false
+	agent.Background.Interval = "5m"
+	agent.Background.Prompt = ""
+	agent.Background.InvestInterval = "30m"
+	agent.Background.ManaStalenessTimeout = "10m"
+
+	result := FormatConfig(cfg, agent)
+
+	for _, key := range []string{
+		"background.enabled",
+		"background.interval",
+		"background.invest_interval",
+		"background.mana_staleness_timeout",
+	} {
+		if !strings.Contains(result, key) {
+			t.Errorf("missing %q in FormatConfig output when background disabled", key)
+		}
+	}
+}
+
+func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
+	cfg, agent := testConfig()
+	cfg.Agents = []AgentConfig{agent}
+	cfg.Background.Enabled = false
+	cfg.Background.Interval = "5m"
+	cfg.Background.InvestInterval = "30m"
+	cfg.Background.ManaStalenessTimeout = "10m"
+	agent.Background = cfg.Background
+
+	tables := FormatConfigGrouped(cfg, agent)
+	combined := strings.Join(tables, "\n")
+
+	for _, key := range []string{
+		"background.enabled",
+		"background.interval",
+		"background.invest_interval",
+		"background.mana_staleness_timeout",
+	} {
+		if !strings.Contains(combined, key) {
+			t.Errorf("missing %q in FormatConfigGrouped output when background disabled", key)
+		}
+	}
+}
+
 func TestFormatConfigSecretRedaction(t *testing.T) {
 	cfg, agent := testConfig()
 	result := FormatConfig(cfg, agent)
