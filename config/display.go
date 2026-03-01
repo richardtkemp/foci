@@ -144,7 +144,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	}
 
 	// telegram
-	add("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
 	if len(cfg.Telegram.AllowedUsers) > 0 {
 		add("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
 	}
@@ -193,9 +192,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	}
 
 	// memory
-	if cfg.Memory.Dir != "" {
-		add("memory", "dir", cfg.Memory.Dir)
-	}
 	if len(cfg.Memory.Sources) > 0 {
 		add("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
 	}
@@ -404,7 +400,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if cfg.MemoryFormation.SessionEndEnabled != nil {
 		addGlobal("memory_formation", "session_end_enabled", *cfg.MemoryFormation.SessionEndEnabled)
 	}
-	addGlobal("telegram", "bot_token", redactString(cfg.Telegram.BotToken))
 	if len(cfg.Telegram.AllowedUsers) > 0 {
 		addGlobal("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
 	}
@@ -448,9 +443,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.BranchOrientationPrompt != "" {
 		addGlobal("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
-	}
-	if cfg.Memory.Dir != "" {
-		addGlobal("memory", "dir", cfg.Memory.Dir)
 	}
 	if len(cfg.Memory.Sources) > 0 {
 		addGlobal("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))

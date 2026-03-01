@@ -168,7 +168,7 @@ type TelegramBotConfig struct {
 }
 
 type TelegramConfig struct {
-	BotToken            string                       `toml:"bot_token"` // legacy single-bot token
+	BotToken            string                       `toml:"bot_token"` // deprecated: use [telegram.bots] with token_secret
 	AllowedUsers        []string                     `toml:"allowed_users"`
 	MultiballBots       []string                     `toml:"multiball_bots"`        // shared multiball pool: references keys in [telegram.bots] map
 	Bots                map[string]TelegramBotConfig `toml:"bots"`                  // named bots for multi-agent
@@ -208,7 +208,7 @@ type MemorySource struct {
 }
 
 type MemoryConfig struct {
-	Dir                string         `toml:"dir"`                 // backward compat: single directory
+	Dir                string         `toml:"dir"`                 // deprecated: use [[memory.sources]]
 	Sources            []MemorySource `toml:"sources"`             // new: multiple sources with weights
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
@@ -1054,6 +1054,13 @@ func Load(path string) (*Config, error) {
 	if !md.IsDefined("telegram", "enable_startup_notify") {
 		cfg.Telegram.EnableStartupNotify = true
 	}
+	// Warn about deprecated config keys.
+	if md.IsDefined("telegram", "bot_token") {
+		log.Warnf("config", "telegram.bot_token is deprecated — migrate to [telegram.bots.<name>] with token_secret in secrets.toml")
+	}
+	if md.IsDefined("memory", "dir") {
+		log.Warnf("config", "memory.dir is deprecated — migrate to [[memory.sources]] with name, dir, and weight fields")
+	}
 	// Migrate deprecated [telegram] display settings to [defaults].
 	if md.IsDefined("telegram", "show_tool_calls") {
 		log.Warnf("config", "telegram.show_tool_calls is deprecated — move to [defaults] show_tool_calls")
@@ -1256,21 +1263,14 @@ type SecretGetter interface {
 }
 
 // ResolveBotToken resolves a Telegram bot token for the given bot name.
-// It checks the [telegram.bots] map first (token_secret → secrets store),
-// then falls back to the legacy telegram.bot_token path.
+// It checks the [telegram.bots] map for token_secret → secrets store.
 func (c *Config) ResolveBotToken(botName string, secrets SecretGetter) string {
-	// New path: [telegram.bots.<name>].token_secret → secrets store
 	if bot, ok := c.Telegram.Bots[botName]; ok && bot.TokenSecret != "" {
 		if v, ok := secrets.Get(bot.TokenSecret); ok {
 			return v
 		}
 	}
-
-	// Legacy path: [telegram].bot_token or secrets.telegram.bot_token
-	if v, ok := secrets.Get("telegram.bot_token"); ok {
-		return v
-	}
-	return c.Telegram.BotToken
+	return ""
 }
 
 // ResolvePath resolves a path. Absolute paths are returned as-is.
