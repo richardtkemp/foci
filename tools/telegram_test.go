@@ -456,16 +456,20 @@ func TestChatIDFromSessionKey(t *testing.T) {
 	}{
 		{"agent:fotini:chat:99887766", 99887766},
 		{"agent:clutch:chat:12345", 12345},
+		{"agent:fotini:chat:5970082313", 5970082313},
+		{"agent:fotini:chat:8792716180", 8792716180},
+		{"agent:test:chat:-1001234567890", -1001234567890}, // group chat
 		{"agent:test:spawn:spawn-123456", 0},
 		{"agent:test:main", 0},
 		{"agent:test:multiball:mb-123", 0},
+		{"agent:fotini:8792716180", 0}, // missing chat: segment
 		{"", 0},
 		{"agent:test:chat:notanumber", 0},
 	}
 	for _, tt := range tests {
-		got := chatIDFromSessionKey(tt.key)
+		got := ChatIDFromSessionKey(tt.key)
 		if got != tt.want {
-			t.Errorf("chatIDFromSessionKey(%q) = %d, want %d", tt.key, got, tt.want)
+			t.Errorf("ChatIDFromSessionKey(%q) = %d, want %d", tt.key, got, tt.want)
 		}
 	}
 }

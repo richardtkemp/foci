@@ -213,3 +213,74 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 		t.Errorf("appended to key = %q", store.key)
 	}
 }
+
+func TestSendToSessionPerUserChatRouting(t *testing.T) {
+	// Bug #218: verify that cross-session communication between per-user
+	// chat sessions routes to the correct target session key, enabling
+	// chat ID extraction for Telegram delivery.
+	store := &mockSessionAppender{}
+	notifier := NewAsyncNotifier(func(sk, msg string) {
+		// reply_to=caller: verify the notifier receives the TARGET session key
+		// so the async_notify callback can extract the chat ID.
+		if ChatIDFromSessionKey(sk) == 0 {
+			t.Errorf("async_notify should receive session key with extractable chat ID, got %q", sk)
+		}
+	})
+
+	sessionDelivered := make(chan struct{ sk, msg string }, 1)
+	sessionNotifyFn := SessionNotifyFn(func(sk, msg string) {
+		sessionDelivered <- struct{ sk, msg string }{sk, msg}
+	})
+
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn)
+
+	// Dick's session sends to Eleni's session with reply_to=session
+	dickSession := "agent:fotini:chat:5970082313"
+	eleniSession := "agent:fotini:chat:8792716180"
+
+	ctx := WithSessionKey(context.Background(), dickSession)
+	params, _ := json.Marshal(map[string]string{
+		"session_key": eleniSession,
+		"message":     "Στείλε μήνυμα στην Ελένη",
+		"reply_to":    "session",
+	})
+
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "reply_to=session") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Verify sessionNotifyFn receives the TARGET session key (Eleni's),
+	// not the caller's (Dick's)
+	d := <-sessionDelivered
+	if d.sk != eleniSession {
+		t.Errorf("session notify key = %q, want %s", d.sk, eleniSession)
+	}
+	// Verify chat ID can be extracted from the target session key
+	chatID := ChatIDFromSessionKey(d.sk)
+	if chatID != 8792716180 {
+		t.Errorf("ChatIDFromSessionKey(%q) = %d, want 8792716180", d.sk, chatID)
+	}
+
+	// Now test reply_to=caller path
+	params, _ = json.Marshal(map[string]string{
+		"session_key": eleniSession,
+		"message":     "What did Eleni say?",
+		"reply_to":    "caller",
+	})
+
+	result, err = tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute (caller): %v", err)
+	}
+	if !strings.Contains(result, "reply_to=caller") {
+		t.Errorf("result = %q", result)
+	}
+	// Verify the message was appended to the target session
+	if store.key != eleniSession {
+		t.Errorf("appended to key = %q, want %s", store.key, eleniSession)
+	}
+}
