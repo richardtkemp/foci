@@ -294,7 +294,7 @@ Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API defa
 
 ### Tool System
 
-Tools are Go functions registered at compile time. No dynamic loading, no plugin discovery.
+Tools are Go functions registered at compile time. No dynamic loading, no plugin discovery. See [docs/TOOLS.md](docs/TOOLS.md) for the canonical tool reference.
 
 **Alpha tools:**
 - `exec` — run shell commands (with timeout, background, auto-background)
