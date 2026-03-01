@@ -767,7 +767,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// prompt cache — any insertion in the middle of conversation history
 	// invalidates all cached tokens after the insertion point.
 	sessionLock := a.turnLock(sessionKey)
+	log.Debugf("agent", "turn_lock_wait session=%s", sessionKey)
+	lockStart := time.Now()
 	sessionLock.Lock()
+	lockDur := time.Since(lockStart)
+	if lockDur > 100*time.Millisecond {
+		log.Warnf("agent", "turn_lock_held session=%s waited=%s", sessionKey, lockDur)
+	} else {
+		log.Debugf("agent", "turn_lock_acquired session=%s waited=%s", sessionKey, lockDur)
+	}
 	defer sessionLock.Unlock()
 
 	atomic.AddInt32(&a.processing, 1)
@@ -946,11 +954,14 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			sessionKey, turnModel, len(reqMessages), len(toolDefs), len(system))
 
 		start := time.Now()
+		log.Debugf("agent", "api_call_start session=%s model=%s", sessionKey, turnModel)
 		resp, err := a.Client.SendMessage(ctx, req)
 		duration := time.Since(start)
+		log.Debugf("agent", "api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
 
 		if err != nil {
 			if ctx.Err() != nil {
+				log.Debugf("agent", "api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
 				return "", ctx.Err()
 			}
 			// Detect rate limit / overloaded errors and notify via callback.
