@@ -31,8 +31,9 @@ Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` f
 | `memory.sources` | array | see below | Per-agent memory directories (see below). Combined with global `[memory]` sources. When empty, defaults to a single source: `{name: $id, dir: $workspace/memory, weight: 1.0}`. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
-| `autopilot_threshold` | int | `10` | Consecutive tool-call loops before injecting an autopilot warning. `0` disables. Per-agent override of `[defaults] autopilot_threshold`. |
-| `autopilot_prompt` | string | `""` | Custom warning text injected when the threshold is hit. Empty uses a hardcoded default. Per-agent override of `[defaults] autopilot_prompt`. |
+| `braindead_warning_enable` | bool | `true` | Enable braindead warning injection. `false` disables. Per-agent override of `[defaults] braindead_warning_enable`. |
+| `braindead_warning_threshold` | int | `10` | Consecutive tool-call loops before injecting a braindead warning. `0` disables. Per-agent override of `[defaults] braindead_warning_threshold`. |
+| `braindead_warning_prompt` | string | `""` | Custom warning text injected when the threshold is hit. Empty uses a hardcoded default. Per-agent override of `[defaults] braindead_warning_prompt`. |
 | `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. Empty = omit (use API default). Overridable at runtime via `/effort` command. Per-session overrides persist across restarts via state store and reset when a new session starts. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` enables adaptive extended thinking (Opus 4.6). Empty or `"off"` = disabled. Overridable at runtime via `/thinking` command. Per-session overrides persist across restarts via state store. Thinking tokens count toward mana. |
 | `inject_agent_warnings` | bool | `false` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
@@ -107,8 +108,9 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `inject_agent_warnings` | bool | `false` | Default inject_agent_warnings setting. |
 | `max_tool_loops` | int | `25` | Default max tool iterations per turn. |
 | `max_output_tokens` | int | `8192` | Default max tokens in model response. |
-| `autopilot_threshold` | int | `10` | Default consecutive tool loops before autopilot warning. `0` disables. |
-| `autopilot_prompt` | string | `""` | Default autopilot warning text. Empty uses hardcoded default. |
+| `braindead_warning_enable` | bool | `true` | Enable braindead warning. `false` disables. |
+| `braindead_warning_threshold` | int | `10` | Default consecutive tool loops before braindead warning. `0` disables. |
+| `braindead_warning_prompt` | string | `""` | Default braindead warning text. Empty uses hardcoded default. |
 | `effort` | string | `""` | Default effort level: `"low"`, `"medium"`, `"high"`. Empty = omit. |
 | `thinking` | string | `""` | Default thinking mode: `"adaptive"` or empty/`"off"`. |
 | `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |

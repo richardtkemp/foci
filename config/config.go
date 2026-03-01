@@ -94,34 +94,35 @@ type AgentMemoryConfig struct {
 }
 
 type AgentConfig struct {
-	ID                      string            `toml:"id"`
-	Name                    string            `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji                   string            `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Model                   string            `toml:"model"`
-	Workspace               string            `toml:"workspace"`
-	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages       bool              `toml:"duplicate_messages"`        // send user text twice per API call (improves instruction following)
-	ForkPrompt              string            `toml:"fork_prompt"`               // DEPRECATED: use branch_orientation_prompt
-	BranchOrientationPrompt string            `toml:"branch_orientation_prompt"` // path to prompt file injected into all branch sessions (multiball, cron, spawn)
-	TelegramBot             string            `toml:"telegram_bot"`              // references key in [telegram.bots] map
-	MultiballBot            string            `toml:"multiball_bot"`             // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
-	MultiballBots           []string          `toml:"multiball_bots"`            // references keys in [telegram.bots] map (optional)
-	Memory                  AgentMemoryConfig `toml:"memory"`                    // per-agent memory sources (combined with global [memory])
-	MaxToolLoops            int               `toml:"max_tool_loops"`            // max tool iterations per turn (default 25)
-	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
-	AutopilotThreshold      int               `toml:"autopilot_threshold"`       // consecutive tool loops before warning (0 = disabled, default 10)
-	AutopilotPrompt         string            `toml:"autopilot_prompt"`          // warning text injected as user message
-	Effort                  string            `toml:"effort"`                    // effort level: "low", "medium", "high" (empty = omit from request)
-	Thinking                string            `toml:"thinking"`                  // thinking mode: "off" (default), "adaptive"
-	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
-	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
-	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
-	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
-	ShowThinking            *ShowThinking     `toml:"show_thinking"`             // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
-	DisplayWidth            *int              `toml:"display_width"`             // display width for dividers in Telegram (nil = use global telegram.display_width)
-	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
-	ReceivedFilesDir        string            `toml:"received_files_dir"`        // save received files to this directory (empty = disabled)
-	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
+	ID                        string            `toml:"id"`
+	Name                      string            `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji                     string            `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Model                     string            `toml:"model"`
+	Workspace                 string            `toml:"workspace"`
+	SystemFiles               []string          `toml:"system_files"`                // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	DuplicateMessages         bool              `toml:"duplicate_messages"`          // send user text twice per API call (improves instruction following)
+	ForkPrompt                string            `toml:"fork_prompt"`                 // DEPRECATED: use branch_orientation_prompt
+	BranchOrientationPrompt   string            `toml:"branch_orientation_prompt"`   // path to prompt file injected into all branch sessions (multiball, cron, spawn)
+	TelegramBot               string            `toml:"telegram_bot"`                // references key in [telegram.bots] map
+	MultiballBot              string            `toml:"multiball_bot"`               // DEPRECATED: use multiball_bots. References key in [telegram.bots] map (optional)
+	MultiballBots             []string          `toml:"multiball_bots"`              // references keys in [telegram.bots] map (optional)
+	Memory                    AgentMemoryConfig `toml:"memory"`                      // per-agent memory sources (combined with global [memory])
+	MaxToolLoops              int               `toml:"max_tool_loops"`              // max tool iterations per turn (default 25)
+	MaxOutputTokens           int               `toml:"max_output_tokens"`           // max tokens in model response (default 8192)
+	BraindeadWarningEnable    *bool             `toml:"braindead_warning_enable"`    // enable braindead warning (nil = use global default)
+	BraindeadWarningThreshold int               `toml:"braindead_warning_threshold"` // consecutive tool loops before warning (0 = disabled, default 10)
+	BraindeadWarningPrompt    string            `toml:"braindead_warning_prompt"`    // warning text injected as user message
+	Effort                    string            `toml:"effort"`                      // effort level: "low", "medium", "high" (empty = omit from request)
+	Thinking                  string            `toml:"thinking"`                    // thinking mode: "off" (default), "adaptive"
+	TTSRate                   float64           `toml:"tts_rate"`                    // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
+	InjectAgentWarnings       bool              `toml:"inject_agent_warnings"`       // inject warnings/errors into agent session (default false)
+	StartupNotification       *bool             `toml:"startup_notification"`        // send startup notification (nil = use global enable_startup_notify)
+	ShowToolCalls             *ToolCallDisplay  `toml:"show_tool_calls"`             // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
+	ShowThinking              *ShowThinking     `toml:"show_thinking"`               // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
+	DisplayWidth              *int              `toml:"display_width"`               // display width for dividers in Telegram (nil = use global telegram.display_width)
+	MessagesInLog             *bool             `toml:"messages_in_log"`             // log user message content to event log (nil = use global logging.messages_in_log)
+	ReceivedFilesDir          string            `toml:"received_files_dir"`          // save received files to this directory (empty = disabled)
+	AllowedUsers              []string          `toml:"allowed_users"`               // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
 	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
 	CompactionThreshold        *float64 `toml:"compaction_threshold"`         // compact at this % of context window
 	CompactionSummaryPrompt    string   `toml:"compaction_summary_prompt"`    // path to summary prompt file
@@ -316,20 +317,21 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Model               string           `toml:"model"`                 // default model (default: claude-haiku-4-5)
-	DuplicateMessages   bool             `toml:"duplicate_messages"`    // default duplicate_messages (default: false)
-	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
-	MaxToolLoops        int              `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
-	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
-	AutopilotThreshold  int              `toml:"autopilot_threshold"`   // default autopilot threshold (default: 10)
-	AutopilotPrompt     string           `toml:"autopilot_prompt"`      // default autopilot prompt
-	Effort              string           `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
-	Thinking            string           `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
-	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
-	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
-	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
-	DisplayWidth        *int             `toml:"display_width"`         // default display_width (nil = use telegram.display_width)
-	SystemFiles         []string         `toml:"system_files"`          // default system file list
+	Model                     string           `toml:"model"`                       // default model (default: claude-haiku-4-5)
+	DuplicateMessages         bool             `toml:"duplicate_messages"`          // default duplicate_messages (default: false)
+	InjectAgentWarnings       bool             `toml:"inject_agent_warnings"`       // default inject_agent_warnings (default: false)
+	MaxToolLoops              int              `toml:"max_tool_loops"`              // default max_tool_loops (default: 25)
+	MaxOutputTokens           int              `toml:"max_output_tokens"`           // default max_output_tokens (default: 8192)
+	BraindeadWarningEnable    bool             `toml:"braindead_warning_enable"`    // enable braindead warning (default: true)
+	BraindeadWarningThreshold int              `toml:"braindead_warning_threshold"` // default braindead warning threshold (default: 10)
+	BraindeadWarningPrompt    string           `toml:"braindead_warning_prompt"`    // default braindead warning prompt
+	Effort                    string           `toml:"effort"`                      // default effort level: "low", "medium", "high" (empty = omit)
+	Thinking                  string           `toml:"thinking"`                    // default thinking mode: "off" (default), "adaptive"
+	TTSRate                   float64          `toml:"tts_rate"`                    // default TTS speech rate (default: 0 = voice config)
+	ShowToolCalls             *ToolCallDisplay `toml:"show_tool_calls"`             // default show_tool_calls (nil = use telegram.show_tool_calls)
+	ShowThinking              *ShowThinking    `toml:"show_thinking"`               // default show_thinking (nil = use telegram.show_thinking)
+	DisplayWidth              *int             `toml:"display_width"`               // default display_width (nil = use telegram.display_width)
+	SystemFiles               []string         `toml:"system_files"`                // default system file list
 }
 
 // ModelsConfig holds model-related configuration.
@@ -623,8 +625,11 @@ func Load(path string) (*Config, error) {
 	if cfg.Defaults.MaxOutputTokens == 0 {
 		cfg.Defaults.MaxOutputTokens = 8192
 	}
-	if cfg.Defaults.AutopilotThreshold == 0 && !md.IsDefined("defaults", "autopilot_threshold") {
-		cfg.Defaults.AutopilotThreshold = 10
+	if !md.IsDefined("defaults", "braindead_warning_enable") {
+		cfg.Defaults.BraindeadWarningEnable = true
+	}
+	if cfg.Defaults.BraindeadWarningThreshold == 0 && !md.IsDefined("defaults", "braindead_warning_threshold") {
+		cfg.Defaults.BraindeadWarningThreshold = 10
 	}
 
 	// Backward compat: [agent] (singular) → single-element Agents array
@@ -643,11 +648,14 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].MaxOutputTokens == 0 {
 			cfg.Agents[i].MaxOutputTokens = cfg.Defaults.MaxOutputTokens
 		}
-		if cfg.Agents[i].AutopilotThreshold == 0 {
-			cfg.Agents[i].AutopilotThreshold = cfg.Defaults.AutopilotThreshold
+		if cfg.Agents[i].BraindeadWarningEnable == nil {
+			cfg.Agents[i].BraindeadWarningEnable = &cfg.Defaults.BraindeadWarningEnable
 		}
-		if cfg.Agents[i].AutopilotPrompt == "" {
-			cfg.Agents[i].AutopilotPrompt = cfg.Defaults.AutopilotPrompt
+		if cfg.Agents[i].BraindeadWarningThreshold == 0 {
+			cfg.Agents[i].BraindeadWarningThreshold = cfg.Defaults.BraindeadWarningThreshold
+		}
+		if cfg.Agents[i].BraindeadWarningPrompt == "" {
+			cfg.Agents[i].BraindeadWarningPrompt = cfg.Defaults.BraindeadWarningPrompt
 		}
 		if cfg.Agents[i].Effort == "" {
 			cfg.Agents[i].Effort = cfg.Defaults.Effort
