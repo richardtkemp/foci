@@ -12,7 +12,7 @@ Secrets are loaded from `secrets.toml` in the same directory as the config file.
 
 ## `[agent]` / `[[agents]]`
 
-Core agent settings. Use `[agent]` for a single agent (legacy) or `[[agents]]` for multiple agents. When both are present, `[[agents]]` takes precedence.
+Core agent settings. Use `[[agents]]` for one or more agents.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
