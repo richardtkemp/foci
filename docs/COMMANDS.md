@@ -1,6 +1,6 @@
 # Slash Commands Reference
 
-Messages starting with `/` are intercepted at the Telegram router level before reaching the agent — they execute immediately and never enter session history.
+Messages starting with `/` are intercepted at the Telegram router level before reaching the agent — they execute immediately and never enter session history. A period (`.`) prefix also works as an alias (e.g. `.mana` → `/mana`), provided it's followed by a letter. The `.` prefix exists because it's easier to type on most phone keyboards than `/`.
 
 All registered slash commands are also available to the agent as tools (without the `/` prefix), except those marked **CLI-only** below. See [TOOLS.md](TOOLS.md) for details.
 
