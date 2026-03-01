@@ -15,7 +15,7 @@ import (
 
 func TestSummaryTool_MissingParams(t *testing.T) {
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client)
+	tool := NewSummaryTool(client, nil)
 
 	tests := []struct {
 		name   string
@@ -43,7 +43,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 
 func TestSummaryTool_FileNotFound(t *testing.T) {
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client)
+	tool := NewSummaryTool(client, nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   "/tmp/nonexistent-summary-test-file-xyz",
@@ -64,7 +64,7 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 	os.WriteFile(tmp, []byte{}, 0644)
 
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client)
+	tool := NewSummaryTool(client, nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -86,7 +86,7 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 	os.WriteFile(tmp, data, 0644)
 
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client)
+	tool := NewSummaryTool(client, nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -132,7 +132,8 @@ func TestSummaryTool_Success(t *testing.T) {
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
-	tool := NewSummaryTool(client)
+	aliases := map[string]string{"haiku": "claude-haiku-4-5"}
+	tool := NewSummaryTool(client, aliases)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -165,5 +166,43 @@ func TestSummaryTool_Success(t *testing.T) {
 	}
 	if !strings.Contains(msgText, "What does this program do?") {
 		t.Error("request message does not contain prompt")
+	}
+}
+
+func TestSummaryTool_ModelAlias(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "test.txt")
+	os.WriteFile(tmp, []byte("hello"), 0644)
+
+	var gotModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req anthropic.MessageRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		gotModel = req.Model
+
+		resp := anthropic.MessageResponse{
+			ID:      "msg_test",
+			Type:    "message",
+			Role:    "assistant",
+			Content: []anthropic.ContentBlock{{Type: "text", Text: "ok"}},
+			Usage:   anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	aliases := map[string]string{
+		"haiku": "claude-haiku-4-5-custom",
+	}
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	tool := NewSummaryTool(client, aliases)
+
+	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotModel != "claude-haiku-4-5-custom" {
+		t.Errorf("model = %q, want %q", gotModel, "claude-haiku-4-5-custom")
 	}
 }
