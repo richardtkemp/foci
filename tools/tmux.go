@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"foci/log"
+	"foci/prompts"
 	"foci/state"
 )
 
@@ -1020,7 +1021,9 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 			if err != nil {
 				// Session is dead — notify and clean up
 				log.Infof("tmux", "watch: session %s no longer exists, auto-unwatching", ws.session)
-				msg := fmt.Sprintf("[TMUX WATCH] Session %s no longer exists — auto-unwatched", ws.session)
+				msg := prompts.FormatInjectedMessage("TMUX WATCH",
+					time.Now(),
+					fmt.Sprintf("Session %s no longer exists — auto-unwatched", ws.session))
 				ws.notifier.Notify(ws.agentSessionKey, msg)
 
 				inst.mu.Lock()
@@ -1043,7 +1046,9 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 				// Content unchanged; check if threshold exceeded
 				if time.Since(ws.lastActivity) > ws.threshold {
 					log.Infof("tmux", "watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
-					msg := fmt.Sprintf("[TMUX WATCH] Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold)
+					msg := prompts.FormatInjectedMessage("TMUX WATCH",
+						time.Now(),
+						fmt.Sprintf("Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold))
 					ws.notifier.Notify(ws.agentSessionKey, msg)
 
 					if ws.braindead {
