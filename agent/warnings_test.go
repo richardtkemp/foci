@@ -60,42 +60,6 @@ func TestWarningQueue_Format(t *testing.T) {
 	}
 }
 
-func TestCollectWarnings_NilQueue(t *testing.T) {
-	a := &Agent{}
-	if got := a.collectWarnings(); got != "" {
-		t.Errorf("collectWarnings() with nil queue = %q, want empty", got)
-	}
-}
-
-func TestCollectWarnings_EmptyQueue(t *testing.T) {
-	a := &Agent{Warnings: NewWarningQueue(0, 0)}
-	if got := a.collectWarnings(); got != "" {
-		t.Errorf("collectWarnings() with empty queue = %q, want empty", got)
-	}
-}
-
-func TestCollectWarnings_WithWarnings(t *testing.T) {
-	a := &Agent{Warnings: NewWarningQueue(0, 0)}
-	a.Warnings.Push("WARN", "config", "unknown key: foo")
-	a.Warnings.Push("ERROR", "telegram", "connection failed")
-
-	got := a.collectWarnings()
-	if !strings.Contains(got, "[system warnings]") {
-		t.Errorf("collectWarnings() missing header: %q", got)
-	}
-	if !strings.Contains(got, "unknown key: foo") {
-		t.Errorf("collectWarnings() missing first warning: %q", got)
-	}
-	if !strings.Contains(got, "connection failed") {
-		t.Errorf("collectWarnings() missing second warning: %q", got)
-	}
-
-	// Second call should return empty (drained)
-	if got := a.collectWarnings(); got != "" {
-		t.Errorf("collectWarnings() after drain = %q, want empty", got)
-	}
-}
-
 // --- Normalization tests ---
 
 func TestNormalizeWarning(t *testing.T) {

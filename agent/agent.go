@@ -736,25 +736,6 @@ func (a *Agent) collectReminders() string {
 	return block
 }
 
-// collectWarnings returns queued warnings formatted for injection into the user message.
-// Returns empty string if no warnings are queued or the queue is nil.
-func (a *Agent) collectWarnings() string {
-	if a.Warnings == nil {
-		return ""
-	}
-
-	warnings := a.Warnings.Drain()
-	if len(warnings) == 0 {
-		return ""
-	}
-
-	block := "\n[system warnings]"
-	for _, w := range warnings {
-		block += "\n- " + w
-	}
-	return block
-}
-
 // turnLock returns a per-session mutex that serializes HandleMessage calls.
 // This prevents concurrent turns on the same session from interleaving messages
 // in the session file, which would invalidate Anthropic's prefix-matched prompt cache.
@@ -857,13 +838,12 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 	metaPrefix := buildMetaPrefix(now, turnModel, mana, sm)
 	reminderBlock := a.collectReminders()
-	warningBlock := a.collectWarnings()
 	msgBody := imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && (trigger == "" || trigger == "user") {
 		msgBody = userMessage + "\n\n" + userMessage
 	}
-	annotatedMessage := metaPrefix + reminderBlock + warningBlock + "\n" + msgBody
+	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
 
 	// Build content blocks: images first, then text
 	var contentBlocks []anthropic.ContentBlock
