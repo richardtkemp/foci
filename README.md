@@ -48,7 +48,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Built-in todo list.** Persistent, priority-ranked task management the agent can use to keep its own priorities straight. Add, complete, search, remove — stored in SQLite, survives restarts. The agent tracks its own work without external tools or memory file hacks.
 
-**Cron is cron.** Scheduled tasks use the system crontab, not a built-in scheduler. Keepalives, memory formation, daily reviews — they're all cron entries calling `foci send` or `foci branch`. Debug with `crontab -l`, edit with `crontab -e`, monitor with your existing tools. No reinvented wheels, no custom DSL, no "task engine" to learn.
+**Cron is cron.** Scheduled tasks use the system crontab, not a built-in scheduler. Keepalives, memory formation, daily reviews — they're all cron entries calling `foci send` or `foci branch`. Debug with `crontab -l`, edit with `crontab -e`, monitor with your existing tools. No reinvented wheels, no custom DSL, no "task engine" to learn. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for the keepalive, background work, and manamometer details.
 
 **Multi-agent, single process.** Multiple agents share one binary with separate workspaces, identities, and Telegram bots. No container overhead, no orchestration. Config is one TOML file.
 
@@ -87,7 +87,7 @@ foci.toml + secrets.toml
 | What | Why | Notes |
 |------|-----|-------|
 | **Go 1.22+** | Build from source | |
-| **Claude Code** | Provides the OAuth token foci uses to access the Anthropic API | Also enables `/usage` (rate limit detection) and coding agent orchestration |
+| **Claude Code** | Provides the OAuth token foci uses to access the Anthropic API | Also enables `/usage` (rate limit detection) and coding agent orchestration. See [docs/AUTH.md](docs/AUTH.md) for token resolution and `foci auth` setup. |
 | **Telegram bot token** | Message transport | Create via [@BotFather](https://t.me/BotFather) |
 
 ### Optional
