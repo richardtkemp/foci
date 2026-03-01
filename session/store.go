@@ -12,6 +12,7 @@ import (
 
 	"foci/anthropic"
 	"foci/log"
+	"foci/prompts"
 )
 
 // SessionMeta is stored as the first line in a session file to preserve metadata
@@ -438,7 +439,7 @@ func (s *Store) InjectRestartMarkers(maxAge time.Duration) (int, error) {
 
 		marker := anthropic.Message{
 			Role:    "user",
-			Content: anthropic.TextContent("[System restarted at " + now.UTC().Format(time.RFC3339) + "]"),
+			Content: anthropic.TextContent(prompts.FormatInjectedMessage("SYSTEM RESTART", now, "")),
 		}
 		if err := s.appendUnlocked(key, marker); err != nil {
 			return fmt.Errorf("mark %s: %w", key, err)

@@ -1380,7 +1380,7 @@ func main() {
 			}
 			restartCtx := agent.WithTrigger(ctx, "restart")
 			restartCtx = agent.WithNoCompact(restartCtx)
-			msg := fmt.Sprintf("[SYSTEM UPDATE]\n%s", content)
+			msg := prompts.FormatInjectedMessage("SYSTEM UPDATE", time.Now(), content)
 			if _, err := inst.ag.HandleMessage(restartCtx, sk, msg); err != nil {
 				log.Errorf("main", "restart turn failed: %v", err)
 			}
@@ -1861,7 +1861,7 @@ func setupAgent(p setupParams) *agentInstance {
 					log.Warnf("remind", "no default session for agent %s, skipping", acfg.ID)
 					return
 				}
-				resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "scheduled_wake"), sk, "[SCHEDULED WAKE]\n"+message)
+				resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "scheduled_wake"), sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
 				if err != nil {
 					log.Errorf("remind", "error: %v", err)
 				} else {

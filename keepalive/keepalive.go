@@ -447,10 +447,14 @@ func (r *Runner) maybeWarningDispatch() {
 		return
 	}
 
-	text := "[proactive system warnings]"
-	for _, w := range warnings {
-		text += "\n- " + w
+	body := ""
+	for i, w := range warnings {
+		if i > 0 {
+			body += "\n"
+		}
+		body += "- " + w
 	}
+	text := prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
 
 	r.mu.Lock()
 	r.warningDispatching = true
