@@ -196,16 +196,39 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				}
 				var results []string
 				for _, id := range ids {
+					oldItem, getErr := store.Get(agentID, id)
 					item, err := store.Edit(agentID, id, p.Text, p.Priority, p.Tag, setTags)
 					if err != nil {
 						results = append(results, fmt.Sprintf("#%d: error: %v", id, err))
-					} else {
+						continue
+					}
+					if getErr != nil {
 						tags := memory.FormatTags(item.Tags)
-						marker := "[ ]"
-						if item.Status == "done" {
-							marker = "[x]"
+						results = append(results, fmt.Sprintf("#%d: updated [%s]%s %s", item.ID, item.Priority, tags, item.Text))
+						continue
+					}
+					var changes []string
+					if p.Text != "" && oldItem.Text != item.Text {
+						changes = append(changes, fmt.Sprintf("text: %s → %s", oldItem.Text, item.Text))
+					}
+					if p.Priority != "" && oldItem.Priority != item.Priority {
+						changes = append(changes, fmt.Sprintf("priority: %s → %s", oldItem.Priority, item.Priority))
+					}
+					if setTags && oldItem.Tags != item.Tags {
+						oldTags := memory.FormatTags(oldItem.Tags)
+						newTags := memory.FormatTags(item.Tags)
+						if oldTags == "" {
+							oldTags = "(none)"
 						}
-						results = append(results, fmt.Sprintf("#%d: updated %s [%s]%s %s", item.ID, marker, item.Priority, tags, item.Text))
+						if newTags == "" {
+							newTags = "(none)"
+						}
+						changes = append(changes, fmt.Sprintf("tags: %s → %s", oldTags, newTags))
+					}
+					if len(changes) == 0 {
+						results = append(results, fmt.Sprintf("#%d: no changes", id))
+					} else {
+						results = append(results, fmt.Sprintf("#%d: %s", id, strings.Join(changes, ", ")))
 					}
 				}
 				return strings.Join(results, "\n"), nil
