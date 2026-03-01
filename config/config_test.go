@@ -2158,7 +2158,7 @@ token_secret = "custom.key"
 	}
 }
 
-func TestAutopilotThresholdDefault(t *testing.T) {
+func TestBraindeadWarningThresholdDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -2171,19 +2171,22 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].AutopilotThreshold != 10 {
-		t.Errorf("AutopilotThreshold = %d, want 10", cfg.Agents[0].AutopilotThreshold)
+	if cfg.Agents[0].BraindeadWarningThreshold != 10 {
+		t.Errorf("BraindeadWarningThreshold = %d, want 10", cfg.Agents[0].BraindeadWarningThreshold)
+	}
+	if cfg.Agents[0].BraindeadWarningEnable == nil || *cfg.Agents[0].BraindeadWarningEnable != true {
+		t.Errorf("BraindeadWarningEnable = %v, want true", cfg.Agents[0].BraindeadWarningEnable)
 	}
 }
 
-func TestAutopilotThresholdExplicit(t *testing.T) {
+func TestBraindeadWarningThresholdExplicit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [[agents]]
 id = "test"
-autopilot_threshold = 5
-autopilot_prompt = "custom warning"
+braindead_warning_threshold = 5
+braindead_warning_prompt = "custom warning"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -2191,29 +2194,29 @@ autopilot_prompt = "custom warning"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].AutopilotThreshold != 5 {
-		t.Errorf("AutopilotThreshold = %d, want 5", cfg.Agents[0].AutopilotThreshold)
+	if cfg.Agents[0].BraindeadWarningThreshold != 5 {
+		t.Errorf("BraindeadWarningThreshold = %d, want 5", cfg.Agents[0].BraindeadWarningThreshold)
 	}
-	if cfg.Agents[0].AutopilotPrompt != "custom warning" {
-		t.Errorf("AutopilotPrompt = %q, want %q", cfg.Agents[0].AutopilotPrompt, "custom warning")
+	if cfg.Agents[0].BraindeadWarningPrompt != "custom warning" {
+		t.Errorf("BraindeadWarningPrompt = %q, want %q", cfg.Agents[0].BraindeadWarningPrompt, "custom warning")
 	}
 }
 
-func TestAutopilotThresholdPerAgent(t *testing.T) {
+func TestBraindeadWarningThresholdPerAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-autopilot_threshold = 15
-autopilot_prompt = "defaults prompt"
+braindead_warning_threshold = 15
+braindead_warning_prompt = "defaults prompt"
 
 [[agents]]
 id = "a"
 
 [[agents]]
 id = "b"
-autopilot_threshold = 5
-autopilot_prompt = "agent prompt"
+braindead_warning_threshold = 5
+braindead_warning_prompt = "agent prompt"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -2222,28 +2225,28 @@ autopilot_prompt = "agent prompt"
 	}
 
 	// Agent "a" inherits from defaults
-	if cfg.Agents[0].AutopilotThreshold != 15 {
-		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].AutopilotThreshold)
+	if cfg.Agents[0].BraindeadWarningThreshold != 15 {
+		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].BraindeadWarningThreshold)
 	}
-	if cfg.Agents[0].AutopilotPrompt != "defaults prompt" {
-		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].AutopilotPrompt, "defaults prompt")
+	if cfg.Agents[0].BraindeadWarningPrompt != "defaults prompt" {
+		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].BraindeadWarningPrompt, "defaults prompt")
 	}
 
 	// Agent "b" overrides
-	if cfg.Agents[1].AutopilotThreshold != 5 {
-		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].AutopilotThreshold)
+	if cfg.Agents[1].BraindeadWarningThreshold != 5 {
+		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].BraindeadWarningThreshold)
 	}
-	if cfg.Agents[1].AutopilotPrompt != "agent prompt" {
-		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].AutopilotPrompt, "agent prompt")
+	if cfg.Agents[1].BraindeadWarningPrompt != "agent prompt" {
+		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].BraindeadWarningPrompt, "agent prompt")
 	}
 }
 
-func TestAutopilotThresholdDisabled(t *testing.T) {
+func TestBraindeadWarningThresholdDisabled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-autopilot_threshold = 0
+braindead_warning_threshold = 0
 
 [agent]
 id = "test"
@@ -2254,7 +2257,28 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].AutopilotThreshold != 0 {
-		t.Errorf("AutopilotThreshold = %d, want 0 (disabled)", cfg.Agents[0].AutopilotThreshold)
+	if cfg.Agents[0].BraindeadWarningThreshold != 0 {
+		t.Errorf("BraindeadWarningThreshold = %d, want 0 (disabled)", cfg.Agents[0].BraindeadWarningThreshold)
+	}
+}
+
+func TestBraindeadWarningEnableDisable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte(`
+[defaults]
+braindead_warning_enable = false
+
+[agent]
+id = "test"
+`), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Agents[0].BraindeadWarningEnable == nil || *cfg.Agents[0].BraindeadWarningEnable != false {
+		t.Errorf("BraindeadWarningEnable = %v, want false", cfg.Agents[0].BraindeadWarningEnable)
 	}
 }

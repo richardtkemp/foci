@@ -1995,12 +1995,12 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		notifier := tools.NewAsyncNotifier(func(sk, msg string) {})
 		var notified []string
 		ag := &Agent{
-			Client:    client,
-			Sessions:  store,
-			Tools:     tools.NewRegistry(),
-			Bootstrap: bootstrap,
-			Compactor: compactor,
-			Model:     "claude-haiku-4-5",
+			Client:        client,
+			Sessions:      store,
+			Tools:         tools.NewRegistry(),
+			Bootstrap:     bootstrap,
+			Compactor:     compactor,
+			Model:         "claude-haiku-4-5",
 			AsyncNotifier: notifier,
 			CompactionNotifyFunc: func(session string, msg string) {
 				notified = append(notified, msg)
@@ -3230,12 +3230,13 @@ func TestAutopilotWarningInjected(t *testing.T) {
 	})
 
 	ag := &Agent{
-		Client:             client,
-		Sessions:           store,
-		Tools:              registry,
-		Bootstrap:          workspace.NewBootstrap(t.TempDir(), []string{}),
-		Model:              "claude-haiku-4-5",
-		AutopilotThreshold: threshold,
+		Client:                    client,
+		Sessions:                  store,
+		Tools:                     registry,
+		Bootstrap:                 workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:                     "claude-haiku-4-5",
+		BraindeadWarningThreshold: threshold,
+		BraindeadWarningEnable:    true,
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
@@ -3244,7 +3245,7 @@ func TestAutopilotWarningInjected(t *testing.T) {
 	}
 
 	msgs, _ := store.Load("agent:test:main")
-	// Find the autopilot warning folded into a tool_result message
+	// Find the braindead warning folded into a tool_result message
 	found := 0
 	for _, m := range msgs {
 		if m.Role != "user" {
@@ -3257,7 +3258,7 @@ func TestAutopilotWarningInjected(t *testing.T) {
 		}
 	}
 	if found != 1 {
-		t.Errorf("autopilot warnings found = %d, want 1", found)
+		t.Errorf("braindead warnings found = %d, want 1", found)
 	}
 }
 
@@ -3299,12 +3300,13 @@ func TestAutopilotWarningOnlyOnce(t *testing.T) {
 	})
 
 	ag := &Agent{
-		Client:             client,
-		Sessions:           store,
-		Tools:              registry,
-		Bootstrap:          workspace.NewBootstrap(t.TempDir(), []string{}),
-		Model:              "claude-haiku-4-5",
-		AutopilotThreshold: threshold,
+		Client:                    client,
+		Sessions:                  store,
+		Tools:                     registry,
+		Bootstrap:                 workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:                     "claude-haiku-4-5",
+		BraindeadWarningThreshold: threshold,
+		BraindeadWarningEnable:    true,
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
@@ -3325,7 +3327,7 @@ func TestAutopilotWarningOnlyOnce(t *testing.T) {
 		}
 	}
 	if count != 1 {
-		t.Errorf("autopilot warnings = %d, want exactly 1 (only-once guarantee)", count)
+		t.Errorf("braindead warnings = %d, want exactly 1 (only-once guarantee)", count)
 	}
 }
 
@@ -3365,12 +3367,13 @@ func TestAutopilotDisabledWhenZero(t *testing.T) {
 	})
 
 	ag := &Agent{
-		Client:             client,
-		Sessions:           store,
-		Tools:              registry,
-		Bootstrap:          workspace.NewBootstrap(t.TempDir(), []string{}),
-		Model:              "claude-haiku-4-5",
-		AutopilotThreshold: 0, // disabled
+		Client:                    client,
+		Sessions:                  store,
+		Tools:                     registry,
+		Bootstrap:                 workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:                     "claude-haiku-4-5",
+		BraindeadWarningThreshold: 0, // disabled
+		BraindeadWarningEnable:    true,
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
@@ -3385,7 +3388,7 @@ func TestAutopilotDisabledWhenZero(t *testing.T) {
 		}
 		for _, b := range m.Content {
 			if b.Type == "text" && strings.Contains(b.Text, "[system]") {
-				t.Error("autopilot warning injected despite threshold=0")
+				t.Error("braindead warning injected despite threshold=0")
 			}
 		}
 	}
