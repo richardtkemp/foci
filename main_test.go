@@ -11,6 +11,7 @@ import (
 	"foci/config"
 	"foci/memory"
 	"foci/session"
+	"foci/telegram"
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {
@@ -367,5 +368,137 @@ func TestReadPromptFile_TrimsWhitespace(t *testing.T) {
 	result := readPromptFile(f, "test")
 	if result != "trimmed" {
 		t.Errorf("expected trimmed content, got %q", result)
+	}
+}
+
+// ========== applyAgentDisplaySettings tests ==========
+
+func ptr[T any](v T) *T { return &v }
+
+func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
+	bot := telegram.NewBotForTest()
+	acfg := config.AgentConfig{
+		ShowToolCalls: ptr(config.ToolCallFull),
+		ShowThinking:  ptr(config.ShowThinkingCompact),
+		DisplayWidth:  ptr(80),
+		MessagesInLog: ptr(true),
+		ReceivedFilesDir: "/agent/files",
+	}
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{
+			ShowToolCalls:    config.ToolCallOff,
+			ShowThinking:     config.ShowThinkingOff,
+			DisplayWidth:     44,
+			ReceivedFilesDir: "/global/files",
+		},
+		Logging: config.LoggingConfig{
+			MessagesInLog: false,
+		},
+	}
+
+	applyAgentDisplaySettings(bot, acfg, cfg)
+
+	stc, st, dw, mil, rfd := bot.DisplaySettings()
+	if stc != "full" {
+		t.Errorf("ShowToolCalls = %q, want %q", stc, "full")
+	}
+	if st != "compact" {
+		t.Errorf("ShowThinking = %q, want %q", st, "compact")
+	}
+	if dw != 80 {
+		t.Errorf("DisplayWidth = %d, want 80", dw)
+	}
+	if !mil {
+		t.Error("MessagesInLog = false, want true")
+	}
+	if rfd != "/agent/files" {
+		t.Errorf("ReceivedFilesDir = %q, want %q", rfd, "/agent/files")
+	}
+}
+
+func TestApplyAgentDisplaySettings_FallsBackToGlobal(t *testing.T) {
+	bot := telegram.NewBotForTest()
+	acfg := config.AgentConfig{} // all nil/zero — should fall back to global
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{
+			ShowToolCalls:    config.ToolCallPreview,
+			ShowThinking:     config.ShowThinkingTrue,
+			DisplayWidth:     60,
+			ReceivedFilesDir: "/global/files",
+		},
+		Logging: config.LoggingConfig{
+			MessagesInLog: true,
+		},
+	}
+
+	applyAgentDisplaySettings(bot, acfg, cfg)
+
+	stc, st, dw, mil, rfd := bot.DisplaySettings()
+	if stc != "preview" {
+		t.Errorf("ShowToolCalls = %q, want %q (global fallback)", stc, "preview")
+	}
+	if st != "true" {
+		t.Errorf("ShowThinking = %q, want %q (global fallback)", st, "true")
+	}
+	if dw != 60 {
+		t.Errorf("DisplayWidth = %d, want 60 (global fallback)", dw)
+	}
+	if !mil {
+		t.Error("MessagesInLog = false, want true (global fallback)")
+	}
+	if rfd != "/global/files" {
+		t.Errorf("ReceivedFilesDir = %q, want %q (global fallback)", rfd, "/global/files")
+	}
+}
+
+func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
+	bot := telegram.NewBotForTest()
+	// Pre-set a value to verify it's NOT overwritten when both are empty
+	bot.SetReceivedFilesDir("/pre-existing")
+
+	acfg := config.AgentConfig{ReceivedFilesDir: ""}
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{ReceivedFilesDir: ""},
+	}
+
+	applyAgentDisplaySettings(bot, acfg, cfg)
+
+	_, _, _, _, rfd := bot.DisplaySettings()
+	if rfd != "/pre-existing" {
+		t.Errorf("ReceivedFilesDir = %q, want %q (should not be overwritten when both empty)", rfd, "/pre-existing")
+	}
+}
+
+func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
+	bot := telegram.NewBotForTest()
+	// Only override ShowToolCalls; rest falls back to global
+	acfg := config.AgentConfig{
+		ShowToolCalls: ptr(config.ToolCallFull),
+	}
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{
+			ShowToolCalls: config.ToolCallOff,
+			ShowThinking:  config.ShowThinkingCompact,
+			DisplayWidth:  44,
+		},
+		Logging: config.LoggingConfig{
+			MessagesInLog: true,
+		},
+	}
+
+	applyAgentDisplaySettings(bot, acfg, cfg)
+
+	stc, st, dw, mil, _ := bot.DisplaySettings()
+	if stc != "full" {
+		t.Errorf("ShowToolCalls = %q, want %q (agent override)", stc, "full")
+	}
+	if st != "compact" {
+		t.Errorf("ShowThinking = %q, want %q (global fallback)", st, "compact")
+	}
+	if dw != 44 {
+		t.Errorf("DisplayWidth = %d, want 44 (global fallback)", dw)
+	}
+	if !mil {
+		t.Error("MessagesInLog = false, want true (global fallback)")
 	}
 }
