@@ -2343,6 +2343,126 @@ func TestTerminateProcesses(t *testing.T) {
 	}
 }
 
+func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
+	tmuxAvailable(t)
+
+	name := "foci-test-maybekill"
+	defer tmuxCleanup(t, name)
+
+	// Start a session so the server has at least one.
+	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 300")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// maybeKillTmuxServer should NOT kill because sessions exist.
+	if maybeKillTmuxServer(context.Background()) {
+		t.Error("maybeKillTmuxServer killed server while sessions exist")
+	}
+
+	// Verify the session is still there.
+	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		t.Fatalf("list-sessions after maybeKillTmuxServer: %v", err)
+	}
+	if !strings.Contains(out, name) {
+		t.Errorf("session %q disappeared after maybeKillTmuxServer", name)
+	}
+}
+
+func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
+	tmuxAvailable(t)
+
+	// Check if the user has existing tmux sessions — if so, skip this test
+	// because we can't test server cleanup without risking their sessions.
+	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if strings.TrimSpace(line) != "" {
+				t.Skip("existing tmux sessions present; skipping server-kill test to avoid interference")
+			}
+		}
+	}
+
+	// Start a session and immediately kill it so the server has no sessions.
+	name := "foci-test-maybekill-empty"
+	_, err = runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 1")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	_, err = runTmux(context.Background(), "kill-session", "-t", name)
+	if err != nil {
+		t.Fatalf("kill session: %v", err)
+	}
+
+	// Server may have exited already (exit-empty on), or it may linger.
+	// maybeKillTmuxServer should handle both cases gracefully.
+	maybeKillTmuxServer(context.Background())
+
+	// After this, the server should not be running. Verify by listing.
+	out, err = runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if strings.TrimSpace(line) != "" {
+				t.Errorf("unexpected session %q after server cleanup", line)
+			}
+		}
+	}
+	// err != nil is expected ("no server running") — that's the success case.
+}
+
+func TestTmuxKillCleansUpServer(t *testing.T) {
+	tmuxAvailable(t)
+
+	// Skip if user has existing sessions — we can't verify server cleanup
+	// without risking interference.
+	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if strings.TrimSpace(line) != "" {
+				t.Skip("existing tmux sessions present; skipping server-kill test")
+			}
+		}
+	}
+
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	name := "foci-test-killserver"
+	defer tmuxCleanup(t, name)
+
+	// Start a single session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Kill it — should also clean up the server
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "kill",
+		"name":      name,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+
+	// Give a moment for cleanup
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify no tmux server is running
+	out, err = runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if strings.TrimSpace(line) != "" {
+				t.Errorf("session %q still exists after kill (server should be gone)", line)
+			}
+		}
+	}
+	// err != nil ("no server running") is the expected success case.
+}
+
 func TestTmuxSessionPIDs(t *testing.T) {
 	tmuxAvailable(t)
 
