@@ -1839,6 +1839,11 @@ func NewSecretsCommand(store SecretsStore) *Command {
 		Description:    "Manage secrets (list/set/remove)",
 		Category:       "operations",
 		SkipToolExport: true,
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "list", Data: "list"},
+			}
+		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			parts := strings.Fields(args)
 			if len(parts) == 0 {
