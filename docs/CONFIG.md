@@ -111,8 +111,8 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 | `braindead_warning_enable` | bool | `true` | Enable braindead warning. `false` disables. |
 | `braindead_warning_threshold` | int | `10` | Default consecutive tool loops before braindead warning. `0` disables. |
 | `braindead_warning_prompt` | string | `""` | Default braindead warning text. Empty uses hardcoded default. |
-| `effort` | string | `""` | Default effort level: `"low"`, `"medium"`, `"high"`. Empty = omit. |
-| `thinking` | string | `""` | Default thinking mode: `"adaptive"` or empty/`"off"`. |
+| `effort` | string | `"low"` | Default effort level: `"low"`, `"medium"`, `"high"`. |
+| `thinking` | string | `"adaptive"` | Default thinking mode: `"adaptive"` or `"off"`. |
 | `tts_rate` | float | `0` | Default TTS speech rate (0 = use `[voice]` config). |
 | `show_tool_calls` | string | nil | Default tool call display mode. Per-agent `show_tool_calls` overrides this, then falls back to `[telegram] show_tool_calls`. |
 | `show_thinking` | string | nil | Default thinking display mode. Per-agent `show_thinking` overrides this, then falls back to `[telegram] show_thinking`. |

@@ -110,8 +110,8 @@ type AgentConfig struct {
 	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
 	BraindeadThreshold      int               `toml:"braindead_threshold"`       // consecutive tool loops before warning (0 = disabled, default 10)
 	BraindeadPrompt         string            `toml:"braindead_prompt"`          // warning text injected as user message
-	Effort                  string            `toml:"effort"`                    // effort level: "low", "medium", "high" (empty = omit from request)
-	Thinking                string            `toml:"thinking"`                  // thinking mode: "off" (default), "adaptive"
+	Effort                  string            `toml:"effort"`                    // effort level: "low" (default), "medium", "high"
+	Thinking                string            `toml:"thinking"`                  // thinking mode: "adaptive" (default) or "off"
 	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use global [voice] tts_rate)
 	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
@@ -347,8 +347,8 @@ type DefaultsConfig struct {
 	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)
 	BraindeadThreshold  int              `toml:"braindead_threshold"`   // default braindead threshold (default: 10)
 	BraindeadPrompt     string           `toml:"braindead_prompt"`      // default braindead prompt
-	Effort              string           `toml:"effort"`                // default effort level: "low", "medium", "high" (empty = omit)
-	Thinking            string           `toml:"thinking"`              // default thinking mode: "off" (default), "adaptive"
+	Effort              string           `toml:"effort"`                // default effort level: "low" (default), "medium", "high"
+	Thinking            string           `toml:"thinking"`              // default thinking mode: "adaptive" (default) or "off"
 	TTSRate             float64          `toml:"tts_rate"`              // default TTS speech rate (default: 0 = voice config)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (nil = use telegram.show_tool_calls)
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (nil = use telegram.show_thinking)
@@ -754,6 +754,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Defaults.BraindeadThreshold == 0 && !md.IsDefined("defaults", "braindead_threshold") {
 		cfg.Defaults.BraindeadThreshold = 10
+	}
+	if cfg.Defaults.Thinking == "" && !md.IsDefined("defaults", "thinking") {
+		cfg.Defaults.Thinking = "adaptive"
+	}
+	if cfg.Defaults.Effort == "" && !md.IsDefined("defaults", "effort") {
+		cfg.Defaults.Effort = "low"
 	}
 
 	// Backward compat: [agent] (singular) → single-element Agents array
