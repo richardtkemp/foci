@@ -773,6 +773,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			dotCmd := "/" + dotText
 			cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
 			cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
+			cmdCtx = context.WithValue(cmdCtx, command.DisplayWidthKey{}, b.displayWidth)
 			if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
 				b.sendCommandKeyboard(msg.Chat.Id, cmdName, opts)
 				return
@@ -826,9 +827,10 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			return
 		}
 
-		// Pass userID and chatID to command via context
+		// Pass userID, chatID, and display width to command via context
 		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
 		cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
+		cmdCtx = context.WithValue(cmdCtx, command.DisplayWidthKey{}, b.displayWidth)
 
 		// Check for inline keyboard (bare command, no args)
 		if name, opts, ok := b.commands.LookupKeyboard(cmdCtx, text); ok {
@@ -2194,6 +2196,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cmdText string) {
 	cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, "")
 	cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, chatID)
+	cmdCtx = context.WithValue(cmdCtx, command.DisplayWidthKey{}, b.displayWidth)
 
 	// Check if this bare subcommand needs a chained keyboard (e.g. /tmux kill → pick session)
 	if parentName, opts, ok := b.commands.LookupChainKeyboard(cmdCtx, cmdText); ok {

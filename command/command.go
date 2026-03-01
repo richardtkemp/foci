@@ -244,6 +244,10 @@ func (r *Registry) ClearWizard() {
 // Used by commands that need to know which chat issued the command (e.g. /sessions info).
 type ChatIDKey struct{}
 
+// DisplayWidthKey is the context key for the display width (int).
+// Commands use this to constrain table output to the configured display width.
+type DisplayWidthKey struct{}
+
 // HandleMessage routes a message to the active wizard, if any.
 // Returns (response, true) if the wizard handled the message, or ("", false)
 // if no wizard is active. Handles /cancel and /stop to abort the wizard.
