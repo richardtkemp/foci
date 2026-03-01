@@ -763,15 +763,28 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		b.lastMsgStore.Record(userID, text)
 	}
 
-	// Slash commands bypass the agent pipeline entirely.
-	// Period prefix (e.g. ".mana") is an alias for slash prefix ("/mana"),
-	// but only if followed by a letter (avoids intercepting "..", "...", ".5", etc.).
-	isDotCommand := strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z'
-	if text != "" && (strings.HasPrefix(text, "/") || isDotCommand) {
-		cmd := strings.ToLower(strings.TrimSpace(text))
-		if isDotCommand {
-			cmd = "/" + cmd[1:]
+	// Period prefix (e.g. ".mana") is an alias for slash commands — easier to
+	// type on phone keyboards. Only treated as a command if it matches a
+	// registered command; otherwise falls through to the agent as normal text.
+	if text != "" && strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
+		dotCmd := "/" + strings.ToLower(strings.TrimSpace(text))[1:]
+		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
+		cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
+		if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
+			b.sendCommandKeyboard(msg.Chat.Id, dotCmd[1:], opts)
+			return
 		}
+		if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
+			log.Debugf("telegram", "dot-command %s → %s dispatched", text, dotCmd)
+			b.sendReply(msg, userID, result)
+			return
+		}
+		// Not a valid command — fall through to agent
+	}
+
+	// Slash commands bypass the agent pipeline entirely
+	if text != "" && strings.HasPrefix(text, "/") {
+		cmd := strings.ToLower(strings.TrimSpace(text))
 
 		// Skip stale slash commands (e.g. /restart replayed from the update
 		// queue after a crash). Agent messages are still delivered since the
