@@ -265,6 +265,14 @@ bind = "127.0.0.1"
 # tmux_watch_threshold = "30s"
 # max_upload_file_size = 52428800
 
+# ─── Resources ────────────────────────────────────────────────────────
+# [resources]
+# memory_guard_enabled = true
+# memory_guard_interval = "60s"
+# memory_warn_percent = 25
+# memory_kill_percent = 40
+# memory_pressure_threshold = 10.0
+
 # ─── Global Background ───────────────────────────────────────────────
 # [background]
 # enabled = false

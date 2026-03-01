@@ -385,6 +385,20 @@ When `inject_agent_warnings` is enabled, WARN/ERROR log events are pushed into t
 
 Proactive dispatch ensures critical warnings (disk full, tmux OOM) reach the agent immediately rather than sitting unnoticed until the next user message.
 
+### System Memory Guard
+
+Background goroutine monitoring total RSS of all processes owned by the foci system user. Reads `/proc/[pid]/status` directly — no external commands.
+
+Two thresholds (configurable as `%` of RAM):
+- **warn** (default 25%) — log WARN, inject warning to agent session via `WarningQueue` (surfaces via proactive warning dispatch)
+- **kill** (default 40%) — find largest non-foci process by RSS (excluding `os.Getpid()`), SIGTERM, wait 5s, SIGKILL if needed
+
+Both thresholds require **memory pressure** (PSI `avg10` > configurable threshold, default 10.0) via `/proc/pressure/memory`. This prevents false alarms when the system has plenty of free RAM — high RSS alone doesn't indicate a problem if there's no actual pressure.
+
+Warn dedup: fires once per threshold crossing, resets when RSS drops below warn threshold.
+
+Entire feature is disableable via `memory_guard_enabled = false`.
+
 ### Tool Result Guard
 
 When a tool returns a result exceeding a configurable character threshold (default: 5,000 chars), foci does NOT inject the full result into session history. Instead:

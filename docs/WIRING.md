@@ -463,6 +463,12 @@ Background goroutine that checks the RSS of the tmux server process at configura
 
 Wired in `main.go` after agent setup. Notification callback sends to agents whose `inject_agent_warnings` is false (agents with injection see warnings via their WarningQueue — passively on next turn, or proactively via the keepalive runner's `maybeWarningDispatch`). Cleanup callback calls `tmuxClearAll` on each agent instance (stored on `agentInstance` struct).
 
+### System Memory Guard (`resources/memory_guard.go`)
+
+Background goroutine monitoring total RSS of all processes owned by the foci user. Reads `/proc/[pid]/status` directly — no external commands. Two thresholds (warn at 25%, kill at 40% of RAM), both gated by memory pressure (PSI `avg10` from `/proc/pressure/memory` > configurable threshold). Warn pushes to all agents' `WarningQueue` (surfaces via proactive warning dispatch). Kill finds the largest non-foci process by RSS (excludes `os.Getpid()`), sends SIGTERM, waits 5s, SIGKILL if still alive.
+
+Wired in `main.go` after tmux memory monitor. Warning callback iterates `agents` map and pushes to any `inst.ag.Warnings` that's non-nil (agents with `inject_agent_warnings`).
+
 ### Tool Result Guard
 
 If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. The agent receives only a guard message with the file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown) — no partial content is included. This prevents large results from bloating session history indefinitely.

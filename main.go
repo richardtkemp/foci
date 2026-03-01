@@ -25,6 +25,7 @@ import (
 	"foci/log"
 	"foci/memory"
 	"foci/prompts"
+	"foci/resources"
 	"foci/secrets"
 	"foci/secrets/bitwarden"
 	"foci/session"
@@ -833,6 +834,31 @@ func main() {
 			)
 			tmuxMemMon.Start(ctx)
 			defer tmuxMemMon.Stop()
+		}
+	}
+
+	// System memory guard — monitors total RSS for foci user, warns/kills under pressure
+	if cfg.Resources.MemoryGuardEnabled {
+		guardInterval, _ := time.ParseDuration(cfg.Resources.MemoryGuardInterval)
+		if guardInterval > 0 {
+			memGuard := resources.NewMemoryGuard(
+				resources.MemoryGuardConfig{
+					Interval:          guardInterval,
+					WarnPercent:       cfg.Resources.MemoryWarnPercent,
+					KillPercent:       cfg.Resources.MemoryKillPercent,
+					PressureThreshold: cfg.Resources.MemoryPressureThreshold,
+				},
+				// Warning callback: push to all agents with warning injection enabled
+				func(msg string) {
+					for _, inst := range agents {
+						if inst.ag.Warnings != nil {
+							inst.ag.Warnings.Push("WARN", "memory_guard", msg)
+						}
+					}
+				},
+			)
+			memGuard.Start(ctx)
+			defer memGuard.Stop()
 		}
 	}
 

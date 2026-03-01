@@ -462,6 +462,22 @@ The block is built once per agent at startup from config values — no runtime o
 
 ---
 
+## `[resources]`
+
+System resource monitoring.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `memory_guard_enabled` | bool | `true` | Enable system memory guard. Monitors total RSS of all foci user processes, warns/kills under memory pressure. |
+| `memory_guard_interval` | string | `"60s"` | Check interval. Go duration format. |
+| `memory_warn_percent` | int | `25` | Warn threshold as % of total RAM. Requires memory pressure (PSI) to fire. |
+| `memory_kill_percent` | int | `40` | Kill threshold as % of total RAM. Kills the largest non-foci process owned by the foci user. Requires memory pressure (PSI) to fire. |
+| `memory_pressure_threshold` | float | `10.0` | Minimum PSI memory avg10 value required before warn/kill actions fire. Prevents false alarms when RSS is high but free RAM is available. |
+
+Both thresholds require memory pressure (PSI `avg10` from `/proc/pressure/memory` exceeding `memory_pressure_threshold`) before acting. This avoids false alarms when the system has ample free RAM despite high RSS. The guard reads `/proc` directly — no external commands.
+
+---
+
 ## `[tools]`
 
 Tool behavior settings.
