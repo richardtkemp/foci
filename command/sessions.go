@@ -59,7 +59,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			case "list":
 				chatID, _ := ctx.Value(ChatIDKey{}).(int64)
-				return sessionsListCmd(deps, chatID)
+				return sessionsListCmd(deps, chatID, displayWidth(ctx))
 
 			case "default":
 				if len(parts) < 2 {
@@ -83,7 +83,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 				if len(parts) > 2 {
 					statusFilter = parts[2]
 				}
-				return sessionsIndexCmd(deps, typeFilter, statusFilter)
+				return sessionsIndexCmd(deps, typeFilter, statusFilter, displayWidth(ctx))
 
 			default:
 				return "Usage: /sessions [list|default <chat_id>|info|index]", nil
@@ -102,7 +102,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 	}
 }
 
-func sessionsListCmd(deps SessionsDeps, currentChatID int64) (string, error) {
+func sessionsListCmd(deps SessionsDeps, currentChatID int64, maxWidth int) (string, error) {
 	sessions, err := deps.ListFn()
 	if err != nil {
 		return "", fmt.Errorf("list sessions: %w", err)
@@ -155,7 +155,7 @@ func sessionsListCmd(deps SessionsDeps, currentChatID int64) (string, error) {
 		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.flags}
 	}
 	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n◉ = current  ★ = default (keepalive, cron)",
-		deps.AgentID, len(sessions), table.Format(cols, tableRows)), nil
+		deps.AgentID, len(sessions), table.FormatWidth(cols, tableRows, maxWidth)), nil
 }
 
 func sessionsDefaultCmd(deps SessionsDeps, chatID int64) (string, error) {
@@ -218,7 +218,7 @@ func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 	return sb.String(), nil
 }
 
-func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string) (string, error) {
+func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, maxWidth int) (string, error) {
 	if deps.IndexFn == nil {
 		return "Session index not available.", nil
 	}
@@ -274,7 +274,7 @@ func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string) (strin
 	}
 
 	return fmt.Sprintf("Session Index — %d sessions%s\n\n```\n%s\n```",
-		len(entries), filterDesc, table.Format(cols, tableRows)), nil
+		len(entries), filterDesc, table.FormatWidth(cols, tableRows, maxWidth)), nil
 }
 
 // shortenSessionKey abbreviates a session key for table display.

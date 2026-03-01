@@ -2201,14 +2201,15 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		return infos
 	}))
-	cmds.Register(command.NewConfigCommand(func(args string) (string, error) {
+	cmds.Register(command.NewConfigCommand(func(ctx context.Context, args string) (string, error) {
+		dw, _ := ctx.Value(command.DisplayWidthKey{}).(int)
 		switch strings.TrimSpace(strings.ToLower(args)) {
 		case "toml":
 			return config.FormatConfigTOML(p.cfg, acfg), nil
 		case "table":
-			return strings.Join(config.FormatConfigGrouped(p.cfg, acfg), "\x00"), nil
+			return strings.Join(config.FormatConfigGrouped(p.cfg, acfg, dw), "\x00"), nil
 		case "available":
-			return "```\n" + config.FormatAvailable(p.cfg, acfg) + "\n```", nil
+			return "```\n" + config.FormatAvailable(p.cfg, acfg, dw) + "\n```", nil
 		default:
 			return "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults", nil
 		}

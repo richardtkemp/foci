@@ -18,8 +18,13 @@ type configRow struct {
 }
 
 // FormatConfig returns an aligned columnar table of the running config
-// for the given agent. Secrets are redacted.
-func FormatConfig(cfg *Config, agent AgentConfig) string {
+// for the given agent. Secrets are redacted. An optional maxWidth constrains
+// table columns.
+func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
+	mw := 0
+	if len(maxWidth) > 0 {
+		mw = maxWidth[0]
+	}
 	var rows []configRow
 	add := func(section, key string, val interface{}) {
 		rows = append(rows, configRow{section, key, formatValue(val)})
@@ -308,14 +313,18 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("prompt_rules", fmt.Sprintf("(%d rules)", len(cfg.PromptRules)), "")
 	}
 
-	return formatTableBySection(rows)
+	return formatTableBySection(rows, mw)
 }
 
 // FormatConfigGrouped returns per-group config tables, each wrapped in a
 // markdown code block. The first table is "Global" config (all non-agent
 // sections), followed by one table for the given agent. Each table is small
 // enough to fit in a single Telegram message.
-func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
+func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []string {
+	mw := 0
+	if len(maxWidth) > 0 {
+		mw = maxWidth[0]
+	}
 	// Build global rows (everything except agent-specific)
 	var globalRows []configRow
 
@@ -539,7 +548,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	}
 
 	var tables []string
-	tables = append(tables, "```\nGlobal\n"+formatTableBySection(globalRows)+"\n```")
+	tables = append(tables, "```\nGlobal\n"+formatTableBySection(globalRows, mw)+"\n```")
 
 	// Current agent table
 	{
@@ -626,7 +635,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		if agent.MemoryFormation.SessionEndEnabled != nil {
 			addAgent("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
 		}
-		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTableBySection(agentRows)+"\n```")
+		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTableBySection(agentRows, mw)+"\n```")
 	}
 
 	return tables
@@ -635,7 +644,11 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 // formatTableBySection groups rows by Section and emits a separate table for
 // each group, headed by [section]. Each table has only KEY/VALUE columns.
 // Section order is preserved from insertion.
-func formatTableBySection(rows []configRow) string {
+func formatTableBySection(rows []configRow, maxWidth ...int) string {
+	mw := 0
+	if len(maxWidth) > 0 {
+		mw = maxWidth[0]
+	}
 	// Collect sections in insertion order.
 	var sections []string
 	seen := map[string]bool{}
@@ -660,7 +673,7 @@ func formatTableBySection(rows []configRow) string {
 		for i, r := range sRows {
 			tableRows[i] = []string{r.Key, r.Value}
 		}
-		parts = append(parts, "["+sec+"]\n"+table.Format(cols, tableRows))
+		parts = append(parts, "["+sec+"]\n"+table.FormatWidth(cols, tableRows, mw))
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -776,7 +789,11 @@ type availableOption struct {
 
 // FormatAvailable returns a table of config options that are currently unset
 // (at zero or default value) for the agent and global sections.
-func FormatAvailable(cfg *Config, agent AgentConfig) string {
+func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
+	mw := 0
+	if len(maxWidth) > 0 {
+		mw = maxWidth[0]
+	}
 	var opts []availableOption
 
 	// Agent fields
@@ -950,7 +967,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		for i, o := range sOpts {
 			tableRows[i] = []string{o.Key, o.Default, o.Description}
 		}
-		parts = append(parts, "["+sec+"]\n"+table.Format(cols, tableRows))
+		parts = append(parts, "["+sec+"]\n"+table.FormatWidth(cols, tableRows, mw))
 	}
 	return "Unset/default config options:\n\n" + strings.Join(parts, "\n\n")
 }

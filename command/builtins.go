@@ -16,6 +16,12 @@ import (
 	"time"
 )
 
+// displayWidth extracts the display width from context, returning 0 if unset.
+func displayWidth(ctx context.Context) int {
+	w, _ := ctx.Value(DisplayWidthKey{}).(int)
+	return w
+}
+
 // ChildSysProcAttr is called to get the SysProcAttr for child processes.
 // Set this from main to drop supplementary groups (foci-secrets).
 // If nil, defaults to {Setpgid: true}.
@@ -312,7 +318,7 @@ func NewCacheCommand(apiLogPath string) *Command {
 				tableRows[i] = []string{r.time, r.input, r.cRead, r.cWrite, r.cost, r.hitPct}
 			}
 			return fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n```\n%s\n```",
-				len(recent), avgHit, table.Format(cols, tableRows)), nil
+				len(recent), avgHit, table.FormatWidth(cols, tableRows, displayWidth(ctx))), nil
 		},
 	}
 }
@@ -420,7 +426,7 @@ func NewCostCommand(apiLogPath string) *Command {
 					}
 					tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total), formatCommas(count)})
 					b.WriteString("\n```\n")
-					b.WriteString(table.Format(cols, tableRows))
+					b.WriteString(table.FormatWidth(cols, tableRows, displayWidth(ctx)))
 					b.WriteString("\n```")
 				}
 				return b.String(), nil
@@ -752,21 +758,21 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 			for i, t := range tools {
 				tableRows[i] = []string{t.Name, t.Description}
 			}
-			return "```\n" + table.Format(cols, tableRows) + "\n```", nil
+			return "```\n" + table.FormatWidth(cols, tableRows, displayWidth(ctx)) + "\n```", nil
 		},
 	}
 }
 
 // NewConfigCommand returns a /config command dumping the running config.
-// configFn receives the subcommand args ("toml", "available", or "") and
-// returns the formatted config with secrets redacted.
-func NewConfigCommand(configFn func(args string) (string, error)) *Command {
+// configFn receives the context (for display width) and the subcommand args
+// ("toml", "available", or "") and returns the formatted config with secrets redacted.
+func NewConfigCommand(configFn func(ctx context.Context, args string) (string, error)) *Command {
 	return &Command{
 		Name:        "config",
 		Description: "Show running config. Subcommands: toml, table, available",
 		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			return configFn(args)
+			return configFn(ctx, args)
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
 			return []KeyboardOption{
@@ -1776,7 +1782,7 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 			for i, r := range rows {
 				tableRows[i] = []string{r.id, r.session, r.status, r.model, r.msgs}
 			}
-			return "Agents\n\n```\n" + table.Format(cols, tableRows) + "\n```", nil
+			return "Agents\n\n```\n" + table.FormatWidth(cols, tableRows, displayWidth(ctx)) + "\n```", nil
 		},
 	}
 }
@@ -1908,7 +1914,7 @@ func NewSecretsCommand(store SecretsStore) *Command {
 					}
 				}
 				return fmt.Sprintf("Secrets (%d keys)\n\n```\n%s\n```",
-					len(names), table.Format(cols, tableRows)), nil
+					len(names), table.FormatWidth(cols, tableRows, displayWidth(ctx))), nil
 
 			case "hosts":
 				return secretsHostsSubcmd(store, parts[1:])

@@ -276,6 +276,60 @@ func TestDisplayWidthWideRanges(t *testing.T) {
 	}
 }
 
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		in       string
+		maxWidth int
+		want     string
+	}{
+		{"hello", 10, "hello"},        // fits
+		{"hello", 5, "hello"},         // exact fit
+		{"hello world", 6, "hello…"},  // truncated
+		{"hello world", 1, "…"},       // minimal
+		{"abcdef", 4, "abc…"},         // cut at 3 + ellipsis
+		{"", 5, ""},                   // empty
+	}
+	for _, tt := range tests {
+		got := Truncate(tt.in, tt.maxWidth)
+		if got != tt.want {
+			t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.maxWidth, got, tt.want)
+		}
+	}
+}
+
+func TestFormatWidth(t *testing.T) {
+	cols := []Column{
+		{Header: "Name"},
+		{Header: "Description"},
+	}
+	rows := [][]string{
+		{"exec", "Execute shell commands in a sandbox"},
+		{"read", "Read file contents"},
+	}
+
+	// With plenty of width, should match Format
+	wide := FormatWidth(cols, rows, 200)
+	normal := Format(cols, rows)
+	if wide != normal {
+		t.Errorf("FormatWidth with large maxWidth should match Format:\ngot:\n%s\nwant:\n%s", wide, normal)
+	}
+
+	// With narrow width, lines should not exceed maxWidth
+	narrow := FormatWidth(cols, rows, 30)
+	for _, line := range strings.Split(narrow, "\n") {
+		w := DisplayWidth(line)
+		if w > 30 {
+			t.Errorf("line exceeds maxWidth 30 (width %d): %q", w, line)
+		}
+	}
+
+	// Zero maxWidth delegates to Format
+	zero := FormatWidth(cols, rows, 0)
+	if zero != normal {
+		t.Error("FormatWidth with 0 should delegate to Format")
+	}
+}
+
 func TestDisplayWidthMultipleTabs(t *testing.T) {
 	tests := []struct {
 		in   string

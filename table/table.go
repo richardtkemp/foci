@@ -132,6 +132,148 @@ func PadRight(s string, targetWidth int) string {
 	return s + strings.Repeat(" ", targetWidth-currentWidth)
 }
 
+// FormatWidth renders a table like Format but constrains it to maxWidth
+// display columns. If maxWidth <= 0, it delegates to Format (no constraint).
+// When the natural table is wider than maxWidth, the widest columns are
+// iteratively shrunk and their cell values truncated with "…".
+func FormatWidth(cols []Column, rows [][]string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return Format(cols, rows)
+	}
+	if len(cols) == 0 {
+		return ""
+	}
+
+	const minCol = 4
+
+	// Measure natural widths.
+	widths := make([]int, len(cols))
+	for i, c := range cols {
+		widths[i] = DisplayWidth(c.Header)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if i >= len(cols) {
+				break
+			}
+			if w := DisplayWidth(cell); w > widths[i] {
+				widths[i] = w
+			}
+		}
+	}
+
+	// Gaps: 2 spaces between columns.
+	gaps := 2 * (len(cols) - 1)
+	if gaps < 0 {
+		gaps = 0
+	}
+
+	// Shrink widest columns iteratively until total fits.
+	for {
+		total := gaps
+		for _, w := range widths {
+			total += w
+		}
+		if total <= maxWidth {
+			break
+		}
+		// Find widest column.
+		widest := 0
+		for i, w := range widths {
+			if w > widths[widest] {
+				widest = i
+			}
+			_ = w
+		}
+		if widths[widest] <= minCol {
+			break // can't shrink further
+		}
+		widths[widest]--
+	}
+
+	// Render with truncation.
+	totalWidth := 0
+	for i, w := range widths {
+		totalWidth += w
+		if i < len(widths)-1 {
+			totalWidth += 2
+		}
+	}
+
+	var b strings.Builder
+	writeCell := func(s string, colWidth int, align int) {
+		truncated := Truncate(s, colWidth)
+		if align == AlignRight {
+			padLeft(&b, truncated, colWidth)
+		} else {
+			b.WriteString(PadRight(truncated, colWidth))
+		}
+	}
+
+	// Header.
+	for i, c := range cols {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		writeCell(c.Header, widths[i], c.Align)
+	}
+	b.WriteByte('\n')
+
+	// Separator.
+	b.WriteString(strings.Repeat("─", totalWidth))
+	b.WriteByte('\n')
+
+	// Data rows.
+	for _, row := range rows {
+		for i, c := range cols {
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			cell := ""
+			if i < len(row) {
+				cell = row[i]
+			}
+			writeCell(cell, widths[i], c.Align)
+		}
+		b.WriteByte('\n')
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// Truncate truncates s to fit within maxWidth display columns.
+// If s is wider than maxWidth, it is cut and "…" is appended (the
+// ellipsis replaces the last character to stay within maxWidth).
+// Returns s unchanged if it already fits.
+func Truncate(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if DisplayWidth(s) <= maxWidth {
+		return s
+	}
+	// Walk runes, accumulating display width.
+	w := 0
+	var result []rune
+	for _, r := range s {
+		rw := 1
+		switch {
+		case r == '\t':
+			rw = 4 - (w % 4)
+		case isZeroWidth(r):
+			rw = 0
+		case isWide(r):
+			rw = 2
+		}
+		if w+rw > maxWidth-1 { // leave room for "…"
+			break
+		}
+		result = append(result, r)
+		w += rw
+	}
+	return string(result) + "…"
+}
+
 func isWide(r rune) bool {
 	switch {
 	case r >= 0x1100 && r <= 0x115F:

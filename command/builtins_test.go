@@ -669,7 +669,7 @@ func TestToolsCommandEmpty(t *testing.T) {
 }
 
 func TestConfigCommand(t *testing.T) {
-	cmd := NewConfigCommand(func(args string) (string, error) {
+	cmd := NewConfigCommand(func(ctx context.Context, args string) (string, error) {
 		switch args {
 		case "toml":
 			return "toml output", nil
