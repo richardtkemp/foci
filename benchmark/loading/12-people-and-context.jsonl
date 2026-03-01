@@ -1,0 +1,10 @@
+{"seq": 1, "message": "Sarah from the platform team said the API gateway migration is happening next Thursday.", "purpose": "establish_people_context"}
+{"seq": 2, "message": "Marcus owns the auth service. If anything auth-related breaks, he's the contact.", "purpose": "establish_people_context"}
+{"seq": 3, "message": "The deploy freeze starts December 15th and ends January 3rd.", "purpose": "establish_temporal_context"}
+{"seq": 4, "message": "Our SLA with Acme Corp requires 99.95% uptime on the notification API.", "purpose": "establish_business_context"}
+{"seq": 5, "message": "Actually the SLA is 99.9%, not 99.95%. I was thinking of the old contract.", "purpose": "correction_factual"}
+{"seq": 6, "message": "James from security said we need to rotate all service account keys by end of month.", "purpose": "establish_deadline"}
+{"seq": 7, "message": "The new monitoring stack is Grafana + Mimir. We're migrating off Datadog.", "purpose": "establish_context"}
+{"seq": 8, "message": "Who's responsible for the auth service?", "purpose": "people_recall"}
+{"seq": 9, "message": "When's the deploy freeze?", "purpose": "temporal_recall"}
+{"seq": 10, "message": "The on-call rotation this week is: Mon-Wed Sarah, Thu-Fri Marcus, Weekend me.", "purpose": "establish_schedule"}

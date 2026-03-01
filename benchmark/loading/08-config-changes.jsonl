@@ -1,0 +1,12 @@
+{"seq": 1, "message": "Can you check what port the API server is running on in project/config.yaml?", "purpose": "config_detail_recall"}
+{"seq": 2, "message": "Change the API port to 9090 in the config.", "purpose": "config_mutation"}
+{"seq": 3, "message": "Actually wait, change it to 8443 instead. The other services need 9090.", "purpose": "correction_supersede"}
+{"seq": 4, "message": "What SSL certificate path is configured?", "purpose": "config_detail_recall"}
+{"seq": 5, "message": "Set the log level to debug and increase max_connections to 500.", "purpose": "multi_change"}
+{"seq": 6, "message": "What's the current redis host configured?", "purpose": "config_detail_recall"}
+{"seq": 7, "message": "Switch redis from localhost to redis.internal:6380", "purpose": "config_mutation"}
+{"seq": 8, "message": "No wait, redis should be on the default port 6379, just change the host.", "purpose": "correction_partial"}
+{"seq": 9, "message": "Show me all the timeout values in the config.", "purpose": "config_aggregation"}
+{"seq": 10, "message": "Double all the timeout values.", "purpose": "batch_mutation"}
+{"seq": 11, "message": "Actually, only double the read timeouts. Write timeouts should stay the same.", "purpose": "correction_scoped"}
+{"seq": 12, "message": "Summarize all the changes we've made to the config so far.", "purpose": "change_tracking"}

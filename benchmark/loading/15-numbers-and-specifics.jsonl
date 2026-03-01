@@ -1,0 +1,12 @@
+{"seq": 1, "message": "The budget for cloud infrastructure is $4,200/month. We're currently at $3,850.", "purpose": "establish_number"}
+{"seq": 2, "message": "The staging cluster has 3 nodes, 8 cores each, 32GB RAM per node.", "purpose": "establish_number"}
+{"seq": 3, "message": "Production is 5 nodes, 16 cores, 64GB RAM each.", "purpose": "establish_number"}
+{"seq": 4, "message": "Actually production is 6 nodes now — we added one last sprint.", "purpose": "number_correction"}
+{"seq": 5, "message": "The API rate limit is 1000 req/s for authenticated users, 100 req/s for anonymous.", "purpose": "establish_number"}
+{"seq": 6, "message": "We need to increase the authenticated rate limit to 2000 req/s before the Acme launch.", "purpose": "number_change"}
+{"seq": 7, "message": "Database size: main DB is 340GB, analytics is 1.2TB, logs is 890GB.", "purpose": "establish_number"}
+{"seq": 8, "message": "The log retention policy is 90 days for production, 30 days for staging.", "purpose": "establish_policy"}
+{"seq": 9, "message": "How many production nodes do we have?", "purpose": "corrected_number_recall"}
+{"seq": 10, "message": "What's our monthly cloud budget and current spend?", "purpose": "number_recall"}
+{"seq": 11, "message": "The p99 latency target is 200ms. Current p99 is 180ms.", "purpose": "establish_number"}
+{"seq": 12, "message": "After the Acme launch we expect 3x traffic increase. Will we need more nodes?", "purpose": "reasoning_with_numbers"}

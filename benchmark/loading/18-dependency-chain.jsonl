@@ -1,0 +1,12 @@
+{"seq": 1, "message": "The notification service depends on the auth service for token validation.", "purpose": "establish_dependency"}
+{"seq": 2, "message": "Auth service depends on PostgreSQL and Redis for session cache.", "purpose": "establish_dependency"}
+{"seq": 3, "message": "The API gateway routes to auth, notification, and the user service.", "purpose": "establish_architecture"}
+{"seq": 4, "message": "If Redis goes down, auth falls back to DB-only mode but latency increases 10x.", "purpose": "establish_failure_mode"}
+{"seq": 5, "message": "The user service talks to the same PostgreSQL instance as auth.", "purpose": "establish_dependency"}
+{"seq": 6, "message": "We're planning to split the user service DB into its own instance next quarter.", "purpose": "establish_future_plan"}
+{"seq": 7, "message": "If the notification service is down, what other services are affected?", "purpose": "dependency_reasoning"}
+{"seq": 8, "message": "Draw me the dependency graph — what depends on what?", "purpose": "architecture_recall"}
+{"seq": 9, "message": "The API gateway also has a rate limiter that uses Redis. Same Redis instance as auth.", "purpose": "establish_shared_resource"}
+{"seq": 10, "message": "So if Redis dies, what breaks?", "purpose": "failure_cascade_reasoning"}
+{"seq": 11, "message": "We should add a circuit breaker between the notification service and SES. If SES is slow, we back off.", "purpose": "architecture_decision"}
+{"seq": 12, "message": "The circuit breaker threshold should be: open after 5 failures in 30 seconds, half-open after 60 seconds.", "purpose": "specific_config"}

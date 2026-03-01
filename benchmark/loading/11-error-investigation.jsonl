@@ -1,0 +1,14 @@
+{"seq": 1, "message": "Read project/error.log and tell me what's going on.", "purpose": "establish_error_knowledge"}
+{"seq": 2, "message": "How many unique error types are there?", "purpose": "error_analysis"}
+{"seq": 3, "message": "Which error is most frequent?", "purpose": "error_analysis"}
+{"seq": 4, "message": "I think the connection timeout errors are from the load balancer health checks. Ignore those.", "purpose": "establish_filter"}
+{"seq": 5, "message": "Actually no, the health check timeouts ARE a problem — they started after we upgraded the LB firmware last Tuesday.", "purpose": "correction_revert"}
+{"seq": 6, "message": "The auth failures are from a bot trying to brute force the admin panel. We've already blocked the IP.", "purpose": "establish_context"}
+{"seq": 7, "message": "What's the most concerning error pattern after filtering out the bot auth failures?", "purpose": "filtered_analysis"}
+{"seq": 8, "message": "Check the Makefile — is there a target for running the integration tests?", "purpose": "cross_reference"}
+{"seq": 9, "message": "Run the lint target and see what it does.", "purpose": "tool_use"}
+{"seq": 10, "message": "The memory leak warnings — those correlate with the docker-compose services. Check if any containers have no memory limits.", "purpose": "cross_file_analysis"}
+{"seq": 11, "message": "Which services in docker-compose.yaml have no resource limits?", "purpose": "docker_analysis"}
+{"seq": 12, "message": "Add 512MB memory limits to any service that doesn't have one.", "purpose": "docker_mutation"}
+{"seq": 13, "message": "Wait, the redis container should have 1GB, not 512MB. Fix that.", "purpose": "correction_specific"}
+{"seq": 14, "message": "Summarize the error investigation and what we've concluded.", "purpose": "investigation_recall"}
