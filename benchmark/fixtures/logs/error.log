@@ -1,0 +1,13 @@
+2025-12-15T08:23:41Z ERROR [widget-api] failed to connect to database: connection refused (host=db-staging.internal port=5432)
+2025-12-15T08:23:42Z WARN  [widget-api] retrying database connection in 5s (attempt 1/5)
+2025-12-15T08:23:47Z ERROR [widget-api] failed to connect to database: connection refused (host=db-staging.internal port=5432)
+2025-12-15T08:23:58Z INFO  [widget-api] database connection established (host=db-staging.internal pool_size=10)
+2025-12-15T09:14:22Z ERROR [widget-api] handler panic recovered: runtime error: index out of range [3] with length 3
+2025-12-15T09:14:22Z ERROR [widget-api] stack trace: goroutine 47 [running]: handlers/widget.go:142 processWidget()
+2025-12-15T10:30:05Z WARN  [widget-api] slow query detected: SELECT * FROM widgets WHERE category=$1 ORDER BY updated_at DESC (duration=4.2s)
+2025-12-15T10:45:11Z WARN  [widget-api] cache miss rate elevated: 45% (threshold: 30%)
+2025-12-15T11:02:33Z ERROR [nginx] upstream timed out (110: Connection timed out) while reading response header from upstream
+2025-12-15T11:02:33Z ERROR [widget-api] request timeout: POST /api/v1/widgets/batch (client=10.0.1.55 duration=30.1s)
+2025-12-15T14:33:17Z ERROR [widget-api] unique constraint violation: widgets_pkey (duplicate key value: id=4872)
+2025-12-15T15:20:44Z WARN  [redis] connection pool exhausted, waiting for available connection
+2025-12-15T15:20:45Z WARN  [redis] pool wait time exceeded 1s (actual: 2.3s)

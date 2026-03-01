@@ -1,0 +1,18 @@
+# Add this to your foci.toml [[agents]] array for benchmarking.
+# Minimal agent — no heartbeat, no cron, deterministic.
+
+[[agents]]
+id = "bench"
+name = "Bench"
+model = "claude-sonnet-4-20250514"  # or whichever model to test
+workspace = "/home/foci/bench"
+
+[agents.compaction]
+threshold = 0.80           # tune this per test run
+summary_prompt = "shared/prompts/compaction-summary.md"
+effort = "high"            # always high for compaction quality
+
+[agents.telegram]
+bot = "clutchling"         # or whichever bot token
+show_tool_calls = false
+show_thinking = false

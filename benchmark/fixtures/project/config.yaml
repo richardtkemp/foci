@@ -1,0 +1,28 @@
+app:
+  name: widget-api
+  version: 2.4.1
+  environment: staging
+
+server:
+  host: 0.0.0.0
+  port: 8443
+  workers: 4
+  timeout_seconds: 30
+
+database:
+  host: db-staging.internal
+  port: 5432
+  name: widgets_staging
+  pool_size: 10
+  ssl: true
+
+cache:
+  provider: redis
+  host: cache-01.internal
+  port: 6379
+  ttl_seconds: 300
+
+logging:
+  level: info
+  format: json
+  output: /var/log/widget-api/app.log
