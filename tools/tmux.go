@@ -45,6 +45,9 @@ type persistedWatch struct {
 	AgentSessionKey string `json:"agent_session_key"`
 }
 
+// sendMinGap is the minimum time between consecutive sends to the same session.
+const sendMinGap = 2 * time.Second
+
 // tmuxInstance holds per-tool-instance state so each agent gets isolated tmux sessions.
 type tmuxInstance struct {
 	mu                sync.Mutex
@@ -58,6 +61,8 @@ type tmuxInstance struct {
 	stateStore        *state.Store // nil = no persistence
 	stateKey          string       // key prefix for persisted owned sessions
 	watchStateKey     string       // key for persisted watches (stateKey + ":watches")
+	sendMu            sync.Mutex
+	lastSend          map[string]time.Time // session name → last send timestamp
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
@@ -84,6 +89,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		stateStore:        stateStore,
 		stateKey:          stateKey,
 		watchStateKey:     stateKey + ":watches",
+		lastSend:          make(map[string]time.Time),
 	}
 
 	// Restore owned sessions from persistent state
@@ -322,6 +328,10 @@ func (inst *tmuxInstance) ClearAll() {
 	inst.persistOwned()
 	inst.mu.Unlock()
 
+	inst.sendMu.Lock()
+	inst.lastSend = make(map[string]time.Time)
+	inst.sendMu.Unlock()
+
 	log.Debugf("tmux", "ClearAll: cleared all watches and owned sessions")
 }
 
@@ -386,6 +396,18 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	}
 
 	log.Debugf("tmux", "send: name=%s keys=%q enter=%v", name, keys, enter)
+
+	// Rate-limit: enforce minimum gap between consecutive sends to the same session.
+	inst.sendMu.Lock()
+	if last, ok := inst.lastSend[name]; ok {
+		if gap := time.Since(last); gap < sendMinGap {
+			wait := sendMinGap - gap
+			log.Debugf("tmux", "send: rate-limiting %s, sleeping %v", name, wait)
+			time.Sleep(wait)
+		}
+	}
+	inst.lastSend[name] = time.Now()
+	inst.sendMu.Unlock()
 
 	// Send keys first, then Enter as a separate send-keys call.
 	// Combining them in one call is unreliable with certain key strings.
@@ -608,6 +630,10 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 	delete(inst.owned, name)
 	inst.persistOwned()
 	inst.mu.Unlock()
+
+	inst.sendMu.Lock()
+	delete(inst.lastSend, name)
+	inst.sendMu.Unlock()
 
 	result := fmt.Sprintf("Session killed: %s", name)
 	if killed > 0 {

@@ -2493,3 +2493,55 @@ func TestTmuxSessionPIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestTmuxSendRateLimit(t *testing.T) {
+	tmuxAvailable(t)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+
+	name := "foci-test-ratelimit"
+	defer tmuxCleanup(t, name)
+
+	// Start a session
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "cat",
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// First send should be fast
+	sendParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "first",
+		"enter":     false,
+	})
+	t0 := time.Now()
+	if _, err := tool.Execute(context.Background(), sendParams); err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	d1 := time.Since(t0)
+
+	// Second send should be delayed ~2s by rate limiter
+	sendParams, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "second",
+		"enter":     false,
+	})
+	t1 := time.Now()
+	if _, err := tool.Execute(context.Background(), sendParams); err != nil {
+		t.Fatalf("second send: %v", err)
+	}
+	d2 := time.Since(t1)
+
+	if d1 > 1*time.Second {
+		t.Errorf("first send took %v, expected < 1s", d1)
+	}
+	if d2 < 1500*time.Millisecond {
+		t.Errorf("second send took %v, expected >= 1.5s (rate limited)", d2)
+	}
+}
