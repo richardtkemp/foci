@@ -770,12 +770,22 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// prompt cache — any insertion in the middle of conversation history
 	// invalidates all cached tokens after the insertion point.
 	sessionLock := a.turnLock(sessionKey)
-	log.Debugf("agent", "turn_lock_wait session=%s", sessionKey)
+	waiterTrigger := TriggerFromContext(ctx)
+	log.Debugf("agent", "turn_lock_wait session=%s trigger=%s", sessionKey, waiterTrigger)
 	lockStart := time.Now()
 	sessionLock.Lock()
 	lockDur := time.Since(lockStart)
 	if lockDur > 100*time.Millisecond {
-		log.Warnf("agent", "turn_lock_held session=%s waited=%s", sessionKey, lockDur)
+		// Find the holder's details from in-flight turns
+		holder := ""
+		for _, td := range a.ProcessingDetails() {
+			if td.SessionKey == sessionKey {
+				holder = fmt.Sprintf(" holder_trigger=%s holder_tool=%s holder_elapsed=%s",
+					td.Trigger, td.ToolName, time.Since(td.StartTime).Truncate(time.Millisecond))
+				break
+			}
+		}
+		log.Warnf("agent", "turn_lock_held session=%s waited=%s waiter_trigger=%s%s", sessionKey, lockDur, waiterTrigger, holder)
 	} else {
 		log.Debugf("agent", "turn_lock_acquired session=%s waited=%s", sessionKey, lockDur)
 	}
