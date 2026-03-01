@@ -19,7 +19,7 @@ import (
 	"foci/secrets/bitwarden"
 )
 
-const execMaxOutputBytes = 2 * 1024 * 1024 // 2MB cap on stdout/stderr to prevent OOM
+const execMaxOutputBytes = 100 * 1024 * 1024 // 100MB backstop on stdout/stderr; guardToolResult handles char truncation
 
 // sleepRegexp matches commands that start with "sleep" (case-insensitive).
 // This blocks bare sleep commands which block for up to 10s then silently
@@ -337,10 +337,6 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 // formatResult formats command output with error info, truncation, and redaction.
 func formatResult(output string, err error, ctx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) string {
 	result := output
-	const maxLen = 100_000
-	if len(result) > maxLen {
-		result = result[:maxLen] + "\n... (truncated)"
-	}
 
 	// Redact secrets from output
 	if store != nil {

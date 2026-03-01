@@ -120,8 +120,8 @@ func TestWebFetchMarkdownStructure(t *testing.T) {
 	}
 }
 
-func TestWebFetchTruncation(t *testing.T) {
-	// Build a response larger than 50k chars
+func TestWebFetchNoTruncation(t *testing.T) {
+	// Build a response larger than 50k chars — web_fetch no longer truncates (guardToolResult handles it)
 	big := strings.Repeat("x", 60_000)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(big))
@@ -137,11 +137,8 @@ func TestWebFetchTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "truncated") {
-		t.Errorf("expected truncation notice in result")
-	}
-	if len(result) > 60_000 {
-		t.Errorf("result length = %d, expected truncated", len(result))
+	if strings.Contains(result, "truncated") {
+		t.Errorf("web_fetch should no longer truncate output (guardToolResult handles it)")
 	}
 }
 
