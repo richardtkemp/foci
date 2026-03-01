@@ -28,7 +28,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 ## Design Decisions
 
-**Cache-first architecture.** OpenClaw makes zero effort to preserve Anthropic's prompt cache — every structural change busts it, burning through API budget fast. Foci is designed around cache preservation: character files form a stable prefix that stays cached across turns, session branching shares the parent's cached prefix, and the system actively avoids unnecessary cache invalidation. The result is dramatically better token efficiency — more actual work per dollar (or per subscription window).
+**Cache-first architecture.** Foci is designed around Anthropic's prompt cache — character files form a stable prefix, session branching shares cached prefixes, and the system actively avoids cache invalidation. The result is dramatically better token efficiency — more actual work per dollar. See [docs/CACHING.md](docs/CACHING.md) for the full cache architecture.
 
 **Character documents, not system prompts.** Agents have SOUL.md (identity), CRAFT.md (practices), COHERENCE.md (how these relate), and MEMORY.md (learned experience). These aren't configuration — they're the agent's self-understanding, maintained by the agent itself. Foci ships default character files that produce and maintain a more coherent agent identity than OpenClaw's approach — resulting in better instruction-following and agent wellbeing.
 

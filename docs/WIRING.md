@@ -166,19 +166,7 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 
 ### Cache Stability Invariant
 
-**The conversation history sent to the Anthropic API MUST be a strict append-only extension of the previous request.** New messages must only ever appear at the end — never inserted in the middle.
-
-Anthropic's prompt cache is prefix-matched. If any message shifts position (because an injected message was inserted before it), all cached tokens after that point are invalidated. A single cache bust can cost $1+ in re-tokenization.
-
-**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex (`turnLock(sessionKey)`) before doing any work. This serializes all turns on the same session — concurrent callers (`AsyncNotifier`, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
-
-**Concurrent callers that are serialized by the turn lock:**
-- Telegram bot worker (user messages)
-- `AsyncNotifier` (`[TMUX WATCH]` inactivity, `[EXEC RESULT]`/`[HTTP RESULT]` auto-background completion)
-- Scheduled wakes (`[SCHEDULED WAKE]`, fires from `go func()`)
-- HTTP `/send` endpoint
-
-**Different sessions run concurrently** — the lock is per-session, not global. Branch sessions and parent sessions have different keys and do not block each other.
+Conversation history sent to the API must be a strict append-only extension of the previous request — inserting a message in the middle invalidates all cached tokens after that point. `HandleMessageWithImages` enforces this via a per-session turn lock that serializes all callers (Telegram, `AsyncNotifier`, scheduled wakes, HTTP `/send`). Different sessions run concurrently. See [CACHING.md](CACHING.md) for the full cache stability contract.
 
 ## Message Metadata
 
@@ -339,21 +327,7 @@ Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
 
 ## Prompt Caching
 
-Two cache breakpoints per API request:
-
-1. **System prompt** — `cache_control: ephemeral` on the last `SystemBlock` (set by `bootstrap.SystemBlocks()`). Caches the entire system prompt so it's not re-tokenized each turn.
-
-2. **Conversation history** — `cache_control: ephemeral` on the last content block of the second-to-last message (set by `withCacheBreakpoint()` in `agent.go`). Caches system prompt + conversation history up to the previous turn.
-
-Cache breakpoints are added **only to the API request payload**, never persisted to session storage. The `withCacheBreakpoint()` function returns a shallow copy of the messages slice.
-
-**Branch cache sharing:** When a branch session's `LoadFull()` builds a message list starting with the parent's prefix, the cache breakpoint lands on the same byte-identical prefix. The API hits cache (read pricing) instead of re-tokenizing (write pricing).
-
-**Requirements for cache hits:**
-- System prompt must be byte-identical across turns (workspace files don't change mid-conversation)
-- `anthropic-beta: oauth-2025-04-20` header (set in `client.go`)
-
-**Verify in `api.jsonl`:** `cache_read > 0` on the second message in a session means caching is working.
+Two `cache_control: ephemeral` breakpoints per API request: one on the system prompt (`bootstrap.SystemBlocks()`), one on the second-to-last conversation message (`withCacheBreakpoint()` in `agent.go`). Breakpoints are added only to the API request payload, never persisted to session storage. See [CACHING.md](CACHING.md) for the full cache architecture, stability invariant, and monitoring.
 
 ## Secrets (`secrets/`)
 

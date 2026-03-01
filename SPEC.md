@@ -27,14 +27,13 @@ The 4th segment (branch ID) is optional. Branch sessions inherit the parent's me
 
 ### Session Branching (Cache Sharing)
 
-A branch session copies the parent's system prompt + message history at a point in time. When sent to Anthropic, the shared prefix hits the cache (read pricing: $0.30/MTok on Haiku, $0.50/MTok on Opus) instead of being rewritten ($1.25/MTok Haiku, $6.25/MTok Opus).
+A branch session copies the parent's system prompt + message history at a point in time. The shared prefix hits the cache instead of being re-tokenized. See [docs/CACHING.md](docs/CACHING.md) for pricing details and cache requirements.
 
 **Rules:**
 - Parent session: append-only, owns canonical history
 - Branch session: snapshot of parent messages at branch point + own appended messages
 - Branch never writes back to parent history
 - Branch result delivered as a message to the parent session or via Telegram
-- System prompt MUST be byte-identical between parent and branch for cache hit
 
 **Storage:** A branch record holds:
 ```
@@ -90,9 +89,8 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 
 - **Auth:** OAuth PKCE with auto-refresh, or static token override. See [docs/AUTH.md](docs/AUTH.md).
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
-- **Prompt caching:** `cache_control` with `{"type": "ephemeral"}` on system prompt blocks
+- **Prompt caching:** Two cache breakpoints per API request (system prompt + conversation history). See [docs/CACHING.md](docs/CACHING.md).
 - **Streaming:** Server-sent events for responses
-- **Key constraint:** System prompt must be byte-identical across turns for cache reuse
 
 ### Telegram Bot
 
@@ -197,7 +195,7 @@ Fields:
 - `prev_cost` — total cost of the previous agent turn (API call that generated the last response)
 - `prev_tokens` — token breakdown of the previous turn (input/output/cache_read/cache_write)
 
-**Why metadata on messages, not system prompt:** The system prompt must be byte-identical across turns for cache reuse. Dynamic values like timestamps go on messages instead — they're past the cache breakpoint.
+**Why metadata on messages, not system prompt:** Dynamic values in the system prompt would bust the cache every turn. See [docs/CACHING.md](docs/CACHING.md).
 
 **Why previous turn's cost, not current:** The current turn's cost isn't known until after the API responds. So each message carries the cost of the turn that came before it. The agent always knows what its last response cost.
 
@@ -468,7 +466,7 @@ On session start, read markdown files from the workspace directory and inject th
 IDENTITY.md, SOUL.md, COHERENCE.md, AGENTS.md, TOOLS.md, USER.md, MEMORY.md, HEARTBEAT.md
 ```
 
-Order matters: most-stable files first maximises cache prefix length.
+Order matters for cache efficiency — see [docs/CACHING.md](docs/CACHING.md).
 
 ### Skills
 
@@ -805,19 +803,7 @@ Useful during development and debugging. The agent and `/last` can reference it 
 
 ### Cache bust alerts
 
-When a single API call writes more than a configurable threshold of cache tokens, foci sends an immediate Telegram notification to the session's chat. This is a plain Telegram message, not an agent turn — zero tokens spent.
-
-```toml
-[logging]
-cache_bust_detect = true   # alert when cache_read drops >50% vs previous request
-cache_bust_idle_minutes = 10  # suppress alert if session idle > N minutes (cache expired naturally)
-```
-
-```
-⚠️ Cache write: 43,201 tokens ($0.27) on agent:main:main
-```
-
-Default threshold: 20,000 tokens. Set to 0 to disable. Helps catch system prompt mutations, unexpected session resets, or compaction failures that silently blow up costs.
+When `cache_read` drops significantly vs the previous request, foci sends an immediate Telegram notification — zero tokens spent. See [docs/CACHING.md](docs/CACHING.md) for configuration and details.
 
 ### Log rotation
 

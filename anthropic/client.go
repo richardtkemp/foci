@@ -140,11 +140,20 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
 
+	deadline, hasDeadline := ctx.Deadline()
+	httpTimeout := c.httpClient.Timeout
+	slog.Debug("anthropic: http_call_start", "url", c.baseURL+"/v1/messages", "http_timeout", httpTimeout, "ctx_has_deadline", hasDeadline, "ctx_deadline", deadline, "body_bytes", len(body))
+	callStart := time.Now()
+
 	httpResp, err := c.httpClient.Do(httpReq)
+
+	callDur := time.Since(callStart)
 	if err != nil {
+		slog.Debug("anthropic: http_call_error", "duration", callDur, "error", err, "ctx_err", ctx.Err())
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer httpResp.Body.Close()
+	slog.Debug("anthropic: http_call_done", "duration", callDur, "status", httpResp.StatusCode)
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
@@ -183,6 +192,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	var lastErr error
+	loopStart := time.Now()
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			slog.Warn("anthropic: retrying after server error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
@@ -194,11 +204,16 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 			backoff *= 2
 		}
 
+		slog.Debug("anthropic: send_attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
+		attemptStart := time.Now()
 		resp, err := c.sendOnce(ctx, body)
+		attemptDur := time.Since(attemptStart)
 		if err == nil {
+			slog.Debug("anthropic: send_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
 			return resp, nil
 		}
 		lastErr = err
+		slog.Debug("anthropic: send_attempt_fail", "attempt", attempt, "duration", attemptDur, "error", err, "elapsed_total", time.Since(loopStart))
 
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
@@ -210,6 +225,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 		}
 	}
 
+	slog.Debug("anthropic: send_exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
 	return nil, lastErr
 }
 
