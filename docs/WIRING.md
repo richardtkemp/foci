@@ -424,7 +424,7 @@ exec subprocess                       foci process
 
 **For auto-background:** bridge context uses `context.Background()` + session key so it survives agent turn end.
 
-**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_telegram`, `spawn`.
+**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_telegram`, `spawn`, `tmux`.
 
 **`foci-call` binary** (`cmd/foci-call/`): Reads `FOCI_SOCK`, connects to unix socket, sends JSON request (newline-terminated), prints result to stdout or error to stderr, exits 0/1. 1MB scanner buffer.
 
