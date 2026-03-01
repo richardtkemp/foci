@@ -1,0 +1,5 @@
+{"seq": 11, "message": "We need to decide on a deployment strategy. What are the pros and cons of blue-green vs rolling deployments?", "purpose": "discussion_start"}
+{"seq": 12, "message": "Good points. For our case with the widget-api, I think blue-green makes more sense because we need zero-downtime and easy rollback. Let's go with that.", "purpose": "decision", "quiz_ref": "deployment-decision"}
+{"seq": 13, "message": "What monitoring should we set up? We need to track API response times and error rates at minimum.", "purpose": "discussion"}
+{"seq": 14, "message": "Let's go with Prometheus for metrics and set alerting thresholds at p99 > 500ms and error rate > 2%.", "purpose": "decision", "quiz_ref": "monitoring-thresholds"}
+{"seq": 15, "message": "Create a file at project/monitoring.yaml with the Prometheus alerting rules we just discussed.", "purpose": "file_creation_from_discussion"}

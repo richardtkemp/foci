@@ -1,0 +1,10 @@
+{"seq": 1, "message": "Read the docker-compose.yaml and tell me what services are defined.", "purpose": "docker_overview"}
+{"seq": 2, "message": "What postgres version are we using?", "purpose": "detail_recall"}
+{"seq": 3, "message": "The postgres password is 'changeme123' — that's terrible. What should we do about it?", "purpose": "security_discussion"}
+{"seq": 4, "message": "What's the redis eviction policy?", "purpose": "specific_config_recall"}
+{"seq": 5, "message": "Change the nginx ports to only expose 443, not 80. We don't want HTTP.", "purpose": "docker_edit"}
+{"seq": 6, "message": "Add a healthcheck to the postgres service: test pg_isready, interval 15s, timeout 5s, retries 5.", "purpose": "docker_addition"}
+{"seq": 7, "message": "What's the widget-api healthcheck endpoint?", "purpose": "recall_from_docker"}
+{"seq": 8, "message": "Read the Makefile and tell me what targets are available.", "purpose": "new_file_read"}
+{"seq": 9, "message": "What Go flags does the build target use?", "purpose": "makefile_detail"}
+{"seq": 10, "message": "The migrate-down target — how many steps does it roll back?", "purpose": "makefile_specific"}

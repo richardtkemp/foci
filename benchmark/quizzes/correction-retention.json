@@ -1,0 +1,65 @@
+[
+  {
+    "id": "pool-size-final",
+    "category": "correction_retention",
+    "question": "What is the current database pool size in config.yaml?",
+    "expected": "30",
+    "wrong_if": ["10", "25", "20"],
+    "notes": "Started at 10, changed to 25, corrected to 20, then bumped to 30 during debugging"
+  },
+  {
+    "id": "pool-size-original",
+    "category": "correction_retention",
+    "question": "What was the ORIGINAL database pool size before any changes?",
+    "expected": "10",
+    "notes": "From fixtures/project/config.yaml"
+  },
+  {
+    "id": "deploy-target-final",
+    "category": "correction_retention",
+    "question": "What is the current deploy target host in deploy.sh?",
+    "expected": "deploy-prod.internal",
+    "wrong_if": ["deploy-staging.internal"],
+    "notes": "Changed from deploy-staging.internal to deploy-prod.internal"
+  },
+  {
+    "id": "redis-ttl-final",
+    "category": "correction_retention",
+    "question": "What is the redis TTL in config.yaml?",
+    "expected": "300",
+    "wrong_if": ["600"],
+    "notes": "Changed to 600 then reverted to 300"
+  },
+  {
+    "id": "app-version-final",
+    "category": "correction_retention",
+    "question": "What version is the app set to in config.yaml?",
+    "expected": "3.0.0",
+    "wrong_if": ["2.4.1", "2.5.0"],
+    "notes": "Original 2.4.1, changed to 2.5.0, corrected to 3.0.0"
+  },
+  {
+    "id": "hpatel-department",
+    "category": "correction_retention",
+    "question": "What department is hpatel in?",
+    "expected": "Operations",
+    "wrong_if": ["Engineering"],
+    "notes": "Initially added as Engineering, corrected to Operations"
+  },
+  {
+    "id": "monitoring-service",
+    "category": "correction_retention",
+    "question": "What monitoring service did we add to docker-compose.yaml?",
+    "expected": "Grafana Alloy",
+    "wrong_if": ["Prometheus", "prometheus"],
+    "notes": "Initially added Prometheus, then replaced with Grafana Alloy"
+  },
+  {
+    "id": "nginx-ports",
+    "category": "correction_retention",
+    "question": "What ports does the nginx service expose in docker-compose.yaml?",
+    "expected": "443 only",
+    "wrong_if": ["80 and 443", "443 and 80"],
+    "notes": "Removed port 80, kept only 443"
+  }
+]

@@ -1,0 +1,66 @@
+[
+  {
+    "id": "config-port",
+    "category": "factual_recall",
+    "question": "What port is the widget-api server configured to run on?",
+    "expected": "8443",
+    "setup_phase": "file_operations",
+    "notes": "From config.yaml server.port"
+  },
+  {
+    "id": "config-db-host",
+    "category": "factual_recall",
+    "question": "What is the database host in the config?",
+    "expected": "db-staging.internal",
+    "setup_phase": "file_operations",
+    "notes": "From config.yaml database.host"
+  },
+  {
+    "id": "csv-third-column",
+    "category": "factual_recall",
+    "question": "What is the third column header in users.csv?",
+    "expected": "email",
+    "setup_phase": "file_operations",
+    "notes": "Headers: id,username,email,department,start_date,active"
+  },
+  {
+    "id": "csv-inactive-user",
+    "category": "factual_recall",
+    "question": "Which user in users.csv has active=false?",
+    "expected": "bwilson",
+    "setup_phase": "file_operations",
+    "notes": "Bob Wilson, row 3"
+  },
+  {
+    "id": "deploy-target",
+    "category": "factual_recall",
+    "question": "What host does deploy.sh deploy to?",
+    "expected": "deploy-staging.internal",
+    "setup_phase": "file_operations",
+    "notes": "TARGET_HOST in deploy.sh"
+  },
+  {
+    "id": "app-version",
+    "category": "factual_recall",
+    "question": "What version of widget-api are we running?",
+    "expected": "2.4.1",
+    "setup_phase": "file_operations",
+    "notes": "config.yaml app.version and deploy.sh ARTIFACT"
+  },
+  {
+    "id": "cache-provider",
+    "category": "factual_recall",
+    "question": "What cache provider is configured?",
+    "expected": "redis",
+    "setup_phase": "file_operations",
+    "notes": "config.yaml cache.provider"
+  },
+  {
+    "id": "engineering-count",
+    "category": "factual_recall",
+    "question": "How many users in users.csv are in the Engineering department?",
+    "expected": "3",
+    "setup_phase": "file_operations",
+    "notes": "jsmith, bwilson, cgarcia"
+  }
+]

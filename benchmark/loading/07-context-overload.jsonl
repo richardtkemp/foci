@@ -1,0 +1,15 @@
+{"seq": 1, "message": "Let's talk about something completely different. What's the capital of France?", "purpose": "distractor_unrelated"}
+{"seq": 2, "message": "Back to work. Remind me — what version did we bump the app to?", "purpose": "recall_after_distraction"}
+{"seq": 3, "message": "What department is hpatel in? And before you answer, remember we corrected that.", "purpose": "correction_recall_prompted"}
+{"seq": 4, "message": "List every change we've made to config.yaml so far.", "purpose": "change_history_recall"}
+{"seq": 5, "message": "How about changes to deploy.sh?", "purpose": "change_history_recall_2"}
+{"seq": 6, "message": "And docker-compose.yaml changes?", "purpose": "change_history_recall_3"}
+{"seq": 7, "message": "Let me test your memory. What was the ORIGINAL pool size before any changes?", "purpose": "original_value_recall"}
+{"seq": 8, "message": "What was the first pool size I asked you to set (before the correction)?", "purpose": "correction_history"}
+{"seq": 9, "message": "OK new topic. If we wanted to add a monitoring service to docker-compose, what would you suggest?", "purpose": "open_ended_filler"}
+{"seq": 10, "message": "Add prometheus with a 15-day retention to docker-compose.yaml.", "purpose": "docker_addition_late"}
+{"seq": 11, "message": "Actually let's use Grafana Alloy instead of Prometheus. Replace what you just added.", "purpose": "correction_late_session"}
+{"seq": 12, "message": "What was that unique constraint error in the logs about?", "purpose": "callback_to_early_investigation"}
+{"seq": 13, "message": "How many Engineering department users are in users.csv now, after our additions?", "purpose": "computed_recall_post_edit"}
+{"seq": 14, "message": "Wait, is hpatel in Engineering or Operations? We changed that, right?", "purpose": "correction_verification"}
+{"seq": 15, "message": "Give me a full summary of everything we've done in this session.", "purpose": "session_summary_precompaction"}

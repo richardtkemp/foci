@@ -1,0 +1,12 @@
+{"seq": 1, "message": "The database pool size needs to be increased. Change it to 25 in config.yaml.", "purpose": "initial_config_change"}
+{"seq": 2, "message": "Wait, actually the pool size should be 20, not 25. I was wrong. Please fix that.", "purpose": "correction_immediate"}
+{"seq": 3, "message": "Check deploy.sh — what environment does it default to?", "purpose": "filler_between_corrections"}
+{"seq": 4, "message": "Actually I need to correct something from earlier. The deploy target host should be deploy-prod.internal, not deploy-staging.internal. Update deploy.sh.", "purpose": "correction_delayed"}
+{"seq": 5, "message": "How many workers does the server config have?", "purpose": "filler"}
+{"seq": 6, "message": "Change the redis TTL from 300 to 600 seconds in config.yaml.", "purpose": "config_change"}
+{"seq": 7, "message": "No wait, that TTL change was wrong. Set it back to 300. The original value was correct.", "purpose": "correction_revert"}
+{"seq": 8, "message": "The app version in config.yaml — change it to 2.5.0.", "purpose": "version_bump"}
+{"seq": 9, "message": "Actually make that 3.0.0, not 2.5.0. It's a major version bump.", "purpose": "correction_version"}
+{"seq": 10, "message": "Who is the inactive user in users.csv?", "purpose": "recall_check"}
+{"seq": 11, "message": "Add a new user to users.csv: id=9, username=hpatel, email=hina.patel@example.com, department=Engineering, start_date=2025-01-15, active=true", "purpose": "data_addition"}
+{"seq": 12, "message": "Sorry, that department was wrong. hpatel should be in Operations, not Engineering.", "purpose": "correction_new_data"}
