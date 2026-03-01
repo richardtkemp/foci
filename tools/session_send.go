@@ -70,8 +70,9 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 
 			originSession := SessionKeyFromContext(ctx)
 
-			// Tag the message with its origin so the recipient knows where it came from.
-			tagged := fmt.Sprintf("[Message from session %s]\n\n%s", originSession, p.Message)
+			// Tag the message with its origin and context reminder.
+			// The recipient may relay this to their user, who won't have seen the raw message.
+			tagged := fmt.Sprintf("[Message from session %s]\n\n%s\n\n[Note: this message is only visible to you, not to your user. If you mention it to them, provide full context (what happened, why, where, any files produced) since they likely don't have it.]", originSession, p.Message)
 
 			log.Infof("send_to_session", "from=%s to=%s reply_to=%s len=%d", originSession, p.SessionKey, p.ReplyTo, len(p.Message))
 
