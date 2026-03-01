@@ -252,3 +252,53 @@ func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, err
 
 	return resp.InputTokens, nil
 }
+
+// ModelInfo represents a model returned by the /v1/models endpoint.
+type ModelInfo struct {
+	ID          string    `json:"id"`
+	DisplayName string    `json:"display_name"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ListModels calls the /v1/models endpoint to list available models.
+func (c *Client) ListModels() ([]ModelInfo, error) {
+	token, err := c.resolveToken()
+	if err != nil {
+		return nil, fmt.Errorf("resolve token: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("GET", c.baseURL+"/v1/models?limit=100", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+	httpResp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	respBody, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, &APIError{
+			StatusCode: httpResp.StatusCode,
+			Body:       string(respBody),
+		}
+	}
+
+	var resp struct {
+		Data []ModelInfo `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	return resp.Data, nil
+}

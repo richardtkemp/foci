@@ -88,10 +88,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Handle "foci auth" before normal command dispatch — it doesn't need a gateway.
+	// Handle "foci auth" and "foci setup" before normal command dispatch — they don't need a gateway.
 	if os.Args[1] == "auth" {
 		if err := cmdAuth(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if os.Args[1] == "setup" {
+		if err := cmdSetup(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -152,6 +159,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `Usage: foci <command> [args...]
 
 Commands:
+  setup                First-run setup wizard (config, auth, character files)
   auth                 Authenticate with Anthropic (OAuth PKCE flow)
   send <text>          Send a message to the agent (main session)
   branch [text]        Trigger a branch session
