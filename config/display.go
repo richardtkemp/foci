@@ -268,11 +268,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("skills", "dirs", cfg.Skills.Dirs)
 	}
 
-	// cache
-	add("cache", "strategy", cfg.Cache.Strategy)
-
 	// usage_warnings
-	add("usage_warnings", "name", cfg.ManaWarnings.Name)
 	if len(cfg.ManaWarnings.Thresholds) > 0 {
 		add("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
@@ -518,8 +514,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if len(cfg.Skills.Dirs) > 0 {
 		addGlobal("skills", "dirs", cfg.Skills.Dirs)
 	}
-	addGlobal("cache", "strategy", cfg.Cache.Strategy)
-	addGlobal("usage_warnings", "name", cfg.ManaWarnings.Name)
 	if len(cfg.ManaWarnings.Thresholds) > 0 {
 		addGlobal("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
@@ -696,7 +690,6 @@ type displayConfig struct {
 	Tools         ToolsConfig        `toml:"tools"`
 	Environment   EnvironmentConfig  `toml:"environment"`
 	Skills        SkillsConfig       `toml:"skills"`
-	Cache         CacheConfig        `toml:"cache"`
 	UsageWarnings ManaWarningsConfig `toml:"usage_warnings"`
 	Voice         VoiceConfig        `toml:"voice"`
 	Database      DatabaseConfig     `toml:"database"`
@@ -751,7 +744,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Tools:         cfg.Tools,
 		Environment:   cfg.Environment,
 		Skills:        cfg.Skills,
-		Cache:         cfg.Cache,
 		UsageWarnings: cfg.ManaWarnings,
 		Voice:         cfg.Voice,
 		Database:      cfg.Database,
