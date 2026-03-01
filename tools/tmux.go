@@ -163,7 +163,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 				},
 				"keys": {
 					"type": "string",
-					"description": "Keystrokes to send (send)"
+					"description": "Keystrokes to send (send). Optional if enter=true (sends bare Enter)"
 				},
 				"enter": {
 					"type": "boolean",
@@ -365,8 +365,8 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if name == "" {
 		return "", fmt.Errorf("name is required for send")
 	}
-	if keys == "" {
-		return "", fmt.Errorf("keys is required for send")
+	if keys == "" && (enter == false) {
+		return "", fmt.Errorf("keys is required for send (or set enter=true to send just Enter)")
 	}
 	if !inst.owns(name) {
 		return "", fmt.Errorf("session %q not owned by this agent", name)
@@ -376,9 +376,13 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 
 	// Send keys first, then Enter as a separate send-keys call.
 	// Combining them in one call is unreliable with certain key strings.
-	out, err := runTmux(ctx, "send-keys", "-t", name, keys)
-	if err != nil {
-		return "", fmt.Errorf("tmux send-keys: %s %w", strings.TrimSpace(out), err)
+	var out string
+	var err error
+	if keys != "" {
+		out, err = runTmux(ctx, "send-keys", "-t", name, keys)
+		if err != nil {
+			return "", fmt.Errorf("tmux send-keys: %s %w", strings.TrimSpace(out), err)
+		}
 	}
 	if enter {
 		// Brief pause so TUI apps (Claude Code, OpenCode) can process
