@@ -84,16 +84,17 @@ func NewRepeatCommand(store *LastMessageStore) *Command {
 
 // apiEntry mirrors log.APIEntry for reading api.jsonl without importing log.
 type apiEntry struct {
-	Timestamp  time.Time `json:"ts"`
-	Session    string    `json:"session"`
-	Model      string    `json:"model"`
-	Input      int       `json:"input"`
-	Output     int       `json:"output"`
-	CacheRead  int       `json:"cache_read"`
-	CacheWrite int       `json:"cache_write"`
-	CostUSD    float64   `json:"cost_usd"`
-	DurationMS int64     `json:"duration_ms"`
-	StopReason string    `json:"stop_reason"`
+	Timestamp    time.Time `json:"ts"`
+	Session      string    `json:"session"`
+	Model        string    `json:"model"`
+	Input        int       `json:"input"`
+	Output       int       `json:"output"`
+	CacheRead    int       `json:"cache_read"`
+	CacheWrite   int       `json:"cache_write"`
+	CostUSD      float64   `json:"cost_usd"`
+	DurationMS   int64     `json:"duration_ms"`
+	StopReason   string    `json:"stop_reason"`
+	IsCompaction bool      `json:"is_compaction"`
 }
 
 // categoryCosts computes per-category cost breakdown from API log entries.
@@ -169,7 +170,9 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 				if e.Session == info.SessionKey {
 					sessionCost += e.CostUSD
 					sessionCalls++
-					contextTokens = e.Input + e.CacheRead + e.CacheWrite
+					if !e.IsCompaction {
+						contextTokens = e.Input + e.CacheRead + e.CacheWrite
+					}
 				}
 			}
 

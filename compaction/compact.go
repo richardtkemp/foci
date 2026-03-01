@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"foci/anthropic"
 	"foci/log"
@@ -318,6 +319,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	})
 
 	log.Debugf("compaction", "summary request: model=%s max_tokens=%d messages=%d effort=%s", c.model, c.maxTokens, len(summaryMessages), c.effort)
+	start := time.Now()
 	req := &anthropic.MessageRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
@@ -331,6 +333,24 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	if err != nil {
 		return "", fmt.Errorf("summarize for compaction: %w", err)
 	}
+
+	duration := time.Since(start)
+	cost := log.CalculateCost(c.model,
+		resp.Usage.InputTokens, resp.Usage.OutputTokens,
+		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	log.API(log.APIEntry{
+		Timestamp:    start.UTC(),
+		Session:      sessionKey,
+		Model:        c.model,
+		Input:        resp.Usage.InputTokens,
+		Output:       resp.Usage.OutputTokens,
+		CacheRead:    resp.Usage.CacheReadInputTokens,
+		CacheWrite:   resp.Usage.CacheCreationInputTokens,
+		CostUSD:      cost,
+		DurationMS:   duration.Milliseconds(),
+		StopReason:   resp.StopReason,
+		IsCompaction: true,
+	})
 
 	summary := anthropic.TextOf(resp.Content)
 
