@@ -966,17 +966,9 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 // NewTmuxCommand returns a /tmux command that wraps the tmux tool, exposing all
 // operations via slash-command syntax. It delegates to execFn (the tool's Execute).
 func NewTmuxCommand(execFn func(ctx context.Context, params json.RawMessage) (string, error)) *Command {
-	const usage = `Usage: /tmux [operation] [args...]
+	const usage = `Usage: /tmux <command> [args...]
 
-Operations:
-  list                          List all tmux sessions (default)
-  start [name] [command...]     Start a new session (auto-watches)
-  start [name] --no-watch [cmd] Start without auto-watch
-  send <name> <keys...>         Send keystrokes to a session
-  read <name> [lines]           Read pane output
-  kill <name>                   Kill a session
-  watch <name> [threshold_secs] Watch session for inactivity
-  unwatch <name>                Stop watching a session`
+Commands: list, start, send, read, kill, watch, unwatch`
 
 	return &Command{
 		Name:           "tmux",
