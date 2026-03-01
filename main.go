@@ -2534,6 +2534,9 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tools.CreateCommandWrapperTool(cmd))
 	}
 
+	// Finalize exec tool description with dynamically-generated shell function list.
+	registry.FinalizeExecDescription()
+
 	// Log registered tools
 	allTools := registry.All()
 	toolNames := make([]string, len(allTools))
