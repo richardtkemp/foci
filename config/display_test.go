@@ -213,6 +213,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ReceivedFilesDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"
+	agent.CompactionEffort = "high"
 	// Set optional global fields
 	cfg.Sessions.CompactionSummaryPrompt = "/tmp/summary.md"
 	cfg.Sessions.CompactionHandoffMsg = "handoff"
