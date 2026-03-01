@@ -12,7 +12,6 @@ func testConfig() (*Config, AgentConfig) {
 		Anthropic: AnthropicConfig{
 			SetupToken:      "sk-ant-secret",
 			BraveAPIKey:     "brave-secret",
-			CredentialsFile: "/home/user/.credentials.json",
 			HTTPTimeout:     "120s",
 			UsageAPITimeout: "10s",
 		},

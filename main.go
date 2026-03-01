@@ -95,20 +95,20 @@ func main() {
 	// Handle "foci auth" subcommand before normal flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		authFlags := flag.NewFlagSet("auth", flag.ExitOnError)
-		credsFile := authFlags.String("credentials-file", "", "path to save credentials (default: from config or ~/.config/foci/oauth.json)")
-		configFile := authFlags.String("config", "", "path to foci.toml (to read credentials_file)")
+		configFile := authFlags.String("config", "", "path to foci.toml (to find secrets.toml)")
 		authFlags.Parse(os.Args[2:])
 
-		path := *credsFile
-		if path == "" && *configFile != "" {
-			if c, err := config.Load(*configFile); err == nil && c.Anthropic.CredentialsFile != "" {
-				path = c.Anthropic.CredentialsFile
-			}
+		cfgPath := *configFile
+		if cfgPath == "" {
+			cfgPath = config.ParseFlags()
 		}
-		if path == "" {
-			path = "~/.config/foci/oauth.json"
+		secretsPath := filepath.Join(filepath.Dir(cfgPath), "secrets.toml")
+		authStore, err := secrets.Load(secretsPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load secrets: %v\n", err)
+			os.Exit(1)
 		}
-		if err := anthropic.RunAuthFlow(path); err != nil {
+		if err := anthropic.RunAuthFlow(authStore); err != nil {
 			fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -255,7 +255,7 @@ func main() {
 	}
 
 	// Token resolution priority:
-	// 1. Foci's own OAuth credentials file (credentials_file or default ~/.config/foci/oauth.json)
+	// 1. Foci's own OAuth credentials in secrets.toml (anthropic.oauth_access_token etc.)
 	// 2. Static setup-token from secrets.toml / foci.toml
 	// 3. Claude Code credentials at ~/.claude/.credentials.json (read-only fallback)
 	var client *anthropic.Client
@@ -265,14 +265,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	fociCredsFile := cfg.Anthropic.CredentialsFile
-	if fociCredsFile == "" {
-		fociCredsFile = "~/.config/foci/oauth.json"
-	}
 	const ccCredsFile = "~/.claude/.credentials.json"
 
-	// Try source 1: foci's own OAuth credentials
-	if mgr, err := anthropic.NewOAuthManager(fociCredsFile); err == nil {
+	// Try source 1: foci's own OAuth credentials in secrets.toml
+	if mgr, err := anthropic.NewOAuthManagerFromStore(store); err == nil {
 		oauthMgr = mgr
 		if oauthMgr.ExpiresIn() < 5*time.Minute {
 			if err := oauthMgr.Refresh(); err != nil {
@@ -282,7 +278,7 @@ func main() {
 		oauthMgr.StartRefresh(ctx)
 		client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
 		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-		log.Infof("main", "using foci OAuth token from %s (expires in %s, auto-refresh active)", fociCredsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+		log.Infof("main", "using foci OAuth token from secrets.toml (expires in %s, auto-refresh active)", oauthMgr.ExpiresIn().Truncate(time.Second))
 	} else if setupToken != "" {
 		// Source 2: static setup-token
 		client = anthropic.NewClientWithTimeout(setupToken, httpTimeout)
@@ -304,10 +300,10 @@ func main() {
 		// No credentials found — try interactive auth or exit
 		if fi, statErr := os.Stdin.Stat(); statErr == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
 			log.Infof("main", "no credentials found, starting interactive auth flow")
-			if authErr := anthropic.RunAuthFlow(fociCredsFile); authErr != nil {
+			if authErr := anthropic.RunAuthFlow(store); authErr != nil {
 				log.Fatalf("main", "auth flow failed: %v", authErr)
 			}
-			mgr, err := anthropic.NewOAuthManager(fociCredsFile)
+			mgr, err := anthropic.NewOAuthManagerFromStore(store)
 			if err != nil {
 				log.Fatalf("main", "load credentials after auth: %v", err)
 			}
@@ -315,7 +311,7 @@ func main() {
 			oauthMgr.StartRefresh(ctx)
 			client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
 			usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-			log.Infof("main", "using foci OAuth token from %s (expires in %s, auto-refresh active)", fociCredsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
+			log.Infof("main", "using foci OAuth token from secrets.toml (expires in %s, auto-refresh active)", oauthMgr.ExpiresIn().Truncate(time.Second))
 		} else {
 			log.Errorf("main", "no Anthropic token found — run: foci auth")
 			os.Exit(1)
