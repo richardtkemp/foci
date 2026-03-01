@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"os/signal"
@@ -2282,16 +2283,19 @@ func setupAgent(p setupParams) *agentInstance {
 	if manaName == "" {
 		manaName = "mana"
 	}
+	manaEmoji := []string{"🔮", "✨", "🌙", "⚡", "🪄", "💎", "🌟", "🔥", "🧿", "🪬", "💫", "🌀", "🎇"}
+	displayName := strings.ToUpper(manaName[:1]) + manaName[1:]
 	manaFn := func(ctx context.Context) (string, error) {
+		emoji := manaEmoji[rand.IntN(len(manaEmoji))]
 		usage, err := p.usageClient.GetUsage(ctx)
 		if err != nil {
-			return fmt.Sprintf("Error fetching %s: %v", manaName, err), nil
+			return fmt.Sprintf("%s Error fetching %s: %v", emoji, displayName, err), nil
 		}
 		percent := anthropic.FormatMana(usage)
 		if percent == "" {
-			return fmt.Sprintf("%s: unknown", manaName), nil
+			return fmt.Sprintf("%s %s: unknown", emoji, displayName), nil
 		}
-		result := fmt.Sprintf("%s: %s remaining", manaName, percent)
+		result := fmt.Sprintf("%s %s: %s remaining", emoji, displayName, percent)
 		if reset := anthropic.FormatManaReset(usage); reset != "" {
 			result += fmt.Sprintf(" (resets %s)", reset)
 		}
