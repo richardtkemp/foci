@@ -1447,8 +1447,11 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 		Execute: func(ctx context.Context, args string) (string, error) {
 			args = strings.TrimSpace(args)
 
-			if strings.HasPrefix(strings.ToLower(args), "search ") {
-				query := strings.TrimSpace(args[7:])
+			if strings.ToLower(args) == "search" || strings.HasPrefix(strings.ToLower(args), "search ") {
+				query := ""
+				if len(args) > 7 {
+					query = strings.TrimSpace(args[7:])
+				}
 				if query == "" {
 					return "Usage: /todo search <query>", nil
 				}
@@ -1495,8 +1498,8 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 				items = visible
 			} else {
 				items = append(visible, background...)
-				sortTodosByPriority(items)
 			}
+			sortTodosByPriority(items)
 
 			if len(items) == 0 {
 				if backgroundCount > 0 {
