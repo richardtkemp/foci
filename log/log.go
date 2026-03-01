@@ -53,26 +53,27 @@ func ParseLevel(s string) Level {
 
 // APIEntry is a structured record for one Anthropic API request.
 type APIEntry struct {
-	Timestamp  time.Time `json:"ts"`
-	Session    string    `json:"session"`
-	Model      string    `json:"model"`
-	Input      int       `json:"input"`
-	Output     int       `json:"output"`
-	CacheRead  int       `json:"cache_read"`
-	CacheWrite int       `json:"cache_write"`
-	CostUSD    float64   `json:"cost_usd"`
-	DurationMS int64     `json:"duration_ms"`
-	StopReason string    `json:"stop_reason"`
+	Timestamp    time.Time `json:"ts"`
+	Session      string    `json:"session"`
+	Model        string    `json:"model"`
+	Input        int       `json:"input"`
+	Output       int       `json:"output"`
+	CacheRead    int       `json:"cache_read"`
+	CacheWrite   int       `json:"cache_write"`
+	CostUSD      float64   `json:"cost_usd"`
+	DurationMS   int64     `json:"duration_ms"`
+	StopReason   string    `json:"stop_reason"`
+	IsCompaction bool      `json:"is_compaction,omitempty"`
 }
 
 // PayloadEntry is a full API request/response record.
 type PayloadEntry struct {
-	Timestamp time.Time       `json:"ts"`
-	Session   string          `json:"session"`
-	Model     string          `json:"model"`
-	Request   json.RawMessage `json:"request"`
-	Response  json.RawMessage `json:"response"`
-	DurationMS int64          `json:"duration_ms"`
+	Timestamp  time.Time       `json:"ts"`
+	Session    string          `json:"session"`
+	Model      string          `json:"model"`
+	Request    json.RawMessage `json:"request"`
+	Response   json.RawMessage `json:"response"`
+	DurationMS int64           `json:"duration_ms"`
 }
 
 // Logger writes event log lines and structured API log entries.
