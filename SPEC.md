@@ -302,8 +302,8 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `read` — read file contents
 - `write` — create/overwrite files
 - `edit` — find-and-replace in files (with syntax validation for .json, .toml, .go, .yaml/.yml, .xml, .py, .sh/.bash)
-- `web_fetch` — HTTP GET, readability extraction + markdown conversion (raw mode available)
-- `web_search` — Brave Search API
+- `web_fetch` — fetch web content. Default: Anthropic server-side tool. Fallback: client-side HTTP GET with readability extraction (`fetch_provider = "builtin"`)
+- `web_search` — search the web. Default: Anthropic server-side tool. Fallback: Brave Search API (`search_provider = "brave"`)
 - `summary` — summarize/extract from a file via Haiku without loading it into context
 - `memory_search` — FTS5 search over memory files + conversation history (sort by relevance or recency)
 - `remind` — defer a thought for later (delay, tomorrow, specific date); wake=true actively wakes the session

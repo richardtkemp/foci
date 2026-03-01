@@ -27,6 +27,8 @@ model = "claude-sonnet-4-20250514"
 # system_files = ["character/SOUL.md"]    # default system file list
 # summary_context_turns = 5              # recent turns for auto-summary context
 # summary_context_chars = 6000           # max chars of context for auto-summary
+# search_provider = "anthropic"          # "anthropic" (default) or "brave"
+# fetch_provider = "anthropic"           # "anthropic" (default) or "builtin"
 
 # ─── Model aliases ───────────────────────────────────────────────────
 # [models]
@@ -270,6 +272,14 @@ bind = "127.0.0.1"
 # max_upload_file_size = 52428800
 # summary_context_turns = 5
 # summary_context_chars = 6000
+# search_provider = "anthropic"              # "anthropic" (server-side, default) or "brave" (needs brave_api_key)
+# fetch_provider = "anthropic"               # "anthropic" (server-side, default) or "builtin" (client-side)
+# web_search_max_uses = 0                    # max searches per API call (0 = unlimited, anthropic provider only)
+# web_search_allowed_domains = []            # domain whitelist (mutually exclusive with blocked)
+# web_search_blocked_domains = []            # domain blacklist
+# web_fetch_max_uses = 0                     # max fetches per API call (0 = unlimited, anthropic provider only)
+# web_fetch_allowed_domains = []
+# web_fetch_blocked_domains = []
 
 # ─── Resources ────────────────────────────────────────────────────────
 # [resources]

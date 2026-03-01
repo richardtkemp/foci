@@ -903,7 +903,7 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 	// Build a set of tool names present in the API schema (defs).
 	defNames := make(map[string]bool, len(defs))
 	for _, d := range defs {
-		defNames[d.Name] = true
+		defNames[d.Name()] = true
 	}
 
 	// Verify every tool is either allowed or blocked — no unclassified tools.
@@ -956,8 +956,8 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 
 	// Verify defs and tools map are consistent — every def has a handler.
 	for _, d := range defs {
-		if _, ok := tools[d.Name]; !ok {
-			t.Errorf("tool %q has a schema definition but no handler in tools map", d.Name)
+		if _, ok := tools[d.Name()]; !ok {
+			t.Errorf("tool %q has a schema definition but no handler in tools map", d.Name())
 		}
 	}
 	for name := range tools {
@@ -1004,7 +1004,7 @@ func TestSpawnCharacterOnlyAllTools(t *testing.T) {
 
 	toolNames := make(map[string]bool)
 	for _, td := range receivedReq.Tools {
-		toolNames[td.Name] = true
+		toolNames[td.Name()] = true
 	}
 
 	if !toolNames["send_telegram"] {
@@ -1029,7 +1029,7 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 	})
 
 	defs, tools := spawnToolSet(reg, nil)
-	if len(defs) != 1 || defs[0].Name != "exec" {
+	if len(defs) != 1 || defs[0].Name() != "exec" {
 		t.Errorf("defs = %v, want [exec] only", defs)
 	}
 	if _, ok := tools["spawn"]; ok {

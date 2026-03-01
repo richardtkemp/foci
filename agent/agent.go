@@ -111,6 +111,7 @@ type Agent struct {
 	BraindeadWarningPrompt      string                          // warning text (empty = hardcoded default)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
+	ServerTools                 []anthropic.ToolDef             // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu   sync.Mutex
@@ -912,6 +913,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		system = combined
 	}
 	toolDefs := a.Tools.ToolDefs()
+	if len(a.ServerTools) > 0 {
+		toolDefs = append(toolDefs, a.ServerTools...)
+	}
 
 	maxLoops := a.MaxToolLoops
 	if maxLoops <= 0 {
@@ -1057,11 +1061,22 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		messages = append(messages, assistantMsg)
 		newMessages = append(newMessages, assistantMsg)
 
-		// Emit thinking blocks to observer (if any)
+		// Emit thinking blocks and server tool call/result notifications to observer (if any)
 		for _, block := range resp.Content {
 			if block.Type == "thinking" {
 				notifyThinkingCtx(ctx, block.Thinking)
 			}
+			if block.Type == "server_tool_use" {
+				notifyToolCallCtx(ctx, block.Name, block.Input)
+			}
+			if block.Type == "web_search_tool_result" || block.Type == "web_fetch_tool_result" {
+				notifyToolResultCtx(ctx, block.Type, summarizeServerToolResult(block), false)
+			}
+		}
+
+		// pause_turn: server paused a long-running turn — continue without client-side tool execution
+		if resp.StopReason == "pause_turn" {
+			continue
 		}
 
 		if resp.StopReason != "tool_use" {
@@ -1125,7 +1140,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		// so tools can route async results without importing agent.
 		toolCtx := tools.WithSessionKey(ctx, sessionKey)
 
-		// Execute tool calls
+		// Execute tool calls. server_tool_use blocks are skipped by the type check
+		// below — they are already executed by Anthropic's servers.
 		var toolResults []anthropic.ContentBlock
 		for _, block := range resp.Content {
 			if block.Type != "tool_use" {
@@ -1312,6 +1328,26 @@ func repairInterruptedToolCalls(messages []anthropic.Message) *anthropic.Message
 		results = append(results, anthropic.ToolResultBlock(id, "Tool call interrupted by service restart", true))
 	}
 	return &anthropic.Message{Role: "user", Content: results}
+}
+
+// summarizeServerToolResult extracts a brief text summary from a server tool result block.
+// Server tool result blocks (web_search_tool_result, web_fetch_tool_result) contain
+// structured data in their Raw JSON. We extract a human-readable snippet for observers.
+func summarizeServerToolResult(block anthropic.ContentBlock) string {
+	// Try to extract content from the raw JSON
+	if len(block.Raw) > 0 {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(block.Raw, &raw); err == nil {
+			// web_search_tool_result has a "content" array with search results
+			if content, ok := raw["content"]; ok {
+				var items []json.RawMessage
+				if json.Unmarshal(content, &items) == nil && len(items) > 0 {
+					return fmt.Sprintf("%d results", len(items))
+				}
+			}
+		}
+	}
+	return block.Type
 }
 
 // TurnResult holds the result of a single agent turn.

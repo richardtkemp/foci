@@ -70,17 +70,22 @@ func TestRegistryToolDefs(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("len = %d, want 1", len(defs))
 	}
-	if defs[0].Name != "exec" {
-		t.Errorf("Name = %q", defs[0].Name)
-	}
-	if defs[0].Description != "run commands" {
-		t.Errorf("Description = %q", defs[0].Description)
+	if defs[0].Name() != "exec" {
+		t.Errorf("Name = %q", defs[0].Name())
 	}
 
-	// InputSchema should be valid JSON
-	var schema map[string]interface{}
-	if err := json.Unmarshal(defs[0].InputSchema, &schema); err != nil {
-		t.Errorf("InputSchema not valid JSON: %v", err)
+	// ToolDef should round-trip via JSON and contain expected fields
+	data, err := json.Marshal(defs[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]interface{}
+	json.Unmarshal(data, &raw)
+	if raw["description"] != "run commands" {
+		t.Errorf("description = %v", raw["description"])
+	}
+	if raw["input_schema"] == nil {
+		t.Error("input_schema missing from serialized ToolDef")
 	}
 }
 

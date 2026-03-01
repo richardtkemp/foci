@@ -140,6 +140,8 @@ type AgentConfig struct {
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
 	SummaryContextTurns int    `toml:"summary_context_turns"` // recent turns for auto-summary context (0 = use global)
 	SummaryContextChars int    `toml:"summary_context_chars"` // max chars of context for auto-summary (0 = use global)
+	SearchProvider      string `toml:"search_provider"`       // "anthropic" or "brave" (empty = use global)
+	FetchProvider       string `toml:"fetch_provider"`        // "anthropic" or "builtin" (empty = use global)
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
 	Background      BackgroundConfig      `toml:"background"`       // per-agent background override
@@ -311,8 +313,16 @@ type ToolsConfig struct {
 	TmuxBraindead           bool   `toml:"tmux_braindead"`             // auto-unwatch on inactivity, auto-watch on send (default true)
 	TmuxWatchThreshold      string `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
-	SummaryContextTurns     int    `toml:"summary_context_turns"`      // recent turns for auto-summary context (default 5)
-	SummaryContextChars     int    `toml:"summary_context_chars"`      // max chars of context for auto-summary (default 6000)
+	SummaryContextTurns        int      `toml:"summary_context_turns"`         // recent turns for auto-summary context (default 5)
+	SummaryContextChars        int      `toml:"summary_context_chars"`         // max chars of context for auto-summary (default 6000)
+	SearchProvider             string   `toml:"search_provider"`               // "anthropic" (default) or "brave"
+	FetchProvider              string   `toml:"fetch_provider"`                // "anthropic" (default) or "builtin"
+	WebSearchMaxUses           int      `toml:"web_search_max_uses"`           // max searches per API call (0 = unlimited)
+	WebSearchAllowedDomains    []string `toml:"web_search_allowed_domains"`    // domain whitelist (mutually exclusive with blocked)
+	WebSearchBlockedDomains    []string `toml:"web_search_blocked_domains"`    // domain blacklist
+	WebFetchMaxUses            int      `toml:"web_fetch_max_uses"`            // max fetches per API call (0 = unlimited)
+	WebFetchAllowedDomains     []string `toml:"web_fetch_allowed_domains"`     // domain whitelist
+	WebFetchBlockedDomains     []string `toml:"web_fetch_blocked_domains"`     // domain blacklist
 }
 
 type PromptRule struct {
@@ -347,6 +357,8 @@ type DefaultsConfig struct {
 	CompactionEffort    string           `toml:"compaction_effort"`     // default compaction effort (empty = use session effort)
 	SummaryContextTurns int              `toml:"summary_context_turns"` // default summary_context_turns (default 5)
 	SummaryContextChars int              `toml:"summary_context_chars"` // default summary_context_chars (default 6000)
+	SearchProvider      string           `toml:"search_provider"`       // default search provider: "anthropic" (default) or "brave"
+	FetchProvider       string           `toml:"fetch_provider"`        // default fetch provider: "anthropic" (default) or "builtin"
 }
 
 // ModelsConfig holds model-related configuration.
@@ -906,6 +918,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.TmuxWatchThreshold == "" {
 		cfg.Tools.TmuxWatchThreshold = "30s"
+	}
+	if cfg.Tools.SearchProvider == "" {
+		cfg.Tools.SearchProvider = "anthropic"
+	}
+	if cfg.Tools.FetchProvider == "" {
+		cfg.Tools.FetchProvider = "anthropic"
 	}
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}

@@ -1558,11 +1558,50 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore))
 	registry.Register(tools.NewEditTool(agentStore))
-	registry.Register(tools.NewWebFetchTool())
 	registry.Register(tools.NewSummaryTool(p.client, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
-	if p.braveKey != "" {
+
+	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
+	var serverTools []anthropic.ToolDef
+
+	searchProvider := resolveString(acfg.SearchProvider, p.cfg.Tools.SearchProvider)
+	if searchProvider == "anthropic" {
+		stConfig := map[string]interface{}{
+			"type": "web_search_20250305",
+			"name": "web_search",
+		}
+		if p.cfg.Tools.WebSearchMaxUses > 0 {
+			stConfig["max_uses"] = p.cfg.Tools.WebSearchMaxUses
+		}
+		if len(p.cfg.Tools.WebSearchAllowedDomains) > 0 {
+			stConfig["allowed_domains"] = p.cfg.Tools.WebSearchAllowedDomains
+		}
+		if len(p.cfg.Tools.WebSearchBlockedDomains) > 0 {
+			stConfig["blocked_domains"] = p.cfg.Tools.WebSearchBlockedDomains
+		}
+		serverTools = append(serverTools, anthropic.NewServerTool(stConfig))
+	} else if searchProvider == "brave" && p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
+	}
+
+	fetchProvider := resolveString(acfg.FetchProvider, p.cfg.Tools.FetchProvider)
+	if fetchProvider == "anthropic" {
+		ftConfig := map[string]interface{}{
+			"type": "web_fetch_20250910",
+			"name": "web_fetch",
+		}
+		if p.cfg.Tools.WebFetchMaxUses > 0 {
+			ftConfig["max_uses"] = p.cfg.Tools.WebFetchMaxUses
+		}
+		if len(p.cfg.Tools.WebFetchAllowedDomains) > 0 {
+			ftConfig["allowed_domains"] = p.cfg.Tools.WebFetchAllowedDomains
+		}
+		if len(p.cfg.Tools.WebFetchBlockedDomains) > 0 {
+			ftConfig["blocked_domains"] = p.cfg.Tools.WebFetchBlockedDomains
+		}
+		serverTools = append(serverTools, anthropic.NewServerTool(ftConfig))
+	} else {
+		registry.Register(tools.NewWebFetchTool())
 	}
 
 	// Memory tools (shared stores, registered per-agent)
@@ -1693,6 +1732,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Client:                      p.client,
 		Sessions:                    p.sessions,
 		Tools:                       registry,
+		ServerTools:                 serverTools,
 		EnvironmentBlock:            envBlock,
 		Bootstrap:                   bootstrap,
 		Compactor:                   compactor,
@@ -2460,6 +2500,13 @@ func setupAgent(p setupParams) *agentInstance {
 		toolNames[i] = t.Name
 	}
 	log.Infof("main", "agent %q: registered %d tools: [%s]", acfg.ID, len(toolNames), strings.Join(toolNames, ", "))
+	if len(serverTools) > 0 {
+		stNames := make([]string, len(serverTools))
+		for i, st := range serverTools {
+			stNames[i] = st.Name()
+		}
+		log.Infof("main", "agent %q: server tools: [%s]", acfg.ID, strings.Join(stNames, ", "))
+	}
 
 	// Resolve per-agent allowed users (falls back to global)
 	allowedUsers := acfg.AllowedUsers

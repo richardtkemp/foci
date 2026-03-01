@@ -10,8 +10,8 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `write` | Create or overwrite files. |
 | `edit` | Find-and-replace in files. `old_string` must be unique. Syntax validation for `.json`, `.toml`, `.go`, `.yaml`/`.yml`, `.xml`, `.py`, `.sh`/`.bash` — rejects edits that would break a valid file. |
 | `exec` | Run shell commands via `sh -c` with process group kill on timeout. Output redacted for secrets. Supports `background: true` for daemons and auto-background for long-running commands. Regular `{{secret:}}` templates are blocked (use `http_request`); Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated). |
-| `web_search` | Search the web via Brave Search API. |
-| `web_fetch` | HTTP GET with readability extraction + markdown conversion. Raw HTML mode available. |
+| `web_search` | Search the web. Default: Anthropic server-side tool (`search_provider = "anthropic"`). Fallback: Brave Search API (`search_provider = "brave"`). |
+| `web_fetch` | Fetch web page content. Default: Anthropic server-side tool (`fetch_provider = "anthropic"`). Fallback: client-side HTTP GET with readability extraction (`fetch_provider = "builtin"`). |
 | `memory_search` | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency). |
 | `todo` | Per-agent task list — add, list, complete, remove, search. SQLite backend with priority ordering (high/medium/low). Tag support for background work filtering. |
 | `remind` | Defer a thought for later (delay, tomorrow, specific date/time). Stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |

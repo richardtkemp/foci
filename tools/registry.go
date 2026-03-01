@@ -53,12 +53,8 @@ func (r *Registry) All() []*Tool {
 func (r *Registry) ToolDefs() []anthropic.ToolDef {
 	defs := make([]anthropic.ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
-		defs = append(defs, anthropic.ToolDef{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.Parameters,
-		})
+		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
 	}
-	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name() < defs[j].Name() })
 	return defs
 }
