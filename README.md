@@ -121,7 +121,8 @@ See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next step
 - [docs/MULTIBALL.md](docs/MULTIBALL.md) — Parallel conversations (session forking)
 - [docs/WIRING.md](docs/WIRING.md) — Internal architecture and wiring
 - [docs/CLI.md](docs/CLI.md) — CLI reference
-- [docs/TOOL-PIPING.md](docs/TOOL-PIPING.md) — Shell function tool chaining
+- [docs/TOOLS.md](docs/TOOLS.md) — Tool reference and shell function piping
+- [docs/COMMANDS.md](docs/COMMANDS.md) — Slash commands reference
 - [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) — System dependencies
 
 ## Stats

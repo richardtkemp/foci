@@ -367,7 +367,7 @@ Three outputs:
 
 ## Tool System (`tools/`)
 
-Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. Registry maps name → tool. Tools available:
+Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. Registry maps name → tool. See [TOOLS.md](TOOLS.md) for the canonical tool reference. Data-flow summary:
 
 | Tool | File | What it does |
 |------|------|-------------|
