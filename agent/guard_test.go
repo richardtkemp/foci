@@ -45,8 +45,8 @@ func TestGuardToolResult_OverLimit_JSONHint(t *testing.T) {
 	result := `{"key": "value", "data": [1, 2, 3, 4, 5, 6]}`
 	got := a.guardToolResult(context.Background(), "test", result, nil)
 
-	if strings.Contains(got, "key") {
-		t.Error("guard message should not contain partial content")
+	if strings.Contains(got, `"value"`) {
+		t.Error("guard message should not contain original JSON values")
 	}
 	if !strings.Contains(got, "Result too large") {
 		t.Error("missing 'Result too large' prefix")
@@ -82,11 +82,8 @@ func TestGuardToolResult_OverLimit_PlainTextHint(t *testing.T) {
 	if strings.Contains(got, "plain text") {
 		t.Error("guard message should not contain partial content")
 	}
-	if !strings.Contains(got, "grep") {
-		t.Error("plain text should suggest grep")
-	}
-	if !strings.Contains(got, "head") {
-		t.Error("plain text should suggest head")
+	if !strings.Contains(got, "summary") {
+		t.Error("plain text should suggest summary tool")
 	}
 }
 
@@ -129,6 +126,7 @@ func TestGuardToolResult_MessageFormat(t *testing.T) {
 }
 
 func TestGuardHint(t *testing.T) {
+	path := "/tmp/test-result.txt"
 	tests := []struct {
 		name    string
 		content string
@@ -139,15 +137,65 @@ func TestGuardHint(t *testing.T) {
 		{"json with whitespace", `  {"foo": 1}`, "jq"},
 		{"markdown", "# Title\nContent", "mdq"},
 		{"markdown with whitespace", "  # Title", "mdq"},
-		{"plain text", "just some text", "grep"},
-		{"empty", "", "grep"},
+		{"toml section", "[section]\nkey = \"value\"", "yq"},
+		{"toml key-value", "name = \"foci\"\nversion = \"1.0\"", "yq"},
+		{"yaml doc", "---\nname: foci", "yq"},
+		{"yaml key-value", "name: foci\nversion: 1.0", "yq"},
+		{"xml content", "<?xml version=\"1.0\"?><root/>", "yq"},
+		{"plain text", "just some text", "summary"},
+		{"empty", "", "summary"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := guardHint(tt.content)
+			got := guardHint(tt.content, path)
 			if !strings.Contains(got, tt.want) {
 				t.Errorf("guardHint(%q) = %q, want to contain %q", tt.content[:min(len(tt.content), 30)], got, tt.want)
+			}
+			if !strings.Contains(got, path) {
+				t.Errorf("guardHint(%q) = %q, want to contain path %q", tt.content[:min(len(tt.content), 30)], got, path)
+			}
+		})
+	}
+}
+
+func TestLooksLikeTOML(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"section header", "[section]\nkey = \"val\"", true},
+		{"key = value", "name = \"foci\"", true},
+		{"json array", "[1, 2, 3]", false},
+		{"empty", "", false},
+		{"plain text", "hello world", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := looksLikeTOML(tt.content); got != tt.want {
+				t.Errorf("looksLikeTOML(%q) = %v, want %v", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeYAML(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"document start", "---\nname: foci", true},
+		{"key: value", "name: foci\nversion: 1.0", true},
+		{"not yaml - url", "http://example.com", false},
+		{"empty", "", false},
+		{"plain text", "hello world", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := looksLikeYAML(tt.content); got != tt.want {
+				t.Errorf("looksLikeYAML(%q) = %v, want %v", tt.content, got, tt.want)
 			}
 		})
 	}

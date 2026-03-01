@@ -537,7 +537,7 @@ func (a *Agent) guardToolResult(ctx context.Context, toolName string, result str
 		}
 	}
 
-	hint := guardHint(result)
+	hint := guardHint(result, fpath)
 	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", len(result), a.MaxResultChars, fpath, hint)
 }
 
@@ -553,10 +553,10 @@ func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string
 
 	var userText string
 	if convContext != "" {
-		userText = fmt.Sprintf("<context>\n%s\n</context>\n\n<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise the important information from this tool output.",
+		userText = fmt.Sprintf("<context>\n%s\n</context>\n\n<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise this tool output. First give a general overview, then list the parts most relevant to the conversation context with exact quotes and their addresses (line numbers, section headers, JSON paths, or key names) so the reader knows exactly where to look for details.",
 			convContext, toolName, result)
 	} else {
-		userText = fmt.Sprintf("<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise the important information from this tool output.",
+		userText = fmt.Sprintf("<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise this tool output. First give a general overview, then list the key sections or data points with exact quotes and their addresses (line numbers, section headers, JSON paths, or key names) so the reader knows exactly where to look for details.",
 			toolName, result)
 	}
 
@@ -564,7 +564,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string
 		Model:     model,
 		MaxTokens: 4096,
 		System: []anthropic.SystemBlock{
-			{Type: "text", Text: "You are a tool output summarisation assistant. Summarise the tool output below, preserving key data the user likely needs based on the conversation context."},
+			{Type: "text", Text: "You are a tool output summarisation assistant. Your job is to summarise oversized tool output so the reader gets useful visibility without the full content in context.\n\nYour summary must have two parts:\n1. **Overview**: A concise general summary of the content (what it is, how large, key structure).\n2. **Relevant details**: Exact quotes from the parts most relevant to the conversation context, each annotated with its address — line number, section header, JSON path, key name, or other locator. These addresses let the reader jump directly to the source if they need more detail.\n\nBe concise. Preserve exact values (numbers, names, paths, error messages) rather than paraphrasing them."},
 		},
 		Messages: []anthropic.Message{
 			{Role: "user", Content: anthropic.TextContent(userText)},
@@ -635,16 +635,75 @@ func recentContext(messages []anthropic.Message, maxTurns, maxChars int) string 
 }
 
 // guardHint returns a contextual suggestion for how to extract data from a
-// saved tool result file, based on content sniffing.
-func guardHint(content string) string {
+// saved tool result file, based on content sniffing. Includes the file path
+// in example commands so the agent can copy-paste.
+func guardHint(content, path string) string {
 	trimmed := strings.TrimSpace(content)
-	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
-		return "Use `jq` to query specific fields, or `head`/`tail` to inspect sections."
+	if len(trimmed) == 0 {
+		return fmt.Sprintf("Use the `summary` tool to extract specific information from %s.", path)
 	}
-	if len(trimmed) > 0 && trimmed[0] == '#' {
-		return "Use `mdq` to query specific sections, or `grep`/`sed` to extract what you need."
+	// Check TOML before JSON — both can start with '[' but TOML sections start with [letter
+	if looksLikeTOML(trimmed) {
+		return fmt.Sprintf("Use `yq` to query, e.g. `yq '.section.key' %s`.", path)
 	}
-	return "Use `head -n 50` to preview, or `grep`/`ack` to search for specific content."
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		return fmt.Sprintf("Use `jq` to query, e.g. `jq 'keys' %s` or `jq '.items[:3]' %s`.", path, path)
+	}
+	if trimmed[0] == '#' {
+		return fmt.Sprintf("Use `mdq` to query sections, e.g. `mdq '# Section' %s`.", path)
+	}
+	if detectContentExtension(content) == ".xml" {
+		return fmt.Sprintf("Use `yq` to query, e.g. `yq -p xml '.' %s`.", path)
+	}
+	if looksLikeYAML(trimmed) {
+		return fmt.Sprintf("Use `yq` to query, e.g. `yq '.key' %s`.", path)
+	}
+	return fmt.Sprintf("Use the `summary` tool to extract specific information from %s.", path)
+}
+
+// looksLikeTOML checks if content starts with TOML-like patterns (e.g. [section] or key = value).
+func looksLikeTOML(trimmed string) bool {
+	if len(trimmed) == 0 {
+		return false
+	}
+	// [section] at start of line — must start with a letter (not digit, quote, brace)
+	if trimmed[0] == '[' && len(trimmed) > 1 && isLetter(trimmed[1]) {
+		if idx := strings.IndexByte(trimmed, ']'); idx > 1 && idx < 80 {
+			return true
+		}
+	}
+	// key = value pattern on first line
+	firstLine := trimmed
+	if nl := strings.IndexByte(trimmed, '\n'); nl > 0 {
+		firstLine = trimmed[:nl]
+	}
+	if strings.Contains(firstLine, " = ") {
+		return true
+	}
+	return false
+}
+
+func isLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+}
+
+// looksLikeYAML checks if content starts with YAML-like patterns (e.g. key: value or ---).
+func looksLikeYAML(trimmed string) bool {
+	if len(trimmed) == 0 {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "---") {
+		return true
+	}
+	firstLine := trimmed
+	if nl := strings.IndexByte(trimmed, '\n'); nl > 0 {
+		firstLine = trimmed[:nl]
+	}
+	// key: value (but not URLs like http:)
+	if idx := strings.Index(firstLine, ": "); idx > 0 && !strings.Contains(firstLine[:idx], "//") {
+		return true
+	}
+	return false
 }
 
 // collectReminders returns due reminders formatted for injection into the user message.
