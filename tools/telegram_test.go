@@ -462,9 +462,12 @@ func TestChatIDFromSessionKey(t *testing.T) {
 		{"agent:test:spawn:spawn-123456", 0},
 		{"agent:test:main", 0},
 		{"agent:test:multiball:mb-123", 0},
-		{"agent:fotini:8792716180", 0}, // missing chat: segment
+		{"agent:fotini:8792716180", 8792716180},          // legacy format without chat: segment
+		{"agent:test:5970082313", 5970082313},              // legacy format — another agent
+		{"agent:test:-1001234567890", -1001234567890},      // legacy format — group chat (negative ID)
 		{"", 0},
 		{"agent:test:chat:notanumber", 0},
+		{"agent:test:notanumber", 0}, // non-numeric third segment is not a chat ID
 	}
 	for _, tt := range tests {
 		got := ChatIDFromSessionKey(tt.key)
