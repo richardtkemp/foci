@@ -204,6 +204,98 @@ func TestInjectWelcomeFile_TriggersTurnOnlyWithContent(t *testing.T) {
 	}
 }
 
+// ========== buildEnvironmentBlock visibility tests ==========
+
+func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
+	tests := []struct {
+		name        string
+		toolCalls   config.ToolCallDisplay
+		thinking    config.ShowThinking
+		wantTool    string
+		wantThink   string
+	}{
+		{
+			name:      "off/off",
+			toolCalls: config.ToolCallOff,
+			thinking:  config.ShowThinkingOff,
+			wantTool:  "hidden from the user",
+			wantThink: "hidden from the user",
+		},
+		{
+			name:      "preview/compact",
+			toolCalls: config.ToolCallPreview,
+			thinking:  config.ShowThinkingCompact,
+			wantTool:  "brief previews",
+			wantThink: "toggle button",
+		},
+		{
+			name:      "full/true",
+			toolCalls: config.ToolCallFull,
+			thinking:  config.ShowThinkingTrue,
+			wantTool:  "fully visible",
+			wantThink: "shown inline",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acfg := config.AgentConfig{
+				ID:        "test",
+				Workspace: "/tmp/test",
+			}
+			cfg := &config.Config{
+				Telegram: config.TelegramConfig{
+					ShowToolCalls: tt.toolCalls,
+					ShowThinking:  tt.thinking,
+				},
+				Logging: config.LoggingConfig{
+					EventFile: "/tmp/foci.log",
+				},
+			}
+
+			block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg)
+
+			if !strings.Contains(block, "## Visibility") {
+				t.Error("expected Visibility section")
+			}
+			if !strings.Contains(block, tt.wantTool) {
+				t.Errorf("expected tool call description containing %q", tt.wantTool)
+			}
+			if !strings.Contains(block, tt.wantThink) {
+				t.Errorf("expected thinking description containing %q", tt.wantThink)
+			}
+		})
+	}
+}
+
+func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
+	acfg := config.AgentConfig{
+		ID:            "test",
+		Workspace:     "/tmp/test",
+		ShowToolCalls: ptr(config.ToolCallFull),
+		ShowThinking:  ptr(config.ShowThinkingTrue),
+	}
+	cfg := &config.Config{
+		Telegram: config.TelegramConfig{
+			ShowToolCalls: config.ToolCallOff,
+			ShowThinking:  config.ShowThinkingOff,
+		},
+		Logging: config.LoggingConfig{
+			EventFile: "/tmp/foci.log",
+		},
+	}
+
+	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg)
+
+	// Agent overrides should win
+	if !strings.Contains(block, "fully visible") {
+		t.Error("expected agent override for tool calls (full), got global (off)")
+	}
+	if !strings.Contains(block, "shown inline") {
+		t.Error("expected agent override for thinking (true), got global (off)")
+	}
+}
+
 // ========== Per-agent memory tests ==========
 
 func TestBuildAgentMemorySources_GlobalOnly(t *testing.T) {

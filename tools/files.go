@@ -165,20 +165,40 @@ func resolveAndValidatePath(path, baseDir string) (string, error) {
 		return "", fmt.Errorf("resolve base dir: %w", err)
 	}
 
-	var resolved string
 	if filepath.IsAbs(path) {
 		return "", fmt.Errorf("absolute paths not allowed in isolated mode")
 	}
 
-	resolved = filepath.Join(baseDir, path)
-	resolved = filepath.Clean(resolved)
+	resolved := filepath.Clean(filepath.Join(baseDir, path))
 
 	evalResolved, err := filepath.EvalSymlinks(resolved)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
-	if evalResolved != "" {
+	if err == nil {
 		resolved = evalResolved
+	} else {
+		// File doesn't exist yet — resolve the deepest existing ancestor
+		// to catch symlinks on intermediate path components.
+		dir := resolved
+		var tail []string
+		for {
+			parent := filepath.Dir(dir)
+			tail = append(tail, filepath.Base(dir))
+			dir = parent
+			evalDir, err := filepath.EvalSymlinks(dir)
+			if err == nil {
+				// Rebuild: resolved ancestor + unresolved tail components
+				for i := len(tail) - 1; i >= 0; i-- {
+					evalDir = filepath.Join(evalDir, tail[i])
+				}
+				resolved = evalDir
+				break
+			}
+			if !os.IsNotExist(err) {
+				return "", fmt.Errorf("resolve ancestor: %w", err)
+			}
+		}
 	}
 
 	if !strings.HasPrefix(resolved, evalBase+string(filepath.Separator)) && resolved != evalBase {
@@ -300,11 +320,11 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		return "", fmt.Errorf("old_string found %d times in %s (must be unique)", count, p.Path)
 	}
 
-	preErr := checkSyntax(p.Path, data)
+	preErr := checkSyntax(resolved, data)
 	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
 
 	if preErr == nil {
-		if postErr := checkSyntax(p.Path, []byte(newContent)); postErr != nil {
+		if postErr := checkSyntax(resolved, []byte(newContent)); postErr != nil {
 			return "", fmt.Errorf("edit rejected — would introduce syntax error: %v", postErr)
 		}
 	}

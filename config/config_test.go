@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -142,9 +144,12 @@ token = "test-token"
 	if cfg.Logging.APIFile != wantAPIFile {
 		t.Errorf("default Logging.APIFile = %q, want %q", cfg.Logging.APIFile, wantAPIFile)
 	}
+	if cfg.ManaWarnings.Name != "mana" {
+		t.Errorf("default ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "mana")
+	}
 }
 
-func TestLoadCustomManaThresholds(t *testing.T) {
+func TestLoadCustomManaName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -154,6 +159,7 @@ id = "test"
 token = "test-token"
 
 [usage_warnings]
+name = "juice"
 thresholds = [50, 25, 10]
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -163,6 +169,9 @@ thresholds = [50, 25, 10]
 		t.Fatalf("Load: %v", err)
 	}
 
+	if cfg.ManaWarnings.Name != "juice" {
+		t.Errorf("ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "juice")
+	}
 	if len(cfg.ManaWarnings.Thresholds) != 3 {
 		t.Errorf("len(Thresholds) = %d, want 3", len(cfg.ManaWarnings.Thresholds))
 	}
@@ -842,6 +851,20 @@ func TestValidateLoggingLevel(t *testing.T) {
 	}
 }
 
+func TestValidateCacheStrategy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid cache strategy")
+	}
+	if !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("error = %q, want mention of invalid", err.Error())
+	}
+}
+
 func TestValidateWarningWindowDuration(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -1375,79 +1398,6 @@ mb2 = { token_secret = "telegram.mb2" }
 	}
 	if cfg.Agents[0].MultiballBots[0] != "mb1" || cfg.Agents[0].MultiballBots[1] != "mb2" {
 		t.Errorf("MultiballBots = %v, want [mb1 mb2]", cfg.Agents[0].MultiballBots)
-	}
-}
-
-func TestLoadMultiballBotDeprecatedAlias(t *testing.T) {
-	// multiball_bot (singular) should be promoted to multiball_bots (plural) with deprecation warning
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	toml := `
-[[agents]]
-id = "clutch"
-telegram_bot = "primary"
-multiball_bot = "secondary"
-
-[telegram]
-allowed_users = ["111"]
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-secondary = { token_secret = "telegram.secondary" }
-`
-	os.WriteFile(path, []byte(toml), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// multiball_bot should be promoted to multiball_bots
-	if len(cfg.Agents[0].MultiballBots) != 1 {
-		t.Fatalf("MultiballBots len = %d, want 1 (promoted from singular)", len(cfg.Agents[0].MultiballBots))
-	}
-	if cfg.Agents[0].MultiballBots[0] != "secondary" {
-		t.Errorf("MultiballBots[0] = %q, want secondary", cfg.Agents[0].MultiballBots[0])
-	}
-	// Original singular field should still be set
-	if cfg.Agents[0].MultiballBot != "secondary" {
-		t.Errorf("MultiballBot = %q, want secondary", cfg.Agents[0].MultiballBot)
-	}
-}
-
-func TestLoadMultiballBotPluralTakesPrecedence(t *testing.T) {
-	// If both multiball_bot and multiball_bots are set, plural wins
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	toml := `
-[[agents]]
-id = "clutch"
-telegram_bot = "primary"
-multiball_bot = "old"
-multiball_bots = ["new1", "new2"]
-
-[telegram]
-allowed_users = ["111"]
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-old = { token_secret = "telegram.old" }
-new1 = { token_secret = "telegram.new1" }
-new2 = { token_secret = "telegram.new2" }
-`
-	os.WriteFile(path, []byte(toml), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// Plural should take precedence — no promotion of singular
-	if len(cfg.Agents[0].MultiballBots) != 2 {
-		t.Fatalf("MultiballBots len = %d, want 2", len(cfg.Agents[0].MultiballBots))
-	}
-	if cfg.Agents[0].MultiballBots[0] != "new1" {
-		t.Errorf("MultiballBots[0] = %q, want new1", cfg.Agents[0].MultiballBots[0])
 	}
 }
 
@@ -2137,7 +2087,7 @@ token_secret = "custom.key"
 	}
 }
 
-func TestBraindeadWarningThresholdDefault(t *testing.T) {
+func TestAutopilotThresholdDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -2150,22 +2100,19 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadWarningThreshold != 10 {
-		t.Errorf("BraindeadWarningThreshold = %d, want 10", cfg.Agents[0].BraindeadWarningThreshold)
-	}
-	if cfg.Agents[0].BraindeadWarningEnable == nil || *cfg.Agents[0].BraindeadWarningEnable != true {
-		t.Errorf("BraindeadWarningEnable = %v, want true", cfg.Agents[0].BraindeadWarningEnable)
+	if cfg.Agents[0].AutopilotThreshold != 10 {
+		t.Errorf("AutopilotThreshold = %d, want 10", cfg.Agents[0].AutopilotThreshold)
 	}
 }
 
-func TestBraindeadWarningThresholdExplicit(t *testing.T) {
+func TestAutopilotThresholdExplicit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [[agents]]
 id = "test"
-braindead_warning_threshold = 5
-braindead_warning_prompt = "custom warning"
+autopilot_threshold = 5
+autopilot_prompt = "custom warning"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -2173,29 +2120,29 @@ braindead_warning_prompt = "custom warning"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadWarningThreshold != 5 {
-		t.Errorf("BraindeadWarningThreshold = %d, want 5", cfg.Agents[0].BraindeadWarningThreshold)
+	if cfg.Agents[0].AutopilotThreshold != 5 {
+		t.Errorf("AutopilotThreshold = %d, want 5", cfg.Agents[0].AutopilotThreshold)
 	}
-	if cfg.Agents[0].BraindeadWarningPrompt != "custom warning" {
-		t.Errorf("BraindeadWarningPrompt = %q, want %q", cfg.Agents[0].BraindeadWarningPrompt, "custom warning")
+	if cfg.Agents[0].AutopilotPrompt != "custom warning" {
+		t.Errorf("AutopilotPrompt = %q, want %q", cfg.Agents[0].AutopilotPrompt, "custom warning")
 	}
 }
 
-func TestBraindeadWarningThresholdPerAgent(t *testing.T) {
+func TestAutopilotThresholdPerAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-braindead_warning_threshold = 15
-braindead_warning_prompt = "defaults prompt"
+autopilot_threshold = 15
+autopilot_prompt = "defaults prompt"
 
 [[agents]]
 id = "a"
 
 [[agents]]
 id = "b"
-braindead_warning_threshold = 5
-braindead_warning_prompt = "agent prompt"
+autopilot_threshold = 5
+autopilot_prompt = "agent prompt"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -2204,28 +2151,28 @@ braindead_warning_prompt = "agent prompt"
 	}
 
 	// Agent "a" inherits from defaults
-	if cfg.Agents[0].BraindeadWarningThreshold != 15 {
-		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].BraindeadWarningThreshold)
+	if cfg.Agents[0].AutopilotThreshold != 15 {
+		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].AutopilotThreshold)
 	}
-	if cfg.Agents[0].BraindeadWarningPrompt != "defaults prompt" {
-		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].BraindeadWarningPrompt, "defaults prompt")
+	if cfg.Agents[0].AutopilotPrompt != "defaults prompt" {
+		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].AutopilotPrompt, "defaults prompt")
 	}
 
 	// Agent "b" overrides
-	if cfg.Agents[1].BraindeadWarningThreshold != 5 {
-		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].BraindeadWarningThreshold)
+	if cfg.Agents[1].AutopilotThreshold != 5 {
+		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].AutopilotThreshold)
 	}
-	if cfg.Agents[1].BraindeadWarningPrompt != "agent prompt" {
-		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].BraindeadWarningPrompt, "agent prompt")
+	if cfg.Agents[1].AutopilotPrompt != "agent prompt" {
+		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].AutopilotPrompt, "agent prompt")
 	}
 }
 
-func TestBraindeadWarningThresholdDisabled(t *testing.T) {
+func TestAutopilotThresholdDisabled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-braindead_warning_threshold = 0
+autopilot_threshold = 0
 
 [agent]
 id = "test"
@@ -2236,28 +2183,170 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadWarningThreshold != 0 {
-		t.Errorf("BraindeadWarningThreshold = %d, want 0 (disabled)", cfg.Agents[0].BraindeadWarningThreshold)
+	if cfg.Agents[0].AutopilotThreshold != 0 {
+		t.Errorf("AutopilotThreshold = %d, want 0 (disabled)", cfg.Agents[0].AutopilotThreshold)
 	}
 }
 
-func TestBraindeadWarningEnableDisable(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte(`
-[defaults]
-braindead_warning_enable = false
+func TestExampleConfigKeysValid(t *testing.T) {
+	// Validates that foci.toml.example contains exactly the right config keys.
+	// If you add a new config field, this test will fail until you either:
+	//   - Add it to foci.toml.example (if users should know about it)
+	//   - Add it to exampleSkipKeys below (if it's deprecated, internal, or secret)
 
-[agent]
-id = "test"
-`), 0644)
-
-	cfg, err := Load(path)
+	examplePath := filepath.Join("..", "foci.toml.example")
+	raw, err := os.ReadFile(examplePath)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Skipf("foci.toml.example not found: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadWarningEnable == nil || *cfg.Agents[0].BraindeadWarningEnable != false {
-		t.Errorf("BraindeadWarningEnable = %v, want false", cfg.Agents[0].BraindeadWarningEnable)
+	// Uncomment config lines to get the full key set.
+	// Only uncomment lines that look like TOML key=value or section headers.
+	tomlKeyValue := regexp.MustCompile(`^[a-z][a-z0-9_]*\s*=`)
+	tomlSection := regexp.MustCompile(`^\[+[a-z][a-z0-9_.]*\]+$`)
+	var uncommented strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		stripped := ""
+		if strings.HasPrefix(trimmed, "# ") {
+			stripped = strings.TrimSpace(trimmed[2:])
+		} else if strings.HasPrefix(trimmed, "#") && len(trimmed) > 1 {
+			stripped = strings.TrimSpace(trimmed[1:])
+		}
+		if stripped != "" {
+			if tomlKeyValue.MatchString(stripped) || tomlSection.MatchString(stripped) {
+				uncommented.WriteString(stripped)
+			} else {
+				uncommented.WriteString(line)
+			}
+		} else {
+			uncommented.WriteString(line)
+		}
+		uncommented.WriteString("\n")
 	}
+
+	// Parse the uncommented example — every key must decode into Config.
+	var cfg Config
+	meta, err := tomlParser.Decode(uncommented.String(), &cfg)
+	if err != nil {
+		t.Fatalf("foci.toml.example has invalid TOML after uncommenting: %v", err)
+	}
+
+	// Check 1: no unknown keys in the example.
+	undecoded := meta.Undecoded()
+	if len(undecoded) > 0 {
+		var keys []string
+		for _, k := range undecoded {
+			keys = append(keys, k.String())
+		}
+		t.Errorf("foci.toml.example contains keys that don't match any Config field:\n  %s\n"+
+			"Fix the key names in the example or add the fields to config structs.",
+			strings.Join(keys, "\n  "))
+	}
+
+	// Check 2: every Config struct field appears in the example.
+	structKeys := collectTOMLKeys(reflect.TypeOf(Config{}), "")
+
+	// Keys intentionally absent from the example. Add a comment explaining why.
+	exampleSkipKeys := map[string]bool{
+		// Legacy (to be removed — see task: remove cfg.Agent and telegram.bot_token)
+		"telegram.bot_token": true,
+		// Secrets (belong in secrets.toml)
+		"anthropic.setup_token":   true,
+		"anthropic.brave_api_key": true,
+	}
+
+	// The legacy [agent] (singular) section has the same fields as [[agents]].
+	// The example only shows [[agents]]; skip all agent.* paths.
+	exampleSkipPrefixes := []string{"agent."}
+
+	exampleText := string(raw)
+	var missing []string
+	for _, key := range structKeys {
+		if exampleSkipKeys[key] {
+			continue
+		}
+		skip := false
+		for _, prefix := range exampleSkipPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+
+		// Check the leaf key name appears in the raw file (commented or not).
+		parts := strings.Split(key, ".")
+		leaf := parts[len(parts)-1]
+		if !strings.Contains(exampleText, leaf) {
+			missing = append(missing, key)
+		}
+	}
+
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Errorf("Config fields missing from foci.toml.example:\n  %s\n"+
+			"Add them to the example file, or add to exampleSkipKeys with a reason.",
+			strings.Join(missing, "\n  "))
+	}
+}
+
+// collectTOMLKeys walks a struct type recursively and returns all leaf TOML key paths.
+func collectTOMLKeys(t reflect.Type, prefix string) []string {
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.Slice {
+		t = t.Elem()
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+
+	var keys []string
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("toml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if idx := strings.Index(tag, ","); idx != -1 {
+			tag = tag[:idx]
+		}
+
+		fullKey := tag
+		if prefix != "" {
+			fullKey = prefix + "." + tag
+		}
+
+		ft := f.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+
+		switch {
+		case ft.Kind() == reflect.Map:
+			// Dynamic keys — include the map itself but not contents
+			keys = append(keys, fullKey)
+		case ft.Kind() == reflect.Slice && ft.Elem().Kind() == reflect.Struct:
+			// Slice of structs — recurse into element type
+			keys = append(keys, collectTOMLKeys(ft.Elem(), fullKey)...)
+		case ft.Kind() == reflect.Struct:
+			if ft.Implements(reflect.TypeOf((*tomlParser.Unmarshaler)(nil)).Elem()) ||
+				reflect.PointerTo(ft).Implements(reflect.TypeOf((*tomlParser.Unmarshaler)(nil)).Elem()) {
+				// Custom unmarshaler (e.g. ToolCallDisplay) — leaf key
+				keys = append(keys, fullKey)
+			} else {
+				keys = append(keys, collectTOMLKeys(ft, fullKey)...)
+			}
+		default:
+			keys = append(keys, fullKey)
+		}
+	}
+	return keys
 }

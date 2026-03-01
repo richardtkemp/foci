@@ -1,114 +1,299 @@
-# Foci Configuration Example
+# Foci Configuration Reference
 #
-# Copy this file to your agent's home directory and edit it.
-# Most settings have sensible defaults — you only need to configure
-# what's different from the defaults. See docs/CONFIG.md for full reference.
-#
-# Secrets (API keys, tokens) go in secrets.toml in the same directory.
-# See secrets.toml.example for the format.
+# Exhaustive reference of every configuration option.
+# Secrets (API keys, tokens) go in secrets.toml — see secrets.toml.example.
+
+# ─── Top-level ────────────────────────────────────────────────────────
+# data_dir = "/home/foci/data"            # directory for databases, sessions, state (default: $HOME/data)
+# welcome_file = "WELCOME.md"             # changelog/welcome file injected on startup
+# skip_security_checks = false            # skip startup security checks for secrets.toml
 
 # ─── Defaults ─────────────────────────────────────────────────────────
-# Global defaults inherited by all agents. Agents can override any of these.
+# Global defaults inherited by all agents. Per-agent values override these.
 [defaults]
-model = "claude-sonnet-4-20250514"    # default model for all agents
-# effort = "low"                      # thinking effort: low, medium, high
-# thinking = "off"                    # extended thinking: off, adaptive
+model = "claude-sonnet-4-20250514"
+# effort = "low"                          # low, medium, high
+# thinking = "off"                        # off, adaptive
+# max_tool_loops = 25
+# max_output_tokens = 8192
+# autopilot_threshold = 10               # consecutive tool loops before warning (0 = disabled)
+# autopilot_prompt = ""                   # warning text injected at threshold
+# duplicate_messages = false              # send user text twice per API call
+# inject_agent_warnings = false           # inject warnings/errors into session
+# tts_rate = 0.0                          # TTS speech rate (0 = use voice config)
+# show_tool_calls = "off"                 # off, preview, full
+# show_thinking = "off"                   # off, compact, true
+# display_width = 44                      # divider width in Telegram
+# system_files = ["character/SOUL.md"]    # default system file list
+
+# ─── Model aliases ───────────────────────────────────────────────────
+# [models]
+# [models.aliases]
+# opus = "claude-opus-4-6"
+# sonnet = "claude-sonnet-4-5"
 
 # ─── Agent ────────────────────────────────────────────────────────────
-# Define one or more agents. Each agent gets its own sessions, memory,
-# and Telegram bot. Most paths are derived from the agent ID automatically.
-#
-# Smart defaults (derived from agent ID):
-#   workspace  → $HOME/ID              (e.g. /home/foci/myagent)
-#   name       → capitalised ID        (e.g. "Myagent")
-#   memory     → $workspace/memory     (auto-created)
-#   telegram   → bot named "ID"        (from [telegram.bots.ID])
+# Define one or more agents. Each gets its own sessions, memory, and bot.
 
 [[agents]]
-id = "myagent"                         # unique identifier (used in session keys)
-# name = "My Agent"                    # human-readable name (defaults to capitalised id)
-# emoji = "🤖"                         # shown in Telegram notifications
-# model = "claude-sonnet-4-20250514"   # override default model for this agent
-# effort = "low"                       # override default effort
-# workspace = "/home/foci/myagent"     # agent's working directory (default: $HOME/id)
-# max_tool_loops = 25                  # max tool calls per turn
-# max_output_tokens = 16384            # max response tokens
+id = "myagent"
+# name = "My Agent"                       # human-readable name (default: capitalised id)
+# emoji = "🤖"
+# model = "claude-sonnet-4-20250514"      # override default model
+# effort = "low"
+# thinking = "off"
+# workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
+# max_tool_loops = 25
+# max_output_tokens = 16384
+# autopilot_threshold = 10
+# autopilot_prompt = ""
+# duplicate_messages = false
+# inject_agent_warnings = false
+# tts_rate = 0.0
+# show_tool_calls = "preview"             # off, preview, full
+# show_thinking = "off"                   # off, compact, true
+# display_width = 44
+# messages_in_log = false                 # log user message content (privacy)
+# startup_notification = true             # send Telegram notification on startup
+# telegram_bot = "myagent"               # references key in [telegram.bots]
+# multiball_bots = ["bot2", "bot3"]       # additional bots for multiball
+# branch_orientation_prompt = "prompts/branch-orientation.md"
+# received_files_dir = "received"         # save received Telegram files here
+# allowed_users = ["12345"]               # per-agent Telegram user filter
+# skills_dirs = ["skills"]                # per-agent skill directories
+# compaction_effort = "high"              # effort for compaction API calls
+# exec_auto_background = 10              # seconds before auto-backgrounding exec
+# max_concurrent_spawns = 3
+# max_upload_file_size = 52428800         # 50MB
+# tmux_autopilot = true
+# tmux_watch_threshold = "30s"
 
-# System prompt files loaded in order (paths relative to workspace):
 system_files = [
   "character/SOUL.md",
   "character/CRAFT.md",
 ]
 
-# Background task scheduling (optional)
+# Per-agent compaction overrides:
+# compaction_threshold = 0.8
+# compaction_summary_prompt = "prompts/compaction-summary.md"
+# compaction_handoff_msg = ""
+# compaction_notify = true
+# compaction_debug = false
+# compaction_preserve_messages = 25
+
+# Per-agent prompt rules:
+# [[agents.prompt_rules]]
+# find = "pattern"
+# replace = "replacement"
+
+# Per-agent memory sources:
+# [[agents.memory.sources]]
+# name = "docs"
+# dir = "memory/docs"
+# weight = 0.8
+
+# Per-agent usage warnings:
+# [agents.usage_warnings]
+# thresholds = [50, 25, 10, 5]
+
+# Per-agent background task scheduling:
 # [agents.background]
-# cron = "*/10 * * * *"               # run background tasks on this schedule
-# mana_threshold = 30                  # only run if mana > this %
-# prompt = "Check your background todo list and work on the highest priority open item."
+# enabled = true
+# interval = "5m"                         # time since last interaction before firing
+# prompt = "Check your todo list."
+# invest_interval = "30m"                 # quiet period after mana reset
 
-# Keepalive (optional — periodic check-in when idle)
+# Per-agent keepalive (cache warming):
 # [agents.keepalive]
-# cron = "0 */2 * * *"                # check in every 2 hours
-# prompt = "Check on anything that needs attention."
+# enabled = true
+# interval = "55m"
+# prompt = ""                             # empty = embedded default, "none" = disabled
 
-# Compaction settings (optional)
-# [agents.compaction]
-# effort = "high"                      # use higher effort for compaction (quality matters)
+# Per-agent memory formation:
+# [agents.memory_formation]
+# interval_enabled = true
+# interval = "1h"
+# interval_prompt = ""
+# consolidation_enabled = true
+# consolidation_interval = "20h"
+# consolidation_prompt = ""
+# session_end_enabled = true
+# session_end_prompt = ""
 
 # ─── Anthropic ────────────────────────────────────────────────────────
-# Authentication is configured in secrets.toml. Run `foci auth` to set up
-# OAuth (recommended for Max/Pro plans) or add a setup token manually.
-# See docs/AUTH.md for details.
+# API keys go in secrets.toml. These are non-secret settings only.
+[anthropic]
+# http_timeout = "600s"                   # HTTP timeout for API calls
+# usage_api_timeout = "10s"              # HTTP timeout for usage API
 
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
-allowed_users = ["YOUR_TELEGRAM_USER_ID"]  # Telegram user IDs that can talk to the agent
+allowed_users = ["YOUR_TELEGRAM_USER_ID"]
+# multiball_bots = ["bot2", "bot3"]       # shared multiball bot pool
+# stop_aliases = ["stop", "wait"]
+# enable_stop_aliases = true
+# enable_startup_notify = true
+# multiball_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
+# message_queue_size = 64
+# long_poll_timeout = "65s"
+# show_tool_calls = "off"                 # off, preview, full
+# show_thinking = "off"                   # off, compact, true
+# display_width = 44
+# received_files_dir = ""                 # save received files (per-agent overrides)
 
-# Bot tokens go in secrets.toml:
-#   [telegram.bots.myagent]
-#   token = "123456:ABC-..."
-
-# Per-bot display settings (optional):
+# Bot definitions (tokens go in secrets.toml):
 # [telegram.bots.myagent]
-# show_tool_calls = "text"             # off, text, or full
-# show_thinking = false                # show extended thinking blocks
-# display_width = 72                   # wrap width for tool call display
+# token_secret = "telegram.myagent"
 
 # ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]
-# dir = "/home/foci/data/sessions"     # session JSONL storage (default: $HOME/data/sessions)
-compaction_threshold = 0.8              # compact when context reaches 80%
-
-# Compaction summary prompt (loaded from file or inline):
-# compaction_summary_prompt_file = "shared/prompts/compaction-summary.md"
-# compaction_summary_prompt = "Summarise the conversation so far..."
+# dir = "/home/foci/data/sessions"
+compaction_threshold = 0.8
+# compaction_max_tokens = 4096
+# compaction_min_messages = 4
+# compaction_summary_prompt = "prompts/compaction-summary.md"
+# compaction_handoff_msg = ""
+# compaction_notify = true
+# compaction_debug = false
+# compaction_preserve_messages = 25
+# max_system_prompt_chars_file = 20000
+# max_system_prompt_chars_total = 80000
+# branch_orientation_prompt = ""
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]
-# dirs = ["/home/foci/shared/skills"]  # directories to scan for SKILL.md files
+# dirs = ["/home/foci/shared/skills"]
 
 # ─── Memory ───────────────────────────────────────────────────────────
 # [memory]
-# dir = "/home/foci/data"              # where memory.db lives (default: data_dir)
-# Per-agent memory sources are auto-configured from workspace/memory/
+# dir = "/home/foci/data"
+# reindex_debounce = "0s"
+# conversation_weight = 0.1
+# search_limit = 20
+
+# [[memory.sources]]
+# name = "shared"
+# dir = "/home/foci/shared/memory"
+# weight = 0.5
+
+# ─── Database ─────────────────────────────────────────────────────────
+# [database]
+# busy_timeout = "5s"
 
 # ─── HTTP ─────────────────────────────────────────────────────────────
 [http]
 port = 18791
-bind = "127.0.0.1"                     # listen only on localhost
-
-# ─── Voice (optional) ────────────────────────────────────────────────
-# [voice]
-# ws_enabled = true                    # enable WebSocket endpoint for voice clients
-# Voice API key goes in secrets.toml: voice.api_key = "..."
+bind = "127.0.0.1"
+# graceful_shutdown_timeout = "30s"
 
 # ─── Logging ──────────────────────────────────────────────────────────
 # [logging]
-# level = "info"                       # debug, info, warn, error
-# dir = "/home/foci/logs"              # log directory (default: $HOME/logs)
-# api_log = true                       # log API calls to api.jsonl
-# payload_log = false                  # log full API payloads (large!)
+# level = "info"                          # debug, info, warn, error
+# event_file = "foci.log"
+# api_file = "api.jsonl"
+# conversation_file = ""
+# full_payload = false
+# payload_file = "api-payload.jsonl"
+# cache_bust_detect = false
+# cache_bust_idle_minutes = 10
+# warning_max_per_window = 3
+# warning_window_duration = "5m"
+# log_rotation = true
+# rotation_period = "24h"
+# retention_period = "48h"
+# rotation_max_line_size = "64MB"
+# archive_dir = ""                        # default: log_dir/archive/
+# messages_in_log = false
 
-# ─── Environment Block ───────────────────────────────────────────────
+# ─── Voice ────────────────────────────────────────────────────────────
+# [voice]
+# ws_enabled = false
+# stt_endpoint = ""                       # default: Groq
+# stt_model = "whisper-large-v3"
+# tts_provider = "edge-tts"              # edge-tts or openai
+# tts_endpoint = ""
+# tts_model = ""
+# tts_voice = ""
+# tts_rate = 0.0
+
+# ─── Bitwarden ────────────────────────────────────────────────────────
+# [bitwarden]
+# enabled = false
+# refresh_interval = "15m"
+# secret_ttl = "30m"
+# session_file = "/home/bitwarden/.bw_session"
+# cleanup_interval = "1m"
+
+# ─── Cache ────────────────────────────────────────────────────────────
+# [cache]
+# strategy = "auto"                       # auto or explicit
+
+# ─── Usage Warnings ──────────────────────────────────────────────────
+# [usage_warnings]
+# name = "mana"
+# thresholds = [50, 25, 10, 5]
+
+# ─── Environment ─────────────────────────────────────────────────────
 # [environment]
-# enabled = true                       # inject environment info into system prompt
+# enabled = true
+# docs_path = ""
+
+# ─── Tools ────────────────────────────────────────────────────────────
+# [tools]
+# max_result_chars = 15000
+# temp_dir = "/tmp/foci-tool-results"
+# tmux_cols = 300
+# tmux_rows = 30
+# exec_auto_background = 10
+# exec_default_timeout = 30
+# exec_max_output_chars = 100000
+# tmux_command_timeout = "5s"
+# web_fetch_timeout = "30s"
+# web_fetch_max_bytes = 1048576
+# web_fetch_max_chars = 50000
+# web_search_timeout = "15s"
+# max_concurrent_spawns = 3
+# tool_call_preview_chars = 450
+# tmux_memory_check_interval = "5m"
+# tmux_memory_warn = "10%"
+# tmux_memory_critical = "20%"
+# tmux_memory_kill = "30%"
+# tmux_autopilot = true
+# tmux_watch_threshold = "30s"
+# max_upload_file_size = 52428800
+
+# ─── Global Background ───────────────────────────────────────────────
+# [background]
+# enabled = false
+# interval = "5m"
+# prompt = ""
+# invest_interval = "30m"
+
+# ─── Global Keepalive ────────────────────────────────────────────────
+# [keepalive]
+# enabled = false
+# interval = "55m"
+# prompt = ""
+
+# ─── Global Memory Formation ─────────────────────────────────────────
+# [memory_formation]
+# interval_enabled = true
+# interval = "1h"
+# interval_prompt = ""
+# consolidation_enabled = true
+# consolidation_interval = "20h"
+# consolidation_prompt = ""
+# session_end_enabled = true
+# session_end_prompt = ""
+
+# ─── Prompt Rules ─────────────────────────────────────────────────────
+# [[prompt_rules]]
+# find = "regex pattern"
+# replace = "replacement ($1, $2, etc.)"
+
+# ─── Custom Commands ─────────────────────────────────────────────────
+# [[commands]]
+# name = "deploy"
+# description = "Run the deploy script"
+# script = "./deploy.sh"
+# timeout = 30

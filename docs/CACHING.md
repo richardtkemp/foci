@@ -6,7 +6,7 @@ Foci is designed around Anthropic's prompt cache. Every architectural decision c
 
 Anthropic caches the **prefix** of your prompt. If the first N tokens of a request match the first N tokens of a recent request, those tokens are served from cache at ~90% discount. The cache is:
 
-- **Per-session**: each conversation thread has its own cache
+- **Prefix-based**: sessions with identical prompt prefixes share the same cache
 - **Prefix-matched**: only contiguous tokens from the start count
 - **Time-limited**: ~5 minutes TTL, refreshed on each hit
 - **Minimum size**: 1,024 tokens (shorter prefixes aren't cached)

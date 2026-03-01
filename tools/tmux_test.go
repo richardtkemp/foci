@@ -260,6 +260,49 @@ func TestTmuxSendNoEnter(t *testing.T) {
 	}
 }
 
+func TestTmuxSendBareEnter(t *testing.T) {
+	tmuxAvailable(t)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+
+	name := "foci-test-bareenter"
+	defer tmuxCleanup(t, name)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+	})
+	if _, err := tool.Execute(context.Background(), params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Send bare Enter (no keys, enter=true)
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"enter":     true,
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("bare enter send should succeed: %v", err)
+	}
+	if result != "Keys sent." {
+		t.Errorf("result = %q, want %q", result, "Keys sent.")
+	}
+
+	// Verify: no keys + no enter should fail
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"enter":     false,
+	})
+	_, err = tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for empty keys with enter=false")
+	}
+}
+
 func TestTmuxMissingName(t *testing.T) {
 	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
 

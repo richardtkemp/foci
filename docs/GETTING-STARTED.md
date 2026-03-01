@@ -25,7 +25,7 @@ sudo -u myagent nano ~myagent/config/foci.toml
 
 At minimum, you need:
 - A Telegram bot token in `secrets.toml`
-- Your Telegram chat ID in the agent config
+- Your Telegram user ID in the agent config
 - An Anthropic API key or OAuth authentication
 
 See [foci.toml.example](../foci.toml.example) for all available options with comments.
@@ -96,7 +96,7 @@ In Telegram, type `/help` to see available slash commands: `/status`, `/model`, 
 
 ## Troubleshooting
 
-**Bot doesn't respond:** Check `journalctl -u foci -f` for errors. Common causes: wrong chat ID, missing API key, Telegram token issues.
+**Bot doesn't respond:** Check `journalctl -u foci -f` for errors. Common causes: wrong user ID, missing API key, Telegram token issues.
 
 **Authentication errors:** Run `foci auth` again, or check that `secrets.toml` has valid credentials.
 

@@ -43,9 +43,16 @@ type SpawnAgent interface {
 
 // spawnNoneBlacklist lists tools excluded from "none" mode spawns.
 // No character context means no awareness of communication conventions.
+// exec and tmux are excluded because they bypass file tool sandboxing —
+// the isolated file tools enforce path containment, but shell access
+// allows arbitrary filesystem access and symlink creation.
 var spawnNoneBlacklist = map[string]bool{
+	"exec":            true,
+	"tmux":            true,
 	"send_telegram":   true,
 	"send_to_session": true,
+	"scratchpad":      true,
+	"todo":            true,
 }
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.

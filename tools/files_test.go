@@ -399,6 +399,194 @@ func TestEditBlockedSecretsToml(t *testing.T) {
 	}
 }
 
+// --- resolveAndValidatePath tests ---
+
+func TestResolveAndValidatePath_RelativeInside(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveAndValidatePath("sub/file.txt", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := filepath.Join(dir, "sub", "file.txt")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveAndValidatePath_AbsoluteRejected(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveAndValidatePath("/etc/passwd", dir)
+	if err == nil {
+		t.Fatal("expected error for absolute path")
+	}
+	if !strings.Contains(err.Error(), "absolute paths not allowed") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestResolveAndValidatePath_DotDotTraversal(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveAndValidatePath("../../../etc/passwd", dir)
+	if err == nil {
+		t.Fatal("expected error for ../ traversal")
+	}
+	if !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestResolveAndValidatePath_DotDotInMiddle(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveAndValidatePath("sub/../../outside", dir)
+	if err == nil {
+		t.Fatal("expected error for traversal via sub/../..")
+	}
+	if !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestResolveAndValidatePath_SymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	// Create a symlink inside baseDir that points outside
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0644)
+	os.Symlink(outside, filepath.Join(dir, "escape"))
+
+	_, err := resolveAndValidatePath("escape/secret.txt", dir)
+	if err == nil {
+		t.Fatal("expected error for symlink escape")
+	}
+	if !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestResolveAndValidatePath_SymlinkEscapeNewFile(t *testing.T) {
+	dir := t.TempDir()
+	// Symlink to outside dir — target file doesn't exist yet
+	outside := t.TempDir()
+	os.Symlink(outside, filepath.Join(dir, "link"))
+
+	_, err := resolveAndValidatePath("link/newfile.txt", dir)
+	if err == nil {
+		t.Fatal("expected error for symlink escape on new file")
+	}
+	if !strings.Contains(err.Error(), "path traversal") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestResolveAndValidatePath_SymlinkInsideOK(t *testing.T) {
+	dir := t.TempDir()
+	// Symlink within baseDir is fine
+	sub := filepath.Join(dir, "sub")
+	os.MkdirAll(sub, 0755)
+	os.WriteFile(filepath.Join(sub, "file.txt"), []byte("ok"), 0644)
+	os.Symlink(sub, filepath.Join(dir, "link"))
+
+	got, err := resolveAndValidatePath("link/file.txt", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should resolve to the real path inside dir
+	if !strings.HasPrefix(got, dir) {
+		t.Errorf("resolved path %q not under base %q", got, dir)
+	}
+}
+
+func TestResolveAndValidatePath_EmptyBaseDir(t *testing.T) {
+	got, err := resolveAndValidatePath("/any/path", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "/any/path" {
+		t.Errorf("got %q, want passthrough", got)
+	}
+}
+
+// --- Isolated tool end-to-end tests ---
+
+func TestIsolatedReadInside(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("hello\n"), 0644)
+
+	tool := NewIsolatedReadTool(nil, dir)
+	params, _ := json.Marshal(map[string]string{"path": "ok.txt"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("read inside should succeed: %v", err)
+	}
+	if !strings.Contains(result, "hello") {
+		t.Errorf("result = %q", result)
+	}
+}
+
+func TestIsolatedReadEscapeBlocked(t *testing.T) {
+	dir := t.TempDir()
+	tool := NewIsolatedReadTool(nil, dir)
+	params, _ := json.Marshal(map[string]string{"path": "../../../etc/hostname"})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for path traversal")
+	}
+}
+
+func TestIsolatedWriteInside(t *testing.T) {
+	dir := t.TempDir()
+	tool := NewIsolatedWriteTool(nil, dir)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    "output.txt",
+		"content": "written",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("write inside should succeed: %v", err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "output.txt"))
+	if string(data) != "written" {
+		t.Errorf("content = %q", string(data))
+	}
+}
+
+func TestIsolatedWriteEscapeBlocked(t *testing.T) {
+	dir := t.TempDir()
+	tool := NewIsolatedWriteTool(nil, dir)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    "../../escape.txt",
+		"content": "malicious",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for path traversal write")
+	}
+}
+
+func TestIsolatedEditEscapeBlocked(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file outside the base dir
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "target.txt"), []byte("original"), 0644)
+	// Symlink to it
+	os.Symlink(filepath.Join(outside, "target.txt"), filepath.Join(dir, "link.txt"))
+
+	tool := NewIsolatedEditTool(nil, dir)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       "link.txt",
+		"old_string": "original",
+		"new_string": "modified",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for symlink escape edit")
+	}
+	// Verify file was not modified
+	data, _ := os.ReadFile(filepath.Join(outside, "target.txt"))
+	if string(data) != "original" {
+		t.Errorf("file was modified despite rejection: %q", string(data))
+	}
+}
+
 func TestReadAllowedWithStore(t *testing.T) {
 	store := loadTestStore(t)
 	dir := t.TempDir()

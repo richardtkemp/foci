@@ -37,9 +37,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if agent.BranchOrientationPrompt != "" {
 		add("agent", "branch_orientation_prompt", agent.BranchOrientationPrompt)
 	}
-	if agent.ForkPrompt != "" {
-		add("agent", "fork_prompt (deprecated)", agent.ForkPrompt)
-	}
 	if agent.TelegramBot != "" {
 		add("agent", "telegram_bot", agent.TelegramBot)
 	}
@@ -268,7 +265,11 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("skills", "dirs", cfg.Skills.Dirs)
 	}
 
+	// cache
+	add("cache", "strategy", cfg.Cache.Strategy)
+
 	// usage_warnings
+	add("usage_warnings", "name", cfg.ManaWarnings.Name)
 	if len(cfg.ManaWarnings.Thresholds) > 0 {
 		add("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
@@ -514,6 +515,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if len(cfg.Skills.Dirs) > 0 {
 		addGlobal("skills", "dirs", cfg.Skills.Dirs)
 	}
+	addGlobal("cache", "strategy", cfg.Cache.Strategy)
+	addGlobal("usage_warnings", "name", cfg.ManaWarnings.Name)
 	if len(cfg.ManaWarnings.Thresholds) > 0 {
 		addGlobal("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
@@ -566,9 +569,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 		addAgent("duplicate_messages", agent.DuplicateMessages)
 		if agent.BranchOrientationPrompt != "" {
 			addAgent("branch_orientation_prompt", agent.BranchOrientationPrompt)
-		}
-		if agent.ForkPrompt != "" {
-			addAgent("fork_prompt (deprecated)", agent.ForkPrompt)
 		}
 		if agent.TelegramBot != "" {
 			addAgent("telegram_bot", agent.TelegramBot)
@@ -690,6 +690,7 @@ type displayConfig struct {
 	Tools         ToolsConfig        `toml:"tools"`
 	Environment   EnvironmentConfig  `toml:"environment"`
 	Skills        SkillsConfig       `toml:"skills"`
+	Cache         CacheConfig        `toml:"cache"`
 	UsageWarnings ManaWarningsConfig `toml:"usage_warnings"`
 	Voice         VoiceConfig        `toml:"voice"`
 	Database      DatabaseConfig     `toml:"database"`
@@ -744,6 +745,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Tools:         cfg.Tools,
 		Environment:   cfg.Environment,
 		Skills:        cfg.Skills,
+		Cache:         cfg.Cache,
 		UsageWarnings: cfg.ManaWarnings,
 		Voice:         cfg.Voice,
 		Database:      cfg.Database,
