@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"foci/anthropic"
 )
@@ -45,6 +46,36 @@ func (r *Registry) All() []*Tool {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// ExportedNames returns sorted names of tools with ExecExport: true,
+// prefixed with "foci_" (matching the shell function names).
+func (r *Registry) ExportedNames() []string {
+	var names []string
+	for _, t := range r.All() {
+		if t.ExecExport {
+			names = append(names, "foci_"+t.Name)
+		}
+	}
+	return names
+}
+
+// FinalizeExecDescription updates the exec tool's description to include
+// the current list of ExecExport shell functions. Call this after all tools
+// have been registered so the description stays in sync.
+func (r *Registry) FinalizeExecDescription() {
+	execTool := r.Get("exec")
+	if execTool == nil {
+		return
+	}
+	names := r.ExportedNames()
+	if len(names) == 0 {
+		return
+	}
+	suffix := " Shell functions are available for piping tool results within a single command: " + strings.Join(names, ", ") + "."
+	if !strings.Contains(execTool.Description, "Shell functions are available") {
+		execTool.Description += suffix
+	}
 }
 
 // ToolDefs returns tool definitions for the Anthropic API, sorted by name

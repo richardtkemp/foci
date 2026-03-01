@@ -552,6 +552,79 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 	}
 }
 
+func TestFinalizeExecDescription(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&Tool{
+		Name:        "exec",
+		Description: "Run a shell command.",
+		Parameters:  json.RawMessage(`{}`),
+	})
+	reg.Register(&Tool{
+		Name:        "web_search",
+		ExecExport:  true,
+		Description: "Search the web",
+		Parameters:  json.RawMessage(`{}`),
+	})
+	reg.Register(&Tool{
+		Name:        "summary",
+		ExecExport:  true,
+		Description: "Summarise content",
+		Parameters:  json.RawMessage(`{}`),
+	})
+	reg.Register(&Tool{
+		Name:        "read",
+		ExecExport:  false,
+		Description: "Read a file",
+		Parameters:  json.RawMessage(`{}`),
+	})
+
+	reg.FinalizeExecDescription()
+
+	exec := reg.Get("exec")
+	if !strings.Contains(exec.Description, "foci_summary") {
+		t.Errorf("exec description missing foci_summary: %s", exec.Description)
+	}
+	if !strings.Contains(exec.Description, "foci_web_search") {
+		t.Errorf("exec description missing foci_web_search: %s", exec.Description)
+	}
+	if strings.Contains(exec.Description, "foci_read") {
+		t.Errorf("exec description should not contain foci_read (ExecExport=false): %s", exec.Description)
+	}
+
+	// List should be alphabetically sorted
+	sumIdx := strings.Index(exec.Description, "foci_summary")
+	wsIdx := strings.Index(exec.Description, "foci_web_search")
+	if sumIdx > wsIdx {
+		t.Error("exported names should be in alphabetical order (foci_summary before foci_web_search)")
+	}
+
+	// Calling FinalizeExecDescription again should not duplicate the list
+	reg.FinalizeExecDescription()
+	count := strings.Count(exec.Description, "Shell functions are available")
+	if count != 1 {
+		t.Errorf("expected 1 occurrence of shell functions sentence, got %d", count)
+	}
+}
+
+func TestExportedNamesAlphabetical(t *testing.T) {
+	reg := NewRegistry()
+	reg.Register(&Tool{Name: "zebra", ExecExport: true, Parameters: json.RawMessage(`{}`)})
+	reg.Register(&Tool{Name: "alpha", ExecExport: true, Parameters: json.RawMessage(`{}`)})
+	reg.Register(&Tool{Name: "middle", ExecExport: true, Parameters: json.RawMessage(`{}`)})
+	reg.Register(&Tool{Name: "nope", ExecExport: false, Parameters: json.RawMessage(`{}`)})
+
+	names := reg.ExportedNames()
+	if len(names) != 3 {
+		t.Fatalf("expected 3 exported names, got %d", len(names))
+	}
+	expected := []string{"foci_alpha", "foci_middle", "foci_zebra"}
+	for i, want := range expected {
+		if names[i] != want {
+			t.Errorf("names[%d] = %q, want %q", i, names[i], want)
+		}
+	}
+}
+
 // TestExecExportToolsHaveShellFunc verifies that every tool with ExecExport:true
 // produces a non-empty shell function via generateShellFunc.
 func TestExecExportToolsHaveShellFunc(t *testing.T) {
