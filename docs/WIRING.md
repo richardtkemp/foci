@@ -20,8 +20,8 @@ config.Load(path)                                        ← validates values; l
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
   → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
   → Token resolution (priority order):
-  →   1. Setup token: anthropic.setup_token from secrets.toml → NewClientWithTimeout + NewUsageClient
-  →   2. API key: anthropic.api_key from secrets.toml → NewClientWithTimeout + NewUsageClient
+  →   1. Setup token: anthropic.setup_token from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
+  →   2. API key: anthropic.api_key from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
@@ -55,7 +55,7 @@ config.Load(path)                                        ← validates values; l
   → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
   → restoreMultiballSessions()                             ← restore bot→session mappings from state store
   → botMgr.StartAll(ctx)                                  ← starts all bots
-  → http.Server{"/send", "/status", "/command", "/wake", "/voice (ws)"}  ← routes by agent param
+  → http.Server{"/send", "/status", "/command", "/wake", "/voice (ws)", "/-/reload-credentials"}  ← routes by agent param
   → injectWelcomeFile()                                    ← setup.sh changelog injection
   → block on signal → shutdown
 ```
@@ -667,6 +667,7 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 - `POST /command` — dispatches slash command (bypasses agent context)
 - `POST /wake` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session.
 - `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[voice] ws_enabled = true`.
+- `POST /-/reload-credentials` — hot-reload API credentials from `secrets.toml`. Called by `foci auth` after saving a new token. Only registered when using static token auth (setup-token or API key), not OAuth fallback.
 
 ## CLI Tool (`cmd/foci/`)
 

@@ -1,15 +1,20 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"foci/agent"
 	"foci/config"
 	"foci/memory"
+	"foci/secrets"
 	"foci/session"
 	"foci/telegram"
 )
@@ -596,5 +601,160 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")
+	}
+}
+
+// ========== tokenHolder tests ==========
+
+func TestTokenHolder_GetSet(t *testing.T) {
+	h := &tokenHolder{token: "initial"}
+	tok, err := h.Get()
+	if err != nil {
+		t.Fatalf("Get: unexpected error: %v", err)
+	}
+	if tok != "initial" {
+		t.Errorf("Get = %q, want %q", tok, "initial")
+	}
+
+	h.Set("updated")
+	tok, err = h.Get()
+	if err != nil {
+		t.Fatalf("Get after Set: unexpected error: %v", err)
+	}
+	if tok != "updated" {
+		t.Errorf("Get after Set = %q, want %q", tok, "updated")
+	}
+}
+
+func TestTokenHolder_EmptyReturnsError(t *testing.T) {
+	h := &tokenHolder{}
+	_, err := h.Get()
+	if err == nil {
+		t.Fatal("expected error for empty tokenHolder")
+	}
+}
+
+func TestTokenHolder_ConcurrentAccess(t *testing.T) {
+	h := &tokenHolder{token: "start"}
+	var wg sync.WaitGroup
+
+	// Concurrent writers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			h.Set("token-" + strings.Repeat("x", i))
+		}(i)
+	}
+
+	// Concurrent readers
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tok, err := h.Get()
+			if err != nil {
+				t.Errorf("concurrent Get error: %v", err)
+			}
+			if tok == "" {
+				t.Error("concurrent Get returned empty")
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// ========== /-/reload-credentials endpoint tests ==========
+
+func TestReloadCredentialsEndpoint_Success(t *testing.T) {
+	// Write a secrets.toml with a setup token
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "secrets.toml")
+	os.WriteFile(secretsPath, []byte(`[anthropic]
+setup_token = "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-pass-validation-checks-here"`+"\n"), 0600)
+
+	holder := &tokenHolder{token: "old-token"}
+	cfg := &config.Config{}
+
+	reloadFn := func() error {
+		st, err := secrets.Load(secretsPath)
+		if err != nil {
+			return err
+		}
+		newSetupToken, newAPIKey, _, _, _, _ := resolveSecretKeys(cfg, st)
+		token := newSetupToken
+		if token == "" {
+			token = newAPIKey
+		}
+		if token == "" {
+			return nil
+		}
+		holder.Set(token)
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	registerHTTPHandlers(mux, httpHandlerDeps{
+		agents:            map[string]*agentInstance{},
+		agentOrder:        []string{},
+		cfg:               cfg,
+		reloadCredentials: reloadFn,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/-/reload-credentials", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["status"] == "" {
+		t.Error("expected non-empty status in response")
+	}
+
+	tok, _ := holder.Get()
+	expected := "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-pass-validation-checks-here"
+	if tok != expected {
+		t.Errorf("holder token = %q, want %q", tok, expected)
+	}
+}
+
+func TestReloadCredentialsEndpoint_MethodNotAllowed(t *testing.T) {
+	mux := http.NewServeMux()
+	registerHTTPHandlers(mux, httpHandlerDeps{
+		agents:            map[string]*agentInstance{},
+		agentOrder:        []string{},
+		cfg:               &config.Config{},
+		reloadCredentials: func() error { return nil },
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/-/reload-credentials", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
+	mux := http.NewServeMux()
+	registerHTTPHandlers(mux, httpHandlerDeps{
+		agents:     map[string]*agentInstance{},
+		agentOrder: []string{},
+		cfg:        &config.Config{},
+		// reloadCredentials is nil — endpoint should not be registered
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/-/reload-credentials", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (endpoint not registered)", w.Code)
 	}
 }

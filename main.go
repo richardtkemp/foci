@@ -48,6 +48,29 @@ var (
 	goVersion = runtime.Version()
 )
 
+// tokenHolder is a thread-safe, swappable credential string.
+// Used with NewClientWithTokenFunc so that credentials can be hot-reloaded
+// (e.g. after `foci auth` saves a new setup-token) without restarting.
+type tokenHolder struct {
+	mu    sync.RWMutex
+	token string
+}
+
+func (h *tokenHolder) Get() (string, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.token == "" {
+		return "", fmt.Errorf("no credential configured")
+	}
+	return h.token, nil
+}
+
+func (h *tokenHolder) Set(token string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.token = token
+}
+
 // agentInstance holds all per-agent state.
 type agentInstance struct {
 	id                string
@@ -171,16 +194,17 @@ func configureMultiballBot(bot *telegram.Bot, mc multiballBotConfig) {
 
 // httpHandlerDeps holds shared state needed by HTTP endpoint handlers.
 type httpHandlerDeps struct {
-	agents      map[string]*agentInstance
-	agentOrder  []string
-	stateStore  *state.Store
-	sessions    *session.Store
-	botMgr      *telegram.BotManager
-	cfg         *config.Config
-	ctx         context.Context
-	voiceAPIKey string
-	sttProvider voice.STT
-	ttsProvider voice.TTS
+	agents             map[string]*agentInstance
+	agentOrder         []string
+	stateStore         *state.Store
+	sessions           *session.Store
+	botMgr             *telegram.BotManager
+	cfg                *config.Config
+	ctx                context.Context
+	voiceAPIKey        string
+	sttProvider        voice.STT
+	ttsProvider        voice.TTS
+	reloadCredentials  func() error // hot-reload credentials from secrets.toml (nil if not supported)
 }
 
 // registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /wake, /voice).
@@ -465,6 +489,24 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		log.Infof("http", "/voice WebSocket endpoint enabled")
 	}
 
+	// POST /-/reload-credentials — hot-reload API credentials from secrets.toml
+	if d.reloadCredentials != nil {
+		mux.HandleFunc("/-/reload-credentials", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if err := d.reloadCredentials(); err != nil {
+				log.Errorf("http", "POST /-/reload-credentials: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "credentials reloaded"})
+		})
+		endpointList += ", /-/reload-credentials"
+	}
+
 	log.Infof("http", "registered endpoints: %s", endpointList)
 }
 
@@ -641,7 +683,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	client, usageClient := resolveCredentials(cfg, store, setupToken, apiKey, ctx)
+	client, usageClient, credHolder := resolveCredentials(cfg, store, setupToken, apiKey, ctx)
 	log.Debugf("main", "anthropic client ready")
 
 	// Shared: Session store
@@ -1096,18 +1138,41 @@ func main() {
 	}
 
 	// ========== HTTP server ==========
+	// Build credential reload function (only for static token auth, not OAuth fallback).
+	var reloadCreds func() error
+	if credHolder != nil {
+		reloadCreds = func() error {
+			st, err := secrets.Load(secretsPath)
+			if err != nil {
+				return fmt.Errorf("reload secrets.toml: %w", err)
+			}
+			newSetupToken, newAPIKey, _, _, _, _ := resolveSecretKeys(cfg, st)
+			token := newSetupToken
+			if token == "" {
+				token = newAPIKey
+			}
+			if token == "" {
+				return fmt.Errorf("no setup_token or api_key found in secrets.toml after reload")
+			}
+			credHolder.Set(token)
+			log.Infof("main", "credentials hot-reloaded from secrets.toml")
+			return nil
+		}
+	}
+
 	mux := http.NewServeMux()
 	registerHTTPHandlers(mux, httpHandlerDeps{
-		agents:      agents,
-		agentOrder:  agentOrder,
-		stateStore:  stateStore,
-		sessions:    sessions,
-		botMgr:      botMgr,
-		cfg:         cfg,
-		ctx:         ctx,
-		voiceAPIKey: voiceAPIKey,
-		sttProvider: sttProvider,
-		ttsProvider: ttsProvider,
+		agents:            agents,
+		agentOrder:        agentOrder,
+		stateStore:        stateStore,
+		sessions:          sessions,
+		botMgr:            botMgr,
+		cfg:               cfg,
+		ctx:               ctx,
+		voiceAPIKey:       voiceAPIKey,
+		sttProvider:       sttProvider,
+		ttsProvider:       ttsProvider,
+		reloadCredentials: reloadCreds,
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTP.Bind, cfg.HTTP.Port)
@@ -2935,7 +3000,11 @@ func resolveSecretKeys(cfg *config.Config, store *secrets.Store) (setupToken, ap
 // resolveCredentials resolves the Anthropic API client and usage client.
 // Priority: (1) setup-token from secrets.toml, (2) API key from secrets.toml,
 // (3) Claude Code credentials fallback.
-func resolveCredentials(cfg *config.Config, store *secrets.Store, setupToken, apiKey string, ctx context.Context) (*anthropic.Client, *anthropic.UsageClient) {
+//
+// For static tokens (setup-token, API key), the client is created with a tokenFunc
+// backed by a tokenHolder, enabling hot-reload via /-/reload-credentials.
+// Returns the tokenHolder (nil for OAuth fallback, which manages its own refresh).
+func resolveCredentials(cfg *config.Config, store *secrets.Store, setupToken, apiKey string, ctx context.Context) (*anthropic.Client, *anthropic.UsageClient, *tokenHolder) {
 	httpTimeout, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout)
 	if err != nil {
 		log.Warnf("main", "invalid anthropic.http_timeout, using default: %v", err)
@@ -2960,25 +3029,28 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, setupToken, ap
 	// Source 1: setup-token (from `foci auth` / `claude setup-token`)
 	if setupToken != "" {
 		log.Infof("main", "using setup-token from secrets.toml")
-		return anthropic.NewClientWithTimeout(setupToken, httpTimeout),
-			anthropic.NewUsageClient(setupToken)
+		holder := &tokenHolder{token: setupToken}
+		return anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout),
+			anthropic.NewUsageClientWithFunc(holder.Get), holder
 	}
 
 	// Source 2: Anthropic API key
 	if apiKey != "" {
 		log.Infof("main", "using API key from secrets.toml")
-		return anthropic.NewClientWithTimeout(apiKey, httpTimeout),
-			anthropic.NewUsageClient(apiKey)
+		holder := &tokenHolder{token: apiKey}
+		return anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout),
+			anthropic.NewUsageClientWithFunc(holder.Get), holder
 	}
 
 	// Source 3: Claude Code credentials (read-only fallback)
 	if mgr, err := anthropic.NewOAuthManager(ccCredsFile); err == nil {
-		return initOAuth(mgr, fmt.Sprintf("Claude Code credentials from %s (fallback, read-only)", ccCredsFile))
+		c, u := initOAuth(mgr, fmt.Sprintf("Claude Code credentials from %s (fallback, read-only)", ccCredsFile))
+		return c, u, nil
 	}
 
 	log.Errorf("main", "no Anthropic token found — run: foci auth")
 	os.Exit(1)
-	return nil, nil // unreachable
+	return nil, nil, nil // unreachable
 }
 
 // readPromptFile reads a prompt from a file path. Returns the trimmed contents,
