@@ -142,7 +142,8 @@ func TestParseSetupFlags(t *testing.T) {
 		"--bot-token", "123:ABC-test",
 		"--user-id", "12345678",
 		"--agent-id", "fotini",
-		"--auth-method", "oauth",
+		"--setup-token", "stp_test123",
+		"--api-key", "sk-test456",
 	}
 
 	f := parseSetupFlags(args)
@@ -168,8 +169,11 @@ func TestParseSetupFlags(t *testing.T) {
 	if f.agentID != "fotini" {
 		t.Errorf("agentID = %q, want fotini", f.agentID)
 	}
-	if f.authMethod != "oauth" {
-		t.Errorf("authMethod = %q, want oauth", f.authMethod)
+	if f.setupToken != "stp_test123" {
+		t.Errorf("setupToken = %q, want stp_test123", f.setupToken)
+	}
+	if f.apiKey != "sk-test456" {
+		t.Errorf("apiKey = %q, want sk-test456", f.apiKey)
 	}
 }
 

@@ -43,15 +43,16 @@ type setupFlags struct {
 	nonInteractive bool
 	botToken       string
 	userID         string
-	agentID        string
-	authMethod     string // "oauth", "apikey", "skip"
-	authToken      string // API key (for authMethod=apikey)
+	agentID    string
+	setupToken string // setup token from 'claude setup-token'
+	apiKey     string // API key (auth credential, or usage tracking when setup-token provided)
 }
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
 	botToken   string
 	authMethod string // "setup-token", "apikey", "skip"
+	apiKey     string // optional API key for usage endpoint (setup-token auth only)
 	userID     string
 	agentID    string
 }
@@ -63,6 +64,7 @@ Interactive setup wizard for first-run configuration.
 Generates foci.toml, secrets.toml, and seeds character files.
 
 Flags:
+  -h, --help             Show this help
   --config-dir <path>    Directory for config files (default: ./config)
   --home <path>          Foci home directory (default: current user home)
   --defaults-dir <path>  Path to default character templates
@@ -70,8 +72,8 @@ Flags:
   --bot-token <token>    Telegram bot token
   --user-id <id>         Telegram user ID
   --agent-id <id>        Agent identifier (default: main)
-  --auth-method <m>      Auth method: setup-token, apikey, skip
-  --auth-token <token>   API key (for --auth-method=apikey)
+  --setup-token <token>  Setup token from 'claude setup-token'
+  --api-key <key>        API key (auth credential, or usage tracking when --setup-token provided)
 `)
 }
 
@@ -125,14 +127,14 @@ func parseSetupFlags(args []string) setupFlags {
 				f.agentID = args[i+1]
 				i++
 			}
-		case "--auth-method":
+		case "--setup-token":
 			if i+1 < len(args) {
-				f.authMethod = args[i+1]
+				f.setupToken = args[i+1]
 				i++
 			}
-		case "--auth-token":
+		case "--api-key":
 			if i+1 < len(args) {
-				f.authToken = args[i+1]
+				f.apiKey = args[i+1]
 				i++
 			}
 		}
@@ -164,12 +166,6 @@ func runSetupNonInteractive(f setupFlags) error {
 	if f.userID == "" {
 		missing = append(missing, "--user-id")
 	}
-	if f.authMethod == "" {
-		missing = append(missing, "--auth-method")
-	}
-	if f.authMethod == "apikey" && f.authToken == "" {
-		missing = append(missing, "--auth-token (required for --auth-method=apikey)")
-	}
 	if len(missing) > 0 {
 		return fmt.Errorf("non-interactive mode requires: %s", strings.Join(missing, ", "))
 	}
@@ -190,19 +186,16 @@ func runSetupNonInteractive(f setupFlags) error {
 		return fmt.Errorf("load secrets: %w", err)
 	}
 
-	switch f.authMethod {
-	case "setup-token":
-		if err := anthropic.RunSetupTokenFlow(store); err != nil {
-			return fmt.Errorf("auth: %w", err)
-		}
-		// Token saved to store; read back for config gen
-		if v, ok := store.Get("anthropic.setup_token"); ok {
-			secretsOpts.SetupToken = v
-		}
-	case "apikey":
-		secretsOpts.SetupToken = f.authToken
-	case "skip":
-		// No auth
+	// Auth: setup-token takes precedence, then api-key, then skip.
+	if f.setupToken != "" {
+		store.Set("anthropic.setup_token", f.setupToken)
+		secretsOpts.SetupToken = f.setupToken
+	} else if f.apiKey != "" {
+		secretsOpts.SetupToken = f.apiKey
+	}
+
+	if f.apiKey != "" {
+		store.Set("anthropic.api_key", f.apiKey)
 	}
 
 	model := "claude-sonnet-4-6"
@@ -227,11 +220,21 @@ func runSetupInteractive(f setupFlags) error {
 	fmt.Println("  (Enter 'back' at any prompt to return to the previous step)")
 	fmt.Println("──────────────────────────────────────────")
 
+	// Load secrets store early — needed by RunSetupTokenFlow in step 3.
+	secretsPath := filepath.Join(f.configDir, "secrets.toml")
+	store, err := secrets.Load(secretsPath)
+	if err != nil {
+		return fmt.Errorf("load secrets: %w", err)
+	}
+
+	secretsOpts := config.SecretsOptions{}
+
+	totalSteps := 7
 	step := 1
-	for step <= 5 {
+	for step <= totalSteps {
 		switch step {
 		case 1:
-			result, back := stepBotToken(reader, state.botToken)
+			result, back := stepBotToken(reader, state.botToken, totalSteps)
 			if back {
 				fmt.Println("  Already at the first step.")
 				continue
@@ -240,7 +243,7 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 2:
-			method, back := stepAuth(reader, state.authMethod)
+			method, back := stepAuth(reader, state.authMethod, totalSteps)
 			if back {
 				step--
 				continue
@@ -249,16 +252,47 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 3:
-			userID, back := stepUserID(reader, state.botToken, state.userID)
+			// Collect the actual credential for the chosen auth method.
+			back, err := stepCredential(reader, state.authMethod, store, &secretsOpts, totalSteps)
+			if err != nil {
+				return err
+			}
 			if back {
 				step--
+				continue
+			}
+			step++
+
+		case 4:
+			// Optional API key for usage tracking (only for setup-token auth).
+			if state.authMethod != "setup-token" {
+				step++
+				continue
+			}
+			key, back := stepUsageKey(reader, state.apiKey, totalSteps)
+			if back {
+				step--
+				continue
+			}
+			state.apiKey = key
+			step++
+
+		case 5:
+			userID, back := stepUserID(reader, state.botToken, state.userID, totalSteps)
+			if back {
+				// Skip back over step 4 if it was auto-skipped.
+				if state.authMethod != "setup-token" {
+					step -= 2
+				} else {
+					step--
+				}
 				continue
 			}
 			state.userID = userID
 			step++
 
-		case 4:
-			agentID, back := stepAgentID(reader, state.agentID)
+		case 6:
+			agentID, back := stepAgentID(reader, state.agentID, totalSteps)
 			if back {
 				step--
 				continue
@@ -266,8 +300,8 @@ func runSetupInteractive(f setupFlags) error {
 			state.agentID = agentID
 			step++
 
-		case 5:
-			back := stepCharacterFiles(reader, f, state.agentID)
+		case 7:
+			back := stepCharacterFiles(reader, f, state.agentID, totalSteps)
 			if back {
 				step--
 				continue
@@ -276,40 +310,8 @@ func runSetupInteractive(f setupFlags) error {
 		}
 	}
 
-	// Run auth flow
-	secretsPath := filepath.Join(f.configDir, "secrets.toml")
-	store, err := secrets.Load(secretsPath)
-	if err != nil {
-		return fmt.Errorf("load secrets: %w", err)
-	}
-
-	secretsOpts := config.SecretsOptions{
-		AgentID:  state.agentID,
-		BotToken: state.botToken,
-	}
-
-	switch state.authMethod {
-	case "setup-token":
-		fmt.Println()
-		if err := anthropic.RunSetupTokenFlow(store); err != nil {
-			return fmt.Errorf("auth: %w", err)
-		}
-		fmt.Println("✓ Setup token saved.")
-		if v, ok := store.Get("anthropic.setup_token"); ok {
-			secretsOpts.SetupToken = v
-		}
-	case "apikey":
-		fmt.Print("\n  API key: ")
-		key, _ := reader.ReadString('\n')
-		key = strings.TrimSpace(key)
-		if key == "" {
-			return fmt.Errorf("API key cannot be empty")
-		}
-		secretsOpts.SetupToken = key
-		fmt.Println("✓ API key saved.")
-	case "skip":
-		fmt.Println("✓ Skipping auth (will use Claude Code credentials if available).")
-	}
+	secretsOpts.AgentID = state.agentID
+	secretsOpts.BotToken = state.botToken
 
 	// Discover model
 	model := discoverModel(store)
@@ -323,6 +325,11 @@ func runSetupInteractive(f setupFlags) error {
 
 	fmt.Println()
 	fmt.Println("Creating config...")
+
+	if state.apiKey != "" {
+		store.Set("anthropic.api_key", state.apiKey)
+	}
+
 	if err := writeSetupFiles(f, configOpts, secretsOpts, store); err != nil {
 		return err
 	}
@@ -334,9 +341,9 @@ func runSetupInteractive(f setupFlags) error {
 }
 
 // stepBotToken prompts for a Telegram bot token.
-func stepBotToken(reader *bufio.Reader, current string) (token string, back bool) {
+func stepBotToken(reader *bufio.Reader, current string, total int) (token string, back bool) {
 	fmt.Println()
-	fmt.Println("Step 1/5: Telegram Bot")
+	fmt.Printf("Step 1/%d: Telegram Bot\n", total)
 	fmt.Println("  Create a bot via @BotFather on Telegram (https://t.me/BotFather)")
 	fmt.Println("  Send /newbot, follow the prompts, and paste the token here.")
 	fmt.Println()
@@ -365,9 +372,9 @@ func stepBotToken(reader *bufio.Reader, current string) (token string, back bool
 }
 
 // stepAuth prompts for authentication method.
-func stepAuth(reader *bufio.Reader, current string) (method string, back bool) {
+func stepAuth(reader *bufio.Reader, current string, total int) (method string, back bool) {
 	fmt.Println()
-	fmt.Println("Step 2/5: Anthropic Authentication")
+	fmt.Printf("Step 2/%d: Anthropic Authentication\n", total)
 	fmt.Println("  Foci needs access to Claude. Choose one:")
 	fmt.Println("  [1] Setup token (recommended — uses Claude Code subscription)")
 	fmt.Println("  [2] API key")
@@ -396,10 +403,91 @@ func stepAuth(reader *bufio.Reader, current string) (method string, back bool) {
 	}
 }
 
-// stepUserID prompts for user ID via auto-detect or manual entry.
-func stepUserID(reader *bufio.Reader, botToken string, current string) (userID string, back bool) {
+// stepCredential collects the actual auth credential based on the chosen method.
+func stepCredential(reader *bufio.Reader, authMethod string, store *secrets.Store, opts *config.SecretsOptions, total int) (back bool, err error) {
 	fmt.Println()
-	fmt.Println("Step 3/5: Your Telegram User ID")
+	fmt.Printf("Step 3/%d: Credential\n", total)
+
+	switch authMethod {
+	case "setup-token":
+		fmt.Println("  Run 'claude setup-token' in another terminal and follow the prompts.")
+		fmt.Println("  Type 'back' to return to auth method selection.")
+		fmt.Println()
+		fmt.Print("  Press Enter when ready (or 'back'): ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "back" {
+			return true, nil
+		}
+		if err := anthropic.RunSetupTokenFlow(store); err != nil {
+			return false, fmt.Errorf("auth: %w", err)
+		}
+		fmt.Println("✓ Setup token saved.")
+		if v, ok := store.Get("anthropic.setup_token"); ok {
+			opts.SetupToken = v
+		}
+
+	case "apikey":
+		for {
+			fmt.Print("  API key: ")
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(input)
+			if input == "back" {
+				return true, nil
+			}
+			if input == "" {
+				fmt.Println("  API key cannot be empty.")
+				continue
+			}
+			opts.SetupToken = input
+			fmt.Println("✓ API key saved.")
+			break
+		}
+
+	case "skip":
+		fmt.Println("✓ Skipping auth (will use Claude Code credentials if available).")
+	}
+
+	return false, nil
+}
+
+// stepUsageKey prompts for an optional API key to enable usage/mana tracking.
+// Only shown when auth method is setup-token.
+func stepUsageKey(reader *bufio.Reader, current string, total int) (key string, back bool) {
+	fmt.Println()
+	fmt.Printf("Step 4/%d: Usage Tracking (optional)\n", total)
+	fmt.Println("  Setup tokens can't query the usage endpoint.")
+	fmt.Println("  To enable mana/usage tracking, provide an API key from:")
+	fmt.Println("  https://platform.claude.com/settings/keys")
+	fmt.Println("  Press Enter to skip.")
+	fmt.Println()
+
+	prompt := "  API key: "
+	if current != "" {
+		prompt = fmt.Sprintf("  API key [%s...]: ", current[:min(8, len(current))])
+	}
+	fmt.Print(prompt)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if input == "back" {
+		return "", true
+	}
+	if input == "" && current != "" {
+		return current, false
+	}
+	if input == "" {
+		fmt.Println("  Skipped.")
+		return "", false
+	}
+	fmt.Println("✓ API key saved for usage tracking.")
+	return input, false
+}
+
+// stepUserID prompts for user ID via auto-detect or manual entry.
+func stepUserID(reader *bufio.Reader, botToken string, current string, total int) (userID string, back bool) {
+	fmt.Println()
+	fmt.Printf("Step 5/%d: Your Telegram User ID\n", total)
 	fmt.Println("  How would you like to identify yourself?")
 	fmt.Println("  [1] Auto-detect (send a message to your bot)")
 	fmt.Println("  [2] Enter manually")
@@ -561,9 +649,9 @@ func manualUserID(reader *bufio.Reader, current string) (string, bool) {
 }
 
 // stepAgentID prompts for an agent identifier.
-func stepAgentID(reader *bufio.Reader, current string) (agentID string, back bool) {
+func stepAgentID(reader *bufio.Reader, current string, total int) (agentID string, back bool) {
 	fmt.Println()
-	fmt.Println("Step 4/5: Agent ID")
+	fmt.Printf("Step 6/%d: Agent ID\n", total)
 	fmt.Println("  Pick a short lowercase name for your agent (letters, numbers, hyphens).")
 	fmt.Println("  This becomes the agent's workspace directory and session key prefix.")
 	fmt.Println()
@@ -591,9 +679,9 @@ func stepAgentID(reader *bufio.Reader, current string) (agentID string, back boo
 
 // stepCharacterFiles handles character file seeding or import.
 // Returns true if the user wants to go back.
-func stepCharacterFiles(reader *bufio.Reader, f setupFlags, agentID string) bool {
+func stepCharacterFiles(reader *bufio.Reader, f setupFlags, agentID string, total int) bool {
 	fmt.Println()
-	fmt.Println("Step 5/5: Character Files")
+	fmt.Printf("Step 7/%d: Character Files\n", total)
 	fmt.Println("  Do you have existing character files to import?")
 	fmt.Println("  [1] No — use defaults (recommended for new users)")
 	fmt.Println("  [2] Yes — import from a directory")
