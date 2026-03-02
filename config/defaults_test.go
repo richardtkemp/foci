@@ -70,6 +70,68 @@ func TestSetFloatDefault(t *testing.T) {
 	})
 }
 
+func TestSetBoolDefaultDefined(t *testing.T) {
+	t.Run("sets when not defined", func(t *testing.T) {
+		v := false
+		setBoolDefaultDefined(&v, true, false)
+		if !v {
+			t.Error("expected true when not defined")
+		}
+	})
+	t.Run("preserves when defined", func(t *testing.T) {
+		v := false
+		setBoolDefaultDefined(&v, true, true)
+		if v {
+			t.Error("should preserve false when defined")
+		}
+	})
+}
+
+func TestSetIntDefaultDefined(t *testing.T) {
+	t.Run("sets when zero and not defined", func(t *testing.T) {
+		v := 0
+		setIntDefaultDefined(&v, 10, false)
+		if v != 10 {
+			t.Errorf("got %d, want 10", v)
+		}
+	})
+	t.Run("preserves non-zero even when not defined", func(t *testing.T) {
+		v := 5
+		setIntDefaultDefined(&v, 10, false)
+		if v != 5 {
+			t.Errorf("got %d, want 5", v)
+		}
+	})
+	t.Run("preserves zero when defined", func(t *testing.T) {
+		v := 0
+		setIntDefaultDefined(&v, 10, true)
+		if v != 0 {
+			t.Errorf("got %d, want 0", v)
+		}
+	})
+}
+
+func TestValidateDurations(t *testing.T) {
+	t.Run("valid durations pass", func(t *testing.T) {
+		err := validateDurations([]durationEntry{
+			{"logging", "rotation_period", "24h"},
+			{"tools", "timeout", "30s"},
+		})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid duration returns error", func(t *testing.T) {
+		err := validateDurations([]durationEntry{
+			{"logging", "rotation_period", "24h"},
+			{"tools", "timeout", "not-a-duration"},
+		})
+		if err == nil {
+			t.Error("expected error for invalid duration")
+		}
+	})
+}
+
 func TestKeepaliveConfigMergeDefaults(t *testing.T) {
 	global := KeepaliveConfig{Enabled: true, Interval: "55m", Prompt: "global.md"}
 

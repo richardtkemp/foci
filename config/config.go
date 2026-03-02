@@ -465,39 +465,8 @@ func validate(cfg *Config) error {
 	if !validLevels[levelUpper] {
 		return fmt.Errorf("[logging] level = %q: must be one of DEBUG, INFO, WARN, ERROR", cfg.Logging.Level)
 	}
-	if _, err := time.ParseDuration(cfg.Logging.WarningWindowDuration); err != nil {
-		return fmt.Errorf("[logging] warning_window_duration = %q: %w", cfg.Logging.WarningWindowDuration, err)
-	}
-	if _, err := time.ParseDuration(cfg.Logging.WarningProactiveActiveInterval); err != nil {
-		return fmt.Errorf("[logging] warning_proactive_active_interval = %q: %w", cfg.Logging.WarningProactiveActiveInterval, err)
-	}
-	if _, err := time.ParseDuration(cfg.Logging.WarningProactiveInactiveInterval); err != nil {
-		return fmt.Errorf("[logging] warning_proactive_inactive_interval = %q: %w", cfg.Logging.WarningProactiveInactiveInterval, err)
-	}
-	if _, err := time.ParseDuration(cfg.Logging.WarningProactiveActivityThreshold); err != nil {
-		return fmt.Errorf("[logging] warning_proactive_activity_threshold = %q: %w", cfg.Logging.WarningProactiveActivityThreshold, err)
-	}
-	if _, err := time.ParseDuration(cfg.Logging.RotationPeriod); err != nil {
-		return fmt.Errorf("[logging] rotation_period = %q: %w", cfg.Logging.RotationPeriod, err)
-	}
-	if _, err := time.ParseDuration(cfg.Logging.RetentionPeriod); err != nil {
-		return fmt.Errorf("[logging] retention_period = %q: %w", cfg.Logging.RetentionPeriod, err)
-	}
 	if _, err := ParseByteSize(cfg.Logging.RotationMaxLineSize); err != nil {
 		return fmt.Errorf("[logging] rotation_max_line_size = %q: %w", cfg.Logging.RotationMaxLineSize, err)
-	}
-
-	// Bitwarden
-	if cfg.Bitwarden.Enabled {
-		if _, err := time.ParseDuration(cfg.Bitwarden.RefreshInterval); err != nil {
-			return fmt.Errorf("[bitwarden] refresh_interval = %q: %w", cfg.Bitwarden.RefreshInterval, err)
-		}
-		if _, err := time.ParseDuration(cfg.Bitwarden.SecretTTL); err != nil {
-			return fmt.Errorf("[bitwarden] secret_ttl = %q: %w", cfg.Bitwarden.SecretTTL, err)
-		}
-		if _, err := time.ParseDuration(cfg.Bitwarden.CleanupInterval); err != nil {
-			return fmt.Errorf("[bitwarden] cleanup_interval = %q: %w", cfg.Bitwarden.CleanupInterval, err)
-		}
 	}
 
 	// Cache
@@ -536,29 +505,7 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Database
-	if _, err := time.ParseDuration(cfg.Database.BusyTimeout); err != nil {
-		return fmt.Errorf("[database] busy_timeout = %q: %w", cfg.Database.BusyTimeout, err)
-	}
-
-	// Anthropic
-	if _, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout); err != nil {
-		return fmt.Errorf("[anthropic] http_timeout = %q: %w", cfg.Anthropic.HTTPTimeout, err)
-	}
-	if _, err := time.ParseDuration(cfg.Anthropic.UsageAPITimeout); err != nil {
-		return fmt.Errorf("[anthropic] usage_api_timeout = %q: %w", cfg.Anthropic.UsageAPITimeout, err)
-	}
-
-	// Tools
-	if _, err := time.ParseDuration(cfg.Tools.TmuxCommandTimeout); err != nil {
-		return fmt.Errorf("[tools] tmux_command_timeout = %q: %w", cfg.Tools.TmuxCommandTimeout, err)
-	}
-	if _, err := time.ParseDuration(cfg.Tools.WebFetchTimeout); err != nil {
-		return fmt.Errorf("[tools] web_fetch_timeout = %q: %w", cfg.Tools.WebFetchTimeout, err)
-	}
-	if _, err := time.ParseDuration(cfg.Tools.WebSearchTimeout); err != nil {
-		return fmt.Errorf("[tools] web_search_timeout = %q: %w", cfg.Tools.WebSearchTimeout, err)
-	}
+	// Special case: tmux_memory_check_interval allows "0" to disable
 	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
 		if _, err := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval); err != nil {
 			return fmt.Errorf("[tools] tmux_memory_check_interval = %q: %w", cfg.Tools.TmuxMemoryCheckInterval, err)
@@ -575,9 +522,6 @@ func validate(cfg *Config) error {
 	}
 
 	// Resources
-	if _, err := time.ParseDuration(cfg.Resources.MemoryGuardInterval); err != nil {
-		return fmt.Errorf("[resources] memory_guard_interval = %q: %w", cfg.Resources.MemoryGuardInterval, err)
-	}
 	if cfg.Resources.MemoryWarnPercent < 0 || cfg.Resources.MemoryWarnPercent > 100 {
 		return fmt.Errorf("[resources] memory_warn_percent = %d: must be between 0 and 100", cfg.Resources.MemoryWarnPercent)
 	}
@@ -588,17 +532,34 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("[resources] memory_pressure_threshold = %g: must not be negative", cfg.Resources.MemoryPressureThreshold)
 	}
 
-	// Telegram
-	if _, err := time.ParseDuration(cfg.Telegram.LongPollTimeout); err != nil {
-		return fmt.Errorf("[telegram] long_poll_timeout = %q: %w", cfg.Telegram.LongPollTimeout, err)
+	// Table-driven duration validation — all fields that must be valid Go durations
+	durations := []durationEntry{
+		{"logging", "warning_window_duration", cfg.Logging.WarningWindowDuration},
+		{"logging", "warning_proactive_active_interval", cfg.Logging.WarningProactiveActiveInterval},
+		{"logging", "warning_proactive_inactive_interval", cfg.Logging.WarningProactiveInactiveInterval},
+		{"logging", "warning_proactive_activity_threshold", cfg.Logging.WarningProactiveActivityThreshold},
+		{"logging", "rotation_period", cfg.Logging.RotationPeriod},
+		{"logging", "retention_period", cfg.Logging.RetentionPeriod},
+		{"database", "busy_timeout", cfg.Database.BusyTimeout},
+		{"anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout},
+		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
+		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
+		{"tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout},
+		{"tools", "web_search_timeout", cfg.Tools.WebSearchTimeout},
+		{"resources", "memory_guard_interval", cfg.Resources.MemoryGuardInterval},
+		{"telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout},
+		{"telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL},
+		{"http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout},
 	}
-	if _, err := time.ParseDuration(cfg.Telegram.MultiballSessionTTL); err != nil {
-		return fmt.Errorf("[telegram] multiball_session_ttl = %q: %w", cfg.Telegram.MultiballSessionTTL, err)
+	if cfg.Bitwarden.Enabled {
+		durations = append(durations,
+			durationEntry{"bitwarden", "refresh_interval", cfg.Bitwarden.RefreshInterval},
+			durationEntry{"bitwarden", "secret_ttl", cfg.Bitwarden.SecretTTL},
+			durationEntry{"bitwarden", "cleanup_interval", cfg.Bitwarden.CleanupInterval},
+		)
 	}
-
-	// HTTP
-	if _, err := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout); err != nil {
-		return fmt.Errorf("[http] graceful_shutdown_timeout = %q: %w", cfg.HTTP.GracefulShutdownTimeout, err)
+	if err := validateDurations(durations); err != nil {
+		return err
 	}
 
 	return nil
@@ -765,16 +726,10 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Defaults.Model, "claude-haiku-4-5")
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
-	if cfg.Defaults.BraindeadThreshold == 0 && !md.IsDefined("defaults", "braindead_threshold") {
-		cfg.Defaults.BraindeadThreshold = 10
-	}
+	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
 	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
-	if cfg.Defaults.Thinking == "" && !md.IsDefined("defaults", "thinking") {
-		cfg.Defaults.Thinking = "adaptive"
-	}
-	if cfg.Defaults.Effort == "" && !md.IsDefined("defaults", "effort") {
-		cfg.Defaults.Effort = "low"
-	}
+	setStringDefaultDefined(&cfg.Defaults.Thinking, "adaptive", md.IsDefined("defaults", "thinking"))
+	setStringDefaultDefined(&cfg.Defaults.Effort, "low", md.IsDefined("defaults", "effort"))
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
@@ -819,9 +774,7 @@ func Load(path string) (*Config, error) {
 	setFloatDefault(&cfg.Sessions.CompactionThreshold, 0.8)
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
-	if cfg.Sessions.CompactionPreserveMessages == 0 && !md.IsDefined("sessions", "compaction_preserve_messages") {
-		cfg.Sessions.CompactionPreserveMessages = 25
-	}
+	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
 	setIntDefault(&cfg.HTTP.Port, 18791)
 	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")
 	if cfg.DataDir == "" {
@@ -834,39 +787,23 @@ func Load(path string) (*Config, error) {
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
 	}
-	if cfg.Logging.APIDB == "" && !md.IsDefined("logging", "api_db") {
-		cfg.Logging.APIDB = cfg.DataPath("api.db")
-	}
-	if cfg.Logging.CacheBustIdleMinutes == 0 && !md.IsDefined("logging", "cache_bust_idle_minutes") {
-		cfg.Logging.CacheBustIdleMinutes = 10
-	}
-	if cfg.Logging.WarningMaxPerWindow == 0 && !md.IsDefined("logging", "warning_max_per_window") {
-		cfg.Logging.WarningMaxPerWindow = 3
-	}
+	setStringDefaultDefined(&cfg.Logging.APIDB, cfg.DataPath("api.db"), md.IsDefined("logging", "api_db"))
+	setIntDefaultDefined(&cfg.Logging.CacheBustIdleMinutes, 10, md.IsDefined("logging", "cache_bust_idle_minutes"))
+	setIntDefaultDefined(&cfg.Logging.WarningMaxPerWindow, 3, md.IsDefined("logging", "warning_max_per_window"))
 	setStringDefault(&cfg.Logging.WarningWindowDuration, "5m")
 	setStringDefault(&cfg.Logging.WarningProactiveActiveInterval, "5m")
 	setStringDefault(&cfg.Logging.WarningProactiveInactiveInterval, "1h")
 	setStringDefault(&cfg.Logging.WarningProactiveActivityThreshold, "10m")
-	if !md.IsDefined("logging", "log_rotation") {
-		cfg.Logging.LogRotation = true
-	}
+	setBoolDefaultDefined(&cfg.Logging.LogRotation, true, md.IsDefined("logging", "log_rotation"))
 	setStringDefault(&cfg.Logging.RotationPeriod, "24h")
 	setStringDefault(&cfg.Logging.RetentionPeriod, "48h")
 	setStringDefault(&cfg.Logging.RotationMaxLineSize, "64MB")
 	// Resources defaults
-	if !md.IsDefined("resources", "memory_guard_enabled") {
-		cfg.Resources.MemoryGuardEnabled = true
-	}
+	setBoolDefaultDefined(&cfg.Resources.MemoryGuardEnabled, true, md.IsDefined("resources", "memory_guard_enabled"))
 	setStringDefault(&cfg.Resources.MemoryGuardInterval, "60s")
-	if cfg.Resources.MemoryWarnPercent == 0 && !md.IsDefined("resources", "memory_warn_percent") {
-		cfg.Resources.MemoryWarnPercent = 25
-	}
-	if cfg.Resources.MemoryKillPercent == 0 && !md.IsDefined("resources", "memory_kill_percent") {
-		cfg.Resources.MemoryKillPercent = 40
-	}
-	if cfg.Resources.MemoryPressureThreshold == 0 && !md.IsDefined("resources", "memory_pressure_threshold") {
-		cfg.Resources.MemoryPressureThreshold = 10.0
-	}
+	setIntDefaultDefined(&cfg.Resources.MemoryWarnPercent, 25, md.IsDefined("resources", "memory_warn_percent"))
+	setIntDefaultDefined(&cfg.Resources.MemoryKillPercent, 40, md.IsDefined("resources", "memory_kill_percent"))
+	setFloatDefaultDefined(&cfg.Resources.MemoryPressureThreshold, 10.0, md.IsDefined("resources", "memory_pressure_threshold"))
 	// Bitwarden defaults
 	setStringDefault(&cfg.Bitwarden.SessionFile, "/home/bitwarden/.bw_session")
 	setStringDefault(&cfg.Bitwarden.RefreshInterval, "15m")
@@ -879,15 +816,9 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci-tool-results")
 	setIntDefault(&cfg.Tools.TmuxCols, 300)
 	setIntDefault(&cfg.Tools.TmuxRows, 30)
-	if cfg.Tools.ExecAutoBackground == 0 && !md.IsDefined("tools", "exec_auto_background") {
-		cfg.Tools.ExecAutoBackground = 10
-	}
-	if !md.IsDefined("tools", "auto_summarise") {
-		cfg.Tools.AutoSummarise = true
-	}
-	if !md.IsDefined("tools", "tmux_braindead") {
-		cfg.Tools.TmuxBraindead = true
-	}
+	setIntDefaultDefined(&cfg.Tools.ExecAutoBackground, 10, md.IsDefined("tools", "exec_auto_background"))
+	setBoolDefaultDefined(&cfg.Tools.AutoSummarise, true, md.IsDefined("tools", "auto_summarise"))
+	setBoolDefaultDefined(&cfg.Tools.TmuxBraindead, true, md.IsDefined("tools", "tmux_braindead"))
 	setStringDefault(&cfg.Tools.TmuxWatchThreshold, "30s")
 	setStringDefault(&cfg.Tools.SearchProvider, "anthropic")
 	setStringDefault(&cfg.Tools.FetchProvider, "builtin")
@@ -931,17 +862,9 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.HTTP.GracefulShutdownTimeout, "30s")
 
 	// Bool defaults: default to true unless explicitly set to false in config.
-	// We use md.IsDefined because Go's zero value for bool is false,
-	// so we can't distinguish "not set" from "set to false" otherwise.
-	if !md.IsDefined("environment", "enabled") {
-		cfg.Environment.Enabled = true
-	}
-	if !md.IsDefined("telegram", "enable_stop_aliases") {
-		cfg.Telegram.EnableStopAliases = true
-	}
-	if !md.IsDefined("telegram", "enable_startup_notify") {
-		cfg.Telegram.EnableStartupNotify = true
-	}
+	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
+	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
+	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
 	// Warn about deprecated config keys.
 	if md.IsDefined("telegram", "bot_token") {
 		log.Warnf("config", "telegram.bot_token is deprecated — migrate to [telegram.bots.<name>] with token_secret in secrets.toml")
