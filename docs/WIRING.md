@@ -190,16 +190,27 @@ Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The meta
 
 ## Deferred Replies
 
-When the model responds with text alongside `tool_use` blocks (e.g., "Looking into this..."), the text is sent immediately via `ReplyFunc` before tool execution begins. This allows the agent to acknowledge a message and deliver the full response later.
+When the model responds with text alongside `tool_use` blocks (e.g., "Looking into this..."), the text is sent to Telegram before tool execution begins. This allows the agent to acknowledge a message and deliver the full response later.
 
-**Flow:**
-1. Telegram bot creates a `TurnCallbacks` struct and attaches it to the turn context via `agent.WithTurnCallbacks(ctx, cb)`
+Controlled by `batch_partial_assistant_messages` (bool, default `false`):
+- **false (default):** Text is sent immediately via `ReplyFunc` each time it appears in a response.
+- **true:** Text is accumulated in a `strings.Builder` and returned concatenated from `HandleMessage` when the turn completes.
+
+**Flow (batch=false, default):**
+1. Caller creates a `TurnCallbacks` struct and attaches it via `agent.WithTurnCallbacks(ctx, cb)`
 2. Agent loop detects text in a `tool_use` response
 3. `sendIntermediateCtx(ctx)` extracts the ReplyFunc from context and calls it
 4. Agent continues executing tools
 5. Final `end_turn` response is returned from `HandleMessage` as usual
 
-Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks. Async callers (tmux watch, exec/http_request auto-background, scheduled wakes) that don't set callbacks get nil — no Telegram side effects. No cross-turn state corruption.
+**Flow (batch=true):**
+1. Agent loop detects text in a `tool_use` response and appends to `batchedText`
+2. On `end_turn`, batched text is prepended to final text (joined with `\n\n`)
+3. Concatenated text is returned from `HandleMessage`
+
+Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks.
+
+Both Telegram-triggered and async callers (tmux watch, exec auto-background) now set up `TurnCallbacks` with a `ReplyFunc`. The async_notify path resolves the bot early and attaches callbacks before calling `HandleMessage`, so intermediate text is delivered during system-triggered turns.
 
 ## Tool Call Visibility
 

@@ -1307,7 +1307,23 @@ func setupAgent(p setupParams) *agentInstance {
 			if target == "" {
 				target = defaultSessionKey()
 			}
-			resp, err := ag.HandleMessage(agent.WithTrigger(p.ctx, "async_notify"), target, message)
+
+			// Resolve bot early so intermediate replies (ReplyFunc) can be delivered
+			// during the turn, not just at the end.
+			bot := p.botMgr.BotForSessionOrPrimary(target, acfg.ID)
+
+			ctx := agent.WithTrigger(p.ctx, "async_notify")
+			if bot != nil {
+				ctx = agent.WithTurnCallbacks(ctx, &agent.TurnCallbacks{
+					ReplyFunc: func(text string) {
+						if err := bot.SendText(text); err != nil {
+							log.Errorf("async_notify", "intermediate telegram delivery: %v", err)
+						}
+					},
+				})
+			}
+
+			resp, err := ag.HandleMessage(ctx, target, message)
 			if err != nil {
 				log.Errorf("async_notify", "error: %v", err)
 				return
@@ -1316,7 +1332,6 @@ func setupAgent(p setupParams) *agentInstance {
 			if resp == "" {
 				return
 			}
-			bot := p.botMgr.BotForSessionOrPrimary(target, acfg.ID)
 			if bot == nil {
 				log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", acfg.ID, target)
 				return
@@ -1500,7 +1515,8 @@ func setupAgent(p setupParams) *agentInstance {
 		CacheStrategy:               p.cfg.Cache.Strategy,
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
 		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
-		DuplicateMessages:           acfg.DuplicateMessages,
+		DuplicateMessages:              acfg.DuplicateMessages,
+		BatchPartialAssistantMessages:  acfg.BatchPartialAssistantMessages,
 		MaxResultChars:              resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
 		ToolResultTempDir:           p.cfg.Tools.TempDir,
 		ModelAliases:                p.cfg.Models.Aliases,

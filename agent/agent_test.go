@@ -3425,3 +3425,228 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchPartialAssistantMessages_False(t *testing.T) {
+	// When batch=false (default), intermediate text should be sent via ReplyFunc
+	// and the final response text returned from HandleMessage.
+	// This also covers the bug where final response has empty content.
+	callCount := 0
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			// First response: text + tool_use (intermediate text)
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "Working on it..."},
+					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		// Second response: empty content (the bug scenario)
+		return &anthropic.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []anthropic.ContentBlock{},
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 1},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "test_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "done", nil
+		},
+	})
+	ag := &Agent{
+		Client:                        client,
+		Sessions:                      store,
+		Tools:                         registry,
+		Bootstrap:                     workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:                         "claude-haiku-4-5",
+		BatchPartialAssistantMessages: false,
+	}
+
+	var intermediateReplies []string
+	cb := &TurnCallbacks{
+		ReplyFunc: func(text string) {
+			intermediateReplies = append(intermediateReplies, text)
+		},
+	}
+	ctx := WithTurnCallbacks(context.Background(), cb)
+
+	finalResp, err := ag.HandleMessage(ctx, "agent:test:batch-false", "Do something")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// Intermediate text should have been sent via ReplyFunc
+	if len(intermediateReplies) != 1 || intermediateReplies[0] != "Working on it..." {
+		t.Errorf("intermediate replies = %v, want [\"Working on it...\"]", intermediateReplies)
+	}
+
+	// Final response is empty (the bug scenario — but text was already delivered)
+	if finalResp != "" {
+		t.Errorf("final response = %q, want empty", finalResp)
+	}
+}
+
+func TestBatchPartialAssistantMessages_True(t *testing.T) {
+	// When batch=true, intermediate text should be accumulated and returned
+	// concatenated from HandleMessage. No ReplyFunc calls.
+	callCount := 0
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "Working on it..."},
+					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		// Second response: empty content
+		return &anthropic.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []anthropic.ContentBlock{},
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 1},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "test_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "done", nil
+		},
+	})
+	ag := &Agent{
+		Client:                        client,
+		Sessions:                      store,
+		Tools:                         registry,
+		Bootstrap:                     workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:                         "claude-haiku-4-5",
+		BatchPartialAssistantMessages: true,
+	}
+
+	var intermediateReplies []string
+	cb := &TurnCallbacks{
+		ReplyFunc: func(text string) {
+			intermediateReplies = append(intermediateReplies, text)
+		},
+	}
+	ctx := WithTurnCallbacks(context.Background(), cb)
+
+	finalResp, err := ag.HandleMessage(ctx, "agent:test:batch-true", "Do something")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	// ReplyFunc should NOT have been called
+	if len(intermediateReplies) != 0 {
+		t.Errorf("intermediate replies = %v, want none", intermediateReplies)
+	}
+
+	// Batched text should be returned as the final response
+	if finalResp != "Working on it..." {
+		t.Errorf("final response = %q, want %q", finalResp, "Working on it...")
+	}
+}
+
+func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
+	// When batch=true with multiple intermediate text blocks and a final text,
+	// all text should be concatenated with double newlines.
+	callCount := 0
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		if callCount == 1 {
+			return &anthropic.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "Step 1 done."},
+					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+		if callCount == 2 {
+			return &anthropic.MessageResponse{
+				ID:   "msg_2",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "Step 2 done."},
+					{Type: "tool_use", ID: "tu_002", Name: "test_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 10},
+			}
+		}
+		// Third response: final text
+		return &anthropic.MessageResponse{
+			ID:         "msg_3",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("All done!"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 40, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "test_tool",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "done", nil
+		},
+	})
+	ag := &Agent{
+		Client:                        client,
+		Sessions:                      store,
+		Tools:                         registry,
+		Bootstrap:                     workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:                         "claude-haiku-4-5",
+		BatchPartialAssistantMessages: true,
+	}
+
+	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
+	finalResp, err := ag.HandleMessage(ctx, "agent:test:batch-multi", "Do multiple things")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	expected := "Step 1 done.\n\nStep 2 done.\n\nAll done!"
+	if finalResp != expected {
+		t.Errorf("final response = %q, want %q", finalResp, expected)
+	}
+}

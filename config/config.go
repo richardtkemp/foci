@@ -102,7 +102,8 @@ type AgentConfig struct {
 	Model                   string            `toml:"model"`
 	Workspace               string            `toml:"workspace"`
 	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages       bool              `toml:"duplicate_messages"`        // send user text twice per API call (improves instruction following)
+	DuplicateMessages              bool              `toml:"duplicate_messages"`                // send user text twice per API call (improves instruction following)
+	BatchPartialAssistantMessages  bool              `toml:"batch_partial_assistant_messages"`   // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
 	BranchOrientationPrompt string            `toml:"branch_orientation_prompt"` // path to prompt file injected into all branch sessions (multiball, cron, spawn)
 	TelegramBot             string            `toml:"telegram_bot"`              // references key in [telegram.bots] map
 	MultiballBots           []string          `toml:"multiball_bots"`            // references keys in [telegram.bots] map (optional)
@@ -350,7 +351,8 @@ type CommandConfig struct {
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
 	Model               string           `toml:"model"`                 // default model (default: claude-haiku-4-5)
-	DuplicateMessages   bool             `toml:"duplicate_messages"`    // default duplicate_messages (default: false)
+	DuplicateMessages              bool             `toml:"duplicate_messages"`                // default duplicate_messages (default: false)
+	BatchPartialAssistantMessages  bool             `toml:"batch_partial_assistant_messages"`   // default batch_partial_assistant_messages (default: false)
 	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // default inject_agent_warnings (default: false)
 	MaxToolLoops        int              `toml:"max_tool_loops"`        // default max_tool_loops (default: 25)
 	MaxOutputTokens     int              `toml:"max_output_tokens"`     // default max_output_tokens (default: 8192)

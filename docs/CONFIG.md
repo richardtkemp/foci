@@ -23,6 +23,7 @@ Core agent settings. Use `[[agents]]` for one or more agents.
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
+| `batch_partial_assistant_messages` | bool | `false` | When `false`, text in mid-turn responses (alongside tool calls) is sent to Telegram immediately. When `true`, text is accumulated and returned concatenated when the turn completes. |
 | `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, embedded defaults from `prompts/branch-orientation-headless.md` or `prompts/branch-orientation-multiball.md` are used. |
 | `telegram_bot` | string | `$id` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. Defaults to the agent ID if a matching key exists in `[telegram.bots]`. |
 | `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
@@ -108,6 +109,7 @@ Global defaults for agent-specific fields. Agents inherit these values unless th
 |-----|------|---------|-------------|
 | `model` | string | `"claude-haiku-4-5"` | Default model for all agents. |
 | `duplicate_messages` | bool | `false` | Default duplicate_messages setting. |
+| `batch_partial_assistant_messages` | bool | `false` | Default batch_partial_assistant_messages setting. |
 | `inject_agent_warnings` | bool | `false` | Default inject_agent_warnings setting. |
 | `max_tool_loops` | int | `25` | Default max tool iterations per turn. |
 | `max_output_tokens` | int | `8192` | Default max tokens in model response. |
