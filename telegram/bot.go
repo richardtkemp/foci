@@ -644,63 +644,23 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if len(msg.Photo) > 0 {
 		// Take the largest photo (last in the array)
 		photo := msg.Photo[len(msg.Photo)-1]
-		if data, err := b.downloadFile(photo.FileId); err != nil {
-			log.Errorf("telegram", "download photo: %s", b.sanitizeError(err))
-		} else {
-			att := imageAttachment{data: data, mediaType: "image/jpeg"}
-			if b.receivedFilesDir != "" {
-				if path, err := b.saveImage(data, "image/jpeg", msg.Chat.Id); err != nil {
-					log.Warnf("telegram", "save image: %v", err)
-				} else {
-					att.savedPath = path
-					log.Infof("telegram", "saved image to %s", path)
-				}
-			}
+		if att, ok := b.downloadImage(photo.FileId, "image/jpeg", msg.Chat.Id); ok {
 			images = append(images, att)
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
-		if data, err := b.downloadFile(msg.Document.FileId); err != nil {
-			log.Errorf("telegram", "download document: %s", b.sanitizeError(err))
-		} else {
-			att := imageAttachment{data: data, mediaType: msg.Document.MimeType}
-			if b.receivedFilesDir != "" {
-				if path, err := b.saveImage(data, msg.Document.MimeType, msg.Chat.Id); err != nil {
-					log.Warnf("telegram", "save image: %v", err)
-				} else {
-					att.savedPath = path
-					log.Infof("telegram", "saved image to %s", path)
-				}
-			}
+		if att, ok := b.downloadImage(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
 			images = append(images, att)
 		}
 	}
 
 	// Handle video messages
 	if msg.Video != nil {
-		if path, err := b.downloadAndSaveMedia(msg.Video.FileId, msg.Video.FileSize, "video", msg.Chat.Id, extForVideo(msg.Video.MimeType)); err != nil {
-			if isFileTooLarge(err) {
-				text = fmt.Sprintf("[Video too large to download (%d MB)]\n\n%s", msg.Video.FileSize/(1024*1024), text)
-			} else {
-				log.Errorf("telegram", "download video: %s", b.sanitizeError(err))
-			}
-		} else {
-			text = fmt.Sprintf("[Video saved to: %s]\n\n%s", path, text)
-			log.Infof("telegram", "saved video to %s", path)
-		}
+		text = b.handleMediaMessage(text, msg.Video.FileId, msg.Video.FileSize, "video", "Video", msg.Chat.Id, extForVideo(msg.Video.MimeType))
 	}
 
 	// Handle video notes (circular video messages)
 	if msg.VideoNote != nil {
-		if path, err := b.downloadAndSaveMedia(msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", msg.Chat.Id, ".mp4"); err != nil {
-			if isFileTooLarge(err) {
-				text = fmt.Sprintf("[Video too large to download (%d MB)]\n\n%s", msg.VideoNote.FileSize/(1024*1024), text)
-			} else {
-				log.Errorf("telegram", "download video note: %s", b.sanitizeError(err))
-			}
-		} else {
-			text = fmt.Sprintf("[Video saved to: %s]\n\n%s", path, text)
-			log.Infof("telegram", "saved video note to %s", path)
-		}
+		text = b.handleMediaMessage(text, msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", "Video", msg.Chat.Id, ".mp4")
 	}
 
 	// Handle non-image document attachments
@@ -709,16 +669,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		if ext == "" {
 			ext = extForMIME(msg.Document.MimeType)
 		}
-		if path, err := b.downloadAndSaveMedia(msg.Document.FileId, msg.Document.FileSize, "document", msg.Chat.Id, ext); err != nil {
-			if isFileTooLarge(err) {
-				text = fmt.Sprintf("[Document too large to download (%d MB)]\n\n%s", msg.Document.FileSize/(1024*1024), text)
-			} else {
-				log.Errorf("telegram", "download document: %s", b.sanitizeError(err))
-			}
-		} else {
-			text = fmt.Sprintf("[Document saved to: %s]\n\n%s", path, text)
-			log.Infof("telegram", "saved document to %s", path)
-		}
+		text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "Document", msg.Chat.Id, ext)
 	}
 
 	// Drop messages with no text and no images
@@ -1814,6 +1765,42 @@ func (b *Bot) saveImage(data []byte, mediaType string, chatID int64) (string, er
 		return "", fmt.Errorf("write image: %w", err)
 	}
 	return path, nil
+}
+
+// downloadImage downloads a file and returns it as an imageAttachment,
+// optionally saving to disk. Returns (attachment, true) on success.
+func (b *Bot) downloadImage(fileID, mimeType string, chatID int64) (imageAttachment, bool) {
+	data, err := b.downloadFile(fileID)
+	if err != nil {
+		log.Errorf("telegram", "download image: %s", b.sanitizeError(err))
+		return imageAttachment{}, false
+	}
+	att := imageAttachment{data: data, mediaType: mimeType}
+	if b.receivedFilesDir != "" {
+		if path, err := b.saveImage(data, mimeType, chatID); err != nil {
+			log.Warnf("telegram", "save image: %v", err)
+		} else {
+			att.savedPath = path
+			log.Infof("telegram", "saved image to %s", path)
+		}
+	}
+	return att, true
+}
+
+// handleMediaMessage downloads and saves a media file (video, video note,
+// document), prepending a status annotation to text. On success it prepends
+// "[Label saved to: path]"; on file-too-large it prepends a size warning.
+func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType, label string, chatID int64, ext string) string {
+	path, err := b.downloadAndSaveMedia(fileID, fileSize, mediaType, chatID, ext)
+	if err != nil {
+		if isFileTooLarge(err) {
+			return fmt.Sprintf("[%s too large to download (%d MB)]\n\n%s", label, fileSize/(1024*1024), text)
+		}
+		log.Errorf("telegram", "download %s: %s", mediaType, b.sanitizeError(err))
+		return text
+	}
+	log.Infof("telegram", "saved %s to %s", mediaType, path)
+	return fmt.Sprintf("[%s saved to: %s]\n\n%s", label, path, text)
 }
 
 // isImageMIME returns true if the MIME type is a supported image format.
