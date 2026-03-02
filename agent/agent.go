@@ -86,6 +86,7 @@ type Agent struct {
 	CacheBustIdleThreshold      time.Duration                   // suppress cache bust alert if session idle > this (default 10m)
 	CacheBustAlert              CacheBustFunc                   // callback for cache bust alerts
 	DuplicateMessages           bool                            // send user text twice per API call (improves instruction following)
+	BatchPartialAssistantMessages bool                          // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
 	MaxResultChars              int                             // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir           string                          // where to write large tool results
 	ModelAliases                map[string]string               // for resolving "haiku" → full model ID
@@ -946,6 +947,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 	braindeadWarningThreshold := a.BraindeadWarningThreshold
 	braindeadWarned := false
+	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
 	for i := 0; i < maxLoops; i++ {
 		var reqMessages []anthropic.Message
 		if useAutoCache {
@@ -1059,13 +1061,27 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			a.maybeCompact(ctx, sessionKey, messages, system, &resp.Usage, sm)
 
-			return anthropic.TextOf(resp.Content), nil
+			finalText := anthropic.TextOf(resp.Content)
+			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
+				if finalText != "" {
+					batchedText.WriteString("\n\n")
+					batchedText.WriteString(finalText)
+				}
+				return batchedText.String(), nil
+			}
+			return finalText, nil
 		}
 
-		// Send any text in the response as an intermediate reply
-		// (the agent said something before/alongside tool calls)
+		// Handle text in tool_use responses: either send immediately or accumulate for batch delivery.
 		if intermediateText := anthropic.TextOf(resp.Content); intermediateText != "" {
-			sendIntermediateCtx(ctx, intermediateText)
+			if a.BatchPartialAssistantMessages {
+				if batchedText.Len() > 0 {
+					batchedText.WriteString("\n\n")
+				}
+				batchedText.WriteString(intermediateText)
+			} else {
+				sendIntermediateCtx(ctx, intermediateText)
+			}
 		}
 
 		// Build tool execution context: inject session key
