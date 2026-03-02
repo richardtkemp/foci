@@ -26,7 +26,7 @@ const (
 	OAuthAuthURL     = "https://claude.ai/oauth/authorize"
 	OAuthTokenURL    = "https://platform.claude.com/v1/oauth/token"
 	OAuthRedirectURI = "https://platform.claude.com/oauth/code/callback"
-	OAuthScopes      = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers"
+	OAuthScopes      = "user:profile user:inference user:sessions:claude_code user:mcp_servers"
 	refreshMargin    = 5 * time.Minute
 )
 
@@ -293,7 +293,7 @@ func GeneratePKCE() (verifier, challenge string, err error) {
 // BuildAuthURL returns the full OAuth authorization URL with PKCE challenge
 // and a random state parameter for CSRF protection.
 func BuildAuthURL(challenge string) (authURL, state string) {
-	buf := make([]byte, 16)
+	buf := make([]byte, 32)
 	rand.Read(buf) // crypto/rand never fails on supported platforms
 	state = base64.RawURLEncoding.EncodeToString(buf)
 	params := url.Values{
