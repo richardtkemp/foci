@@ -1287,12 +1287,21 @@ type SecretGetter interface {
 // ResolveBotToken resolves a Telegram bot token for the given bot name.
 // It checks the [telegram.bots] map for token_secret → secrets store.
 func (c *Config) ResolveBotToken(botName string, secrets SecretGetter) string {
-	if bot, ok := c.Telegram.Bots[botName]; ok && bot.TokenSecret != "" {
-		if v, ok := secrets.Get(bot.TokenSecret); ok {
-			return v
-		}
+	bot, ok := c.Telegram.Bots[botName]
+	if !ok {
+		log.Warnf("config", "ResolveBotToken(%q): bot not found in [telegram.bots]", botName)
+		return ""
 	}
-	return ""
+	if bot.TokenSecret == "" {
+		log.Warnf("config", "ResolveBotToken(%q): token_secret is empty", botName)
+		return ""
+	}
+	v, ok := secrets.Get(bot.TokenSecret)
+	if !ok {
+		log.Warnf("config", "ResolveBotToken(%q): secret %q not found in secrets store", botName, bot.TokenSecret)
+		return ""
+	}
+	return v
 }
 
 // ResolvePath resolves a path. Absolute paths are returned as-is.
