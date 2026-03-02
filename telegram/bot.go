@@ -872,12 +872,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	defer typingTicker.Stop()
 
 	// Track tool calls for live visibility via send+edit pattern.
-	// Declared before ReplyFunc so the closure can reset toolMsgID
-	// when intermediate text is sent (fixes message ordering).
-	var toolMsgID int64
-	var toolMsgText string     // last compact summary HTML (full mode) or full HTML (preview mode)
-	var toolMsgFullText string // last full formatted tool call HTML with JSON params (full mode only)
-	var toolMsgMu sync.Mutex
+	tracker := &toolCallTracker{bot: b, chatID: qm.msg.Chat.Id}
 
 	// Accumulate thinking blocks for the turn
 	var thinkingBuf strings.Builder
@@ -885,14 +880,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Per-turn callbacks scoped to context -- no cross-turn races.
 	cb := &agent.TurnCallbacks{
 		// Intermediate reply delivery (deferred replies).
-		// When intermediate text fires, reset toolMsgID so the next tool call
+		// When intermediate text fires, reset the tracker so the next tool call
 		// creates a fresh message below the text instead of editing the stale
 		// earlier message (which would appear above the text in chat).
 		ReplyFunc: func(text string) {
 			b.sendReply(qm.msg, qm.userID, text)
-			toolMsgMu.Lock()
-			toolMsgID = 0
-			toolMsgMu.Unlock()
+			tracker.resetMsgID()
 		},
 		// Voice reply delivery (for voice mode)
 		VoiceReplyFunc: func(oggData []byte) {
@@ -902,128 +895,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		ActivityFunc: func() {
 			b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 		},
-		// Tool call visibility via send+edit pattern (gated by showToolCalls)
-		ToolCallObserver: func(toolName string, params json.RawMessage) {
-			if b.showToolCalls == "off" || b.showToolCalls == "" {
-				return
-			}
-			toolMsgMu.Lock()
-			defer toolMsgMu.Unlock()
-
-			// In "full" mode, every tool call gets its own persistent message
-			// showing a compact summary with a "Show full" button.
-			if b.showToolCalls == "full" {
-				compact := formatToolCallCompact(toolName, params)
-				full := b.formatToolCall(toolName, params)
-				sendOpts := &gotgbot.SendMessageOpts{
-					ParseMode: "HTML",
-					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-							{Text: "Show full", CallbackData: "tc:show:0"},
-						}},
-					},
-				}
-				sent, err := b.client.SendMessage(qm.msg.Chat.Id, compact, sendOpts)
-				if err != nil {
-					log.Debugf("telegram", "send tool call msg: %v", err)
-					return
-				}
-				toolMsgID = sent.MessageId
-				toolMsgText = compact
-				toolMsgFullText = full
-				// Store entry immediately so "Show full" works while tool is running.
-				b.toolResults.Store(toolMsgID, toolResultEntry{
-					compactText: compact,
-					fullInput:   full,
-					chatID:      qm.msg.Chat.Id,
-				})
-				// Update the button callback data with the real message ID.
-				b.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
-					ChatId:    qm.msg.Chat.Id,
-					MessageId: toolMsgID,
-					ParseMode: "HTML",
-					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-							{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
-						}},
-					},
-				})
-				return
-			}
-
-			// "preview" mode: send first, then edit subsequent tool calls
-			// into the same message (overwriting previous).
-			text := b.formatToolCall(toolName, params)
-			sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
-			if toolMsgID == 0 {
-				sent, err := b.client.SendMessage(qm.msg.Chat.Id, text, sendOpts)
-				if err != nil {
-					log.Debugf("telegram", "send tool call msg: %v", err)
-					return
-				}
-				toolMsgID = sent.MessageId
-				toolMsgText = text
-			} else {
-				_, _, err := b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-					ChatId:    qm.msg.Chat.Id,
-					MessageId: toolMsgID,
-					ParseMode: "HTML",
-				})
-				if err != nil {
-					log.Debugf("telegram", "edit tool call msg: %v", err)
-				}
-				toolMsgText = text
-			}
-		},
-		// Tool result storage for inline keyboard expansion (full mode only)
-		ToolResultObserver: func(toolName string, result string, isError bool) {
-			if b.showToolCalls != "full" {
-				return
-			}
-			toolMsgMu.Lock()
-			msgID := toolMsgID
-			compact := toolMsgText
-			full := toolMsgFullText
-			toolMsgMu.Unlock()
-			if msgID == 0 {
-				return
-			}
-
-			// Check if user already expanded this message while the tool was running.
-			var wasExpanded bool
-			var chatID int64
-			if prev, ok := b.toolResults.Load(msgID); ok {
-				entry := prev.(toolResultEntry)
-				wasExpanded = entry.expanded
-				chatID = entry.chatID
-			}
-
-			b.toolResults.Store(msgID, toolResultEntry{
-				compactText: compact,
-				fullInput:   full,
-				result:      result,
-				expanded:    wasExpanded,
-				chatID:      chatID,
-			})
-			if b.toolDetailStore != nil {
-				b.toolDetailStore.Store(msgID, compact, full, result)
-			}
-
-			// If user already clicked "Show full", update the message with actual results.
-			if wasExpanded && chatID != 0 {
-				expanded := formatToolCallWithResult(full, result)
-				b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
-					ChatId:    chatID,
-					MessageId: msgID,
-					ParseMode: "HTML",
-					ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-						InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-							{Text: "Hide", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
-						}},
-					},
-				})
-			}
-		},
+		ToolCallObserver:   tracker.observeToolCall,
+		ToolResultObserver: tracker.observeToolResult,
 		// Thinking block accumulator (gated by showThinking)
 		ThinkingObserver: func(thinking string) {
 			if b.showThinking == "off" || b.showThinking == "" {
@@ -1089,9 +962,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// or if the edit fails. Skip when thinking will be shown — thinking-aware
 	// send functions handle the full reply (preview edit can't include thinking).
 	hasThinking := thinkingText != "" && b.showThinking != "off" && b.showThinking != ""
-	toolMsgMu.Lock()
-	editID := toolMsgID
-	toolMsgMu.Unlock()
+	editID := tracker.lastMsgID()
 
 	if editID != 0 && b.showToolCalls == "preview" && !hasThinking && len(response) <= 4096 {
 		htmlResp := ConvertToTelegramHTML(response)
@@ -2373,6 +2244,156 @@ func truncateHTMLSafe(s string, maxLen int) string {
 		}
 	}
 	return s
+}
+
+// toolCallTracker manages tool call visibility state during an agent turn.
+// It encapsulates the mutable state shared between ToolCallObserver and
+// ToolResultObserver callbacks (message ID, text snapshots, mutex).
+type toolCallTracker struct {
+	bot    *Bot
+	chatID int64
+
+	mu       sync.Mutex
+	msgID    int64  // Telegram message ID of the current tool-call message
+	text     string // last compact summary HTML (full mode) or full HTML (preview mode)
+	fullText string // last full formatted tool call HTML (full mode only)
+}
+
+// lastMsgID returns the current tool-call message ID (thread-safe).
+func (t *toolCallTracker) lastMsgID() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.msgID
+}
+
+// resetMsgID clears the tool-call message ID (e.g. after intermediate text).
+func (t *toolCallTracker) resetMsgID() {
+	t.mu.Lock()
+	t.msgID = 0
+	t.mu.Unlock()
+}
+
+// observeToolCall handles tool call visibility via send+edit pattern.
+func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessage) {
+	if t.bot.showToolCalls == "off" || t.bot.showToolCalls == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.bot.showToolCalls == "full" {
+		t.sendFullModeToolCall(toolName, params)
+		return
+	}
+	t.sendPreviewModeToolCall(toolName, params)
+}
+
+// sendFullModeToolCall sends a compact summary with a "Show full" button.
+func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawMessage) {
+	compact := formatToolCallCompact(toolName, params)
+	full := t.bot.formatToolCall(toolName, params)
+	sendOpts := &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+				{Text: "Show full", CallbackData: "tc:show:0"},
+			}},
+		},
+	}
+	sent, err := t.bot.client.SendMessage(t.chatID, compact, sendOpts)
+	if err != nil {
+		log.Debugf("telegram", "send tool call msg: %v", err)
+		return
+	}
+	t.msgID = sent.MessageId
+	t.text = compact
+	t.fullText = full
+	t.bot.toolResults.Store(t.msgID, toolResultEntry{
+		compactText: compact,
+		fullInput:   full,
+		chatID:      t.chatID,
+	})
+	t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
+		ChatId:    t.chatID,
+		MessageId: t.msgID,
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+				{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", t.msgID)},
+			}},
+		},
+	})
+}
+
+// sendPreviewModeToolCall sends or edits a tool call message (overwriting previous).
+func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.RawMessage) {
+	text := t.bot.formatToolCall(toolName, params)
+	sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
+	if t.msgID == 0 {
+		sent, err := t.bot.client.SendMessage(t.chatID, text, sendOpts)
+		if err != nil {
+			log.Debugf("telegram", "send tool call msg: %v", err)
+			return
+		}
+		t.msgID = sent.MessageId
+		t.text = text
+	} else {
+		_, _, err := t.bot.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+			ChatId:    t.chatID,
+			MessageId: t.msgID,
+			ParseMode: "HTML",
+		})
+		if err != nil {
+			log.Debugf("telegram", "edit tool call msg: %v", err)
+		}
+		t.text = text
+	}
+}
+
+// observeToolResult stores tool results for inline keyboard expansion (full mode only).
+func (t *toolCallTracker) observeToolResult(toolName string, result string, isError bool) {
+	if t.bot.showToolCalls != "full" {
+		return
+	}
+	t.mu.Lock()
+	msgID := t.msgID
+	compact := t.text
+	full := t.fullText
+	t.mu.Unlock()
+	if msgID == 0 {
+		return
+	}
+
+	var wasExpanded bool
+	if prev, ok := t.bot.toolResults.Load(msgID); ok {
+		entry := prev.(toolResultEntry)
+		wasExpanded = entry.expanded
+	}
+
+	t.bot.toolResults.Store(msgID, toolResultEntry{
+		compactText: compact,
+		fullInput:   full,
+		result:      result,
+		expanded:    wasExpanded,
+		chatID:      t.chatID,
+	})
+	if t.bot.toolDetailStore != nil {
+		t.bot.toolDetailStore.Store(msgID, compact, full, result)
+	}
+
+	if wasExpanded {
+		expanded := formatToolCallWithResult(full, result)
+		t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+			ChatId:    t.chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+					{Text: "Hide", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
+				}},
+			},
+		})
+	}
 }
 
 // toolResultEntry stores the compact summary, full input text, and result
