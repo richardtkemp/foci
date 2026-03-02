@@ -212,7 +212,7 @@ HAS_POLKIT_RULE=false
 
 NEED_DIRS=false
 if ! $IS_SELF; then
-    for dir in "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills"; do
+    for dir in "$FOCI_HOME/config" "$FOCI_HOME/data"; do
         if [[ ! -d "$dir" ]]; then
             NEED_DIRS=true
             break
@@ -291,7 +291,7 @@ if $IS_SELF && ! $DRY_RUN; then
     info "Self-mode: handling directories, config, and files directly"
 
     # Create directories (no chown needed — we own them)
-    mkdir -p "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills"
+    mkdir -p "$FOCI_HOME/config" "$FOCI_HOME/data"
 
     # Config wizard
     if ! $HAS_CONFIG; then
@@ -365,14 +365,14 @@ emit "install -m 755 \"$SCRIPT_DIR/foci-call\" \"$INSTALL_DIR/foci-call\""
 # --- Directories (only if needed and not self-mode) ---
 if $NEED_DIRS; then
     emit_comment "Create directories"
-    emit "mkdir -p \"$FOCI_HOME/config\" \"$FOCI_HOME/data\" \"$FOCI_HOME/data/sessions\" \"$FOCI_HOME/logs\" \"$FOCI_HOME/shared/skills\""
-    emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/config\" \"$FOCI_HOME/data\" \"$FOCI_HOME/data/sessions\" \"$FOCI_HOME/logs\" \"$FOCI_HOME/shared/skills\""
+    emit "mkdir -p \"$FOCI_HOME/config\" \"$FOCI_HOME/data\""
+    emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/config\" \"$FOCI_HOME/data\""
 fi
 
 # --- Config wizard (only if no config and not self-mode) ---
 if ! $HAS_CONFIG && ! $IS_SELF; then
     emit_comment "Run config wizard"
-    emit "sudo -u \"$FOCI_USER\" -g \"$SECRETS_GROUP\" \"$INSTALL_DIR/foci\" setup $SETUP_WIZARD_ARGS"
+    emit "sudo -u \"$FOCI_USER\" \"$INSTALL_DIR/foci\" setup $SETUP_WIZARD_ARGS"
     # Wizard may create secrets.toml — harden it if so
     emit "[ -f \"$SECRETS_FILE\" ] && chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\" && chmod 0660 \"$SECRETS_FILE\""
 fi
