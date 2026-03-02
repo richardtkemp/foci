@@ -51,10 +51,6 @@ func (m *mockSessionBrancher) CreateBranch(parentKey, branchKey string, opts Bra
 	return m.err
 }
 
-func (m *mockSessionBrancher) SessionPath(key string) (string, error) {
-	return "/tmp/mock-session-" + key + ".jsonl", nil
-}
-
 // mockSpawnAgent captures HandleMessage calls.
 type mockSpawnAgent struct {
 	sessionKey string

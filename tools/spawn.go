@@ -34,7 +34,6 @@ type BranchOptions struct {
 // SessionBrancher is the session ops needed by spawn inherit mode.
 type SessionBrancher interface {
 	CreateBranch(parentKey, branchKey string, opts BranchOptions) error
-	SessionPath(key string) (string, error)
 }
 
 // SpawnAgent is the agent interface needed by spawn inherit mode.
