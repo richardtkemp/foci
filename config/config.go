@@ -158,15 +158,11 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	SetupToken      string `toml:"setup_token"` // setup-token from `claude setup-token` (written by `foci auth`)
-	APIKey          string `toml:"api_key"`      // Anthropic API key (fallback when setup-token not available)
-	BraveAPIKey     string `toml:"brave_api_key"`
 	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
 }
 
 type TelegramConfig struct {
-	BotToken            string   `toml:"bot_token"` // deprecated: use telegram_bot on agent + secret
 	AllowedUsers        []string `toml:"allowed_users"`
 	MultiballBots       []string `toml:"multiball_bots"` // shared multiball pool: bot names (tokens via "telegram.<name>" secrets)
 	StopAliases         []string                     `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])

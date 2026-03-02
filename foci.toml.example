@@ -278,7 +278,7 @@ bind = "127.0.0.1"
 # max_upload_file_size = 52428800
 # summary_context_turns = 5
 # summary_context_chars = 6000
-# search_provider = "anthropic"              # "anthropic" (server-side, default) or "brave" (needs brave_api_key)
+# search_provider = "anthropic"              # "anthropic" (server-side, default) or "brave" (needs brave.api_key in secrets)
 # fetch_provider = "builtin"                  # "builtin" (client-side, default) or "anthropic" (server-side)
 # web_search_max_uses = 0                    # max searches per API call (0 = unlimited, anthropic provider only)
 # web_search_allowed_domains = []            # domain whitelist (mutually exclusive with blocked)
