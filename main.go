@@ -3218,10 +3218,14 @@ func readPromptFile(path, label string) string {
 // exist. This gives users editable copies they can customise.
 func seedDefaultPrompts(dir string) {
 	promptFiles := map[string]func() string{
-		"keepalive.md":            prompts.Keepalive,
-		"background.md":           prompts.Background,
-		"memory-formation.md":     prompts.MemoryFormation,
-		"memory-consolidation.md": prompts.MemoryConsolidation,
+		"keepalive.md":                    prompts.Keepalive,
+		"background.md":                   prompts.Background,
+		"memory-formation.md":             prompts.MemoryFormation,
+		"memory-consolidation.md":         prompts.MemoryConsolidation,
+		"compaction-summary.md":           prompts.CompactionSummary,
+		"compaction-handoff.md":           prompts.CompactionHandoff,
+		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless,
+		"branch-orientation-multiball.md": prompts.BranchOrientationMultiball,
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
