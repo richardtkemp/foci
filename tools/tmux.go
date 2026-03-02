@@ -351,6 +351,26 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir stri
 
 	log.Debugf("tmux", "start: name=%s command=%q workdir=%q cols=%d rows=%d watch=%v", name, command, workdir, inst.cols, inst.rows, watch)
 
+	// Cancel any stale watches for this session name (e.g. from a prior
+	// session that exited naturally before the monitor noticed).
+	inst.mu.Lock()
+	prefix := name + ":"
+	var staleWatches []*watchedSession
+	for key, ws := range inst.watched {
+		if strings.HasPrefix(key, prefix) {
+			staleWatches = append(staleWatches, ws)
+			delete(inst.watched, key)
+		}
+	}
+	if len(staleWatches) > 0 {
+		inst.persistWatches()
+	}
+	inst.mu.Unlock()
+	for _, ws := range staleWatches {
+		ws.cancel()
+		log.Debugf("tmux", "start: cancelled stale watch for %s", name)
+	}
+
 	out, err := runTmux(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("tmux new-session: %s %w", strings.TrimSpace(out), err)
@@ -1045,13 +1065,8 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 			out, err := runTmux(context.Background(), "capture-pane", "-t",
 				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
 			if err != nil {
-				// Session is dead — notify and clean up
-				log.Infof("tmux", "watch: session %s no longer exists, auto-unwatching", ws.session)
-				msg := prompts.FormatInjectedMessage("TMUX WATCH",
-					time.Now(),
-					fmt.Sprintf("Session %s no longer exists — auto-unwatched", ws.session))
-				ws.notifier.Notify(ws.agentSessionKey, msg)
-
+				// Session exited — silently clean up the watch
+				log.Debugf("tmux", "watch: session %s exited, cleaning up watch", ws.session)
 				inst.mu.Lock()
 				delete(inst.watched, key)
 				inst.persistWatches()
