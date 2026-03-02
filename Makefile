@@ -6,7 +6,7 @@ LDFLAGS = -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call test vet clean
+.PHONY: all build cli foci-call test vet lint check clean
 
 all: build cli foci-call
 
@@ -27,3 +27,13 @@ clean:
 
 vet:
 	go vet ./...
+
+lint: vet
+	@echo "=== errcheck (production only) ==="
+	@errcheck ./... 2>&1 | grep -v _test.go | tee /dev/stderr | { ! grep -q .; }
+	@echo "=== gocyclo (>100) ==="
+	@gocyclo -over 100 . || true
+	@echo "=== gocognit (>100) ==="
+	@gocognit -over 100 . || true
+
+check: test lint
