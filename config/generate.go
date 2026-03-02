@@ -17,11 +17,8 @@ type SetupOptions struct {
 type SecretsOptions struct {
 	AgentID string // agent identifier (matches bot name in [telegram.bots.<id>])
 
-	// Anthropic auth — one of these groups should be set
-	OAuthAccessToken  string
-	OAuthRefreshToken string
-	OAuthExpiresAt    int64
-	SetupToken        string // static API key (alternative to OAuth)
+	// Anthropic auth
+	SetupToken string // setup-token from `claude setup-token` or API key
 
 	// Telegram
 	BotToken string
@@ -70,20 +67,9 @@ func GenerateSecrets(opts SecretsOptions) string {
 	var b strings.Builder
 
 	// [anthropic]
-	hasAnthropicOAuth := opts.OAuthAccessToken != "" && opts.OAuthRefreshToken != ""
-	hasSetupToken := opts.SetupToken != ""
-
-	if hasAnthropicOAuth || hasSetupToken {
+	if opts.SetupToken != "" {
 		b.WriteString("[anthropic]\n")
-		if hasAnthropicOAuth {
-			b.WriteString(fmt.Sprintf("oauth_access_token = %q\n", opts.OAuthAccessToken))
-			b.WriteString(fmt.Sprintf("oauth_refresh_token = %q\n", opts.OAuthRefreshToken))
-			if opts.OAuthExpiresAt > 0 {
-				b.WriteString(fmt.Sprintf("oauth_expires_at = %d\n", opts.OAuthExpiresAt))
-			}
-		} else {
-			b.WriteString(fmt.Sprintf("setup_token = %q\n", opts.SetupToken))
-		}
+		b.WriteString(fmt.Sprintf("setup_token = %q\n", opts.SetupToken))
 		b.WriteString("\n")
 	}
 

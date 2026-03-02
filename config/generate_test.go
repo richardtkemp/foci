@@ -83,13 +83,11 @@ func TestGenerateConfigMinimal(t *testing.T) {
 	}
 }
 
-func TestGenerateSecretsOAuth(t *testing.T) {
+func TestGenerateSecretsSetupToken(t *testing.T) {
 	opts := SecretsOptions{
-		AgentID:           "fotini",
-		OAuthAccessToken:  "sk-ant-oat01-test",
-		OAuthRefreshToken: "sk-ant-ort01-test",
-		OAuthExpiresAt:    1772334580401,
-		BotToken:          "123456789:AAF-test",
+		AgentID:    "fotini",
+		SetupToken: "sk-ant-oat01-testtoken123456789012345678901234567890123456789012345678901234567",
+		BotToken:   "123456789:AAF-test",
 	}
 
 	result := GenerateSecrets(opts)
@@ -99,24 +97,14 @@ func TestGenerateSecretsOAuth(t *testing.T) {
 		t.Fatalf("generated secrets is not valid TOML: %v\nOutput:\n%s", err, result)
 	}
 
-	if !strings.Contains(result, `oauth_access_token = "sk-ant-oat01-test"`) {
-		t.Error("missing oauth_access_token")
-	}
-	if !strings.Contains(result, `oauth_refresh_token = "sk-ant-ort01-test"`) {
-		t.Error("missing oauth_refresh_token")
-	}
-	if !strings.Contains(result, "oauth_expires_at = 1772334580401") {
-		t.Error("missing oauth_expires_at")
+	if !strings.Contains(result, `setup_token = "sk-ant-oat01-`) {
+		t.Error("missing setup_token")
 	}
 	if !strings.Contains(result, `[telegram.bots.fotini]`) {
 		t.Error("missing telegram bot section")
 	}
 	if !strings.Contains(result, `token = "123456789:AAF-test"`) {
 		t.Error("missing bot token")
-	}
-	// OAuth mode should NOT have setup_token
-	if strings.Contains(result, "setup_token") {
-		t.Error("OAuth mode should not include setup_token")
 	}
 }
 
