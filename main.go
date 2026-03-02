@@ -80,8 +80,9 @@ type agentInstance struct {
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
-	tmuxClearAll      func()            // clears tmux tool state (watches, owned sessions)
-	kaRunner          *keepalive.Runner // keepalive & background work timer (nil if disabled)
+	promptSearchDirs  []string           // directories to search for prompt files
+	tmuxClearAll      func()             // clears tmux tool state (watches, owned sessions)
+	kaRunner          *keepalive.Runner  // keepalive & background work timer (nil if disabled)
 }
 
 // applyAgentDisplaySettings sets per-agent display settings on a bot,
@@ -408,7 +409,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
 		orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, d.cfg.Sessions.BranchOrientationPrompt)
-		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false)
+		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
 		branchErr := d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        req.NoResetHook,
 			OrientationMessage: orientText,
@@ -847,7 +848,7 @@ func main() {
 			branchFn := keepalive.BuildBranchFunc(
 				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
 				func(branchKey, parentKey, branchType string) string {
-					return buildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false)
+					return buildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false, inst.promptSearchDirs)
 				},
 				ctx,
 			)
@@ -899,6 +900,7 @@ func main() {
 				Keepalive:                 acfg.Keepalive,
 				Background:                acfg.Background,
 				MemoryFormation:           acfg.MemoryFormation,
+				PromptSearchDirs:          inst.promptSearchDirs,
 				TodoStore:                 mem.todoStore,
 				UsageClient:               usageClient,
 				StateStore:                stateStore,
@@ -971,8 +973,8 @@ func main() {
 					if strings.HasPrefix(sessionKey, prefix) {
 						orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 						fireSessionEndMemory(inst.ag, sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
-							return buildBranchOrientation(orientPath, bk, pk, bt, false)
-						}, ctx)
+							return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
+						}, inst.promptSearchDirs, ctx)
 						return
 					}
 				}
@@ -1345,6 +1347,13 @@ type setupParams struct {
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
+	// Prompt search directories: agent workspace first, then shared.
+	// Used by ResolvePrompt when no explicit path is configured.
+	promptSearchDirs := []string{
+		filepath.Join(acfg.Workspace, "prompts"),
+		filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts"),
+	}
+
 	// Default session key resolver — returns the session key for the agent's default chat.
 	// Before any Telegram message arrives, this returns "" (no default set).
 	// After the first message, it returns agent:<id>:chat:<chatID>.
@@ -1610,8 +1619,8 @@ func setupAgent(p setupParams) *agentInstance {
 		UsageClient:                 p.usageClient,
 		PromptRules:                 agent.CompilePromptRules(resolvePromptRules(acfg, p.cfg)),
 		CompactionSummaryPromptPath: resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
-		ReadPromptFile:              readPromptFile,
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
+		PromptSearchDirs:            promptSearchDirs,
 		MaxToolLoops:                acfg.MaxToolLoops,
 		MaxOutputTokens:             acfg.MaxOutputTokens,
 		BraindeadWarningThreshold:   acfg.BraindeadThreshold,
@@ -1677,7 +1686,7 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxInherit: resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
 		Notifier:   notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
-			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false)
+			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
 		},
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
@@ -1757,8 +1766,8 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		resetOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		fireSessionEndMemory(ag, p.sessions, sk, acfg.MemoryFormation, func(bk, pk, bt string) string {
-			return buildBranchOrientation(resetOrientPath, bk, pk, bt, false)
-		}, p.ctx)
+			return buildBranchOrientation(resetOrientPath, bk, pk, bt, false, promptSearchDirs)
+		}, promptSearchDirs, p.ctx)
 		if err := p.sessions.Clear(sk); err != nil {
 			return err
 		}
@@ -1997,7 +2006,7 @@ func setupAgent(p setupParams) *agentInstance {
 		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
 
 		orientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
-		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true)
+		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true, promptSearchDirs)
 		if err := p.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			OrientationMessage: orientText,
 		}); err != nil {
@@ -2048,8 +2057,12 @@ func setupAgent(p setupParams) *agentInstance {
 			ag.CompactionNotifyFunc(sk, "⏳ Compacting context...")
 		}
 		system := bootstrap.SystemBlocks()
-		summaryPrompt := readPromptFile(ag.CompactionSummaryPromptPath, "compaction")
-		summary, err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, ag.CompactionHandoffMsg)
+		summaryPrompt := prompts.ResolvePrompt(ag.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), promptSearchDirs...)
+		handoffMsg := ag.CompactionHandoffMsg
+		if handoffMsg == "" {
+			handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), promptSearchDirs...)
+		}
+		summary, err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, handoffMsg)
 		if err != nil {
 			return 0, fmt.Errorf("compaction failed: %w", err)
 		}
@@ -2193,6 +2206,7 @@ func setupAgent(p setupParams) *agentInstance {
 		bootstrap:         bootstrap,
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
+		promptSearchDirs:  promptSearchDirs,
 		tmuxClearAll:      tmuxClearAll,
 	}
 }
@@ -2350,10 +2364,14 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		}
 		reclaimOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		reclaimMfCfg := acfg.MemoryFormation
+		reclaimSearchDirs := []string{
+			filepath.Join(acfg.Workspace, "prompts"),
+			filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts"),
+		}
 		pool.ReclaimHook = func(sessionKey string) {
 			fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-				return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false)
-			}, p.ctx)
+				return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
+			}, reclaimSearchDirs, p.ctx)
 		}
 	}
 }
@@ -3039,9 +3057,6 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 	return nil, nil, nil // unreachable
 }
 
-// readPromptFile reads a prompt from a file path. Returns the trimmed contents,
-// or empty string (with error logged) if the file can't be read.
-
 // resolveInt returns the per-agent value if non-zero, otherwise global.
 func resolveInt(perAgent, global int) int {
 	if perAgent != 0 {
@@ -3202,18 +3217,6 @@ func hasMemoryFormation(mf config.MemoryFormationConfig) bool {
 	return intervalEnabled || consolidationEnabled || sessionEndEnabled
 }
 
-func readPromptFile(path, label string) string {
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Errorf(label, "read prompt file %s: %v", path, err)
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
 // seedDefaultPrompts writes embedded prompt files to dir if they don't already
 // exist. This gives users editable copies they can customise.
 func seedDefaultPrompts(dir string) {
@@ -3247,21 +3250,18 @@ func seedDefaultPrompts(dir string) {
 }
 
 // buildBranchOrientation constructs orientation text for a branch session.
-// If promptPath points to a readable file, its contents are used as a template.
-// Otherwise an embedded default from prompts/ is used (varies by directChat).
+// Resolves the prompt through ResolvePrompt: explicit path → search dirs → embedded default.
 // Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
-func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool) string {
-	var text string
-	if promptPath != "" {
-		text = readPromptFile(promptPath, "branch_orientation")
+func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool, searchDirs []string) string {
+	var filename, embedded string
+	if directChat {
+		filename = "branch-orientation-multiball.md"
+		embedded = prompts.BranchOrientationMultiball()
+	} else {
+		filename = "branch-orientation-headless.md"
+		embedded = prompts.BranchOrientationHeadless()
 	}
-	if text == "" {
-		if directChat {
-			text = prompts.BranchOrientationMultiball()
-		} else {
-			text = prompts.BranchOrientationHeadless()
-		}
-	}
+	text := prompts.ResolvePrompt(promptPath, filename, embedded, searchDirs...)
 	return prompts.ReplaceVars(text, map[string]string{
 		"branch_key":  branchKey,
 		"parent_key":  parentKey,
@@ -3282,12 +3282,12 @@ func promptInfo(label, path string) command.PromptInfo {
 // fireSessionEndMemory runs memory formation on the expiring session before it is cleared.
 // Creates an async branch from the session so the caller can proceed immediately.
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
-func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, parentCtx context.Context) {
+func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context) {
 	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "session-end-memory", prompts.MemoryFormation())
+	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "memory-formation.md", prompts.MemoryFormation(), searchDirs...)
 	if prompt == "" {
 		return
 	}
