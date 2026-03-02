@@ -32,7 +32,7 @@ func TestKeyToPath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got, err := s.keyToPath(tt.key)
+		got, err := s.SessionPath(tt.key)
 		if err != nil {
 			t.Errorf("keyToPath(%q) unexpected error: %v", tt.key, err)
 			continue
@@ -44,7 +44,7 @@ func TestKeyToPath(t *testing.T) {
 
 	// Empty/malformed keys should return error, not panic
 	for _, bad := range []string{"", "agent", "agent:main"} {
-		_, err := s.keyToPath(bad)
+		_, err := s.SessionPath(bad)
 		if err == nil {
 			t.Errorf("keyToPath(%q) should return error for malformed key", bad)
 		}
@@ -272,7 +272,7 @@ func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
 	s.Append(key, msg("user", "hello"))
 
 	// Verify session_meta is written by reading raw file
-	path, _ := s.keyToPath(key)
+	path, _ := s.SessionPath(key)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read file: %v", err)
@@ -326,7 +326,7 @@ func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
 	}
 
 	// Modify file mtime (simulating external modification)
-	path, _ := s.keyToPath(key)
+	path, _ := s.SessionPath(key)
 	newTime := time.Now().Add(-24 * time.Hour)
 	if err := os.Chtimes(path, newTime, newTime); err != nil {
 		t.Fatalf("Chtimes: %v", err)
@@ -542,7 +542,7 @@ func TestInjectRestartMarkersOldFile(t *testing.T) {
 	s.Append(key, msg("user", "hello"))
 
 	// Set mtime to 2 hours ago
-	path, _ := s.keyToPath(key)
+	path, _ := s.SessionPath(key)
 	oldTime := time.Now().Add(-2 * time.Hour)
 	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
 		t.Fatalf("Chtimes: %v", err)
@@ -584,7 +584,7 @@ func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
 	// Old session
 	old := "agent:test:cron:daily"
 	s.Append(old, msg("user", "wake"))
-	oldPath, _ := s.keyToPath(old)
+	oldPath, _ := s.SessionPath(old)
 	oldTime := time.Now().Add(-2 * time.Hour)
 	os.Chtimes(oldPath, oldTime, oldTime)
 

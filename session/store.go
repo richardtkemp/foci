@@ -34,10 +34,10 @@ func NewStore(dir string) *Store {
 	return &Store{dir: dir}
 }
 
-// keyToPath converts a session key to a file path.
+// SessionPath converts a session key to a file path.
 // Key format: agent:AGENTID:TYPE[:BRANCHID]
 // Path format: {dir}/agent/AGENTID/TYPE[/BRANCHID].jsonl
-func (s *Store) keyToPath(key string) (string, error) {
+func (s *Store) SessionPath(key string) (string, error) {
 	parts := strings.Split(key, ":")
 	// parts[0] = "agent", parts[1] = AGENTID, parts[2] = TYPE, parts[3] = BRANCHID (optional)
 	if len(parts) < 3 {
@@ -59,7 +59,7 @@ func (s *Store) Load(key string) ([]anthropic.Message, error) {
 }
 
 func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (s *Store) Append(key string, msg anthropic.Message) error {
 }
 
 func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (s *Store) Clear(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return err
 	}
@@ -303,7 +303,7 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 
 // getStoredCreatedAt reads the stored creation time from an existing session file.
 func (s *Store) getStoredCreatedAt(key string) string {
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return ""
 	}
@@ -467,7 +467,7 @@ func (s *Store) MessageCount(key string) (int, error) {
 // Returns "n/a" if the file doesn't exist.
 func (s *Store) CreatedAt(key string) string {
 	// First try to read stored creation time from file
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return "n/a"
 	}
@@ -501,7 +501,7 @@ func (s *Store) LastActivity(key string) string {
 }
 
 func (s *Store) fileTime(key string) string {
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return "n/a"
 	}
