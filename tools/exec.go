@@ -74,6 +74,11 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 				"background": {
 					"type": "boolean",
 					"description": "If true, child processes survive after the command exits (for tmux, daemons, etc.)"
+				},
+				"output_mode": {
+					"type": "string",
+					"enum": ["combined", "separated"],
+					"description": "Output mode: combined (default) merges stdout/stderr; separated returns JSON with stdout, stderr, and exit_code fields"
 				}
 			},
 			"required": ["command"]
@@ -89,6 +94,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
 		Background bool   `json:"background"`
+		OutputMode string `json:"output_mode"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
@@ -135,21 +141,21 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	// For explicit background mode, use the original direct approach (no bridge)
 	if p.Background {
-		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil)
+		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil, p.OutputMode)
 	}
 
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
 		sk := SessionKeyFromContext(ctx)
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry, p.OutputMode)
 	}
 
-	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry)
+	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry, p.OutputMode)
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry) (string, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -202,6 +208,22 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		return "", fmt.Errorf("start command: %w", err)
 	}
 
+	if outputMode == "separated" {
+		var stdoutBuf, stderrBuf bytes.Buffer
+		doneRead := make(chan struct{})
+		go func() {
+			defer close(doneRead)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
+			wg.Wait()
+		}()
+		err = proc.Wait()
+		<-doneRead
+		return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
+	}
+
 	// Read stdout and stderr with limits. Pipes close when process exits,
 	// so we must read in goroutines and wait for them after Wait().
 	var combined bytes.Buffer
@@ -221,7 +243,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry) (string, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string) (string, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -272,15 +294,27 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		return "", fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr with limits into shared buffer
+	// Read stdout and stderr with limits
 	var combined bytes.Buffer
+	var stdoutBuf, stderrBuf bytes.Buffer
 	doneRead := make(chan struct{})
 
-	go func() {
-		defer close(doneRead)
-		_, _ = io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
-		_, _ = io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
-	}()
+	if outputMode == "separated" {
+		go func() {
+			defer close(doneRead)
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
+			wg.Wait()
+		}()
+	} else {
+		go func() {
+			defer close(doneRead)
+			_, _ = io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
+			_, _ = io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
+		}()
+	}
 
 	// Wait for completion or threshold
 	done := make(chan error, 1)
@@ -296,6 +330,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		cmdCancel()
 		if bridge != nil {
 			bridge.Close()
+		}
+		if outputMode == "separated" {
+			return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
 		}
 		return formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
 
@@ -313,7 +350,12 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			}
 			err := <-done
 			<-doneRead // Wait for output reading to complete
-			result := formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+			var result string
+			if outputMode == "separated" {
+				result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
+			} else {
+				result = formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+			}
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
 			notifier.Notify(sessionKey, msg)
 		}()
@@ -354,6 +396,37 @@ func formatResult(output string, err error, ctx context.Context, timeout time.Du
 	}
 
 	return result
+}
+
+// separatedOutput is the JSON structure returned by exec in "separated" output mode.
+type separatedOutput struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+}
+
+// formatSeparatedResult returns a JSON object with stdout, stderr, and exit_code.
+func formatSeparatedResult(stdout, stderr string, err error, store *secrets.Store, bwStore *bitwarden.Store) string {
+	if store != nil {
+		stdout = store.Redact(stdout)
+		stderr = store.Redact(stderr)
+	}
+	if bwStore != nil {
+		stdout = bwStore.Redact(stdout)
+		stderr = bwStore.Redact(stderr)
+	}
+
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			code = -1
+		}
+	}
+
+	b, _ := json.Marshal(separatedOutput{Stdout: stdout, Stderr: stderr, ExitCode: code})
+	return string(b)
 }
 
 // allSecretRefsInHTTPRequestScope returns true if every {{secret:}} template
