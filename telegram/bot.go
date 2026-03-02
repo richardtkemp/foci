@@ -59,6 +59,7 @@ type queuedMessage struct {
 // Messages are received on one goroutine and processed on another.
 // Slash commands execute immediately on the receiver goroutine.
 type Bot struct {
+	log                *log.ComponentLogger
 	api                *gotgbot.Bot // for receiving updates (Run)
 	client             botClient    // for sending messages and files (mockable in tests)
 	agent              *agent.Agent
@@ -99,6 +100,19 @@ type Bot struct {
 	toolDetailStore      *ToolDetailStore    // nil = no persistence; write-through to SQLite
 }
 
+// defaultLogger is used when a Bot is constructed without a ComponentLogger
+// (e.g. in tests that build the struct literal directly).
+var defaultLogger = log.NewComponentLogger("telegram")
+
+// logger returns the bot's ComponentLogger, falling back to a package-level
+// default so that test-constructed bots never nil-deref.
+func (b *Bot) logger() *log.ComponentLogger {
+	if b.log != nil {
+		return b.log
+	}
+	return defaultLogger
+}
+
 // NewBot creates a new Telegram bot.
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (multiball) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
@@ -127,6 +141,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 	}
 
 	return &Bot{
+		log:          log.NewComponentLogger("telegram:" + agentID),
 		api:          api,
 		client:       api,
 		agent:        ag,
@@ -197,14 +212,14 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 	}
 	entries, err := store.LoadAll()
 	if err != nil {
-		log.Warnf("telegram", "load tool details: %v", err)
+		b.logger().Warnf("load tool details: %v", err)
 		return
 	}
 	for id, entry := range entries {
 		b.toolResults.Store(id, entry)
 	}
 	if len(entries) > 0 {
-		log.Infof("telegram", "restored %d tool call details from disk", len(entries))
+		b.logger().Infof("restored %d tool call details from disk", len(entries))
 	}
 }
 
@@ -217,6 +232,7 @@ func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidt
 // For use in tests outside the telegram package.
 func NewBotForTest() *Bot {
 	return &Bot{
+		log:   log.NewComponentLogger("telegram:test"),
 		queue: make(chan queuedMessage, 64),
 	}
 }
@@ -231,14 +247,14 @@ func (b *Bot) SetStateStore(store *state.Store, key string) {
 	var chatID int64
 	if store.Get(key+":chatid", &chatID) && chatID != 0 {
 		b.SetChatID(chatID)
-		log.Infof("telegram", "restored chat ID %d from state", chatID)
+		b.logger().Infof("restored chat ID %d from state", chatID)
 	}
 
 	// Restore default chat from persisted state (for per-chat session routing)
 	if b.agentID != "" {
 		var defaultChat int64
 		if store.Get("agent:"+b.agentID+":default_chat", &defaultChat) && defaultChat != 0 {
-			log.Infof("telegram", "restored default chat %d for agent %s", defaultChat, b.agentID)
+			b.logger().Infof("restored default chat %d for agent %s", defaultChat, b.agentID)
 		}
 	}
 }
@@ -331,7 +347,7 @@ func (b *Bot) setDefaultChat(chatID int64) {
 		return
 	}
 	if err := b.stateStore.Set("agent:"+b.agentID+":default_chat", chatID); err != nil {
-		log.Errorf("telegram", "persist default chat: %v", err)
+		b.logger().Errorf("persist default chat: %v", err)
 	}
 }
 
@@ -342,7 +358,7 @@ func (b *Bot) recordChatUsername(chatID int64, username string) {
 	}
 	key := fmt.Sprintf("agent:%s:chat:%d:username", b.agentID, chatID)
 	if err := b.stateStore.Set(key, username); err != nil {
-		log.Errorf("telegram", "persist chat username: %v", err)
+		b.logger().Errorf("persist chat username: %v", err)
 	}
 }
 
@@ -408,16 +424,16 @@ func (b *Bot) RegisterCommands() {
 	cmds = append(cmds, gotgbot.BotCommand{Command: "done", Description: "Detach a secondary bot from its session"})
 
 	if _, err := b.client.SetMyCommands(cmds, nil); err != nil {
-		log.Warnf("telegram", "setMyCommands: %s", b.sanitizeError(err))
+		b.logger().Warnf("setMyCommands: %s", b.sanitizeError(err))
 		return
 	}
-	log.Infof("telegram", "registered %d commands with BotFather", len(cmds))
+	b.logger().Infof("registered %d commands with BotFather", len(cmds))
 }
 
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
 // If polling fails, it recovers and retries with backoff.
 func (b *Bot) Run(ctx context.Context) {
-	log.Infof("telegram", "bot started as @%s", b.api.Username)
+	b.logger().Infof("bot started as @%s", b.api.Username)
 
 	b.RegisterCommands()
 
@@ -431,7 +447,7 @@ func (b *Bot) Run(ctx context.Context) {
 			return
 		}
 
-		log.Warnf("telegram", "polling interrupted, restarting in 5s...")
+		b.logger().Warnf("polling interrupted, restarting in 5s...")
 		select {
 		case <-ctx.Done():
 			return
@@ -445,7 +461,7 @@ func (b *Bot) Run(ctx context.Context) {
 func (b *Bot) pollUpdates(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf("telegram", "panic in polling: %v\n%s", r, debug.Stack())
+			b.logger().Errorf("panic in polling: %v\n%s", r, debug.Stack())
 		}
 	}()
 
@@ -472,9 +488,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				},
 			})
 			if err != nil {
-				log.Errorf("telegram", "failed to ack updates on shutdown: %s", b.sanitizeError(err))
+				b.logger().Errorf("failed to ack updates on shutdown: %s", b.sanitizeError(err))
 			} else {
-				log.Infof("telegram", "acknowledged updates up to offset %d", offset)
+				b.logger().Infof("acknowledged updates up to offset %d", offset)
 			}
 		}
 	}()
@@ -505,9 +521,9 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				consecutiveErrors++
 				sanitized := b.sanitizeError(res.err)
 				if consecutiveErrors >= errorEscalateThreshold {
-					log.Errorf("telegram", "get updates (%d consecutive failures): %s", consecutiveErrors, sanitized)
+					b.logger().Errorf("get updates (%d consecutive failures): %s", consecutiveErrors, sanitized)
 				} else {
-					log.Debugf("telegram", "get updates (transient): %s", sanitized)
+					b.logger().Debugf("get updates (transient): %s", sanitized)
 				}
 				select {
 				case <-ctx.Done():
@@ -566,7 +582,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
 	if !b.allowedUsers[userID] {
-		log.Warnf("telegram", "rejected message from %s", formatUserInfo(msg.From))
+		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.From))
 		return
 	}
 
@@ -578,7 +594,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 
 	if changed && b.stateStore != nil {
 		if err := b.stateStore.Set(b.stateKey+":chatid", msg.Chat.Id); err != nil {
-			log.Errorf("telegram", "persist chat ID: %v", err)
+			b.logger().Errorf("persist chat ID: %v", err)
 		}
 	}
 
@@ -586,7 +602,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if !b.isSecondary && b.agentID != "" {
 		if b.defaultChatID() == 0 {
 			b.setDefaultChat(msg.Chat.Id)
-			log.Infof("telegram", "set default chat %d for agent %s", msg.Chat.Id, b.agentID)
+			b.logger().Infof("set default chat %d for agent %s", msg.Chat.Id, b.agentID)
 		}
 		if msg.From != nil {
 			b.recordChatUsername(msg.Chat.Id, msg.From.Username)
@@ -596,7 +612,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Record last real user activity (for --if-active gating on CLI commands).
 	// Only primary bots track this — secondary (multiball) bots don't count.
 	if !b.isSecondary && b.agentID != "" && b.stateStore != nil {
-		b.stateStore.Set("agent:"+b.agentID+":last_user_activity", time.Now().Unix())
+		_ = b.stateStore.Set("agent:"+b.agentID+":last_user_activity", time.Now().Unix())
 	}
 	if b.OnUserMessage != nil {
 		b.OnUserMessage()
@@ -626,15 +642,15 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Handle voice notes: download, transcribe, tag with [voice]
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
-			log.Errorf("telegram", "download voice: %s", b.sanitizeError(err))
+			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
 		} else {
 			transcript, err := b.transcriber.Transcribe(ctx, data, "voice.ogg")
 			if err != nil {
-				log.Errorf("telegram", "transcribe voice: %v", err)
+				b.logger().Errorf("transcribe voice: %v", err)
 				b.sendReply(msg, userID, "Could not transcribe voice note.")
 				return
 			}
-			log.Infof("telegram", "voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
+			b.logger().Infof("voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
 			text = "[voice] " + transcript
 		}
 	}
@@ -682,9 +698,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		logText = fmt.Sprintf("[%d image(s)] %s", len(images), text)
 	}
 	if b.messagesInLog {
-		log.Infof("telegram", "message from %s: %s", formatUserInfo(msg.From), truncate(logText, 100))
+		b.logger().Infof("message from %s: %s", formatUserInfo(msg.From), truncate(logText, 100))
 	} else {
-		log.Debugf("telegram", "message from %s", formatUserInfo(msg.From))
+		b.logger().Debugf("message from %s", formatUserInfo(msg.From))
 	}
 
 	// Log received message — use per-chat session key for primary bots
@@ -730,7 +746,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 				return
 			}
 			if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
-				log.Debugf("telegram", "dot-command %s → %s dispatched", text, dotCmd)
+				b.logger().Debugf("dot-command %s → %s dispatched", text, dotCmd)
 				b.sendReply(msg, userID, result)
 				return
 			}
@@ -747,7 +763,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		// agent can reason about timeliness, but slash commands execute
 		// unconditionally so stale ones must be dropped.
 		if age := time.Since(time.Unix(int64(msg.Date), 0)); age > 30*time.Second {
-			log.Warnf("telegram", "dropping stale command %q (age=%s)", cmd, age.Truncate(time.Second))
+			b.logger().Warnf("dropping stale command %q (age=%s)", cmd, age.Truncate(time.Second))
 			return
 		}
 
@@ -774,7 +790,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 				b.pool.Release(b)
 			}
 			b.sendReply(msg, userID, "Session ended.")
-			log.Infof("telegram", "secondary bot detached from %s", sk)
+			b.logger().Infof("secondary bot detached from %s", sk)
 			return
 		}
 
@@ -785,13 +801,13 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 
 		// Check for inline keyboard (bare command, no args)
 		if name, opts, ok := b.commands.LookupKeyboard(cmdCtx, text); ok {
-			log.Debugf("telegram", "command /%s showing keyboard (%d options)", name, len(opts))
+			b.logger().Debugf("command /%s showing keyboard (%d options)", name, len(opts))
 			b.sendCommandKeyboard(msg.Chat.Id, name, opts)
 			return
 		}
 
 		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
-			log.Debugf("telegram", "command %s dispatched", text)
+			b.logger().Debugf("command %s dispatched", text)
 			b.sendReply(msg, userID, result)
 			return
 		}
@@ -801,14 +817,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Replying would cause spurious "idle" messages on restart when stale
 	// Telegram updates are replayed.
 	if b.isSecondary && b.SessionKey() == "" {
-		log.Debugf("telegram", "dropping message to idle secondary bot from %s", formatUserInfo(msg.From))
+		b.logger().Debugf("dropping message to idle secondary bot from %s", formatUserInfo(msg.From))
 		return
 	}
 
 	select {
 	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, images: images}:
 	default:
-		log.Warnf("telegram", "message queue full, dropping message from %s", formatUserInfo(msg.From))
+		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(msg.From))
 		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
 	}
 }
@@ -857,13 +873,13 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	// Send typing indicator and keep it alive throughout the agent turn.
 	// Telegram typing expires after ~5s, so we re-send every 4s.
-	b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+	_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 	typingTicker := time.NewTicker(4 * time.Second)
 	go func() {
 		for {
 			select {
 			case <-typingTicker.C:
-				b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+				_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 			case <-turnCtx.Done():
 				return
 			}
@@ -893,7 +909,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		},
 		// Refresh typing indicator when tools complete
 		ActivityFunc: func() {
-			b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+			_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 		},
 		ToolCallObserver:   tracker.observeToolCall,
 		ToolResultObserver: tracker.observeToolResult,
@@ -925,10 +941,10 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}
 	if err != nil {
 		if turnCtx.Err() != nil {
-			log.Infof("telegram", "agent turn cancelled")
+			b.logger().Infof("agent turn cancelled")
 			return // /stop was called, "Stopped." already sent
 		}
-		log.Errorf("telegram", "agent error: %s", b.sanitizeError(err))
+		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
 		response = fmt.Sprintf("Error: %s", b.sanitizeError(err))
 	}
 	if b.OnTurnComplete != nil {
@@ -938,14 +954,14 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Guard against empty responses (e.g. end_turn after tool use with no text).
 	// Sending an empty string to Telegram would fail with "message text is empty".
 	if strings.TrimSpace(response) == "" {
-		log.Debugf("telegram", "agent returned empty response for %s, not sending", sk)
+		b.logger().Debugf("agent returned empty response for %s, not sending", sk)
 		return
 	}
 
 	// Voice mode: convert final reply to voice note
 	if b.agent.VoiceMode(sk) && b.tts != nil && response != "" {
 		if audioData, err := b.tts.Synthesize(turnCtx, response); err != nil {
-			log.Errorf("telegram", "tts for voice mode: %v", err)
+			b.logger().Errorf("tts for voice mode: %v", err)
 			b.sendReply(qm.msg, qm.userID, response) // fall back to text
 		} else {
 			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, audioData)
@@ -983,7 +999,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			})
 			return
 		}
-		log.Debugf("telegram", "edit final response failed, falling back: %v", editErr)
+		b.logger().Debugf("edit final response failed, falling back: %v", editErr)
 	}
 
 	// Full thinking: prepend italic thinking + divider to response
@@ -1006,7 +1022,7 @@ func (b *Bot) cancelTurn() {
 	b.turnMu.Lock()
 	defer b.turnMu.Unlock()
 	if b.turnCancel != nil {
-		log.Infof("telegram", "cancelling agent turn via /stop")
+		b.logger().Infof("cancelling agent turn via /stop")
 		b.turnCancel()
 	}
 }
@@ -1040,7 +1056,7 @@ func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, res
 
 	chunks := splitMessage(fullHTML, 4096)
 	for _, chunk := range chunks {
-		b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+		_, _ = b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 	}
 	log.Conversation(log.ConversationEntry{
 		Direction: "sent",
@@ -1075,18 +1091,18 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 		if i < len(chunks)-1 {
 			// Plain chunk without button
 			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-				log.Debugf("telegram", "send thinking chunk: %v", err)
+				b.logger().Debugf("send thinking chunk: %v", err)
 			}
 			continue
 		}
 		// Last chunk — send with button
 		sent, err := b.client.SendMessage(msg.Chat.Id, chunk, sendOpts)
 		if err != nil {
-			log.Errorf("telegram", "send reply with thinking button: %v", err)
+			b.logger().Errorf("send reply with thinking button: %v", err)
 			return
 		}
 		// Update button with real message ID and store thinking data
-		b.client.EditMessageText(chunk, &gotgbot.EditMessageTextOpts{
+		_, _, _ = b.client.EditMessageText(chunk, &gotgbot.EditMessageTextOpts{
 			ChatId:    msg.Chat.Id,
 			MessageId: sent.MessageId,
 			ParseMode: "HTML",
@@ -1123,7 +1139,7 @@ func (b *Bot) sendReplyPart(msg *gotgbot.Message, userID string, response string
 			// Retry without markdown if parsing fails
 			parseMode = ""
 			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, nil); err != nil {
-				log.Errorf("telegram", "send error: %s", b.sanitizeError(err))
+				b.logger().Errorf("send error: %s", b.sanitizeError(err))
 				sendErr = err.Error()
 			}
 		}
@@ -1146,7 +1162,7 @@ func (b *Bot) sendReplyPart(msg *gotgbot.Message, userID string, response string
 // Silently skips empty or whitespace-only messages.
 func (b *Bot) SendNotification(text string) {
 	if strings.TrimSpace(text) == "" {
-		log.Debugf("telegram", "skipping empty notification")
+		b.logger().Debugf("skipping empty notification")
 		return
 	}
 
@@ -1155,12 +1171,12 @@ func (b *Bot) SendNotification(text string) {
 	b.chatMu.Unlock()
 
 	if chatID == 0 {
-		log.Warnf("telegram", "no chat ID for notification: %s", text)
+		b.logger().Warnf("no chat ID for notification: %s", text)
 		return
 	}
 
 	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
-		log.Errorf("telegram", "send notification: %s", b.sanitizeError(err))
+		b.logger().Errorf("send notification: %s", b.sanitizeError(err))
 	}
 }
 
@@ -1184,7 +1200,7 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	b.chatMu.Unlock()
 
 	if chatID == 0 {
-		log.Debugf("telegram", "no chat ID for startup notification (no prior messages)")
+		b.logger().Debugf("no chat ID for startup notification (no prior messages)")
 		return
 	}
 
@@ -1201,7 +1217,7 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	}
 
 	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
-		log.Errorf("telegram", "send startup notification: %s", b.sanitizeError(err))
+		b.logger().Errorf("send startup notification: %s", b.sanitizeError(err))
 	}
 }
 
@@ -1351,7 +1367,7 @@ func (b *Bot) SendDocumentToChat(chatID int64, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("open document: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := b.client.SendDocument(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send document: %w", err)
@@ -1372,7 +1388,7 @@ func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("open voice file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send voice: %w", err)
@@ -1393,7 +1409,7 @@ func (b *Bot) SendVideoToChat(chatID int64, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("open video file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := b.client.SendVideo(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send video: %w", err)
@@ -1414,7 +1430,7 @@ func (b *Bot) SendPhotoToChat(chatID int64, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("open photo file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := b.client.SendPhoto(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send photo: %w", err)
@@ -1435,7 +1451,7 @@ func (b *Bot) SendAudioToChat(chatID int64, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("open audio file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := b.client.SendAudio(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send audio: %w", err)
@@ -1456,7 +1472,7 @@ func (b *Bot) SendAnimationToChat(chatID int64, filePath string) error {
 	if err != nil {
 		return fmt.Errorf("open animation file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := b.client.SendAnimation(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send animation: %w", err)
@@ -1474,7 +1490,7 @@ func (b *Bot) SendAnimationToChat(chatID int64, filePath string) error {
 // sendVoiceNote sends audio data as a Telegram voice note.
 func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
 	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil); err != nil {
-		log.Errorf("telegram", "send voice note: %s", b.sanitizeError(err))
+		b.logger().Errorf("send voice note: %s", b.sanitizeError(err))
 	}
 
 	log.Conversation(log.ConversationEntry{
@@ -1499,7 +1515,7 @@ func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("download file: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download file: status %d", resp.StatusCode)
@@ -1643,16 +1659,16 @@ func (b *Bot) saveImage(data []byte, mediaType string, chatID int64) (string, er
 func (b *Bot) downloadImage(fileID, mimeType string, chatID int64) (imageAttachment, bool) {
 	data, err := b.downloadFile(fileID)
 	if err != nil {
-		log.Errorf("telegram", "download image: %s", b.sanitizeError(err))
+		b.logger().Errorf("download image: %s", b.sanitizeError(err))
 		return imageAttachment{}, false
 	}
 	att := imageAttachment{data: data, mediaType: mimeType}
 	if b.receivedFilesDir != "" {
 		if path, err := b.saveImage(data, mimeType, chatID); err != nil {
-			log.Warnf("telegram", "save image: %v", err)
+			b.logger().Warnf("save image: %v", err)
 		} else {
 			att.savedPath = path
-			log.Infof("telegram", "saved image to %s", path)
+			b.logger().Infof("saved image to %s", path)
 		}
 	}
 	return att, true
@@ -1667,10 +1683,10 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 		if isFileTooLarge(err) {
 			return fmt.Sprintf("[%s too large to download (%d MB)]\n\n%s", label, fileSize/(1024*1024), text)
 		}
-		log.Errorf("telegram", "download %s: %s", mediaType, b.sanitizeError(err))
+		b.logger().Errorf("download %s: %s", mediaType, b.sanitizeError(err))
 		return text
 	}
-	log.Infof("telegram", "saved %s to %s", mediaType, path)
+	b.logger().Infof("saved %s to %s", mediaType, path)
 	return fmt.Sprintf("[%s saved to: %s]\n\n%s", label, path, text)
 }
 
@@ -2004,7 +2020,7 @@ func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, opts []command.K
 	}
 
 	label := fmt.Sprintf("/%s:", cmdName)
-	b.client.SendMessage(chatID, label, &gotgbot.SendMessageOpts{
+	_, _ = b.client.SendMessage(chatID, label, &gotgbot.SendMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: rows,
 		},
@@ -2021,7 +2037,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 
 	// Always answer the callback query to dismiss the loading indicator.
 	defer func() {
-		b.client.AnswerCallbackQuery(cq.Id, nil)
+		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 	}()
 
 	// Command keyboard callbacks: "cmd:/name args"
@@ -2075,7 +2091,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 		display = display[:4090] + "\n..."
 	}
 
-	log.Debugf("telegram", "command callback %q dispatched", cmdText)
+	b.logger().Debugf("command callback %q dispatched", cmdText)
 
 	_, _, err := b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 		ChatId:    chatID,
@@ -2083,8 +2099,8 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 		ParseMode: "HTML",
 	})
 	if err != nil {
-		log.Debugf("telegram", "command callback HTML edit failed: %v, retrying as plain text", err)
-		b.client.EditMessageText(result, &gotgbot.EditMessageTextOpts{
+		b.logger().Debugf("command callback HTML edit failed: %v, retrying as plain text", err)
+		_, _, _ = b.client.EditMessageText(result, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 		})
@@ -2121,7 +2137,7 @@ func (b *Bot) editMessageWithKeyboard(chatID, msgID int64, parentName, cmdText s
 	}
 
 	display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
-	b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
+	_, _, _ = b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 		ChatId:    chatID,
 		MessageId: msgID,
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
@@ -2151,7 +2167,7 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 		stored.expanded = true
 		stored.chatID = chatID
 		b.toolResults.Store(msgID, stored)
-		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
@@ -2164,7 +2180,7 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 	case "hide":
 		stored.expanded = false
 		b.toolResults.Store(msgID, stored)
-		b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
+		_, _, _ = b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
@@ -2188,7 +2204,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 	switch action {
 	case "show":
 		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.displayWidth)
-		b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
@@ -2199,7 +2215,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 			},
 		})
 	case "hide":
-		b.client.EditMessageText(entry.responseHTML, &gotgbot.EditMessageTextOpts{
+		_, _, _ = b.client.EditMessageText(entry.responseHTML, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
@@ -2302,7 +2318,7 @@ func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawM
 	}
 	sent, err := t.bot.client.SendMessage(t.chatID, compact, sendOpts)
 	if err != nil {
-		log.Debugf("telegram", "send tool call msg: %v", err)
+		t.bot.logger().Debugf("send tool call msg: %v", err)
 		return
 	}
 	t.msgID = sent.MessageId
@@ -2313,7 +2329,7 @@ func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawM
 		fullInput:   full,
 		chatID:      t.chatID,
 	})
-	t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
+	_, _, _ = t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
 		ChatId:    t.chatID,
 		MessageId: t.msgID,
 		ParseMode: "HTML",
@@ -2332,7 +2348,7 @@ func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.R
 	if t.msgID == 0 {
 		sent, err := t.bot.client.SendMessage(t.chatID, text, sendOpts)
 		if err != nil {
-			log.Debugf("telegram", "send tool call msg: %v", err)
+			t.bot.logger().Debugf("send tool call msg: %v", err)
 			return
 		}
 		t.msgID = sent.MessageId
@@ -2344,7 +2360,7 @@ func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.R
 			ParseMode: "HTML",
 		})
 		if err != nil {
-			log.Debugf("telegram", "edit tool call msg: %v", err)
+			t.bot.logger().Debugf("edit tool call msg: %v", err)
 		}
 		t.text = text
 	}
@@ -2383,7 +2399,7 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 
 	if wasExpanded {
 		expanded := formatToolCallWithResult(full, result)
-		t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+		_, _, _ = t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    t.chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",

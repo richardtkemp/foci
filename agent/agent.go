@@ -77,6 +77,7 @@ type Agent struct {
 	Reminders     *memory.ReminderStore // nil disables reminder injection
 	AgentID       string                // unique agent identifier (for per-agent DB queries)
 	Model         string
+	Log           *log.ComponentLogger  // structured logger for this agent
 
 	EnvironmentBlock            string                          // pre-built environment context block (prepended first in system prompt)
 	ExtraSystemBlocks           []anthropic.SystemBlock         // additional system blocks (e.g. skills list), injected before cache marker
@@ -128,6 +129,15 @@ type Agent struct {
 	manaCached      string
 	manaResetCached string
 	manaCacheTime   time.Time
+}
+
+// logger returns the agent's ComponentLogger, lazily creating a default if nil.
+func (a *Agent) logger() *log.ComponentLogger {
+	if a.Log != nil {
+		return a.Log
+	}
+	a.Log = log.NewComponentLogger("agent")
+	return a.Log
 }
 
 // TurnDetail describes one in-flight turn for shutdown diagnostics.
@@ -198,7 +208,7 @@ func (a *Agent) SetVoiceMode(sessionKey string, on bool) {
 
 	if a.StateStore != nil {
 		if err := a.StateStore.Set("voice:"+sessionKey, on); err != nil {
-			log.Errorf("agent", "persist voice mode: %v", err)
+			a.logger().Errorf("persist voice mode: %v", err)
 		}
 	}
 }
@@ -214,7 +224,7 @@ func (a *Agent) RestoreVoiceMode(sessionKey string) {
 		a.metaMu.Lock()
 		sm.voiceMode = on
 		a.metaMu.Unlock()
-		log.Infof("agent", "restored voice mode for %s", sessionKey)
+		a.logger().Infof("restored voice mode for %s", sessionKey)
 	}
 }
 
@@ -239,9 +249,9 @@ func (a *Agent) SetSessionEffort(sessionKey, value string) {
 
 	if a.StateStore != nil {
 		if value == "" {
-			a.StateStore.Delete("effort:" + sessionKey)
+			_ = a.StateStore.Delete("effort:" + sessionKey)
 		} else if err := a.StateStore.Set("effort:"+sessionKey, value); err != nil {
-			log.Errorf("agent", "persist effort: %v", err)
+			a.logger().Errorf("persist effort: %v", err)
 		}
 	}
 }
@@ -267,9 +277,9 @@ func (a *Agent) SetSessionThinking(sessionKey, value string) {
 
 	if a.StateStore != nil {
 		if value == "" {
-			a.StateStore.Delete("thinking:" + sessionKey)
+			_ = a.StateStore.Delete("thinking:" + sessionKey)
 		} else if err := a.StateStore.Set("thinking:"+sessionKey, value); err != nil {
-			log.Errorf("agent", "persist thinking: %v", err)
+			a.logger().Errorf("persist thinking: %v", err)
 		}
 	}
 }
@@ -295,9 +305,9 @@ func (a *Agent) SetSessionModel(sessionKey, value string) {
 
 	if a.StateStore != nil {
 		if value == "" {
-			a.StateStore.Delete("model:" + sessionKey)
+			_ = a.StateStore.Delete("model:" + sessionKey)
 		} else if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
-			log.Errorf("agent", "persist model: %v", err)
+			a.logger().Errorf("persist model: %v", err)
 		}
 	}
 }
@@ -331,7 +341,7 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 		restored = append(restored, "model="+val)
 	}
 	if len(restored) > 0 {
-		log.Infof("agent", "restored session overrides for %s: %s", sessionKey, strings.Join(restored, ", "))
+		a.logger().Infof("restored session overrides for %s: %s", sessionKey, strings.Join(restored, ", "))
 	}
 }
 
@@ -359,7 +369,7 @@ func (a *Agent) manaAndReset() (mana, reset string) {
 
 	usage, err := a.UsageClient.GetUsage(context.Background())
 	if err != nil {
-		log.Debugf("agent", "mana fetch: %v", err)
+		a.logger().Debugf("mana fetch: %v", err)
 		// Return stale values only if cache is recent; otherwise return empty
 		// to avoid displaying dangerously outdated mana readings.
 		if time.Since(a.manaCacheTime) > 10*time.Minute {
@@ -519,13 +529,13 @@ func (a *Agent) guardToolResult(ctx context.Context, toolName string, result str
 	}
 
 	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
-		log.Warnf("agent", "create tool result temp dir: %v", err)
+		a.logger().Warnf("create tool result temp dir: %v", err)
 		return result
 	}
 
 	var randBytes [8]byte
 	if _, err := rand.Read(randBytes[:]); err != nil {
-		log.Warnf("agent", "generate random filename: %v", err)
+		a.logger().Warnf("generate random filename: %v", err)
 		return result
 	}
 	ext := detectContentExtension(result)
@@ -533,11 +543,11 @@ func (a *Agent) guardToolResult(ctx context.Context, toolName string, result str
 	fpath := filepath.Join(a.ToolResultTempDir, filename)
 
 	if err := os.WriteFile(fpath, []byte(result), 0o600); err != nil {
-		log.Warnf("agent", "write tool result to file: %v", err)
+		a.logger().Warnf("write tool result to file: %v", err)
 		return result
 	}
 
-	log.Debugf("agent", "tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, fpath)
+	a.logger().Debugf("tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
 	if a.AutoSummarise && a.Client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || len(result) <= a.MaxSummaryChars) {
@@ -583,7 +593,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string
 	start := time.Now()
 	resp, err := a.Client.SendMessage(ctx, req)
 	if err != nil {
-		log.Warnf("agent", "auto-summary failed for %s: %v", toolName, err)
+		a.logger().Warnf("auto-summary failed for %s: %v", toolName, err)
 		return ""
 	}
 
@@ -592,7 +602,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-	log.Infof("agent", "auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
+	a.logger().Infof("auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
 		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
 	summary := anthropic.TextOf(resp.Content)
@@ -724,7 +734,7 @@ func (a *Agent) collectReminders() string {
 
 	reminders, err := a.Reminders.Due(a.AgentID)
 	if err != nil {
-		log.Errorf("agent", "fetch reminders: %v", err)
+		a.logger().Errorf("fetch reminders: %v", err)
 		return ""
 	}
 	if len(reminders) == 0 {
@@ -739,7 +749,7 @@ func (a *Agent) collectReminders() string {
 
 	// Auto-dismiss surfaced reminders
 	if err := a.Reminders.DismissAll(a.AgentID); err != nil {
-		log.Errorf("agent", "dismiss reminders: %v", err)
+		a.logger().Errorf("dismiss reminders: %v", err)
 	}
 
 	return block
@@ -777,7 +787,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// invalidates all cached tokens after the insertion point.
 	sessionLock := a.turnLock(sessionKey)
 	waiterTrigger := TriggerFromContext(ctx)
-	log.Debugf("agent", "turn_lock_wait session=%s trigger=%s", sessionKey, waiterTrigger)
+	a.logger().Debugf("turn_lock_wait session=%s trigger=%s", sessionKey, waiterTrigger)
 	lockStart := time.Now()
 	sessionLock.Lock()
 	lockDur := time.Since(lockStart)
@@ -795,9 +805,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				break
 			}
 		}
-		log.Warnf("agent", "turn_lock_held session=%s waited=%s waiter_trigger=%s%s", sessionKey, lockDur, waiterTrigger, holder)
+		a.logger().Warnf("turn_lock_held session=%s waited=%s waiter_trigger=%s%s", sessionKey, lockDur, waiterTrigger, holder)
 	} else {
-		log.Debugf("agent", "turn_lock_acquired session=%s waited=%s", sessionKey, lockDur)
+		a.logger().Debugf("turn_lock_acquired session=%s waited=%s", sessionKey, lockDur)
 	}
 	defer sessionLock.Unlock()
 
@@ -829,9 +839,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	if repair := repairInterruptedToolCalls(messages); repair != nil {
 		messages = append(messages, *repair)
 		if err := a.Sessions.Append(sessionKey, *repair); err != nil {
-			log.Errorf("agent", "persist tool call repair: %v", err)
+			a.logger().Errorf("persist tool call repair: %v", err)
 		} else {
-			log.Infof("agent", "repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
+			a.logger().Infof("repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
 		}
 	}
 
@@ -906,9 +916,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	defer func() {
 		if len(newMessages) > 0 {
 			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
-				log.Errorf("agent", "flush in-flight messages: %v", err)
+				a.logger().Errorf("flush in-flight messages: %v", err)
 			} else {
-				log.Infof("agent", "flushed %d in-flight messages for %s", len(newMessages), sessionKey)
+				a.logger().Infof("flushed %d in-flight messages for %s", len(newMessages), sessionKey)
 			}
 		}
 	}()
@@ -957,14 +967,14 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		// Debug: log cache_control placement
 		logCacheDebug(system, reqMessages, turnModel)
 
-		log.Debugf("agent", "api_request session=%s model=%s messages=%d tools=%d system_blocks=%d",
+		a.logger().Debugf("api_request session=%s model=%s messages=%d tools=%d system_blocks=%d",
 			sessionKey, turnModel, len(reqMessages), len(toolDefs), len(system))
 
 		start := time.Now()
-		log.Debugf("agent", "api_call_start session=%s model=%s", sessionKey, turnModel)
+		a.logger().Debugf("api_call_start session=%s model=%s", sessionKey, turnModel)
 		resp, err := a.Client.SendMessage(ctx, req)
 		duration := time.Since(start)
-		log.Debugf("agent", "api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
+		a.logger().Debugf("api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
 
 		if err != nil {
 			return "", a.classifyAPIError(ctx, err, sessionKey, duration)
@@ -994,7 +1004,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		// Warn on max_tokens — response was truncated mid-thought
 		if resp.StopReason == "max_tokens" {
 			warn := fmt.Sprintf("stop_reason=max_tokens on %s (output=%d, limit=%d)", sessionKey, resp.Usage.OutputTokens, maxOutput)
-			log.Warnf("agent", "%s", warn)
+			a.logger().Warnf("%s", warn)
 			if a.MaxTokensWarnFunc != nil {
 				a.MaxTokensWarnFunc(warn)
 			}
@@ -1071,7 +1081,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 
 			tool := a.Tools.Get(block.Name)
 			if tool == nil {
-				log.Warnf("agent", "unknown tool: %s", block.Name)
+				a.logger().Warnf("unknown tool: %s", block.Name)
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 				))
@@ -1079,7 +1089,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				continue
 			}
 
-			log.Debugf("agent", "tool_use: %s (%d bytes)", block.Name, len(block.Input))
+			a.logger().Debugf("tool_use: %s (%d bytes)", block.Name, len(block.Input))
 			notifyToolCallCtx(ctx, block.Name, block.Input)
 			td.ToolName = block.Name
 			result, err := tool.Execute(toolCtx, block.Input)
@@ -1088,7 +1098,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				return "", ctx.Err()
 			}
 			if err != nil {
-				log.Debugf("agent", "tool %s error: %v", block.Name, err)
+				a.logger().Debugf("tool %s error: %v", block.Name, err)
 				errMsg := fmt.Sprintf("Error: %s", err)
 				if a.Redact != nil {
 					errMsg = a.Redact(errMsg)
@@ -1123,7 +1133,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			}
 			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[system] " + prompt})
 			braindeadWarned = true
-			log.Infof("agent", "braindead warning injected at loop %d for session %s", i+1, sessionKey)
+			a.logger().Infof("braindead warning injected at loop %d for session %s", i+1, sessionKey)
 		}
 
 		// Append tool results as user message
@@ -1136,7 +1146,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 
 	// Max loops reached — save what we have and return last text
-	log.Warnf("agent", "max tool call depth reached for session %s", sessionKey)
+	a.logger().Warnf("max tool call depth reached for session %s", sessionKey)
 	if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 		return "", fmt.Errorf("save session: %w", err)
 	}
@@ -1148,20 +1158,20 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 // rate limit and server error callbacks as appropriate.
 func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey string, duration time.Duration) error {
 	if ctx.Err() != nil {
-		log.Debugf("agent", "api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
+		a.logger().Debugf("api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
 		return ctx.Err()
 	}
 	var apiErr *anthropic.APIError
 	if errors.As(err, &apiErr) && (apiErr.IsRateLimit() || apiErr.IsOverloaded()) {
-		log.Warnf("agent", "rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
+		a.logger().Warnf("rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(apiErr.RetryAfterSeconds())
 		}
 		return fmt.Errorf("rate limited — mana exhausted")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsRetryable() {
-		log.Debugf("agent", "server error detail: %s", err)
-		log.Warnf("agent", "API server error (status %d)", apiErr.StatusCode)
+		a.logger().Debugf("server error detail: %s", err)
+		a.logger().Warnf("API server error (status %d)", apiErr.StatusCode)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(0)
 		}
@@ -1176,7 +1186,7 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-	log.Infof("agent", "stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
+	a.logger().Infof("stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
 		resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, cost)
 
@@ -1259,7 +1269,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 		totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 		limit := compaction.ContextLimit(a.Model)
 		percent := int(float64(totalTokens) / float64(limit) * 100)
-		log.Infof("agent", "context at %d%% capacity for no_compact session", percent)
+		a.logger().Infof("context at %d%% capacity for no_compact session", percent)
 		return
 	}
 	oldCount := len(messages)
@@ -1271,7 +1281,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 		summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
 	}
 	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
-		log.Errorf("agent", "compaction failed: %v", err)
+		a.logger().Errorf("compaction failed: %v", err)
 	} else {
 		if a.CompactionNotifyFunc != nil {
 			a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))

@@ -110,7 +110,7 @@ func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive stri
 		if !isActive(agentID, dur) {
 			log.Debugf(logTag, "POST %s: skipping (no user activity within %s for agent %s)", endpoint, ifActive, agentID)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
 			return false
 		}
 	}
@@ -123,7 +123,7 @@ func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive stri
 		if isActive(agentID, dur) {
 			log.Debugf(logTag, "POST %s: skipping (user active within %s for agent %s)", endpoint, ifInactive, agentID)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
 			return false
 		}
 	}
@@ -161,9 +161,9 @@ func configureMultiballBot(bot *telegram.Bot, mc multiballBotConfig) {
 		bot.OnSessionKeyChange = func(username, sessionKey string) {
 			key := "multiball:" + username
 			if sessionKey == "" {
-				ss.Delete(key)
+				_ = ss.Delete(key)
 			} else {
-				ss.Set(key, sessionKey)
+				_ = ss.Set(key, sessionKey)
 			}
 		}
 	}
@@ -488,7 +488,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Conte
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "queued"})
 }
 
 func main() {
@@ -496,7 +496,7 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		authFlags := flag.NewFlagSet("auth", flag.ExitOnError)
 		configFile := authFlags.String("config", "", "path to foci.toml (to find secrets.toml)")
-		authFlags.Parse(os.Args[2:])
+		_ = authFlags.Parse(os.Args[2:])
 
 		cfgPath := *configFile
 		if cfgPath == "" {
@@ -667,7 +667,7 @@ func main() {
 	if err != nil {
 		log.Errorf("main", "create session index: %v (session index disabled)", err)
 	} else {
-		defer sessionIndex.Close()
+		defer func() { _ = sessionIndex.Close() }()
 		// Rebuild index from disk on startup
 		if n, err := sessionIndex.Rebuild(sessions); err != nil {
 			log.Warnf("main", "rebuild session index: %v", err)
@@ -715,7 +715,7 @@ func main() {
 		toolDetailStore.ExpireAndVacuum()
 		defer func() {
 			toolDetailStore.ExpireAndVacuum()
-			toolDetailStore.Close()
+			_ = toolDetailStore.Close()
 		}()
 	}
 
@@ -1210,7 +1210,7 @@ func main() {
 	// Close HTTP server — prevents new HTTP-triggered turns
 	httpMu.Lock()
 	if httpServer != nil {
-		httpServer.Close()
+		_ = httpServer.Close()
 	}
 	httpMu.Unlock()
 
@@ -1484,6 +1484,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
+		Log:                         log.NewComponentLogger("agent:" + acfg.ID),
 		Client:                      p.client,
 		Sessions:                    p.sessions,
 		Tools:                       registry,
@@ -2153,16 +2154,16 @@ func setupAgent(p setupParams) *agentInstance {
 					return
 				}
 				if _, err := f.WriteString(summary); err != nil {
-					f.Close()
-					os.Remove(f.Name())
+					_ = f.Close()
+					_ = os.Remove(f.Name())
 					log.Warnf("agent", "compaction debug: write temp file: %v", err)
 					return
 				}
-				f.Close()
+				_ = f.Close()
 				if err := bot.SendDocument(f.Name()); err != nil {
 					log.Warnf("agent", "compaction debug: send document: %v", err)
 				}
-				os.Remove(f.Name())
+				_ = os.Remove(f.Name())
 			}
 		}
 
@@ -2861,7 +2862,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 
 	result.cleanup = func() {
 		for i := len(closers) - 1; i >= 0; i-- {
-			closers[i].Close()
+			_ = closers[i].Close()
 		}
 	}
 	return result
@@ -3298,7 +3299,7 @@ func restoreMultiballSessions(
 			// Validate session still exists on disk
 			if sessions.LastActivity(savedKey) == "n/a" {
 				log.Infof("main", "multiball restore: @%s session %s no longer exists, cleaning up", username, savedKey)
-				stateStore.Delete("multiball:" + username)
+				_ = stateStore.Delete("multiball:" + username)
 				return
 			}
 

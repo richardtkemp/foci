@@ -50,6 +50,7 @@ type WarningDispatchFunc func(warningText string)
 
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
+	log         *log.ComponentLogger
 	agentID     string
 	kaCfg       config.KeepaliveConfig
 	bgCfg       config.BackgroundConfig
@@ -121,6 +122,7 @@ func New(cfg RunnerConfig) *Runner {
 
 	now := time.Now()
 	r := &Runner{
+		log:                      log.NewComponentLogger("keepalive:" + cfg.AgentID),
 		agentID:                  cfg.AgentID,
 		kaCfg:                    cfg.Keepalive,
 		bgCfg:                    cfg.Background,
@@ -206,7 +208,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) {
 
 	interval, err := time.ParseDuration(r.kaCfg.Interval)
 	if err != nil {
-		log.Warnf("keepalive", "bad interval %q: %v", r.kaCfg.Interval, err)
+		r.log.Warnf("bad interval %q: %v", r.kaCfg.Interval, err)
 		return
 	}
 
@@ -226,7 +228,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) {
 	r.lastCacheWarmed = time.Now()
 	r.mu.Unlock()
 
-	log.Infof("keepalive", "firing keepalive for agent %s (cache age %s)", r.agentID, elapsed.Round(time.Second))
+	r.log.Infof("firing keepalive for agent %s (cache age %s)", r.agentID, elapsed.Round(time.Second))
 
 	go func() {
 		defer func() {
@@ -245,7 +247,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 
 	interval, err := time.ParseDuration(r.bgCfg.Interval)
 	if err != nil {
-		log.Warnf("keepalive", "bad background interval %q: %v", r.bgCfg.Interval, err)
+		r.log.Warnf("bad background interval %q: %v", r.bgCfg.Interval, err)
 		return
 	}
 
@@ -275,7 +277,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	if r.todoStore != nil {
 		count, err := r.todoStore.CountOpenByTag(r.agentID, "background")
 		if err != nil {
-			log.Warnf("keepalive", "count background todos: %v", err)
+			r.log.Warnf("count background todos: %v", err)
 			return
 		}
 		if count == 0 {
@@ -295,7 +297,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	r.lastCacheWarmed = time.Now()
 	r.mu.Unlock()
 
-	log.Infof("keepalive", "firing background work for agent %s (idle %s)", r.agentID, elapsed.Round(time.Second))
+	r.log.Infof("firing background work for agent %s (idle %s)", r.agentID, elapsed.Round(time.Second))
 
 	go func() {
 		defer func() {
@@ -315,7 +317,7 @@ func (r *Runner) maybeMemoryFormation() {
 
 	interval, err := time.ParseDuration(r.mfCfg.Interval)
 	if err != nil {
-		log.Warnf("keepalive", "bad memory formation interval %q: %v", r.mfCfg.Interval, err)
+		r.log.Warnf("bad memory formation interval %q: %v", r.mfCfg.Interval, err)
 		return
 	}
 
@@ -347,7 +349,7 @@ func (r *Runner) maybeMemoryFormation() {
 	r.lastMemoryFormation = now
 	r.mu.Unlock()
 
-	log.Infof("keepalive", "firing memory formation for agent %s", r.agentID)
+	r.log.Infof("firing memory formation for agent %s", r.agentID)
 
 	go func() {
 		defer func() {
@@ -366,7 +368,7 @@ func (r *Runner) maybeConsolidation() {
 
 	interval, err := time.ParseDuration(r.mfCfg.ConsolidationInterval)
 	if err != nil {
-		log.Warnf("keepalive", "bad consolidation interval %q: %v", r.mfCfg.ConsolidationInterval, err)
+		r.log.Warnf("bad consolidation interval %q: %v", r.mfCfg.ConsolidationInterval, err)
 		return
 	}
 
@@ -397,7 +399,7 @@ func (r *Runner) maybeConsolidation() {
 	r.lastConsolidation = now
 	r.mu.Unlock()
 
-	log.Infof("keepalive", "firing memory consolidation for agent %s", r.agentID)
+	r.log.Infof("firing memory consolidation for agent %s", r.agentID)
 
 	go func() {
 		defer func() {
@@ -406,7 +408,7 @@ func (r *Runner) maybeConsolidation() {
 			r.mu.Unlock()
 			if r.stateStore != nil {
 				if err := r.stateStore.Set("consolidation_last:"+r.agentID, time.Now()); err != nil {
-					log.Warnf("keepalive", "persist consolidation timestamp: %v", err)
+					r.log.Warnf("persist consolidation timestamp: %v", err)
 				}
 			}
 		}()
@@ -468,7 +470,7 @@ func (r *Runner) maybeWarningDispatch() {
 	r.lastWarningDispatch = time.Now()
 	r.mu.Unlock()
 
-	log.Infof("keepalive", "dispatching %d proactive warnings for agent %s", len(warnings), r.agentID)
+	r.log.Infof("dispatching %d proactive warnings for agent %s", len(warnings), r.agentID)
 
 	go func() {
 		defer func() {
@@ -494,7 +496,7 @@ func (r *Runner) manaIsGood(ctx context.Context) bool {
 	if needPoll {
 		usage, err := r.usageClient.GetUsage(ctx)
 		if err != nil {
-			log.Warnf("keepalive", "usage API: %v", err)
+			r.log.Warnf("usage API: %v", err)
 			return false // err on the side of caution
 		}
 
@@ -519,7 +521,7 @@ func (r *Runner) manaIsGood(ctx context.Context) bool {
 	r.mu.Unlock()
 
 	if r.lastUsagePoll.IsZero() || pollAge > staleThreshold {
-		log.Debugf("keepalive", "mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), staleThreshold)
+		r.log.Debugf("mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), staleThreshold)
 		return false
 	}
 
