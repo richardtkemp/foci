@@ -555,6 +555,138 @@ func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
 	}
 }
 
+func TestExecOutputModeSeparated(t *testing.T) {
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command":     "echo out && echo err >&2",
+		"output_mode": "separated",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out separatedOutput
+	if err := json.Unmarshal([]byte(result), &out); err != nil {
+		t.Fatalf("unmarshal: %v (raw: %q)", err, result)
+	}
+	if strings.TrimSpace(out.Stdout) != "out" {
+		t.Errorf("stdout = %q, want %q", out.Stdout, "out\n")
+	}
+	if strings.TrimSpace(out.Stderr) != "err" {
+		t.Errorf("stderr = %q, want %q", out.Stderr, "err\n")
+	}
+	if out.ExitCode != 0 {
+		t.Errorf("exit_code = %d, want 0", out.ExitCode)
+	}
+}
+
+func TestExecOutputModeSeparatedStdoutOnly(t *testing.T) {
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command":     "echo hello",
+		"output_mode": "separated",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out separatedOutput
+	if err := json.Unmarshal([]byte(result), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if strings.TrimSpace(out.Stdout) != "hello" {
+		t.Errorf("stdout = %q", out.Stdout)
+	}
+	if out.Stderr != "" {
+		t.Errorf("stderr = %q, want empty", out.Stderr)
+	}
+	if out.ExitCode != 0 {
+		t.Errorf("exit_code = %d", out.ExitCode)
+	}
+}
+
+func TestExecOutputModeSeparatedStderrOnly(t *testing.T) {
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command":     "echo err >&2",
+		"output_mode": "separated",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out separatedOutput
+	if err := json.Unmarshal([]byte(result), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.Stdout != "" {
+		t.Errorf("stdout = %q, want empty", out.Stdout)
+	}
+	if strings.TrimSpace(out.Stderr) != "err" {
+		t.Errorf("stderr = %q", out.Stderr)
+	}
+}
+
+func TestExecOutputModeSeparatedFailure(t *testing.T) {
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command":     "echo before-fail; exit 42",
+		"output_mode": "separated",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out separatedOutput
+	if err := json.Unmarshal([]byte(result), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if strings.TrimSpace(out.Stdout) != "before-fail" {
+		t.Errorf("stdout = %q", out.Stdout)
+	}
+	if out.ExitCode != 42 {
+		t.Errorf("exit_code = %d, want 42", out.ExitCode)
+	}
+}
+
+func TestExecOutputModeCombinedDefault(t *testing.T) {
+	// Omitting output_mode should behave exactly like the original combined mode
+	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo out && echo err >&2",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Combined mode returns raw text, not JSON
+	if !strings.Contains(result, "out") {
+		t.Errorf("result should contain stdout, got %q", result)
+	}
+	if !strings.Contains(result, "err") {
+		t.Errorf("result should contain stderr, got %q", result)
+	}
+	// Should NOT be valid separatedOutput JSON
+	var out separatedOutput
+	if json.Unmarshal([]byte(result), &out) == nil && out.Stdout != "" {
+		t.Error("combined mode should not return separated JSON")
+	}
+}
+
 func TestExecSleepBlocked(t *testing.T) {
 	tool := NewExecTool(nil, nil, 0, nil, "", nil)
 
