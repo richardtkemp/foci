@@ -1824,6 +1824,17 @@ func setupAgent(p setupParams) *agentInstance {
 		},
 	})
 
+	// /m — short alias for the mana command
+	if manaName != "m" {
+		cmds.Register(&command.Command{
+			Name:   "m",
+			Hidden: true,
+			Execute: func(ctx context.Context, args string) (string, error) {
+				return manaFn(ctx)
+			},
+		})
+	}
+
 	// /reload command
 	cmds.Register(command.NewReloadCommand(func() (string, error) {
 		bootstrap.Reload()
