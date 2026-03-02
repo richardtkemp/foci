@@ -87,6 +87,37 @@ func TestGenerateConfigMinimal(t *testing.T) {
 	}
 }
 
+func TestGenerateConfigWithAgentBlock(t *testing.T) {
+	agentBlock := `[[agents]]
+id = "fotini"
+model = "claude-sonnet-4-6"
+workspace = "/home/foci/fotini"
+system_files = ["character/SOUL.md", "character/COHERENCE.md", "character/CRAFT.md", "character/USER.md", "character/MEMORY.md"]
+`
+	opts := SetupOptions{
+		Model:        "claude-sonnet-4-6",
+		AgentBlock:   agentBlock,
+		AllowedUsers: []string{"12345678"},
+	}
+
+	result := GenerateConfig(opts)
+
+	var parsed map[string]any
+	if _, err := tomlParser.Decode(result, &parsed); err != nil {
+		t.Fatalf("generated config is not valid TOML: %v\nOutput:\n%s", err, result)
+	}
+
+	if !strings.Contains(result, `id = "fotini"`) {
+		t.Error("missing agent id from agent block")
+	}
+	if !strings.Contains(result, `workspace = "/home/foci/fotini"`) {
+		t.Error("missing workspace from agent block")
+	}
+	if !strings.Contains(result, `allowed_users = ["12345678"]`) {
+		t.Error("missing allowed_users")
+	}
+}
+
 func TestGenerateSecretsSetupToken(t *testing.T) {
 	opts := SecretsOptions{
 		AgentID:    "fotini",

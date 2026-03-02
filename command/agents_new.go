@@ -2,12 +2,11 @@ package command
 
 import (
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
+
+	"foci/provision"
 )
 
 // AgentNewDeps holds dependencies for the /agents new wizard.
@@ -26,19 +25,11 @@ type agentWizard struct {
 	deps AgentNewDeps
 
 	// Collected values:
-	id, display, emoji, model string
-	botName, tokenSecret      string
-	charMode, copyFrom        string
+	id, display, model string
+	charMode, copyFrom string
 
 	// Overridable for testing:
 	createFn func(w *agentWizard) (string, error)
-}
-
-var slugRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-
-// IsValidSlug checks if a string is a valid agent ID slug.
-func IsValidSlug(s string) bool {
-	return slugRe.MatchString(s)
 }
 
 func newAgentWizard(deps AgentNewDeps) *agentWizard {
@@ -56,13 +47,9 @@ func (w *agentWizard) Handle(text string) (response string, done bool) {
 		return w.handleID(text)
 	case 1: // Display name
 		return w.handleDisplay(text)
-	case 2: // Emoji
-		return w.handleEmoji(text)
-	case 3: // Model
+	case 2: // Model
 		return w.handleModel(text)
-	case 4: // Bot token secret
-		return w.handleToken(text)
-	case 5: // Character mode
+	case 3: // Character mode
 		return w.handleCharMode(text)
 	default:
 		return "Unexpected state.", true
@@ -71,7 +58,7 @@ func (w *agentWizard) Handle(text string) (response string, done bool) {
 
 func (w *agentWizard) handleID(text string) (string, bool) {
 	text = strings.ToLower(text)
-	if !IsValidSlug(text) {
+	if !provision.IsValidAgentID(text) {
 		return "Invalid ID — must match `[a-z][a-z0-9-]*` (e.g. `greek-tutor`). Try again:", false
 	}
 
@@ -84,91 +71,43 @@ func (w *agentWizard) handleID(text string) (string, bool) {
 
 	w.id = text
 	w.step = 1
-	return "Display name (e.g. `Greek Tutor`):", false
+	return fmt.Sprintf("Display name (default: `%s`):", provision.TitleCase(text)), false
 }
 
 func (w *agentWizard) handleDisplay(text string) (string, bool) {
 	if text == "" {
-		return "Display name cannot be empty. Try again:", false
+		text = provision.TitleCase(w.id)
 	}
 	w.display = text
 	w.step = 2
-	return "Emoji (single emoji for this agent):", false
-}
-
-func (w *agentWizard) handleEmoji(text string) (string, bool) {
-	if text == "" {
-		return "Emoji cannot be empty. Try again:", false
-	}
-	w.emoji = text
-	w.step = 3
 	return "Model — `opus`, `sonnet`, `haiku`, or full model ID (default: `sonnet`):", false
 }
 
 func (w *agentWizard) handleModel(text string) (string, bool) {
 	resolve := w.deps.ResolveModel
 	if resolve == nil {
-		resolve = defaultResolveModel
+		resolve = provision.ResolveModelAlias
 	}
 	w.model = resolve(text)
-	w.step = 4
-	return "Bot token secret name (e.g. `telegram.greek`):", false
-}
 
-// defaultResolveModel is the fallback when no ResolveModel callback is provided.
-func defaultResolveModel(input string) string {
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "opus":
-		return "claude-opus-4-6"
-	case "sonnet", "":
-		return "claude-sonnet-4-6"
-	case "haiku":
-		return "claude-haiku-4-5"
-	default:
-		return input
-	}
-}
-
-func (w *agentWizard) handleToken(text string) (string, bool) {
-	if text == "" || !strings.Contains(text, ".") {
-		return "Secret must be in `section.key` format (e.g. `telegram.greek`). Try again:", false
-	}
-
-	w.tokenSecret = text
-
-	// Derive bot name from the key part after "telegram."
-	parts := strings.SplitN(text, ".", 2)
-	w.botName = parts[len(parts)-1]
-
-	// Check for duplicate secret in existing secrets store
-	if w.deps.SecretNames != nil {
-		for _, name := range w.deps.SecretNames() {
-			if name == text {
-				// Secret already exists — that's fine, it means the token is already configured.
-				// No duplicate error needed; multiple agents can share a secret key in theory,
-				// but more importantly we just need the secret to exist.
-				break
-			}
-		}
-	}
-
-	// Check if the secret exists
+	// Derive token secret and check if it exists
+	tokenSecret := "telegram." + w.id
 	var warning string
 	found := false
 	if w.deps.SecretNames != nil {
 		for _, name := range w.deps.SecretNames() {
-			if name == text {
+			if name == tokenSecret {
 				found = true
 				break
 			}
 		}
 	}
 	if !found {
-		warning = fmt.Sprintf("\n⚠️  Secret `%s` not found — you'll need to add it with `/secrets set %s <token>` before starting.", text, text)
+		warning = fmt.Sprintf("\n⚠️  Secret `%s` not found — you'll need to add it with `/secrets set %s <token>` before starting.", tokenSecret, tokenSecret)
 	}
 
-	w.step = 5
-	return fmt.Sprintf("Character files — `defaults` (recommended), `copy <agent-id>`, or `blank` (default: `defaults`):%s", warning), false
+	w.step = 3
+	return fmt.Sprintf("Character files — `defaults` (recommended), `openclaw`, `copy <agent-id>`, or `blank` (default: `defaults`):%s", warning), false
 }
 
 func (w *agentWizard) handleCharMode(text string) (string, bool) {
@@ -179,6 +118,8 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 
 	if lower == "defaults" {
 		w.charMode = "defaults"
+	} else if lower == "openclaw" {
+		w.charMode = "openclaw"
 	} else if lower == "blank" {
 		w.charMode = "blank"
 	} else if strings.HasPrefix(lower, "copy ") {
@@ -200,7 +141,7 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 		w.charMode = "copy"
 		w.copyFrom = source
 	} else {
-		return "Must be `defaults`, `copy <agent-id>`, or `blank`. Try again:", false
+		return "Must be `defaults`, `openclaw`, `copy <agent-id>`, or `blank`. Try again:", false
 	}
 
 	// Execute creation
@@ -213,228 +154,67 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 
 // createAgent is the default creation function that sets up workspace, config, and crontab.
 func createAgent(w *agentWizard) (string, error) {
-	workspace := filepath.Join(w.deps.HomeDir, w.id)
-	var sb strings.Builder
+	spec := provision.AgentSpec{
+		ID:          w.id,
+		Model:       w.model,
+		DisplayName: w.display,
+		HomeDir:     w.deps.HomeDir,
+		DefaultsDir: w.deps.DefaultsDir,
+		CharMode:    w.charMode,
+		CopyFrom:    w.copyFrom,
+	}
 
-	// 1. Create workspace directories
-	for _, dir := range []string{"character", "memory", "prompts"} {
-		if err := os.MkdirAll(filepath.Join(workspace, dir), 0755); err != nil {
-			return "", fmt.Errorf("create %s: %w", dir, err)
+	// Count existing agents for crontab staggering
+	existingCount := len(w.deps.ListFn())
+
+	result, err := provision.Provision(spec)
+	if err != nil {
+		return "", err
+	}
+
+	// Override crontab with stagger based on existing agents
+	templatePath := filepath.Join(w.deps.DefaultsDir, "crontab.template")
+	if existingCount > 0 {
+		if lines, err := provision.GenerateCrontab(templatePath, spec, existingCount); err == nil {
+			result.CrontabLines = lines
 		}
 	}
-	fmt.Fprintf(&sb, "✅ Workspace: %s\n", workspace)
 
-	// 2. Character files
+	var sb strings.Builder
+
+	fmt.Fprintf(&sb, "✅ Workspace: %s\n", result.Workspace)
 	switch w.charMode {
 	case "defaults":
-		if err := copyCharacterFiles(w.deps.DefaultsDir, workspace); err != nil {
-			return "", fmt.Errorf("copy defaults: %w", err)
-		}
-		// Substitute placeholders in SOUL.md with actual agent name and emoji
-		soulPath := filepath.Join(workspace, "character", "SOUL.md")
-		if err := templateSoulFile(soulPath, w.display, w.emoji); err != nil {
-			return "", fmt.Errorf("template SOUL.md: %w", err)
-		}
 		sb.WriteString("✅ Character files: copied from defaults\n")
+	case "openclaw":
+		sb.WriteString("✅ Character files: copied from openclaw\n")
 	case "copy":
-		sourceWorkspace := filepath.Join(w.deps.HomeDir, w.copyFrom)
-		if err := copyDir(filepath.Join(sourceWorkspace, "character"), filepath.Join(workspace, "character")); err != nil {
-			return "", fmt.Errorf("copy from %s: %w", w.copyFrom, err)
-		}
 		fmt.Fprintf(&sb, "✅ Character files: copied from %s\n", w.copyFrom)
 	case "blank":
-		for _, name := range []string{"SOUL.md", "COHERENCE.md", "CRAFT.md", "USER.md", "MEMORY.md"} {
-			path := filepath.Join(workspace, "character", name)
-			if err := os.WriteFile(path, []byte(""), 0644); err != nil {
-				return "", fmt.Errorf("create %s: %w", name, err)
-			}
-		}
 		sb.WriteString("✅ Character files: blank templates created\n")
 	}
 
-	// 3. Append to foci.toml
-	configEntry := generateConfigEntry(w, workspace)
-	if err := appendToFile(w.deps.ConfigPath, configEntry); err != nil {
+	// Append to foci.toml
+	if err := appendToFile(w.deps.ConfigPath, result.ConfigBlock); err != nil {
 		return "", fmt.Errorf("update config: %w", err)
 	}
 	fmt.Fprintf(&sb, "✅ Config: appended to %s\n", w.deps.ConfigPath)
 
-	// 4. Crontab entries
-	crontabLines, err := generateCrontab(w, workspace)
-	if err != nil {
-		sb.WriteString("⚠️  Crontab: could not read template — skipping crontab setup.\n")
-		fmt.Fprintf(&sb, "   (%s)\n", err)
-	} else if err := appendCrontab(crontabLines); err != nil {
-		sb.WriteString("⚠️  Crontab: could not update automatically. Add these entries manually:\n")
-		for _, line := range crontabLines {
-			fmt.Fprintf(&sb, "   %s\n", line)
+	// Crontab entries
+	if len(result.CrontabLines) > 0 {
+		if err := provision.AppendCrontab(result.CrontabLines); err != nil {
+			sb.WriteString("⚠️  Crontab: could not update automatically. Add these entries manually:\n")
+			for _, line := range result.CrontabLines {
+				fmt.Fprintf(&sb, "   %s\n", line)
+			}
+		} else {
+			sb.WriteString("✅ Crontab: entries added\n")
 		}
-	} else {
-		sb.WriteString("✅ Crontab: entries added\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("\n%s %s (%s) is ready.\n", w.emoji, w.display, w.id))
+	sb.WriteString(fmt.Sprintf("\n%s (%s) is ready.\n", w.display, w.id))
 	sb.WriteString("Restart foci for the new agent to start: /restart")
 	return sb.String(), nil
-}
-
-// generateConfigEntry produces the TOML config block for the new agent.
-func generateConfigEntry(w *agentWizard, workspace string) string {
-	var sb strings.Builder
-	sb.WriteString("\n")
-	sb.WriteString("[[agents]]\n")
-	fmt.Fprintf(&sb, "id = %q\n", w.id)
-	fmt.Fprintf(&sb, "model = %q\n", w.model)
-	// Only emit telegram_bot when it differs from the agent ID (convention default).
-	if w.botName != w.id {
-		fmt.Fprintf(&sb, "telegram_bot = %q\n", w.botName)
-	}
-	// Only emit bot_secret when the secret key differs from the "telegram.<botName>" convention.
-	conventionKey := "telegram." + w.botName
-	if w.tokenSecret != conventionKey {
-		fmt.Fprintf(&sb, "bot_secret = %q\n", w.tokenSecret)
-	}
-	fmt.Fprintf(&sb, "workspace = %q\n", workspace)
-	sb.WriteString("system_files = [\"character/SOUL.md\", \"character/COHERENCE.md\", \"character/CRAFT.md\", \"character/USER.md\", \"character/MEMORY.md\"]\n")
-	sb.WriteString("\n")
-	sb.WriteString("[[agents.memory.sources]]\n")
-	fmt.Fprintf(&sb, "name = %q\n", w.id)
-	fmt.Fprintf(&sb, "dir = %q\n", filepath.Join(workspace, "memory"))
-	sb.WriteString("weight = 1.0\n")
-
-	return sb.String()
-}
-
-// generateCrontab returns crontab entries for the new agent.
-// Reads a template from {DefaultsDir}/crontab.template, replaces AGENT_NAME,
-// WORKSPACE, and HOMEDIR placeholders, strips comment lines, then staggers
-// minute values based on agent count.
-func generateCrontab(w *agentWizard, workspace string) ([]string, error) {
-	templatePath := filepath.Join(w.deps.DefaultsDir, "crontab.template")
-	data, err := os.ReadFile(templatePath)
-	if err != nil {
-		return nil, fmt.Errorf("read crontab template: %w", err)
-	}
-	tmpl := string(data)
-
-	// Replace placeholders
-	tmpl = strings.ReplaceAll(tmpl, "AGENT_NAME", w.id)
-	tmpl = strings.ReplaceAll(tmpl, "WORKSPACE", workspace)
-	tmpl = strings.ReplaceAll(tmpl, "HOMEDIR", w.deps.HomeDir)
-
-	// Stagger minute offsets based on number of existing agents
-	agents := w.deps.ListFn()
-	offset := len(agents) * 3
-
-	var lines []string
-	for _, line := range strings.Split(strings.TrimSpace(tmpl), "\n") {
-		line = strings.TrimRight(line, " \t")
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if offset > 0 {
-			line = staggerCrontabLine(line, offset)
-		}
-		lines = append(lines, line)
-	}
-	return lines, nil
-}
-
-// staggerCrontabLine offsets the minute field(s) of a crontab line.
-// Handles both simple ("0") and interval ("*/30") minute fields.
-func staggerCrontabLine(line string, offset int) string {
-	fields := strings.Fields(line)
-	if len(fields) < 6 {
-		return line // not a valid crontab line
-	}
-	minute := fields[0]
-	if strings.HasPrefix(minute, "*/") {
-		// Interval field like */30 — leave interval, will naturally stagger
-		// since agents are created at different times
-		return line
-	}
-	// Absolute minute: add offset and wrap at 60
-	var min int
-	if _, err := fmt.Sscanf(minute, "%d", &min); err == nil {
-		min = (min + offset) % 60
-		fields[0] = fmt.Sprintf("%d", min)
-		return strings.Join(fields, " ")
-	}
-	return line
-}
-
-// templateSoulFile replaces placeholder comments in a SOUL.md file with actual values.
-func templateSoulFile(path, displayName, emoji string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // no SOUL.md to template
-		}
-		return err
-	}
-	content := string(data)
-	content = strings.Replace(content, "<!-- your name -->", displayName, 1)
-	content = strings.Replace(content, "<!-- your symbol -->", emoji, 1)
-	return os.WriteFile(path, []byte(content), 0644)
-}
-
-// copyCharacterFiles copies default character and prompt files to a new workspace.
-func copyCharacterFiles(defaultsDir, workspace string) error {
-	charSrc := filepath.Join(defaultsDir, "character")
-	charDst := filepath.Join(workspace, "character")
-
-	if err := copyDir(charSrc, charDst); err != nil {
-		return err
-	}
-
-	// Copy keepalive prompt if it exists
-	keepaliveSrc := filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md")
-	keepaliveDst := filepath.Join(workspace, "prompts", "KEEPALIVE.md")
-	if _, err := os.Stat(keepaliveSrc); err == nil {
-		return copyFile(keepaliveSrc, keepaliveDst)
-	}
-
-	return nil
-}
-
-// copyDir copies all files from src to dst (non-recursive, files only).
-func copyDir(src, dst string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(dst, 0755); err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if err := copyFile(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// copyFile copies a single file.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-
-	_, err = io.Copy(out, in)
-	return err
 }
 
 // appendToFile appends text to a file.
@@ -447,17 +227,4 @@ func appendToFile(path, text string) error {
 
 	_, err = f.WriteString(text)
 	return err
-}
-
-// appendCrontab appends entries to the user's crontab.
-func appendCrontab(lines []string) error {
-	newEntries := strings.Join(lines, "\n")
-	cmd := fmt.Sprintf("(crontab -l 2>/dev/null; echo %q) | crontab -", "\n"+newEntries+"\n")
-	return runCrontabCmd(cmd)
-}
-
-// runCrontabCmd is the function used to append crontab entries.
-// Overridden in tests to avoid real exec.
-var runCrontabCmd = func(shellCmd string) error {
-	return exec.Command("sh", "-c", shellCmd).Run()
 }

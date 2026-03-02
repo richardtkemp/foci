@@ -5,56 +5,42 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"foci/anthropic"
 	"foci/config"
+	"foci/provision"
 	"foci/secrets"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// knownCharacterFiles are filenames pre-selected during character file import.
-var knownCharacterFiles = map[string]bool{
-	"SOUL.md":      true,
-	"CRAFT.md":     true,
-	"COHERENCE.md": true,
-	"USER.md":      true,
-	"MEMORY.md":    true,
-}
-
-// defaultSystemFiles is the list written to system_files in generated config.
-var defaultSystemFiles = []string{
-	"character/SOUL.md",
-	"character/CRAFT.md",
-	"character/COHERENCE.md",
-	"character/USER.md",
-	"character/MEMORY.md",
-}
-
 // setupFlags holds parsed flags for the setup command.
 type setupFlags struct {
 	configDir      string // directory for foci.toml and secrets.toml
 	homeDir        string // foci user home (workspace parent)
-	defaultsDir    string // path to shared/defaults/character/
 	nonInteractive bool
 	botToken       string
 	userID         string
-	agentID    string
-	setupToken string // setup token from 'claude setup-token'
-	apiKey     string // API key (auth credential, or usage tracking when setup-token provided)
+	agentID        string
+	displayName    string // display name for agent
+	model          string // model alias or full ID
+	setupToken     string // setup token from 'claude setup-token'
+	apiKey         string // API key (auth credential, or usage tracking when setup-token provided)
 }
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
-	botToken   string
-	authMethod string // "setup-token", "apikey", "skip"
-	apiKey     string // optional API key for usage endpoint (setup-token auth only)
-	userID     string
-	agentID    string
+	botToken    string
+	authMethod  string // "setup-token", "apikey", "skip"
+	apiKey      string // optional API key for usage endpoint (setup-token auth only)
+	userID      string
+	agentID     string
+	displayName string
+	model       string
+	charMode    string // "defaults", "openclaw", "blank"
 }
 
 func setupUsage() {
@@ -66,12 +52,12 @@ Generates foci.toml, secrets.toml, and seeds character files.
 Flags:
   -h, --help             Show this help
   --config-dir <path>    Directory for config files (default: ~/config)
-  --home <path>          Foci home directory (default: ~)
-  --defaults-dir <path>  Path to default character templates (default: ~/shared/defaults/character)
   --non-interactive      Non-interactive mode (all required flags must be set)
   --bot-token <token>    Telegram bot token
   --user-id <id>         Telegram user ID
   --agent-id <id>        Agent identifier (default: main)
+  --display-name <name>  Display name for agent (default: titlecased agent ID)
+  --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
   --setup-token <token>  Setup token from 'claude setup-token'
   --api-key <key>        API key (auth credential, or usage tracking when --setup-token provided)
 `)
@@ -84,6 +70,15 @@ func cmdSetup(args []string) error {
 	}
 
 	flags := parseSetupFlags(args)
+
+	// Seed shared/defaults/ from repo to disk if not already present
+	repoDefaultsDir := findRepoDefaults()
+	if repoDefaultsDir != "" {
+		targetDefaultsDir := filepath.Join(flags.homeDir, "shared", "defaults")
+		if err := provision.SeedDefaults(repoDefaultsDir, targetDefaultsDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not seed defaults: %v\n", err)
+		}
+	}
 
 	if flags.nonInteractive {
 		return runSetupNonInteractive(flags)
@@ -98,16 +93,6 @@ func parseSetupFlags(args []string) setupFlags {
 		case "--config-dir":
 			if i+1 < len(args) {
 				f.configDir = args[i+1]
-				i++
-			}
-		case "--home":
-			if i+1 < len(args) {
-				f.homeDir = args[i+1]
-				i++
-			}
-		case "--defaults-dir":
-			if i+1 < len(args) {
-				f.defaultsDir = args[i+1]
 				i++
 			}
 		case "--non-interactive":
@@ -125,6 +110,16 @@ func parseSetupFlags(args []string) setupFlags {
 		case "--agent-id":
 			if i+1 < len(args) {
 				f.agentID = args[i+1]
+				i++
+			}
+		case "--display-name":
+			if i+1 < len(args) {
+				f.displayName = args[i+1]
+				i++
+			}
+		case "--model":
+			if i+1 < len(args) {
+				f.model = args[i+1]
 				i++
 			}
 		case "--setup-token":
@@ -159,14 +154,31 @@ func parseSetupFlags(args []string) setupFlags {
 			f.homeDir = "."
 		}
 	}
-	if f.defaultsDir == "" && home != "" {
-		f.defaultsDir = filepath.Join(home, "shared", "defaults", "character")
-	}
 	if f.agentID == "" {
 		f.agentID = "main"
 	}
 
 	return f
+}
+
+// findRepoDefaults tries to locate the shared/defaults/ directory relative to
+// the running binary or the current working directory.
+func findRepoDefaults() string {
+	// Try relative to the executable
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "shared", "defaults")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	// Try current working directory
+	if cwd, err := os.Getwd(); err == nil {
+		candidate := filepath.Join(cwd, "shared", "defaults")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func runSetupNonInteractive(f setupFlags) error {
@@ -181,8 +193,17 @@ func runSetupNonInteractive(f setupFlags) error {
 		return fmt.Errorf("non-interactive mode requires: %s", strings.Join(missing, ", "))
 	}
 
-	if !isValidBotToken(f.botToken) {
+	if !provision.IsValidBotToken(f.botToken) {
 		return fmt.Errorf("invalid bot token format")
+	}
+
+	// Resolve model
+	model := provision.ResolveModelAlias(f.model)
+
+	// Resolve display name
+	displayName := f.displayName
+	if displayName == "" {
+		displayName = provision.TitleCase(f.agentID)
 	}
 
 	// Build secrets
@@ -209,16 +230,29 @@ func runSetupNonInteractive(f setupFlags) error {
 		store.Set("anthropic.api_key", f.apiKey)
 	}
 
-	model := "claude-sonnet-4-6"
+	// Provision the agent workspace
+	defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
+	spec := provision.AgentSpec{
+		ID:          f.agentID,
+		Model:       model,
+		DisplayName: displayName,
+		HomeDir:     f.homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "defaults",
+	}
+
+	result, err := provision.Provision(spec)
+	if err != nil {
+		return fmt.Errorf("provision agent: %w", err)
+	}
 
 	configOpts := config.SetupOptions{
-		AgentID:      f.agentID,
+		AgentBlock:   result.ConfigBlock,
 		Model:        model,
-		SystemFiles:  defaultSystemFiles,
 		AllowedUsers: []string{f.userID},
 	}
 
-	return writeSetupFiles(f, configOpts, secretsOpts, store)
+	return writeSetupFiles(f, configOpts, secretsOpts, store, result)
 }
 
 func runSetupInteractive(f setupFlags) error {
@@ -240,7 +274,7 @@ func runSetupInteractive(f setupFlags) error {
 
 	secretsOpts := config.SecretsOptions{}
 
-	totalSteps := 7
+	totalSteps := 9
 	step := 1
 	for step <= totalSteps {
 		switch step {
@@ -312,11 +346,30 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 7:
-			back := stepCharacterFiles(reader, f, state.agentID, totalSteps)
+			displayName, back := stepDisplayName(reader, state.agentID, state.displayName, totalSteps)
 			if back {
 				step--
 				continue
 			}
+			state.displayName = displayName
+			step++
+
+		case 8:
+			model, back := stepModel(reader, state.model, store, totalSteps)
+			if back {
+				step--
+				continue
+			}
+			state.model = model
+			step++
+
+		case 9:
+			charMode, back := stepCharacterMode(reader, f, totalSteps)
+			if back {
+				step--
+				continue
+			}
+			state.charMode = charMode
 			step++
 		}
 	}
@@ -324,13 +377,25 @@ func runSetupInteractive(f setupFlags) error {
 	secretsOpts.AgentID = state.agentID
 	secretsOpts.BotToken = state.botToken
 
-	// Discover model
-	model := discoverModel(store)
+	// Provision the agent workspace
+	defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
+	spec := provision.AgentSpec{
+		ID:          state.agentID,
+		Model:       state.model,
+		DisplayName: state.displayName,
+		HomeDir:     f.homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    state.charMode,
+	}
+
+	provResult, err := provision.Provision(spec)
+	if err != nil {
+		return fmt.Errorf("provision agent: %w", err)
+	}
 
 	configOpts := config.SetupOptions{
-		AgentID:      state.agentID,
-		Model:        model,
-		SystemFiles:  defaultSystemFiles,
+		AgentBlock:   provResult.ConfigBlock,
+		Model:        state.model,
 		AllowedUsers: []string{state.userID},
 	}
 
@@ -341,7 +406,7 @@ func runSetupInteractive(f setupFlags) error {
 		store.Set("anthropic.api_key", state.apiKey)
 	}
 
-	if err := writeSetupFiles(f, configOpts, secretsOpts, store); err != nil {
+	if err := writeSetupFiles(f, configOpts, secretsOpts, store, provResult); err != nil {
 		return err
 	}
 
@@ -374,7 +439,7 @@ func stepBotToken(reader *bufio.Reader, current string, total int) (token string
 		if input == "" && current != "" {
 			return current, false
 		}
-		if isValidBotToken(input) {
+		if provision.IsValidBotToken(input) {
 			fmt.Println("✓ Bot token validated.")
 			return input, false
 		}
@@ -651,7 +716,7 @@ func manualUserID(reader *bufio.Reader, current string) (string, bool) {
 			fmt.Printf("✓ User ID: %s\n", current)
 			return current, false
 		}
-		if isValidUserID(input) {
+		if provision.IsValidUserID(input) {
 			fmt.Printf("✓ User ID: %s\n", input)
 			return input, false
 		}
@@ -680,7 +745,7 @@ func stepAgentID(reader *bufio.Reader, current string, total int) (agentID strin
 			fmt.Printf("✓ Agent ID: %s\n", current)
 			return current, false
 		}
-		if isValidAgentID(input) {
+		if provision.IsValidAgentID(input) {
 			fmt.Printf("✓ Agent ID: %s\n", input)
 			return input, false
 		}
@@ -688,14 +753,72 @@ func stepAgentID(reader *bufio.Reader, current string, total int) (agentID strin
 	}
 }
 
-// stepCharacterFiles handles character file seeding or import.
-// Returns true if the user wants to go back.
-func stepCharacterFiles(reader *bufio.Reader, f setupFlags, agentID string, total int) bool {
+// stepDisplayName prompts for a display name.
+func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (displayName string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 7/%d: Character Files\n", total)
-	fmt.Println("  Do you have existing character files to import?")
-	fmt.Println("  [1] No — use defaults (recommended for new users)")
-	fmt.Println("  [2] Yes — import from a directory")
+	fmt.Printf("Step 7/%d: Display Name\n", total)
+	fmt.Println("  A human-readable name for your agent (used in SOUL.md).")
+	fmt.Println()
+
+	defaultName := provision.TitleCase(agentID)
+	if current != "" {
+		defaultName = current
+	}
+
+	prompt := fmt.Sprintf("Display name [%s]: ", defaultName)
+	fmt.Print(prompt)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if input == "back" {
+		return "", true
+	}
+	if input == "" {
+		fmt.Printf("✓ Display name: %s\n", defaultName)
+		return defaultName, false
+	}
+	fmt.Printf("✓ Display name: %s\n", input)
+	return input, false
+}
+
+// stepModel prompts for a model selection.
+func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total int) (model string, back bool) {
+	fmt.Println()
+	fmt.Printf("Step 8/%d: Model\n", total)
+	fmt.Println("  Choose a model: opus, sonnet, haiku, or enter a full model ID.")
+	fmt.Println()
+
+	defaultModel := "sonnet"
+	if current != "" {
+		defaultModel = current
+	}
+
+	prompt := fmt.Sprintf("Model [%s]: ", defaultModel)
+	fmt.Print(prompt)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if input == "back" {
+		return "", true
+	}
+	if input == "" {
+		input = defaultModel
+	}
+
+	// Try to discover exact model from API
+	resolved := discoverModelFamily(store, input)
+	fmt.Printf("✓ Model: %s\n", resolved)
+	return resolved, false
+}
+
+// stepCharacterMode prompts for character file sourcing.
+func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode string, back bool) {
+	fmt.Println()
+	fmt.Printf("Step 9/%d: Character Files\n", total)
+	fmt.Println("  How should we set up the character files?")
+	fmt.Println("  [1] Defaults (recommended for new users)")
+	fmt.Println("  [2] OpenClaw templates")
+	fmt.Println("  [3] Blank (empty files)")
 	fmt.Println()
 
 	for {
@@ -704,78 +827,142 @@ func stepCharacterFiles(reader *bufio.Reader, f setupFlags, agentID string, tota
 		input = strings.TrimSpace(input)
 
 		if input == "back" {
-			return true
+			return "", true
 		}
 
 		switch input {
-		case "1":
-			destDir := filepath.Join(f.homeDir, agentID, "character")
-			if err := seedDefaultCharacterFiles(f.defaultsDir, destDir); err != nil {
-				fmt.Printf("  Warning: could not seed defaults: %v\n", err)
-			} else {
-				fmt.Printf("✓ Seeded default character files to %s/\n", destDir)
-			}
-			return false
-
+		case "1", "":
+			fmt.Println("✓ Character files: defaults")
+			return "defaults", false
 		case "2":
-			fmt.Print("  Directory path: ")
-			dirInput, _ := reader.ReadString('\n')
-			dirInput = strings.TrimSpace(dirInput)
-			if dirInput == "back" {
-				return true
-			}
-
-			destDir := filepath.Join(f.homeDir, agentID, "character")
-			if err := importCharacterFiles(reader, dirInput, destDir); err != nil {
-				fmt.Printf("  Error: %v\n", err)
-				continue
-			}
-			return false
-
+			fmt.Println("✓ Character files: openclaw")
+			return "openclaw", false
+		case "3":
+			fmt.Println("✓ Character files: blank")
+			return "blank", false
 		default:
-			fmt.Println("  Enter 1 or 2.")
+			fmt.Println("  Enter 1, 2, or 3.")
 		}
 	}
 }
 
-// seedDefaultCharacterFiles copies templates from defaultsDir to destDir.
-func seedDefaultCharacterFiles(defaultsDir, destDir string) error {
-	if defaultsDir == "" {
-		return fmt.Errorf("no defaults directory specified (use --defaults-dir)")
+// writeSetupFiles writes foci.toml, secrets.toml, and ensures workspace directories exist.
+func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts config.SecretsOptions, store *secrets.Store, provResult *provision.Result) error {
+	// Ensure config directory exists
+	if err := os.MkdirAll(f.configDir, 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("create directory: %w", err)
+	// Write foci.toml
+	configPath := filepath.Join(f.configDir, "foci.toml")
+	configContent := config.GenerateConfig(configOpts)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("write foci.toml: %w", err)
 	}
+	fmt.Printf("  → %s\n", configPath)
 
-	entries, err := os.ReadDir(defaultsDir)
-	if err != nil {
-		return fmt.Errorf("read defaults dir: %w", err)
+	// Write secrets via the store (so it handles formatting + existing values)
+	if secretsOpts.BotToken != "" {
+		store.Set(fmt.Sprintf("telegram.%s", secretsOpts.AgentID), secretsOpts.BotToken)
 	}
+	if secretsOpts.SetupToken != "" {
+		store.Set("anthropic.setup_token", secretsOpts.SetupToken)
+	}
+	if err := store.Save(); err != nil {
+		return fmt.Errorf("write secrets.toml: %w", err)
+	}
+	fmt.Printf("  → %s\n", filepath.Join(f.configDir, "secrets.toml"))
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
+	// Workspace directories were already created by Provision
+	fmt.Printf("  → %s/\n", provResult.Workspace)
+
+	// Install crontab entries
+	if len(provResult.CrontabLines) > 0 {
+		if err := provision.AppendCrontab(provResult.CrontabLines); err != nil {
+			fmt.Printf("  ⚠️  Could not install crontab entries automatically.\n")
+			fmt.Printf("     Add these entries manually with `crontab -e`:\n")
+			for _, line := range provResult.CrontabLines {
+				fmt.Printf("     %s\n", line)
+			}
+		} else {
+			fmt.Println("  → Crontab entries installed")
 		}
-		src := filepath.Join(defaultsDir, entry.Name())
-		dst := filepath.Join(destDir, entry.Name())
-
-		data, err := os.ReadFile(src)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", entry.Name(), err)
-		}
-		if err := os.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("write %s: %w", entry.Name(), err)
-		}
 	}
+
 	return nil
 }
 
+// discoverModelFamily queries the Anthropic API to find the latest model in a family.
+// Falls back to provision.ResolveModelAlias on failure.
+func discoverModelFamily(store *secrets.Store, alias string) string {
+	fallback := provision.ResolveModelAlias(alias)
+
+	// Determine which family to search for
+	family := strings.ToLower(strings.TrimSpace(alias))
+	switch family {
+	case "opus", "sonnet", "haiku":
+		// proceed with API query
+	default:
+		// Full model ID or unknown alias — just use static resolution
+		return fallback
+	}
+
+	// Get a token for the API call
+	token := ""
+	if v, ok := store.Get("anthropic.setup_token"); ok {
+		token = v
+	} else if v, ok := store.Get("anthropic.api_key"); ok {
+		token = v
+	}
+	if token == "" {
+		return fallback
+	}
+
+	fmt.Printf("  Querying Anthropic API for latest %s model... ", family)
+
+	client := anthropic.NewClientWithTimeout(token, 5*time.Second)
+	models, err := client.ListModels()
+	if err != nil {
+		fmt.Printf("(using default: %s)\n", fallback)
+		return fallback
+	}
+
+	// Find the latest model in the requested family
+	var bestID string
+	var bestTime time.Time
+	for _, m := range models {
+		if !strings.Contains(strings.ToLower(m.ID), family) {
+			continue
+		}
+		if m.CreatedAt.After(bestTime) {
+			bestTime = m.CreatedAt
+			bestID = m.ID
+		}
+	}
+
+	if bestID == "" {
+		fmt.Printf("(not found, using default: %s)\n", fallback)
+		return fallback
+	}
+
+	fmt.Printf("✓ %s\n", bestID)
+	return bestID
+}
+
 // importCharacterFiles lists .md files from srcDir and lets the user select which to import.
+// Kept for potential future use with advanced import flows.
 func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return fmt.Errorf("read directory %s: %w", srcDir, err)
+	}
+
+	knownCharacterFiles := map[string]bool{
+		"SOUL.md":      true,
+		"CRAFT.md":     true,
+		"COHERENCE.md": true,
+		"USER.md":      true,
+		"MEMORY.md":    true,
 	}
 
 	type fileEntry struct {
@@ -896,116 +1083,6 @@ func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 	return nil
 }
 
-// writeSetupFiles writes foci.toml, secrets.toml, and creates the workspace directory.
-func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts config.SecretsOptions, store *secrets.Store) error {
-	// Ensure config directory exists
-	if err := os.MkdirAll(f.configDir, 0755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-
-	// Write foci.toml
-	configPath := filepath.Join(f.configDir, "foci.toml")
-	configContent := config.GenerateConfig(configOpts)
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
-		return fmt.Errorf("write foci.toml: %w", err)
-	}
-	fmt.Printf("  → %s\n", configPath)
-
-	// Write secrets via the store (so it handles formatting + existing values)
-	if secretsOpts.BotToken != "" {
-		store.Set(fmt.Sprintf("telegram.%s", secretsOpts.AgentID), secretsOpts.BotToken)
-	}
-	if secretsOpts.SetupToken != "" {
-		store.Set("anthropic.setup_token", secretsOpts.SetupToken)
-	}
-	// Setup token is already in store from RunSetupTokenFlow
-	if err := store.Save(); err != nil {
-		return fmt.Errorf("write secrets.toml: %w", err)
-	}
-	fmt.Printf("  → %s\n", filepath.Join(f.configDir, "secrets.toml"))
-
-	// Create workspace directories
-	workspaceDir := filepath.Join(f.homeDir, configOpts.AgentID)
-	charDir := filepath.Join(workspaceDir, "character")
-	memDir := filepath.Join(workspaceDir, "memory")
-	for _, dir := range []string{charDir, memDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
-		}
-	}
-	fmt.Printf("  → %s/\n", charDir)
-
-	return nil
-}
-
-// discoverModel queries the Anthropic /v1/models API to find the latest Sonnet.
-// Falls back to "claude-sonnet-4-6" on failure or timeout.
-func discoverModel(store *secrets.Store) string {
-	fallback := "claude-sonnet-4-6"
-
-	// Get a token for the API call
-	token := ""
-	if v, ok := store.Get("anthropic.setup_token"); ok {
-		token = v
-	} else if v, ok := store.Get("anthropic.api_key"); ok {
-		token = v
-	}
-	if token == "" {
-		return fallback
-	}
-
-	fmt.Print("  Querying Anthropic API for latest Sonnet model... ")
-
-	client := anthropic.NewClientWithTimeout(token, 5*time.Second)
-	models, err := client.ListModels()
-	if err != nil {
-		fmt.Printf("(using default: %s)\n", fallback)
-		return fallback
-	}
-
-	// Find the latest sonnet model
-	var bestID string
-	var bestTime time.Time
-	for _, m := range models {
-		if !strings.Contains(strings.ToLower(m.ID), "sonnet") {
-			continue
-		}
-		if m.CreatedAt.After(bestTime) {
-			bestTime = m.CreatedAt
-			bestID = m.ID
-		}
-	}
-
-	if bestID == "" {
-		fmt.Printf("(no sonnet found, using default: %s)\n", fallback)
-		return fallback
-	}
-
-	fmt.Printf("✓ %s\n", bestID)
-	return bestID
-}
-
-// isValidBotToken checks if a string looks like a Telegram bot token.
-var botTokenRe = regexp.MustCompile(`^\d{5,}:[A-Za-z0-9_-]{20,}$`)
-
-func isValidBotToken(token string) bool {
-	return botTokenRe.MatchString(token)
-}
-
-// isValidUserID checks if a string is a numeric Telegram user ID.
-var userIDRe = regexp.MustCompile(`^\d{3,}$`)
-
-func isValidUserID(id string) bool {
-	return userIDRe.MatchString(id)
-}
-
-// isValidAgentID checks if a string is a valid agent identifier.
-var agentIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-
-func isValidAgentID(id string) bool {
-	return agentIDRe.MatchString(id)
-}
-
 // min returns the smaller of a and b. (Go 1.21+ has builtin min but we support earlier.)
 func min(a, b int) int {
 	if a < b {
@@ -1013,4 +1090,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-
