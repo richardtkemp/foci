@@ -723,63 +723,7 @@ func main() {
 	}
 
 	// Shared: Voice providers
-	var sttProvider voice.STT
-	var ttsProvider voice.TTS
-
-	// STT: Whisper API (Groq by default, any OpenAI-compatible endpoint)
-	sttEndpoint := cfg.Voice.STTEndpoint
-	if sttEndpoint == "" {
-		sttEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-	}
-	sttModel := cfg.Voice.STTModel
-	if sttModel == "" {
-		sttModel = "whisper-large-v3"
-	}
-	if groqKey != "" {
-		sttProvider = &voice.WhisperSTT{
-			Endpoint: sttEndpoint,
-			APIKey:   groqKey,
-			Model:    sttModel,
-		}
-		log.Infof("main", "voice STT enabled (whisper, %s)", sttModel)
-	}
-
-	// TTS: edge-tts (default, free) or openai-compatible API
-	ttsProviderName := cfg.Voice.TTSProvider
-	if ttsProviderName == "" {
-		ttsProviderName = "edge-tts"
-	}
-	switch ttsProviderName {
-	case "edge-tts":
-		ttsProvider = &voice.EdgeTTS{
-			Voice: cfg.Voice.TTSVoice,
-			Rate:  cfg.Voice.TTSRate,
-		}
-		log.Infof("main", "voice TTS enabled (edge-tts, voice=%s rate=%.2f)", cfg.Voice.TTSVoice, cfg.Voice.TTSRate)
-	case "openai":
-		ttsEndpoint := cfg.Voice.TTSEndpoint
-		if ttsEndpoint == "" {
-			ttsEndpoint = "https://openrouter.ai/api/v1/audio/speech"
-		}
-		ttsModel := cfg.Voice.TTSModel
-		if ttsModel == "" {
-			ttsModel = "openai/tts-1-mini"
-		}
-		ttsVoice := cfg.Voice.TTSVoice
-		if ttsVoice == "" {
-			ttsVoice = "alloy"
-		}
-		ttsProvider = &voice.OpenAITTS{
-			Endpoint: ttsEndpoint,
-			APIKey:   openrouterKey,
-			Model:    ttsModel,
-			Voice:    ttsVoice,
-			Speed:    cfg.Voice.TTSRate,
-		}
-		log.Infof("main", "voice TTS enabled (openai, %s, voice=%s rate=%.2f)", ttsModel, ttsVoice, cfg.Voice.TTSRate)
-	default:
-		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
-	}
+	sttProvider, ttsProvider := initVoice(cfg, groqKey, openrouterKey)
 
 	startTime := time.Now()
 
@@ -3038,6 +2982,69 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// initVoice sets up STT and TTS providers based on config and available API keys.
+func initVoice(cfg *config.Config, groqKey, openrouterKey string) (voice.STT, voice.TTS) {
+	var sttProvider voice.STT
+	var ttsProvider voice.TTS
+
+	// STT: Whisper API (Groq by default, any OpenAI-compatible endpoint)
+	sttEndpoint := cfg.Voice.STTEndpoint
+	if sttEndpoint == "" {
+		sttEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+	}
+	sttModel := cfg.Voice.STTModel
+	if sttModel == "" {
+		sttModel = "whisper-large-v3"
+	}
+	if groqKey != "" {
+		sttProvider = &voice.WhisperSTT{
+			Endpoint: sttEndpoint,
+			APIKey:   groqKey,
+			Model:    sttModel,
+		}
+		log.Infof("main", "voice STT enabled (whisper, %s)", sttModel)
+	}
+
+	// TTS: edge-tts (default, free) or openai-compatible API
+	ttsProviderName := cfg.Voice.TTSProvider
+	if ttsProviderName == "" {
+		ttsProviderName = "edge-tts"
+	}
+	switch ttsProviderName {
+	case "edge-tts":
+		ttsProvider = &voice.EdgeTTS{
+			Voice: cfg.Voice.TTSVoice,
+			Rate:  cfg.Voice.TTSRate,
+		}
+		log.Infof("main", "voice TTS enabled (edge-tts, voice=%s rate=%.2f)", cfg.Voice.TTSVoice, cfg.Voice.TTSRate)
+	case "openai":
+		ttsEndpoint := cfg.Voice.TTSEndpoint
+		if ttsEndpoint == "" {
+			ttsEndpoint = "https://openrouter.ai/api/v1/audio/speech"
+		}
+		ttsModel := cfg.Voice.TTSModel
+		if ttsModel == "" {
+			ttsModel = "openai/tts-1-mini"
+		}
+		ttsVoice := cfg.Voice.TTSVoice
+		if ttsVoice == "" {
+			ttsVoice = "alloy"
+		}
+		ttsProvider = &voice.OpenAITTS{
+			Endpoint: ttsEndpoint,
+			APIKey:   openrouterKey,
+			Model:    ttsModel,
+			Voice:    ttsVoice,
+			Speed:    cfg.Voice.TTSRate,
+		}
+		log.Infof("main", "voice TTS enabled (openai, %s, voice=%s rate=%.2f)", ttsModel, ttsVoice, cfg.Voice.TTSRate)
+	default:
+		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
+	}
+
+	return sttProvider, ttsProvider
 }
 
 // buildServerTool constructs an anthropic server tool config map with optional
