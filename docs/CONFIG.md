@@ -25,8 +25,9 @@ Core agent settings. Use `[[agents]]` for one or more agents.
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `batch_partial_assistant_messages` | bool | `false` | When `false`, text in mid-turn responses (alongside tool calls) is sent to Telegram immediately. When `true`, text is accumulated and returned concatenated when the turn completes. |
 | `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. If empty, embedded defaults from `prompts/branch-orientation-headless.md` or `prompts/branch-orientation-multiball.md` are used. |
-| `telegram_bot` | string | `$id` | References a key in `[telegram.bots]` map. Assigns this bot to the agent. Defaults to the agent ID if a matching key exists in `[telegram.bots]`. |
-| `multiball_bots` | string[] | `[]` | References keys in `[telegram.bots]` map. Per-agent multiball pool for `/multiball` sessions. |
+| `telegram_bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"telegram.<bot>"`. Defaults to agent ID. |
+| `bot_secret` | string | `""` | Override secret key for bot token. Default: `"telegram.<telegram_bot>"`. |
+| `multiball_bots` | string[] | `[]` | Additional bot names for multiball. Tokens resolved via `"telegram.<name>"` secret convention. |
 | `memory.sources` | array | see below | Per-agent memory directories (see below). Combined with global `[memory]` sources. When empty, defaults to a single source: `{name: $id, dir: $workspace/memory, weight: 1.0}`. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
@@ -190,30 +191,19 @@ Telegram bot configuration.
 |-----|------|---------|-------------|
 | `allowed_users` | string[] | `[]` | Global default: Telegram user IDs allowed to interact with bots. Per-agent `allowed_users` overrides this. |
 | `enable_startup_notify` | bool | `true` | Send a startup notification when the service starts. Can be overridden per-agent with `startup_notification`. |
-| `multiball_bots` | string[] | `[]` | Shared multiball pool: references keys in `[telegram.bots]` map. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
+| `multiball_bots` | string[] | `[]` | Shared multiball pool: bot names whose tokens are resolved via `"telegram.<name>"` secret convention. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
 | `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. Set to `"0"` to disable auto-reclaim. Go duration format (`30m`, `2h`). Applies to both per-agent and shared pools. |
 | `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 | `received_files_dir` | string | `""` | Save received media (images, videos, video notes, documents) to this directory. Empty disables. Per-agent `received_files_dir` overrides this. Relative paths resolve against `$HOME`. See agent `received_files_dir` for filename formats. |
 
-### `[telegram.bots.<name>]`
+### Bot token resolution
 
-Named bot configuration for multi-agent setups. Each bot is referenced by name from `telegram_bot`, `multiball_bots` (per-agent), or `[telegram] multiball_bots` (shared pool).
+Bot tokens are resolved by convention: `"telegram.<botname>"` in `secrets.toml`. No explicit bot map is needed.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `token_secret` | string | `telegram.<name>` | Key in `secrets.toml` to resolve the bot token. Defaults to `telegram.<bot-key-name>` (e.g. bot key `primary` → `telegram.primary`). |
+For example, an agent with `telegram_bot = "primary"` resolves its token from the secret key `telegram.primary`. To override the convention, set `bot_secret` on the agent.
 
-Example:
-```toml
-[telegram.bots.primary]
-token_secret = "telegram.primary"
-
-[telegram.bots.secondary]
-token_secret = "telegram.secondary"
-```
-
-With `secrets.toml`:
+`secrets.toml`:
 ```toml
 [telegram]
 primary = "123456:ABC..."
@@ -877,9 +867,6 @@ system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "M
 
 [telegram]
 allowed_users = ["123456789"]
-
-[telegram.bots.primary]
-token_secret = "telegram.primary"
 
 [sessions]
 dir = "/home/foci/sessions"

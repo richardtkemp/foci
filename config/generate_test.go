@@ -77,9 +77,13 @@ func TestGenerateConfigMinimal(t *testing.T) {
 	if strings.Contains(result, "[defaults]") {
 		t.Error("should not have [defaults] section when model is empty")
 	}
-	// No telegram section when no users
-	if strings.Contains(result, "[telegram]") {
-		t.Error("should not have [telegram] section when no allowed_users")
+	// No allowed_users when none specified
+	if strings.Contains(result, "allowed_users") {
+		t.Error("should not have allowed_users when none specified")
+	}
+	// Should NOT have telegram.bots section (removed)
+	if strings.Contains(result, "telegram.bots") {
+		t.Error("should not contain [telegram.bots] section")
 	}
 }
 
@@ -100,10 +104,10 @@ func TestGenerateSecretsSetupToken(t *testing.T) {
 	if !strings.Contains(result, `setup_token = "sk-ant-oat01-`) {
 		t.Error("missing setup_token")
 	}
-	if !strings.Contains(result, `[telegram.bots.fotini]`) {
-		t.Error("missing telegram bot section")
+	if !strings.Contains(result, `[telegram]`) {
+		t.Error("missing telegram section")
 	}
-	if !strings.Contains(result, `token = "123456789:AAF-test"`) {
+	if !strings.Contains(result, `fotini = "123456789:AAF-test"`) {
 		t.Error("missing bot token")
 	}
 }
@@ -125,8 +129,11 @@ func TestGenerateSecretsAPIKey(t *testing.T) {
 	if !strings.Contains(result, `setup_token = "sk-ant-api03-test"`) {
 		t.Error("missing setup_token")
 	}
-	if !strings.Contains(result, `[telegram.bots.main]`) {
-		t.Error("missing telegram bot section")
+	if !strings.Contains(result, `[telegram]`) {
+		t.Error("missing telegram section")
+	}
+	if !strings.Contains(result, `main = "123:ABC"`) {
+		t.Error("missing bot token")
 	}
 	// API key mode should NOT have OAuth fields
 	if strings.Contains(result, "oauth_access_token") {
@@ -147,7 +154,10 @@ func TestGenerateSecretsNoAuth(t *testing.T) {
 		t.Error("should not have [anthropic] section when no auth configured")
 	}
 	// Should still have bot token
-	if !strings.Contains(result, `[telegram.bots.main]`) {
-		t.Error("missing telegram bot section")
+	if !strings.Contains(result, `[telegram]`) {
+		t.Error("missing telegram section")
+	}
+	if !strings.Contains(result, `main = "123:ABC"`) {
+		t.Error("missing bot token")
 	}
 }

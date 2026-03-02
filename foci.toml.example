@@ -64,7 +64,8 @@ id = "myagent"
 # display_width = 44
 # messages_in_log = false                 # log user message content (privacy)
 # startup_notification = true             # send Telegram notification on startup
-# telegram_bot = "myagent"               # references key in [telegram.bots]
+# telegram_bot = "myagent"               # bot name; token via "telegram.<bot>" secret
+# bot_secret = "custom.key"              # override secret key (default: "telegram.<telegram_bot>")
 # multiball_bots = ["bot2", "bot3"]       # additional bots for multiball
 # branch_orientation_prompt = "prompts/branch-orientation.md"
 # received_files_dir = "received"         # save received Telegram files here
@@ -153,10 +154,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # message_queue_size = 64
 # long_poll_timeout = "65s"
 # received_files_dir = ""                 # save received files (per-agent overrides)
-
-# Bot definitions (tokens go in secrets.toml):
-# [telegram.bots.myagent]
-# token_secret = "telegram.myagent"
 
 # ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]

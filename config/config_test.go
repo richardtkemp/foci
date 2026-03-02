@@ -267,11 +267,6 @@ telegram_bot = "scout"
 
 [telegram]
 allowed_users = ["111"]
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-secondary = { token_secret = "telegram.secondary" }
-scout = { token_secret = "telegram.scout" }
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -316,17 +311,6 @@ scout = { token_secret = "telegram.scout" }
 	// cfg.Agent should mirror first agent
 	if cfg.Agent.ID != "clutch" {
 		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "clutch")
-	}
-
-	// Telegram bots map
-	if len(cfg.Telegram.Bots) != 3 {
-		t.Fatalf("Telegram.Bots len = %d, want 3", len(cfg.Telegram.Bots))
-	}
-	if cfg.Telegram.Bots["primary"].TokenSecret != "telegram.primary" {
-		t.Errorf("Bots[primary].TokenSecret = %q", cfg.Telegram.Bots["primary"].TokenSecret)
-	}
-	if cfg.Telegram.Bots["scout"].TokenSecret != "telegram.scout" {
-		t.Errorf("Bots[scout].TokenSecret = %q", cfg.Telegram.Bots["scout"].TokenSecret)
 	}
 }
 
@@ -408,33 +392,42 @@ func (m mockSecrets) Get(key string) (string, bool) {
 }
 
 func TestResolveBotToken(t *testing.T) {
-	t.Run("new format: telegram.bots map + secrets", func(t *testing.T) {
-		cfg := &Config{
-			Telegram: TelegramConfig{
-				Bots: map[string]TelegramBotConfig{
-					"primary": {TokenSecret: "telegram.primary"},
-					"scout":   {TokenSecret: "telegram.scout"},
-				},
-			},
-		}
+	t.Run("convention: telegram.<botName>", func(t *testing.T) {
 		secrets := mockSecrets{
 			"telegram.primary": "token-primary-123",
 			"telegram.scout":   "token-scout-456",
 		}
 
-		if got := cfg.ResolveBotToken("primary", secrets); got != "token-primary-123" {
+		if got := ResolveBotToken("primary", "", secrets); got != "token-primary-123" {
 			t.Errorf("ResolveBotToken(primary) = %q, want %q", got, "token-primary-123")
 		}
-		if got := cfg.ResolveBotToken("scout", secrets); got != "token-scout-456" {
+		if got := ResolveBotToken("scout", "", secrets); got != "token-scout-456" {
 			t.Errorf("ResolveBotToken(scout) = %q, want %q", got, "token-scout-456")
 		}
 	})
 
-	t.Run("unknown bot returns empty", func(t *testing.T) {
-		cfg := &Config{}
+	t.Run("custom bot_secret override", func(t *testing.T) {
+		secrets := mockSecrets{
+			"custom.key": "token-custom-789",
+		}
+
+		if got := ResolveBotToken("mybot", "custom.key", secrets); got != "token-custom-789" {
+			t.Errorf("ResolveBotToken(mybot, custom.key) = %q, want %q", got, "token-custom-789")
+		}
+	})
+
+	t.Run("empty botName returns empty", func(t *testing.T) {
 		secrets := mockSecrets{}
 
-		if got := cfg.ResolveBotToken("anything", secrets); got != "" {
+		if got := ResolveBotToken("", "", secrets); got != "" {
+			t.Errorf("ResolveBotToken(\"\") = %q, want empty", got)
+		}
+	})
+
+	t.Run("missing secret returns empty", func(t *testing.T) {
+		secrets := mockSecrets{}
+
+		if got := ResolveBotToken("anything", "", secrets); got != "" {
 			t.Errorf("ResolveBotToken(anything) = %q, want empty", got)
 		}
 	})
@@ -459,11 +452,6 @@ telegram_bot = "scout"
 
 [telegram]
 allowed_users = ["111"]
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-secondary = { token_secret = "telegram.secondary" }
-scout = { token_secret = "telegram.scout" }
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -511,8 +499,8 @@ scout = { token_secret = "telegram.scout" }
 	}
 
 	// Each agent's bot should resolve to a different token
-	clutchToken := cfg.ResolveBotToken(cfg.Agents[0].TelegramBot, secrets)
-	scoutToken := cfg.ResolveBotToken(cfg.Agents[1].TelegramBot, secrets)
+	clutchToken := ResolveBotToken(cfg.Agents[0].TelegramBot, cfg.Agents[0].BotSecret, secrets)
+	scoutToken := ResolveBotToken(cfg.Agents[1].TelegramBot, cfg.Agents[1].BotSecret, secrets)
 
 	if clutchToken == scoutToken {
 		t.Errorf("clutch and scout resolved to same token: %q", clutchToken)
@@ -525,7 +513,7 @@ scout = { token_secret = "telegram.scout" }
 	}
 
 	// Multiball bot should resolve differently from primary
-	mbToken := cfg.ResolveBotToken(cfg.Agents[0].MultiballBots[0], secrets)
+	mbToken := ResolveBotToken(cfg.Agents[0].MultiballBots[0], "", secrets)
 	if mbToken != "token-secondary" {
 		t.Errorf("multiball token = %q, want token-secondary", mbToken)
 	}
@@ -1349,11 +1337,6 @@ multiball_bots = ["mb1", "mb2"]
 
 [telegram]
 allowed_users = ["111"]
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-mb1 = { token_secret = "telegram.mb1" }
-mb2 = { token_secret = "telegram.mb2" }
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -1381,11 +1364,6 @@ telegram_bot = "primary"
 [telegram]
 allowed_users = ["111"]
 multiball_bots = ["spare1", "spare2"]
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-spare1 = { token_secret = "telegram.spare1" }
-spare2 = { token_secret = "telegram.spare2" }
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -2075,32 +2053,6 @@ weight = 0.5
 	}
 	if cfg.Agents[1].Memory.Sources[0].Name != "custom" {
 		t.Errorf("explicit source name = %q, want %q", cfg.Agents[1].Memory.Sources[0].Name, "custom")
-	}
-}
-
-func TestBotTokenSecretDefault(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte(`
-[agent]
-id = "test"
-
-[telegram.bots.primary]
-
-[telegram.bots.secondary]
-token_secret = "custom.key"
-`), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if cfg.Telegram.Bots["primary"].TokenSecret != "telegram.primary" {
-		t.Errorf("primary token_secret = %q, want %q", cfg.Telegram.Bots["primary"].TokenSecret, "telegram.primary")
-	}
-	if cfg.Telegram.Bots["secondary"].TokenSecret != "custom.key" {
-		t.Errorf("secondary token_secret = %q, want %q", cfg.Telegram.Bots["secondary"].TokenSecret, "custom.key")
 	}
 }
 

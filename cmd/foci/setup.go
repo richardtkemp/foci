@@ -814,7 +814,7 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts c
 
 	// Write secrets via the store (so it handles formatting + existing values)
 	if secretsOpts.BotToken != "" {
-		store.Set(fmt.Sprintf("telegram.bots.%s.token", secretsOpts.AgentID), secretsOpts.BotToken)
+		store.Set(fmt.Sprintf("telegram.%s", secretsOpts.AgentID), secretsOpts.BotToken)
 	}
 	if secretsOpts.SetupToken != "" {
 		store.Set("anthropic.setup_token", secretsOpts.SetupToken)

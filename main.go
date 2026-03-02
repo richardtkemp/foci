@@ -932,7 +932,7 @@ func main() {
 	if len(cfg.Telegram.MultiballBots) > 0 && len(agentOrder) > 0 {
 		firstInst := agents[agentOrder[0]]
 		for _, botName := range cfg.Telegram.MultiballBots {
-			mbToken := cfg.ResolveBotToken(botName, store)
+			mbToken := config.ResolveBotToken(botName, "", store)
 			if mbToken == "" {
 				log.Errorf("main", "shared multiball bot %q: token not found", botName)
 				continue
@@ -2013,13 +2013,6 @@ func setupAgent(p setupParams) *agentInstance {
 		HomeDir:     filepath.Dir(acfg.Workspace),
 		ListFn:      p.agentListFn,
 		SecretNames: func() []string { return agentStore.Names() },
-		BotNames: func() []string {
-			names := make([]string, 0, len(p.cfg.Telegram.Bots))
-			for name := range p.cfg.Telegram.Bots {
-				names = append(names, name)
-			}
-			return names
-		},
 		ResolveModel: resolveModelFn,
 	}
 	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
@@ -2191,7 +2184,7 @@ func setupAgent(p setupParams) *agentInstance {
 // setupTelegram creates and registers Telegram bots for an agent.
 // If the primary bot fails to initialize, the agent continues without Telegram.
 func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds *command.Registry, allowedUsers []string, lastMsgStore *command.LastMessageStore) {
-	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)
+	telegramToken := config.ResolveBotToken(acfg.TelegramBot, acfg.BotSecret, p.store)
 	if telegramToken == "" {
 		return
 	}
@@ -2306,7 +2299,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 
 	// Per-agent multiball bots (if configured)
 	for _, botName := range acfg.MultiballBots {
-		mbToken := p.cfg.ResolveBotToken(botName, p.store)
+		mbToken := config.ResolveBotToken(botName, "", p.store)
 		if mbToken == "" {
 			log.Errorf("main", "agent %q: multiball bot %q: token not found", acfg.ID, botName)
 			continue
@@ -2753,8 +2746,7 @@ func gracefulShutdown(agents map[string]*agentInstance, timeout time.Duration) {
 
 // checkFirstRun determines whether a first-run onboarding prompt should be
 // injected for an agent. Returns the prompt message if injection is needed,
-// empty string otherwise. Handles migration for existing installs by checking
-// whether character files have been modified from defaults.
+// empty string otherwise. Uses state.json to track completion.
 func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
 	if stateStore == nil {
 		return ""
@@ -2766,22 +2758,6 @@ func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
 	var completed bool
 	if stateStore.Get(key, &completed) && completed {
 		return ""
-	}
-
-	// Migration check: if character files have been customized, this is an
-	// existing install. Auto-set the flag silently.
-	soulPath := filepath.Join(acfg.Workspace, "character", "SOUL.md")
-	if data, err := os.ReadFile(soulPath); err == nil {
-		content := string(data)
-		// Default template SOUL.md contains "<!-- your name -->" placeholder.
-		// If the file exists and doesn't contain this, the user has customized it.
-		if !strings.Contains(content, "<!-- your name -->") {
-			log.Infof("main", "agent %s: character files customized, auto-completing first-run", acfg.ID)
-			if err := stateStore.Set(key, true); err != nil {
-				log.Errorf("main", "set first_run_completed for %s: %v", acfg.ID, err)
-			}
-			return ""
-		}
 	}
 
 	// First run — inject the onboarding prompt

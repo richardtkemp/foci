@@ -487,9 +487,7 @@ When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
 
 `cfg.Agent` always mirrors `cfg.Agents[0]` so legacy code paths work unchanged.
 
-**Telegram bots config:** `[telegram.bots]` map of named bots. Each entry has `token_secret` referencing a key in `secrets.toml`. Agents reference bots by name via `telegram_bot` and `multiball_bots` fields. The `[telegram]` section also supports `multiball_bots` for a shared pool.
-
-**Token resolution:** `Config.ResolveBotToken(botName, secrets)` checks `[telegram.bots.<name>].token_secret` → secrets store first, then falls back to legacy `telegram.bot_token`.
+**Telegram bot token resolution:** Bot tokens are resolved by convention: `config.ResolveBotToken(botName, botSecret, secrets)` looks up `"telegram.<botName>"` in the secrets store (or uses `botSecret` as the key if non-empty). No explicit `[telegram.bots]` map is needed. Agents set `telegram_bot` (defaults to agent ID) and optionally `bot_secret` for override.
 
 **Example multi-agent config:**
 ```toml
@@ -508,12 +506,15 @@ telegram_bot = "scout"
 [telegram]
 allowed_users = ["5970082313"]
 multiball_bots = ["spare1"]           # shared pool (any agent)
+```
 
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-clutchling = { token_secret = "telegram.clutchling" }
-scout = { token_secret = "telegram.scout" }
-spare1 = { token_secret = "telegram.spare1" }
+With `secrets.toml`:
+```toml
+[telegram]
+primary = "123456:ABC..."
+clutchling = "234567:DEF..."
+scout = "345678:GHI..."
+spare1 = "456789:JKL..."
 ```
 
 ## Telegram Bot (`telegram/bot.go`)

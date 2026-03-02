@@ -8,17 +8,12 @@ import (
 )
 
 func testDeps(agents []AgentInfo, secrets []string) AgentNewDeps {
-	return testDepsWithBots(agents, secrets, nil)
-}
-
-func testDepsWithBots(agents []AgentInfo, secrets []string, botNames []string) AgentNewDeps {
 	return AgentNewDeps{
 		ConfigPath:  filepath.Join(os.TempDir(), "test-foci.toml"),
 		DefaultsDir: "",
 		HomeDir:     os.TempDir(),
 		ListFn:      func() []AgentInfo { return agents },
 		SecretNames: func() []string { return secrets },
-		BotNames:    func() []string { return botNames },
 	}
 }
 
@@ -121,8 +116,9 @@ func TestAgentWizardDuplicateID(t *testing.T) {
 	}
 }
 
-func TestAgentWizardDuplicateBotName(t *testing.T) {
-	deps := testDepsWithBots(nil, nil, []string{"helen", "greek"})
+func TestAgentWizardExistingSecret(t *testing.T) {
+	// When the secret already exists, no warning is shown
+	deps := testDeps(nil, []string{"telegram.helen", "telegram.greek"})
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
@@ -132,22 +128,13 @@ func TestAgentWizardDuplicateBotName(t *testing.T) {
 	w.Handle("🤖")
 	w.Handle("sonnet")
 
-	// Bot name "helen" already exists in config
+	// Secret exists — should proceed without warning
 	resp, done := w.Handle("telegram.helen")
 	if done {
-		t.Error("duplicate bot name should not advance wizard")
-	}
-	if !strings.Contains(resp, "already exists") {
-		t.Errorf("expected already exists error, got %q", resp)
-	}
-	if w.step != 4 {
-		t.Errorf("step = %d, want 4 (should stay on token step)", w.step)
-	}
-
-	// A different bot name should work
-	resp, done = w.Handle("telegram.newbot")
-	if done {
 		t.Error("should not be done after token step")
+	}
+	if strings.Contains(resp, "not found") {
+		t.Errorf("should NOT warn for existing secret, got %q", resp)
 	}
 	if !strings.Contains(resp, "Character files") {
 		t.Errorf("should advance to next step, got %q", resp)
@@ -492,8 +479,9 @@ func TestCreateWorkspace(t *testing.T) {
 	if !strings.Contains(config, `id = "test-agent"`) {
 		t.Error("missing agent ID in config")
 	}
-	if !strings.Contains(config, `[telegram.bots.test]`) {
-		t.Error("missing telegram bot config")
+	// telegram_bot should be emitted since botName ("test") != id ("test-agent")
+	if !strings.Contains(config, `telegram_bot = "test"`) {
+		t.Error("missing telegram_bot in config")
 	}
 
 	// Check result message
@@ -600,35 +588,75 @@ func TestTemplateSoulFileMissing(t *testing.T) {
 }
 
 func TestGenerateConfigEntry(t *testing.T) {
-	w := &agentWizard{
-		id:          "greek-tutor",
-		model:       "claude-sonnet-4-6",
-		botName:     "greek",
-		tokenSecret: "telegram.greek",
-	}
-
-	result := generateConfigEntry(w, "/home/foci/greek-tutor")
-
-	checks := []string{
-		"[[agents]]",
-		`id = "greek-tutor"`,
-		`model = "claude-sonnet-4-6"`,
-		`telegram_bot = "greek"`,
-		`workspace = "/home/foci/greek-tutor"`,
-		`system_files = ["character/SOUL.md"`,
-		"[[agents.memory.sources]]",
-		`name = "greek-tutor"`,
-		`dir = "/home/foci/greek-tutor/memory"`,
-		"weight = 1.0",
-		"[telegram.bots.greek]",
-		`token_secret = "telegram.greek"`,
-	}
-
-	for _, check := range checks {
-		if !strings.Contains(result, check) {
-			t.Errorf("missing %q in:\n%s", check, result)
+	t.Run("botName differs from id", func(t *testing.T) {
+		w := &agentWizard{
+			id:          "greek-tutor",
+			model:       "claude-sonnet-4-6",
+			botName:     "greek",
+			tokenSecret: "telegram.greek",
 		}
-	}
+
+		result := generateConfigEntry(w, "/home/foci/greek-tutor")
+
+		checks := []string{
+			"[[agents]]",
+			`id = "greek-tutor"`,
+			`model = "claude-sonnet-4-6"`,
+			`telegram_bot = "greek"`,
+			`workspace = "/home/foci/greek-tutor"`,
+			`system_files = ["character/SOUL.md"`,
+			"[[agents.memory.sources]]",
+			`name = "greek-tutor"`,
+			`dir = "/home/foci/greek-tutor/memory"`,
+			"weight = 1.0",
+		}
+
+		for _, check := range checks {
+			if !strings.Contains(result, check) {
+				t.Errorf("missing %q in:\n%s", check, result)
+			}
+		}
+
+		// Should NOT contain [telegram.bots] section
+		if strings.Contains(result, "[telegram.bots") {
+			t.Errorf("should not contain [telegram.bots] in:\n%s", result)
+		}
+		// Convention key matches — should NOT emit bot_secret
+		if strings.Contains(result, "bot_secret") {
+			t.Errorf("should not contain bot_secret when convention matches in:\n%s", result)
+		}
+	})
+
+	t.Run("botName matches id — omit telegram_bot", func(t *testing.T) {
+		w := &agentWizard{
+			id:          "greek",
+			model:       "claude-sonnet-4-6",
+			botName:     "greek",
+			tokenSecret: "telegram.greek",
+		}
+
+		result := generateConfigEntry(w, "/home/foci/greek")
+
+		// telegram_bot should be omitted when it equals id
+		if strings.Contains(result, "telegram_bot") {
+			t.Errorf("should not contain telegram_bot when botName == id in:\n%s", result)
+		}
+	})
+
+	t.Run("custom secret — emit bot_secret", func(t *testing.T) {
+		w := &agentWizard{
+			id:          "greek",
+			model:       "claude-sonnet-4-6",
+			botName:     "greek",
+			tokenSecret: "custom.key",
+		}
+
+		result := generateConfigEntry(w, "/home/foci/greek")
+
+		if !strings.Contains(result, `bot_secret = "custom.key"`) {
+			t.Errorf("missing bot_secret in:\n%s", result)
+		}
+	})
 }
 
 func TestGenerateCrontabMissingTemplate(t *testing.T) {
