@@ -653,6 +653,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			b.logger().Infof("voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
 			text = "[voice] " + transcript
 		}
+	} else if msg.Voice != nil && b.transcriber == nil {
+		b.sendReply(msg, userID, "Voice notes require an STT provider. Set groq.api_key in secrets.toml or configure [voice] stt_endpoint.")
+		return
 	}
 
 	// Download images from photos or image documents
