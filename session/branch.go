@@ -42,7 +42,7 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		NoResetHook: opts.NoResetHook,
 	}
 
-	path, err := s.keyToPath(branchKey)
+	path, err := s.SessionPath(branchKey)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (s *Store) LoadFull(key string) ([]anthropic.Message, error) {
 // readBranchMeta reads branch metadata from the first line of a session file.
 // Returns nil, nil if the session is not a branch.
 func (s *Store) readBranchMeta(key string) (*BranchMeta, error) {
-	path, err := s.keyToPath(key)
+	path, err := s.SessionPath(key)
 	if err != nil {
 		return nil, err
 	}

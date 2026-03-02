@@ -985,7 +985,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			return "", ctx.Err()
 		}
 
-		cost := a.logAPIResponse(sessionKey, turnModel, start, duration, req, resp)
+		cost := a.logAPIResponse(sessionKey, turnModel, start, duration, req, resp, len(reqMessages))
 
 		// Cache bust detection: cache_read dropped significantly vs previous request.
 		// Skip first request (no baseline) — prevCacheRead will be 0.
@@ -1181,7 +1181,7 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 }
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
-func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *anthropic.MessageRequest, resp *anthropic.MessageResponse) float64 {
+func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *anthropic.MessageRequest, resp *anthropic.MessageResponse, msgCount int) float64 {
 	cost := log.CalculateCost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
@@ -1190,18 +1190,26 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 		resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, cost)
 
+	sessionFile := ""
+	if a.Sessions != nil {
+		if p, err := a.Sessions.SessionPath(sessionKey); err == nil {
+			sessionFile = p
+		}
+	}
 	log.API(log.APIEntry{
-		Timestamp:  start.UTC(),
-		Session:    sessionKey,
-		Model:      model,
-		Input:      resp.Usage.InputTokens,
-		Output:     resp.Usage.OutputTokens,
-		CacheRead:  resp.Usage.CacheReadInputTokens,
-		CacheWrite: resp.Usage.CacheCreationInputTokens,
-		CostUSD:    cost,
-		DurationMS: duration.Milliseconds(),
-		StopReason: resp.StopReason,
-		CallType:   "conversation",
+		Timestamp:   start.UTC(),
+		Session:     sessionKey,
+		Model:       model,
+		Input:       resp.Usage.InputTokens,
+		Output:      resp.Usage.OutputTokens,
+		CacheRead:   resp.Usage.CacheReadInputTokens,
+		CacheWrite:  resp.Usage.CacheCreationInputTokens,
+		CostUSD:     cost,
+		DurationMS:  duration.Milliseconds(),
+		StopReason:  resp.StopReason,
+		CallType:    "conversation",
+		SessionFile: sessionFile,
+		SessionLine: msgCount + 2, // +2 for the user message and assistant response being appended
 	})
 
 	if log.PayloadEnabled() {
