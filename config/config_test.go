@@ -2386,6 +2386,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 		"memory.dir":         true,
 		// Secrets (belong in secrets.toml)
 		"anthropic.setup_token":   true,
+		"anthropic.api_key":       true,
 		"anthropic.brave_api_key": true,
 	}
 

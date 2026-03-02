@@ -46,119 +46,39 @@ func (m *mockStore) Save() error {
 	return nil
 }
 
-func TestGeneratePKCE(t *testing.T) {
-	verifier, challenge, err := GeneratePKCE()
-	if err != nil {
-		t.Fatalf("GeneratePKCE: %v", err)
-	}
+// --- Setup token validation ---
 
-	// Verifier is base64url-encoded 32 bytes = 43 chars
-	if len(verifier) != 43 {
-		t.Errorf("verifier length = %d, want 43", len(verifier))
-	}
-
-	// Challenge is base64url-encoded SHA256 = 43 chars
-	if len(challenge) != 43 {
-		t.Errorf("challenge length = %d, want 43", len(challenge))
-	}
-
-	// Verifier and challenge should be different
-	if verifier == challenge {
-		t.Error("verifier and challenge should differ")
-	}
-
-	// Two calls should produce different values
-	v2, _, _ := GeneratePKCE()
-	if verifier == v2 {
-		t.Error("two calls should produce different verifiers")
+func TestValidateSetupToken(t *testing.T) {
+	// Valid token (80+ chars with correct prefix)
+	valid := "sk-ant-oat01-" + strings.Repeat("a", 80)
+	if err := ValidateSetupToken(valid); err != nil {
+		t.Errorf("valid token rejected: %v", err)
 	}
 }
 
-func TestBuildAuthURL(t *testing.T) {
-	authURL, state := BuildAuthURL("test-challenge")
-
-	if !strings.HasPrefix(authURL, OAuthAuthURL+"?") {
-		t.Errorf("URL should start with auth URL, got %q", authURL)
-	}
-	for _, param := range []string{
-		"response_type=code",
-		"client_id=" + OAuthClientID,
-		"code_challenge=test-challenge",
-		"code_challenge_method=S256",
-	} {
-		if !strings.Contains(authURL, param) {
-			t.Errorf("URL missing param %q: %s", param, authURL)
-		}
-	}
-	if !strings.Contains(authURL, "scope=") {
-		t.Error("URL missing scope param")
-	}
-	if state == "" {
-		t.Error("state should be non-empty")
-	}
-	if !strings.Contains(authURL, "state="+state) {
-		t.Errorf("URL missing matching state param: %s", authURL)
+func TestValidateSetupTokenEmpty(t *testing.T) {
+	if err := ValidateSetupToken(""); err == nil {
+		t.Error("expected error for empty token")
 	}
 }
 
-func TestExchangeCode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("ParseForm: %v", err)
-		}
-		if r.FormValue("grant_type") != "authorization_code" {
-			t.Errorf("grant_type = %q", r.FormValue("grant_type"))
-		}
-		if r.FormValue("client_id") != OAuthClientID {
-			t.Errorf("client_id = %q", r.FormValue("client_id"))
-		}
-		if r.FormValue("code") != "test-code" {
-			t.Errorf("code = %q", r.FormValue("code"))
-		}
-		if r.FormValue("code_verifier") != "test-verifier" {
-			t.Errorf("code_verifier = %q", r.FormValue("code_verifier"))
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"access_token":  "new-access-token",
-			"refresh_token": "new-refresh-token",
-			"expires_in":    3600,
-		})
-	}))
-	defer server.Close()
-
-	creds, err := exchangeCodeWithURL(context.Background(), server.URL, "test-code", "test-verifier")
-	if err != nil {
-		t.Fatalf("ExchangeCode: %v", err)
-	}
-	if creds.AccessToken != "new-access-token" {
-		t.Errorf("AccessToken = %q", creds.AccessToken)
-	}
-	if creds.RefreshToken != "new-refresh-token" {
-		t.Errorf("RefreshToken = %q", creds.RefreshToken)
-	}
-	if creds.ExpiresAt == 0 {
-		t.Error("ExpiresAt should be non-zero")
-	}
-}
-
-func TestExchangeCodeError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"invalid_grant"}`))
-	}))
-	defer server.Close()
-
-	_, err := exchangeCodeWithURL(context.Background(), server.URL, "bad-code", "bad-verifier")
+func TestValidateSetupTokenBadPrefix(t *testing.T) {
+	err := ValidateSetupToken("sk-ant-api03-" + strings.Repeat("a", 80))
 	if err == nil {
-		t.Fatal("expected error")
+		t.Fatal("expected error for wrong prefix")
 	}
-	if !strings.Contains(err.Error(), "status 400") {
-		t.Errorf("error = %q, want status 400", err.Error())
+	if !strings.Contains(err.Error(), SetupTokenPrefix) {
+		t.Errorf("error = %q, want mention of prefix", err.Error())
+	}
+}
+
+func TestValidateSetupTokenTooShort(t *testing.T) {
+	err := ValidateSetupToken("sk-ant-oat01-short")
+	if err == nil {
+		t.Fatal("expected error for short token")
+	}
+	if !strings.Contains(err.Error(), "too short") {
+		t.Errorf("error = %q, want 'too short'", err.Error())
 	}
 }
 

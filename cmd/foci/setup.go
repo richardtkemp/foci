@@ -51,7 +51,7 @@ type setupFlags struct {
 // setupState tracks wizard state for back navigation.
 type setupState struct {
 	botToken   string
-	authMethod string // "oauth", "apikey", "skip"
+	authMethod string // "setup-token", "apikey", "skip"
 	userID     string
 	agentID    string
 }
@@ -70,7 +70,7 @@ Flags:
   --bot-token <token>    Telegram bot token
   --user-id <id>         Telegram user ID
   --agent-id <id>        Agent identifier (default: main)
-  --auth-method <m>      Auth method: oauth, apikey, skip
+  --auth-method <m>      Auth method: setup-token, apikey, skip
   --auth-token <token>   API key (for --auth-method=apikey)
 `)
 }
@@ -191,16 +191,13 @@ func runSetupNonInteractive(f setupFlags) error {
 	}
 
 	switch f.authMethod {
-	case "oauth":
-		if err := anthropic.RunAuthFlow(store); err != nil {
+	case "setup-token":
+		if err := anthropic.RunSetupTokenFlow(store); err != nil {
 			return fmt.Errorf("auth: %w", err)
 		}
-		// Auth flow saved to store; read back for config gen
-		if v, ok := store.Get("anthropic.oauth_access_token"); ok {
-			secretsOpts.OAuthAccessToken = v
-		}
-		if v, ok := store.Get("anthropic.oauth_refresh_token"); ok {
-			secretsOpts.OAuthRefreshToken = v
+		// Token saved to store; read back for config gen
+		if v, ok := store.Get("anthropic.setup_token"); ok {
+			secretsOpts.SetupToken = v
 		}
 	case "apikey":
 		secretsOpts.SetupToken = f.authToken
@@ -292,17 +289,14 @@ func runSetupInteractive(f setupFlags) error {
 	}
 
 	switch state.authMethod {
-	case "oauth":
+	case "setup-token":
 		fmt.Println()
-		if err := anthropic.RunAuthFlow(store); err != nil {
+		if err := anthropic.RunSetupTokenFlow(store); err != nil {
 			return fmt.Errorf("auth: %w", err)
 		}
-		fmt.Println("✓ Authenticated.")
-		if v, ok := store.Get("anthropic.oauth_access_token"); ok {
-			secretsOpts.OAuthAccessToken = v
-		}
-		if v, ok := store.Get("anthropic.oauth_refresh_token"); ok {
-			secretsOpts.OAuthRefreshToken = v
+		fmt.Println("✓ Setup token saved.")
+		if v, ok := store.Get("anthropic.setup_token"); ok {
+			secretsOpts.SetupToken = v
 		}
 	case "apikey":
 		fmt.Print("\n  API key: ")
@@ -375,7 +369,7 @@ func stepAuth(reader *bufio.Reader, current string) (method string, back bool) {
 	fmt.Println()
 	fmt.Println("Step 2/5: Anthropic Authentication")
 	fmt.Println("  Foci needs access to Claude. Choose one:")
-	fmt.Println("  [1] OAuth (recommended for subscribers)")
+	fmt.Println("  [1] Setup token (recommended — uses Claude Code subscription)")
 	fmt.Println("  [2] API key")
 	fmt.Println("  [3] Skip (use Claude Code credentials if available)")
 	fmt.Println()
@@ -391,7 +385,7 @@ func stepAuth(reader *bufio.Reader, current string) (method string, back bool) {
 
 		switch input {
 		case "1":
-			return "oauth", false
+			return "setup-token", false
 		case "2":
 			return "apikey", false
 		case "3":
@@ -825,7 +819,7 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts c
 	if secretsOpts.SetupToken != "" {
 		store.Set("anthropic.setup_token", secretsOpts.SetupToken)
 	}
-	// OAuth credentials are already in store from RunAuthFlow
+	// Setup token is already in store from RunSetupTokenFlow
 	if err := store.Save(); err != nil {
 		return fmt.Errorf("write secrets.toml: %w", err)
 	}
@@ -852,9 +846,9 @@ func discoverModel(store *secrets.Store) string {
 
 	// Get a token for the API call
 	token := ""
-	if v, ok := store.Get("anthropic.oauth_access_token"); ok {
+	if v, ok := store.Get("anthropic.setup_token"); ok {
 		token = v
-	} else if v, ok := store.Get("anthropic.setup_token"); ok {
+	} else if v, ok := store.Get("anthropic.api_key"); ok {
 		token = v
 	}
 	if token == "" {

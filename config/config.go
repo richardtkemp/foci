@@ -157,7 +157,8 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	SetupToken      string `toml:"setup_token"` // static setup-token (fallback when OAuth not available)
+	SetupToken      string `toml:"setup_token"` // setup-token from `claude setup-token` (written by `foci auth`)
+	APIKey          string `toml:"api_key"`      // Anthropic API key (fallback when setup-token not available)
 	BraveAPIKey     string `toml:"brave_api_key"`
 	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")

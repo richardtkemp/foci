@@ -87,7 +87,7 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 
 ### Anthropic API
 
-- **Auth:** OAuth PKCE with auto-refresh, or static token override. See [docs/AUTH.md](docs/AUTH.md).
+- **Auth:** Setup token (from `claude setup-token`), API key, or Claude Code credentials fallback. See [docs/AUTH.md](docs/AUTH.md).
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** Two cache breakpoints per API request (system prompt + conversation history). See [docs/CACHING.md](docs/CACHING.md).
 - **Streaming:** Server-sent events for responses
@@ -874,9 +874,7 @@ model = "claude-haiku-4-5"
 workspace = "/home/rich/git/openclaw/workspace"
 
 [anthropic]
-oauth_access_token = "sk-ant-oat01-..."   # written by foci auth, auto-updated on refresh
-oauth_refresh_token = "sk-ant-ort01-..."
-oauth_expires_at = 1772334580401
+setup_token = "sk-ant-oat01-..."   # from `foci auth` (Claude Code setup token)
 
 [telegram]
 bot_token = "8351531463:AAH..."
@@ -965,7 +963,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
 4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
-   - Anthropic OAuth (via `foci auth` or static token)
+   - Anthropic auth (via `foci auth` setup token or API key)
    - Telegram user ID (allowed_users)
    - Agent model (default: claude-haiku-4-5)
 5. **Character files:** Create `~/character/` with template content if files don't exist:

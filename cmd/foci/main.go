@@ -160,7 +160,7 @@ func usage() {
 
 Commands:
   setup                First-run setup wizard (config, auth, character files)
-  auth                 Authenticate with Anthropic (OAuth PKCE flow)
+  auth                 Authenticate with Anthropic (setup token from Claude Code)
   send <text>          Send a message to the agent (main session)
   branch [text]        Trigger a branch session
                          --no-compact      Skip compaction if context limit reached
@@ -640,8 +640,9 @@ Flags:
 func authUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: foci auth [--config <path>]
 
-Authenticate with Anthropic using the OAuth PKCE flow.
-Credentials are saved to secrets.toml alongside foci.toml.
+Authenticate with Anthropic using a Claude Code setup token.
+Run 'claude setup-token' in another terminal, then paste the token.
+Token is saved to secrets.toml alongside foci.toml.
 
 Flags:
   --config <path>       Path to foci.toml (used to locate secrets.toml)
@@ -671,10 +672,10 @@ func cmdAuth(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
 	}
-	if err := anthropic.RunAuthFlow(store); err != nil {
+	if err := anthropic.RunSetupTokenFlow(store); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Credentials saved to %s\n", secretsPath)
+	fmt.Fprintf(os.Stderr, "Setup token saved to %s\n", secretsPath)
 	return nil
 }
 

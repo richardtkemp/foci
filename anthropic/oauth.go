@@ -1,12 +1,9 @@
-// OAuth PKCE flow based on https://gist.github.com/changjonathanc/9f9d635b2f8692e0520a884eaf098351
-// (Anthropic OAuth CLI by changjonathanc)
+// OAuth token management for Anthropic API authentication.
 package anthropic
 
 import (
+	"bufio"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,14 +17,14 @@ import (
 	"time"
 )
 
-// OAuth PKCE constants matching Claude Code's OAuth flow.
 const (
-	OAuthClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	OAuthAuthURL     = "https://claude.ai/oauth/authorize"
-	OAuthTokenURL    = "https://platform.claude.com/v1/oauth/token"
-	OAuthRedirectURI = "https://platform.claude.com/oauth/code/callback"
-	OAuthScopes      = "user:profile user:inference user:sessions:claude_code user:mcp_servers"
-	refreshMargin    = 5 * time.Minute
+	OAuthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	OAuthTokenURL = "https://platform.claude.com/v1/oauth/token"
+	refreshMargin = 5 * time.Minute
+
+	// Setup token validation constants.
+	SetupTokenPrefix    = "sk-ant-oat01-"
+	SetupTokenMinLength = 80
 )
 
 // SecretsStore is the subset of secrets.Store used by OAuthManager.
@@ -275,130 +272,45 @@ func refreshAccessToken(client *http.Client, tokenURL, refreshToken string) (*OA
 	}, nil
 }
 
-// --- PKCE helpers ---
-
-// GeneratePKCE generates a PKCE code verifier and its SHA256 challenge.
-func GeneratePKCE() (verifier, challenge string, err error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", "", fmt.Errorf("generate random: %w", err)
+// ValidateSetupToken checks that a token has the expected prefix and minimum length.
+func ValidateSetupToken(token string) error {
+	if token == "" {
+		return fmt.Errorf("token is empty")
 	}
-	verifier = base64.RawURLEncoding.EncodeToString(buf)
-
-	h := sha256.Sum256([]byte(verifier))
-	challenge = base64.RawURLEncoding.EncodeToString(h[:])
-	return verifier, challenge, nil
+	if !strings.HasPrefix(token, SetupTokenPrefix) {
+		return fmt.Errorf("expected token starting with %s", SetupTokenPrefix)
+	}
+	if len(token) < SetupTokenMinLength {
+		return fmt.Errorf("token looks too short; paste the full setup-token")
+	}
+	return nil
 }
 
-// BuildAuthURL returns the full OAuth authorization URL with PKCE challenge
-// and a random state parameter for CSRF protection.
-func BuildAuthURL(challenge string) (authURL, state string) {
-	buf := make([]byte, 32)
-	rand.Read(buf) // crypto/rand never fails on supported platforms
-	state = base64.RawURLEncoding.EncodeToString(buf)
-	params := url.Values{
-		"code":                  {"true"}, // Anthropic-specific: required for auth page to function
-		"response_type":         {"code"},
-		"client_id":             {OAuthClientID},
-		"redirect_uri":          {OAuthRedirectURI},
-		"scope":                 {OAuthScopes},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
-		"state":                 {state},
-	}
-	return OAuthAuthURL + "?" + params.Encode(), state
-}
-
-// ExchangeCode exchanges an authorization code for tokens.
-func ExchangeCode(ctx context.Context, code, verifier string) (*OAuthCredentials, error) {
-	return exchangeCodeWithURL(ctx, OAuthTokenURL, code, verifier)
-}
-
-func exchangeCodeWithURL(ctx context.Context, tokenURL, code, verifier string) (*OAuthCredentials, error) {
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"client_id":     {OAuthClientID},
-		"code":          {code},
-		"redirect_uri":  {OAuthRedirectURI},
-		"code_verifier": {verifier},
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.URL.RawQuery = ""
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Body = io.NopCloser(nil)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.PostForm(tokenURL, form)
-	if err != nil {
-		return nil, fmt.Errorf("exchange request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read exchange response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exchange failed (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("parse exchange response: %w", err)
-	}
-
-	return &OAuthCredentials{
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UnixMilli(),
-	}, nil
-}
-
-// RunAuthFlow runs the interactive OAuth PKCE flow: prints an auth URL,
-// reads the authorization code from stdin, exchanges it, and saves credentials
-// to the secrets store.
-func RunAuthFlow(store SecretsStore) error {
-	verifier, challenge, err := GeneratePKCE()
-	if err != nil {
-		return fmt.Errorf("generate PKCE: %w", err)
-	}
-
-	authURL, state := BuildAuthURL(challenge)
-	fmt.Println("Open this URL in your browser to authenticate:")
+// RunSetupTokenFlow runs the interactive setup-token flow: instructs the user
+// to run `claude setup-token`, reads the token from stdin, validates it,
+// and saves it to the secrets store as anthropic.setup_token.
+func RunSetupTokenFlow(store SecretsStore) error {
+	fmt.Println("Run this command in another terminal:")
 	fmt.Println()
-	fmt.Println("  " + authURL)
+	fmt.Println("  claude setup-token")
 	fmt.Println()
-	fmt.Print("Paste the authorization code: ")
+	fmt.Print("Paste the token: ")
 
-	var raw string
-	if _, err := fmt.Scanln(&raw); err != nil {
-		return fmt.Errorf("read code: %w", err)
-	}
-
-	// Anthropic returns "code#state" — split and verify state for CSRF protection.
-	code, returnedState, _ := strings.Cut(raw, "#")
-	if returnedState != state {
-		return fmt.Errorf("state mismatch (CSRF check failed)")
-	}
-
-	creds, err := ExchangeCode(context.Background(), code, verifier)
+	reader := bufio.NewReader(os.Stdin)
+	raw, err := reader.ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("exchange code: %w", err)
+		return fmt.Errorf("read token: %w", err)
+	}
+	token := strings.TrimSpace(raw)
+
+	if err := ValidateSetupToken(token); err != nil {
+		return err
 	}
 
-	if err := saveCredsToStore(store, creds); err != nil {
-		return fmt.Errorf("save credentials: %w", err)
+	store.Set("anthropic.setup_token", token)
+	if err := store.Save(); err != nil {
+		return fmt.Errorf("save token: %w", err)
 	}
 
-	fmt.Println("Credentials saved to secrets.toml")
 	return nil
 }

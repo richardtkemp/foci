@@ -5,6 +5,8 @@ Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 mi
 ## Prerequisites
 
 Install these before running setup:
+TODO these are platform-specific! Just list the tools, don't mention apt, name specific package names only as per-distro hints. OR, give complete commands for various distros
+TODO tmux jq are technically optional
 
 ```bash
 # Go 1.22+ (for building from source)
@@ -14,7 +16,6 @@ sudo apt install golang-go
 sudo apt install tmux jq git
 
 # Optional but recommended
-sudo apt install ack           # file search (used by grep skill)
 pip install yq                 # TOML/YAML/XML querying (used by query skill)
 ```
 
@@ -48,7 +49,7 @@ sudo ./setup.sh -u foci
 
 The wizard prompts for:
 - **Bot token** — paste the token from @BotFather
-- **Authentication** — OAuth (recommended for subscribers), API key, or skip
+- **Authentication** — setup token (recommended, uses Claude Code subscription), API key, or skip
 - **User ID** — auto-detected by messaging your bot, or entered manually
 - **Agent ID** — a short name for your agent (default: `main`)
 - **Character files** — use default templates or import from an existing directory
@@ -79,7 +80,7 @@ Available env vars:
 |----------|----------|-------------|
 | `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `FOCI_TELEGRAM_USER` | Yes | Your Telegram user ID |
-| `FOCI_AUTH_METHOD` | No | `oauth`, `apikey`, or `skip` (default: `skip`) |
+| `FOCI_AUTH_METHOD` | No | `setup-token`, `apikey`, or `skip` (default: `skip`) |
 | `FOCI_AUTH_TOKEN` | If apikey | Anthropic API key |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 
