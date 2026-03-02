@@ -913,39 +913,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 	}()
 
-	system := a.Bootstrap.SystemBlocks()
-	if a.EnvironmentBlock != "" {
-		envBlock := anthropic.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
-		system = append([]anthropic.SystemBlock{envBlock}, system...)
-	}
+	system := a.buildSystemBlocks()
 	useAutoCache := a.CacheStrategy == "auto"
-
-	if useAutoCache {
-		// Auto caching: strip intermediate cache_control from system blocks,
-		// but keep an explicit breakpoint on the last system block so tools+system
-		// are cached as a stable prefix that survives message changes (e.g. compaction).
-		// Anthropic docs confirm auto+explicit breakpoints are compatible:
-		// the explicit breakpoint uses one of 4 available slots.
-		if len(a.ExtraSystemBlocks) > 0 {
-			system = append(system, a.ExtraSystemBlocks...)
-		}
-		cleanSystem := make([]anthropic.SystemBlock, len(system))
-		copy(cleanSystem, system)
-		for i := range cleanSystem {
-			cleanSystem[i].CacheControl = nil
-		}
-		if len(cleanSystem) > 0 {
-			cleanSystem[len(cleanSystem)-1].CacheControl = anthropic.Ephemeral()
-		}
-		system = cleanSystem
-	} else if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
-		// Explicit caching: insert extra blocks before the last block (which has cache_control).
-		combined := make([]anthropic.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
-		combined = append(combined, system[:len(system)-1]...)
-		combined = append(combined, a.ExtraSystemBlocks...)
-		combined = append(combined, system[len(system)-1])
-		system = combined
-	}
 	toolDefs := a.Tools.ToolDefs()
 	if len(a.ServerTools) > 0 {
 		toolDefs = append(toolDefs, a.ServerTools...)
@@ -998,30 +967,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		log.Debugf("agent", "api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
 
 		if err != nil {
-			if ctx.Err() != nil {
-				log.Debugf("agent", "api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
-				return "", ctx.Err()
-			}
-			// Detect rate limit / overloaded errors and notify via callback.
-			var apiErr *anthropic.APIError
-			if errors.As(err, &apiErr) && (apiErr.IsRateLimit() || apiErr.IsOverloaded()) {
-				log.Warnf("agent", "rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
-				if a.RateLimitFunc != nil {
-					a.RateLimitFunc(apiErr.RetryAfterSeconds())
-				}
-				return "", fmt.Errorf("rate limited — mana exhausted")
-			}
-			// Detect retryable server errors (500/502/503/529) and return a friendly message.
-			// By this point, the client has already retried 3 times.
-			if errors.As(err, &apiErr) && apiErr.IsRetryable() {
-				log.Debugf("agent", "server error detail: %s", err)
-				log.Warnf("agent", "API server error (status %d)", apiErr.StatusCode)
-				if a.RateLimitFunc != nil {
-					a.RateLimitFunc(0)
-				}
-				return "", fmt.Errorf("anthropic API is temporarily unavailable, try again in a few minutes")
-			}
-			return "", fmt.Errorf("send message: %w", err)
+			return "", a.classifyAPIError(ctx, err, sessionKey, duration)
 		}
 
 		// Check for cancellation after API call
@@ -1029,41 +975,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			return "", ctx.Err()
 		}
 
-		cost := log.CalculateCost(turnModel,
-			resp.Usage.InputTokens, resp.Usage.OutputTokens,
-			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
-
-		log.Infof("agent", "stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
-			resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
-			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, cost)
-
-		log.API(log.APIEntry{
-			Timestamp:  start.UTC(),
-			Session:    sessionKey,
-			Model:      turnModel,
-			Input:      resp.Usage.InputTokens,
-			Output:     resp.Usage.OutputTokens,
-			CacheRead:  resp.Usage.CacheReadInputTokens,
-			CacheWrite: resp.Usage.CacheCreationInputTokens,
-			CostUSD:    cost,
-			DurationMS: duration.Milliseconds(),
-			StopReason: resp.StopReason,
-			CallType:   "conversation",
-		})
-
-		// Full payload logging (opt-in)
-		if log.PayloadEnabled() {
-			reqJSON, _ := json.Marshal(req)
-			respJSON, _ := json.Marshal(resp)
-			log.Payload(log.PayloadEntry{
-				Timestamp:  start.UTC(),
-				Session:    sessionKey,
-				Model:      turnModel,
-				Request:    reqJSON,
-				Response:   respJSON,
-				DurationMS: duration.Milliseconds(),
-			})
-		}
+		cost := a.logAPIResponse(sessionKey, turnModel, start, duration, req, resp)
 
 		// Cache bust detection: cache_read dropped significantly vs previous request.
 		// Skip first request (no baseline) — prevCacheRead will be 0.
@@ -1129,38 +1041,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			sm.prevCacheRead = resp.Usage.CacheReadInputTokens
 			sm.prevCacheWrite = resp.Usage.CacheCreationInputTokens
 
-			// Check if compaction is needed (skip while async results are pending)
-			if a.Compactor != nil && !a.AsyncNotifier.HasPending(sessionKey) && a.Compactor.ShouldCompact(messages, &resp.Usage) {
-				if NoCompactFromContext(ctx) {
-					totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens
-					limit := compaction.ContextLimit(a.Model)
-					percent := int(float64(totalTokens) / float64(limit) * 100)
-					log.Infof("agent", "context at %d%% capacity for no_compact session", percent)
-				} else {
-					oldCount := len(messages)
-					if a.CompactionNotifyFunc != nil {
-						a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
-					}
-					summaryPrompt := ""
-					if a.ReadPromptFile != nil {
-						summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
-					}
-					if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
-						log.Errorf("agent", "compaction failed: %v", err)
-					} else {
-						if a.CompactionNotifyFunc != nil {
-							a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
-						}
-						if a.CompactionDebugFunc != nil && summary != "" {
-							a.CompactionDebugFunc(sessionKey, summary)
-						}
-					}
-					// Reload system prompt — compaction may have changed memory files
-					a.Bootstrap.Reload()
-					// Reset cache baseline — next request will have a different prefix
-					sm.prevCacheRead = 0
-				}
-			}
+			a.maybeCompact(ctx, sessionKey, messages, system, &resp.Usage, sm)
 
 			return anthropic.TextOf(resp.Content), nil
 		}
@@ -1261,6 +1142,148 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 	newMessages = nil // saved — defer won't double-save
 	return "Max tool call depth reached.", nil
+}
+
+// classifyAPIError maps API errors to user-friendly messages, notifying
+// rate limit and server error callbacks as appropriate.
+func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey string, duration time.Duration) error {
+	if ctx.Err() != nil {
+		log.Debugf("agent", "api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
+		return ctx.Err()
+	}
+	var apiErr *anthropic.APIError
+	if errors.As(err, &apiErr) && (apiErr.IsRateLimit() || apiErr.IsOverloaded()) {
+		log.Warnf("agent", "rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
+		if a.RateLimitFunc != nil {
+			a.RateLimitFunc(apiErr.RetryAfterSeconds())
+		}
+		return fmt.Errorf("rate limited — mana exhausted")
+	}
+	if errors.As(err, &apiErr) && apiErr.IsRetryable() {
+		log.Debugf("agent", "server error detail: %s", err)
+		log.Warnf("agent", "API server error (status %d)", apiErr.StatusCode)
+		if a.RateLimitFunc != nil {
+			a.RateLimitFunc(0)
+		}
+		return fmt.Errorf("anthropic API is temporarily unavailable, try again in a few minutes")
+	}
+	return fmt.Errorf("send message: %w", err)
+}
+
+// logAPIResponse logs usage, cost, and optionally the full request/response payload.
+func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *anthropic.MessageRequest, resp *anthropic.MessageResponse) float64 {
+	cost := log.CalculateCost(model,
+		resp.Usage.InputTokens, resp.Usage.OutputTokens,
+		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+
+	log.Infof("agent", "stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
+		resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
+		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, cost)
+
+	log.API(log.APIEntry{
+		Timestamp:  start.UTC(),
+		Session:    sessionKey,
+		Model:      model,
+		Input:      resp.Usage.InputTokens,
+		Output:     resp.Usage.OutputTokens,
+		CacheRead:  resp.Usage.CacheReadInputTokens,
+		CacheWrite: resp.Usage.CacheCreationInputTokens,
+		CostUSD:    cost,
+		DurationMS: duration.Milliseconds(),
+		StopReason: resp.StopReason,
+		CallType:   "conversation",
+	})
+
+	if log.PayloadEnabled() {
+		reqJSON, _ := json.Marshal(req)
+		respJSON, _ := json.Marshal(resp)
+		log.Payload(log.PayloadEntry{
+			Timestamp:  start.UTC(),
+			Session:    sessionKey,
+			Model:      model,
+			Request:    reqJSON,
+			Response:   respJSON,
+			DurationMS: duration.Milliseconds(),
+		})
+	}
+
+	return cost
+}
+
+// buildSystemBlocks assembles the system prompt blocks from bootstrap,
+// environment, and extra blocks, applying the appropriate cache strategy.
+func (a *Agent) buildSystemBlocks() []anthropic.SystemBlock {
+	system := a.Bootstrap.SystemBlocks()
+	if a.EnvironmentBlock != "" {
+		envBlock := anthropic.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
+		system = append([]anthropic.SystemBlock{envBlock}, system...)
+	}
+
+	if a.CacheStrategy == "auto" {
+		// Auto caching: strip intermediate cache_control, keep an explicit
+		// breakpoint on the last block so tools+system are cached as a stable
+		// prefix that survives message changes (e.g. compaction).
+		if len(a.ExtraSystemBlocks) > 0 {
+			system = append(system, a.ExtraSystemBlocks...)
+		}
+		clean := make([]anthropic.SystemBlock, len(system))
+		copy(clean, system)
+		for i := range clean {
+			clean[i].CacheControl = nil
+		}
+		if len(clean) > 0 {
+			clean[len(clean)-1].CacheControl = anthropic.Ephemeral()
+		}
+		return clean
+	}
+
+	if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
+		// Explicit caching: insert extra blocks before the last block
+		// (which has cache_control).
+		combined := make([]anthropic.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
+		combined = append(combined, system[:len(system)-1]...)
+		combined = append(combined, a.ExtraSystemBlocks...)
+		combined = append(combined, system[len(system)-1])
+		return combined
+	}
+
+	return system
+}
+
+// maybeCompact checks whether context compaction is needed and performs it.
+func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []anthropic.Message, system []anthropic.SystemBlock, usage *anthropic.Usage, sm *sessionMeta) {
+	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) || !a.Compactor.ShouldCompact(messages, usage) {
+		return
+	}
+	if NoCompactFromContext(ctx) {
+		totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+		limit := compaction.ContextLimit(a.Model)
+		percent := int(float64(totalTokens) / float64(limit) * 100)
+		log.Infof("agent", "context at %d%% capacity for no_compact session", percent)
+		return
+	}
+	oldCount := len(messages)
+	if a.CompactionNotifyFunc != nil {
+		a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
+	}
+	summaryPrompt := ""
+	if a.ReadPromptFile != nil {
+		summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
+	}
+	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
+		log.Errorf("agent", "compaction failed: %v", err)
+	} else {
+		if a.CompactionNotifyFunc != nil {
+			a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+		}
+		if a.CompactionDebugFunc != nil && summary != "" {
+			a.CompactionDebugFunc(sessionKey, summary)
+		}
+	}
+	// Reload system prompt — compaction may have changed memory files
+	a.Bootstrap.Reload()
+	// Reset cache baseline — next request will have a different prefix
+	sm.prevCacheRead = 0
 }
 
 // withCacheBreakpoint returns a deep copy of messages with cache_control set
