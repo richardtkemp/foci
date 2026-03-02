@@ -539,7 +539,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	if !strings.Contains(wakeMsg, "TMUX WATCH") {
 		t.Errorf("wake message = %q, want to contain TMUX WATCH", wakeMsg)
 	}
-	if !strings.Contains(wakeMsg, "injected by the system") {
+	if !strings.Contains(wakeMsg, "SYSTEM INJECTION") {
 		t.Errorf("wake message = %q, want to contain context note", wakeMsg)
 	}
 

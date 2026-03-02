@@ -455,7 +455,7 @@ func TestWarningDispatch_Dispatches(t *testing.T) {
 	got := dispatched
 	mu.Unlock()
 
-	if !containsAll(got, "PROACTIVE WARNINGS", "filesystem 95% full", "OOM killed", "injected by the system") {
+	if !containsAll(got, "PROACTIVE WARNINGS", "filesystem 95% full", "OOM killed", "SYSTEM INJECTION") {
 		t.Errorf("dispatched text missing expected content: %q", got)
 	}
 }
