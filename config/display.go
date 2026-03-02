@@ -17,105 +17,22 @@ type configRow struct {
 	Value   string
 }
 
+// firstWidth returns the first element of maxWidth or 0.
+func firstWidth(maxWidth []int) int {
+	if len(maxWidth) > 0 {
+		return maxWidth[0]
+	}
+	return 0
+}
+
 // FormatConfig returns an aligned columnar table of the running config
 // for the given agent. Secrets are redacted. An optional maxWidth constrains
 // table columns.
 func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
-	mw := 0
-	if len(maxWidth) > 0 {
-		mw = maxWidth[0]
-	}
-	var rows []configRow
+	mw := firstWidth(maxWidth)
+	rows := collectAgentRows(agent)
 	add := func(section, key string, val interface{}) {
 		rows = append(rows, configRow{section, key, formatValue(val)})
-	}
-
-	// agent
-	add("agent", "id", agent.ID)
-	add("agent", "model", agent.Model)
-	add("agent", "workspace", agent.Workspace)
-
-	if len(agent.SystemFiles) > 0 {
-		add("agent", "system_files", agent.SystemFiles)
-	}
-	add("agent", "duplicate_messages", agent.DuplicateMessages)
-	if agent.BranchOrientationPrompt != "" {
-		add("agent", "branch_orientation_prompt", agent.BranchOrientationPrompt)
-	}
-	if agent.TelegramBot != "" {
-		add("agent", "telegram_bot", agent.TelegramBot)
-	}
-	if len(agent.MultiballBots) > 0 {
-		add("agent", "multiball_bots", agent.MultiballBots)
-	}
-	add("agent", "max_tool_loops", agent.MaxToolLoops)
-	add("agent", "max_output_tokens", agent.MaxOutputTokens)
-	if agent.Effort != "" {
-		add("agent", "effort", agent.Effort)
-	}
-	if agent.TTSRate != 0 {
-		add("agent", "tts_rate", agent.TTSRate)
-	}
-	add("agent", "inject_agent_warnings", agent.InjectAgentWarnings)
-	if agent.StartupNotification != nil {
-		add("agent", "startup_notification", *agent.StartupNotification)
-	}
-	if agent.ShowToolCalls != nil {
-		add("agent", "show_tool_calls", string(*agent.ShowToolCalls))
-	}
-	if agent.ShowThinking != nil {
-		add("agent", "show_thinking", string(*agent.ShowThinking))
-	}
-	if agent.DisplayWidth != nil {
-		add("agent", "display_width", *agent.DisplayWidth)
-	}
-	if agent.MessagesInLog != nil {
-		add("agent", "messages_in_log", *agent.MessagesInLog)
-	}
-	if agent.ReceivedFilesDir != "" {
-		add("agent", "received_files_dir", agent.ReceivedFilesDir)
-	}
-	if len(agent.AllowedUsers) > 0 {
-		add("agent", "allowed_users", agent.AllowedUsers)
-	}
-	if agent.CompactionPreserveMessages != nil {
-		add("agent", "compaction_preserve_messages", *agent.CompactionPreserveMessages)
-	}
-	if agent.CompactionEffort != "" {
-		add("agent", "compaction_effort", agent.CompactionEffort)
-	}
-	if len(agent.UsageWarnings.Thresholds) > 0 {
-		add("agent", "usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
-	}
-	// Per-agent keepalive/background
-	add("agent", "keepalive.enabled", agent.Keepalive.Enabled)
-	add("agent", "keepalive.interval", agent.Keepalive.Interval)
-	add("agent", "keepalive.prompt", agent.Keepalive.Prompt)
-	add("agent", "background.enabled", agent.Background.Enabled)
-	add("agent", "background.interval", agent.Background.Interval)
-	add("agent", "background.prompt", agent.Background.Prompt)
-	add("agent", "background.invest_interval", agent.Background.InvestInterval)
-	add("agent", "background.mana_staleness_timeout", agent.Background.ManaStalenessTimeout)
-	// Memory formation
-	add("agent", "memory_formation.interval", agent.MemoryFormation.Interval)
-	if agent.MemoryFormation.IntervalEnabled != nil {
-		add("agent", "memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
-	}
-	if agent.MemoryFormation.IntervalPrompt != "" {
-		add("agent", "memory_formation.interval_prompt", agent.MemoryFormation.IntervalPrompt)
-	}
-	add("agent", "memory_formation.consolidation_interval", agent.MemoryFormation.ConsolidationInterval)
-	if agent.MemoryFormation.ConsolidationEnabled != nil {
-		add("agent", "memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
-	}
-	if agent.MemoryFormation.ConsolidationPrompt != "" {
-		add("agent", "memory_formation.consolidation_prompt", agent.MemoryFormation.ConsolidationPrompt)
-	}
-	if agent.MemoryFormation.SessionEndEnabled != nil {
-		add("agent", "memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
-	}
-	if agent.MemoryFormation.SessionEndPrompt != "" {
-		add("agent", "memory_formation.session_end_prompt", agent.MemoryFormation.SessionEndPrompt)
 	}
 
 	// defaults
@@ -313,15 +230,105 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	return formatTableBySection(rows, mw)
 }
 
+// collectAgentRows returns the standard set of agent config display rows.
+func collectAgentRows(agent AgentConfig) []configRow {
+	var rows []configRow
+	add := func(key string, val interface{}) {
+		rows = append(rows, configRow{"agent", key, formatValue(val)})
+	}
+	add("id", agent.ID)
+	add("model", agent.Model)
+	add("workspace", agent.Workspace)
+
+	if len(agent.SystemFiles) > 0 {
+		add("system_files", agent.SystemFiles)
+	}
+	add("duplicate_messages", agent.DuplicateMessages)
+	if agent.BranchOrientationPrompt != "" {
+		add("branch_orientation_prompt", agent.BranchOrientationPrompt)
+	}
+	if agent.TelegramBot != "" {
+		add("telegram_bot", agent.TelegramBot)
+	}
+	if len(agent.MultiballBots) > 0 {
+		add("multiball_bots", agent.MultiballBots)
+	}
+	add("max_tool_loops", agent.MaxToolLoops)
+	add("max_output_tokens", agent.MaxOutputTokens)
+	if agent.Effort != "" {
+		add("effort", agent.Effort)
+	}
+	if agent.TTSRate != 0 {
+		add("tts_rate", agent.TTSRate)
+	}
+	add("inject_agent_warnings", agent.InjectAgentWarnings)
+	if agent.StartupNotification != nil {
+		add("startup_notification", *agent.StartupNotification)
+	}
+	if agent.ShowToolCalls != nil {
+		add("show_tool_calls", string(*agent.ShowToolCalls))
+	}
+	if agent.ShowThinking != nil {
+		add("show_thinking", string(*agent.ShowThinking))
+	}
+	if agent.DisplayWidth != nil {
+		add("display_width", *agent.DisplayWidth)
+	}
+	if agent.MessagesInLog != nil {
+		add("messages_in_log", *agent.MessagesInLog)
+	}
+	if agent.ReceivedFilesDir != "" {
+		add("received_files_dir", agent.ReceivedFilesDir)
+	}
+	if len(agent.AllowedUsers) > 0 {
+		add("allowed_users", agent.AllowedUsers)
+	}
+	if agent.CompactionPreserveMessages != nil {
+		add("compaction_preserve_messages", *agent.CompactionPreserveMessages)
+	}
+	if agent.CompactionEffort != "" {
+		add("compaction_effort", agent.CompactionEffort)
+	}
+	if len(agent.UsageWarnings.Thresholds) > 0 {
+		add("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
+	}
+	add("keepalive.enabled", agent.Keepalive.Enabled)
+	add("keepalive.interval", agent.Keepalive.Interval)
+	add("keepalive.prompt", agent.Keepalive.Prompt)
+	add("background.enabled", agent.Background.Enabled)
+	add("background.interval", agent.Background.Interval)
+	add("background.prompt", agent.Background.Prompt)
+	add("background.invest_interval", agent.Background.InvestInterval)
+	add("background.mana_staleness_timeout", agent.Background.ManaStalenessTimeout)
+	add("memory_formation.interval", agent.MemoryFormation.Interval)
+	if agent.MemoryFormation.IntervalEnabled != nil {
+		add("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
+	}
+	if agent.MemoryFormation.IntervalPrompt != "" {
+		add("memory_formation.interval_prompt", agent.MemoryFormation.IntervalPrompt)
+	}
+	add("memory_formation.consolidation_interval", agent.MemoryFormation.ConsolidationInterval)
+	if agent.MemoryFormation.ConsolidationEnabled != nil {
+		add("memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
+	}
+	if agent.MemoryFormation.ConsolidationPrompt != "" {
+		add("memory_formation.consolidation_prompt", agent.MemoryFormation.ConsolidationPrompt)
+	}
+	if agent.MemoryFormation.SessionEndEnabled != nil {
+		add("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
+	}
+	if agent.MemoryFormation.SessionEndPrompt != "" {
+		add("memory_formation.session_end_prompt", agent.MemoryFormation.SessionEndPrompt)
+	}
+	return rows
+}
+
 // FormatConfigGrouped returns per-group config tables, each wrapped in a
 // markdown code block. The first table is "Global" config (all non-agent
 // sections), followed by one table for the given agent. Each table is small
 // enough to fit in a single Telegram message.
 func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []string {
-	mw := 0
-	if len(maxWidth) > 0 {
-		mw = maxWidth[0]
-	}
+	mw := firstWidth(maxWidth)
 	// Build global rows (everything except agent-specific)
 	var globalRows []configRow
 
@@ -545,89 +552,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	tables = append(tables, "```\nGlobal\n"+formatTableBySection(globalRows, mw)+"\n```")
 
 	// Current agent table
-	{
-		var agentRows []configRow
-		addAgent := func(key string, val interface{}) {
-			agentRows = append(agentRows, configRow{"agent", key, formatValue(val)})
-		}
-		addAgent("id", agent.ID)
-		addAgent("model", agent.Model)
-		addAgent("workspace", agent.Workspace)
-
-		if len(agent.SystemFiles) > 0 {
-			addAgent("system_files", agent.SystemFiles)
-		}
-		addAgent("duplicate_messages", agent.DuplicateMessages)
-		if agent.BranchOrientationPrompt != "" {
-			addAgent("branch_orientation_prompt", agent.BranchOrientationPrompt)
-		}
-		if agent.TelegramBot != "" {
-			addAgent("telegram_bot", agent.TelegramBot)
-		}
-		if len(agent.MultiballBots) > 0 {
-			addAgent("multiball_bots", agent.MultiballBots)
-		}
-		addAgent("max_tool_loops", agent.MaxToolLoops)
-		addAgent("max_output_tokens", agent.MaxOutputTokens)
-		if agent.Effort != "" {
-			addAgent("effort", agent.Effort)
-		}
-		if agent.TTSRate != 0 {
-			addAgent("tts_rate", agent.TTSRate)
-		}
-		addAgent("inject_agent_warnings", agent.InjectAgentWarnings)
-		if agent.StartupNotification != nil {
-			addAgent("startup_notification", *agent.StartupNotification)
-		}
-		if agent.ShowToolCalls != nil {
-			addAgent("show_tool_calls", string(*agent.ShowToolCalls))
-		}
-		if agent.ShowThinking != nil {
-			addAgent("show_thinking", string(*agent.ShowThinking))
-		}
-		if agent.DisplayWidth != nil {
-			addAgent("display_width", *agent.DisplayWidth)
-		}
-		if agent.MessagesInLog != nil {
-			addAgent("messages_in_log", *agent.MessagesInLog)
-		}
-		if agent.ReceivedFilesDir != "" {
-			addAgent("received_files_dir", agent.ReceivedFilesDir)
-		}
-		if len(agent.AllowedUsers) > 0 {
-			addAgent("allowed_users", agent.AllowedUsers)
-		}
-		if agent.CompactionPreserveMessages != nil {
-			addAgent("compaction_preserve_messages", *agent.CompactionPreserveMessages)
-		}
-		if agent.CompactionEffort != "" {
-			addAgent("compaction_effort", agent.CompactionEffort)
-		}
-		if len(agent.UsageWarnings.Thresholds) > 0 {
-			addAgent("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
-		}
-		addAgent("keepalive.enabled", agent.Keepalive.Enabled)
-		addAgent("keepalive.interval", agent.Keepalive.Interval)
-		addAgent("keepalive.prompt", agent.Keepalive.Prompt)
-		addAgent("background.enabled", agent.Background.Enabled)
-		addAgent("background.interval", agent.Background.Interval)
-		addAgent("background.prompt", agent.Background.Prompt)
-		addAgent("background.invest_interval", agent.Background.InvestInterval)
-		addAgent("background.mana_staleness_timeout", agent.Background.ManaStalenessTimeout)
-		// Memory formation
-		addAgent("memory_formation.interval", agent.MemoryFormation.Interval)
-		if agent.MemoryFormation.IntervalEnabled != nil {
-			addAgent("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
-		}
-		addAgent("memory_formation.consolidation_interval", agent.MemoryFormation.ConsolidationInterval)
-		if agent.MemoryFormation.ConsolidationEnabled != nil {
-			addAgent("memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
-		}
-		if agent.MemoryFormation.SessionEndEnabled != nil {
-			addAgent("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
-		}
-		tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTableBySection(agentRows, mw)+"\n```")
-	}
+	tables = append(tables, "```\nAgent: "+agent.ID+"\n"+formatTableBySection(collectAgentRows(agent), mw)+"\n```")
 
 	return tables
 }
@@ -636,10 +561,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 // each group, headed by [section]. Each table has only KEY/VALUE columns.
 // Section order is preserved from insertion.
 func formatTableBySection(rows []configRow, maxWidth ...int) string {
-	mw := 0
-	if len(maxWidth) > 0 {
-		mw = maxWidth[0]
-	}
+	mw := firstWidth(maxWidth)
 	// Collect sections in insertion order.
 	var sections []string
 	seen := map[string]bool{}
@@ -781,10 +703,7 @@ type availableOption struct {
 // FormatAvailable returns a table of config options that are currently unset
 // (at zero or default value) for the agent and global sections.
 func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
-	mw := 0
-	if len(maxWidth) > 0 {
-		mw = maxWidth[0]
-	}
+	mw := firstWidth(maxWidth)
 	var opts []availableOption
 
 	// Agent fields
