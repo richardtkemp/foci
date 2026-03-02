@@ -762,21 +762,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Populate [defaults] section with hardcoded fallbacks
-	if cfg.Defaults.Model == "" {
-		cfg.Defaults.Model = "claude-haiku-4-5"
-	}
-	if cfg.Defaults.MaxToolLoops == 0 {
-		cfg.Defaults.MaxToolLoops = 25
-	}
-	if cfg.Defaults.MaxOutputTokens == 0 {
-		cfg.Defaults.MaxOutputTokens = 8192
-	}
+	setStringDefault(&cfg.Defaults.Model, "claude-haiku-4-5")
+	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
+	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	if cfg.Defaults.BraindeadThreshold == 0 && !md.IsDefined("defaults", "braindead_threshold") {
 		cfg.Defaults.BraindeadThreshold = 10
 	}
-	if cfg.Defaults.TurnLockWarnThreshold == "" {
-		cfg.Defaults.TurnLockWarnThreshold = "3m"
-	}
+	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
 	if cfg.Defaults.Thinking == "" && !md.IsDefined("defaults", "thinking") {
 		cfg.Defaults.Thinking = "adaptive"
 	}
@@ -813,9 +805,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Legacy agent defaults (in case nothing is configured at all)
-	if cfg.Agent.Model == "" {
-		cfg.Agent.Model = "claude-haiku-4-5"
-	}
+	setStringDefault(&cfg.Agent.Model, "claude-haiku-4-5")
 
 	// Model aliases defaults (if not configured)
 	if len(cfg.Models.Aliases) == 0 {
@@ -826,37 +816,21 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	if cfg.Sessions.CompactionThreshold == 0 {
-		cfg.Sessions.CompactionThreshold = 0.8
-	}
-	if cfg.Sessions.CompactionMaxTokens == 0 {
-		cfg.Sessions.CompactionMaxTokens = 4096
-	}
-	if cfg.Sessions.CompactionMinMessages == 0 {
-		cfg.Sessions.CompactionMinMessages = 4
-	}
+	setFloatDefault(&cfg.Sessions.CompactionThreshold, 0.8)
+	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
+	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 	if cfg.Sessions.CompactionPreserveMessages == 0 && !md.IsDefined("sessions", "compaction_preserve_messages") {
 		cfg.Sessions.CompactionPreserveMessages = 25
 	}
-	if cfg.HTTP.Port == 0 {
-		cfg.HTTP.Port = 18791
-	}
-	if cfg.HTTP.Bind == "" {
-		cfg.HTTP.Bind = "127.0.0.1"
-	}
+	setIntDefault(&cfg.HTTP.Port, 18791)
+	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")
 	if cfg.DataDir == "" {
 		home, _ := os.UserHomeDir()
 		cfg.DataDir = filepath.Join(home, "data")
 	}
-	if cfg.Logging.Level == "" {
-		cfg.Logging.Level = "INFO"
-	}
-	if cfg.Logging.EventFile == "" {
-		cfg.Logging.EventFile = "logs/foci.log"
-	}
-	if cfg.Logging.APIFile == "" {
-		cfg.Logging.APIFile = "logs/api.jsonl"
-	}
+	setStringDefault(&cfg.Logging.Level, "INFO")
+	setStringDefault(&cfg.Logging.EventFile, "logs/foci.log")
+	setStringDefault(&cfg.Logging.APIFile, "logs/api.jsonl")
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
 	}
@@ -869,37 +843,21 @@ func Load(path string) (*Config, error) {
 	if cfg.Logging.WarningMaxPerWindow == 0 && !md.IsDefined("logging", "warning_max_per_window") {
 		cfg.Logging.WarningMaxPerWindow = 3
 	}
-	if cfg.Logging.WarningWindowDuration == "" {
-		cfg.Logging.WarningWindowDuration = "5m"
-	}
-	if cfg.Logging.WarningProactiveActiveInterval == "" {
-		cfg.Logging.WarningProactiveActiveInterval = "5m"
-	}
-	if cfg.Logging.WarningProactiveInactiveInterval == "" {
-		cfg.Logging.WarningProactiveInactiveInterval = "1h"
-	}
-	if cfg.Logging.WarningProactiveActivityThreshold == "" {
-		cfg.Logging.WarningProactiveActivityThreshold = "10m"
-	}
+	setStringDefault(&cfg.Logging.WarningWindowDuration, "5m")
+	setStringDefault(&cfg.Logging.WarningProactiveActiveInterval, "5m")
+	setStringDefault(&cfg.Logging.WarningProactiveInactiveInterval, "1h")
+	setStringDefault(&cfg.Logging.WarningProactiveActivityThreshold, "10m")
 	if !md.IsDefined("logging", "log_rotation") {
 		cfg.Logging.LogRotation = true
 	}
-	if cfg.Logging.RotationPeriod == "" {
-		cfg.Logging.RotationPeriod = "24h"
-	}
-	if cfg.Logging.RetentionPeriod == "" {
-		cfg.Logging.RetentionPeriod = "48h"
-	}
-	if cfg.Logging.RotationMaxLineSize == "" {
-		cfg.Logging.RotationMaxLineSize = "64MB"
-	}
+	setStringDefault(&cfg.Logging.RotationPeriod, "24h")
+	setStringDefault(&cfg.Logging.RetentionPeriod, "48h")
+	setStringDefault(&cfg.Logging.RotationMaxLineSize, "64MB")
 	// Resources defaults
 	if !md.IsDefined("resources", "memory_guard_enabled") {
 		cfg.Resources.MemoryGuardEnabled = true
 	}
-	if cfg.Resources.MemoryGuardInterval == "" {
-		cfg.Resources.MemoryGuardInterval = "60s"
-	}
+	setStringDefault(&cfg.Resources.MemoryGuardInterval, "60s")
 	if cfg.Resources.MemoryWarnPercent == 0 && !md.IsDefined("resources", "memory_warn_percent") {
 		cfg.Resources.MemoryWarnPercent = 25
 	}
@@ -910,37 +868,17 @@ func Load(path string) (*Config, error) {
 		cfg.Resources.MemoryPressureThreshold = 10.0
 	}
 	// Bitwarden defaults
-	if cfg.Bitwarden.SessionFile == "" {
-		cfg.Bitwarden.SessionFile = "/home/bitwarden/.bw_session"
-	}
-	if cfg.Bitwarden.RefreshInterval == "" {
-		cfg.Bitwarden.RefreshInterval = "15m"
-	}
-	if cfg.Bitwarden.SecretTTL == "" {
-		cfg.Bitwarden.SecretTTL = "30m"
-	}
-	if cfg.Bitwarden.CleanupInterval == "" {
-		cfg.Bitwarden.CleanupInterval = "1m"
-	}
+	setStringDefault(&cfg.Bitwarden.SessionFile, "/home/bitwarden/.bw_session")
+	setStringDefault(&cfg.Bitwarden.RefreshInterval, "15m")
+	setStringDefault(&cfg.Bitwarden.SecretTTL, "30m")
+	setStringDefault(&cfg.Bitwarden.CleanupInterval, "1m")
 
-	if cfg.Cache.Strategy == "" {
-		cfg.Cache.Strategy = "auto"
-	}
-	if cfg.ManaWarnings.Name == "" {
-		cfg.ManaWarnings.Name = "mana"
-	}
-	if cfg.Tools.MaxResultChars == 0 {
-		cfg.Tools.MaxResultChars = 15000
-	}
-	if cfg.Tools.TempDir == "" {
-		cfg.Tools.TempDir = "/tmp/foci-tool-results"
-	}
-	if cfg.Tools.TmuxCols == 0 {
-		cfg.Tools.TmuxCols = 300
-	}
-	if cfg.Tools.TmuxRows == 0 {
-		cfg.Tools.TmuxRows = 30
-	}
+	setStringDefault(&cfg.Cache.Strategy, "auto")
+	setStringDefault(&cfg.ManaWarnings.Name, "mana")
+	setIntDefault(&cfg.Tools.MaxResultChars, 15000)
+	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci-tool-results")
+	setIntDefault(&cfg.Tools.TmuxCols, 300)
+	setIntDefault(&cfg.Tools.TmuxRows, 30)
 	if cfg.Tools.ExecAutoBackground == 0 && !md.IsDefined("tools", "exec_auto_background") {
 		cfg.Tools.ExecAutoBackground = 10
 	}
@@ -950,103 +888,47 @@ func Load(path string) (*Config, error) {
 	if !md.IsDefined("tools", "tmux_braindead") {
 		cfg.Tools.TmuxBraindead = true
 	}
-	if cfg.Tools.TmuxWatchThreshold == "" {
-		cfg.Tools.TmuxWatchThreshold = "30s"
-	}
-	if cfg.Tools.SearchProvider == "" {
-		cfg.Tools.SearchProvider = "anthropic"
-	}
-	if cfg.Tools.FetchProvider == "" {
-		cfg.Tools.FetchProvider = "builtin"
-	}
+	setStringDefault(&cfg.Tools.TmuxWatchThreshold, "30s")
+	setStringDefault(&cfg.Tools.SearchProvider, "anthropic")
+	setStringDefault(&cfg.Tools.FetchProvider, "builtin")
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
 	}
-	if cfg.WelcomeFile == "" {
-		cfg.WelcomeFile = "data/WELCOME.md"
-	}
-	if cfg.Memory.ConversationWeight == 0 {
-		cfg.Memory.ConversationWeight = 0.1
-	}
-	if cfg.Memory.SearchLimit == 0 {
-		cfg.Memory.SearchLimit = 20
-	}
+	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
+	setFloatDefault(&cfg.Memory.ConversationWeight, 0.1)
+	setIntDefault(&cfg.Memory.SearchLimit, 20)
 
 	// Database defaults
-	if cfg.Database.BusyTimeout == "" {
-		cfg.Database.BusyTimeout = "5s"
-	}
+	setStringDefault(&cfg.Database.BusyTimeout, "5s")
 
 	// Anthropic defaults
-	if cfg.Anthropic.HTTPTimeout == "" {
-		cfg.Anthropic.HTTPTimeout = "600s" // 10 min — thinking responses can take several minutes
-	}
-	if cfg.Anthropic.UsageAPITimeout == "" {
-		cfg.Anthropic.UsageAPITimeout = "10s"
-	}
+	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
+	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
 
 	// Tools defaults
-	if cfg.Tools.ExecDefaultTimeout == 0 {
-		cfg.Tools.ExecDefaultTimeout = 30
-	}
-	if cfg.Tools.MaxSummaryChars == 0 {
-		cfg.Tools.MaxSummaryChars = 300000
-	}
-	if cfg.Tools.TmuxCommandTimeout == "" {
-		cfg.Tools.TmuxCommandTimeout = "5s"
-	}
-	if cfg.Tools.WebFetchTimeout == "" {
-		cfg.Tools.WebFetchTimeout = "30s"
-	}
-	if cfg.Tools.WebFetchMaxBytes == 0 {
-		cfg.Tools.WebFetchMaxBytes = 1048576 // 1MB
-	}
-	if cfg.Tools.WebSearchTimeout == "" {
-		cfg.Tools.WebSearchTimeout = "15s"
-	}
-	if cfg.Tools.MaxConcurrentSpawns == 0 {
-		cfg.Tools.MaxConcurrentSpawns = 3
-	}
-	if cfg.Tools.MaxUploadFileSize == 0 {
-		cfg.Tools.MaxUploadFileSize = 50 * 1024 * 1024 // 50MB
-	}
-	if cfg.Tools.ToolCallPreviewChars == 0 {
-		cfg.Tools.ToolCallPreviewChars = 450
-	}
-	if cfg.Tools.TmuxMemoryCheckInterval == "" {
-		cfg.Tools.TmuxMemoryCheckInterval = "5m"
-	}
-	if cfg.Tools.TmuxMemoryWarn == "" {
-		cfg.Tools.TmuxMemoryWarn = "10%"
-	}
-	if cfg.Tools.TmuxMemoryCritical == "" {
-		cfg.Tools.TmuxMemoryCritical = "20%"
-	}
-	if cfg.Tools.TmuxMemoryKill == "" {
-		cfg.Tools.TmuxMemoryKill = "30%"
-	}
-	if cfg.Tools.SummaryContextTurns == 0 {
-		cfg.Tools.SummaryContextTurns = 5
-	}
-	if cfg.Tools.SummaryContextChars == 0 {
-		cfg.Tools.SummaryContextChars = 6000
-	}
+	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)
+	setIntDefault(&cfg.Tools.MaxSummaryChars, 300000)
+	setStringDefault(&cfg.Tools.TmuxCommandTimeout, "5s")
+	setStringDefault(&cfg.Tools.WebFetchTimeout, "30s")
+	setIntDefault(&cfg.Tools.WebFetchMaxBytes, 1048576) // 1MB
+	setStringDefault(&cfg.Tools.WebSearchTimeout, "15s")
+	setIntDefault(&cfg.Tools.MaxConcurrentSpawns, 3)
+	setInt64Default(&cfg.Tools.MaxUploadFileSize, 50*1024*1024) // 50MB
+	setIntDefault(&cfg.Tools.ToolCallPreviewChars, 450)
+	setStringDefault(&cfg.Tools.TmuxMemoryCheckInterval, "5m")
+	setStringDefault(&cfg.Tools.TmuxMemoryWarn, "10%")
+	setStringDefault(&cfg.Tools.TmuxMemoryCritical, "20%")
+	setStringDefault(&cfg.Tools.TmuxMemoryKill, "30%")
+	setIntDefault(&cfg.Tools.SummaryContextTurns, 5)
+	setIntDefault(&cfg.Tools.SummaryContextChars, 6000)
 
 	// Telegram defaults
-	if cfg.Telegram.MessageQueueSize == 0 {
-		cfg.Telegram.MessageQueueSize = 64
-	}
-	if cfg.Telegram.LongPollTimeout == "" {
-		cfg.Telegram.LongPollTimeout = "65s"
-	}
-	if cfg.Telegram.MultiballSessionTTL == "" {
-		cfg.Telegram.MultiballSessionTTL = "60m"
-	}
+	setIntDefault(&cfg.Telegram.MessageQueueSize, 64)
+	setStringDefault(&cfg.Telegram.LongPollTimeout, "65s")
+	setStringDefault(&cfg.Telegram.MultiballSessionTTL, "60m")
 
 	// HTTP defaults
-	if cfg.HTTP.GracefulShutdownTimeout == "" {
-		cfg.HTTP.GracefulShutdownTimeout = "30s"
-	}
+	setStringDefault(&cfg.HTTP.GracefulShutdownTimeout, "30s")
 
 	// Bool defaults: default to true unless explicitly set to false in config.
 	// We use md.IsDefined because Go's zero value for bool is false,
@@ -1104,28 +986,16 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Keepalive/background defaults
-	if cfg.Keepalive.Interval == "" {
-		cfg.Keepalive.Interval = "55m"
-	}
+	setStringDefault(&cfg.Keepalive.Interval, "55m")
 	// Keepalive.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
-	if cfg.Background.Interval == "" {
-		cfg.Background.Interval = "5m"
-	}
+	setStringDefault(&cfg.Background.Interval, "5m")
 	// Background.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
-	if cfg.Background.InvestInterval == "" {
-		cfg.Background.InvestInterval = "30m"
-	}
-	if cfg.Background.ManaStalenessTimeout == "" {
-		cfg.Background.ManaStalenessTimeout = "10m"
-	}
+	setStringDefault(&cfg.Background.InvestInterval, "30m")
+	setStringDefault(&cfg.Background.ManaStalenessTimeout, "10m")
 
 	// Memory formation defaults
-	if cfg.MemoryFormation.Interval == "" {
-		cfg.MemoryFormation.Interval = "1h"
-	}
-	if cfg.MemoryFormation.ConsolidationInterval == "" {
-		cfg.MemoryFormation.ConsolidationInterval = "20h"
-	}
+	setStringDefault(&cfg.MemoryFormation.Interval, "1h")
+	setStringDefault(&cfg.MemoryFormation.ConsolidationInterval, "20h")
 	// IntervalEnabled/ConsolidationEnabled/SessionEndEnabled: nil = true (resolved at runtime)
 
 	// Per-agent keepalive/background: inherit from global when not set per-agent.
