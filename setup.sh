@@ -102,7 +102,20 @@ fi
 # ---------- 2. Build binaries from source ----------
 info "Step 2: Build binaries from source"
 if ! command -v go &>/dev/null; then
-    error "Go not found. Install Go 1.19+ first: https://golang.org/doc/install"
+    error "Go not found. Install Go 1.24+ first."
+    error "Ubuntu: sudo add-apt-repository ppa:longsleep/golang-backports && sudo apt update && sudo apt install golang-go"
+    error "Or download from https://go.dev/dl/"
+    exit 1
+fi
+
+# Validate Go version (need 1.24+ for go.mod compatibility)
+GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
+GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
+GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
+if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt 24 ]]; then
+    error "Go $GO_VERSION found, but 1.24+ is required (go.mod declares go 1.24.0)."
+    error "Ubuntu: sudo add-apt-repository ppa:longsleep/golang-backports && sudo apt update && sudo apt install golang-go"
+    error "Or download from https://go.dev/dl/"
     exit 1
 fi
 
@@ -123,7 +136,9 @@ fi
 # Ensure data dir exists early (needed for commit file and welcome file)
 if ! $DRY_RUN; then
     mkdir -p "$FOCI_HOME/data"
-    chown "$FOCI_USER:$FOCI_USER" "$FOCI_HOME/data" 2>/dev/null || true
+    if ! chown "$FOCI_USER:$FOCI_USER" "$FOCI_HOME/data" 2>/dev/null; then
+        warn "  Could not chown $FOCI_HOME/data to $FOCI_USER — check permissions"
+    fi
 fi
 
 # Ensure Go env vars are set (sudo strips HOME and caches)
@@ -327,8 +342,12 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 SERVICE
-        systemctl daemon-reload
-        systemctl enable foci
+        if ! systemctl daemon-reload; then
+            warn "  systemctl daemon-reload failed"
+        fi
+        if ! systemctl enable foci; then
+            warn "  systemctl enable foci failed"
+        fi
     fi
     info "  Service installed and enabled"
 fi
@@ -365,7 +384,9 @@ if command -v systemctl &>/dev/null; then
         run systemctl restart foci --no-block
     else
         info "  Starting foci"
-        run systemctl start foci
+        if ! run systemctl start foci; then
+            error "  Failed to start foci. Check: journalctl -u foci -n 50"
+        fi
     fi
 fi
 
