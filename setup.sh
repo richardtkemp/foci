@@ -108,7 +108,7 @@ if ! command -v go &>/dev/null; then
     exit 1
 fi
 
-# Validate Go version (need 1.24+ for go.mod compatibility)
+# Validate Go version (need 1.24+ per go.mod and dependency requirements)
 GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
 GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
 GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
