@@ -132,6 +132,45 @@ func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive stri
 	return true
 }
 
+// multiballBotConfig holds common settings applied to every multiball bot.
+type multiballBotConfig struct {
+	sttProvider     voice.STT
+	ttsProvider     voice.TTS
+	stopAliases     []string
+	enableStopAlias bool
+	acfg            config.AgentConfig
+	cfg             *config.Config
+	toolDetailStore *telegram.ToolDetailStore
+	stateStore      *state.Store
+}
+
+// configureMultiballBot applies the standard multiball bot settings shared by
+// both per-agent and shared-pool multiball bots.
+func configureMultiballBot(bot *telegram.Bot, mc multiballBotConfig) {
+	if mc.sttProvider != nil {
+		bot.SetTranscriber(mc.sttProvider)
+	}
+	if mc.ttsProvider != nil {
+		bot.SetTTS(mc.ttsProvider)
+	}
+	bot.SetStopAliases(mc.stopAliases, mc.enableStopAlias)
+	applyAgentDisplaySettings(bot, mc.acfg, mc.cfg)
+	if mc.toolDetailStore != nil {
+		bot.SetToolDetailStore(mc.toolDetailStore)
+	}
+	if mc.stateStore != nil {
+		ss := mc.stateStore
+		bot.OnSessionKeyChange = func(username, sessionKey string) {
+			key := "multiball:" + username
+			if sessionKey == "" {
+				ss.Delete(key)
+			} else {
+				ss.Set(key, sessionKey)
+			}
+		}
+	}
+}
+
 // httpHandlerDeps holds shared state needed by HTTP endpoint handlers.
 type httpHandlerDeps struct {
 	agents      map[string]*agentInstance
@@ -1113,46 +1152,16 @@ func main() {
 				log.Errorf("main", "shared multiball bot %q: create: %v", botName, err)
 				continue
 			}
-			if sttProvider != nil {
-				mbBot.SetTranscriber(sttProvider)
-			}
-			if ttsProvider != nil {
-				mbBot.SetTTS(ttsProvider)
-			}
-			mbBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
-			if cfg.Defaults.ShowToolCalls != nil {
-				mbBot.SetShowToolCalls(string(*cfg.Defaults.ShowToolCalls))
-			} else {
-				mbBot.SetShowToolCalls(string(config.ToolCallOff))
-			}
-			if cfg.Defaults.ShowThinking != nil {
-				mbBot.SetShowThinking(string(*cfg.Defaults.ShowThinking))
-			} else {
-				mbBot.SetShowThinking(string(config.ShowThinkingOff))
-			}
-			if cfg.Defaults.DisplayWidth != nil {
-				mbBot.SetDisplayWidth(*cfg.Defaults.DisplayWidth)
-			} else {
-				mbBot.SetDisplayWidth(44)
-			}
-			mbBot.SetMessagesInLog(cfg.Logging.MessagesInLog)
-			if filesDir := cfg.Telegram.ReceivedFilesDir; filesDir != "" {
-				mbBot.SetReceivedFilesDir(filesDir)
-			}
-			if toolDetailStore != nil {
-				mbBot.SetToolDetailStore(toolDetailStore)
-			}
-			if stateStore != nil {
-				ss := stateStore
-				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
-					key := "multiball:" + username
-					if sessionKey == "" {
-						ss.Delete(key)
-					} else {
-						ss.Set(key, sessionKey)
-					}
-				}
-			}
+			configureMultiballBot(mbBot, multiballBotConfig{
+				sttProvider:     sttProvider,
+				ttsProvider:     ttsProvider,
+				stopAliases:     cfg.Telegram.StopAliases,
+				enableStopAlias: cfg.Telegram.EnableStopAliases,
+				acfg:            firstInst.agentCfg,
+				cfg:             cfg,
+				toolDetailStore: toolDetailStore,
+				stateStore:      stateStore,
+			})
 			botMgr.AddSharedMultiball(mbBot)
 		}
 		if pool := botMgr.SharedPool(); pool != nil && pool.Size() > 0 {
@@ -2471,28 +2480,16 @@ func setupAgent(p setupParams) *agentInstance {
 				log.Errorf("main", "agent %q: create multiball bot %q: %v", acfg.ID, botName, err)
 				continue
 			}
-			if p.sttProvider != nil {
-				mbBot.SetTranscriber(p.sttProvider)
-			}
-			if p.ttsProvider != nil {
-				mbBot.SetTTS(p.ttsProvider)
-			}
-			mbBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
-			applyAgentDisplaySettings(mbBot, acfg, p.cfg)
-			if p.toolDetailStore != nil {
-				mbBot.SetToolDetailStore(p.toolDetailStore)
-			}
-			if p.stateStore != nil {
-				ss := p.stateStore
-				mbBot.OnSessionKeyChange = func(username, sessionKey string) {
-					key := "multiball:" + username
-					if sessionKey == "" {
-						ss.Delete(key)
-					} else {
-						ss.Set(key, sessionKey)
-					}
-				}
-			}
+			configureMultiballBot(mbBot, multiballBotConfig{
+				sttProvider:     p.sttProvider,
+				ttsProvider:     p.ttsProvider,
+				stopAliases:     p.cfg.Telegram.StopAliases,
+				enableStopAlias: p.cfg.Telegram.EnableStopAliases,
+				acfg:            acfg,
+				cfg:             p.cfg,
+				toolDetailStore: p.toolDetailStore,
+				stateStore:      p.stateStore,
+			})
 			p.botMgr.AddMultiball(acfg.ID, mbBot)
 		}
 		if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
