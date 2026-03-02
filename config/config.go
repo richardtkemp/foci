@@ -400,7 +400,7 @@ type MemoryFormationConfig struct {
 // BackgroundConfig controls the mana-gated background work timer.
 type BackgroundConfig struct {
 	Enabled              bool   `toml:"enabled"`                // enable background work timer (default: false)
-	Interval             string `toml:"interval"`               // time since last interaction before firing (default: "5m")
+	Interval             string `toml:"interval"`               // time since last interaction before firing (default: "15m")
 	Prompt               string `toml:"prompt"`                 // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
 	InvestInterval       string `toml:"invest_interval"`        // quiet period after mana reset to let cache invest (default: "30m")
 	ManaStalenessTimeout string `toml:"mana_staleness_timeout"` // max age of mana reading before considering it stale (default: "10m")
@@ -911,7 +911,7 @@ func Load(path string) (*Config, error) {
 	// Keepalive/background defaults
 	setStringDefault(&cfg.Keepalive.Interval, "55m")
 	// Keepalive.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
-	setStringDefault(&cfg.Background.Interval, "5m")
+	setStringDefault(&cfg.Background.Interval, "15m")
 	// Background.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
 	setStringDefault(&cfg.Background.InvestInterval, "30m")
 	setStringDefault(&cfg.Background.ManaStalenessTimeout, "10m")
