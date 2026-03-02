@@ -502,7 +502,7 @@ Tool behavior settings.
 | `tmux_memory_warn` | string | `"10%"` | Warn threshold. Sends Telegram notification. Formats: `"N%"` (% of RAM), `"Nmb"`, `"Ngb"`. |
 | `tmux_memory_critical` | string | `"20%"` | Critical threshold. Sends Telegram notification with stronger message. Same formats. |
 | `tmux_memory_kill` | string | `"30%"` | Kill threshold. Kills tmux server, notifies, cleans up tool state. Same formats. |
-| `tmux_braindead` | bool | `true` | Auto-unwatch sessions after inactivity notification, auto-watch on send. |
+| `tmux_autopilot` | bool | `true` | Auto-unwatch sessions after inactivity notification, auto-watch on send. |
 | `tmux_watch_threshold` | string | `"30s"` | Default inactivity watch threshold. Go duration format. |
 | `search_provider` | string | `"anthropic"` | Web search provider: `"anthropic"` (server-side, default) or `"brave"` (client-side, needs `brave_api_key`). Per-agent override via `[[agents]]`. |
 | `fetch_provider` | string | `"builtin"` | Per-agent web fetch provider override. See [TOOLS.md](TOOLS.md) for provider details. |
