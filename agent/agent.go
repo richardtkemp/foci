@@ -100,6 +100,7 @@ type Agent struct {
 	RateLimitFunc               func(retryAfter int)            // callback when API returns 429/529 (rate limited or overloaded)
 	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
 	CompactionDebugFunc         func(string, string)            // callback for compaction debug (session key, summary text)
+	OnActivity                  func(string)                    // callback when a session has activity (session key); nil disables
 	Redact                      func(string) string             // redact secrets from tool output; nil disables
 	StateStore                  *state.Store                    // nil disables state persistence
 	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
@@ -825,6 +826,11 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// Check if context was cancelled while waiting for the turn lock
 	if ctx.Err() != nil {
 		return "", ctx.Err()
+	}
+
+	// Touch session activity for index tracking.
+	if a.OnActivity != nil {
+		a.OnActivity(sessionKey)
 	}
 
 	// Load existing messages

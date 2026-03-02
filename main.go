@@ -2019,6 +2019,7 @@ func setupAgent(p setupParams) *agentInstance {
 			opts := session.QueryOptions{
 				SessionType: session.SessionType(sessionType),
 				Status:      session.SessionStatus(status),
+				MaxAge:      7 * 24 * time.Hour, // default: show sessions active in last 7 days
 				Limit:       50,
 			}
 			entries, err := p.sessionIndex.Query(opts)
@@ -2030,6 +2031,7 @@ func setupAgent(p setupParams) *agentInstance {
 				result = append(result, command.SessionIndexInfo{
 					SessionKey:       e.SessionKey,
 					CreatedAt:        e.CreatedAt,
+					LastActivityAt:   e.LastActivityAt,
 					ParentSessionKey: e.ParentSessionKey,
 					SessionType:      string(e.SessionType),
 					Status:           string(e.Status),
@@ -2148,6 +2150,14 @@ func setupAgent(p setupParams) *agentInstance {
 		if compactNotify == nil || *compactNotify {
 			ag.CompactionNotifyFunc = func(session string, msg string) {
 				primaryBot.SendNotification(msg)
+			}
+		}
+
+		// Wire session activity tracking for the session index.
+		if p.sessionIndex != nil {
+			sidx := p.sessionIndex // capture for closure
+			ag.OnActivity = func(sessionKey string) {
+				sidx.TouchActivity(sessionKey)
 			}
 		}
 

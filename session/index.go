@@ -37,7 +37,8 @@ type SessionIndexEntry struct {
 	SessionKey       string
 	FilePath         string
 	CreatedAt        time.Time
-	ParentSessionKey string // empty if root session
+	LastActivityAt   time.Time // updated on every session append; zero if never set
+	ParentSessionKey string    // empty if root session
 	SessionType      SessionType
 	Status           SessionStatus
 }
@@ -76,6 +77,9 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 		return nil, fmt.Errorf("create session_index table: %w", err)
 	}
 
+	// Migration: add last_activity_at column if missing.
+	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`)
+
 	return &SessionIndex{db: db}, nil
 }
 
@@ -89,10 +93,15 @@ func (idx *SessionIndex) Upsert(e SessionIndexEntry) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
+	activityAt := e.LastActivityAt
+	if activityAt.IsZero() {
+		activityAt = e.CreatedAt
+	}
 	_, err := idx.db.Exec(
-		`INSERT OR REPLACE INTO session_index (session_key, file_path, created_at, parent_session_key, session_type, status)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT OR REPLACE INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		e.SessionKey, e.FilePath, e.CreatedAt.UTC().Format(time.RFC3339),
+		activityAt.UTC().Format(time.RFC3339),
 		nullableString(e.ParentSessionKey), string(e.SessionType), string(e.Status))
 	if err != nil {
 		log.Warnf("session_index", "upsert %s: %v", e.SessionKey, err)
@@ -108,6 +117,18 @@ func (idx *SessionIndex) SetStatus(sessionKey string, status SessionStatus) {
 		string(status), sessionKey)
 	if err != nil {
 		log.Warnf("session_index", "set status %s=%s: %v", sessionKey, status, err)
+	}
+}
+
+// TouchActivity updates the last_activity_at timestamp for a session.
+func (idx *SessionIndex) TouchActivity(sessionKey string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	_, err := idx.db.Exec(`UPDATE session_index SET last_activity_at = ? WHERE session_key = ?`,
+		time.Now().UTC().Format(time.RFC3339), sessionKey)
+	if err != nil {
+		log.Warnf("session_index", "touch activity %s: %v", sessionKey, err)
 	}
 }
 
@@ -127,12 +148,13 @@ type QueryOptions struct {
 	AgentID     string        // filter by agent ID (empty = all)
 	SessionType SessionType   // filter by type (empty = all)
 	Status      SessionStatus // filter by status (empty = all)
+	MaxAge      time.Duration // only sessions with activity within this duration (0 = no limit)
 	Limit       int           // max results (0 = unlimited)
 }
 
 // Query returns session index entries matching the given options, ordered by created_at desc.
 func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
-	query := `SELECT session_key, file_path, created_at, parent_session_key, session_type, status
+	query := `SELECT session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status
 		FROM session_index WHERE 1=1`
 	var args []interface{}
 
@@ -148,7 +170,12 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 		query += ` AND status = ?`
 		args = append(args, string(opts.Status))
 	}
-	query += ` ORDER BY created_at DESC`
+	if opts.MaxAge > 0 {
+		cutoff := time.Now().UTC().Add(-opts.MaxAge).Format(time.RFC3339)
+		query += ` AND COALESCE(last_activity_at, created_at) >= ?`
+		args = append(args, cutoff)
+	}
+	query += ` ORDER BY COALESCE(last_activity_at, created_at) DESC`
 	if opts.Limit > 0 {
 		query += fmt.Sprintf(` LIMIT %d`, opts.Limit)
 	}
@@ -163,13 +190,17 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	for rows.Next() {
 		var e SessionIndexEntry
 		var createdStr string
+		var activityStr sql.NullString
 		var parentKey sql.NullString
 		var stype, status string
-		if err := rows.Scan(&e.SessionKey, &e.FilePath, &createdStr, &parentKey, &stype, &status); err != nil {
+		if err := rows.Scan(&e.SessionKey, &e.FilePath, &createdStr, &activityStr, &parentKey, &stype, &status); err != nil {
 			log.Warnf("session_index", "scan row: %v", err)
 			continue
 		}
 		e.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		if activityStr.Valid {
+			e.LastActivityAt, _ = time.Parse(time.RFC3339, activityStr.String)
+		}
 		if parentKey.Valid {
 			e.ParentSessionKey = parentKey.String
 		}

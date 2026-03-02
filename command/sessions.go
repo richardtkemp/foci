@@ -22,6 +22,7 @@ type SessionChatInfo struct {
 type SessionIndexInfo struct {
 	SessionKey       string
 	CreatedAt        time.Time
+	LastActivityAt   time.Time
 	ParentSessionKey string
 	SessionType      string
 	Status           string
@@ -239,14 +240,16 @@ func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, maxWid
 		{Header: "Session Key"},
 		{Header: "Type"},
 		{Header: "Status"},
-		{Header: "Created"},
+		{Header: "Last Active"},
 		{Header: "Parent"},
 	}
 	tableRows := make([][]string, len(entries))
 	for i, e := range entries {
-		created := "—"
-		if !e.CreatedAt.IsZero() {
-			created = e.CreatedAt.Format("Jan 02 15:04")
+		activity := "—"
+		if !e.LastActivityAt.IsZero() {
+			activity = e.LastActivityAt.Format("Jan 02 15:04")
+		} else if !e.CreatedAt.IsZero() {
+			activity = e.CreatedAt.Format("Jan 02 15:04")
 		}
 		parent := "—"
 		if e.ParentSessionKey != "" {
@@ -257,7 +260,7 @@ func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, maxWid
 			shortenSessionKey(e.SessionKey),
 			e.SessionType,
 			e.Status,
-			created,
+			activity,
 			parent,
 		}
 	}
