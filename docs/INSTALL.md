@@ -207,6 +207,31 @@ When idle, the agent receives periodic `[KEEPALIVE]` messages — a chance to re
 
 In Telegram, type `/help` to see available slash commands: `/status`, `/model`, `/thinking`, `/effort`, and more.
 
+## Development
+
+### Build targets
+
+```bash
+make              # build all 3 binaries (focigw, foci CLI, foci-call)
+make build        # gateway only
+make cli          # CLI only
+make test         # run all tests
+make vet          # go vet
+make lint         # vet + errcheck (production only) + gocyclo/gocognit (>100 threshold)
+make check        # test + lint
+make clean        # remove built binaries
+```
+
+### Static analysis tools
+
+`make lint` requires these tools (install once):
+
+```bash
+go install github.com/kisielk/errcheck@latest
+go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+go install github.com/uudashr/gocognit/cmd/gocognit@latest
+```
+
 ### Further reading
 
 - [AUTH.md](AUTH.md) — detailed authentication setup
