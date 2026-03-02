@@ -65,9 +65,9 @@ Generates foci.toml, secrets.toml, and seeds character files.
 
 Flags:
   -h, --help             Show this help
-  --config-dir <path>    Directory for config files (default: ./config)
-  --home <path>          Foci home directory (default: current user home)
-  --defaults-dir <path>  Path to default character templates
+  --config-dir <path>    Directory for config files (default: ~/config)
+  --home <path>          Foci home directory (default: ~)
+  --defaults-dir <path>  Path to default character templates (default: ~/shared/defaults/character)
   --non-interactive      Non-interactive mode (all required flags must be set)
   --bot-token <token>    Telegram bot token
   --user-id <id>         Telegram user ID
@@ -141,15 +141,26 @@ func parseSetupFlags(args []string) setupFlags {
 	}
 
 	// Apply defaults
+	home := ""
+	if h, err := os.UserHomeDir(); err == nil {
+		home = h
+	}
 	if f.configDir == "" {
-		f.configDir = "./config"
+		if home != "" {
+			f.configDir = filepath.Join(home, "config")
+		} else {
+			f.configDir = "./config"
+		}
 	}
 	if f.homeDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
+		if home != "" {
 			f.homeDir = home
 		} else {
 			f.homeDir = "."
 		}
+	}
+	if f.defaultsDir == "" && home != "" {
+		f.defaultsDir = filepath.Join(home, "shared", "defaults", "character")
 	}
 	if f.agentID == "" {
 		f.agentID = "main"
