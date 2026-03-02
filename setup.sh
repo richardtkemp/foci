@@ -1,47 +1,57 @@
 #!/bin/bash
 # Foci setup script — idempotent. Run once to install, again to update.
-# Usage: sudo ./setup.sh [-u USER] [--dry-run]
+#
+# Usage:
+#   ./setup.sh                 Build + print root commands for review
+#   ./setup.sh --install       Build + run root commands via sudo
+#   ./setup.sh --dry-run       Show everything, execute nothing
+#
+# The build runs unprivileged as the invoking user. Only the install
+# step (user creation, file ownership, systemd) needs root.
 set -euo pipefail
 
 INSTALL_DIR="/usr/local/bin"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DRY_RUN=false
+DO_INSTALL=false
 FOCI_USER=""
-SERVICE_FILE="/etc/systemd/system/foci.service"
+INSTALL_SCRIPT="$SCRIPT_DIR/.setup-install.sh"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
-    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 else
-    RED=''; GREEN=''; YELLOW=''; NC=''
+    RED=''; GREEN=''; YELLOW=''; BLUE=''; NC=''
 fi
 
 info()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[x]${NC} $*" >&2; }
 
-run() {
-    if $DRY_RUN; then
-        echo "  (dry-run) $*"
-    else
-        "$@"
-    fi
-}
-
 # Parse flags
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=true; shift ;;
+        --install) DO_INSTALL=true; shift ;;
         -u)
             [[ $# -lt 2 ]] && { error "-u requires a username"; exit 1; }
             FOCI_USER="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: sudo $0 [-u USER] [--dry-run]"
-            echo "Installs foci as a system service. Idempotent — safe to re-run."
+            echo "Usage: $0 [--install] [-u USER] [--dry-run]"
+            echo "Builds foci from source and installs as a system service."
+            echo "Idempotent — safe to re-run."
+            echo ""
+            echo "Modes:"
+            echo "  (default)    Build binaries, then print root commands for review"
+            echo "  --install    Build binaries, then run root commands via sudo"
+            echo "  --dry-run    Show what would be done without doing anything"
             echo ""
             echo "Options:"
             echo "  -u USER    System user to run as (default: foci)"
-            echo "  --dry-run  Show what would be done without doing it"
+            echo ""
+            echo "The build step runs as your current user — no root needed."
+            echo "Only the install step (user creation, systemd, file ownership)"
+            echo "requires root, and you can review the commands before running them."
             echo ""
             echo "Configuration is handled by the 'foci setup' wizard, which runs"
             echo "interactively unless env vars are set for non-interactive mode:"
@@ -58,11 +68,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Must be root (skip in dry-run)
-if ! $DRY_RUN && [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-    error "Run as root: sudo $0"
-    exit 1
-fi
+# ============================================================
+# Phase 1: Unprivileged — build binaries and probe system state
+# ============================================================
 
 # Resolve target user and home directory
 FOCI_USER="${FOCI_USER:-foci}"
@@ -72,35 +80,19 @@ else
     FOCI_HOME="/home/$FOCI_USER"
 fi
 
-info "Installing for user: $FOCI_USER (home: $FOCI_HOME)"
-
-# ---------- 1. System user ----------
-info "Step 1: System user"
-if id "$FOCI_USER" &>/dev/null; then
-    info "  User $FOCI_USER exists"
+if [[ "$FOCI_USER" == foci* ]]; then
+    SERVICE_NAME="$FOCI_USER"
 else
-    info "  Creating system user $FOCI_USER"
-    run useradd --system --home-dir "$FOCI_HOME" --create-home --shell /bin/bash "$FOCI_USER"
+    SERVICE_NAME="foci-$FOCI_USER"
 fi
-
-# ---------- 1b. Secrets group ----------
-info "Step 1b: Secrets group (foci-secrets)"
+SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 SECRETS_GROUP="foci-secrets"
-if getent group "$SECRETS_GROUP" &>/dev/null; then
-    info "  Group $SECRETS_GROUP exists"
-else
-    info "  Creating group $SECRETS_GROUP"
-    run groupadd "$SECRETS_GROUP"
-fi
-if id -nG "$FOCI_USER" 2>/dev/null | grep -qw "$SECRETS_GROUP"; then
-    info "  $FOCI_USER is a member of $SECRETS_GROUP"
-else
-    info "  Adding $FOCI_USER to $SECRETS_GROUP"
-    run usermod -aG "$SECRETS_GROUP" "$FOCI_USER"
-fi
+COMMIT_FILE="$FOCI_HOME/data/.foci-commit"
 
-# ---------- 2. Build binaries from source ----------
-info "Step 2: Build binaries from source"
+info "Target user: $FOCI_USER (home: $FOCI_HOME)"
+
+# ---------- Check Go ----------
+info "Checking Go installation"
 if ! command -v go &>/dev/null; then
     error "Go not found. Install Go 1.22+ first."
     error "Ubuntu: sudo apt install golang-go"
@@ -108,7 +100,6 @@ if ! command -v go &>/dev/null; then
     exit 1
 fi
 
-# Validate Go version (need 1.22+)
 GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
 GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
 GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
@@ -118,73 +109,48 @@ if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt 22 ]]; the
     error "Or download from https://go.dev/dl/"
     exit 1
 fi
+info "  Go $GO_VERSION — OK"
 
-# Capture the currently-deployed commit hash (for changelog on update)
+# ---------- Detect update ----------
 OLD_COMMIT=""
 IS_UPDATE=false
-COMMIT_FILE="$FOCI_HOME/data/.foci-commit"
 if [[ -f "$INSTALL_DIR/focigw" ]]; then
     IS_UPDATE=true
-    # Check new location first, fall back to legacy
-    if [[ -f "$COMMIT_FILE" ]]; then
+    if [[ -f "$COMMIT_FILE" ]] && [[ -r "$COMMIT_FILE" ]]; then
         OLD_COMMIT="$(cat "$COMMIT_FILE" 2>/dev/null || true)"
-    elif [[ -f "$FOCI_HOME/.foci-commit" ]]; then
+    elif [[ -f "$FOCI_HOME/.foci-commit" ]] && [[ -r "$FOCI_HOME/.foci-commit" ]]; then
         OLD_COMMIT="$(cat "$FOCI_HOME/.foci-commit" 2>/dev/null || true)"
     fi
 fi
 
-# Ensure data dir exists early (needed for commit file and welcome file)
-if ! $DRY_RUN; then
-    mkdir -p "$FOCI_HOME/data"
-    if ! chown "$FOCI_USER:$FOCI_USER" "$FOCI_HOME/data" 2>/dev/null; then
-        warn "  Could not chown $FOCI_HOME/data to $FOCI_USER — check permissions"
-    fi
-fi
+# ---------- Build binaries ----------
+info "Building binaries"
 
-# Ensure Go env vars are set (sudo strips HOME and caches)
-# Default to /var/cache/go — keeps build artifacts out of home dirs and repos
-export GOPATH="${GOPATH:-/var/cache/go}"
-export GOMODCACHE="${GOMODCACHE:-$GOPATH/pkg/mod}"
-export GOCACHE="${GOCACHE:-/var/cache/go-build}"
-if ! $DRY_RUN; then
-    mkdir -p "$GOPATH" "$GOCACHE" 2>/dev/null || true
-fi
-export GOFLAGS="${GOFLAGS:--buildvcs=false}"
-
-# Build info for ldflags
 NEW_COMMIT="$(git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 LDFLAGS="-X main.gitCommit=$NEW_COMMIT -X main.buildTime=$BUILD_TIME"
 
-info "  Building focigw (gateway/main binary)..."
 if ! $DRY_RUN; then
     cd "$SCRIPT_DIR"
+
+    info "  Building focigw (gateway)..."
     go build -ldflags "$LDFLAGS" -o focigw . || { error "Failed to build focigw"; exit 1; }
-fi
 
-info "  Building foci (CLI tool)..."
-if ! $DRY_RUN; then
-    cd "$SCRIPT_DIR"
+    info "  Building foci (CLI)..."
     go build -ldflags "$LDFLAGS" -o foci ./cmd/foci/ || { error "Failed to build foci"; exit 1; }
-fi
 
-info "  Building foci-call (exec bridge helper)..."
-if ! $DRY_RUN; then
-    cd "$SCRIPT_DIR"
+    info "  Building foci-call (exec bridge)..."
     go build -o foci-call ./cmd/foci-call/ || { error "Failed to build foci-call"; exit 1; }
+
+    info "  Binaries built in $SCRIPT_DIR"
+else
+    info "  (dry-run) Would build focigw, foci, foci-call in $SCRIPT_DIR"
 fi
 
-# Install built binaries
-if ! $DRY_RUN; then
-    install -m 755 "$SCRIPT_DIR/focigw" "$INSTALL_DIR/focigw"
-    install -m 755 "$SCRIPT_DIR/foci" "$INSTALL_DIR/foci"
-    install -m 755 "$SCRIPT_DIR/foci-call" "$INSTALL_DIR/foci-call"
-fi
-info "  Installed focigw, foci, and foci-call to $INSTALL_DIR"
-
-# Write changelog (WELCOME.md) on update — not fresh install
+# ---------- Stage changelog ----------
+STAGED_WELCOME=""
 if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]]; then
-    WELCOME_FILE="$FOCI_HOME/data/WELCOME.md"
+    STAGED_WELCOME="$SCRIPT_DIR/.staged-WELCOME.md"
     if ! $DRY_RUN; then
         {
             echo "# Foci Updated"
@@ -198,130 +164,249 @@ if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]];
             echo "## Instructions"
             echo ""
             echo "Tell your user what just changed. Summarise the updates above in a brief, friendly message — highlight the most impactful changes and anything they'll notice. Send it via Telegram."
-        } > "$WELCOME_FILE"
-        chown "$FOCI_USER:$FOCI_USER" "$WELCOME_FILE"
-        info "  Wrote changelog to $WELCOME_FILE"
+        } > "$STAGED_WELCOME"
+        info "  Staged changelog ($OLD_COMMIT → $NEW_COMMIT)"
     else
-        info "  (dry-run) Would write changelog to $FOCI_HOME/WELCOME.md"
+        info "  (dry-run) Would stage changelog ($OLD_COMMIT → $NEW_COMMIT)"
     fi
 elif $IS_UPDATE; then
     info "  Update detected but no previous commit recorded — skipping changelog"
 fi
 
-# Save current commit for next update
-if ! $DRY_RUN; then
-    echo "$NEW_COMMIT" > "$COMMIT_FILE"
-    chown "$FOCI_USER:$FOCI_USER" "$COMMIT_FILE"
+# ---------- Detect system state ----------
+info "Detecting system state"
+
+CURRENT_USER="$(id -un)"
+IS_SELF=false
+[[ "$CURRENT_USER" == "$FOCI_USER" ]] && IS_SELF=true
+
+NEED_USERADD=false
+id "$FOCI_USER" &>/dev/null || NEED_USERADD=true
+
+NEED_GROUPADD=false
+getent group "$SECRETS_GROUP" &>/dev/null || NEED_GROUPADD=true
+
+NEED_GROUPMEMBER=false
+if $NEED_USERADD || $NEED_GROUPADD; then
+    NEED_GROUPMEMBER=true
+elif ! id -nG "$FOCI_USER" 2>/dev/null | grep -qw "$SECRETS_GROUP"; then
+    NEED_GROUPMEMBER=true
 fi
 
-# ---------- 3. Directories ----------
-info "Step 3: Directories"
-for dir in "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills"; do
-    run mkdir -p "$dir"
-    run chown "$FOCI_USER:$FOCI_USER" "$dir"
-done
-info "  Directories ready"
-
-# ---------- 4. Config ----------
-info "Step 4: Config"
+HAS_CONFIG=false
 if [[ -f "$FOCI_HOME/config/foci.toml" ]] || [[ -f "$FOCI_HOME/foci.toml" ]]; then
-    info "  Config exists, not touching it"
-else
-    if $DRY_RUN; then
-        info "  (dry-run) Would run foci setup wizard"
-    else
-        # Build flags for the wizard
-        SETUP_ARGS=(
-            --config-dir "$FOCI_HOME/config"
-            --home "$FOCI_HOME"
-            --defaults-dir "$SCRIPT_DIR/shared/defaults/character"
-        )
-
-        # Check for env vars → non-interactive mode
-        TELEGRAM_TOKEN="${FOCI_TELEGRAM_TOKEN:-}"
-        TELEGRAM_USER="${FOCI_TELEGRAM_USER:-}"
-        AUTH_METHOD="${FOCI_AUTH_METHOD:-}"
-        AUTH_TOKEN="${FOCI_AUTH_TOKEN:-}"
-        AGENT_ID="${FOCI_AGENT_ID:-}"
-
-        if [[ -n "$TELEGRAM_TOKEN" && -n "$TELEGRAM_USER" ]]; then
-            # Non-interactive: pass env vars as flags
-            SETUP_ARGS+=(--non-interactive)
-            SETUP_ARGS+=(--bot-token "$TELEGRAM_TOKEN")
-            SETUP_ARGS+=(--user-id "$TELEGRAM_USER")
-            [[ -n "$AUTH_METHOD" ]] && SETUP_ARGS+=(--auth-method "$AUTH_METHOD")
-            [[ -n "$AUTH_TOKEN" ]] && SETUP_ARGS+=(--auth-token "$AUTH_TOKEN")
-            [[ -n "$AGENT_ID" ]] && SETUP_ARGS+=(--agent-id "$AGENT_ID")
-        elif [[ ! -t 0 ]]; then
-            # No TTY and no env vars — cannot proceed
-            error "No config found and stdin is not a terminal."
-            error "Set credentials via environment variables:"
-            error "  FOCI_TELEGRAM_TOKEN   — Telegram bot token (required)"
-            error "  FOCI_TELEGRAM_USER    — Telegram user ID (required)"
-            error "  FOCI_AUTH_METHOD      — Auth method: oauth, apikey, skip (default: skip)"
-            error "  FOCI_AUTH_TOKEN       — API key (required if auth method is apikey)"
-            error "  FOCI_AGENT_ID         — Agent ID (default: main)"
-            error ""
-            error "Example:"
-            error "  sudo FOCI_TELEGRAM_TOKEN=123:ABC FOCI_TELEGRAM_USER=5970082313 FOCI_AUTH_METHOD=apikey FOCI_AUTH_TOKEN=sk-ant-... ./setup.sh"
-            exit 1
-        fi
-
-        info "  Launching setup wizard..."
-        # Run as foci user with secrets group so it can write secrets.toml
-        sudo -u "$FOCI_USER" -g "$SECRETS_GROUP" \
-            "$INSTALL_DIR/foci" setup "${SETUP_ARGS[@]}"
-
-        info "  Config written by foci setup"
-    fi
+    HAS_CONFIG=true
 fi
 
-# ---------- 4b. Harden existing secrets.toml ----------
+HAS_SYSTEMCTL=false
+command -v systemctl &>/dev/null && HAS_SYSTEMCTL=true
+
+SERVICE_ACTIVE=false
+$HAS_SYSTEMCTL && systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null && SERVICE_ACTIVE=true
+
+HAS_POLKIT=false
+command -v pkaction &>/dev/null && HAS_POLKIT=true
+
+HAS_POLKIT_RULE=false
+[[ -f "/etc/polkit-1/rules.d/49-${SERVICE_NAME}.rules" ]] && HAS_POLKIT_RULE=true
+
+NEED_DIRS=false
+if ! $IS_SELF; then
+    for dir in "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills"; do
+        if [[ ! -d "$dir" ]]; then
+            NEED_DIRS=true
+            break
+        fi
+    done
+fi
+
 SECRETS_FILE="$FOCI_HOME/config/secrets.toml"
+NEED_SECRETS_HARDEN=false
 if [[ -f "$SECRETS_FILE" ]]; then
     CURRENT_OWNER="$(stat -c '%u:%G' "$SECRETS_FILE" 2>/dev/null || true)"
     CURRENT_PERMS="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || true)"
     if [[ "$CURRENT_OWNER" != "0:$SECRETS_GROUP" ]] || [[ "$CURRENT_PERMS" != "660" ]]; then
-        info "  Hardening secrets.toml (chown root:$SECRETS_GROUP, chmod 0660)"
-        run chown "root:$SECRETS_GROUP" "$SECRETS_FILE"
-        run chmod 0660 "$SECRETS_FILE"
-    else
-        info "  secrets.toml already hardened (root:$SECRETS_GROUP, 0660)"
+        NEED_SECRETS_HARDEN=true
     fi
 fi
 
-# ---------- 5. systemd service ----------
-info "Step 5: systemd service"
-if ! command -v systemctl &>/dev/null; then
-    warn "  systemctl not found, skipping service setup"
-elif [[ -f "$SERVICE_FILE" ]]; then
-    info "  Service file exists"
-    # Ensure SupplementaryGroups and AmbientCapabilities are present
-    NEEDS_UPDATE=false
-    if ! grep -q "SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE" 2>/dev/null; then
-        NEEDS_UPDATE=true
+NEED_SERVICE_INSTALL=false
+NEED_SERVICE_PATCH=false
+if $HAS_SYSTEMCTL; then
+    if [[ ! -f "$SERVICE_FILE" ]]; then
+        NEED_SERVICE_INSTALL=true
+    else
+        grep -q "SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
     fi
-    if ! grep -q "AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null; then
-        NEEDS_UPDATE=true
+fi
+
+$IS_SELF && info "  Running as $FOCI_USER (self-mode)"
+$NEED_USERADD && info "  User $FOCI_USER needs to be created"
+$NEED_GROUPADD && info "  Group $SECRETS_GROUP needs to be created"
+$NEED_GROUPMEMBER && info "  $FOCI_USER needs to be added to $SECRETS_GROUP"
+$NEED_DIRS && info "  Directories need to be created"
+$HAS_CONFIG && info "  Config exists" || info "  Config needs to be created"
+$NEED_SECRETS_HARDEN && info "  secrets.toml needs hardening"
+$NEED_SERVICE_INSTALL && info "  Systemd service needs to be installed"
+$NEED_SERVICE_PATCH && info "  Systemd service needs patching"
+
+# ---------- Wizard mode ----------
+SETUP_WIZARD_ARGS="--config-dir \"$FOCI_HOME/config\" --home \"$FOCI_HOME\" --defaults-dir \"$SCRIPT_DIR/shared/defaults/character\""
+
+TELEGRAM_TOKEN="${FOCI_TELEGRAM_TOKEN:-}"
+TELEGRAM_USER="${FOCI_TELEGRAM_USER:-}"
+AUTH_METHOD="${FOCI_AUTH_METHOD:-}"
+AUTH_TOKEN="${FOCI_AUTH_TOKEN:-}"
+AGENT_ID="${FOCI_AGENT_ID:-}"
+
+if [[ -n "$TELEGRAM_TOKEN" && -n "$TELEGRAM_USER" ]]; then
+    SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --non-interactive"
+    SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --bot-token \"$TELEGRAM_TOKEN\""
+    SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --user-id \"$TELEGRAM_USER\""
+    [[ -n "$AUTH_METHOD" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --auth-method \"$AUTH_METHOD\""
+    [[ -n "$AUTH_TOKEN" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --auth-token \"$AUTH_TOKEN\""
+    [[ -n "$AGENT_ID" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --agent-id \"$AGENT_ID\""
+    WIZARD_MODE="non-interactive"
+elif [[ -t 0 ]]; then
+    WIZARD_MODE="interactive"
+else
+    WIZARD_MODE="no-tty"
+fi
+
+# Fail-fast: need config but can't get it
+if ! $HAS_CONFIG && [[ "$WIZARD_MODE" == "no-tty" ]]; then
+    error "No config found and stdin is not a terminal."
+    error "Set credentials via environment variables and re-run:"
+    error "  FOCI_TELEGRAM_TOKEN   — Telegram bot token (required)"
+    error "  FOCI_TELEGRAM_USER    — Telegram user ID (required)"
+    error "  FOCI_AUTH_METHOD      — Auth method: oauth, apikey, skip (default: skip)"
+    error "  FOCI_AUTH_TOKEN       — API key (required if auth method is apikey)"
+    error "  FOCI_AGENT_ID         — Agent ID (default: main)"
+    exit 1
+fi
+
+# ---------- Self-mode: handle unprivileged work directly ----------
+if $IS_SELF && ! $DRY_RUN; then
+    info "Self-mode: handling directories, config, and files directly"
+
+    # Create directories (no chown needed — we own them)
+    mkdir -p "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/data/sessions" "$FOCI_HOME/logs" "$FOCI_HOME/shared/skills"
+
+    # Config wizard
+    if ! $HAS_CONFIG; then
+        info "  Launching setup wizard..."
+        eval "\"$SCRIPT_DIR/foci\" setup $SETUP_WIZARD_ARGS"
+        info "  Config written by foci setup"
     fi
-    if $NEEDS_UPDATE; then
-        info "  Updating service file (adding SupplementaryGroups and AmbientCapabilities)"
-        if ! $DRY_RUN; then
-            # Add SupplementaryGroups after User= if missing
-            if ! grep -q "SupplementaryGroups=" "$SERVICE_FILE"; then
-                sed -i "/^User=/a SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE"
-            fi
-            # Add AmbientCapabilities after SupplementaryGroups= if missing
-            if ! grep -q "AmbientCapabilities=" "$SERVICE_FILE"; then
-                sed -i "/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE"
-            fi
+
+    # Commit file + changelog
+    mkdir -p "$(dirname "$COMMIT_FILE")"
+    echo "$NEW_COMMIT" > "$COMMIT_FILE"
+    if [[ -n "$STAGED_WELCOME" ]] && [[ -f "$STAGED_WELCOME" ]]; then
+        cp "$STAGED_WELCOME" "$FOCI_HOME/data/WELCOME.md"
+        rm -f "$STAGED_WELCOME"
+        info "  Changelog installed"
+    fi
+    # Re-check secrets hardening (wizard may have just created secrets.toml)
+    if ! $NEED_SECRETS_HARDEN && [[ -f "$SECRETS_FILE" ]]; then
+        CURRENT_OWNER="$(stat -c '%u:%G' "$SECRETS_FILE" 2>/dev/null || true)"
+        CURRENT_PERMS="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || true)"
+        if [[ "$CURRENT_OWNER" != "0:$SECRETS_GROUP" ]] || [[ "$CURRENT_PERMS" != "660" ]]; then
+            NEED_SECRETS_HARDEN=true
         fi
     fi
-    run systemctl daemon-reload
-else
-    info "  Installing service"
-    if ! $DRY_RUN; then
-        cat > "$SERVICE_FILE" << SERVICE
+elif $IS_SELF && $DRY_RUN; then
+    info "  (dry-run) Would create directories, run config wizard, write commit file (self-mode)"
+    # Assume wizard will create secrets.toml needing hardening
+    if ! $HAS_CONFIG; then
+        NEED_SECRETS_HARDEN=true
+    fi
+fi
+
+# ============================================================
+# Phase 2: Generate minimal install script
+# ============================================================
+
+info "Generating install script"
+
+emit()         { echo "$@" >> "$INSTALL_SCRIPT"; }
+emit_comment() { echo "" >> "$INSTALL_SCRIPT"; echo "# $*" >> "$INSTALL_SCRIPT"; }
+
+cat > "$INSTALL_SCRIPT" << 'EOF'
+#!/bin/bash
+set -euo pipefail
+EOF
+
+# --- User creation ---
+if $NEED_USERADD; then
+    emit_comment "Create system user"
+    emit "useradd --system --home-dir \"$FOCI_HOME\" --create-home --shell /bin/bash \"$FOCI_USER\""
+fi
+
+# --- Group creation ---
+if $NEED_GROUPADD; then
+    emit_comment "Create secrets group — secrets.toml is root:foci-secrets so gateway can read/write but agent subprocesses cannot"
+    emit "groupadd \"$SECRETS_GROUP\""
+fi
+
+# --- Group membership ---
+if $NEED_GROUPMEMBER; then
+    emit_comment "Add $FOCI_USER to $SECRETS_GROUP"
+    emit "usermod -aG \"$SECRETS_GROUP\" \"$FOCI_USER\""
+fi
+
+# --- Install binaries ---
+emit_comment "Install binaries"
+emit "install -m 755 \"$SCRIPT_DIR/focigw\" \"$INSTALL_DIR/focigw\""
+emit "install -m 755 \"$SCRIPT_DIR/foci\" \"$INSTALL_DIR/foci\""
+emit "install -m 755 \"$SCRIPT_DIR/foci-call\" \"$INSTALL_DIR/foci-call\""
+
+# --- Directories (only if needed and not self-mode) ---
+if $NEED_DIRS; then
+    emit_comment "Create directories"
+    emit "mkdir -p \"$FOCI_HOME/config\" \"$FOCI_HOME/data\" \"$FOCI_HOME/data/sessions\" \"$FOCI_HOME/logs\" \"$FOCI_HOME/shared/skills\""
+    emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/config\" \"$FOCI_HOME/data\" \"$FOCI_HOME/data/sessions\" \"$FOCI_HOME/logs\" \"$FOCI_HOME/shared/skills\""
+fi
+
+# --- Config wizard (only if no config and not self-mode) ---
+if ! $HAS_CONFIG && ! $IS_SELF; then
+    emit_comment "Run config wizard"
+    emit "sudo -u \"$FOCI_USER\" -g \"$SECRETS_GROUP\" \"$INSTALL_DIR/foci\" setup $SETUP_WIZARD_ARGS"
+    # Wizard may create secrets.toml — harden it if so
+    emit "[ -f \"$SECRETS_FILE\" ] && chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\" && chmod 0660 \"$SECRETS_FILE\""
+fi
+
+# --- Secrets hardening (existing file needs re-hardening) ---
+if $NEED_SECRETS_HARDEN; then
+    emit_comment "Harden secrets.toml — root-owned, group-readable so gateway can access but agent subprocesses cannot"
+    emit "chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\""
+    emit "chmod 0660 \"$SECRETS_FILE\""
+fi
+
+# --- Commit file + changelog (only if not self-mode) ---
+if ! $IS_SELF; then
+    emit_comment "Record build commit — used to generate changelog on next update"
+    emit "mkdir -p \"$(dirname "$COMMIT_FILE")\""
+    emit "echo \"$NEW_COMMIT\" > \"$COMMIT_FILE\""
+    emit "chown \"$FOCI_USER:$FOCI_USER\" \"$COMMIT_FILE\""
+    if [[ -n "$STAGED_WELCOME" ]]; then
+        emit "cp \"$STAGED_WELCOME\" \"$FOCI_HOME/data/WELCOME.md\""
+        emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/data/WELCOME.md\""
+        emit "rm -f \"$STAGED_WELCOME\""
+    fi
+fi
+
+# --- Systemd service ---
+if $HAS_SYSTEMCTL; then
+    if $NEED_SERVICE_INSTALL; then
+        SERVICE_PATH="$FOCI_HOME/.local/bin"
+        for d in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+            [[ -d "$d" ]] && SERVICE_PATH="$SERVICE_PATH:$d"
+        done
+        emit_comment "Install systemd service"
+        cat >> "$INSTALL_SCRIPT" << EMIT_SERVICE
+cat > "$SERVICE_FILE" << 'EOF'
 [Unit]
 Description=Foci Agent
 After=network.target
@@ -332,7 +417,7 @@ User=$FOCI_USER
 SupplementaryGroups=$SECRETS_GROUP
 AmbientCapabilities=CAP_SETGID
 WorkingDirectory=$FOCI_HOME
-Environment="PATH=$FOCI_HOME/bin:$FOCI_HOME/.local/bin:$FOCI_HOME/.cargo/bin:$FOCI_HOME/.npm-global/bin:$FOCI_HOME/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=$SERVICE_PATH"
 ExecStart=$INSTALL_DIR/focigw -config $FOCI_HOME/config/foci.toml
 Restart=on-failure
 RestartSec=5
@@ -341,57 +426,101 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
-SERVICE
-        if ! systemctl daemon-reload; then
-            warn "  systemctl daemon-reload failed"
+EOF
+EMIT_SERVICE
+        emit "systemctl daemon-reload"
+        emit "systemctl enable \"$SERVICE_NAME\""
+    elif $NEED_SERVICE_PATCH; then
+        emit_comment "Patch systemd service — add secrets group and CAP_SETGID to older service files"
+        if ! grep -q "SupplementaryGroups=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^User=/a SupplementaryGroups=$SECRETS_GROUP' \"$SERVICE_FILE\""
         fi
-        if ! systemctl enable foci; then
-            warn "  systemctl enable foci failed"
+        if ! grep -q "AmbientCapabilities=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID' \"$SERVICE_FILE\""
         fi
+        emit "systemctl daemon-reload"
+    else
+        emit_comment "Reload systemd"
+        emit "systemctl daemon-reload"
     fi
-    info "  Service installed and enabled"
 fi
 
-# ---------- 6. Polkit rule (lets foci user manage its own service) ----------
-POLKIT_FILE="/etc/polkit-1/rules.d/49-foci.rules"
-info "Step 6: Polkit rule"
-if ! command -v pkaction &>/dev/null; then
-    warn "  polkit not found — $FOCI_USER won't be able to restart foci without sudo"
-elif [[ -f "$POLKIT_FILE" ]]; then
-    info "  Polkit rule exists"
-else
-    info "  Installing polkit rule"
-    if ! $DRY_RUN; then
-        cat > "$POLKIT_FILE" << POLKIT
-// Allow $FOCI_USER to manage the foci.service unit without a password.
+# --- Polkit rule ---
+if $HAS_POLKIT && ! $HAS_POLKIT_RULE; then
+    emit_comment "Install polkit rule — lets $FOCI_USER restart its own service without sudo"
+    cat >> "$INSTALL_SCRIPT" << EMIT_POLKIT
+cat > "/etc/polkit-1/rules.d/49-${SERVICE_NAME}.rules" << 'EOF'
+// Allow $FOCI_USER to manage the $SERVICE_NAME.service unit without a password.
 polkit.addRule(function(action, subject) {
     if (action.id === "org.freedesktop.systemd1.manage-units" &&
-        action.lookup("unit") === "foci.service" &&
+        action.lookup("unit") === "$SERVICE_NAME.service" &&
         subject.user === "$FOCI_USER") {
         return polkit.Result.YES;
     }
 });
-POLKIT
-    fi
-    info "  $FOCI_USER can now: systemctl restart foci"
+EOF
+EMIT_POLKIT
 fi
 
-# ---------- 7. Start/restart ----------
-info "Step 7: Service"
-if command -v systemctl &>/dev/null; then
-    if systemctl is-active --quiet foci 2>/dev/null; then
-        info "  Restarting foci"
-        run systemctl restart foci --no-block
+# --- Start/restart ---
+if $HAS_SYSTEMCTL; then
+    if $SERVICE_ACTIVE; then
+        emit_comment "Restart service"
+        emit "systemctl restart \"$SERVICE_NAME\" --no-block"
     else
-        info "  Starting foci"
-        if ! run systemctl start foci; then
-            error "  Failed to start foci. Check: journalctl -u foci -n 50"
-        fi
+        emit_comment "Start service"
+        emit "systemctl start \"$SERVICE_NAME\""
     fi
 fi
 
-echo ""
-info "Done."
-info "  Status:  systemctl status foci"
-info "  Logs:    journalctl -u foci -f"
-info "  Now message your bot on Telegram — it will introduce itself."
+chmod +x "$INSTALL_SCRIPT"
+
+# ============================================================
+# Phase 3: Execute or display the install script
+# ============================================================
+
+# Check if install script has any real commands (beyond the 3-line header)
+INSTALL_LINES=$(wc -l < "$INSTALL_SCRIPT")
+if [[ "$INSTALL_LINES" -le 3 ]]; then
+    info "Nothing to install — already up to date."
+    rm -f "$INSTALL_SCRIPT"
+elif $DRY_RUN; then
+    echo ""
+    info "Dry run — nothing was built or installed."
+    info "Build would produce: focigw, foci, foci-call in $SCRIPT_DIR"
+    echo ""
+    info "The following install script would be generated and run as root:"
+    echo ""
+    echo -e "${BLUE}--- $INSTALL_SCRIPT ---${NC}"
+    cat "$INSTALL_SCRIPT"
+    echo -e "${BLUE}--- end ---${NC}"
+    rm -f "$INSTALL_SCRIPT"
+elif $DO_INSTALL; then
+    echo ""
+    info "Running install script via sudo..."
+    echo ""
+    sudo bash "$INSTALL_SCRIPT"
+    rm -f "$INSTALL_SCRIPT" "$SCRIPT_DIR/.staged-WELCOME.md" 2>/dev/null || true
+    echo ""
+    info "Done."
+    if $HAS_SYSTEMCTL; then
+        info "  Status:  systemctl status $SERVICE_NAME"
+        info "  Logs:    journalctl -u $SERVICE_NAME -f"
+    fi
+    info "  Now message your bot on Telegram — it will introduce itself."
+else
+    echo ""
+    info "Build complete. Binaries are in $SCRIPT_DIR/"
+    echo ""
+    info "To install, review and run the generated script:"
+    echo ""
+    echo -e "  ${YELLOW}# Review what will run as root:${NC}"
+    echo -e "  cat $INSTALL_SCRIPT"
+    echo ""
+    echo -e "  ${YELLOW}# Then install:${NC}"
+    echo -e "  sudo bash $INSTALL_SCRIPT"
+    echo ""
+    echo -e "  ${YELLOW}# Or re-run with --install to do both in one step:${NC}"
+    echo -e "  $0 --install"
+    echo ""
+fi
