@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -1236,6 +1236,20 @@ func main() {
 			agentID := agentID // capture for goroutine
 			go func() {
 				sk := inst.defaultSessionKey()
+				if sk == "" {
+					// On first run, no Telegram message has arrived yet so
+					// there's no default session. Construct one from the
+					// first allowed user ID in config.
+					users := inst.agentCfg.AllowedUsers
+					if len(users) == 0 {
+						users = cfg.Telegram.AllowedUsers
+					}
+					if len(users) > 0 {
+						if chatID, err := strconv.ParseInt(users[0], 10, 64); err == nil {
+							sk = telegram.SessionKeyForChat(agentID, chatID)
+						}
+					}
+				}
 				if sk == "" {
 					log.Warnf("main", "no default session for first-run injection on %s, skipping", agentID)
 					return
