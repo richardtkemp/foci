@@ -12,5 +12,11 @@ conversation.db-wal
 conversation.db-shm
 .gocache/
 .gopath/
+.setup-install.sh
+.staged-WELCOME.md
 .claude/
 coverage.out
+update.sh
+foci
+focigw
+foci-call
