@@ -1006,7 +1006,11 @@ func main() {
 	}
 
 	// Tmux memory monitor — checks RSS of tmux server, notifies/kills at thresholds
-	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
+	hasTmux := false
+	if _, err := exec.LookPath("tmux"); err == nil {
+		hasTmux = true
+	}
+	if hasTmux && cfg.Tools.TmuxMemoryCheckInterval != "0" {
 		checkInterval, _ := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval)
 		if checkInterval > 0 {
 			tmuxMemMon := tools.NewTmuxMemoryMonitor(
@@ -1438,16 +1442,21 @@ func setupAgent(p setupParams) *agentInstance {
 
 	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
 	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
-	tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
-	tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
-	tmuxWatchThresholdSec := 30
-	if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
-		tmuxWatchThresholdSec = int(d.Seconds())
-	}
-
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
-	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
-	registry.Register(tmuxTool)
+
+	// Only register tmux tool if tmux is available in PATH
+	var tmuxTool *tools.Tool
+	var tmuxClearAll func()
+	if _, err := exec.LookPath("tmux"); err == nil {
+		tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
+		tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
+		tmuxWatchThresholdSec := 30
+		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
+			tmuxWatchThresholdSec = int(d.Seconds())
+		}
+		tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
+		registry.Register(tmuxTool)
+	}
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore))
 	registry.Register(tools.NewEditTool(agentStore))
@@ -1773,7 +1782,9 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
-	cmds.Register(command.NewTmuxCommand(tmuxTool.Execute))
+	if tmuxTool != nil {
+		cmds.Register(command.NewTmuxCommand(tmuxTool.Execute))
+	}
 	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, buildContextInfoFn(
 		ag, bootstrap, registry, acfg, p.client, p.sessions, defaultSessionKey, compactionThreshold,
 	)))
