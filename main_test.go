@@ -682,10 +682,9 @@ setup_token = "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-p
 		if err != nil {
 			return err
 		}
-		newSetupToken, newAPIKey, _, _, _, _ := resolveSecretKeys(cfg, st)
-		token := newSetupToken
+		token, _ := st.Get("anthropic.setup_token")
 		if token == "" {
-			token = newAPIKey
+			token, _ = st.Get("anthropic.api_key")
 		}
 		if token == "" {
 			return nil

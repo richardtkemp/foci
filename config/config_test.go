@@ -23,12 +23,7 @@ model = "claude-haiku-4-5"
 workspace = "/tmp/workspace"
 
 
-[anthropic]
-setup_token = "sk-ant-oat01-test"
-brave_api_key = "brave-key"
-
 [telegram]
-bot_token = "123:ABC"
 allowed_users = ["111", "222"]
 
 [sessions]
@@ -63,13 +58,6 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Agent.Workspace != "/tmp/workspace" {
 		t.Errorf("Agent.Workspace = %q", cfg.Agent.Workspace)
 	}
-	if cfg.Anthropic.SetupToken != "sk-ant-oat01-test" {
-		t.Errorf("Anthropic.SetupToken = %q", cfg.Anthropic.SetupToken)
-	}
-	if cfg.Anthropic.BraveAPIKey != "brave-key" {
-		t.Errorf("Anthropic.BraveAPIKey = %q", cfg.Anthropic.BraveAPIKey)
-	}
-	// telegram.bot_token is deprecated — it still parses but is not used
 	if len(cfg.Telegram.AllowedUsers) != 2 || cfg.Telegram.AllowedUsers[0] != "111" {
 		t.Errorf("Telegram.AllowedUsers = %v", cfg.Telegram.AllowedUsers)
 	}
@@ -2334,12 +2322,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	// Keys intentionally absent from the example. Add a comment explaining why.
 	exampleSkipKeys := map[string]bool{
 		// Deprecated — kept for TOML decode but no longer used
-		"telegram.bot_token": true,
-		"memory.dir":         true,
-		// Secrets (belong in secrets.toml)
-		"anthropic.setup_token":   true,
-		"anthropic.api_key":       true,
-		"anthropic.brave_api_key": true,
+		"memory.dir": true,
 	}
 
 	// The legacy [agent] (singular) section has the same fields as [[agents]].
@@ -2435,6 +2418,29 @@ func collectTOMLKeys(t reflect.Type, prefix string) []string {
 		}
 	}
 	return keys
+}
+
+func TestNoSecretsInConfig(t *testing.T) {
+	// Config structs must not contain credential fields.
+	// Secrets belong in secrets.toml, resolved via the secrets store at runtime.
+	secretPatterns := []*regexp.Regexp{
+		regexp.MustCompile(`_token$`),  // api_token, setup_token — but not max_output_tokens
+		regexp.MustCompile(`_key$`),    // api_key, brave_api_key
+		regexp.MustCompile(`password`), // password, password_hash
+		regexp.MustCompile(`^key$`),    // bare "key"
+		regexp.MustCompile(`^token$`),  // bare "token"
+	}
+
+	keys := collectTOMLKeys(reflect.TypeOf(Config{}), "")
+	for _, key := range keys {
+		parts := strings.Split(key, ".")
+		leaf := strings.ToLower(parts[len(parts)-1])
+		for _, pat := range secretPatterns {
+			if pat.MatchString(leaf) {
+				t.Errorf("config field %q matches %s — secrets belong in secrets.toml", key, pat)
+			}
+		}
+	}
 }
 
 func TestMemorySourcesInheritance(t *testing.T) {

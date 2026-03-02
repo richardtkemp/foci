@@ -209,10 +209,7 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	// database
 	add("database", "busy_timeout", cfg.Database.BusyTimeout)
 
-	// anthropic (secrets redacted)
-	add("anthropic", "setup_token", redactString(cfg.Anthropic.SetupToken))
-	add("anthropic", "api_key", redactString(cfg.Anthropic.APIKey))
-	add("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
+	// anthropic
 	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 
@@ -527,9 +524,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 		addGlobal("voice", "tts_rate", cfg.Voice.TTSRate)
 	}
 	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
-	addGlobal("anthropic", "setup_token", redactString(cfg.Anthropic.SetupToken))
-	addGlobal("anthropic", "api_key", redactString(cfg.Anthropic.APIKey))
-	addGlobal("anthropic", "brave_api_key", redactString(cfg.Anthropic.BraveAPIKey))
 	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 	if len(cfg.PromptRules) > 0 {
@@ -631,9 +625,6 @@ type displayTelegram struct {
 }
 
 type displayAnthropic struct {
-	SetupToken      string `toml:"setup_token"`
-	APIKey          string `toml:"api_key"`
-	BraveAPIKey     string `toml:"brave_api_key"`
 	HTTPTimeout     string `toml:"http_timeout"`
 	UsageAPITimeout string `toml:"usage_api_timeout"`
 }
@@ -666,9 +657,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Voice:         cfg.Voice,
 		Database:      cfg.Database,
 		Anthropic: displayAnthropic{
-			SetupToken:      redactString(cfg.Anthropic.SetupToken),
-			APIKey:          redactString(cfg.Anthropic.APIKey),
-			BraveAPIKey:     redactString(cfg.Anthropic.BraveAPIKey),
 			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,
 			UsageAPITimeout: cfg.Anthropic.UsageAPITimeout,
 		},
@@ -872,9 +860,4 @@ func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	return "Unset/default config options:\n\n" + strings.Join(parts, "\n\n")
 }
 
-func redactString(s string) string {
-	if s == "" {
-		return ""
-	}
-	return "***"
-}
+

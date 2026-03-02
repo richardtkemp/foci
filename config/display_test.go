@@ -10,8 +10,6 @@ import (
 func testConfig() (*Config, AgentConfig) {
 	cfg := &Config{
 		Anthropic: AnthropicConfig{
-			SetupToken:      "sk-ant-secret",
-			BraveAPIKey:     "brave-secret",
 			HTTPTimeout:     "120s",
 			UsageAPITimeout: "10s",
 		},
@@ -172,27 +170,6 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 	}
 }
 
-func TestFormatConfigSecretRedaction(t *testing.T) {
-	cfg, agent := testConfig()
-	result := FormatConfig(cfg, agent)
-
-	// Secrets must be redacted
-	if strings.Contains(result, "sk-ant-secret") {
-		t.Error("anthropic token not redacted")
-	}
-	if strings.Contains(result, "brave-secret") {
-		t.Error("brave api key not redacted")
-	}
-	if strings.Contains(result, "bot-token-secret") {
-		t.Error("telegram bot token not redacted")
-	}
-
-	// Redacted markers must be present
-	if !strings.Contains(result, "***") {
-		t.Error("expected redacted token marker")
-	}
-}
-
 func TestFormatConfigTOML(t *testing.T) {
 	cfg, agent := testConfig()
 	result := FormatConfigTOML(cfg, agent)
@@ -209,18 +186,6 @@ func TestFormatConfigTOML(t *testing.T) {
 	}
 	if _, ok := parsed["telegram"]; !ok {
 		t.Error("missing [telegram] section in TOML")
-	}
-}
-
-func TestFormatConfigTOMLSecretRedaction(t *testing.T) {
-	cfg, agent := testConfig()
-	result := FormatConfigTOML(cfg, agent)
-
-	if strings.Contains(result, "sk-ant-secret") {
-		t.Error("anthropic token not redacted in TOML")
-	}
-	if strings.Contains(result, "bot-token-secret") {
-		t.Error("telegram bot token not redacted in TOML")
 	}
 }
 
@@ -458,11 +423,4 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	}
 }
 
-func TestRedactString(t *testing.T) {
-	if redactString("secret") != "***" {
-		t.Error("non-empty string should be redacted")
-	}
-	if redactString("") != "" {
-		t.Error("empty string should remain empty")
-	}
-}
+
