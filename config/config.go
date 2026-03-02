@@ -140,7 +140,7 @@ type AgentConfig struct {
 	ExecAutoBackground  int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
 	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
-	TmuxBraindead       *bool  `toml:"tmux_braindead"`        // per-agent tmux braindead override (nil = use global)
+	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
 	MaxResultChars      int    `toml:"max_result_chars"`      // max chars before writing to file (0 = use global)
 	MaxSummaryChars     int    `toml:"max_summary_chars"`     // max chars to auto-summarise (0 = use global)
@@ -306,7 +306,7 @@ type ToolsConfig struct {
 	TmuxMemoryWarn          string `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
 	TmuxMemoryCritical      string `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
 	TmuxMemoryKill          string `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
-	TmuxBraindead           bool   `toml:"tmux_braindead"`             // auto-unwatch on inactivity, auto-watch on send (default true)
+	TmuxAutopilot           bool   `toml:"tmux_autopilot"`             // auto-unwatch on inactivity, auto-watch on send (default true)
 	TmuxWatchThreshold      string `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 	SummaryContextTurns        int      `toml:"summary_context_turns"`         // recent turns for auto-summary context (default 5)
@@ -567,7 +567,7 @@ var boolKeys = map[string]bool{
 	"messages_in_log":       true,
 	"compaction_notify":     true,
 	"compaction_debug":      true,
-	"tmux_braindead":        true,
+	"tmux_autopilot":        true,
 	"auto_refresh":          true,
 	"enable_stop_aliases":   true,
 	"enable_startup_notify": true,
@@ -807,7 +807,7 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Tools.TmuxRows, 30)
 	setIntDefaultDefined(&cfg.Tools.ExecAutoBackground, 10, md.IsDefined("tools", "exec_auto_background"))
 	setBoolDefaultDefined(&cfg.Tools.AutoSummarise, true, md.IsDefined("tools", "auto_summarise"))
-	setBoolDefaultDefined(&cfg.Tools.TmuxBraindead, true, md.IsDefined("tools", "tmux_braindead"))
+	setBoolDefaultDefined(&cfg.Tools.TmuxAutopilot, true, md.IsDefined("tools", "tmux_autopilot"))
 	setStringDefault(&cfg.Tools.TmuxWatchThreshold, "30s")
 	setStringDefault(&cfg.Tools.SearchProvider, "anthropic")
 	setStringDefault(&cfg.Tools.FetchProvider, "builtin")

@@ -1438,7 +1438,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
 	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
-	tmuxBraindead := resolveBoolPtr(acfg.TmuxBraindead, p.cfg.Tools.TmuxBraindead)
+	tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
 	tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
 	tmuxWatchThresholdSec := 30
 	if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
@@ -1446,7 +1446,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
-	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxBraindead, tmuxWatchThresholdSec)
+	tmuxTool, tmuxClearAll := tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
 	registry.Register(tmuxTool)
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore))

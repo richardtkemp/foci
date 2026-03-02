@@ -42,14 +42,14 @@ Features:
 Manage tmux sessions with built-in monitoring:
 
 - **`start`** — create a tmux session and run a command. Auto-watches by default.
-- **`send`** — send keystrokes to a pane. Auto-watches after send (braindead mode).
+- **`send`** — send keystrokes to a pane. Auto-watches after send (autopilot mode).
 - **`read`** — read pane output (last N lines).
 - **`list`** — list active sessions.
 - **`kill`** — kill a session.
 - **`watch`** — monitor a pane for inactivity. Fires when content unchanged for `threshold_seconds` (default 30s). Content tracked via MD5 hash. One-shot alert, persists across restarts.
 - **`unwatch`** — stop monitoring a session.
 
-Braindead mode (default on): auto-unwatches after inactivity notification, auto-watches on send — removes manual watch/unwatch overhead.
+Autopilot mode (default on): auto-unwatches after inactivity notification, auto-watches on send — removes manual watch/unwatch overhead.
 
 Owned sessions persist across app restarts via the state store.
 
