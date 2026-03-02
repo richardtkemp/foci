@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -2995,11 +2996,11 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 // resolveCredentials resolves the Anthropic API client and usage client.
 //
 // API client priority: (1) setup-token, (2) API key, (3) Claude Code credentials.
-// Usage client: requires API key (anthropic.api_key). Nil if only setup-token or OAuth.
+// Usage client: always from CC credentials (polls ~/.claude/.credentials.json).
 //
 // For static tokens, the client uses a tokenFunc backed by a tokenHolder,
 // enabling hot-reload via /-/reload-credentials.
-// Returns the tokenHolder (nil for OAuth fallback, which manages its own refresh).
+// Returns the tokenHolder (nil for CC-backed client, which polls the file).
 func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Context) (*anthropic.Client, *anthropic.UsageClient, *tokenHolder) {
 	setupToken, _ := store.Get("anthropic.setup_token")
 	apiKey, _ := store.Get("anthropic.api_key")
@@ -3008,27 +3009,33 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 		log.Warnf("main", "invalid anthropic.http_timeout, using default: %v", err)
 		httpTimeout = 120 * time.Second
 	}
-
-	// Usage client — only works with API key, not setup-token or OAuth.
-	var usageClient *anthropic.UsageClient
-	if apiKey != "" {
-		usageClient = anthropic.NewUsageClient(apiKey)
-		log.Infof("main", "usage client configured (anthropic.api_key)")
-	}
-
-	// Helper: create OAuth-backed API client and start background refresh.
-	initOAuth := func(mgr *anthropic.OAuthManager, label string) *anthropic.Client {
-		if mgr.ExpiresIn() < 5*time.Minute {
-			if err := mgr.Refresh(); err != nil {
-				log.Fatalf("main", "initial token refresh (%s): %v", label, err)
-			}
-		}
-		mgr.StartRefresh(ctx)
-		log.Infof("main", "using %s (expires in %s, auto-refresh active)", label, mgr.ExpiresIn().Truncate(time.Second))
-		return anthropic.NewClientWithTokenFunc(mgr.Token, httpTimeout)
+	ccPollInterval, err := time.ParseDuration(cfg.Anthropic.CCCredentialsPollInterval)
+	if err != nil {
+		log.Warnf("main", "invalid anthropic.cc_credentials_poll_interval, using default: %v", err)
+		ccPollInterval = 30 * time.Second
 	}
 
 	const ccCredsFile = "~/.claude/.credentials.json"
+
+	// CC token source — shared between usage client and (optionally) main client.
+	// Created once; polls the file, never refreshes tokens.
+	var ccSrc *anthropic.CCTokenSource
+	if src, err := anthropic.NewCCTokenSource(ccCredsFile, ccPollInterval); err == nil {
+		src.OnExpired(func() {
+			log.Warnf("main", "CC credentials expired — starting claude to refresh")
+			go startClaudeForRefresh()
+		})
+		src.Start(ctx)
+		ccSrc = src
+		log.Infof("main", "CC token source configured (%s, poll %s)", ccCredsFile, ccPollInterval)
+	}
+
+	// Usage client — always from CC credentials (required for /api/oauth/usage).
+	var usageClient *anthropic.UsageClient
+	if ccSrc != nil {
+		usageClient = anthropic.NewUsageClientWithFunc(ccSrc.Token)
+		log.Infof("main", "usage client configured (CC credentials)")
+	}
 
 	// Source 1: setup-token (from `foci auth` / `claude setup-token`)
 	if setupToken != "" {
@@ -3046,15 +3053,29 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 			usageClient, holder
 	}
 
-	// Source 3: Claude Code credentials (read-only fallback)
-	if mgr, err := anthropic.NewOAuthManager(ccCredsFile); err == nil {
-		c := initOAuth(mgr, fmt.Sprintf("Claude Code credentials from %s (fallback, read-only)", ccCredsFile))
-		return c, usageClient, nil
+	// Source 3: Claude Code credentials (passive — poll file, never refresh)
+	if ccSrc != nil {
+		log.Infof("main", "using CC credentials from %s (passive, poll-based)", ccCredsFile)
+		return anthropic.NewClientWithTokenFunc(ccSrc.Token, httpTimeout),
+			usageClient, nil
 	}
 
 	log.Errorf("main", "no Anthropic token found — run: foci auth")
 	os.Exit(1)
 	return nil, nil, nil // unreachable
+}
+
+// startClaudeForRefresh runs `claude auth status` in a subprocess to trigger
+// a token refresh. Fire-and-forget — logs errors but never blocks.
+func startClaudeForRefresh() {
+	cmd := exec.Command("claude", "auth", "status")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		log.Warnf("main", "claude auth status failed (CC may not be installed): %v", err)
+	} else {
+		log.Infof("main", "claude auth status completed — tokens may have been refreshed")
+	}
 }
 
 // resolveInt returns the per-agent value if non-zero, otherwise global.

@@ -158,8 +158,9 @@ type AgentConfig struct {
 }
 
 type AnthropicConfig struct {
-	HTTPTimeout     string `toml:"http_timeout"`      // HTTP timeout for API calls (default "600s")
-	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
+	HTTPTimeout              string `toml:"http_timeout"`                // HTTP timeout for API calls (default "600s")
+	UsageAPITimeout          string `toml:"usage_api_timeout"`           // HTTP timeout for usage API calls (default "10s")
+	CCCredentialsPollInterval string `toml:"cc_credentials_poll_interval"` // how often to re-read CC credentials file (default "30s")
 }
 
 type TelegramConfig struct {
@@ -530,6 +531,7 @@ func validate(cfg *Config) error {
 		{"database", "busy_timeout", cfg.Database.BusyTimeout},
 		{"anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout},
 		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
+		{"anthropic", "cc_credentials_poll_interval", cfg.Anthropic.CCCredentialsPollInterval},
 		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
 		{"tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout},
 		{"tools", "web_search_timeout", cfg.Tools.WebSearchTimeout},
@@ -822,6 +824,7 @@ func Load(path string) (*Config, error) {
 	// Anthropic defaults
 	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
+	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)

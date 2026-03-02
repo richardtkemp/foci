@@ -142,6 +142,7 @@ system_files = [
 [anthropic]
 # http_timeout = "600s"                   # HTTP timeout for API calls
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
+# cc_credentials_poll_interval = "30s"  # how often to re-read CC credentials file
 
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
