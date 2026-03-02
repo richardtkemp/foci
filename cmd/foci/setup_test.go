@@ -180,8 +180,17 @@ func TestParseSetupFlags(t *testing.T) {
 func TestParseSetupFlagsDefaults(t *testing.T) {
 	f := parseSetupFlags(nil)
 
-	if f.configDir != "./config" {
-		t.Errorf("default configDir = %q, want ./config", f.configDir)
+	home, _ := os.UserHomeDir()
+	wantConfigDir := filepath.Join(home, "config")
+	if f.configDir != wantConfigDir {
+		t.Errorf("default configDir = %q, want %q", f.configDir, wantConfigDir)
+	}
+	if f.homeDir != home {
+		t.Errorf("default homeDir = %q, want %q", f.homeDir, home)
+	}
+	wantDefaultsDir := filepath.Join(home, "shared", "defaults", "character")
+	if f.defaultsDir != wantDefaultsDir {
+		t.Errorf("default defaultsDir = %q, want %q", f.defaultsDir, wantDefaultsDir)
 	}
 	if f.agentID != "main" {
 		t.Errorf("default agentID = %q, want main", f.agentID)
