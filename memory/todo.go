@@ -224,13 +224,15 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 	)
 	var item TodoItem
 	var createdAt string
-	var updatedAt string
+	var updatedAt sql.NullString
 	var completedAt sql.NullString
 	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 		return nil, fmt.Errorf("re-read after edit: %w", err)
 	}
 	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	if updatedAt.Valid {
+		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+	}
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)
 		item.CompletedAt = &t
@@ -246,7 +248,7 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 	)
 	var item TodoItem
 	var createdAt string
-	var updatedAt string
+	var updatedAt sql.NullString
 	var completedAt sql.NullString
 	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 		if err == sql.ErrNoRows {
@@ -255,7 +257,9 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 		return nil, err
 	}
 	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	if updatedAt.Valid {
+		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+	}
 	if completedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, completedAt.String)
 		item.CompletedAt = &t
@@ -286,13 +290,15 @@ func scanTodos(rows *sql.Rows) ([]TodoItem, error) {
 	for rows.Next() {
 		var item TodoItem
 		var createdAt string
-		var updatedAt string
+		var updatedAt sql.NullString
 		var completedAt sql.NullString
 		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 			return nil, err
 		}
 		item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		if updatedAt.Valid {
+			item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+		}
 		if completedAt.Valid {
 			t, _ := time.Parse(time.RFC3339, completedAt.String)
 			item.CompletedAt = &t
