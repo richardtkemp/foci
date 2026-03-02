@@ -28,14 +28,13 @@ type setupFlags struct {
 	displayName    string // display name for agent
 	model          string // model alias or full ID
 	setupToken     string // setup token from 'claude setup-token'
-	apiKey         string // API key (auth credential, or usage tracking when setup-token provided)
+	apiKey         string // API key (auth credential)
 }
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
 	botToken    string
 	authMethod  string // "setup-token", "apikey", "skip"
-	apiKey      string // optional API key for usage endpoint (setup-token auth only)
 	userID      string
 	agentID     string
 	displayName string
@@ -59,7 +58,7 @@ Flags:
   --display-name <name>  Display name for agent (default: titlecased agent ID)
   --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
   --setup-token <token>  Setup token from 'claude setup-token'
-  --api-key <key>        API key (auth credential, or usage tracking when --setup-token provided)
+  --api-key <key>        API key (direct Anthropic API key)
 `)
 }
 
@@ -223,11 +222,8 @@ func runSetupNonInteractive(f setupFlags) error {
 		store.Set("anthropic.setup_token", f.setupToken)
 		secretsOpts.SetupToken = f.setupToken
 	} else if f.apiKey != "" {
-		secretsOpts.SetupToken = f.apiKey
-	}
-
-	if f.apiKey != "" {
 		store.Set("anthropic.api_key", f.apiKey)
+		secretsOpts.SetupToken = f.apiKey
 	}
 
 	// Provision the agent workspace
@@ -274,7 +270,7 @@ func runSetupInteractive(f setupFlags) error {
 
 	secretsOpts := config.SecretsOptions{}
 
-	totalSteps := 9
+	totalSteps := 8
 	step := 1
 	for step <= totalSteps {
 		switch step {
@@ -309,34 +305,15 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 4:
-			// Optional API key for usage tracking (only for setup-token auth).
-			if state.authMethod != "setup-token" {
-				step++
-				continue
-			}
-			key, back := stepUsageKey(reader, state.apiKey, totalSteps)
-			if back {
-				step--
-				continue
-			}
-			state.apiKey = key
-			step++
-
-		case 5:
 			userID, back := stepUserID(reader, state.botToken, state.userID, totalSteps)
 			if back {
-				// Skip back over step 4 if it was auto-skipped.
-				if state.authMethod != "setup-token" {
-					step -= 2
-				} else {
-					step--
-				}
+				step--
 				continue
 			}
 			state.userID = userID
 			step++
 
-		case 6:
+		case 5:
 			agentID, back := stepAgentID(reader, state.agentID, totalSteps)
 			if back {
 				step--
@@ -345,7 +322,7 @@ func runSetupInteractive(f setupFlags) error {
 			state.agentID = agentID
 			step++
 
-		case 7:
+		case 6:
 			displayName, back := stepDisplayName(reader, state.agentID, state.displayName, totalSteps)
 			if back {
 				step--
@@ -354,7 +331,7 @@ func runSetupInteractive(f setupFlags) error {
 			state.displayName = displayName
 			step++
 
-		case 8:
+		case 7:
 			model, back := stepModel(reader, state.model, store, totalSteps)
 			if back {
 				step--
@@ -363,7 +340,7 @@ func runSetupInteractive(f setupFlags) error {
 			state.model = model
 			step++
 
-		case 9:
+		case 8:
 			charMode, back := stepCharacterMode(reader, f, totalSteps)
 			if back {
 				step--
@@ -401,10 +378,6 @@ func runSetupInteractive(f setupFlags) error {
 
 	fmt.Println()
 	fmt.Println("Creating config...")
-
-	if state.apiKey != "" {
-		store.Set("anthropic.api_key", state.apiKey)
-	}
 
 	if err := writeSetupFiles(f, configOpts, secretsOpts, store, provResult); err != nil {
 		return err
@@ -527,43 +500,10 @@ func stepCredential(reader *bufio.Reader, authMethod string, store *secrets.Stor
 	return false, nil
 }
 
-// stepUsageKey prompts for an optional API key to enable usage/mana tracking.
-// Only shown when auth method is setup-token.
-func stepUsageKey(reader *bufio.Reader, current string, total int) (key string, back bool) {
-	fmt.Println()
-	fmt.Printf("Step 4/%d: Usage Tracking (optional)\n", total)
-	fmt.Println("  Setup tokens can't query the usage endpoint.")
-	fmt.Println("  To enable mana/usage tracking, provide an API key from:")
-	fmt.Println("  https://platform.claude.com/settings/keys")
-	fmt.Println("  Press Enter to skip.")
-	fmt.Println()
-
-	prompt := "  API key: "
-	if current != "" {
-		prompt = fmt.Sprintf("  API key [%s...]: ", current[:min(8, len(current))])
-	}
-	fmt.Print(prompt)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-
-	if input == "back" {
-		return "", true
-	}
-	if input == "" && current != "" {
-		return current, false
-	}
-	if input == "" {
-		fmt.Println("  Skipped.")
-		return "", false
-	}
-	fmt.Println("✓ API key saved for usage tracking.")
-	return input, false
-}
-
 // stepUserID prompts for user ID via auto-detect or manual entry.
 func stepUserID(reader *bufio.Reader, botToken string, current string, total int) (userID string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 5/%d: Your Telegram User ID\n", total)
+	fmt.Printf("Step 4/%d: Your Telegram User ID\n", total)
 	fmt.Println("  How would you like to identify yourself?")
 	fmt.Println("  [1] Auto-detect (send a message to your bot)")
 	fmt.Println("  [2] Enter manually")
@@ -727,7 +667,7 @@ func manualUserID(reader *bufio.Reader, current string) (string, bool) {
 // stepAgentID prompts for an agent identifier.
 func stepAgentID(reader *bufio.Reader, current string, total int) (agentID string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 6/%d: Agent ID\n", total)
+	fmt.Printf("Step 5/%d: Agent ID\n", total)
 	fmt.Println("  Pick a short lowercase name for your agent (letters, numbers, hyphens).")
 	fmt.Println("  This becomes the agent's workspace directory and session key prefix.")
 	fmt.Println()
@@ -756,7 +696,7 @@ func stepAgentID(reader *bufio.Reader, current string, total int) (agentID strin
 // stepDisplayName prompts for a display name.
 func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (displayName string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 7/%d: Display Name\n", total)
+	fmt.Printf("Step 6/%d: Display Name\n", total)
 	fmt.Println("  A human-readable name for your agent (used in SOUL.md).")
 	fmt.Println()
 
@@ -784,7 +724,7 @@ func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (
 // stepModel prompts for a model selection.
 func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total int) (model string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 8/%d: Model\n", total)
+	fmt.Printf("Step 7/%d: Model\n", total)
 	fmt.Println("  Choose a model: opus, sonnet, haiku, or enter a full model ID.")
 	fmt.Println()
 
@@ -814,7 +754,7 @@ func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total
 // stepCharacterMode prompts for character file sourcing.
 func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 9/%d: Character Files\n", total)
+	fmt.Printf("Step 8/%d: Character Files\n", total)
 	fmt.Println("  How should we set up the character files?")
 	fmt.Println("  [1] Defaults (recommended for new users)")
 	fmt.Println("  [2] OpenClaw templates")
