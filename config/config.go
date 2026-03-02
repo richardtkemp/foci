@@ -172,11 +172,6 @@ type TelegramConfig struct {
 	MessageQueueSize    int                          `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string                       `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 	ReceivedFilesDir    string                       `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
-
-	// Deprecated: these are migrated to [defaults] in Load(). Kept for TOML decoding of old configs.
-	LegacyShowToolCalls ToolCallDisplay `toml:"show_tool_calls"` // deprecated: use [defaults] show_tool_calls
-	LegacyShowThinking  ShowThinking   `toml:"show_thinking"`   // deprecated: use [defaults] show_thinking
-	LegacyDisplayWidth  int            `toml:"display_width"`   // deprecated: use [defaults] display_width
 }
 
 type SessionsConfig struct {
@@ -201,8 +196,7 @@ type MemorySource struct {
 }
 
 type MemoryConfig struct {
-	Dir                string         `toml:"dir"`                 // deprecated: use [[memory.sources]]
-	Sources            []MemorySource `toml:"sources"`             // new: multiple sources with weights
+	Sources            []MemorySource `toml:"sources"`
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        int            `toml:"search_limit"`        // max search results to return (default 20)
@@ -858,25 +852,6 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
-	// Migrate deprecated [telegram] display settings to [defaults].
-	if md.IsDefined("telegram", "show_tool_calls") {
-		if cfg.Defaults.ShowToolCalls == nil {
-			v := cfg.Telegram.LegacyShowToolCalls
-			cfg.Defaults.ShowToolCalls = &v
-		}
-	}
-	if md.IsDefined("telegram", "show_thinking") {
-		if cfg.Defaults.ShowThinking == nil {
-			v := cfg.Telegram.LegacyShowThinking
-			cfg.Defaults.ShowThinking = &v
-		}
-	}
-	if md.IsDefined("telegram", "display_width") {
-		if cfg.Defaults.DisplayWidth == nil {
-			v := cfg.Telegram.LegacyDisplayWidth
-			cfg.Defaults.DisplayWidth = &v
-		}
-	}
 	// Default display settings in [defaults] when not set.
 	if cfg.Defaults.ShowToolCalls == nil {
 		v := ToolCallOff

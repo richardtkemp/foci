@@ -70,8 +70,6 @@ type APIEntry struct {
 	SessionFile string    `json:"session_file,omitempty"` // path to session JSONL file
 	SessionLine int       `json:"session_line,omitempty"` // line number in session file (conversation calls)
 
-	// Deprecated: use CallType == "compaction" instead.
-	IsCompaction bool `json:"is_compaction,omitempty"`
 }
 
 // PayloadEntry is a full API request/response record.
@@ -351,10 +349,6 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 
 // api writes a structured API log entry to JSONL and SQLite.
 func (l *Logger) api(entry APIEntry) {
-	// Backfill CallType from deprecated IsCompaction if needed
-	if entry.CallType == "" && entry.IsCompaction {
-		entry.CallType = "compaction"
-	}
 	if entry.CallType == "" {
 		entry.CallType = "conversation"
 	}

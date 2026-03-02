@@ -671,34 +671,6 @@ func TestAPIDB(t *testing.T) {
 	}
 }
 
-func TestAPIDBCallTypeBackfill(t *testing.T) {
-	// Test that api() backfills CallType from IsCompaction
-	dbPath := filepath.Join(t.TempDir(), "test_backfill.db")
-
-	if err := InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	defer CloseAPIDB()
-
-	// Old-style entry with IsCompaction
-	SetAPIWriter(nil) // no JSONL
-	std.api(APIEntry{
-		Timestamp:    time.Now().UTC(),
-		Session:      "test",
-		Model:        "test",
-		IsCompaction: true,
-	})
-
-	var ct string
-	err := apiLog.db.QueryRow("SELECT call_type FROM api_calls").Scan(&ct)
-	if err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	if ct != "compaction" {
-		t.Errorf("call_type = %q, want compaction", ct)
-	}
-}
-
 func TestAPIDBDisabled(t *testing.T) {
 	// With no API DB initialized, API() should not panic
 	old := apiLog

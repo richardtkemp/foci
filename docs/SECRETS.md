@@ -57,7 +57,7 @@ allowed_hosts = ["api.example.com", "api.backup.example.com"]
 
 [legacy]
 old_key = "val"
-# No allowed_hosts — can only be used in exec (deprecated)
+# No allowed_hosts — can only be used in exec
 ```
 
 ### Agent usage
