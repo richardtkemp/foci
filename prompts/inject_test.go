@@ -21,12 +21,12 @@ func TestFormatInjectedMessage(t *testing.T) {
 	}
 
 	// Context note
-	if !strings.Contains(result, "injected by the system") {
+	if !strings.Contains(result, "SYSTEM INJECTION") {
 		t.Error("missing context note")
 	}
 
-	// Context note mentions user hasn't seen it
-	if !strings.Contains(result, "your user hasn't seen it") {
+	// Context note mentions user cannot see it
+	if !strings.Contains(result, "NOT by the user") {
 		t.Error("missing user visibility note")
 	}
 }
@@ -55,7 +55,7 @@ func TestFormatInjectedMessageEmptyBody(t *testing.T) {
 	if strings.Contains(result, "Z]\n\n\n") {
 		t.Error("empty body should not produce extra blank lines")
 	}
-	if !strings.Contains(result, "injected by the system") {
+	if !strings.Contains(result, "SYSTEM INJECTION") {
 		t.Error("missing context note")
 	}
 }

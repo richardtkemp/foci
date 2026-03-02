@@ -24,6 +24,6 @@ func FormatInjectedMessage(tag string, when time.Time, body string) string {
 		b.WriteString("\n")
 		b.WriteString(body)
 	}
-	b.WriteString("\n\n[This message was injected by the system — your user hasn't seen it. If you reference it, provide full context.]")
+	b.WriteString("\n\n[SYSTEM INJECTION — This is a user-role message sent by the agent host system, NOT by the user. The user has not seen it, will not see it, and cannot see it. If you reference this message to the user, you MUST explain what you're talking about, e.g. \"a system message just arrived which says...\"]")
 	return b.String()
 }
