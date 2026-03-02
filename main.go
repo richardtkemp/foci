@@ -2151,18 +2151,6 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewBitwardenCommand(p.bwStore, p.cfg.Bitwarden.Enabled))
 	cmds.Register(command.NewRestartCommand(nil))
 
-	// Auto-expose all slash commands as tools
-	for _, cmd := range cmds.All() {
-		if cmd.SkipToolExport {
-			log.Debugf("main", "agent %q: skipping command-to-tool export for '%s' (SkipToolExport)", acfg.ID, cmd.Name)
-			continue
-		}
-		if existingTool := registry.Get(cmd.Name); existingTool != nil {
-			log.Fatalf("main", "agent %q: naming collision: command '%s' conflicts with existing tool", acfg.ID, cmd.Name)
-		}
-		registry.Register(tools.CreateCommandWrapperTool(cmd))
-	}
-
 	// Finalize exec tool description with dynamically-generated shell function list.
 	registry.FinalizeExecDescription()
 

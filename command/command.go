@@ -20,9 +20,8 @@ type Command struct {
 	Name           string
 	Description    string
 	Category       string // grouping for /help (e.g. "observability", "operations")
-	Execute        func(ctx context.Context, args string) (string, error)
-	SkipToolExport bool // if true, not exposed as an agent tool
-	Hidden         bool // if true, excluded from /help and BotFather registration
+	Execute func(ctx context.Context, args string) (string, error)
+	Hidden  bool // if true, excluded from /help and BotFather registration
 
 	// KeyboardOptions returns inline keyboard buttons to show when the command
 	// is invoked bare (no arguments). nil means no keyboard — execute normally.
