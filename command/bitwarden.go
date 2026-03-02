@@ -21,10 +21,9 @@ type BitwardenStoreInfo interface {
 // storeInfo may be nil if bitwarden is disabled (setup still works).
 func NewBitwardenCommand(storeInfo BitwardenStoreInfo, enabled bool) *Command {
 	return &Command{
-		Name:           "bitwarden",
-		Description:    "Bitwarden integration (setup/status)",
-		Category:       "operations",
-		SkipToolExport: true,
+		Name:        "bitwarden",
+		Description: "Bitwarden integration (setup/status)",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			parts := strings.Fields(args)
 			if len(parts) == 0 {

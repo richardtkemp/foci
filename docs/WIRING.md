@@ -44,7 +44,6 @@ config.Load(path)                                        ← validates values; l
     → compaction.NewCompactor(client, sessions, model, threshold)
     → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
     → command.NewRegistry() + register built-ins + custom scripts + skill commands
-    → auto-expose all commands as tools
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
@@ -466,8 +465,6 @@ If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), th
 Messages starting with `/` are intercepted at the Telegram router level before reaching the agent. They execute immediately — never queued behind an in-flight agent turn.
 
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
-
-**Commands exposed as tools:** All registered commands are automatically exposed to the agent as tools with the same name (without the `/` prefix). This allows the agent to invoke commands programmatically. Each command tool accepts an optional `args` string parameter. The tool wrapper converts the JSON params to command arguments and passes through the result or error. Naming collisions between tool names and command names cause a fatal startup error.
 
 **Two types:**
 1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)

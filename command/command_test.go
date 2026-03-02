@@ -529,9 +529,6 @@ func TestSecretsCommand(t *testing.T) {
 	}}
 	cmd := NewSecretsCommand(store)
 
-	if cmd.SkipToolExport != true {
-		t.Error("secrets command must have SkipToolExport=true")
-	}
 	if cmd.KeyboardOptions == nil {
 		t.Fatal("secrets command should have KeyboardOptions")
 	}

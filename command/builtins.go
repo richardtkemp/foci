@@ -69,10 +69,9 @@ type LastMessageUserKey struct{}
 // Expects userID to be stored in context via context.WithValue(ctx, LastMessageUserKey{}, userID).
 func NewRepeatCommand(store *LastMessageStore) *Command {
 	return &Command{
-		Name:           "repeat",
-		Description:    "Repeat your last message (command: //)",
-		SkipToolExport: true,
-		Hidden:         true,
+		Name:        "repeat",
+		Description: "Repeat your last message (command: //)",
+		Hidden:      true,
 		Execute: func(ctx context.Context, args string) (string, error) {
 			userID, ok := ctx.Value(LastMessageUserKey{}).(string)
 			if !ok || userID == "" {
@@ -740,10 +739,9 @@ type ToolInfo struct {
 // NewToolsCommand returns a /tools command listing registered tools.
 func NewToolsCommand(listFn func() []ToolInfo) *Command {
 	return &Command{
-		Name:           "tools",
-		Description:    "List registered tools",
-		Category:       "session",
-		SkipToolExport: true,
+		Name:        "tools",
+		Description: "List registered tools",
+		Category:    "session",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			tools := listFn()
 			if len(tools) == 0 {
@@ -1043,10 +1041,9 @@ func NewTmuxCommand(execFn func(ctx context.Context, params json.RawMessage) (st
 Commands: list, start, send, read, kill, watch, unwatch`
 
 	return &Command{
-		Name:           "tmux",
-		Description:    "Manage tmux sessions — start, send, read, list, kill, watch, unwatch",
-		Category:       "observability",
-		SkipToolExport: true,
+		Name:        "tmux",
+		Description: "Manage tmux sessions — start, send, read, list, kill, watch, unwatch",
+		Category:    "observability",
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "list", Data: "list"},
@@ -1424,14 +1421,11 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 
 // NewReloadCommand returns a /reload command that reloads config and system files.
 // reloadFn is a callback that performs the reload (avoids import coupling).
-// This command is human-only (SkipToolExport: true) because it changes the
-// system prompt prefix, which would cause expensive cache busts.
 func NewReloadCommand(reloadFn func() (string, error)) *Command {
 	return &Command{
-		Name:           "reload",
-		Description:    "Reload config, skills, and system prompt from disk",
-		Category:       "operations",
-		SkipToolExport: true,
+		Name:        "reload",
+		Description: "Reload config, skills, and system prompt from disk",
+		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			return reloadFn()
 		},
@@ -1838,13 +1832,11 @@ type SecretsStore interface {
 }
 
 // NewSecretsCommand creates the /secrets slash command for managing secrets.
-// CLI-only — must be registered with SkipToolExport=true.
 func NewSecretsCommand(store SecretsStore) *Command {
 	return &Command{
-		Name:           "secrets",
-		Description:    "Manage secrets (list/set/remove)",
-		Category:       "operations",
-		SkipToolExport: true,
+		Name:        "secrets",
+		Description: "Manage secrets (list/set/remove)",
+		Category:    "operations",
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "list", Data: "list"},
