@@ -34,6 +34,7 @@ type BranchOptions struct {
 // SessionBrancher is the session ops needed by spawn inherit mode.
 type SessionBrancher interface {
 	CreateBranch(parentKey, branchKey string, opts BranchOptions) error
+	SessionPath(key string) (string, error)
 }
 
 // SpawnAgent is the agent interface needed by spawn inherit mode.
@@ -140,7 +141,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return "", fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnNoneBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools)
+				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions)
 				if err != nil {
 					return "", err
 				}
@@ -156,7 +157,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools)
+				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions)
 
 			case "clone_current":
 				return spawnInherit(ctx, deps, agentFn, sem, p.Prompt, timeout)
@@ -258,7 +259,7 @@ func formatBytes(n int64) string {
 const maxSpawnToolLoops = 25
 
 // spawnOneShot makes API calls with optional tool access (none/character_only modes).
-func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration, toolDefs []anthropic.ToolDef, tools map[string]*Tool) (string, error) {
+func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration, toolDefs []anthropic.ToolDef, tools map[string]*Tool, sessions SessionBrancher) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -291,18 +292,26 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 		log.Infof("spawn", "model=%s input=%d output=%d cost=$%.4f stop=%s",
 			model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
 
+		sessionKey := SessionKeyFromContext(ctx)
+		var sessionFile string
+		if sessions != nil {
+			if p, err := sessions.SessionPath(sessionKey); err == nil {
+				sessionFile = p
+			}
+		}
 		log.API(log.APIEntry{
-			Timestamp:  start.UTC(),
-			Session:    SessionKeyFromContext(ctx),
-			Model:      model,
-			Input:      resp.Usage.InputTokens,
-			Output:     resp.Usage.OutputTokens,
-			CacheRead:  resp.Usage.CacheReadInputTokens,
-			CacheWrite: resp.Usage.CacheCreationInputTokens,
-			CostUSD:    cost,
-			DurationMS: duration.Milliseconds(),
-			StopReason: resp.StopReason,
-			CallType:   "spawn",
+			Timestamp:   start.UTC(),
+			Session:     sessionKey,
+			Model:       model,
+			Input:       resp.Usage.InputTokens,
+			Output:      resp.Usage.OutputTokens,
+			CacheRead:   resp.Usage.CacheReadInputTokens,
+			CacheWrite:  resp.Usage.CacheCreationInputTokens,
+			CostUSD:     cost,
+			DurationMS:  duration.Milliseconds(),
+			StopReason:  resp.StopReason,
+			CallType:    "spawn",
+			SessionFile: sessionFile,
 		})
 
 		// If no tool use, return text.
