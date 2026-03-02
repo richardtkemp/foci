@@ -2165,159 +2165,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Create and register Telegram bots via BotManager
-	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)
-	if telegramToken != "" {
-		primaryBot, err := telegram.NewBot(telegramToken, allowedUsers, ag, cmds, lastMsgStore, acfg.ID)
-		if err != nil {
-			log.Fatalf("main", "agent %q: create telegram bot: %v", acfg.ID, err)
-		}
-
-		if p.stateStore != nil {
-			botKey := "bot:" + acfg.TelegramBot
-			if botKey == "bot:" {
-				botKey = "bot:" + acfg.ID
-			}
-			primaryBot.SetStateStore(p.stateStore, botKey)
-		}
-		if p.toolDetailStore != nil {
-			primaryBot.SetToolDetailStore(p.toolDetailStore)
-		}
-
-		if p.sttProvider != nil {
-			primaryBot.SetTranscriber(p.sttProvider)
-		}
-		if p.ttsProvider != nil {
-			primaryBot.SetTTS(voice.WithRate(p.ttsProvider, acfg.TTSRate))
-		}
-		primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
-		primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
-		applyAgentDisplaySettings(primaryBot, acfg, p.cfg)
-
-		// Wire cache bust alerts to this agent's bot
-		if ag.CacheBustDetect {
-			ag.CacheBustAlert = func(session string, prevRead, curRead int) {
-				msg := fmt.Sprintf("⚠️ Cache bust: read dropped %d → %d on %s", prevRead, curRead, session)
-				log.Warnf("agent", "%s", msg)
-				primaryBot.SendNotification(msg)
-			}
-		}
-
-		// Wire mana threshold warnings to Telegram
-		if ag.ManaWatcher != nil {
-			ag.ManaWarnFunc = func(warn string) {
-				log.Infof("mana", "%s", warn)
-				primaryBot.SendNotification("⚠️ " + warn)
-			}
-		}
-
-		// Wire rate limit notifications to Telegram
-		ag.RateLimitFunc = func(retryAfter int) {
-			msg := "I've hit my rate limit (mana exhausted). Mana refills on a rolling window — should have capacity again soon."
-			if retryAfter > 0 {
-				mins := (retryAfter + 59) / 60
-				msg = fmt.Sprintf("I've hit my rate limit (mana exhausted). Should have capacity again in roughly %d minutes.", mins)
-			}
-			primaryBot.SendNotification("⚡ " + msg)
-		}
-
-		// Wire max_tokens warnings to Telegram
-		ag.MaxTokensWarnFunc = func(warn string) {
-			primaryBot.SendNotification("⚠️ " + warn)
-		}
-
-		// Wire compaction notifications to Telegram (default on)
-		// Per-agent compaction_notify overrides global
-		compactNotify := p.cfg.Sessions.CompactionNotify
-		if acfg.CompactionNotify != nil {
-			compactNotify = acfg.CompactionNotify
-		}
-		if compactNotify == nil || *compactNotify {
-			ag.CompactionNotifyFunc = func(session string, msg string) {
-				primaryBot.SendNotification(msg)
-			}
-		}
-
-		// Wire session activity tracking for the session index.
-		if p.sessionIndex != nil {
-			sidx := p.sessionIndex // capture for closure
-			ag.OnActivity = func(sessionKey string) {
-				sidx.TouchActivity(sessionKey)
-			}
-		}
-
-		// Wire compaction debug (send summary as file attachment)
-		compactDebug := p.cfg.Sessions.CompactionDebug
-		if acfg.CompactionDebug != nil {
-			compactDebug = *acfg.CompactionDebug
-		}
-		if compactDebug {
-			bot := primaryBot // capture for closure
-			ag.CompactionDebugFunc = func(sessionKey, summary string) {
-				f, err := os.CreateTemp("", "compaction-summary-*.md")
-				if err != nil {
-					log.Warnf("agent", "compaction debug: create temp file: %v", err)
-					return
-				}
-				if _, err := f.WriteString(summary); err != nil {
-					_ = f.Close()
-					_ = os.Remove(f.Name())
-					log.Warnf("agent", "compaction debug: write temp file: %v", err)
-					return
-				}
-				_ = f.Close()
-				if err := bot.SendDocument(f.Name()); err != nil {
-					log.Warnf("agent", "compaction debug: send document: %v", err)
-				}
-				_ = os.Remove(f.Name())
-			}
-		}
-
-		p.botMgr.AddPrimary(acfg.ID, primaryBot)
-
-		// Per-agent multiball bots (if configured)
-		for _, botName := range acfg.MultiballBots {
-			mbToken := p.cfg.ResolveBotToken(botName, p.store)
-			if mbToken == "" {
-				log.Errorf("main", "agent %q: multiball bot %q: token not found", acfg.ID, botName)
-				continue
-			}
-			mbBot, err := telegram.NewBot(mbToken, allowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
-			if err != nil {
-				log.Errorf("main", "agent %q: create multiball bot %q: %v", acfg.ID, botName, err)
-				continue
-			}
-			configureMultiballBot(mbBot, multiballBotConfig{
-				sttProvider:     p.sttProvider,
-				ttsProvider:     p.ttsProvider,
-				stopAliases:     p.cfg.Telegram.StopAliases,
-				enableStopAlias: p.cfg.Telegram.EnableStopAliases,
-				acfg:            acfg,
-				cfg:             p.cfg,
-				toolDetailStore: p.toolDetailStore,
-				stateStore:      p.stateStore,
-			})
-			p.botMgr.AddMultiball(acfg.ID, mbBot)
-		}
-		if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
-			log.Infof("main", "agent %q: %d per-agent multiball bots ready", acfg.ID, pool.Size())
-		}
-
-		// Configure session TTL for per-agent multiball pool
-		if pool := p.botMgr.Pool(acfg.ID); pool != nil {
-			ttl, _ := time.ParseDuration(p.cfg.Telegram.MultiballSessionTTL) // validated earlier
-			if ttl > 0 {
-				pool.SetSessionTTL(ttl, p.sessions)
-				log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
-			}
-			reclaimOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
-			reclaimMfCfg := acfg.MemoryFormation
-			pool.ReclaimHook = func(sessionKey string) {
-				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false)
-				}, p.ctx)
-			}
-		}
-	}
+	setupTelegram(p, acfg, ag, cmds, allowedUsers, lastMsgStore)
 
 	// Wire the default session key function after bot creation.
 	// Must be deferred because primaryBot may not exist yet.
@@ -2337,6 +2185,167 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		tmuxClearAll:      tmuxClearAll,
+	}
+}
+
+// setupTelegram creates and registers Telegram bots for an agent.
+// If the primary bot fails to initialize, the agent continues without Telegram.
+func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds *command.Registry, allowedUsers []string, lastMsgStore *command.LastMessageStore) {
+	telegramToken := p.cfg.ResolveBotToken(acfg.TelegramBot, p.store)
+	if telegramToken == "" {
+		return
+	}
+
+	primaryBot, err := telegram.NewBot(telegramToken, allowedUsers, ag, cmds, lastMsgStore, acfg.ID)
+	if err != nil {
+		log.Errorf("main", "agent %q: create telegram bot: %v (agent will run without Telegram)", acfg.ID, err)
+		return
+	}
+
+	if p.stateStore != nil {
+		botKey := "bot:" + acfg.TelegramBot
+		if botKey == "bot:" {
+			botKey = "bot:" + acfg.ID
+		}
+		primaryBot.SetStateStore(p.stateStore, botKey)
+	}
+	if p.toolDetailStore != nil {
+		primaryBot.SetToolDetailStore(p.toolDetailStore)
+	}
+
+	if p.sttProvider != nil {
+		primaryBot.SetTranscriber(p.sttProvider)
+	}
+	if p.ttsProvider != nil {
+		primaryBot.SetTTS(voice.WithRate(p.ttsProvider, acfg.TTSRate))
+	}
+	primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
+	primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
+	applyAgentDisplaySettings(primaryBot, acfg, p.cfg)
+
+	// Wire cache bust alerts to this agent's bot
+	if ag.CacheBustDetect {
+		ag.CacheBustAlert = func(session string, prevRead, curRead int) {
+			msg := fmt.Sprintf("⚠️ Cache bust: read dropped %d → %d on %s", prevRead, curRead, session)
+			log.Warnf("agent", "%s", msg)
+			primaryBot.SendNotification(msg)
+		}
+	}
+
+	// Wire mana threshold warnings to Telegram
+	if ag.ManaWatcher != nil {
+		ag.ManaWarnFunc = func(warn string) {
+			log.Infof("mana", "%s", warn)
+			primaryBot.SendNotification("⚠️ " + warn)
+		}
+	}
+
+	// Wire rate limit notifications to Telegram
+	ag.RateLimitFunc = func(retryAfter int) {
+		msg := "I've hit my rate limit (mana exhausted). Mana refills on a rolling window — should have capacity again soon."
+		if retryAfter > 0 {
+			mins := (retryAfter + 59) / 60
+			msg = fmt.Sprintf("I've hit my rate limit (mana exhausted). Should have capacity again in roughly %d minutes.", mins)
+		}
+		primaryBot.SendNotification("⚡ " + msg)
+	}
+
+	// Wire max_tokens warnings to Telegram
+	ag.MaxTokensWarnFunc = func(warn string) {
+		primaryBot.SendNotification("⚠️ " + warn)
+	}
+
+	// Wire compaction notifications to Telegram (default on)
+	// Per-agent compaction_notify overrides global
+	compactNotify := p.cfg.Sessions.CompactionNotify
+	if acfg.CompactionNotify != nil {
+		compactNotify = acfg.CompactionNotify
+	}
+	if compactNotify == nil || *compactNotify {
+		ag.CompactionNotifyFunc = func(session string, msg string) {
+			primaryBot.SendNotification(msg)
+		}
+	}
+
+	// Wire session activity tracking for the session index.
+	if p.sessionIndex != nil {
+		sidx := p.sessionIndex // capture for closure
+		ag.OnActivity = func(sessionKey string) {
+			sidx.TouchActivity(sessionKey)
+		}
+	}
+
+	// Wire compaction debug (send summary as file attachment)
+	compactDebug := p.cfg.Sessions.CompactionDebug
+	if acfg.CompactionDebug != nil {
+		compactDebug = *acfg.CompactionDebug
+	}
+	if compactDebug {
+		bot := primaryBot // capture for closure
+		ag.CompactionDebugFunc = func(sessionKey, summary string) {
+			f, err := os.CreateTemp("", "compaction-summary-*.md")
+			if err != nil {
+				log.Warnf("agent", "compaction debug: create temp file: %v", err)
+				return
+			}
+			if _, err := f.WriteString(summary); err != nil {
+				_ = f.Close()
+				_ = os.Remove(f.Name())
+				log.Warnf("agent", "compaction debug: write temp file: %v", err)
+				return
+			}
+			_ = f.Close()
+			if err := bot.SendDocument(f.Name()); err != nil {
+				log.Warnf("agent", "compaction debug: send document: %v", err)
+			}
+			_ = os.Remove(f.Name())
+		}
+	}
+
+	p.botMgr.AddPrimary(acfg.ID, primaryBot)
+
+	// Per-agent multiball bots (if configured)
+	for _, botName := range acfg.MultiballBots {
+		mbToken := p.cfg.ResolveBotToken(botName, p.store)
+		if mbToken == "" {
+			log.Errorf("main", "agent %q: multiball bot %q: token not found", acfg.ID, botName)
+			continue
+		}
+		mbBot, err := telegram.NewBot(mbToken, allowedUsers, ag, cmds, lastMsgStore, "") // secondary: no agentID
+		if err != nil {
+			log.Errorf("main", "agent %q: create multiball bot %q: %v", acfg.ID, botName, err)
+			continue
+		}
+		configureMultiballBot(mbBot, multiballBotConfig{
+			sttProvider:     p.sttProvider,
+			ttsProvider:     p.ttsProvider,
+			stopAliases:     p.cfg.Telegram.StopAliases,
+			enableStopAlias: p.cfg.Telegram.EnableStopAliases,
+			acfg:            acfg,
+			cfg:             p.cfg,
+			toolDetailStore: p.toolDetailStore,
+			stateStore:      p.stateStore,
+		})
+		p.botMgr.AddMultiball(acfg.ID, mbBot)
+	}
+	if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
+		log.Infof("main", "agent %q: %d per-agent multiball bots ready", acfg.ID, pool.Size())
+	}
+
+	// Configure session TTL for per-agent multiball pool
+	if pool := p.botMgr.Pool(acfg.ID); pool != nil {
+		ttl, _ := time.ParseDuration(p.cfg.Telegram.MultiballSessionTTL) // validated earlier
+		if ttl > 0 {
+			pool.SetSessionTTL(ttl, p.sessions)
+			log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
+		}
+		reclaimOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		reclaimMfCfg := acfg.MemoryFormation
+		pool.ReclaimHook = func(sessionKey string) {
+			fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
+				return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false)
+			}, p.ctx)
+		}
 	}
 }
 
