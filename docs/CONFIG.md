@@ -291,7 +291,7 @@ weight = 0.5
 
 ### Per-agent memory (`[[agents.memory.sources]]`)
 
-Agents can have their own memory directories in addition to the global sources. When any agent has per-agent memory configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global + agent-specific sources.
+Agents can have their own memory directories in addition to the global sources. Global `[[memory.sources]]` are always prepended to each agent's sources — agents inherit global sources automatically. When any agent has per-agent memory configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global + agent-specific sources.
 
 Agent-specific sources automatically receive a weight boost of +1.0, so they rank higher than global sources with the same base weight. Source names are prefixed with `agent:` in search results.
 
