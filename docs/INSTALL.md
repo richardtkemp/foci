@@ -7,7 +7,7 @@ Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 mi
 Install these before running setup:
 
 ```bash
-# Go 1.24+ (for building from source)
+# Go 1.22+ (for building from source)
 sudo apt install golang-go
 
 # Required tools
@@ -167,7 +167,7 @@ sudo chmod 660 /home/foci/config/secrets.toml
 ```
 
 ### Build errors
-Ensure Go 1.24+: `go version`. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
+Ensure Go 1.22+: `go version`. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
 
 ### "unknown command: setup"
 Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. Re-run `setup.sh` to rebuild.
