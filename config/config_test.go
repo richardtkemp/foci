@@ -2483,3 +2483,97 @@ func collectTOMLKeys(t reflect.Type, prefix string) []string {
 	}
 	return keys
 }
+
+func TestMemorySourcesInheritance(t *testing.T) {
+	t.Run("global sources prepended to agent default", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		toml := `
+[[memory.sources]]
+name = "shared"
+dir = "/shared/memory"
+weight = 0.5
+
+[[agents]]
+id = "clutch"
+workspace = "/ws/clutch"
+`
+		os.WriteFile(path, []byte(toml), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		sources := cfg.Agents[0].Memory.Sources
+		if len(sources) != 2 {
+			t.Fatalf("sources len = %d, want 2", len(sources))
+		}
+		if sources[0].Name != "shared" || sources[0].Dir != "/shared/memory" || sources[0].Weight != 0.5 {
+			t.Errorf("sources[0] = %+v, want shared source", sources[0])
+		}
+		if sources[1].Name != "clutch" || sources[1].Weight != 1.0 {
+			t.Errorf("sources[1] = %+v, want agent default source", sources[1])
+		}
+	})
+
+	t.Run("global sources prepended to agent explicit", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		toml := `
+[[memory.sources]]
+name = "shared"
+dir = "/shared/memory"
+weight = 0.5
+
+[[agents]]
+id = "clutch"
+
+[[agents.memory.sources]]
+name = "custom"
+dir = "/custom/memory"
+weight = 0.8
+`
+		os.WriteFile(path, []byte(toml), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		sources := cfg.Agents[0].Memory.Sources
+		if len(sources) != 2 {
+			t.Fatalf("sources len = %d, want 2", len(sources))
+		}
+		if sources[0].Name != "shared" {
+			t.Errorf("sources[0].Name = %q, want shared", sources[0].Name)
+		}
+		if sources[1].Name != "custom" || sources[1].Weight != 0.8 {
+			t.Errorf("sources[1] = %+v, want custom source", sources[1])
+		}
+	})
+
+	t.Run("no global sources only agent default", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		toml := `
+[[agents]]
+id = "clutch"
+workspace = "/ws/clutch"
+`
+		os.WriteFile(path, []byte(toml), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+
+		sources := cfg.Agents[0].Memory.Sources
+		if len(sources) != 1 {
+			t.Fatalf("sources len = %d, want 1", len(sources))
+		}
+		if sources[0].Name != "clutch" {
+			t.Errorf("sources[0].Name = %q, want clutch", sources[0].Name)
+		}
+	})
+}

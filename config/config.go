@@ -1227,13 +1227,23 @@ func Load(path string) (*Config, error) {
 			r[0] = unicode.ToUpper(r[0])
 			cfg.Agents[i].Name = string(r)
 		}
-		// Memory sources default: single source at $workspace/memory
-		if len(cfg.Agents[i].Memory.Sources) == 0 {
-			cfg.Agents[i].Memory.Sources = []MemorySource{{
+		// Memory sources: prepend global sources, then agent-specific (or default).
+		// Per docstring, agent sources are "combined with global [memory] sources."
+		agentSources := cfg.Agents[i].Memory.Sources
+		if len(agentSources) == 0 {
+			agentSources = []MemorySource{{
 				Name:   cfg.Agents[i].ID,
 				Dir:    filepath.Join(cfg.Agents[i].Workspace, "memory"),
 				Weight: 1.0,
 			}}
+		}
+		if len(cfg.Memory.Sources) > 0 {
+			combined := make([]MemorySource, 0, len(cfg.Memory.Sources)+len(agentSources))
+			combined = append(combined, cfg.Memory.Sources...)
+			combined = append(combined, agentSources...)
+			cfg.Agents[i].Memory.Sources = combined
+		} else {
+			cfg.Agents[i].Memory.Sources = agentSources
 		}
 	}
 
