@@ -247,48 +247,40 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		}
 	}
 
-	// Resolve secret templates in headers and body
+	// resolveValue resolves secret templates in a string using both stores.
+	resolveValue := func(v, label string) (string, error) {
+		if store != nil && len(regularRefs) > 0 {
+			resolved, err := store.Resolve(v)
+			if err != nil {
+				return "", fmt.Errorf("resolve %s: %w", label, err)
+			}
+			v = resolved
+		}
+		if bwStore != nil && hasBWSecrets {
+			resolved, err := bwStore.Resolve(v)
+			if err != nil {
+				return "", fmt.Errorf("resolve bw %s: %w", label, err)
+			}
+			v = resolved
+		}
+		return v, nil
+	}
+
+	// Resolve secret templates in headers, body, and form_fields
 	resolvedHeaders := make(map[string]string, len(p.Headers))
-	if hasSecrets {
-		for k, v := range p.Headers {
-			// Resolve regular secrets first
-			if store != nil && len(regularRefs) > 0 {
-				resolved, err := store.Resolve(v)
-				if err != nil {
-					return "", fmt.Errorf("resolve header %q: %w", k, err)
-				}
-				v = resolved
-			}
-			// Then resolve bitwarden secrets
-			if bwStore != nil && hasBWSecrets {
-				resolved, err := bwStore.Resolve(v)
-				if err != nil {
-					return "", fmt.Errorf("resolve bw header %q: %w", k, err)
-				}
-				v = resolved
-			}
-			resolvedHeaders[k] = v
+	for k, v := range p.Headers {
+		resolved, err := resolveValue(v, fmt.Sprintf("header %q", k))
+		if err != nil {
+			return "", err
 		}
-		if p.Body != "" {
-			if store != nil && len(regularRefs) > 0 {
-				resolved, err := store.Resolve(p.Body)
-				if err != nil {
-					return "", fmt.Errorf("resolve body: %w", err)
-				}
-				p.Body = resolved
-			}
-			if bwStore != nil && hasBWSecrets {
-				resolved, err := bwStore.Resolve(p.Body)
-				if err != nil {
-					return "", fmt.Errorf("resolve bw body: %w", err)
-				}
-				p.Body = resolved
-			}
+		resolvedHeaders[k] = resolved
+	}
+	if hasSecrets && p.Body != "" {
+		resolved, err := resolveValue(p.Body, "body")
+		if err != nil {
+			return "", err
 		}
-	} else {
-		for k, v := range p.Headers {
-			resolvedHeaders[k] = v
-		}
+		p.Body = resolved
 	}
 
 	// Build URL with query params
@@ -306,24 +298,13 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		reqURL = parsed.String()
 	}
 
-	// Resolve secrets in form_fields values
 	resolvedFormFields := make(map[string]string, len(p.FormFields))
 	for k, v := range p.FormFields {
-		if store != nil && len(regularRefs) > 0 {
-			resolved, err := store.Resolve(v)
-			if err != nil {
-				return "", fmt.Errorf("resolve form_field %q: %w", k, err)
-			}
-			v = resolved
+		resolved, err := resolveValue(v, fmt.Sprintf("form_field %q", k))
+		if err != nil {
+			return "", err
 		}
-		if bwStore != nil && hasBWSecrets {
-			resolved, err := bwStore.Resolve(v)
-			if err != nil {
-				return "", fmt.Errorf("resolve bw form_field %q: %w", k, err)
-			}
-			v = resolved
-		}
-		resolvedFormFields[k] = v
+		resolvedFormFields[k] = resolved
 	}
 
 	// Build request body
