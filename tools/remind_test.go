@@ -102,7 +102,7 @@ func TestRemindMissingWhen(t *testing.T) {
 func TestRemindWakeDelay(t *testing.T) {
 	var gotDur time.Duration
 	var gotMsg string
-	fn := func(d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d
 		gotMsg = msg
 		return nil
@@ -133,7 +133,7 @@ func TestRemindWakeDelay(t *testing.T) {
 
 func TestRemindWakeDelaySeconds(t *testing.T) {
 	var gotDur time.Duration
-	fn := func(d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d
 		return nil
 	}
@@ -155,7 +155,7 @@ func TestRemindWakeDelaySeconds(t *testing.T) {
 
 func TestRemindWakeAtTimestamp(t *testing.T) {
 	var gotDur time.Duration
-	fn := func(d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d
 		return nil
 	}
@@ -178,7 +178,7 @@ func TestRemindWakeAtTimestamp(t *testing.T) {
 }
 
 func TestRemindWakePastTimestamp(t *testing.T) {
-	fn := func(d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
@@ -198,7 +198,7 @@ func TestRemindWakePastTimestamp(t *testing.T) {
 }
 
 func TestRemindWakeEmptyText(t *testing.T) {
-	fn := func(d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -234,7 +234,7 @@ func TestRemindWakeNilFunction(t *testing.T) {
 }
 
 func TestRemindWakeInvalidDuration(t *testing.T) {
-	fn := func(d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -253,7 +253,7 @@ func TestRemindWakeInvalidDuration(t *testing.T) {
 }
 
 func TestRemindWakeNegativeDelay(t *testing.T) {
-	fn := func(d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -272,7 +272,7 @@ func TestRemindWakeNegativeDelay(t *testing.T) {
 }
 
 func TestRemindWakeCallbackError(t *testing.T) {
-	fn := func(d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg string) error {
 		return fmt.Errorf("scheduler full")
 	}
 
@@ -294,7 +294,7 @@ func TestRemindWakeCallbackError(t *testing.T) {
 
 func TestRemindWakeTomorrow(t *testing.T) {
 	var gotDur time.Duration
-	fn := func(d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d
 		return nil
 	}

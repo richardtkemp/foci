@@ -96,8 +96,8 @@ system_files = [
 # compaction_debug = false
 # compaction_preserve_messages = 25
 
-# Per-agent prompt rules:
-# [[agents.prompt_rules]]
+# Per-agent message transforms:
+# [[agents.message_transforms]]
 # find = "pattern"
 # replace = "replacement"
 
@@ -320,8 +320,8 @@ bind = "127.0.0.1"
 # session_end_enabled = true
 # session_end_prompt = ""
 
-# ─── Prompt Rules ─────────────────────────────────────────────────────
-# [[prompt_rules]]
+# ─── Message Transforms ──────────────────────────────────────────────
+# [[message_transforms]]
 # find = "regex pattern"
 # replace = "replacement ($1, $2, etc.)"
 

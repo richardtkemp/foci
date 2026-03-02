@@ -174,7 +174,7 @@ Conversation history sent to the API must be a strict append-only extension of t
 
 ## Message Metadata
 
-Before metadata is added, **prompt rules** (`[[prompt_rules]]` in config) run regex find/replace on the raw user message. Rules run in sequence. This happens before duplication (`DuplicateMessages`), before metadata prefix, and after STT transcription.
+**Message transforms** (`[[message_transforms]]` in config) run regex find/replace on inbound user messages. Transforms fire before command dispatch — if a message is already a recognized command, transforms are skipped. If transforms produce a command (e.g. `m` → `/mana`), it is dispatched as one. Rules run in sequence; each rule's output becomes the next rule's input.
 
 Each user message then gets a metadata line prepended (NOT in system prompt — that would bust cache):
 

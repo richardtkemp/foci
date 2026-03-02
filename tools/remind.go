@@ -11,7 +11,8 @@ import (
 )
 
 // ScheduleWakeFn is a callback to schedule a wake event.
-type ScheduleWakeFn func(delay time.Duration, message string) error
+// The id is the DB row ID for cleanup when the wake fires.
+type ScheduleWakeFn func(id int64, delay time.Duration, message string) error
 
 func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn) *Tool {
 	return &Tool{
@@ -53,7 +54,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			}
 
 			if p.Wake {
-				return remindWake(p.Text, p.When, wakeFn)
+				return remindWake(rs, agentID, p.Text, p.When, wakeFn)
 			}
 
 			// Passive reminder — store in ReminderStore
@@ -66,8 +67,8 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 	}
 }
 
-// remindWake schedules an active wake using the ScheduleWakeFn.
-func remindWake(text, when string, wakeFn ScheduleWakeFn) (string, error) {
+// remindWake stores a wake reminder in the DB, then schedules it in-memory.
+func remindWake(rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn) (string, error) {
 	if wakeFn == nil {
 		return "", fmt.Errorf("wake not configured")
 	}
@@ -77,11 +78,17 @@ func remindWake(text, when string, wakeFn ScheduleWakeFn) (string, error) {
 		return "", err
 	}
 
-	if err := wakeFn(dur, text); err != nil {
+	id, err := rs.AddWake(agentID, text, when)
+	if err != nil {
+		return "", fmt.Errorf("store wake: %w", err)
+	}
+
+	if err := wakeFn(id, dur, text); err != nil {
+		_ = rs.Dismiss(id) // clean up DB row on schedule failure
 		return "", fmt.Errorf("schedule wake: %w", err)
 	}
 
-	log.Debugf("remind", "scheduled wake in %v: %q", dur, text)
+	log.Debugf("remind", "scheduled wake id=%d in %v: %q", id, dur, text)
 	return fmt.Sprintf("Wake scheduled in %v: %q", dur, text), nil
 }
 

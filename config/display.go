@@ -213,9 +213,9 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 
-	// prompt_rules
-	if len(cfg.PromptRules) > 0 {
-		add("prompt_rules", fmt.Sprintf("(%d rules)", len(cfg.PromptRules)), "")
+	// message_transforms
+	if len(cfg.MessageTransforms) > 0 {
+		add("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
 	}
 
 	return formatTableBySection(rows, mw)
@@ -526,8 +526,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
 	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
-	if len(cfg.PromptRules) > 0 {
-		addGlobal("prompt_rules", fmt.Sprintf("(%d rules)", len(cfg.PromptRules)), "")
+	if len(cfg.MessageTransforms) > 0 {
+		addGlobal("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
 	}
 
 	var tables []string

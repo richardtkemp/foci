@@ -733,86 +733,30 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		b.lastMsgStore.Record(userID, text)
 	}
 
-	// Period prefix (e.g. ".mana") is an alias for slash commands — easier to
-	// type on phone keyboards. Only treated as a command if it matches a
-	// registered command; otherwise falls through to the agent as normal text.
-	if text != "" && strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
-		dotText := strings.TrimSpace(text)[1:] // strip leading dot, preserve case
-		cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
-		if b.commands.Get(cmdName) != nil || b.isStopCommand("/"+cmdName) {
-			dotCmd := "/" + dotText
-			cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
-			cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
-			cmdCtx = context.WithValue(cmdCtx, command.DisplayWidthKey{}, b.displayWidth)
-			if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
-				b.sendCommandKeyboard(msg.Chat.Id, cmdName, opts)
-				return
-			}
-			if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
-				b.logger().Debugf("dot-command %s → %s dispatched", text, dotCmd)
-				b.sendReply(msg, userID, result)
-				return
-			}
+	// Drop stale slash commands (e.g. /restart replayed from the update
+	// queue after a crash). Agent messages are still delivered since the
+	// agent can reason about timeliness, but slash commands execute
+	// unconditionally so stale ones must be dropped.
+	if text != "" && strings.HasPrefix(text, "/") {
+		if age := time.Since(time.Unix(int64(msg.Date), 0)); age > 30*time.Second {
+			b.logger().Warnf("dropping stale command %q (age=%s)", strings.ToLower(text), age.Truncate(time.Second))
+			return
 		}
-		// Not a valid command — fall through to agent
 	}
 
-	// Slash commands bypass the agent pipeline entirely
-	if text != "" && strings.HasPrefix(text, "/") {
-		cmd := strings.ToLower(strings.TrimSpace(text))
+	// Try dispatching the original message as a command (slash or dot-prefix).
+	if b.tryDispatchCommand(ctx, msg, userID, text) {
+		return
+	}
 
-		// Skip stale slash commands (e.g. /restart replayed from the update
-		// queue after a crash). Agent messages are still delivered since the
-		// agent can reason about timeliness, but slash commands execute
-		// unconditionally so stale ones must be dropped.
-		if age := time.Since(time.Unix(int64(msg.Date), 0)); age > 30*time.Second {
-			b.logger().Warnf("dropping stale command %q (age=%s)", cmd, age.Truncate(time.Second))
-			return
-		}
-
-		// /stop cancels the current agent turn (including configured aliases)
-		if b.isStopCommand(cmd) {
-			b.cancelTurn()
-			b.sendReply(msg, userID, "Stopped.")
-			return
-		}
-
-		// /done detaches a secondary bot from its forked session
-		if cmd == "/done" {
-			if !b.isSecondary {
-				b.sendReply(msg, userID, "Nothing to detach — this is the main session.")
+	// Apply message transforms to non-command messages.
+	// Transforms may produce a command (e.g. "m" → "/mana").
+	if b.agent != nil {
+		if transformed := b.agent.TransformMessage(text); transformed != text {
+			text = transformed
+			if b.tryDispatchCommand(ctx, msg, userID, text) {
 				return
 			}
-			sk := b.SessionKey()
-			if sk == "" {
-				b.sendReply(msg, userID, "Already idle.")
-				return
-			}
-			b.cancelTurn()
-			if b.pool != nil {
-				b.pool.Release(b)
-			}
-			b.sendReply(msg, userID, "Session ended.")
-			b.logger().Infof("secondary bot detached from %s", sk)
-			return
-		}
-
-		// Pass userID, chatID, and display width to command via context
-		cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
-		cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, msg.Chat.Id)
-		cmdCtx = context.WithValue(cmdCtx, command.DisplayWidthKey{}, b.displayWidth)
-
-		// Check for inline keyboard (bare command, no args)
-		if name, opts, ok := b.commands.LookupKeyboard(cmdCtx, text); ok {
-			b.logger().Debugf("command /%s showing keyboard (%d options)", name, len(opts))
-			b.sendCommandKeyboard(msg.Chat.Id, name, opts)
-			return
-		}
-
-		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
-			b.logger().Debugf("command %s dispatched", text)
-			b.sendReply(msg, userID, result)
-			return
 		}
 	}
 
@@ -830,6 +774,91 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(msg.From))
 		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
 	}
+}
+
+// tryDispatchCommand tries to dispatch text as a slash or dot-command.
+// Returns true if the message was handled (caller should return).
+func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
+	if text == "" {
+		return false
+	}
+
+	// Dot-command alias (.xxx → /xxx) — easier to type on phone keyboards.
+	// Only treated as a command if it matches a registered command.
+	if strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
+		dotText := strings.TrimSpace(text)[1:] // strip leading dot, preserve case
+		cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
+		if b.commands.Get(cmdName) != nil || b.isStopCommand("/"+cmdName) {
+			dotCmd := "/" + dotText
+			cmdCtx := b.commandContext(ctx, userID, msg.Chat.Id)
+			if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
+				b.sendCommandKeyboard(msg.Chat.Id, cmdName, opts)
+				return true
+			}
+			if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
+				b.logger().Debugf("command %s → %s dispatched", text, dotCmd)
+				b.sendReply(msg, userID, result)
+				return true
+			}
+		}
+	}
+
+	// Slash commands
+	if strings.HasPrefix(text, "/") {
+		cmd := strings.ToLower(strings.TrimSpace(text))
+
+		// /stop cancels the current agent turn (including configured aliases)
+		if b.isStopCommand(cmd) {
+			b.cancelTurn()
+			b.sendReply(msg, userID, "Stopped.")
+			return true
+		}
+
+		// /done detaches a secondary bot from its forked session
+		if cmd == "/done" {
+			if !b.isSecondary {
+				b.sendReply(msg, userID, "Nothing to detach — this is the main session.")
+				return true
+			}
+			sk := b.SessionKey()
+			if sk == "" {
+				b.sendReply(msg, userID, "Already idle.")
+				return true
+			}
+			b.cancelTurn()
+			if b.pool != nil {
+				b.pool.Release(b)
+			}
+			b.sendReply(msg, userID, "Session ended.")
+			b.logger().Infof("secondary bot detached from %s", sk)
+			return true
+		}
+
+		cmdCtx := b.commandContext(ctx, userID, msg.Chat.Id)
+
+		// Check for inline keyboard (bare command, no args)
+		if name, opts, ok := b.commands.LookupKeyboard(cmdCtx, text); ok {
+			b.logger().Debugf("command /%s showing keyboard (%d options)", name, len(opts))
+			b.sendCommandKeyboard(msg.Chat.Id, name, opts)
+			return true
+		}
+
+		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
+			b.logger().Debugf("command %s dispatched", text)
+			b.sendReply(msg, userID, result)
+			return true
+		}
+	}
+
+	return false
+}
+
+// commandContext creates a context with metadata for command dispatch.
+func (b *Bot) commandContext(ctx context.Context, userID string, chatID int64) context.Context {
+	ctx = context.WithValue(ctx, command.LastMessageUserKey{}, userID)
+	ctx = context.WithValue(ctx, command.ChatIDKey{}, chatID)
+	ctx = context.WithValue(ctx, command.DisplayWidthKey{}, b.displayWidth)
+	return ctx
 }
 
 // agentWorker processes queued messages one at a time.

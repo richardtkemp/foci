@@ -62,7 +62,7 @@ Different sessions run concurrently — the lock is per-session, not global. Bra
 ### Message metadata injection
 Time, cost, mana, token breakdown — all injected into each user message, not the system prompt. The system prompt stays stable. Dynamic values like timestamps go on messages because they're past the cache breakpoint.
 
-### Prompt rules
+### Message transforms
 Regex transforms on inbound messages happen inside user messages, not by modifying the system prompt.
 
 ### Compaction
