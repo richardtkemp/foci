@@ -9,6 +9,7 @@ import (
 
 	"foci/agent"
 	"foci/config"
+	"foci/log"
 )
 
 func TestManaIsGood_InCredit(t *testing.T) {
@@ -147,6 +148,7 @@ func TestBackgroundRunningGuard(t *testing.T) {
 	calls := 0
 
 	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
 			Enabled:  true,
@@ -190,6 +192,7 @@ func TestBackgroundCooldown(t *testing.T) {
 	calls := 0
 
 	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
 			Enabled:  true,
@@ -233,6 +236,7 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 	calls := 0
 
 	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
 			Enabled:  true,
@@ -269,6 +273,7 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 func TestBackgroundNoSelfChaining(t *testing.T) {
 	// Verify background completion does NOT reset lastInteraction.
 	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
 			Enabled:  true,
@@ -334,6 +339,7 @@ func TestWarningDispatch_ActiveUser_RateLimit(t *testing.T) {
 	calls := 0
 
 	r := &Runner{
+		log:                      log.NewComponentLogger("keepalive:test"),
 		agentID:                  "test",
 		warningQueue:             q,
 		warningActiveInterval:    5 * time.Minute,
@@ -379,6 +385,7 @@ func TestWarningDispatch_InactiveUser_RateLimit(t *testing.T) {
 	calls := 0
 
 	r := &Runner{
+		log:                      log.NewComponentLogger("keepalive:test"),
 		agentID:                  "test",
 		warningQueue:             q,
 		warningActiveInterval:    5 * time.Minute,
@@ -424,6 +431,7 @@ func TestWarningDispatch_Dispatches(t *testing.T) {
 	var dispatched string
 
 	r := &Runner{
+		log:                      log.NewComponentLogger("keepalive:test"),
 		agentID:                  "test",
 		warningQueue:             q,
 		warningActiveInterval:    0, // no rate limit for test
@@ -458,6 +466,7 @@ func TestWarningDispatch_ConcurrentGuard(t *testing.T) {
 	calls := 0
 
 	r := &Runner{
+		log:                      log.NewComponentLogger("keepalive:test"),
 		agentID:                  "test",
 		warningQueue:             q,
 		warningActiveInterval:    0,

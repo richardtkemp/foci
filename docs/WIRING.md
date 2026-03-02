@@ -355,8 +355,12 @@ Data flow:
 
 Four outputs:
 
-1. **Event log** (`foci.log` + stderr): `2026-02-21T03:52:39Z INFO  [telegram] message from rich: hello`
-   - Use: `log.Infof("component", "format", args...)`
+1. **Event log** (`foci.log` + stderr): `2026-02-21T03:52:39Z INFO  [telegram:mybot] message from rich: hello`
+   - Package-level: `log.Infof("component", "format", args...)`
+   - Per-component: `log.NewComponentLogger("telegram:" + agentID)` → `logger.Infof("format", args...)`
+   - Major components (Agent, Bot, Keepalive, Compactor) carry a `*log.ComponentLogger` field
+     initialized at construction with a prefix like `"agent:mybot"`. This avoids repeating
+     the component string at every call site and encodes the agent ID for multi-agent setups.
    - Levels: DEBUG < INFO < WARN < ERROR
 
 2. **API log — JSONL** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, cost_usd, duration_ms.

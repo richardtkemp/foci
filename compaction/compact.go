@@ -14,6 +14,7 @@ import (
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
+	log              *log.ComponentLogger
 	client           *anthropic.Client
 	sessions         *session.Store
 	model            string
@@ -29,6 +30,7 @@ type Compactor struct {
 // NewCompactor creates a new Compactor with defaults.
 func NewCompactor(client *anthropic.Client, sessions *session.Store, model string, threshold float64) *Compactor {
 	return &Compactor{
+		log:         log.NewComponentLogger("compaction"),
 		client:      client,
 		sessions:    sessions,
 		model:       model,
@@ -59,12 +61,15 @@ func (c *Compactor) WithEffort(effort string) *Compactor {
 	return c
 }
 
+// SetLogger replaces the component logger (e.g. after AgentID is known).
+func (c *Compactor) SetLogger(l *log.ComponentLogger) { c.log = l }
+
 // checkConfig warns if compaction settings could exceed the context window.
 func (c *Compactor) checkConfig() {
 	limit := contextLimit(c.model)
 	triggerPoint := int(float64(limit) * c.threshold)
 	if triggerPoint+c.maxTokens > limit {
-		log.Warnf("compaction", "compaction_max_tokens (%d) + threshold trigger point (%d) exceeds context window (%d) — summary may not fit",
+		c.log.Warnf("compaction_max_tokens (%d) + threshold trigger point (%d) exceeds context window (%d) — summary may not fit",
 			c.maxTokens, triggerPoint, limit)
 	}
 }
@@ -230,7 +235,7 @@ func (c *Compactor) ShouldCompact(messages []anthropic.Message, lastUsage *anthr
 		result = estimated > threshold
 	}
 
-	log.Debugf("compaction", "should_compact: input=%d threshold=%d estimated=%d result=%v", input, threshold, estimated, result)
+	c.log.Debugf("should_compact: input=%d threshold=%d estimated=%d result=%v", input, threshold, estimated, result)
 	return result
 }
 
@@ -258,7 +263,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		return "", nil // not enough to compact
 	}
 
-	log.Infof("compaction", "compacting session %s (%d messages)", sessionKey, len(messages))
+	c.log.Infof("compacting session %s (%d messages)", sessionKey, len(messages))
 
 	// Determine how many messages to preserve through compaction.
 	// Preserved messages are appended verbatim after the summary.
@@ -286,13 +291,13 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		}
 		safeSplit := safeSplitPoint(messages, splitIdx, maxWalkBack)
 		if safeSplit != splitIdx {
-			log.Infof("compaction", "split adjusted from %d to %d to preserve tool_use pairs", splitIdx, safeSplit)
+			c.log.Infof("split adjusted from %d to %d to preserve tool_use pairs", splitIdx, safeSplit)
 		}
 		splitIdx = safeSplit
 
 		// Re-check minMessages constraint after adjustment.
 		if splitIdx < c.minMessages {
-			log.Infof("compaction", "walk-back pushed split below minMessages (%d < %d), preserving nothing", splitIdx, c.minMessages)
+			c.log.Infof("walk-back pushed split below minMessages (%d < %d), preserving nothing", splitIdx, c.minMessages)
 			splitIdx = len(messages)
 			preserveN = 0
 		} else {
@@ -302,7 +307,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		if preserveN > 0 {
 			toSummarise = messages[:splitIdx]
 			preserved = messages[splitIdx:]
-			log.Infof("compaction", "preserving %d messages through compaction", preserveN)
+			c.log.Infof("preserving %d messages through compaction", preserveN)
 		}
 	}
 
@@ -318,7 +323,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		Content: anthropic.TextContent(summaryPrompt),
 	})
 
-	log.Debugf("compaction", "summary request: model=%s max_tokens=%d messages=%d effort=%s", c.model, c.maxTokens, len(summaryMessages), c.effort)
+	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s", c.model, c.maxTokens, len(summaryMessages), c.effort)
 	start := time.Now()
 	req := &anthropic.MessageRequest{
 		Model:     c.model,
@@ -358,9 +363,9 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	handoff := handoffMessage
 	if c.Scratchpad != nil {
 		if entries, err := c.Scratchpad.All(c.AgentID); err != nil {
-			log.Warnf("compaction", "read scratchpad for %s: %v", sessionKey, err)
+			c.log.Warnf("read scratchpad for %s: %v", sessionKey, err)
 		} else if len(entries) > 0 {
-			log.Infof("compaction", "scratchpad preserved: %d entries through compaction of %s", len(entries), sessionKey)
+			c.log.Infof("scratchpad preserved: %d entries through compaction of %s", len(entries), sessionKey)
 			handoff += "\n\n[scratchpad — working state preserved through compaction]"
 			for _, e := range entries {
 				handoff += fmt.Sprintf("\n--- %s ---\n%s", e.Key, e.Content)
@@ -416,6 +421,6 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		return "", fmt.Errorf("replace session after compaction: %w", err)
 	}
 
-	log.Infof("compaction", "session %s compacted from %d messages to %d", sessionKey, len(messages), len(compacted))
+	c.log.Infof("session %s compacted from %d messages to %d", sessionKey, len(messages), len(compacted))
 	return summary, nil
 }

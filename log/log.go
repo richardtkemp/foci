@@ -163,7 +163,7 @@ func Init(cfg Config) error {
 	// they were already written there when originally logged).
 	if eventFile != nil && len(std.buffer) > 0 {
 		for _, line := range std.buffer {
-			eventFile.WriteString(line)
+			_, _ = eventFile.WriteString(line)
 		}
 	}
 	std.buffer = nil
@@ -189,11 +189,11 @@ func InitAPIDB(path string) error {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -214,20 +214,24 @@ func InitAPIDB(path string) error {
 		session_line       INTEGER
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("create api_calls table: %w", err)
 	}
 
 	// Indexes for common queries
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`)
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`)
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`); err != nil {
+		std.event(WARN, "api_db", "create ts index: %v", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`); err != nil {
+		std.event(WARN, "api_db", "create session index: %v", err)
+	}
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
 	}
 
@@ -238,8 +242,8 @@ func InitAPIDB(path string) error {
 // CloseAPIDB closes the SQLite API call log.
 func CloseAPIDB() {
 	if apiLog != nil {
-		apiLog.stmt.Close()
-		apiLog.db.Close()
+		_ = apiLog.stmt.Close()
+		_ = apiLog.db.Close()
 		apiLog = nil
 	}
 }
@@ -249,15 +253,15 @@ func Close() {
 	std.mu.Lock()
 	defer std.mu.Unlock()
 	if std.eventFile != nil {
-		std.eventFile.Close()
+		_ = std.eventFile.Close()
 		std.eventFile = nil
 	}
 	if std.apiFile != nil {
-		std.apiFile.Close()
+		_ = std.apiFile.Close()
 		std.apiFile = nil
 	}
 	if std.payloadFile != nil {
-		std.payloadFile.Close()
+		_ = std.payloadFile.Close()
 		std.payloadFile = nil
 	}
 }
@@ -274,7 +278,7 @@ func (l *Logger) reopen() error {
 
 	// Event file
 	if l.eventFile != nil {
-		l.eventFile.Close()
+		_ = l.eventFile.Close()
 		f, err := os.OpenFile(l.eventPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("reopen event log %s: %w", l.eventPath, err)
@@ -285,7 +289,7 @@ func (l *Logger) reopen() error {
 
 	// API file
 	if l.apiFile != nil {
-		l.apiFile.Close()
+		_ = l.apiFile.Close()
 		f, err := os.OpenFile(l.apiPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("reopen API log %s: %w", l.apiPath, err)
@@ -295,7 +299,7 @@ func (l *Logger) reopen() error {
 
 	// Payload file
 	if l.payloadFile != nil {
-		l.payloadFile.Close()
+		_ = l.payloadFile.Close()
 		f, err := os.OpenFile(l.payloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("reopen payload log %s: %w", l.payloadPath, err)
@@ -333,7 +337,7 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	line := fmt.Sprintf("%s %s [%s] %s\n", ts, levelStr, component, msg)
 
 	l.mu.Lock()
-	l.eventOut.Write([]byte(line))
+	_, _ = l.eventOut.Write([]byte(line))
 	if !l.initialized {
 		l.buffer = append(l.buffer, line)
 	}
@@ -359,7 +363,7 @@ func (l *Logger) api(entry APIEntry) {
 	l.mu.Lock()
 	if l.apiFile != nil {
 		if data, err := json.Marshal(entry); err == nil {
-			l.apiFile.Write(append(data, '\n'))
+			_, _ = l.apiFile.Write(append(data, '\n'))
 		}
 	}
 	l.mu.Unlock()
@@ -409,7 +413,7 @@ func (l *Logger) payload(entry PayloadEntry) {
 	if err != nil {
 		return
 	}
-	l.payloadFile.Write(append(data, '\n'))
+	_, _ = l.payloadFile.Write(append(data, '\n'))
 }
 
 // PayloadEnabled returns true if full payload logging is active.
@@ -417,6 +421,29 @@ func PayloadEnabled() bool {
 	std.mu.Lock()
 	defer std.mu.Unlock()
 	return std.payloadFile != nil
+}
+
+// ComponentLogger carries a fixed component prefix for structured logging.
+type ComponentLogger struct {
+	component string
+}
+
+// NewComponentLogger creates a logger with a fixed component prefix.
+func NewComponentLogger(component string) *ComponentLogger {
+	return &ComponentLogger{component: component}
+}
+
+func (cl *ComponentLogger) Debugf(format string, args ...interface{}) {
+	std.event(DEBUG, cl.component, format, args...)
+}
+func (cl *ComponentLogger) Infof(format string, args ...interface{}) {
+	std.event(INFO, cl.component, format, args...)
+}
+func (cl *ComponentLogger) Warnf(format string, args ...interface{}) {
+	std.event(WARN, cl.component, format, args...)
+}
+func (cl *ComponentLogger) Errorf(format string, args ...interface{}) {
+	std.event(ERROR, cl.component, format, args...)
 }
 
 // Package-level functions for the global logger.
