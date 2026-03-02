@@ -734,8 +734,8 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// type on phone keyboards. Only treated as a command if it matches a
 	// registered command; otherwise falls through to the agent as normal text.
 	if text != "" && strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
-		dotText := strings.ToLower(strings.TrimSpace(text))[1:]
-		cmdName, _, _ := strings.Cut(dotText, " ")
+		dotText := strings.TrimSpace(text)[1:] // strip leading dot, preserve case
+		cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
 		if b.commands.Get(cmdName) != nil || b.isStopCommand("/"+cmdName) {
 			dotCmd := "/" + dotText
 			cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, userID)
