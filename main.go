@@ -1388,27 +1388,10 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent secrets view: agent-specific values overlay globals
 	agentStore := p.store.ForAgent(acfg.ID)
 
-	// Per-agent exec_auto_background (0 = use global)
-	execAutoBg := p.cfg.Tools.ExecAutoBackground
-	if acfg.ExecAutoBackground != 0 {
-		execAutoBg = acfg.ExecAutoBackground
-	}
-
-	// Per-agent max_upload_file_size (0 = use global)
-	maxUploadSize := p.cfg.Tools.MaxUploadFileSize
-	if acfg.MaxUploadFileSize != 0 {
-		maxUploadSize = acfg.MaxUploadFileSize
-	}
-
-	// Per-agent tmux braindead (nil = use global)
-	tmuxBraindead := p.cfg.Tools.TmuxBraindead
-	if acfg.TmuxBraindead != nil {
-		tmuxBraindead = *acfg.TmuxBraindead
-	}
-	tmuxWatchThreshold := p.cfg.Tools.TmuxWatchThreshold
-	if acfg.TmuxWatchThreshold != "" {
-		tmuxWatchThreshold = acfg.TmuxWatchThreshold
-	}
+	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
+	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
+	tmuxBraindead := resolveBoolPtr(acfg.TmuxBraindead, p.cfg.Tools.TmuxBraindead)
+	tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
 	tmuxWatchThresholdSec := 30
 	if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
 		tmuxWatchThresholdSec = int(d.Seconds())
@@ -1428,40 +1411,16 @@ func setupAgent(p setupParams) *agentInstance {
 
 	searchProvider := resolveString(acfg.SearchProvider, p.cfg.Tools.SearchProvider)
 	if searchProvider == "anthropic" {
-		stConfig := map[string]interface{}{
-			"type": "web_search_20250305",
-			"name": "web_search",
-		}
-		if p.cfg.Tools.WebSearchMaxUses > 0 {
-			stConfig["max_uses"] = p.cfg.Tools.WebSearchMaxUses
-		}
-		if len(p.cfg.Tools.WebSearchAllowedDomains) > 0 {
-			stConfig["allowed_domains"] = p.cfg.Tools.WebSearchAllowedDomains
-		}
-		if len(p.cfg.Tools.WebSearchBlockedDomains) > 0 {
-			stConfig["blocked_domains"] = p.cfg.Tools.WebSearchBlockedDomains
-		}
-		serverTools = append(serverTools, anthropic.NewServerTool(stConfig))
+		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
+			p.cfg.Tools.WebSearchMaxUses, p.cfg.Tools.WebSearchAllowedDomains, p.cfg.Tools.WebSearchBlockedDomains))
 	} else if searchProvider == "brave" && p.braveKey != "" {
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
 
 	fetchProvider := resolveString(acfg.FetchProvider, p.cfg.Tools.FetchProvider)
 	if fetchProvider == "anthropic" {
-		ftConfig := map[string]interface{}{
-			"type": "web_fetch_20250910",
-			"name": "web_fetch",
-		}
-		if p.cfg.Tools.WebFetchMaxUses > 0 {
-			ftConfig["max_uses"] = p.cfg.Tools.WebFetchMaxUses
-		}
-		if len(p.cfg.Tools.WebFetchAllowedDomains) > 0 {
-			ftConfig["allowed_domains"] = p.cfg.Tools.WebFetchAllowedDomains
-		}
-		if len(p.cfg.Tools.WebFetchBlockedDomains) > 0 {
-			ftConfig["blocked_domains"] = p.cfg.Tools.WebFetchBlockedDomains
-		}
-		serverTools = append(serverTools, anthropic.NewServerTool(ftConfig))
+		serverTools = append(serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
+			p.cfg.Tools.WebFetchMaxUses, p.cfg.Tools.WebFetchAllowedDomains, p.cfg.Tools.WebFetchBlockedDomains))
 	} else {
 		registry.Register(tools.NewWebFetchTool())
 	}
@@ -1502,15 +1461,8 @@ func setupAgent(p setupParams) *agentInstance {
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
 
-	// Per-agent compactor (per-agent threshold overrides global)
-	compactionThreshold := p.cfg.Sessions.CompactionThreshold
-	if acfg.CompactionThreshold != nil {
-		compactionThreshold = *acfg.CompactionThreshold
-	}
-	preserveMessages := p.cfg.Sessions.CompactionPreserveMessages
-	if acfg.CompactionPreserveMessages != nil {
-		preserveMessages = *acfg.CompactionPreserveMessages
-	}
+	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
+	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
 	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
@@ -3086,6 +3038,49 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// buildServerTool constructs an anthropic server tool config map with optional
+// max_uses, allowed_domains, and blocked_domains fields.
+func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []string) anthropic.ToolDef {
+	cfg := map[string]interface{}{
+		"type": toolType,
+		"name": toolName,
+	}
+	if maxUses > 0 {
+		cfg["max_uses"] = maxUses
+	}
+	if len(allowed) > 0 {
+		cfg["allowed_domains"] = allowed
+	}
+	if len(blocked) > 0 {
+		cfg["blocked_domains"] = blocked
+	}
+	return anthropic.NewServerTool(cfg)
+}
+
+// resolveInt64 returns the per-agent value if non-zero, otherwise global.
+func resolveInt64(perAgent, global int64) int64 {
+	if perAgent != 0 {
+		return perAgent
+	}
+	return global
+}
+
+// resolveIntPtr returns *perAgent if non-nil, otherwise global.
+func resolveIntPtr(perAgent *int, global int) int {
+	if perAgent != nil {
+		return *perAgent
+	}
+	return global
+}
+
+// resolveFloat64Ptr returns *perAgent if non-nil, otherwise global.
+func resolveFloat64Ptr(perAgent *float64, global float64) float64 {
+	if perAgent != nil {
+		return *perAgent
+	}
+	return global
 }
 
 // resolveString returns the per-agent value if non-empty, otherwise global.
