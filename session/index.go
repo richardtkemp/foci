@@ -97,11 +97,24 @@ func (idx *SessionIndex) Upsert(e SessionIndexEntry) {
 	if activityAt.IsZero() {
 		activityAt = e.CreatedAt
 	}
+	activityStr := activityAt.UTC().Format(time.RFC3339)
+	createdStr := e.CreatedAt.UTC().Format(time.RFC3339)
 	_, err := idx.db.Exec(
-		`INSERT OR REPLACE INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		e.SessionKey, e.FilePath, e.CreatedAt.UTC().Format(time.RFC3339),
-		activityAt.UTC().Format(time.RFC3339),
+		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(session_key) DO UPDATE SET
+		   file_path = excluded.file_path,
+		   created_at = excluded.created_at,
+		   last_activity_at = CASE
+		     WHEN excluded.last_activity_at = excluded.created_at
+		     THEN COALESCE(session_index.last_activity_at, excluded.last_activity_at)
+		     ELSE excluded.last_activity_at
+		   END,
+		   parent_session_key = excluded.parent_session_key,
+		   session_type = excluded.session_type,
+		   status = excluded.status`,
+		e.SessionKey, e.FilePath, createdStr,
+		activityStr,
 		nullableString(e.ParentSessionKey), string(e.SessionType), string(e.Status))
 	if err != nil {
 		log.Warnf("session_index", "upsert %s: %v", e.SessionKey, err)
