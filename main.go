@@ -2012,15 +2012,17 @@ func setupAgent(p setupParams) *agentInstance {
 			p.stateStore.Get("agent:"+acfg.ID+":default_chat", &chatID)
 			return chatID
 		},
-		IndexFn: func(sessionType, status string) ([]command.SessionIndexInfo, error) {
+		IndexFn: func(sessionType, status string, showAll bool) ([]command.SessionIndexInfo, error) {
 			if p.sessionIndex == nil {
 				return nil, fmt.Errorf("session index not available")
 			}
 			opts := session.QueryOptions{
 				SessionType: session.SessionType(sessionType),
 				Status:      session.SessionStatus(status),
-				MaxAge:      7 * 24 * time.Hour, // default: show sessions active in last 7 days
 				Limit:       50,
+			}
+			if !showAll {
+				opts.MaxAge = 7 * 24 * time.Hour // default: show sessions active in last 7 days
 			}
 			entries, err := p.sessionIndex.Query(opts)
 			if err != nil {

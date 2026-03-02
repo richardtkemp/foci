@@ -34,7 +34,7 @@ type SessionsDeps struct {
 	ListFn        func() ([]SessionChatInfo, error)
 	SetDefaultFn  func(chatID int64) error
 	DefaultChatFn func() int64
-	IndexFn       func(sessionType, status string) ([]SessionIndexInfo, error) // nil = index not available
+	IndexFn       func(sessionType, status string, showAll bool) ([]SessionIndexInfo, error) // nil = index not available
 }
 
 // NewSessionsCommand creates the /sessions command for managing per-chat sessions.
@@ -52,7 +52,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			switch subcmd {
 			case "":
-				return "Usage: /sessions [list|default <chat_id>|info|index]\n\n" +
+				return "Usage: /sessions [list|default <chat_id>|info|index [type] [status] [all]]\n\n" +
 					"  list              List all chat sessions for this agent\n" +
 					"  default <chat_id> Set the default session (used by keepalive, cron)\n" +
 					"  info              Show details for the current chat's session\n" +
@@ -78,16 +78,23 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			case "index":
 				var typeFilter, statusFilter string
-				if len(parts) > 1 {
-					typeFilter = parts[1]
+				showAll := false
+				for _, p := range parts[1:] {
+					switch p {
+					case "all":
+						showAll = true
+					default:
+						if typeFilter == "" {
+							typeFilter = p
+						} else if statusFilter == "" {
+							statusFilter = p
+						}
+					}
 				}
-				if len(parts) > 2 {
-					statusFilter = parts[2]
-				}
-				return sessionsIndexCmd(deps, typeFilter, statusFilter, displayWidth(ctx))
+				return sessionsIndexCmd(deps, typeFilter, statusFilter, showAll, displayWidth(ctx))
 
 			default:
-				return "Usage: /sessions [list|default <chat_id>|info|index]", nil
+				return "Usage: /sessions [list|default <chat_id>|info|index [type] [status] [all]]", nil
 			}
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
@@ -219,12 +226,12 @@ func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 	return sb.String(), nil
 }
 
-func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, maxWidth int) (string, error) {
+func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, showAll bool, maxWidth int) (string, error) {
 	if deps.IndexFn == nil {
 		return "Session index not available.", nil
 	}
 
-	entries, err := deps.IndexFn(typeFilter, statusFilter)
+	entries, err := deps.IndexFn(typeFilter, statusFilter, showAll)
 	if err != nil {
 		return "", fmt.Errorf("query session index: %w", err)
 	}
