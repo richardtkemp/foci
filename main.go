@@ -3271,6 +3271,10 @@ func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, opts to
 	})
 }
 
+func (a *sessionBranchAdapter) SessionPath(key string) (string, error) {
+	return a.store.SessionPath(key)
+}
+
 // extractAgentID extracts the agent ID from a session key.
 // Session keys have the format "agent:<id>:..." — returns the second segment.
 func extractAgentID(sessionKey string) string {
