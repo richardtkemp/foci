@@ -52,11 +52,11 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -65,7 +65,7 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 		tokenize='porter unicode61'
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create FTS5 table: %w", err)
 	}
 
@@ -76,7 +76,7 @@ func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Dura
 		PRIMARY KEY (source, path)
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create memory_meta table: %w", err)
 	}
 
@@ -223,7 +223,7 @@ func (idx *Index) Search(query string, sort string) ([]Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("search: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var results []Result
 	for rows.Next() {
@@ -251,7 +251,7 @@ func (idx *Index) Watch() error {
 	// Add all source directories to watcher
 	for _, cfg := range idx.sources {
 		if err := watcher.Add(cfg.Dir); err != nil {
-			watcher.Close()
+			_ = watcher.Close()
 			return fmt.Errorf("watch %s: %w", cfg.Dir, err)
 		}
 	}
@@ -305,7 +305,7 @@ func (idx *Index) scheduleReindex() {
 func (idx *Index) Close() error {
 	idx.mu.Lock()
 	if idx.watcher != nil {
-		idx.watcher.Close()
+		_ = idx.watcher.Close()
 	}
 	if idx.reindexTimer != nil {
 		idx.reindexTimer.Stop()

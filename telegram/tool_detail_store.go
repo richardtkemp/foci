@@ -32,15 +32,15 @@ func NewToolDetailStore(dbPath string) (*ToolDetailStore, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA auto_vacuum=INCREMENTAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set auto_vacuum: %w", err)
 	}
 
@@ -51,7 +51,7 @@ func NewToolDetailStore(dbPath string) (*ToolDetailStore, error) {
 		result       TEXT NOT NULL,
 		created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	)`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
 
@@ -87,7 +87,7 @@ func (s *ToolDetailStore) LoadAll() (map[int64]toolResultEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query tool details: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[int64]toolResultEntry)
 	for rows.Next() {
@@ -126,6 +126,8 @@ func (s *ToolDetailStore) ExpireAndVacuum() {
 // Count returns the number of entries in the store. Test helper.
 func (s *ToolDetailStore) Count() int {
 	var n int
-	s.db.QueryRow("SELECT COUNT(*) FROM tool_call_details").Scan(&n)
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM tool_call_details").Scan(&n); err != nil {
+		log.Warnf("tool_detail_store", "count: %v", err)
+	}
 	return n
 }

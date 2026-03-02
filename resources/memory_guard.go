@@ -217,7 +217,7 @@ func readMemTotal() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -267,7 +267,7 @@ func readStatusRSS(path, uidStr string) (rssKB int64, owned bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var rss int64
 	var uidMatch bool
@@ -357,7 +357,7 @@ func readStatusFull(path, uidStr string) (rssKB int64, owned bool, comm string) 
 	if err != nil {
 		return 0, false, ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

@@ -121,7 +121,7 @@ func gatherDiagnostics(logsDir string, since time.Time) []string {
 		log.Debugf("startup", "could not open log file: %v", err)
 		return findings
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)

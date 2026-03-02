@@ -36,11 +36,11 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -56,14 +56,14 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		completed_at TEXT
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create todos table: %w", err)
 	}
 
 	var hasUpdatedAt bool
 	rows, err := db.Query("PRAGMA table_info(todos)")
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("check table info: %w", err)
 	}
 	for rows.Next() {
@@ -72,19 +72,19 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		var notnull, pk int
 		var dfltValue sql.NullString
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
-			rows.Close()
-			db.Close()
+			_ = rows.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("scan table info: %w", err)
 		}
 		if name == "updated_at" {
 			hasUpdatedAt = true
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 
 	if !hasUpdatedAt {
 		if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("add updated_at column: %w", err)
 		}
 	}
@@ -133,7 +133,7 @@ func (s *TodoStore) List(agentID, status, tag string) ([]TodoItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTodos(rows)
 }
 
@@ -272,7 +272,7 @@ func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanTodos(rows)
 }
 

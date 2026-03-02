@@ -1445,7 +1445,7 @@ func tailFile(path string, n int) (string, error) {
 	if err != nil {
 		return "Log file not found.", nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
@@ -1470,7 +1470,7 @@ func tailFileFiltered(path string, n int, filter func(string) bool) (string, err
 	if err != nil {
 		return "Log file not found.", nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var matching []string
 	scanner := bufio.NewScanner(f)
@@ -1530,7 +1530,7 @@ func readAPILog(path string) []apiEntry {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var entries []apiEntry
 	scanner := bufio.NewScanner(f)

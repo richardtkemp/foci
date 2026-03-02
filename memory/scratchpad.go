@@ -37,11 +37,11 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -53,7 +53,7 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 		PRIMARY KEY (agent_id, key)
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create scratchpad table: %w", err)
 	}
 
@@ -95,7 +95,7 @@ func (s *Scratchpad) All(agentID string) ([]ScratchpadEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []ScratchpadEntry
 	for rows.Next() {
@@ -116,7 +116,7 @@ func (s *Scratchpad) List(agentID string) ([]ScratchpadListEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []ScratchpadListEntry
 	for rows.Next() {

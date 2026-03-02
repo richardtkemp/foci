@@ -44,8 +44,8 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 	}
 	// Restrict socket access
 	if err := os.Chmod(sockPath, 0600); err != nil {
-		listener.Close()
-		os.Remove(sockPath)
+		_ = listener.Close()
+		_ = os.Remove(sockPath)
 		return nil, fmt.Errorf("exec bridge chmod: %w", err)
 	}
 
@@ -61,8 +61,8 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 
 	// Write shell functions file
 	if err := b.writeShellFuncs(); err != nil {
-		listener.Close()
-		os.Remove(sockPath)
+		_ = listener.Close()
+		_ = os.Remove(sockPath)
 		cancel()
 		return nil, fmt.Errorf("exec bridge write funcs: %w", err)
 	}
@@ -84,10 +84,10 @@ func (b *ExecBridge) FuncsPath() string { return b.funcsPath }
 // Close stops the listener, waits for in-flight connections, and removes files.
 func (b *ExecBridge) Close() {
 	b.cancel()
-	b.listener.Close()
+	_ = b.listener.Close()
 	b.wg.Wait()
-	os.Remove(b.sockPath)
-	os.Remove(b.funcsPath)
+	_ = os.Remove(b.sockPath)
+	_ = os.Remove(b.funcsPath)
 	log.Debugf("execbridge", "closed sock=%s", b.sockPath)
 }
 
@@ -106,7 +106,7 @@ func (b *ExecBridge) acceptLoop() {
 
 func (b *ExecBridge) handleConn(conn net.Conn) {
 	defer b.wg.Done()
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -159,7 +159,7 @@ func writeResponse(conn net.Conn, result, errMsg string) {
 	}{Result: result, Error: errMsg}
 	data, _ := json.Marshal(resp)
 	data = append(data, '\n')
-	conn.Write(data)
+	_, _ = conn.Write(data)
 }
 
 // stripHTTPHeaders removes the HTTP status/header block from an http_request

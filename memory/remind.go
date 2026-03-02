@@ -32,11 +32,11 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -49,7 +49,7 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		created  TEXT    NOT NULL
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create reminders table: %w", err)
 	}
 
@@ -83,7 +83,7 @@ func (rs *ReminderStore) Due(agentID string) ([]Reminder, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var reminders []Reminder
 	for rows.Next() {

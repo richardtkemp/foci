@@ -202,7 +202,9 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 		return "", err
 	}
 	var raw map[string]json.RawMessage
-	json.Unmarshal(params, &raw)
+	if err := json.Unmarshal(params, &raw); err != nil {
+		return "", fmt.Errorf("unmarshal params: %w", err)
+	}
 	_, setTags := raw["tag"]
 
 	if text == "" && priority == "" && !setTags {

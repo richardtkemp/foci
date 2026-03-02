@@ -454,7 +454,7 @@ func autoDetectUserID(reader *bufio.Reader, botToken string) (string, error) {
 	fmt.Printf("  Bot connected as @%s\n", bot.Username)
 	fmt.Println("  Send a message to your bot on Telegram, then press Enter here.")
 	fmt.Print("  ")
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 
 	// Poll for messages with a short timeout
 	updates, err := bot.GetUpdates(&gotgbot.GetUpdatesOpts{

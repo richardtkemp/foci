@@ -248,7 +248,7 @@ func refreshAccessToken(client *http.Client, tokenURL, refreshToken string) (*OA
 	if err != nil {
 		return nil, fmt.Errorf("refresh request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -335,7 +335,7 @@ func exchangeCodeWithURL(ctx context.Context, tokenURL, code, verifier string) (
 	if err != nil {
 		return nil, fmt.Errorf("exchange request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

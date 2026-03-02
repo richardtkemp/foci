@@ -56,11 +56,11 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -72,7 +72,7 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 		session_type       TEXT NOT NULL,
 		status             TEXT NOT NULL DEFAULT 'active'
 	)`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create session_index table: %w", err)
 	}
 
@@ -157,7 +157,7 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query session index: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []SessionIndexEntry
 	for rows.Next() {
@@ -183,7 +183,9 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 // Count returns the total number of entries in the index.
 func (idx *SessionIndex) Count() int {
 	var n int
-	idx.db.QueryRow("SELECT COUNT(*) FROM session_index").Scan(&n)
+	if err := idx.db.QueryRow("SELECT COUNT(*) FROM session_index").Scan(&n); err != nil {
+		log.Warnf("session_index", "count: %v", err)
+	}
 	return n
 }
 

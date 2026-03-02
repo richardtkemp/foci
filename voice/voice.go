@@ -69,10 +69,16 @@ func (w *WhisperSTT) Transcribe(ctx context.Context, audioData []byte, filename 
 	}
 
 	if w.Model != "" {
-		mw.WriteField("model", w.Model)
+		if err := mw.WriteField("model", w.Model); err != nil {
+			return "", fmt.Errorf("write model field: %w", err)
+		}
 	}
-	mw.WriteField("response_format", "text")
-	mw.Close()
+	if err := mw.WriteField("response_format", "text"); err != nil {
+		return "", fmt.Errorf("write response_format field: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return "", fmt.Errorf("close multipart writer: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", w.Endpoint, &buf)
 	if err != nil {
@@ -87,7 +93,7 @@ func (w *WhisperSTT) Transcribe(ctx context.Context, audioData []byte, filename 
 	if err != nil {
 		return "", fmt.Errorf("whisper request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -121,9 +127,11 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("close temp file: %w", err)
+	}
 	mp3Path := tmpFile.Name()
-	defer os.Remove(mp3Path)
+	defer func() { _ = os.Remove(mp3Path) }()
 
 	args := []string{"--text", text, "--write-media", mp3Path}
 	if e.Voice != "" {
@@ -191,7 +199,7 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("tts request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	audioData, err := io.ReadAll(resp.Body)
 	if err != nil {

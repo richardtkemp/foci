@@ -54,7 +54,7 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 	if err != nil {
 		return fmt.Errorf("create branch file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := json.Marshal(meta)
 	if err != nil {
@@ -156,7 +156,7 @@ func (s *Store) readBranchMeta(key string) (*BranchMeta, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open for branch check: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Read first line
 	buf := make([]byte, 4096)

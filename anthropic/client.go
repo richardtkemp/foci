@@ -152,7 +152,7 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 		slog.Debug("anthropic: http_call_error", "duration", callDur, "error", err, "ctx_err", ctx.Err())
 		return nil, fmt.Errorf("send request: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 	slog.Debug("anthropic: http_call_done", "duration", callDur, "status", httpResp.StatusCode)
 
 	respBody, err := io.ReadAll(httpResp.Body)
@@ -256,7 +256,7 @@ func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("send request: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
@@ -305,7 +305,7 @@ func (c *Client) ListModels() ([]ModelInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("send request: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {

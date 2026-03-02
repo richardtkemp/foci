@@ -367,7 +367,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		if err != nil {
 			return "", fmt.Errorf("request failed: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		return processHTTPResponse(resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore)
 	}
@@ -746,7 +746,7 @@ func buildMultipartBody(files []fileAttachment, formFields map[string]string, ma
 			return nil, "", fmt.Errorf("open %q: %w", f.FilePath, err)
 		}
 		_, err = io.Copy(part, file)
-		file.Close()
+		_ = file.Close()
 		if err != nil {
 			return nil, "", fmt.Errorf("write file %q: %w", f.FilePath, err)
 		}
