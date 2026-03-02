@@ -30,9 +30,6 @@ allowed_users = ["111", "222"]
 dir = "/tmp/sessions"
 compaction_threshold = 0.7
 
-[memory]
-dir = "/tmp/memory"
-
 [http]
 port = 9999
 bind = "0.0.0.0"
@@ -67,7 +64,6 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Sessions.CompactionThreshold != 0.7 {
 		t.Errorf("Sessions.CompactionThreshold = %f, want 0.7", cfg.Sessions.CompactionThreshold)
 	}
-	// memory.dir is deprecated — it still parses but is not used
 	if cfg.HTTP.Port != 9999 {
 		t.Errorf("HTTP.Port = %d, want 9999", cfg.HTTP.Port)
 	}
@@ -1824,49 +1820,6 @@ show_tool_calls = "full"
 		}
 	})
 
-	// Migration from [telegram] to [defaults]
-	t.Run("telegram migration", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`
-[telegram]
-show_tool_calls = "full"
-show_thinking = "compact"
-display_width = 80
-`), 0644)
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallFull {
-			t.Errorf("Defaults.ShowToolCalls = %v, want %q (migrated from telegram)", cfg.Defaults.ShowToolCalls, ToolCallFull)
-		}
-		if cfg.Defaults.ShowThinking == nil || *cfg.Defaults.ShowThinking != ShowThinkingCompact {
-			t.Errorf("Defaults.ShowThinking = %v, want %q (migrated from telegram)", cfg.Defaults.ShowThinking, ShowThinkingCompact)
-		}
-		if cfg.Defaults.DisplayWidth == nil || *cfg.Defaults.DisplayWidth != 80 {
-			t.Errorf("Defaults.DisplayWidth = %v, want 80 (migrated from telegram)", cfg.Defaults.DisplayWidth)
-		}
-	})
-
-	// Migration: [defaults] takes precedence over [telegram]
-	t.Run("defaults overrides telegram migration", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`
-[defaults]
-show_tool_calls = "preview"
-[telegram]
-show_tool_calls = "full"
-`), 0644)
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallPreview {
-			t.Errorf("Defaults.ShowToolCalls = %v, want %q (defaults should win over telegram)", cfg.Defaults.ShowToolCalls, ToolCallPreview)
-		}
-	})
 }
 
 func TestNormalizeBoolStrings(t *testing.T) {
@@ -2264,7 +2217,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	// Validates that foci.toml.example contains exactly the right config keys.
 	// If you add a new config field, this test will fail until you either:
 	//   - Add it to foci.toml.example (if users should know about it)
-	//   - Add it to exampleSkipKeys below (if it's deprecated, internal, or secret)
+	//   - Add it to exampleSkipPrefixes below (if it's internal or a duplicate section)
 
 	examplePath := filepath.Join("..", "foci.toml.example")
 	raw, err := os.ReadFile(examplePath)
@@ -2319,12 +2272,6 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	// Check 2: every Config struct field appears in the example.
 	structKeys := collectTOMLKeys(reflect.TypeOf(Config{}), "")
 
-	// Keys intentionally absent from the example. Add a comment explaining why.
-	exampleSkipKeys := map[string]bool{
-		// Deprecated — kept for TOML decode but no longer used
-		"memory.dir": true,
-	}
-
 	// The legacy [agent] (singular) section has the same fields as [[agents]].
 	// The example only shows [[agents]]; skip all agent.* paths.
 	exampleSkipPrefixes := []string{"agent."}
@@ -2332,9 +2279,6 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	exampleText := string(raw)
 	var missing []string
 	for _, key := range structKeys {
-		if exampleSkipKeys[key] {
-			continue
-		}
 		skip := false
 		for _, prefix := range exampleSkipPrefixes {
 			if strings.HasPrefix(key, prefix) {
