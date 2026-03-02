@@ -102,19 +102,19 @@ fi
 # ---------- 2. Build binaries from source ----------
 info "Step 2: Build binaries from source"
 if ! command -v go &>/dev/null; then
-    error "Go not found. Install Go 1.24+ first."
-    error "Ubuntu: sudo add-apt-repository ppa:longsleep/golang-backports && sudo apt update && sudo apt install golang-go"
+    error "Go not found. Install Go 1.22+ first."
+    error "Ubuntu: sudo apt install golang-go"
     error "Or download from https://go.dev/dl/"
     exit 1
 fi
 
-# Validate Go version (need 1.24+ for go.mod compatibility)
+# Validate Go version (need 1.22+ for go.mod compatibility)
 GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
 GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
 GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
 if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt 24 ]]; then
-    error "Go $GO_VERSION found, but 1.24+ is required (go.mod declares go 1.24.0)."
-    error "Ubuntu: sudo add-apt-repository ppa:longsleep/golang-backports && sudo apt update && sudo apt install golang-go"
+    error "Go $GO_VERSION found, but 1.22+ is required (go.mod declares go 1.22.2)."
+    error "Ubuntu: sudo apt install golang-go"
     error "Or download from https://go.dev/dl/"
     exit 1
 fi
