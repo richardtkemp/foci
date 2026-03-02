@@ -252,7 +252,7 @@ $NEED_SERVICE_INSTALL && info "  Systemd service needs to be installed"
 $NEED_SERVICE_PATCH && info "  Systemd service needs patching"
 
 # ---------- Wizard mode ----------
-SETUP_WIZARD_ARGS="--config-dir \"$FOCI_HOME/config\" --home \"$FOCI_HOME\" --defaults-dir \"$SCRIPT_DIR/shared/defaults/character\""
+SETUP_WIZARD_ARGS="--config-dir \"$FOCI_HOME/config\""
 
 TELEGRAM_TOKEN="${FOCI_TELEGRAM_TOKEN:-}"
 TELEGRAM_USER="${FOCI_TELEGRAM_USER:-}"

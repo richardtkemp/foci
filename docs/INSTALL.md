@@ -98,9 +98,7 @@ To re-run the setup wizard after initial install (e.g. to reconfigure):
 
 ```bash
 sudo -u foci -g foci-secrets foci setup \
-    --config-dir /home/foci/config \
-    --home /home/foci \
-    --defaults-dir /path/to/foci/shared/defaults/character
+    --config-dir /home/foci/config
 ```
 
 ## 4. Verify

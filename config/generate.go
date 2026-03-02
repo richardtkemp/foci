@@ -7,9 +7,10 @@ import (
 
 // SetupOptions holds the inputs collected by the setup wizard.
 type SetupOptions struct {
-	AgentID     string   // agent identifier (e.g. "fotini")
-	Model       string   // model ID (e.g. "claude-sonnet-4-6")
-	SystemFiles []string // workspace-relative character file paths
+	AgentID      string   // agent identifier (e.g. "fotini")
+	Model        string   // model ID (e.g. "claude-sonnet-4-6")
+	AgentBlock   string   // pre-built [[agents]] TOML from provision.GenerateAgentBlock (if set, overrides AgentID/SystemFiles)
+	SystemFiles  []string // workspace-relative character file paths (used when AgentBlock is empty)
 	AllowedUsers []string // Telegram user IDs
 }
 
@@ -37,16 +38,21 @@ func GenerateConfig(opts SetupOptions) string {
 	}
 
 	// [[agents]]
-	b.WriteString("[[agents]]\n")
-	b.WriteString(fmt.Sprintf("id = %q\n", opts.AgentID))
-	if len(opts.SystemFiles) > 0 {
-		b.WriteString("system_files = [\n")
-		for _, f := range opts.SystemFiles {
-			b.WriteString(fmt.Sprintf("  %q,\n", f))
+	if opts.AgentBlock != "" {
+		b.WriteString(strings.TrimLeft(opts.AgentBlock, "\n"))
+		b.WriteString("\n")
+	} else {
+		b.WriteString("[[agents]]\n")
+		b.WriteString(fmt.Sprintf("id = %q\n", opts.AgentID))
+		if len(opts.SystemFiles) > 0 {
+			b.WriteString("system_files = [\n")
+			for _, f := range opts.SystemFiles {
+				b.WriteString(fmt.Sprintf("  %q,\n", f))
+			}
+			b.WriteString("]\n")
 		}
-		b.WriteString("]\n")
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
 	// [telegram]
 	if len(opts.AllowedUsers) > 0 {

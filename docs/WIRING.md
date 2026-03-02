@@ -118,12 +118,15 @@ main
  ├── workspace     → anthropic
  ├── prompts       (no deps — embedded .md files)
  ├── compaction    → anthropic, prompts, session, log
- ├── command       → table
+ ├── provision     (no deps — stdlib-only leaf package for agent creation)
+ ├── command       → table, provision
  ├── agent         → anthropic, compaction, session, tools, workspace, log
  └── telegram      → agent, command, log, table, voice
 ```
 
-No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
+No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
+
+**`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`, `IsValidBotToken`, `IsValidUserID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`).
 
 ## The Agent Loop (`agent/agent.go`)
 
