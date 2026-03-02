@@ -1618,7 +1618,7 @@ func setupAgent(p setupParams) *agentInstance {
 		AutoSummarise:               resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
 		StateStore:                  p.stateStore,
 		UsageClient:                 p.usageClient,
-		PromptRules:                 agent.CompilePromptRules(resolvePromptRules(acfg, p.cfg)),
+		MessageTransforms:           agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
 		CompactionSummaryPromptPath: resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		PromptSearchDirs:            promptSearchDirs,
@@ -1694,13 +1694,16 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent scheduled wakes
 	var wakesMu sync.Mutex
-	wakes := make(map[string]context.CancelFunc)
-	wakeScheduleFn := func(delay time.Duration, message string) error {
+	wakes := make(map[int64]context.CancelFunc)
+	wakeScheduleFn := func(id int64, delay time.Duration, message string) error {
 		wakeCtx, wakeCancel := context.WithCancel(context.Background())
 		go func() {
 			select {
 			case <-time.After(delay):
-				log.Infof("remind", "firing wake after %v for agent %s: %q", delay, acfg.ID, message)
+				log.Infof("remind", "firing wake id=%d after %v for agent %s: %q", id, delay, acfg.ID, message)
+				if p.reminderStore != nil {
+					_ = p.reminderStore.Dismiss(id)
+				}
 				sk := defaultSessionKey()
 				if sk == "" {
 					log.Warnf("remind", "no default session for agent %s, skipping", acfg.ID)
@@ -1713,21 +1716,38 @@ func setupAgent(p setupParams) *agentInstance {
 					log.Debugf("remind", "response: %s", resp)
 				}
 				wakesMu.Lock()
-				delete(wakes, message)
+				delete(wakes, id)
 				wakesMu.Unlock()
 			case <-wakeCtx.Done():
+				if p.reminderStore != nil {
+					_ = p.reminderStore.Dismiss(id)
+				}
 				wakesMu.Lock()
-				delete(wakes, message)
+				delete(wakes, id)
 				wakesMu.Unlock()
 			}
 		}()
 		wakesMu.Lock()
-		wakes[message] = wakeCancel
+		wakes[id] = wakeCancel
 		wakesMu.Unlock()
 		return nil
 	}
 	if p.reminderStore != nil {
 		registry.Register(tools.NewRemindTool(p.reminderStore, acfg.ID, wakeScheduleFn))
+
+		// Restore pending wakes from DB (survives restart)
+		if pending, err := p.reminderStore.PendingWakes(acfg.ID); err != nil {
+			log.Errorf("remind", "failed to load pending wakes for %s: %v", acfg.ID, err)
+		} else if len(pending) > 0 {
+			for _, r := range pending {
+				delay := time.Until(r.DueAt)
+				if delay < 0 {
+					delay = 0
+				}
+				_ = wakeScheduleFn(r.ID, delay, r.Text)
+			}
+			log.Infof("remind", "restored %d pending wake(s) for agent %s", len(pending), acfg.ID)
+		}
 	}
 
 	// Per-agent slash commands
@@ -3208,12 +3228,12 @@ func resolveString(perAgent, global string) string {
 	return global
 }
 
-// resolvePromptRules returns per-agent prompt rules if set, otherwise global.
-func resolvePromptRules(acfg config.AgentConfig, cfg *config.Config) []config.PromptRule {
-	if len(acfg.PromptRules) > 0 {
-		return acfg.PromptRules
+// resolveMessageTransforms returns per-agent message transforms if set, otherwise global.
+func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []config.MessageTransform {
+	if len(acfg.MessageTransforms) > 0 {
+		return acfg.MessageTransforms
 	}
-	return cfg.PromptRules
+	return cfg.MessageTransforms
 }
 
 // hasMemoryFormation returns true if any memory formation feature is enabled.

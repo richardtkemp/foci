@@ -40,7 +40,7 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Tool result guard.** Large tool outputs are truncated *before* they enter context, with the full result saved to disk. This preserves the prompt cache (truncation happens at the tool layer, not post-hoc) and prevents a single oversized `cat` from blowing the context window. OpenClaw does this after the fact, which means the cache is already busted by the time you notice.
 
-**Prompt rules.** Configurable regex find/replace rules applied to every inbound message before the agent sees it. Use case: prepending "Questions are just requests for information.\n-------\n" to any message ending with `?` — training the agent to answer questions without acting on them. Rules are per-agent, applied at the API layer so they're invisible to the user.
+**Message transforms.** Configurable regex find/replace rules applied to inbound messages before command dispatch and the agent loop. Use case: prepending "Questions are just requests for information.\n-------\n" to any message ending with `?` — training the agent to answer questions without acting on them. Transforms can also produce commands (e.g. `m` → `/mana`). Rules are per-agent and invisible to the user.
 
 **Prompt repetition.** Based on [research showing that repeating the input prompt improves LLM accuracy](https://arxiv.org/abs/2512.14982) without increasing output tokens or latency, foci can automatically duplicate user messages in API calls. Configurable per-agent (`duplicate_messages`), skipped for system triggers like cron wakes.
 

@@ -3,8 +3,8 @@ package memory
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
-
 
 	_ "modernc.org/sqlite"
 )
@@ -53,6 +53,13 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		return nil, fmt.Errorf("create reminders table: %w", err)
 	}
 
+	// Idempotent migration: add wake column for active wake reminders.
+	_, err = db.Exec(`ALTER TABLE reminders ADD COLUMN wake INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		_ = db.Close()
+		return nil, fmt.Errorf("add wake column: %w", err)
+	}
+
 	return &ReminderStore{db: db}, nil
 }
 
@@ -72,12 +79,53 @@ func (rs *ReminderStore) Add(agentID, text, when string) error {
 	return err
 }
 
-// Due returns all reminders for the given agent that are due (due_at <= now).
+// AddWake creates a wake reminder (wake=1) and returns its row ID.
+func (rs *ReminderStore) AddWake(agentID, text, when string) (int64, error) {
+	dueAt := resolveWhen(when)
+	now := time.Now().UTC()
+
+	result, err := rs.db.Exec(
+		"INSERT INTO reminders (agent_id, text, due_at, due_tag, created, wake) VALUES (?, ?, ?, ?, ?, 1)",
+		agentID, text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+// PendingWakes returns all wake reminders for the given agent, ordered by due time.
+func (rs *ReminderStore) PendingWakes(agentID string) ([]Reminder, error) {
+	rows, err := rs.db.Query(
+		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND wake = 1 ORDER BY due_at",
+		agentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var reminders []Reminder
+	for rows.Next() {
+		var r Reminder
+		var dueAt, created string
+		if err := rows.Scan(&r.ID, &r.Text, &dueAt, &r.DueTag, &created); err != nil {
+			return nil, err
+		}
+		r.DueAt, _ = time.Parse(time.RFC3339, dueAt)
+		r.Created, _ = time.Parse(time.RFC3339, created)
+		reminders = append(reminders, r)
+	}
+	return reminders, rows.Err()
+}
+
+// Due returns all passive reminders for the given agent that are due (due_at <= now).
+// Wake reminders are excluded — they fire via their own timer.
 func (rs *ReminderStore) Due(agentID string) ([]Reminder, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	rows, err := rs.db.Query(
-		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND due_at <= ? ORDER BY due_at",
+		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND due_at <= ? AND wake = 0 ORDER BY due_at",
 		agentID, now,
 	)
 	if err != nil {
@@ -105,10 +153,11 @@ func (rs *ReminderStore) Dismiss(id int64) error {
 	return err
 }
 
-// DismissAll removes all due reminders for the given agent.
+// DismissAll removes all due passive reminders for the given agent.
+// Wake reminders are excluded — they are dismissed explicitly by ID when they fire.
 func (rs *ReminderStore) DismissAll(agentID string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := rs.db.Exec("DELETE FROM reminders WHERE agent_id = ? AND due_at <= ?", agentID, now)
+	_, err := rs.db.Exec("DELETE FROM reminders WHERE agent_id = ? AND due_at <= ? AND wake = 0", agentID, now)
 	return err
 }
 

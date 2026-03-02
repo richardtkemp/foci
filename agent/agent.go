@@ -106,7 +106,7 @@ type Agent struct {
 	Redact                      func(string) string             // redact secrets from tool output; nil disables
 	StateStore                  *state.Store                    // nil disables state persistence
 	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
-	PromptRules                 []CompiledPromptRule            // compiled regex rules for inbound message transformation
+	MessageTransforms           []CompiledTransform             // compiled regex rules for inbound message transformation
 	CompactionSummaryPromptPath string   // file path; read at compaction time via prompts.ResolvePrompt
 	CompactionHandoffMsg        string   // inline handoff message; empty resolves from search dirs or embedded default
 	PromptSearchDirs            []string // directories to search for prompt files (agent workspace, shared)
@@ -132,6 +132,15 @@ type Agent struct {
 	manaCached      string
 	manaResetCached string
 	manaCacheTime   time.Time
+}
+
+// TransformMessage applies compiled message transforms to the text.
+// Returns the original text unchanged if no transforms are configured.
+func (a *Agent) TransformMessage(text string) string {
+	if len(a.MessageTransforms) == 0 {
+		return text
+	}
+	return ApplyTransforms(a.MessageTransforms, text)
 }
 
 // logger returns the agent's ComponentLogger, lazily creating a default if nil.
@@ -856,11 +865,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	turnModel := a.SessionModel(sessionKey)
 	turnEffort := a.SessionEffort(sessionKey)
 	turnThinking := a.SessionThinking(sessionKey)
-
-	// Apply prompt rules (regex find/replace on inbound message)
-	if len(a.PromptRules) > 0 {
-		userMessage = ApplyPromptRules(a.PromptRules, userMessage)
-	}
 
 	// Build metadata prefix and prepend to user message
 	now := time.Now()

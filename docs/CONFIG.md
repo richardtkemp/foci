@@ -340,7 +340,7 @@ Tmux memory monitoring detects runaway memory from long-running tmux sessions (g
 
 ### `[skills]`
 
-Skill directories to scan on startup. Per-agent override: `skills_dirs` in `[[agents]]` — see [Global-or-Agent: Skills & Prompt Rules](#skills--prompt-rules).
+Skill directories to scan on startup. Per-agent override: `skills_dirs` in `[[agents]]` — see [Global-or-Agent: Skills & Message Transforms](#skills--message-transforms).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -370,24 +370,24 @@ script = "/home/foci/scripts/deploy.sh"
 timeout = 30
 ```
 
-### `[[prompt_rules]]`
+### `[[message_transforms]]`
 
-Global regex find/replace rules applied to inbound user messages. Per-agent override: `prompt_rules` in `[[agents]]` — see [Global-or-Agent: Skills & Prompt Rules](#skills--prompt-rules).
+Global regex find/replace rules applied to inbound user messages before command dispatch. Per-agent override: `message_transforms` in `[[agents]]` — see [Global-or-Agent: Skills & Message Transforms](#skills--message-transforms).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `find` | string | required | Go regex pattern to match. |
 | `replace` | string | required | Replacement string. Supports `$1`, `$2`, etc. for capture groups. |
 
-Rules run in sequence — the output of one becomes the input of the next. Applied before meta prefix and before message duplication.
+Rules run in sequence — the output of one becomes the input of the next. Transforms fire before command dispatch, so a transform can produce a command (e.g. `m` → `/mana`). Messages that are already recognized commands are not transformed.
 
 Example:
 ```toml
-[[prompt_rules]]
+[[message_transforms]]
 find = '(?is)^((why|when|what|how|where|who|did|does|do|is|are|was|were|can|could|would|should)\b.*\?\s*)$'
 replace = "Questions are just requests for information.\n-------\n$1"
 
-[[prompt_rules]]
+[[message_transforms]]
 find = '(?i)^((can we|could we|should we)\b.*)'
 replace = "This is a question, not an instruction.\n-------\n$1"
 ```
@@ -591,12 +591,12 @@ Per-agent mana warning thresholds. When set, completely replaces the global `[us
 | `thresholds` | int[] | `[]` | Mana warning thresholds. `[]` inherits from global `[usage_warnings]`. When set, completely replaces global thresholds for this agent. |
 | `restore_threshold` | int | `0` | Inject session notice when mana restores to 100% after being below this threshold. `0` disables. |
 
-### Skills & Prompt Rules
+### Skills & Message Transforms
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
 | `skills_dirs` | string[] | `[]` | `[skills] dirs` | Directories to scan for skill subdirectories. `[]` inherits from global `[skills] dirs`. |
-| `prompt_rules` | array | `[]` | `[[prompt_rules]]` | Regex find/replace rules applied to inbound messages. `[]` inherits from global `[[prompt_rules]]`. |
+| `message_transforms` | array | `[]` | `[[message_transforms]]` | Regex find/replace rules applied to inbound messages. `[]` inherits from global `[[message_transforms]]`. |
 
 ---
 

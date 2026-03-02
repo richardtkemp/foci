@@ -133,9 +133,9 @@ type AgentConfig struct {
 	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
 	CompactionEffort           string   `toml:"compaction_effort"`            // effort for compaction API calls (empty = use session effort)
-	// Per-agent skills and prompt rules (empty = use global)
-	SkillsDirs  []string     `toml:"skills_dirs"`  // skill directories (empty = use global [skills] dirs)
-	PromptRules []PromptRule `toml:"prompt_rules"` // regex find/replace rules (empty = use global)
+	// Per-agent skills and message transforms (empty = use global)
+	SkillsDirs        []string           `toml:"skills_dirs"`         // skill directories (empty = use global [skills] dirs)
+	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
 	// Per-agent tool behaviour (0 = use global [tools] value)
 	ExecAutoBackground  int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
 	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
@@ -321,7 +321,7 @@ type ToolsConfig struct {
 	WebFetchBlockedDomains     []string `toml:"web_fetch_blocked_domains"`     // domain blacklist
 }
 
-type PromptRule struct {
+type MessageTransform struct {
 	Find    string `toml:"find"`    // regex pattern to match
 	Replace string `toml:"replace"` // replacement string (supports $1, $2, etc.)
 }
@@ -419,7 +419,7 @@ type Config struct {
 	Background         BackgroundConfig      `toml:"background"`
 	MemoryFormation    MemoryFormationConfig `toml:"memory_formation"`
 	Commands           []CommandConfig       `toml:"commands"`
-	PromptRules        []PromptRule          `toml:"prompt_rules"`         // regex find/replace rules applied to inbound messages
+	MessageTransforms  []MessageTransform    `toml:"message_transforms"`   // regex find/replace rules applied to inbound messages
 	WelcomeFile        string                `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
 	SkipSecurityChecks bool                  `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 	DefinedKeys        map[string]bool       `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)

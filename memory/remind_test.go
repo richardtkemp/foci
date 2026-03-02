@@ -188,6 +188,98 @@ func TestReminderMultiple(t *testing.T) {
 	}
 }
 
+func TestAddWakeAndPendingWakes(t *testing.T) {
+	rs := testReminderStore(t)
+
+	id, err := rs.AddWake("test", "check inbox", "30m")
+	if err != nil {
+		t.Fatalf("AddWake: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero row ID")
+	}
+
+	wakes, err := rs.PendingWakes("test")
+	if err != nil {
+		t.Fatalf("PendingWakes: %v", err)
+	}
+	if len(wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(wakes))
+	}
+	if wakes[0].ID != id {
+		t.Errorf("ID = %d, want %d", wakes[0].ID, id)
+	}
+	if wakes[0].Text != "check inbox" {
+		t.Errorf("Text = %q, want %q", wakes[0].Text, "check inbox")
+	}
+}
+
+func TestDueSkipsWakes(t *testing.T) {
+	rs := testReminderStore(t)
+
+	// Add a passive reminder (due now)
+	if err := rs.Add("test", "passive", "now"); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	// Add a wake reminder (due now)
+	if _, err := rs.AddWake("test", "active", "now"); err != nil {
+		t.Fatalf("AddWake: %v", err)
+	}
+
+	due, err := rs.Due("test")
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+	if len(due) != 1 {
+		t.Fatalf("expected 1 due reminder, got %d", len(due))
+	}
+	if due[0].Text != "passive" {
+		t.Errorf("Text = %q, want %q", due[0].Text, "passive")
+	}
+}
+
+func TestDismissAllSkipsWakes(t *testing.T) {
+	rs := testReminderStore(t)
+
+	// Add a passive reminder (due now) and a wake reminder (due now)
+	rs.Add("test", "passive", "now")
+	wakeID, _ := rs.AddWake("test", "active", "now")
+
+	if err := rs.DismissAll("test"); err != nil {
+		t.Fatalf("DismissAll: %v", err)
+	}
+
+	// Passive should be gone
+	due, _ := rs.Due("test")
+	if len(due) != 0 {
+		t.Fatalf("expected 0 due after DismissAll, got %d", len(due))
+	}
+
+	// Wake should still exist
+	wakes, _ := rs.PendingWakes("test")
+	if len(wakes) != 1 {
+		t.Fatalf("expected 1 wake after DismissAll, got %d", len(wakes))
+	}
+	if wakes[0].ID != wakeID {
+		t.Errorf("wake ID = %d, want %d", wakes[0].ID, wakeID)
+	}
+}
+
+func TestDismissWorksForWakes(t *testing.T) {
+	rs := testReminderStore(t)
+
+	id, _ := rs.AddWake("test", "fire me", "now")
+
+	if err := rs.Dismiss(id); err != nil {
+		t.Fatalf("Dismiss wake: %v", err)
+	}
+
+	wakes, _ := rs.PendingWakes("test")
+	if len(wakes) != 0 {
+		t.Fatalf("expected 0 wakes after dismiss, got %d", len(wakes))
+	}
+}
+
 func TestReminderStoreBusyTimeout(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	rs, err := NewReminderStore(dbPath)
