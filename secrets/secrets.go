@@ -195,10 +195,46 @@ func (s *Store) Remove(name string) bool {
 
 // Save writes the current secrets back to the TOML file.
 func (s *Store) Save() error {
-	// Rebuild section map from flat keys
+	sections := flatKeysToSections(s.values)
+
+	var buf strings.Builder
+
+	// Write global sections
+	secNames := sortedKeyUnion(keysOf(sections), keysOf(s.allowedHosts))
+	for i, sec := range secNames {
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		fmt.Fprintf(&buf, "[%s]\n", sec)
+		writeKeyValues(&buf, sections[sec])
+		writeAllowedHosts(&buf, s.allowedHosts[sec])
+	}
+
+	// Write [agents.*] sections
+	agentIDs := sortedKeyUnion(keysOf(s.agentValues), keysOf(s.agentHosts))
+	for _, agentID := range agentIDs {
+		agentSections := flatKeysToSections(s.agentValues[agentID])
+		var agentHosts map[string][]string
+		if s.agentHosts != nil {
+			agentHosts = s.agentHosts[agentID]
+		}
+		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(agentHosts))
+		for _, sec := range subSecs {
+			buf.WriteByte('\n')
+			fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
+			writeKeyValues(&buf, agentSections[sec])
+			writeAllowedHosts(&buf, agentHosts[sec])
+		}
+	}
+
+	return os.WriteFile(s.path, []byte(buf.String()), 0600)
+}
+
+// flatKeysToSections groups "section.key" flat keys into a nested map.
+func flatKeysToSections(flat map[string]string) map[string]map[string]string {
 	sections := make(map[string]map[string]string)
-	for flat, val := range s.values {
-		parts := strings.SplitN(flat, ".", 2)
+	for k, v := range flat {
+		parts := strings.SplitN(k, ".", 2)
 		if len(parts) != 2 {
 			continue
 		}
@@ -206,137 +242,69 @@ func (s *Store) Save() error {
 		if sections[sec] == nil {
 			sections[sec] = make(map[string]string)
 		}
-		sections[sec][key] = val
+		sections[sec][key] = v
 	}
+	return sections
+}
 
-	// Collect all sections (values + allowedHosts may have different keys)
-	allSections := make(map[string]bool)
-	for sec := range sections {
-		allSections[sec] = true
+// keysOf returns the keys of any map[string]V as a slice.
+func keysOf[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	for sec := range s.allowedHosts {
-		allSections[sec] = true
-	}
+	return keys
+}
 
-	var buf strings.Builder
-	// Sort sections for deterministic output
-	secNames := make([]string, 0, len(allSections))
-	for sec := range allSections {
-		secNames = append(secNames, sec)
+// sortedKeyUnion returns the sorted union of keys from multiple slices.
+func sortedKeyUnion(slices ...[]string) []string {
+	seen := make(map[string]bool)
+	for _, s := range slices {
+		for _, k := range s {
+			seen[k] = true
+		}
 	}
-	sort.Strings(secNames)
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
-	for i, sec := range secNames {
+// writeKeyValues writes sorted key = value pairs in TOML format.
+// Integer values are written unquoted; all others are quoted.
+func writeKeyValues(buf *strings.Builder, pairs map[string]string) {
+	if len(pairs) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(pairs))
+	for k := range pairs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
+			fmt.Fprintf(buf, "%s = %s\n", k, pairs[k])
+		} else {
+			fmt.Fprintf(buf, "%s = %q\n", k, pairs[k])
+		}
+	}
+}
+
+// writeAllowedHosts writes an allowed_hosts TOML array if non-empty.
+func writeAllowedHosts(buf *strings.Builder, hosts []string) {
+	if len(hosts) == 0 {
+		return
+	}
+	buf.WriteString("allowed_hosts = [")
+	for i, h := range hosts {
 		if i > 0 {
-			buf.WriteByte('\n')
+			buf.WriteString(", ")
 		}
-		fmt.Fprintf(&buf, "[%s]\n", sec)
-		if pairs, ok := sections[sec]; ok {
-			keys := make([]string, 0, len(pairs))
-			for k := range pairs {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
-					fmt.Fprintf(&buf, "%s = %s\n", k, pairs[k])
-				} else {
-					fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
-				}
-			}
-		}
-		if hosts, ok := s.allowedHosts[sec]; ok && len(hosts) > 0 {
-			buf.WriteString("allowed_hosts = [")
-			for j, h := range hosts {
-				if j > 0 {
-					buf.WriteString(", ")
-				}
-				fmt.Fprintf(&buf, "%q", h)
-			}
-			buf.WriteString("]\n")
-		}
+		fmt.Fprintf(buf, "%q", h)
 	}
-
-	// Write [agents.*] sections
-	if len(s.agentValues) > 0 || len(s.agentHosts) > 0 {
-		agentIDs := make(map[string]bool)
-		for id := range s.agentValues {
-			agentIDs[id] = true
-		}
-		for id := range s.agentHosts {
-			agentIDs[id] = true
-		}
-		sortedIDs := make([]string, 0, len(agentIDs))
-		for id := range agentIDs {
-			sortedIDs = append(sortedIDs, id)
-		}
-		sort.Strings(sortedIDs)
-
-		for _, agentID := range sortedIDs {
-			// Rebuild per-agent sections from flat keys
-			agentSections := make(map[string]map[string]string)
-			for flat, val := range s.agentValues[agentID] {
-				parts := strings.SplitN(flat, ".", 2)
-				if len(parts) != 2 {
-					continue
-				}
-				sec, key := parts[0], parts[1]
-				if agentSections[sec] == nil {
-					agentSections[sec] = make(map[string]string)
-				}
-				agentSections[sec][key] = val
-			}
-
-			// Collect all agent sub-sections
-			allAgentSecs := make(map[string]bool)
-			for sec := range agentSections {
-				allAgentSecs[sec] = true
-			}
-			if s.agentHosts != nil {
-				for sec := range s.agentHosts[agentID] {
-					allAgentSecs[sec] = true
-				}
-			}
-			sortedSecs := make([]string, 0, len(allAgentSecs))
-			for sec := range allAgentSecs {
-				sortedSecs = append(sortedSecs, sec)
-			}
-			sort.Strings(sortedSecs)
-
-			for _, sec := range sortedSecs {
-				buf.WriteByte('\n')
-				fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
-				if pairs, ok := agentSections[sec]; ok {
-					keys := make([]string, 0, len(pairs))
-					for k := range pairs {
-						keys = append(keys, k)
-					}
-					sort.Strings(keys)
-					for _, k := range keys {
-						if _, err := strconv.ParseInt(pairs[k], 10, 64); err == nil {
-							fmt.Fprintf(&buf, "%s = %s\n", k, pairs[k])
-						} else {
-							fmt.Fprintf(&buf, "%s = %q\n", k, pairs[k])
-						}
-					}
-				}
-				if s.agentHosts != nil {
-					if hosts, ok := s.agentHosts[agentID][sec]; ok && len(hosts) > 0 {
-						buf.WriteString("allowed_hosts = [")
-						for j, h := range hosts {
-							if j > 0 {
-								buf.WriteString(", ")
-							}
-							fmt.Fprintf(&buf, "%q", h)
-						}
-						buf.WriteString("]\n")
-					}
-				}
-			}
-		}
-	}
-
-	return os.WriteFile(s.path, []byte(buf.String()), 0600)
+	buf.WriteString("]\n")
 }
 
 var templateRe = regexp.MustCompile(`\{\{secret:([a-zA-Z0-9_.\-]+)\}\}`)
