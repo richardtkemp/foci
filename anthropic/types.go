@@ -55,7 +55,7 @@ func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
 
 	// Extract the type first to determine error handling strategy.
 	var peek struct{ Type string `json:"type"` }
-	json.Unmarshal(data, &peek)
+	_ = json.Unmarshal(data, &peek)
 
 	type alias contentBlockAlias
 	var a alias
@@ -72,7 +72,7 @@ func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
 			Name  string          `json:"name"`
 			Input json.RawMessage `json:"input"`
 		}
-		json.Unmarshal(data, &common)
+		_ = json.Unmarshal(data, &common)
 		cb.ID = common.ID
 		cb.Name = common.Name
 		cb.Input = common.Input
@@ -113,7 +113,7 @@ func (t *ToolDef) UnmarshalJSON(data []byte) error {
 // Name returns the tool name from the raw JSON (works for both custom and server tools).
 func (t ToolDef) Name() string {
 	var v struct{ Name string `json:"name"` }
-	json.Unmarshal(t.raw, &v)
+	_ = json.Unmarshal(t.raw, &v)
 	return v.Name
 }
 

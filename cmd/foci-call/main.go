@@ -42,7 +42,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "foci-call: connect: %v\n", err)
 		os.Exit(1)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Send request (newline-terminated)
 	if _, err := fmt.Fprintf(conn, "%s\n", arg); err != nil {

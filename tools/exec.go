@@ -209,8 +209,8 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 	go func() {
 		defer close(doneRead)
-		io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
-		io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
+		_, _ = io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
+		_, _ = io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
 	}()
 
 	err = proc.Wait()
@@ -278,8 +278,8 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 
 	go func() {
 		defer close(doneRead)
-		io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
-		io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
+		_, _ = io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
+		_, _ = io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
 	}()
 
 	// Wait for completion or threshold

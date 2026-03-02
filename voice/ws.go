@@ -98,7 +98,7 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 			log.Errorf("voice-ws", "upgrade: %v", err)
 			return
 		}
-		defer ws.Close()
+		defer func() { _ = ws.Close() }()
 
 		connID := fmt.Sprintf("%d", time.Now().UnixNano())
 		log.Infof("voice-ws", "connected (conn=%s)", connID)
@@ -124,9 +124,9 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 		}
 
 		// Configure WebSocket timeouts.
-		ws.SetReadDeadline(time.Now().Add(pongWait))
+		_ = ws.SetReadDeadline(time.Now().Add(pongWait))
 		ws.SetPongHandler(func(string) error {
-			ws.SetReadDeadline(time.Now().Add(pongWait))
+			_ = ws.SetReadDeadline(time.Now().Add(pongWait))
 			return nil
 		})
 
@@ -221,7 +221,7 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 		go c.processText(ctx, connID, txt.Content)
 
 	case "ping":
-		c.sendJSON(PongMsg{Type: "pong"})
+		_ = c.sendJSON(PongMsg{Type: "pong"})
 
 	default:
 		c.sendError(fmt.Sprintf("unknown message type: %q", msg.Type))
@@ -263,7 +263,7 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	}
 
-	c.sendJSON(SessionReadyMsg{
+	_ = c.sendJSON(SessionReadyMsg{
 		Type:       "session_ready",
 		AgentID:    c.agentID,
 		SessionKey: c.sessionKey,
@@ -297,7 +297,7 @@ func (c *conn) processAudio(ctx context.Context, connID string, audio []byte, sa
 	}
 
 	// Send transcription to client.
-	c.sendJSON(TranscriptionMsg{Type: "transcription", Text: text})
+	_ = c.sendJSON(TranscriptionMsg{Type: "transcription", Text: text})
 
 	// Run agent pipeline with transcribed text.
 	c.runAgentPipeline(ctx, connID, text)
@@ -320,19 +320,19 @@ func (c *conn) processText(ctx context.Context, connID string, text string) {
 // Must be called with turnMu held.
 func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string) {
 	// response_start
-	c.sendJSON(ResponseStartMsg{Type: "response_start"})
+	_ = c.sendJSON(ResponseStartMsg{Type: "response_start"})
 
 	// Call agent.
 	resp, err := c.cfg.HandleMessage(ctx, c.agentID, c.sessionKey, text)
 	if err != nil {
 		log.Errorf("voice-ws", "agent error (conn=%s): %v", connID, err)
 		c.sendError(fmt.Sprintf("agent error: %v", err))
-		c.sendJSON(ResponseEndMsg{Type: "response_end"})
+		_ = c.sendJSON(ResponseEndMsg{Type: "response_end"})
 		return
 	}
 
 	// response_text (final=true)
-	c.sendJSON(ResponseTextMsg{Type: "response_text", Content: resp, Final: true})
+	_ = c.sendJSON(ResponseTextMsg{Type: "response_text", Content: resp, Final: true})
 
 	// TTS — non-fatal if it fails.
 	tts := c.cfg.AgentTTS(c.agentID)
@@ -341,14 +341,14 @@ func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string)
 		if err != nil {
 			log.Warnf("voice-ws", "TTS error (conn=%s): %v", connID, err)
 		} else if len(audioData) > 0 {
-			c.sendJSON(AudioStartOutMsg{Type: "audio_start", Format: "mp3"})
+			_ = c.sendJSON(AudioStartOutMsg{Type: "audio_start", Format: "mp3"})
 			c.sendAudioChunks(audioData)
-			c.sendJSON(AudioEndOutMsg{Type: "audio_end"})
+			_ = c.sendJSON(AudioEndOutMsg{Type: "audio_end"})
 		}
 	}
 
 	// response_end
-	c.sendJSON(ResponseEndMsg{Type: "response_end"})
+	_ = c.sendJSON(ResponseEndMsg{Type: "response_end"})
 }
 
 // sendAudioChunks sends audio data as binary frames, chunked to audioChunkSize.
@@ -361,7 +361,7 @@ func (c *conn) sendAudioChunks(data []byte) {
 		data = data[len(chunk):]
 
 		c.writeMu.Lock()
-		c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+		_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 		err := c.ws.WriteMessage(websocket.BinaryMessage, chunk)
 		c.writeMu.Unlock()
 
@@ -377,13 +377,13 @@ func (c *conn) sendJSON(v interface{}) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
-	c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+	_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 	return c.ws.WriteJSON(v)
 }
 
 // sendError sends an error message to the client.
 func (c *conn) sendError(msg string) {
-	c.sendJSON(ErrorMsg{Type: "error", Message: msg})
+	_ = c.sendJSON(ErrorMsg{Type: "error", Message: msg})
 }
 
 // pingLoop sends periodic WebSocket pings.
@@ -397,7 +397,7 @@ func (c *conn) pingLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			c.writeMu.Lock()
-			c.ws.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.ws.SetWriteDeadline(time.Now().Add(writeWait))
 			err := c.ws.WriteMessage(websocket.PingMessage, nil)
 			c.writeMu.Unlock()
 			if err != nil {

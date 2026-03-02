@@ -42,11 +42,11 @@ func InitConversation(path string) error {
 
 	// WAL mode for concurrent reads
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("set WAL mode: %w", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("set busy timeout: %w", err)
 	}
 
@@ -63,7 +63,7 @@ func InitConversation(path string) error {
 		error      TEXT
 	)`)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("create messages table: %w", err)
 	}
 
@@ -74,7 +74,7 @@ func InitConversation(path string) error {
 // CloseConversation closes the conversation log database.
 func CloseConversation() {
 	if convLog != nil {
-		convLog.db.Close()
+		_ = convLog.db.Close()
 		convLog = nil
 	}
 }

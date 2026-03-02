@@ -86,7 +86,7 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch URL: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
@@ -149,7 +149,7 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (stri
 	if err != nil {
 		return "", fmt.Errorf("search request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -71,7 +71,7 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open session %s: %w", key, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var messages []anthropic.Message
 	scanner := bufio.NewScanner(f)
@@ -132,7 +132,7 @@ func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Write session metadata on new files
 	if !exists {
@@ -256,7 +256,7 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 	if err != nil {
 		return fmt.Errorf("create session file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if branchMeta != nil {
 		// Branch session: preserve branch_meta with branch_point=0.
@@ -311,7 +311,7 @@ func (s *Store) getStoredCreatedAt(key string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -475,7 +475,7 @@ func (s *Store) CreatedAt(key string) string {
 	if err != nil {
 		return "n/a"
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

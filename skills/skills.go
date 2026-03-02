@@ -103,7 +103,7 @@ func parseSkillFile(path, dir string) (Skill, error) {
 	if err != nil {
 		return Skill{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fm, err := parseFrontmatter(f)
 	if err != nil {

@@ -68,7 +68,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 		}
 		return fmt.Errorf("open: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Check if file is empty.
 	info, err := f.Stat()
@@ -109,8 +109,8 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	}
 	tmpPath := tmpFile.Name()
 	defer func() {
-		tmpFile.Close()
-		os.Remove(tmpPath) // clean up on error
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath) // clean up on error
 	}()
 
 	// Create temp archive file (renamed to final name after scanning determines timestamps).
@@ -120,8 +120,8 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	}
 	tmpArchivePath := tmpArchive.Name()
 	defer func() {
-		tmpArchive.Close()
-		os.Remove(tmpArchivePath) // clean up on error
+		_ = tmpArchive.Close()
+		_ = os.Remove(tmpArchivePath) // clean up on error
 	}()
 	gzw := gzip.NewWriter(tmpArchive)
 
@@ -135,8 +135,8 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 		ts, ok := parseTimestamp(path, line)
 		if ok && ts.Before(cutoff) {
 			// Old line → archive
-			gzw.Write(line)
-			gzw.Write([]byte("\n"))
+			_, _ = gzw.Write(line)
+			_, _ = gzw.Write([]byte("\n"))
 			archivedLines++
 			if archiveFirst.IsZero() || ts.Before(archiveFirst) {
 				archiveFirst = ts
@@ -146,26 +146,26 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 			}
 		} else {
 			// Recent or unparseable → keep
-			tmpFile.Write(line)
-			tmpFile.Write([]byte("\n"))
+			_, _ = tmpFile.Write(line)
+			_, _ = tmpFile.Write([]byte("\n"))
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		gzw.Close()
-		os.Remove(tmpArchivePath)
+		_ = gzw.Close()
+		_ = os.Remove(tmpArchivePath)
 		return fmt.Errorf("scan: %w", err)
 	}
 
 	// Finalize gzip.
 	if err := gzw.Close(); err != nil {
-		os.Remove(tmpArchivePath)
+		_ = os.Remove(tmpArchivePath)
 		return fmt.Errorf("gzip close: %w", err)
 	}
-	tmpArchive.Close()
+	_ = tmpArchive.Close()
 
 	// If nothing was archived, remove the empty archive.
 	if archivedLines == 0 {
-		os.Remove(tmpArchivePath)
+		_ = os.Remove(tmpArchivePath)
 		return nil
 	}
 
@@ -176,7 +176,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	}
 
 	// Close temp file and atomically replace the original.
-	tmpFile.Close()
+	_ = tmpFile.Close()
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp to %s: %w", path, err)
 	}
