@@ -24,9 +24,9 @@ import (
 const (
 	OAuthClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	OAuthAuthURL     = "https://claude.ai/oauth/authorize"
-	OAuthTokenURL    = "https://console.anthropic.com/v1/oauth/token"
-	OAuthRedirectURI = "https://console.anthropic.com/oauth/code/callback"
-	OAuthScopes      = "org:create_api_key user:profile user:inference"
+	OAuthTokenURL    = "https://platform.claude.com/v1/oauth/token"
+	OAuthRedirectURI = "https://platform.claude.com/oauth/code/callback"
+	OAuthScopes      = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers"
 	refreshMargin    = 5 * time.Minute
 )
 
