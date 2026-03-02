@@ -217,7 +217,7 @@ func TestSessionsNoArgsShowsUsage(t *testing.T) {
 func TestSessionsIndexWithResults(t *testing.T) {
 	now := time.Now().UTC()
 	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(sessionType, status string) ([]SessionIndexInfo, error) {
+	deps.IndexFn = func(sessionType, status string, showAll bool) ([]SessionIndexInfo, error) {
 		all := []SessionIndexInfo{
 			{SessionKey: "agent:bot:chat:123", CreatedAt: now, SessionType: "chat", Status: "active"},
 			{SessionKey: "agent:bot:spawn:spawn-456", CreatedAt: now.Add(-time.Hour), ParentSessionKey: "agent:bot:chat:123", SessionType: "spawn", Status: "active"},
@@ -273,7 +273,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 
 func TestSessionsIndexEmpty(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(sessionType, status string) ([]SessionIndexInfo, error) {
+	deps.IndexFn = func(sessionType, status string, showAll bool) ([]SessionIndexInfo, error) {
 		return nil, nil
 	}
 	cmd := NewSessionsCommand(deps)
@@ -300,7 +300,7 @@ func TestSessionsIndexNotAvailable(t *testing.T) {
 
 func TestSessionsKeyboardIncludesIndex(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(string, string) ([]SessionIndexInfo, error) { return nil, nil }
+	deps.IndexFn = func(string, string, bool) ([]SessionIndexInfo, error) { return nil, nil }
 	cmd := NewSessionsCommand(deps)
 	opts := cmd.KeyboardOptions(context.Background())
 	found := false
