@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -704,118 +705,8 @@ func main() {
 	}
 
 	// ========== Memory system ==========
-	// Build global source map from [memory] config
-	globalMemSources := make(map[string]memory.SourceConfig)
-	if len(cfg.Memory.Sources) > 0 {
-		for _, src := range cfg.Memory.Sources {
-			globalMemSources[src.Name] = memory.SourceConfig{Dir: src.Dir, Weight: src.Weight}
-		}
-	}
-
-	// Parse debounce delay
-	memDebounce := time.Duration(0)
-	if cfg.Memory.ReindexDebounce != "" {
-		memDebounce, err = time.ParseDuration(cfg.Memory.ReindexDebounce)
-		if err != nil {
-			log.Fatalf("main", "invalid reindex_debounce: %v", err)
-		}
-	}
-
-	// Check if any agent has per-agent memory sources
-	hasPerAgentMemory := false
-	for _, acfg := range cfg.Agents {
-		if len(acfg.Memory.Sources) > 0 {
-			hasPerAgentMemory = true
-			break
-		}
-	}
-
-	var sharedMemIdx *memory.Index                    // used when no per-agent memory
-	agentMemIndices := make(map[string]*memory.Index) // agentID → per-agent index
-	var reminderStore *memory.ReminderStore
-	var scratchpadStore *memory.Scratchpad
-	var todoStore *memory.TodoStore
-
-	memoryEnabled := len(globalMemSources) > 0 || hasPerAgentMemory
-	if memoryEnabled {
-		if hasPerAgentMemory {
-			// Per-agent indices: each agent gets global + agent-specific sources
-			for _, acfg := range cfg.Agents {
-				combined := buildAgentMemorySources(globalMemSources, acfg.Memory.Sources)
-				if len(combined) == 0 {
-					continue
-				}
-				dbPath := cfg.DataPath(fmt.Sprintf("memory-%s.db", acfg.ID))
-				idx, err := memory.NewIndex(dbPath, combined, memDebounce, cfg.Memory.ConversationWeight)
-				if err != nil {
-					log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
-				}
-				defer idx.Close()
-				if err := idx.Reindex(); err != nil {
-					log.Errorf("main", "reindex memory for agent %q: %v", acfg.ID, err)
-				}
-				if memDebounce > 0 || len(combined) > 0 {
-					if err := idx.Watch(); err != nil {
-						log.Errorf("main", "start memory file watching for agent %q: %v", acfg.ID, err)
-					}
-				}
-				agentMemIndices[acfg.ID] = idx
-				log.Infof("main", "agent %q: memory index with %d sources", acfg.ID, len(combined))
-			}
-
-			// Conversation hook: route to agent's index by session key prefix
-			log.ConversationHook = func(text, session string) {
-				for agentID, idx := range agentMemIndices {
-					if strings.HasPrefix(session, "agent:"+agentID+":") {
-						idx.IndexConversation(text, session)
-						return
-					}
-				}
-			}
-		} else {
-			// Shared index (backward compat — no agent has per-agent memory)
-			memDbPath := cfg.DataPath("memory.db")
-			sharedMemIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce, cfg.Memory.ConversationWeight)
-			if err != nil {
-				log.Fatalf("main", "create memory index: %v", err)
-			}
-			defer sharedMemIdx.Close()
-
-			if err := sharedMemIdx.Reindex(); err != nil {
-				log.Errorf("main", "reindex memory: %v", err)
-			}
-			if memDebounce > 0 || len(cfg.Memory.Sources) > 0 {
-				if err := sharedMemIdx.Watch(); err != nil {
-					log.Errorf("main", "start memory file watching: %v", err)
-				}
-			}
-			log.ConversationHook = sharedMemIdx.IndexConversation
-		}
-
-		// Reminder store (shared across agents)
-		reminderDbPath := cfg.DataPath("reminders.db")
-		reminderStore, err = memory.NewReminderStore(reminderDbPath)
-		if err != nil {
-			log.Fatalf("main", "create reminder store: %v", err)
-		}
-		defer reminderStore.Close()
-
-		// Scratchpad (shared across agents)
-		scratchpadDbPath := cfg.DataPath("scratchpad.db")
-		scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
-		if err != nil {
-			log.Fatalf("main", "create scratchpad: %v", err)
-		}
-		defer scratchpadStore.Close()
-
-		// Todo list (shared across agents, agent_id scoped per-agent)
-		todoDbPath := cfg.DataPath("todo.db")
-		todoStore, err = memory.NewTodoStore(todoDbPath)
-		if err != nil {
-			log.Fatalf("main", "create todo store: %v", err)
-		}
-		defer todoStore.Close()
-	}
+	mem := initMemorySystem(cfg)
+	defer mem.cleanup()
 
 	// Shared: Tool call detail persistence (for show_tool_calls=full inline keyboard expansion)
 	toolDetailDbPath := cfg.DataPath("tool_details.db")
@@ -930,8 +821,8 @@ func main() {
 
 	for _, acfg := range cfg.Agents {
 		// Resolve memory index: per-agent (if configured) or shared
-		agentMemIdx := sharedMemIdx
-		if idx, ok := agentMemIndices[acfg.ID]; ok {
+		agentMemIdx := mem.sharedIdx
+		if idx, ok := mem.agentIndices[acfg.ID]; ok {
 			agentMemIdx = idx
 		}
 
@@ -945,9 +836,9 @@ func main() {
 			bwStore:         bwStore,
 			stateStore:      stateStore,
 			memIdx:          agentMemIdx,
-			reminderStore:   reminderStore,
-			scratchpadStore: scratchpadStore,
-			todoStore:       todoStore,
+			reminderStore:   mem.reminderStore,
+			scratchpadStore: mem.scratchpadStore,
+			todoStore:       mem.todoStore,
 			toolDetailStore: toolDetailStore,
 			sessionIndex:    sessionIndex,
 			sttProvider:     sttProvider,
@@ -1021,7 +912,7 @@ func main() {
 				Keepalive:                 acfg.Keepalive,
 				Background:                acfg.Background,
 				MemoryFormation:           acfg.MemoryFormation,
-				TodoStore:                 todoStore,
+				TodoStore:                 mem.todoStore,
 				UsageClient:               usageClient,
 				StateStore:                stateStore,
 				BranchFunc:                branchFn,
@@ -2943,6 +2834,144 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 	}
 
 	return combined
+}
+
+// memoryResult holds the outputs of initMemorySystem.
+type memoryResult struct {
+	sharedIdx     *memory.Index
+	agentIndices  map[string]*memory.Index
+	reminderStore *memory.ReminderStore
+	scratchpadStore *memory.Scratchpad
+	todoStore     *memory.TodoStore
+	cleanup       func()
+}
+
+// initMemorySystem sets up memory indices, reminder/scratchpad/todo stores,
+// and conversation hooks. Returns a memoryResult with a cleanup function
+// that closes all opened resources.
+func initMemorySystem(cfg *config.Config) memoryResult {
+	var closers []io.Closer
+	result := memoryResult{
+		agentIndices: make(map[string]*memory.Index),
+		cleanup:      func() {},
+	}
+
+	// Build global source map from [memory] config
+	globalMemSources := make(map[string]memory.SourceConfig)
+	for _, src := range cfg.Memory.Sources {
+		globalMemSources[src.Name] = memory.SourceConfig{Dir: src.Dir, Weight: src.Weight}
+	}
+
+	// Parse debounce delay
+	var memDebounce time.Duration
+	if cfg.Memory.ReindexDebounce != "" {
+		var err error
+		memDebounce, err = time.ParseDuration(cfg.Memory.ReindexDebounce)
+		if err != nil {
+			log.Fatalf("main", "invalid reindex_debounce: %v", err)
+		}
+	}
+
+	// Check if any agent has per-agent memory sources
+	hasPerAgentMemory := false
+	for _, acfg := range cfg.Agents {
+		if len(acfg.Memory.Sources) > 0 {
+			hasPerAgentMemory = true
+			break
+		}
+	}
+
+	memoryEnabled := len(globalMemSources) > 0 || hasPerAgentMemory
+	if !memoryEnabled {
+		return result
+	}
+
+	if hasPerAgentMemory {
+		// Per-agent indices: each agent gets global + agent-specific sources
+		for _, acfg := range cfg.Agents {
+			combined := buildAgentMemorySources(globalMemSources, acfg.Memory.Sources)
+			if len(combined) == 0 {
+				continue
+			}
+			dbPath := cfg.DataPath(fmt.Sprintf("memory-%s.db", acfg.ID))
+			idx, err := memory.NewIndex(dbPath, combined, memDebounce, cfg.Memory.ConversationWeight)
+			if err != nil {
+				log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
+			}
+			closers = append(closers, idx)
+			if err := idx.Reindex(); err != nil {
+				log.Errorf("main", "reindex memory for agent %q: %v", acfg.ID, err)
+			}
+			if memDebounce > 0 || len(combined) > 0 {
+				if err := idx.Watch(); err != nil {
+					log.Errorf("main", "start memory file watching for agent %q: %v", acfg.ID, err)
+				}
+			}
+			result.agentIndices[acfg.ID] = idx
+			log.Infof("main", "agent %q: memory index with %d sources", acfg.ID, len(combined))
+		}
+
+		// Conversation hook: route to agent's index by session key prefix
+		log.ConversationHook = func(text, session string) {
+			for agentID, idx := range result.agentIndices {
+				if strings.HasPrefix(session, "agent:"+agentID+":") {
+					idx.IndexConversation(text, session)
+					return
+				}
+			}
+		}
+	} else {
+		// Shared index (backward compat — no agent has per-agent memory)
+		memDbPath := cfg.DataPath("memory.db")
+		var err error
+		result.sharedIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce, cfg.Memory.ConversationWeight)
+		if err != nil {
+			log.Fatalf("main", "create memory index: %v", err)
+		}
+		closers = append(closers, result.sharedIdx)
+
+		if err := result.sharedIdx.Reindex(); err != nil {
+			log.Errorf("main", "reindex memory: %v", err)
+		}
+		if memDebounce > 0 || len(cfg.Memory.Sources) > 0 {
+			if err := result.sharedIdx.Watch(); err != nil {
+				log.Errorf("main", "start memory file watching: %v", err)
+			}
+		}
+		log.ConversationHook = result.sharedIdx.IndexConversation
+	}
+
+	// Reminder store (shared across agents)
+	reminderDbPath := cfg.DataPath("reminders.db")
+	var err error
+	result.reminderStore, err = memory.NewReminderStore(reminderDbPath)
+	if err != nil {
+		log.Fatalf("main", "create reminder store: %v", err)
+	}
+	closers = append(closers, result.reminderStore)
+
+	// Scratchpad (shared across agents)
+	scratchpadDbPath := cfg.DataPath("scratchpad.db")
+	result.scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
+	if err != nil {
+		log.Fatalf("main", "create scratchpad: %v", err)
+	}
+	closers = append(closers, result.scratchpadStore)
+
+	// Todo list (shared across agents, agent_id scoped per-agent)
+	todoDbPath := cfg.DataPath("todo.db")
+	result.todoStore, err = memory.NewTodoStore(todoDbPath)
+	if err != nil {
+		log.Fatalf("main", "create todo store: %v", err)
+	}
+	closers = append(closers, result.todoStore)
+
+	result.cleanup = func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i].Close()
+		}
+	}
+	return result
 }
 
 // resolveSecretKeys resolves API keys from the secrets store, with config fallbacks.
