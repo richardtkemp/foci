@@ -297,6 +297,7 @@ func BuildAuthURL(challenge string) (authURL, state string) {
 	rand.Read(buf) // crypto/rand never fails on supported platforms
 	state = base64.RawURLEncoding.EncodeToString(buf)
 	params := url.Values{
+		"code":                  {"true"}, // Anthropic-specific: required for auth page to function
 		"response_type":         {"code"},
 		"client_id":             {OAuthClientID},
 		"redirect_uri":          {OAuthRedirectURI},
