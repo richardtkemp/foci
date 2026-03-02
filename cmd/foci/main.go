@@ -642,11 +642,11 @@ func authUsage() {
 
 Authenticate with Anthropic using a Claude Code setup token.
 Run 'claude setup-token' in another terminal, then paste the token.
-Token is saved to secrets.toml alongside foci.toml.
+Token is saved to secrets.toml.
 
 Flags:
-  --config <path>       Path to foci.toml (used to locate secrets.toml)
-                        Default: foci.toml in current directory
+  --config <path>       Path to foci.toml (secrets.toml is written alongside it)
+                        Default secrets path: ~/config/secrets.toml
 `)
 }
 
@@ -657,7 +657,7 @@ func cmdAuth(args []string) error {
 	}
 
 	// Parse --config flag
-	configPath := "foci.toml"
+	configPath := ""
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--config" && i+1 < len(args) {
 			configPath = args[i+1]
@@ -667,7 +667,33 @@ func cmdAuth(args []string) error {
 		}
 	}
 
-	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	var secretsPath string
+	if configPath != "" {
+		// --config explicitly provided: derive secrets path from it
+		secretsPath = filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	} else {
+		// Default: ~/config/secrets.toml
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		secretsPath = filepath.Join(home, "config", "secrets.toml")
+	}
+
+	// If the file doesn't exist, confirm path with the user before writing
+	if _, err := os.Stat(secretsPath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Secrets file will be created at: %s\nConfirm? [Y/n] ", secretsPath)
+		var answer string
+		fmt.Scanln(&answer)
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		if answer != "" && answer != "y" && answer != "yes" {
+			return fmt.Errorf("aborted")
+		}
+		if err := os.MkdirAll(filepath.Dir(secretsPath), 0755); err != nil {
+			return fmt.Errorf("create directory %s: %w", filepath.Dir(secretsPath), err)
+		}
+	}
+
 	store, err := secrets.Load(secretsPath)
 	if err != nil {
 		return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
