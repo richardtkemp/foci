@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -128,6 +129,9 @@ func Init(cfg Config) error {
 	var eventOut io.Writer = os.Stderr
 	var eventFile *os.File
 	if cfg.EventFile != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.EventFile), 0755); err != nil {
+			return fmt.Errorf("create log dir for %s: %w", cfg.EventFile, err)
+		}
 		f, err := os.OpenFile(cfg.EventFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("open event log %s: %w", cfg.EventFile, err)
@@ -139,6 +143,9 @@ func Init(cfg Config) error {
 	// API log
 	var apiFile *os.File
 	if cfg.APIFile != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.APIFile), 0755); err != nil {
+			return fmt.Errorf("create log dir for %s: %w", cfg.APIFile, err)
+		}
 		f, err := os.OpenFile(cfg.APIFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("open API log %s: %w", cfg.APIFile, err)
@@ -149,6 +156,9 @@ func Init(cfg Config) error {
 	// Payload log (full request/response bodies)
 	var payloadFile *os.File
 	if cfg.PayloadFile != "" {
+		if err := os.MkdirAll(filepath.Dir(cfg.PayloadFile), 0755); err != nil {
+			return fmt.Errorf("create log dir for %s: %w", cfg.PayloadFile, err)
+		}
 		f, err := os.OpenFile(cfg.PayloadFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return fmt.Errorf("open payload log %s: %w", cfg.PayloadFile, err)
