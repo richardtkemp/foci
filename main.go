@@ -66,36 +66,33 @@ type agentInstance struct {
 // Used for primary bots, per-agent multiball bots, and shared pool bots
 // acquired or restored for a specific agent.
 func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *config.Config) {
-	if acfg.ShowToolCalls != nil {
+	switch {
+	case acfg.ShowToolCalls != nil:
 		bot.SetShowToolCalls(string(*acfg.ShowToolCalls))
-	} else if cfg.Defaults.ShowToolCalls != nil {
+	case cfg.Defaults.ShowToolCalls != nil:
 		bot.SetShowToolCalls(string(*cfg.Defaults.ShowToolCalls))
-	} else {
-		bot.SetShowToolCalls(string(config.ToolCallOff))
 	}
-	if acfg.ShowThinking != nil {
+	switch {
+	case acfg.ShowThinking != nil:
 		bot.SetShowThinking(string(*acfg.ShowThinking))
-	} else if cfg.Defaults.ShowThinking != nil {
+	case cfg.Defaults.ShowThinking != nil:
 		bot.SetShowThinking(string(*cfg.Defaults.ShowThinking))
-	} else {
-		bot.SetShowThinking(string(config.ShowThinkingOff))
 	}
-	if acfg.DisplayWidth != nil {
+	switch {
+	case acfg.DisplayWidth != nil:
 		bot.SetDisplayWidth(*acfg.DisplayWidth)
-	} else if cfg.Defaults.DisplayWidth != nil {
+	case cfg.Defaults.DisplayWidth != nil:
 		bot.SetDisplayWidth(*cfg.Defaults.DisplayWidth)
-	} else {
-		bot.SetDisplayWidth(44)
 	}
 	if acfg.MessagesInLog != nil {
 		bot.SetMessagesInLog(*acfg.MessagesInLog)
 	} else {
 		bot.SetMessagesInLog(cfg.Logging.MessagesInLog)
 	}
-	if filesDir := acfg.ReceivedFilesDir; filesDir != "" {
-		bot.SetReceivedFilesDir(filesDir)
-	} else if filesDir := cfg.Telegram.ReceivedFilesDir; filesDir != "" {
-		bot.SetReceivedFilesDir(filesDir)
+	if acfg.ReceivedFilesDir != "" {
+		bot.SetReceivedFilesDir(acfg.ReceivedFilesDir)
+	} else if cfg.Telegram.ReceivedFilesDir != "" {
+		bot.SetReceivedFilesDir(cfg.Telegram.ReceivedFilesDir)
 	}
 }
 
