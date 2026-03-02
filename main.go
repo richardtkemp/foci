@@ -1918,228 +1918,9 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewTmuxCommand(tmuxTool.Execute))
-	// Token count cache for /context (persists across calls, invalidated when context changes)
-	var (
-		tcCacheMu     sync.Mutex
-		tcCacheCounts *command.TokenCounts
-		tcCacheMsgCnt int
-		tcCacheSysChr int
-	)
-	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, func() command.ContextInfo {
-		// System prompt section sizes from workspace files
-		var sections []command.SystemSection
-		for _, s := range bootstrap.SectionSizes() {
-			sections = append(sections, command.SystemSection{Name: s.Name, Chars: s.Chars})
-		}
-		// Skills/extra system blocks character count
-		var skillsChars int
-		for _, b := range ag.ExtraSystemBlocks {
-			skillsChars += len(b.Text)
-		}
-		// System chars total (used as cache key)
-		totalSysChars := len(ag.EnvironmentBlock) + skillsChars
-		for _, s := range sections {
-			totalSysChars += s.Chars
-		}
-		// Load messages once (shared between breakdown and counting)
-		sk := defaultSessionKey()
-		var msgs []anthropic.Message
-		if sk != "" {
-			if loaded, err := p.sessions.LoadFull(sk); err == nil {
-				msgs = loaded
-			}
-		}
-		msgCount := len(msgs)
-		// Message breakdown from loaded messages
-		var mb command.MessageBreakdown
-		for _, m := range msgs {
-			chars := 0
-			var hasToolResult bool
-			for _, cb := range m.Content {
-				switch cb.Type {
-				case "text":
-					chars += len(cb.Text)
-				case "tool_use":
-					chars += len(cb.Name) + len(cb.Input)
-				case "tool_result":
-					chars += len(cb.Content)
-					hasToolResult = true
-				}
-			}
-			switch {
-			case hasToolResult:
-				mb.ToolResultChars += chars
-			case m.Role == "user":
-				mb.UserChars += chars
-				mb.UserCount++
-			case m.Role == "assistant":
-				mb.AssistantChars += chars
-				mb.AssistantCount++
-			}
-		}
-		return command.ContextInfo{
-			SessionKey:       sk,
-			Model:            ag.Model,
-			CompactionThresh: compactionThreshold,
-			ContextLimit:     compaction.ContextLimit(ag.Model),
-			SystemSections:   sections,
-			EnvironmentChars: len(ag.EnvironmentBlock),
-			SkillsChars:      skillsChars,
-			Messages:         mb,
-			CountTokensFn: func(ctx context.Context) (*command.TokenCounts, error) {
-				// Check cache
-				tcCacheMu.Lock()
-				if tcCacheCounts != nil && tcCacheMsgCnt == msgCount && tcCacheSysChr == totalSysChars {
-					r := tcCacheCounts
-					tcCacheMu.Unlock()
-					return r, nil
-				}
-				tcCacheMu.Unlock()
-
-				// Build full system blocks (same assembly as agent)
-				bootstrapBlocks := bootstrap.SystemBlocks()
-				bootstrapSizes := bootstrap.SectionSizes()
-				// Strip cache_control from bootstrap blocks
-				for i := range bootstrapBlocks {
-					bootstrapBlocks[i].CacheControl = nil
-				}
-
-				var allSystem []anthropic.SystemBlock
-				if ag.EnvironmentBlock != "" {
-					allSystem = append(allSystem, anthropic.SystemBlock{Type: "text", Text: ag.EnvironmentBlock})
-				}
-				allSystem = append(allSystem, bootstrapBlocks...)
-				var cleanExtra []anthropic.SystemBlock
-				if len(ag.ExtraSystemBlocks) > 0 {
-					cleanExtra = make([]anthropic.SystemBlock, len(ag.ExtraSystemBlocks))
-					copy(cleanExtra, ag.ExtraSystemBlocks)
-					for i := range cleanExtra {
-						cleanExtra[i].CacheControl = nil
-					}
-					allSystem = append(allSystem, cleanExtra...)
-				}
-
-				// Build per-section list for individual counting
-				type sectionDef struct {
-					name   string
-					blocks []anthropic.SystemBlock
-				}
-				var secs []sectionDef
-				if ag.EnvironmentBlock != "" {
-					secs = append(secs, sectionDef{
-						name:   "Environment",
-						blocks: []anthropic.SystemBlock{{Type: "text", Text: ag.EnvironmentBlock}},
-					})
-				}
-				for i, sz := range bootstrapSizes {
-					if i < len(bootstrapBlocks) {
-						secs = append(secs, sectionDef{
-							name:   sz.Name,
-							blocks: []anthropic.SystemBlock{bootstrapBlocks[i]},
-						})
-					}
-				}
-				if len(cleanExtra) > 0 {
-					secs = append(secs, sectionDef{name: "Skills", blocks: cleanExtra})
-				}
-
-				// Common request components
-				dummyMsgs := []anthropic.Message{
-					{Role: "user", Content: anthropic.TextContent(".")},
-				}
-				toolDefs := registry.ToolDefs()
-				maxOutput := acfg.MaxOutputTokens
-				if maxOutput <= 0 {
-					maxOutput = 8192
-				}
-				messages := msgs
-				if len(messages) == 0 {
-					messages = dummyMsgs
-				}
-
-				// Parallel API calls
-				var wg sync.WaitGroup
-				var fullCount, systemCount, baselineCount int
-				var fullErr, systemErr, baselineErr error
-				rawSecCounts := make([]int, len(secs))
-				rawSecErrs := make([]error, len(secs))
-
-				wg.Add(3 + len(secs))
-
-				go func() {
-					defer wg.Done()
-					fullCount, fullErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
-						Model: ag.Model, MaxTokens: maxOutput,
-						System: allSystem, Messages: messages, Tools: toolDefs,
-					})
-				}()
-				go func() {
-					defer wg.Done()
-					systemCount, systemErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
-						Model: ag.Model, MaxTokens: maxOutput,
-						System: allSystem, Messages: dummyMsgs, Tools: toolDefs,
-					})
-				}()
-				go func() {
-					defer wg.Done()
-					baselineCount, baselineErr = p.client.CountTokens(ctx, &anthropic.MessageRequest{
-						Model: ag.Model, MaxTokens: maxOutput,
-						Messages: dummyMsgs, Tools: toolDefs,
-					})
-				}()
-				for i, sec := range secs {
-					i, sec := i, sec
-					go func() {
-						defer wg.Done()
-						rawSecCounts[i], rawSecErrs[i] = p.client.CountTokens(ctx, &anthropic.MessageRequest{
-							Model: ag.Model, MaxTokens: maxOutput,
-							System: sec.blocks, Messages: dummyMsgs, Tools: toolDefs,
-						})
-					}()
-				}
-
-				wg.Wait()
-
-				if fullErr != nil {
-					return nil, fullErr
-				}
-				if systemErr != nil {
-					return nil, systemErr
-				}
-				if baselineErr != nil {
-					return nil, baselineErr
-				}
-
-				tc := &command.TokenCounts{
-					Total:        fullCount,
-					System:       systemCount - baselineCount,
-					Conversation: fullCount - systemCount,
-					Tools:        baselineCount,
-				}
-				for i, sec := range secs {
-					tokens := 0
-					if rawSecErrs[i] == nil {
-						tokens = rawSecCounts[i] - baselineCount
-						if tokens < 0 {
-							tokens = 0
-						}
-					}
-					tc.Sections = append(tc.Sections, command.SectionTokens{
-						Name: sec.name, Tokens: tokens,
-					})
-				}
-
-				// Update cache
-				tcCacheMu.Lock()
-				tcCacheCounts = tc
-				tcCacheMsgCnt = msgCount
-				tcCacheSysChr = totalSysChars
-				tcCacheMu.Unlock()
-
-				return tc, nil
-			},
-		}
-	}))
+	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, buildContextInfoFn(
+		ag, bootstrap, registry, acfg, p.client, p.sessions, defaultSessionKey, compactionThreshold,
+	)))
 	cmds.Register(command.NewResetCommand(func() error {
 		if ag.IsProcessing() {
 			return fmt.Errorf("agent is processing — send /stop first, then /reset")
@@ -2750,6 +2531,244 @@ func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, sess config.Sessions
 	}
 	for _, w := range bootstrap.CheckSizes(maxFile, maxTotal) {
 		log.Warnf(agentID, "%s", w)
+	}
+}
+
+// buildContextInfoFn returns the closure used by the /context command.
+// It computes system prompt section sizes, message breakdown, and provides
+// a CountTokensFn that fires parallel API calls to count tokens per section.
+func buildContextInfoFn(
+	ag *agent.Agent,
+	bootstrap *workspace.Bootstrap,
+	registry *tools.Registry,
+	acfg config.AgentConfig,
+	client *anthropic.Client,
+	sessions *session.Store,
+	defaultSessionKey func() string,
+	compactionThreshold float64,
+) func() command.ContextInfo {
+	// Token count cache (persists across calls, invalidated when context changes)
+	var (
+		tcCacheMu     sync.Mutex
+		tcCacheCounts *command.TokenCounts
+		tcCacheMsgCnt int
+		tcCacheSysChr int
+	)
+
+	return func() command.ContextInfo {
+		// System prompt section sizes from workspace files
+		var sections []command.SystemSection
+		for _, s := range bootstrap.SectionSizes() {
+			sections = append(sections, command.SystemSection{Name: s.Name, Chars: s.Chars})
+		}
+		// Skills/extra system blocks character count
+		var skillsChars int
+		for _, b := range ag.ExtraSystemBlocks {
+			skillsChars += len(b.Text)
+		}
+		// System chars total (used as cache key)
+		totalSysChars := len(ag.EnvironmentBlock) + skillsChars
+		for _, s := range sections {
+			totalSysChars += s.Chars
+		}
+		// Load messages once (shared between breakdown and counting)
+		sk := defaultSessionKey()
+		var msgs []anthropic.Message
+		if sk != "" {
+			if loaded, err := sessions.LoadFull(sk); err == nil {
+				msgs = loaded
+			}
+		}
+		msgCount := len(msgs)
+		// Message breakdown from loaded messages
+		var mb command.MessageBreakdown
+		for _, m := range msgs {
+			chars := 0
+			var hasToolResult bool
+			for _, cb := range m.Content {
+				switch cb.Type {
+				case "text":
+					chars += len(cb.Text)
+				case "tool_use":
+					chars += len(cb.Name) + len(cb.Input)
+				case "tool_result":
+					chars += len(cb.Content)
+					hasToolResult = true
+				}
+			}
+			switch {
+			case hasToolResult:
+				mb.ToolResultChars += chars
+			case m.Role == "user":
+				mb.UserChars += chars
+				mb.UserCount++
+			case m.Role == "assistant":
+				mb.AssistantChars += chars
+				mb.AssistantCount++
+			}
+		}
+		return command.ContextInfo{
+			SessionKey:       sk,
+			Model:            ag.Model,
+			CompactionThresh: compactionThreshold,
+			ContextLimit:     compaction.ContextLimit(ag.Model),
+			SystemSections:   sections,
+			EnvironmentChars: len(ag.EnvironmentBlock),
+			SkillsChars:      skillsChars,
+			Messages:         mb,
+			CountTokensFn: func(ctx context.Context) (*command.TokenCounts, error) {
+				// Check cache
+				tcCacheMu.Lock()
+				if tcCacheCounts != nil && tcCacheMsgCnt == msgCount && tcCacheSysChr == totalSysChars {
+					r := tcCacheCounts
+					tcCacheMu.Unlock()
+					return r, nil
+				}
+				tcCacheMu.Unlock()
+
+				// Build full system blocks (same assembly as agent)
+				bootstrapBlocks := bootstrap.SystemBlocks()
+				bootstrapSizes := bootstrap.SectionSizes()
+				// Strip cache_control from bootstrap blocks
+				for i := range bootstrapBlocks {
+					bootstrapBlocks[i].CacheControl = nil
+				}
+
+				var allSystem []anthropic.SystemBlock
+				if ag.EnvironmentBlock != "" {
+					allSystem = append(allSystem, anthropic.SystemBlock{Type: "text", Text: ag.EnvironmentBlock})
+				}
+				allSystem = append(allSystem, bootstrapBlocks...)
+				var cleanExtra []anthropic.SystemBlock
+				if len(ag.ExtraSystemBlocks) > 0 {
+					cleanExtra = make([]anthropic.SystemBlock, len(ag.ExtraSystemBlocks))
+					copy(cleanExtra, ag.ExtraSystemBlocks)
+					for i := range cleanExtra {
+						cleanExtra[i].CacheControl = nil
+					}
+					allSystem = append(allSystem, cleanExtra...)
+				}
+
+				// Build per-section list for individual counting
+				type sectionDef struct {
+					name   string
+					blocks []anthropic.SystemBlock
+				}
+				var secs []sectionDef
+				if ag.EnvironmentBlock != "" {
+					secs = append(secs, sectionDef{
+						name:   "Environment",
+						blocks: []anthropic.SystemBlock{{Type: "text", Text: ag.EnvironmentBlock}},
+					})
+				}
+				for i, sz := range bootstrapSizes {
+					if i < len(bootstrapBlocks) {
+						secs = append(secs, sectionDef{
+							name:   sz.Name,
+							blocks: []anthropic.SystemBlock{bootstrapBlocks[i]},
+						})
+					}
+				}
+				if len(cleanExtra) > 0 {
+					secs = append(secs, sectionDef{name: "Skills", blocks: cleanExtra})
+				}
+
+				// Common request components
+				dummyMsgs := []anthropic.Message{
+					{Role: "user", Content: anthropic.TextContent(".")},
+				}
+				toolDefs := registry.ToolDefs()
+				maxOutput := acfg.MaxOutputTokens
+				if maxOutput <= 0 {
+					maxOutput = 8192
+				}
+				messages := msgs
+				if len(messages) == 0 {
+					messages = dummyMsgs
+				}
+
+				// Parallel API calls
+				var wg sync.WaitGroup
+				var fullCount, systemCount, baselineCount int
+				var fullErr, systemErr, baselineErr error
+				rawSecCounts := make([]int, len(secs))
+				rawSecErrs := make([]error, len(secs))
+
+				wg.Add(3 + len(secs))
+
+				go func() {
+					defer wg.Done()
+					fullCount, fullErr = client.CountTokens(ctx, &anthropic.MessageRequest{
+						Model: ag.Model, MaxTokens: maxOutput,
+						System: allSystem, Messages: messages, Tools: toolDefs,
+					})
+				}()
+				go func() {
+					defer wg.Done()
+					systemCount, systemErr = client.CountTokens(ctx, &anthropic.MessageRequest{
+						Model: ag.Model, MaxTokens: maxOutput,
+						System: allSystem, Messages: dummyMsgs, Tools: toolDefs,
+					})
+				}()
+				go func() {
+					defer wg.Done()
+					baselineCount, baselineErr = client.CountTokens(ctx, &anthropic.MessageRequest{
+						Model: ag.Model, MaxTokens: maxOutput,
+						Messages: dummyMsgs, Tools: toolDefs,
+					})
+				}()
+				for i, sec := range secs {
+					i, sec := i, sec
+					go func() {
+						defer wg.Done()
+						rawSecCounts[i], rawSecErrs[i] = client.CountTokens(ctx, &anthropic.MessageRequest{
+							Model: ag.Model, MaxTokens: maxOutput,
+							System: sec.blocks, Messages: dummyMsgs, Tools: toolDefs,
+						})
+					}()
+				}
+
+				wg.Wait()
+
+				if fullErr != nil {
+					return nil, fullErr
+				}
+				if systemErr != nil {
+					return nil, systemErr
+				}
+				if baselineErr != nil {
+					return nil, baselineErr
+				}
+
+				tc := &command.TokenCounts{
+					Total:        fullCount,
+					System:       systemCount - baselineCount,
+					Conversation: fullCount - systemCount,
+					Tools:        baselineCount,
+				}
+				for i, sec := range secs {
+					tokens := 0
+					if rawSecErrs[i] == nil {
+						tokens = rawSecCounts[i] - baselineCount
+						if tokens < 0 {
+							tokens = 0
+						}
+					}
+					tc.Sections = append(tc.Sections, command.SectionTokens{
+						Name: sec.name, Tokens: tokens,
+					})
+				}
+
+				// Update cache
+				tcCacheMu.Lock()
+				tcCacheCounts = tc
+				tcCacheMsgCnt = msgCount
+				tcCacheSysChr = totalSysChars
+				tcCacheMu.Unlock()
+
+				return tc, nil
+			},
+		}
 	}
 }
 
