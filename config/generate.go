@@ -15,7 +15,7 @@ type SetupOptions struct {
 
 // SecretsOptions holds credentials for secrets.toml generation.
 type SecretsOptions struct {
-	AgentID string // agent identifier (matches bot name in [telegram.bots.<id>])
+	AgentID string // agent identifier (token stored as "telegram.<id>" in secrets)
 
 	// Anthropic auth
 	SetupToken string // setup-token from `claude setup-token` or API key
@@ -56,6 +56,7 @@ func GenerateConfig(opts SetupOptions) string {
 			quoted[i] = fmt.Sprintf("%q", u)
 		}
 		b.WriteString(fmt.Sprintf("allowed_users = [%s]\n", strings.Join(quoted, ", ")))
+		b.WriteString("\n")
 	}
 
 	return b.String()
@@ -73,10 +74,10 @@ func GenerateSecrets(opts SecretsOptions) string {
 		b.WriteString("\n")
 	}
 
-	// [telegram.bots.<id>]
+	// [telegram] — bot token stored as "telegram.<agentID>"
 	if opts.BotToken != "" && opts.AgentID != "" {
-		b.WriteString(fmt.Sprintf("[telegram.bots.%s]\n", opts.AgentID))
-		b.WriteString(fmt.Sprintf("token = %q\n", opts.BotToken))
+		b.WriteString("[telegram]\n")
+		b.WriteString(fmt.Sprintf("%s = %q\n", opts.AgentID, opts.BotToken))
 	}
 
 	return b.String()

@@ -17,7 +17,6 @@ type AgentNewDeps struct {
 	HomeDir      string // base dir for workspaces (e.g. /home/foci)
 	ListFn       func() []AgentInfo
 	SecretNames  func() []string // current secret names
-	BotNames     func() []string // existing bot names from [telegram.bots] config
 	ResolveModel func(string) string
 }
 
@@ -141,11 +140,14 @@ func (w *agentWizard) handleToken(text string) (string, bool) {
 	parts := strings.SplitN(text, ".", 2)
 	w.botName = parts[len(parts)-1]
 
-	// Check for duplicate bot name in existing config
-	if w.deps.BotNames != nil {
-		for _, name := range w.deps.BotNames() {
-			if name == w.botName {
-				return fmt.Sprintf("Bot `%s` already exists in config (`[telegram.bots.%s]`). Choose a different secret name:", w.botName, w.botName), false
+	// Check for duplicate secret in existing secrets store
+	if w.deps.SecretNames != nil {
+		for _, name := range w.deps.SecretNames() {
+			if name == text {
+				// Secret already exists — that's fine, it means the token is already configured.
+				// No duplicate error needed; multiple agents can share a secret key in theory,
+				// but more importantly we just need the secret to exist.
+				break
 			}
 		}
 	}
@@ -153,10 +155,12 @@ func (w *agentWizard) handleToken(text string) (string, bool) {
 	// Check if the secret exists
 	var warning string
 	found := false
-	for _, name := range w.deps.SecretNames() {
-		if name == text {
-			found = true
-			break
+	if w.deps.SecretNames != nil {
+		for _, name := range w.deps.SecretNames() {
+			if name == text {
+				found = true
+				break
+			}
 		}
 	}
 	if !found {
@@ -281,7 +285,15 @@ func generateConfigEntry(w *agentWizard, workspace string) string {
 	sb.WriteString("[[agents]]\n")
 	fmt.Fprintf(&sb, "id = %q\n", w.id)
 	fmt.Fprintf(&sb, "model = %q\n", w.model)
-	fmt.Fprintf(&sb, "telegram_bot = %q\n", w.botName)
+	// Only emit telegram_bot when it differs from the agent ID (convention default).
+	if w.botName != w.id {
+		fmt.Fprintf(&sb, "telegram_bot = %q\n", w.botName)
+	}
+	// Only emit bot_secret when the secret key differs from the "telegram.<botName>" convention.
+	conventionKey := "telegram." + w.botName
+	if w.tokenSecret != conventionKey {
+		fmt.Fprintf(&sb, "bot_secret = %q\n", w.tokenSecret)
+	}
 	fmt.Fprintf(&sb, "workspace = %q\n", workspace)
 	sb.WriteString("system_files = [\"character/SOUL.md\", \"character/COHERENCE.md\", \"character/CRAFT.md\", \"character/USER.md\", \"character/MEMORY.md\"]\n")
 	sb.WriteString("\n")
@@ -289,9 +301,6 @@ func generateConfigEntry(w *agentWizard, workspace string) string {
 	fmt.Fprintf(&sb, "name = %q\n", w.id)
 	fmt.Fprintf(&sb, "dir = %q\n", filepath.Join(workspace, "memory"))
 	sb.WriteString("weight = 1.0\n")
-	sb.WriteString("\n")
-	fmt.Fprintf(&sb, "[telegram.bots.%s]\n", w.botName)
-	fmt.Fprintf(&sb, "token_secret = %q\n", w.tokenSecret)
 
 	return sb.String()
 }

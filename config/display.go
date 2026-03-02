@@ -69,13 +69,6 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	if len(cfg.Telegram.MultiballBots) > 0 {
 		add("telegram", "multiball_bots", cfg.Telegram.MultiballBots)
 	}
-	if len(cfg.Telegram.Bots) > 0 {
-		var names []string
-		for k := range cfg.Telegram.Bots {
-			names = append(names, k)
-		}
-		add("telegram", "bots", names)
-	}
 	if len(cfg.Telegram.StopAliases) > 0 {
 		add("telegram", "stop_aliases", cfg.Telegram.StopAliases)
 	}
@@ -417,13 +410,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	if len(cfg.Telegram.MultiballBots) > 0 {
 		addGlobal("telegram", "multiball_bots", cfg.Telegram.MultiballBots)
 	}
-	if len(cfg.Telegram.Bots) > 0 {
-		var names []string
-		for k := range cfg.Telegram.Bots {
-			names = append(names, k)
-		}
-		addGlobal("telegram", "bots", names)
-	}
 	if len(cfg.Telegram.StopAliases) > 0 {
 		addGlobal("telegram", "stop_aliases", cfg.Telegram.StopAliases)
 	}
@@ -718,10 +704,10 @@ func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 		opts = append(opts, availableOption{"agent", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})
 	}
 	if agent.TelegramBot == "" {
-		opts = append(opts, availableOption{"agent", "telegram_bot", "\"\"", "references key in [telegram.bots] map"})
+		opts = append(opts, availableOption{"agent", "telegram_bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
 	}
 	if len(agent.MultiballBots) == 0 {
-		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "references keys in [telegram.bots] map"})
+		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "additional bot names for multiball"})
 	}
 	if agent.TTSRate == 0 {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate override (0 = use [voice] tts_rate)"})

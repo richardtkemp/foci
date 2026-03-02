@@ -22,7 +22,7 @@ The fork creates a new session on a **secondary Telegram bot** (configured as a 
 
 ### Bot Pool
 
-Multiball bots are configured in `foci.toml`. Bots are defined in `[telegram.bots]` (tokens in `secrets.toml`), then referenced by name:
+Multiball bots are configured in `foci.toml` by name. Tokens are resolved from `secrets.toml` by convention: `"telegram.<botname>"`.
 
 ```toml
 # Per-agent multiball bots:
@@ -33,13 +33,13 @@ multiball_bots = ["wand", "crystal"]
 # Or shared pool (available to all agents):
 [telegram]
 multiball_bots = ["wand", "crystal"]
+```
 
-# Bot definitions:
-[telegram.bots.wand]
-token_secret = "telegram.wand"
-
-[telegram.bots.crystal]
-token_secret = "telegram.crystal"
+With `secrets.toml`:
+```toml
+[telegram]
+wand = "123456:ABC..."
+crystal = "789012:DEF..."
 ```
 
 Bots can be **per-agent** (dedicated) or **shared** (allocated from a pool). When all bots are in use, the fork request fails immediately.

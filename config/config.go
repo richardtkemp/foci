@@ -105,8 +105,9 @@ type AgentConfig struct {
 	DuplicateMessages              bool              `toml:"duplicate_messages"`                // send user text twice per API call (improves instruction following)
 	BatchPartialAssistantMessages  bool              `toml:"batch_partial_assistant_messages"`   // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
 	BranchOrientationPrompt string            `toml:"branch_orientation_prompt"` // path to prompt file injected into all branch sessions (multiball, cron, spawn)
-	TelegramBot             string            `toml:"telegram_bot"`              // references key in [telegram.bots] map
-	MultiballBots           []string          `toml:"multiball_bots"`            // references keys in [telegram.bots] map (optional)
+	TelegramBot             string            `toml:"telegram_bot"`              // bot name; token resolved via "telegram.<bot>" secret
+	BotSecret               string            `toml:"bot_secret"`                // override secret key for bot token (default: "telegram.<telegram_bot>")
+	MultiballBots           []string          `toml:"multiball_bots"`            // additional bot names for multiball (optional)
 	Memory                  AgentMemoryConfig `toml:"memory"`                    // per-agent memory sources (combined with global [memory])
 	MaxToolLoops            int               `toml:"max_tool_loops"`            // max tool iterations per turn (default 25)
 	MaxOutputTokens         int               `toml:"max_output_tokens"`         // max tokens in model response (default 8192)
@@ -164,17 +165,10 @@ type AnthropicConfig struct {
 	UsageAPITimeout string `toml:"usage_api_timeout"` // HTTP timeout for usage API calls (default "10s")
 }
 
-// TelegramBotConfig defines a named Telegram bot in the [telegram.bots] map.
-// Each bot's token is resolved from secrets.toml via the token_secret key.
-type TelegramBotConfig struct {
-	TokenSecret string `toml:"token_secret"` // key in secrets.toml (e.g., "telegram.primary")
-}
-
 type TelegramConfig struct {
-	BotToken            string                       `toml:"bot_token"` // deprecated: use [telegram.bots] with token_secret
-	AllowedUsers        []string                     `toml:"allowed_users"`
-	MultiballBots       []string                     `toml:"multiball_bots"`        // shared multiball pool: references keys in [telegram.bots] map
-	Bots                map[string]TelegramBotConfig `toml:"bots"`                  // named bots for multi-agent
+	BotToken            string   `toml:"bot_token"` // deprecated: use telegram_bot on agent + secret
+	AllowedUsers        []string `toml:"allowed_users"`
+	MultiballBots       []string `toml:"multiball_bots"` // shared multiball pool: bot names (tokens via "telegram.<name>" secrets)
 	StopAliases         []string                     `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases   bool                         `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
 	EnableStartupNotify bool                         `toml:"enable_startup_notify"` // send notification on startup (default true)
@@ -868,30 +862,20 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
-	// Warn about deprecated config keys.
-	if md.IsDefined("telegram", "bot_token") {
-		log.Warnf("config", "telegram.bot_token is deprecated — migrate to [telegram.bots.<name>] with token_secret in secrets.toml")
-	}
-	if md.IsDefined("memory", "dir") {
-		log.Warnf("config", "memory.dir is deprecated — migrate to [[memory.sources]] with name, dir, and weight fields")
-	}
 	// Migrate deprecated [telegram] display settings to [defaults].
 	if md.IsDefined("telegram", "show_tool_calls") {
-		log.Warnf("config", "telegram.show_tool_calls is deprecated — move to [defaults] show_tool_calls")
 		if cfg.Defaults.ShowToolCalls == nil {
 			v := cfg.Telegram.LegacyShowToolCalls
 			cfg.Defaults.ShowToolCalls = &v
 		}
 	}
 	if md.IsDefined("telegram", "show_thinking") {
-		log.Warnf("config", "telegram.show_thinking is deprecated — move to [defaults] show_thinking")
 		if cfg.Defaults.ShowThinking == nil {
 			v := cfg.Telegram.LegacyShowThinking
 			cfg.Defaults.ShowThinking = &v
 		}
 	}
 	if md.IsDefined("telegram", "display_width") {
-		log.Warnf("config", "telegram.display_width is deprecated — move to [defaults] display_width")
 		if cfg.Defaults.DisplayWidth == nil {
 			v := cfg.Telegram.LegacyDisplayWidth
 			cfg.Defaults.DisplayWidth = &v
@@ -950,11 +934,9 @@ func Load(path string) (*Config, error) {
 			home, _ := os.UserHomeDir()
 			cfg.Agents[i].Workspace = filepath.Join(home, cfg.Agents[i].ID)
 		}
-		// TelegramBot default: agent ID if a matching bot key exists
+		// TelegramBot default: agent ID (token resolved by convention: "telegram.<id>")
 		if cfg.Agents[i].TelegramBot == "" {
-			if _, ok := cfg.Telegram.Bots[cfg.Agents[i].ID]; ok {
-				cfg.Agents[i].TelegramBot = cfg.Agents[i].ID
-			}
+			cfg.Agents[i].TelegramBot = cfg.Agents[i].ID
 		}
 		// ReceivedFilesDir default: $workspace/received_files
 		if cfg.Agents[i].ReceivedFilesDir == "" {
@@ -983,14 +965,6 @@ func Load(path string) (*Config, error) {
 			cfg.Agents[i].Memory.Sources = combined
 		} else {
 			cfg.Agents[i].Memory.Sources = agentSources
-		}
-	}
-
-	// Bot token_secret default: "telegram.<bot-key-name>"
-	for name, bot := range cfg.Telegram.Bots {
-		if bot.TokenSecret == "" {
-			bot.TokenSecret = "telegram." + name
-			cfg.Telegram.Bots[name] = bot
 		}
 	}
 
@@ -1023,21 +997,20 @@ type SecretGetter interface {
 	Get(key string) (string, bool)
 }
 
-// ResolveBotToken resolves a Telegram bot token for the given bot name.
-// It checks the [telegram.bots] map for token_secret → secrets store.
-func (c *Config) ResolveBotToken(botName string, secrets SecretGetter) string {
-	bot, ok := c.Telegram.Bots[botName]
-	if !ok {
-		log.Warnf("config", "ResolveBotToken(%q): bot not found in [telegram.bots]", botName)
+// ResolveBotToken resolves a Telegram bot token by convention.
+// If botSecret is non-empty it is used as the secret key; otherwise "telegram.<botName>".
+// Returns "" if botName is empty or the secret is not found.
+func ResolveBotToken(botName, botSecret string, secrets SecretGetter) string {
+	if botName == "" {
 		return ""
 	}
-	if bot.TokenSecret == "" {
-		log.Warnf("config", "ResolveBotToken(%q): token_secret is empty", botName)
-		return ""
+	key := botSecret
+	if key == "" {
+		key = "telegram." + botName
 	}
-	v, ok := secrets.Get(bot.TokenSecret)
+	v, ok := secrets.Get(key)
 	if !ok {
-		log.Warnf("config", "ResolveBotToken(%q): secret %q not found in secrets store", botName, bot.TokenSecret)
+		log.Warnf("config", "ResolveBotToken(%q): secret %q not found in secrets store", botName, key)
 		return ""
 	}
 	return v
