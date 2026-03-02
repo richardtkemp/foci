@@ -19,6 +19,7 @@ import (
 	"foci/compaction"
 	"foci/log"
 	"foci/memory"
+	"foci/prompts"
 	"foci/session"
 	"foci/state"
 	"foci/tools"
@@ -106,9 +107,9 @@ type Agent struct {
 	StateStore                  *state.Store                    // nil disables state persistence
 	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
 	PromptRules                 []CompiledPromptRule            // compiled regex rules for inbound message transformation
-	CompactionSummaryPromptPath string                          // file path; read at compaction time via ReadPromptFile
-	CompactionHandoffMsg        string                          // passed to Compactor.Compact(); empty uses default
-	ReadPromptFile              func(path, label string) string // reads prompt from file path; nil uses empty string
+	CompactionSummaryPromptPath string   // file path; read at compaction time via prompts.ResolvePrompt
+	CompactionHandoffMsg        string   // inline handoff message; empty resolves from search dirs or embedded default
+	PromptSearchDirs            []string // directories to search for prompt files (agent workspace, shared)
 	MaxToolLoops                int                             // max tool iterations per turn (default 25)
 	MaxOutputTokens             int                             // max tokens in model response (default 8192)
 	BraindeadWarningEnable      bool                            // enable braindead warning (default true)
@@ -1306,11 +1307,12 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	if a.CompactionNotifyFunc != nil {
 		a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
 	}
-	summaryPrompt := ""
-	if a.ReadPromptFile != nil {
-		summaryPrompt = a.ReadPromptFile(a.CompactionSummaryPromptPath, "compaction")
+	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	handoffMsg := a.CompactionHandoffMsg
+	if handoffMsg == "" {
+		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
-	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, a.CompactionHandoffMsg); err != nil {
+	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, handoffMsg); err != nil {
 		a.logger().Errorf("compaction failed: %v", err)
 	} else {
 		if a.CompactionNotifyFunc != nil {

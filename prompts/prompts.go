@@ -6,6 +6,7 @@ package prompts
 import (
 	"embed"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"foci/log"
@@ -51,12 +52,21 @@ func MemoryConsolidation() string { return read("memory-consolidation.md") }
 // FirstRun returns the onboarding prompt injected on an agent's first session.
 func FirstRun() string { return read("first-run.md") }
 
-// ResolvePrompt implements 3-state prompt resolution:
-//   - path absent/unset ("" or "default"): returns embeddedDefault
+// ResolvePrompt implements prompt resolution with directory search:
+//
+//   - path absent/unset ("" or "default"): searches searchDirs for filename,
+//     then returns embeddedDefault if not found
 //   - path = "none": returns "" (explicitly disabled)
 //   - path = "/path/to/file": reads file; on error logs warning + returns embeddedDefault
-func ResolvePrompt(path, label, embeddedDefault string) string {
+func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string) string {
 	if path == "" || path == "default" {
+		for _, dir := range searchDirs {
+			fp := filepath.Join(dir, filename)
+			data, err := os.ReadFile(fp)
+			if err == nil {
+				return strings.TrimSpace(string(data))
+			}
+		}
 		return embeddedDefault
 	}
 	if path == "none" {
@@ -70,7 +80,7 @@ func ResolvePrompt(path, label, embeddedDefault string) string {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Warnf("prompts", "%s: read %s: %v — using embedded default", label, path, err)
+		log.Warnf("prompts", "%s: read %s: %v — using embedded default", filename, path, err)
 		return embeddedDefault
 	}
 	return strings.TrimSpace(string(data))

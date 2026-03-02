@@ -50,12 +50,13 @@ type WarningDispatchFunc func(warningText string)
 
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
-	log         *log.ComponentLogger
-	agentID     string
-	kaCfg       config.KeepaliveConfig
-	bgCfg       config.BackgroundConfig
-	mfCfg       config.MemoryFormationConfig
-	todoStore   *memory.TodoStore
+	log              *log.ComponentLogger
+	agentID          string
+	kaCfg            config.KeepaliveConfig
+	bgCfg            config.BackgroundConfig
+	mfCfg            config.MemoryFormationConfig
+	promptSearchDirs []string
+	todoStore        *memory.TodoStore
 	usageClient *anthropic.UsageClient
 	stateStore  *state.Store
 	branchFn    BranchFunc
@@ -99,6 +100,7 @@ type RunnerConfig struct {
 	Keepalive       config.KeepaliveConfig
 	Background      config.BackgroundConfig
 	MemoryFormation config.MemoryFormationConfig
+	PromptSearchDirs []string // directories to search for prompt files (agent workspace, shared)
 	TodoStore       *memory.TodoStore
 	UsageClient     *anthropic.UsageClient
 	StateStore      *state.Store
@@ -127,6 +129,7 @@ func New(cfg RunnerConfig) *Runner {
 		kaCfg:                    cfg.Keepalive,
 		bgCfg:                    cfg.Background,
 		mfCfg:                    cfg.MemoryFormation,
+		promptSearchDirs:         cfg.PromptSearchDirs,
 		manaStalenessTimeout:     manaStaleness,
 		todoStore:                cfg.TodoStore,
 		usageClient:              cfg.UsageClient,
@@ -221,7 +224,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) {
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.kaCfg.Prompt, "keepalive", prompts.Keepalive())
+	promptText := prompts.ResolvePrompt(r.kaCfg.Prompt, "keepalive.md", prompts.Keepalive(), r.promptSearchDirs...)
 
 	r.mu.Lock()
 	r.keepaliveRunning = true
@@ -290,7 +293,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background", prompts.Background())
+	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background.md", prompts.Background(), r.promptSearchDirs...)
 
 	r.mu.Lock()
 	r.backgroundRunning = true
@@ -339,7 +342,7 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "memory-formation", prompts.MemoryFormation())
+	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
@@ -389,7 +392,7 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "consolidation", prompts.MemoryConsolidation())
+	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}

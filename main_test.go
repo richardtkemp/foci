@@ -430,44 +430,6 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 	}
 }
 
-// ========== readPromptFile tests ==========
-
-func TestReadPromptFile_LoadsFile(t *testing.T) {
-	dir := t.TempDir()
-	f := filepath.Join(dir, "prompt.md")
-	os.WriteFile(f, []byte("prompt content"), 0644)
-
-	result := readPromptFile(f, "test")
-	if result != "prompt content" {
-		t.Errorf("expected file content, got %q", result)
-	}
-}
-
-func TestReadPromptFile_EmptyPathReturnsEmpty(t *testing.T) {
-	result := readPromptFile("", "test")
-	if result != "" {
-		t.Errorf("expected empty for empty path, got %q", result)
-	}
-}
-
-func TestReadPromptFile_MissingFileReturnsEmpty(t *testing.T) {
-	result := readPromptFile("/nonexistent/path/prompt.md", "test")
-	if result != "" {
-		t.Errorf("expected empty for missing file, got %q", result)
-	}
-}
-
-func TestReadPromptFile_TrimsWhitespace(t *testing.T) {
-	dir := t.TempDir()
-	f := filepath.Join(dir, "prompt.md")
-	os.WriteFile(f, []byte("  trimmed  \n\n"), 0644)
-
-	result := readPromptFile(f, "test")
-	if result != "trimmed" {
-		t.Errorf("expected trimmed content, got %q", result)
-	}
-}
-
 // ========== applyAgentDisplaySettings tests ==========
 
 func ptr[T any](v T) *T { return &v }

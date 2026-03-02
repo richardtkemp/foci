@@ -118,3 +118,47 @@ func TestResolvePromptFileMissing(t *testing.T) {
 		t.Errorf("file missing: got %q, want %q", got, "embedded-default")
 	}
 }
+
+func TestResolvePromptSearchDirsFirst(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("from-dir"), 0644)
+
+	got := ResolvePrompt("", "prompt.md", "embedded-default", dir)
+	if got != "from-dir" {
+		t.Errorf("search dirs: got %q, want %q", got, "from-dir")
+	}
+}
+
+func TestResolvePromptSearchDirsPriority(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	os.WriteFile(filepath.Join(dir1, "prompt.md"), []byte("from-dir1"), 0644)
+	os.WriteFile(filepath.Join(dir2, "prompt.md"), []byte("from-dir2"), 0644)
+
+	got := ResolvePrompt("", "prompt.md", "embedded-default", dir1, dir2)
+	if got != "from-dir1" {
+		t.Errorf("search dir priority: got %q, want %q", got, "from-dir1")
+	}
+}
+
+func TestResolvePromptSearchDirsFallthrough(t *testing.T) {
+	dir := t.TempDir() // empty dir, no prompt.md
+	got := ResolvePrompt("", "prompt.md", "embedded-default", dir)
+	if got != "embedded-default" {
+		t.Errorf("search dir fallthrough: got %q, want %q", got, "embedded-default")
+	}
+}
+
+func TestResolvePromptExplicitPathOverridesSearchDirs(t *testing.T) {
+	searchDir := t.TempDir()
+	os.WriteFile(filepath.Join(searchDir, "prompt.md"), []byte("from-dir"), 0644)
+
+	fileDir := t.TempDir()
+	path := filepath.Join(fileDir, "explicit.md")
+	os.WriteFile(path, []byte("explicit-content"), 0644)
+
+	got := ResolvePrompt(path, "prompt.md", "embedded-default", searchDir)
+	if got != "explicit-content" {
+		t.Errorf("explicit path: got %q, want %q", got, "explicit-content")
+	}
+}
