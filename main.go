@@ -605,26 +605,7 @@ func main() {
 	command.ChildSysProcAttr = tools.ChildSysProcAttr
 
 	// Resolve shared credentials: secrets.toml overrides foci.toml
-	setupToken := cfg.Anthropic.SetupToken
-	if v, ok := store.Get("anthropic.setup_token"); ok {
-		setupToken = v
-	}
-	braveKey := cfg.Anthropic.BraveAPIKey
-	if v, ok := store.Get("brave.api_key"); ok {
-		braveKey = v
-	}
-	groqKey := ""
-	if v, ok := store.Get("groq.api_key"); ok {
-		groqKey = v
-	}
-	openrouterKey := ""
-	if v, ok := store.Get("openrouter.api_key"); ok {
-		openrouterKey = v
-	}
-	voiceAPIKey := ""
-	if v, ok := store.Get("voice.api_key"); ok {
-		voiceAPIKey = v
-	}
+	setupToken, braveKey, groqKey, openrouterKey, voiceAPIKey := resolveSecretKeys(cfg, store)
 
 	// Shared: Bitwarden store (optional)
 	var bwStore *bitwarden.Store
@@ -658,76 +639,11 @@ func main() {
 	}
 
 	// Shared: Anthropic client
-	httpTimeout, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout)
-	if err != nil {
-		log.Warnf("main", "invalid anthropic.http_timeout, using default: %v", err)
-		httpTimeout = 120 * time.Second
-	}
-
-	// Token resolution priority:
-	// 1. Foci's own OAuth credentials in secrets.toml (anthropic.oauth_access_token etc.)
-	// 2. Static setup-token from secrets.toml / foci.toml
-	// 3. Claude Code credentials at ~/.claude/.credentials.json (read-only fallback)
-	var client *anthropic.Client
-	var usageClient *anthropic.UsageClient
-	var oauthMgr *anthropic.OAuthManager
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	const ccCredsFile = "~/.claude/.credentials.json"
-
-	// Try source 1: foci's own OAuth credentials in secrets.toml
-	if mgr, err := anthropic.NewOAuthManagerFromStore(store); err == nil {
-		oauthMgr = mgr
-		if oauthMgr.ExpiresIn() < 5*time.Minute {
-			if err := oauthMgr.Refresh(); err != nil {
-				log.Fatalf("main", "initial token refresh: %v", err)
-			}
-		}
-		oauthMgr.StartRefresh(ctx)
-		client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
-		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-		log.Infof("main", "using foci OAuth token from secrets.toml (expires in %s, auto-refresh active)", oauthMgr.ExpiresIn().Truncate(time.Second))
-	} else if setupToken != "" {
-		// Source 2: static setup-token
-		client = anthropic.NewClientWithTimeout(setupToken, httpTimeout)
-		usageClient = anthropic.NewUsageClient(setupToken)
-		log.Infof("main", "using static setup-token from secrets.toml")
-	} else if mgr, err := anthropic.NewOAuthManager(ccCredsFile); err == nil {
-		// Source 3: Claude Code credentials (read-only fallback)
-		oauthMgr = mgr
-		if oauthMgr.ExpiresIn() < 5*time.Minute {
-			if err := oauthMgr.Refresh(); err != nil {
-				log.Fatalf("main", "initial token refresh (Claude Code fallback): %v", err)
-			}
-		}
-		oauthMgr.StartRefresh(ctx)
-		client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
-		usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-		log.Infof("main", "using Claude Code credentials from %s (fallback, read-only, expires in %s)", ccCredsFile, oauthMgr.ExpiresIn().Truncate(time.Second))
-	} else {
-		// No credentials found — try interactive auth or exit
-		if fi, statErr := os.Stdin.Stat(); statErr == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
-			log.Infof("main", "no credentials found, starting interactive auth flow")
-			if authErr := anthropic.RunAuthFlow(store); authErr != nil {
-				log.Fatalf("main", "auth flow failed: %v", authErr)
-			}
-			mgr, err := anthropic.NewOAuthManagerFromStore(store)
-			if err != nil {
-				log.Fatalf("main", "load credentials after auth: %v", err)
-			}
-			oauthMgr = mgr
-			oauthMgr.StartRefresh(ctx)
-			client = anthropic.NewClientWithTokenFunc(oauthMgr.Token, httpTimeout)
-			usageClient = anthropic.NewUsageClientWithFunc(oauthMgr.Token)
-			log.Infof("main", "using foci OAuth token from secrets.toml (expires in %s, auto-refresh active)", oauthMgr.ExpiresIn().Truncate(time.Second))
-		} else {
-			log.Errorf("main", "no Anthropic token found — run: foci auth")
-			os.Exit(1)
-		}
-	}
-	log.Debugf("main", "anthropic client timeout=%s", httpTimeout)
+	client, usageClient := resolveCredentials(cfg, store, setupToken, ctx)
+	log.Debugf("main", "anthropic client ready")
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
@@ -3029,8 +2945,92 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 	return combined
 }
 
+// resolveSecretKeys resolves API keys from the secrets store, with config fallbacks.
+func resolveSecretKeys(cfg *config.Config, store *secrets.Store) (setupToken, braveKey, groqKey, openrouterKey, voiceAPIKey string) {
+	type secretKey struct {
+		storeKey    string
+		cfgFallback string
+		target      *string
+	}
+	keys := []secretKey{
+		{"anthropic.setup_token", cfg.Anthropic.SetupToken, &setupToken},
+		{"brave.api_key", cfg.Anthropic.BraveAPIKey, &braveKey},
+		{"groq.api_key", "", &groqKey},
+		{"openrouter.api_key", "", &openrouterKey},
+		{"voice.api_key", "", &voiceAPIKey},
+	}
+	for _, k := range keys {
+		*k.target = k.cfgFallback
+		if v, ok := store.Get(k.storeKey); ok {
+			*k.target = v
+		}
+	}
+	return
+}
+
+// resolveCredentials resolves the Anthropic API client and usage client.
+// Priority: (1) foci OAuth in secrets.toml, (2) static setup-token,
+// (3) Claude Code credentials, (4) interactive auth flow.
+func resolveCredentials(cfg *config.Config, store *secrets.Store, setupToken string, ctx context.Context) (*anthropic.Client, *anthropic.UsageClient) {
+	httpTimeout, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout)
+	if err != nil {
+		log.Warnf("main", "invalid anthropic.http_timeout, using default: %v", err)
+		httpTimeout = 120 * time.Second
+	}
+
+	// Helper: create OAuth-backed clients and start background refresh.
+	initOAuth := func(mgr *anthropic.OAuthManager, label string) (*anthropic.Client, *anthropic.UsageClient) {
+		if mgr.ExpiresIn() < 5*time.Minute {
+			if err := mgr.Refresh(); err != nil {
+				log.Fatalf("main", "initial token refresh (%s): %v", label, err)
+			}
+		}
+		mgr.StartRefresh(ctx)
+		log.Infof("main", "using %s (expires in %s, auto-refresh active)", label, mgr.ExpiresIn().Truncate(time.Second))
+		return anthropic.NewClientWithTokenFunc(mgr.Token, httpTimeout),
+			anthropic.NewUsageClientWithFunc(mgr.Token)
+	}
+
+	const ccCredsFile = "~/.claude/.credentials.json"
+
+	// Source 1: foci's own OAuth credentials in secrets.toml
+	if mgr, err := anthropic.NewOAuthManagerFromStore(store); err == nil {
+		return initOAuth(mgr, "foci OAuth token from secrets.toml")
+	}
+
+	// Source 2: static setup-token
+	if setupToken != "" {
+		log.Infof("main", "using static setup-token from secrets.toml")
+		return anthropic.NewClientWithTimeout(setupToken, httpTimeout),
+			anthropic.NewUsageClient(setupToken)
+	}
+
+	// Source 3: Claude Code credentials (read-only fallback)
+	if mgr, err := anthropic.NewOAuthManager(ccCredsFile); err == nil {
+		return initOAuth(mgr, fmt.Sprintf("Claude Code credentials from %s (fallback, read-only)", ccCredsFile))
+	}
+
+	// Source 4: interactive auth flow
+	if fi, statErr := os.Stdin.Stat(); statErr == nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+		log.Infof("main", "no credentials found, starting interactive auth flow")
+		if authErr := anthropic.RunAuthFlow(store); authErr != nil {
+			log.Fatalf("main", "auth flow failed: %v", authErr)
+		}
+		mgr, err := anthropic.NewOAuthManagerFromStore(store)
+		if err != nil {
+			log.Fatalf("main", "load credentials after auth: %v", err)
+		}
+		return initOAuth(mgr, "foci OAuth token from secrets.toml")
+	}
+
+	log.Errorf("main", "no Anthropic token found — run: foci auth")
+	os.Exit(1)
+	return nil, nil // unreachable
+}
+
 // readPromptFile reads a prompt from a file path. Returns the trimmed contents,
 // or empty string (with error logged) if the file can't be read.
+
 // resolveInt returns the per-agent value if non-zero, otherwise global.
 func resolveInt(perAgent, global int) int {
 	if perAgent != 0 {
