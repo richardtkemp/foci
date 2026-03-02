@@ -7,8 +7,11 @@ Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 mi
 Install these before running setup:
 
 ```bash
-# Go 1.22+ (for building from source)
-sudo apt install golang-go    # or https://go.dev/dl/
+# Go 1.24+ (for building from source)
+# Ubuntu's default repo has 1.22 — use the backports PPA for 1.24+:
+sudo add-apt-repository ppa:longsleep/golang-backports
+sudo apt update
+sudo apt install golang-go    # or download from https://go.dev/dl/
 
 # Required tools
 sudo apt install tmux jq git
@@ -167,7 +170,7 @@ sudo chmod 660 /home/foci/config/secrets.toml
 ```
 
 ### Build errors
-Ensure Go 1.22+: `go version`. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
+Ensure Go 1.24+: `go version`. Ubuntu's default `golang-go` package is 1.22 — you need the [longsleep/golang-backports PPA](https://launchpad.net/~longsleep/+archive/ubuntu/golang-backports) or a direct install from [go.dev](https://go.dev/dl/). Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
 
 ### "unknown command: setup"
 Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. Re-run `setup.sh` to rebuild.
