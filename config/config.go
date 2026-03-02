@@ -998,68 +998,11 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.MemoryFormation.ConsolidationInterval, "20h")
 	// IntervalEnabled/ConsolidationEnabled/SessionEndEnabled: nil = true (resolved at runtime)
 
-	// Per-agent keepalive/background: inherit from global when not set per-agent.
-	// If no fields were defined (zero-value struct), copy the entire global config.
-	// If any fields were defined, fill gaps from global defaults.
+	// Per-agent keepalive/background/memory-formation: inherit from global.
 	for i := range cfg.Agents {
-		ka := &cfg.Agents[i].Keepalive
-		if *ka == (KeepaliveConfig{}) {
-			cfg.Agents[i].Keepalive = cfg.Keepalive
-		} else {
-			if ka.Interval == "" {
-				ka.Interval = cfg.Keepalive.Interval
-			}
-			if ka.Prompt == "" {
-				ka.Prompt = cfg.Keepalive.Prompt
-			}
-		}
-		bg := &cfg.Agents[i].Background
-		if *bg == (BackgroundConfig{}) {
-			cfg.Agents[i].Background = cfg.Background
-		} else {
-			if bg.Interval == "" {
-				bg.Interval = cfg.Background.Interval
-			}
-			if bg.Prompt == "" {
-				bg.Prompt = cfg.Background.Prompt
-			}
-			if bg.InvestInterval == "" {
-				bg.InvestInterval = cfg.Background.InvestInterval
-			}
-			if bg.ManaStalenessTimeout == "" {
-				bg.ManaStalenessTimeout = cfg.Background.ManaStalenessTimeout
-			}
-		}
-		// Memory formation cascade
-		mf := &cfg.Agents[i].MemoryFormation
-		if *mf == (MemoryFormationConfig{}) {
-			cfg.Agents[i].MemoryFormation = cfg.MemoryFormation
-		} else {
-			if mf.IntervalEnabled == nil && cfg.MemoryFormation.IntervalEnabled != nil {
-				mf.IntervalEnabled = cfg.MemoryFormation.IntervalEnabled
-			}
-			if mf.Interval == "" {
-				mf.Interval = cfg.MemoryFormation.Interval
-			}
-			if mf.IntervalPrompt == "" {
-				mf.IntervalPrompt = cfg.MemoryFormation.IntervalPrompt
-			}
-			if mf.ConsolidationEnabled == nil && cfg.MemoryFormation.ConsolidationEnabled != nil {
-				mf.ConsolidationEnabled = cfg.MemoryFormation.ConsolidationEnabled
-			}
-			if mf.ConsolidationInterval == "" {
-				mf.ConsolidationInterval = cfg.MemoryFormation.ConsolidationInterval
-			}
-			if mf.ConsolidationPrompt == "" {
-				mf.ConsolidationPrompt = cfg.MemoryFormation.ConsolidationPrompt
-			}
-			if mf.SessionEndEnabled == nil && cfg.MemoryFormation.SessionEndEnabled != nil {
-				mf.SessionEndEnabled = cfg.MemoryFormation.SessionEndEnabled
-			}
-			if mf.SessionEndPrompt == "" {
-				mf.SessionEndPrompt = cfg.MemoryFormation.SessionEndPrompt
-			}
-		}
+		cfg.Agents[i].Keepalive.MergeDefaults(cfg.Keepalive)
+		cfg.Agents[i].Background.MergeDefaults(cfg.Background)
+		cfg.Agents[i].MemoryFormation.MergeDefaults(cfg.MemoryFormation)
 		// ShowToolCalls: defaults.show_tool_calls → agent fallback
 		if cfg.Agents[i].ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil {
 			cfg.Agents[i].ShowToolCalls = cfg.Defaults.ShowToolCalls
