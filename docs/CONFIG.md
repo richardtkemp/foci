@@ -178,6 +178,7 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
+| `cc_credentials_poll_interval` | string | `"30s"` | How often to re-read Claude Code credentials from `~/.claude/.credentials.json`. |
 
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
