@@ -32,6 +32,7 @@ using Claude Code credentials from ~/.claude/.credentials.json (fallback, read-o
 2. You run `claude setup-token` in another terminal (requires a Claude Code session)
 3. Paste the token back into the foci prompt
 4. Foci validates the token (prefix `sk-ant-oat01-`, minimum 80 chars) and saves it to `secrets.toml`
+5. If a foci gateway is running, the new credentials are **hot-reloaded immediately** — no restart needed
 
 ## Credentials in secrets.toml
 
@@ -58,10 +59,17 @@ If you already use Claude Code, foci can read its credentials as a fallback — 
 ### `foci auth` flags
 
 ```
-foci auth [--config PATH]
+foci auth [--config PATH] [--addr HOST:PORT]
 ```
 
 - `--config` — path to foci.toml (to find `secrets.toml` in the same directory)
+- `--addr` — gateway address for credential hot-reload notification (env: `FOCI_ADDR`, default: `127.0.0.1:18791`)
+
+## Credential Hot-Reload
+
+When `foci auth` saves a new token, it sends a `POST /-/reload-credentials` request to the running gateway. The gateway re-reads `secrets.toml` and swaps to the new credentials immediately — in-flight API calls complete with the old token, subsequent calls use the new one.
+
+If the gateway isn't running, `foci auth` prints a note and the new credentials take effect on next startup.
 
 ## Auto-Refresh
 

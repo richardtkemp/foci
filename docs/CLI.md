@@ -212,6 +212,28 @@ foci command /cost today
 
 ---
 
+### `auth` — Authenticate with Anthropic
+
+Save a setup token to `secrets.toml`. If a gateway is running, the new credentials are hot-reloaded immediately.
+
+**Usage:**
+```
+foci auth [--config PATH] [--addr HOST:PORT]
+```
+
+**Flags:**
+- `--config` — path to foci.toml (secrets.toml is written alongside it). Default: `~/config/secrets.toml`.
+- `--addr` — gateway address for hot-reload notification. Env: `FOCI_ADDR`. Default: `127.0.0.1:18791`.
+
+**Examples:**
+```bash
+foci auth                            # default secrets path, default gateway
+foci auth --config /etc/foci/foci.toml  # custom config directory
+foci auth --addr 10.0.0.1:18791      # notify remote gateway
+```
+
+---
+
 ### `ping` — Liveness check
 
 Shorthand for `foci command /ping`. Returns "pong" with a timestamp if the gateway and agent are running.

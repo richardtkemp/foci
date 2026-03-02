@@ -638,16 +638,21 @@ Flags:
 }
 
 func authUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci auth [--config <path>]
+	fmt.Fprintf(os.Stderr, `Usage: foci auth [--config <path>] [--addr <host:port>]
 
 Authenticate with Anthropic using a Claude Code setup token.
 Run 'claude setup-token' in another terminal, then paste the token.
 Token is saved to secrets.toml.
 
+If a foci gateway is running, the new credentials are hot-reloaded
+immediately (no restart needed).
+
 Flags:
   --config <path>       Path to foci.toml (secrets.toml is written alongside it)
                         Default secrets path: ~/config/secrets.toml
-`)
+  --addr <host:port>    Gateway address for credential hot-reload notification
+                        Env: FOCI_ADDR / Default: %s
+`, defaultAddr)
 }
 
 func cmdAuth(args []string) error {
@@ -656,15 +661,26 @@ func cmdAuth(args []string) error {
 		return nil
 	}
 
-	// Parse --config flag
+	// Parse --config and --addr flags
 	configPath := ""
+	addr := ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--config" && i+1 < len(args) {
+		switch {
+		case args[i] == "--config" && i+1 < len(args):
 			configPath = args[i+1]
 			i++
-		} else if strings.HasPrefix(args[i], "--config=") {
+		case strings.HasPrefix(args[i], "--config="):
 			configPath = args[i][len("--config="):]
+		case args[i] == "--addr" && i+1 < len(args):
+			addr = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--addr="):
+			addr = args[i][len("--addr="):]
 		}
+	}
+	addr = envDefault(addr, "FOCI_ADDR")
+	if addr == "" {
+		addr = defaultAddr
 	}
 
 	var secretsPath string
@@ -702,7 +718,29 @@ func cmdAuth(args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Setup token saved to %s\n", secretsPath)
+
+	// Notify running gateway to hot-reload credentials.
+	notifyGatewayReload(addr)
 	return nil
+}
+
+// notifyGatewayReload sends a POST to the gateway's /-/reload-credentials endpoint.
+// Best-effort: if the gateway isn't running, prints a note and continues.
+func notifyGatewayReload(addr string) {
+	url := fmt.Sprintf("http://%s/-/reload-credentials", addr)
+	c := &http.Client{Timeout: 3 * time.Second}
+	resp, err := c.Post(url, "application/json", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Gateway not reachable at %s — restart to use new credentials.\n", addr)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Gateway credentials hot-reloaded.\n")
+	} else {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "Gateway reload returned HTTP %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 }
 
 func postJSON(url string, body interface{}) error {
