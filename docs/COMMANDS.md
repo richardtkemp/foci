@@ -115,8 +115,11 @@ Show running configuration.
 - `/config table` — config as formatted table
 - `/config available` — all available config keys with types and defaults
 
-### `/prompts`
+### `/prompts [subcommand]`
 Show configured prompts and prompt files on disk.
+- `/prompts` — show all prompts with default/custom status and files on disk
+- `/prompts reinstall` — write all embedded default prompts to `{workspace}/prompts/`, skipping files that already match
+- `/prompts diff <name>` — generate a unified diff between the current (resolved) prompt and the embedded default, with an AI summary, sent as a Telegram document. Name matching is fuzzy: accepts labels (`compaction_summary`), filenames (`compaction-summary.md`), or partial matches (`keepalive`)
 
 ### `/version`
 Build version info (version, commit, build date, Go version).
