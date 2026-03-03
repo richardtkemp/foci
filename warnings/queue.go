@@ -35,6 +35,7 @@ type warningBucket struct {
 	suppressedSinceDrain int // suppressed count since last Drain()
 	component            string // for summary messages
 	level                string
+	quiet                bool // entered after first saturated window expires
 }
 
 // Queue collects log warnings and errors for injection into agent turns.
@@ -66,6 +67,11 @@ func NewQueue(maxPerWindow int, windowDuration time.Duration) *Queue {
 	}
 }
 
+// quietWindow returns the extended window used during quiet mode (12× normal window).
+func (q *Queue) quietWindow() time.Duration {
+	return q.windowDuration * 12
+}
+
 // Push adds a warning to the queue, subject to rate-limiting.
 func (q *Queue) Push(level, component, msg string) {
 	q.mu.Lock()
@@ -82,15 +88,8 @@ func (q *Queue) Push(level, component, msg string) {
 	key := level + "|" + component + "|" + normalized
 
 	b, exists := q.buckets[key]
-	if !exists || now.Sub(b.windowStart) >= q.windowDuration {
-		// Flush summary for expiring bucket before resetting
-		if exists && b.suppressedSinceDrain > 0 {
-			dur := FormatDuration(now.Sub(b.windowStart))
-			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
-				b.level, b.component, b.suppressedSinceDrain, dur)
-			q.warnings = append(q.warnings, summary)
-		}
-		// New bucket or window expired — reset and allow
+	if !exists {
+		// Brand new — allow through
 		q.buckets[key] = &warningBucket{
 			windowStart: now,
 			allowed:     1,
@@ -101,13 +100,59 @@ func (q *Queue) Push(level, component, msg string) {
 		return
 	}
 
+	// Determine effective window duration
+	effectiveWindow := q.windowDuration
+	if b.quiet {
+		effectiveWindow = q.quietWindow()
+	}
+
+	if now.Sub(b.windowStart) >= effectiveWindow {
+		// Window expired — flush any suppressed summary
+		if b.suppressedSinceDrain > 0 {
+			dur := FormatDuration(now.Sub(b.windowStart))
+			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
+				b.level, b.component, b.suppressedSinceDrain, dur)
+			q.warnings = append(q.warnings, summary)
+		}
+
+		if b.quiet {
+			// Quiet window expired — restart quiet, suppress this push
+			b.windowStart = now
+			b.suppressedSinceDrain = 1
+			return
+		}
+
+		if b.allowed >= q.maxPerWindow {
+			// Saturated window expired — enter quiet mode, suppress this push
+			b.windowStart = now
+			b.quiet = true
+			b.allowed = 0
+			b.suppressedSinceDrain = 1
+			return
+		}
+
+		// Non-saturated window expired — normal reset, allow through
+		b.windowStart = now
+		b.allowed = 1
+		b.suppressedSinceDrain = 0
+		q.pushLocked(level, component, msg)
+		return
+	}
+
+	// Window NOT expired
+	if b.quiet {
+		// Quiet mode — always suppress
+		b.suppressedSinceDrain++
+		return
+	}
+
 	if b.allowed < q.maxPerWindow {
 		b.allowed++
 		q.pushLocked(level, component, msg)
 		return
 	}
 
-	// Suppress
+	// At max — suppress
 	b.suppressedSinceDrain++
 }
 
@@ -124,13 +169,28 @@ func (q *Queue) pushLocked(level, component, msg string) {
 // Drain returns all queued warnings and clears the queue.
 // For any rate-limited keys with suppressed messages, a summary line is appended.
 // Expired buckets are pruned to prevent unbounded growth.
+// Quiet buckets are skipped unless their quiet window has expired.
 func (q *Queue) Drain() []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Append summary lines for suppressed warnings
 	now := q.nowFunc()
 	for key, b := range q.buckets {
+		if b.quiet {
+			// Quiet bucket: only flush when quiet window expires
+			if now.Sub(b.windowStart) >= q.quietWindow() {
+				if b.suppressedSinceDrain > 0 {
+					dur := FormatDuration(now.Sub(b.windowStart))
+					summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
+						b.level, b.component, b.suppressedSinceDrain, dur)
+					q.warnings = append(q.warnings, summary)
+				}
+				delete(q.buckets, key)
+			}
+			continue
+		}
+
+		// Normal bucket
 		if b.suppressedSinceDrain > 0 {
 			dur := FormatDuration(now.Sub(b.windowStart))
 			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
@@ -162,6 +222,9 @@ func (q *Queue) Pending() bool {
 		return true
 	}
 	for _, b := range q.buckets {
+		if b.quiet {
+			continue
+		}
 		if b.suppressedSinceDrain > 0 {
 			return true
 		}

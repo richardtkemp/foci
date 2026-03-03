@@ -137,21 +137,19 @@ func TestQueue_Dedup_SuppressesAfterMax(t *testing.T) {
 func TestQueue_Dedup_WindowExpiry(t *testing.T) {
 	q, now := newTestQueue(2, 5*time.Minute)
 
-	// Fill window
+	// Fill window (not saturated — only 1 of 2 allowed)
 	q.Push("WARN", "telegram", "error 42")
-	q.Push("WARN", "telegram", "error 42")
-	q.Push("WARN", "telegram", "error 42") // suppressed
 
 	// Advance past window
 	*now = now.Add(6 * time.Minute)
 
-	// Should be allowed again (new window)
+	// Should be allowed again (non-saturated window → normal reset)
 	q.Push("WARN", "telegram", "error 42")
 
 	warnings := q.Drain()
-	// 2 from first window + 1 summary + 1 from new window = 4
-	if len(warnings) != 4 {
-		t.Fatalf("got %d warnings, want 4", len(warnings))
+	// 1 from first window + 1 from new window = 2
+	if len(warnings) != 2 {
+		t.Fatalf("got %d warnings, want 2", len(warnings))
 	}
 }
 
@@ -281,6 +279,202 @@ func TestQueue_Pending_AfterDrain(t *testing.T) {
 	q.Drain()
 	if q.Pending() {
 		t.Error("Pending() after Drain() should be false")
+	}
+}
+
+// --- Quiet mode tests ---
+
+func TestQueue_QuietMode_EntersAfterSaturatedWindow(t *testing.T) {
+	q, now := newTestQueue(3, 5*time.Minute)
+
+	// Fill and saturate window (3 allowed + 1 suppressed)
+	for i := 0; i < 4; i++ {
+		q.Push("WARN", "telegram", "context deadline exceeded")
+	}
+	if q.Len() != 3 {
+		t.Fatalf("Len() = %d, want 3 after saturation", q.Len())
+	}
+
+	// Advance past window
+	*now = now.Add(6 * time.Minute)
+
+	// Push again — saturated window expired → enters quiet mode
+	q.Push("WARN", "telegram", "context deadline exceeded")
+
+	// 3 allowed + 1 summary flushed on quiet entry = 4 queued
+	// (the push itself was suppressed into quiet mode)
+	if q.Len() != 4 {
+		t.Fatalf("Len() = %d, want 4 (3 allowed + 1 summary)", q.Len())
+	}
+
+	warnings := q.Drain()
+	// Drain skips quiet bucket within its window
+	if len(warnings) != 4 {
+		t.Fatalf("Drain() got %d warnings, want 4", len(warnings))
+	}
+	if !strings.Contains(warnings[3], "... and 1 more") {
+		t.Errorf("summary = %q, want '... and 1 more'", warnings[3])
+	}
+}
+
+func TestQueue_QuietMode_PendingIgnoresQuiet(t *testing.T) {
+	q, now := newTestQueue(1, 5*time.Minute)
+
+	// Saturate and expire
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // suppressed
+	*now = now.Add(6 * time.Minute)
+	q.Push("WARN", "test", "error") // enters quiet mode
+
+	// Drain to clear queued warnings
+	q.Drain()
+
+	// Push more — suppressed into quiet bucket
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error")
+
+	// Pending should ignore quiet buckets
+	if q.Pending() {
+		t.Error("Pending() should be false when only quiet buckets have suppressions")
+	}
+}
+
+func TestQueue_QuietMode_DrainSkipsActiveQuiet(t *testing.T) {
+	q, now := newTestQueue(1, 5*time.Minute)
+
+	// Enter quiet mode
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // suppressed
+	*now = now.Add(6 * time.Minute)
+	q.Push("WARN", "test", "error") // quiet mode
+
+	q.Drain() // clear queued
+
+	// Push more suppressions into quiet bucket
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error")
+
+	// Drain should skip quiet bucket within its window
+	warnings := q.Drain()
+	if warnings != nil {
+		t.Errorf("Drain() = %v, want nil (quiet bucket should be skipped)", warnings)
+	}
+}
+
+func TestQueue_QuietMode_DrainFlushesExpiredQuiet(t *testing.T) {
+	q, now := newTestQueue(1, 5*time.Minute)
+
+	// Enter quiet mode
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // suppressed
+	*now = now.Add(6 * time.Minute)
+	q.Push("WARN", "test", "error") // quiet mode
+
+	q.Drain() // clear queued
+
+	// Push more into quiet bucket
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error")
+
+	// Advance past quiet window (12 × 5m = 60m)
+	*now = now.Add(61 * time.Minute)
+
+	warnings := q.Drain()
+	if len(warnings) != 1 {
+		t.Fatalf("Drain() got %d warnings, want 1 (summary)", len(warnings))
+	}
+	if !strings.Contains(warnings[0], "... and") {
+		t.Errorf("summary = %q, want to contain '... and'", warnings[0])
+	}
+
+	// Bucket should be pruned — Pending should be false
+	if q.Pending() {
+		t.Error("Pending() should be false after quiet bucket pruned")
+	}
+}
+
+func TestQueue_QuietMode_QuietWindowRenewal(t *testing.T) {
+	q, now := newTestQueue(1, 5*time.Minute)
+
+	// Enter quiet mode
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // suppressed
+	*now = now.Add(6 * time.Minute)
+	q.Push("WARN", "test", "error") // quiet mode
+
+	q.Drain() // clear queued
+
+	// Push more into quiet bucket
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error")
+
+	// Advance past quiet window
+	*now = now.Add(61 * time.Minute)
+
+	// Push again — quiet window expired → flush summary, restart quiet
+	q.Push("WARN", "test", "error")
+
+	warnings := q.Drain()
+	// 1 summary flushed during Push (quiet window expiry)
+	// The push itself is suppressed into renewed quiet window
+	// Drain skips renewed quiet bucket
+	if len(warnings) != 1 {
+		t.Fatalf("Drain() got %d warnings, want 1 (summary from expiry)", len(warnings))
+	}
+	if !strings.Contains(warnings[0], "... and") {
+		t.Errorf("summary = %q, want to contain '... and'", warnings[0])
+	}
+}
+
+func TestQueue_QuietMode_Recovery(t *testing.T) {
+	q, now := newTestQueue(1, 5*time.Minute)
+
+	// Enter quiet mode
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error") // suppressed
+	*now = now.Add(6 * time.Minute)
+	q.Push("WARN", "test", "error") // quiet mode
+
+	q.Drain() // clear queued
+
+	// Advance past quiet window — no more pushes (warning stopped)
+	*now = now.Add(61 * time.Minute)
+	q.Drain() // flushes summary, deletes bucket
+
+	// New push should start a fresh non-quiet bucket
+	q.Push("WARN", "test", "error")
+
+	warnings := q.Drain()
+	if len(warnings) != 1 {
+		t.Fatalf("Drain() got %d, want 1 (fresh bucket, no quiet)", len(warnings))
+	}
+	if strings.Contains(warnings[0], "... and") {
+		t.Errorf("warning = %q, should not be a summary (fresh bucket)", warnings[0])
+	}
+}
+
+func TestQueue_QuietMode_NonSaturatedWindowNoQuiet(t *testing.T) {
+	q, now := newTestQueue(3, 5*time.Minute)
+
+	// Push 2 (below max of 3 — not saturated)
+	q.Push("WARN", "test", "error")
+	q.Push("WARN", "test", "error")
+
+	// Advance past window
+	*now = now.Add(6 * time.Minute)
+
+	// Push again — non-saturated window → normal reset, allow through
+	q.Push("WARN", "test", "error")
+
+	warnings := q.Drain()
+	// 2 from first window + 1 from new window = 3, no quiet mode
+	if len(warnings) != 3 {
+		t.Fatalf("Drain() got %d, want 3", len(warnings))
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "... and") {
+			t.Errorf("unexpected summary: %q (non-saturated should not trigger quiet)", w)
+		}
 	}
 }
 
