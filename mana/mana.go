@@ -5,6 +5,8 @@ package mana
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,106 @@ const (
 	// PollInterval is the minimum interval between usage API calls.
 	PollInterval = 60 * time.Second
 )
+
+// FromUtilization converts a provider utilization percentage (0-100) to mana
+// (available quota). Mana = 100 - utilization, clamped to [0, 100].
+// Provider-agnostic: works with any API that reports utilization out of 100%.
+func FromUtilization(utilization float64) float64 {
+	m := 100 - utilization
+	if m < 0 {
+		return 0
+	}
+	return m
+}
+
+// FormatPercent returns a compact mana percentage string from usage data.
+// Returns "" if unavailable.
+func FormatPercent(usage *anthropic.UsageResponse) string {
+	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
+		return ""
+	}
+	m := FromUtilization(*usage.FiveHour.Utilization)
+	if m < 1 {
+		return fmt.Sprintf("%.1f%%", m)
+	}
+	return fmt.Sprintf("%.0f%%", m)
+}
+
+// FormatReset returns a human-readable reset time string from usage data.
+// Returns "" if no reset time available.
+func FormatReset(usage *anthropic.UsageResponse) string {
+	if usage == nil || usage.FiveHour == nil || usage.FiveHour.ResetsAt == nil {
+		return ""
+	}
+	return ParseResetTime(*usage.FiveHour.ResetsAt)
+}
+
+// FormatUsage returns a human-readable usage summary string.
+func FormatUsage(usage *anthropic.UsageResponse) string {
+	if usage == nil {
+		return "No usage data"
+	}
+
+	var parts []string
+
+	if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
+		util := *usage.FiveHour.Utilization
+		utilStr := ""
+		if util < 1 {
+			utilStr = fmt.Sprintf("%.1f%%", util)
+		} else {
+			utilStr = fmt.Sprintf("%.0f%%", util)
+		}
+		parts = append(parts, fmt.Sprintf("%s used", utilStr))
+
+		if usage.FiveHour.ResetsAt != nil {
+			if resetTime := ParseResetTime(*usage.FiveHour.ResetsAt); resetTime != "" {
+				parts = append(parts, fmt.Sprintf("resets %s", resetTime))
+			}
+		}
+	}
+
+	if usage.ExtraUsage != nil && usage.ExtraUsage.IsEnabled && usage.ExtraUsage.UsedCredits > 0 {
+		parts = append(parts, fmt.Sprintf("overage $%.2f", usage.ExtraUsage.UsedCredits))
+	}
+
+	if len(parts) == 0 {
+		return "No active usage limits"
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+// ParseResetTime converts ISO timestamp to human-readable relative time.
+// Returns formats like "2pm", "in 2h", "in 45m", or "" if parsing fails.
+func ParseResetTime(isoTime string) string {
+	t, err := time.Parse(time.RFC3339Nano, isoTime)
+	if err != nil {
+		return ""
+	}
+
+	now := time.Now().UTC()
+	until := t.Sub(now)
+
+	if until > 24*time.Hour {
+		return t.Format("2pm")
+	}
+	if until < 0 {
+		return "now"
+	}
+	if until < time.Minute {
+		return "in <1m"
+	}
+	if until < time.Hour {
+		return fmt.Sprintf("in %dm", int(until.Minutes()))
+	}
+	hours := int(until.Hours())
+	mins := int(until.Minutes()) % 60
+	if mins == 0 {
+		return fmt.Sprintf("in %dh", hours)
+	}
+	return fmt.Sprintf("in %dh %dm", hours, mins)
+}
 
 // IsGood implements the manamometer check.
 //
@@ -94,10 +196,7 @@ func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) b
 		m.mu.Lock()
 		m.lastUsagePoll = time.Now()
 		if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
-			m.cachedMana = 100 - *usage.FiveHour.Utilization
-			if m.cachedMana < 0 {
-				m.cachedMana = 0
-			}
+			m.cachedMana = FromUtilization(*usage.FiveHour.Utilization)
 		}
 		if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
 			m.cachedReset, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)

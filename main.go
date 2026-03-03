@@ -1962,12 +1962,12 @@ func setupAgent(p setupParams) *agentInstance {
 		if err != nil {
 			return fmt.Sprintf("%s Error fetching %s: %v", emoji, displayName, err), nil
 		}
-		percent := anthropic.FormatMana(usage)
+		percent := mana.FormatPercent(usage)
 		if percent == "" {
 			return fmt.Sprintf("%s %s: unknown", emoji, displayName), nil
 		}
 		result := fmt.Sprintf("%s %s: %s remaining", emoji, displayName, percent)
-		if reset := anthropic.FormatManaReset(usage); reset != "" {
+		if reset := mana.FormatReset(usage); reset != "" {
 			result += fmt.Sprintf(" (resets %s)", reset)
 		}
 		return result, nil

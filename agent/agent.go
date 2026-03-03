@@ -371,7 +371,7 @@ func (a *Agent) manaString() string {
 // manaAndReset returns cached mana percentage, reset time strings, and whether
 // mana is "good" (above invest threshold). Returns empty strings and false if
 // UsageClient is nil or on error.
-func (a *Agent) manaAndReset() (mana, reset string, good bool) {
+func (a *Agent) manaAndReset() (pct, reset string, good bool) {
 	if a.UsageClient == nil {
 		return "", "", false
 	}
@@ -395,8 +395,8 @@ func (a *Agent) manaAndReset() (mana, reset string, good bool) {
 		return a.manaCached, a.manaResetCached, a.manaGoodCached
 	}
 
-	a.manaCached = anthropic.FormatMana(usage)
-	a.manaResetCached = anthropic.FormatManaReset(usage)
+	a.manaCached = mana.FormatPercent(usage)
+	a.manaResetCached = mana.FormatReset(usage)
 	a.manaGoodCached = a.computeManaGood(usage)
 	a.manaCacheTime = time.Now()
 	return a.manaCached, a.manaResetCached, a.manaGoodCached
@@ -410,10 +410,7 @@ func (a *Agent) computeManaGood(usage *anthropic.UsageResponse) bool {
 	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
 		return false
 	}
-	manaVal := 100 - *usage.FiveHour.Utilization
-	if manaVal < 0 {
-		manaVal = 0
-	}
+	manaVal := mana.FromUtilization(*usage.FiveHour.Utilization)
 	var resetsAt time.Time
 	if usage.FiveHour.ResetsAt != nil {
 		resetsAt, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
