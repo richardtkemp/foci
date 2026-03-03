@@ -348,6 +348,30 @@ Skill directories to scan on startup. Per-agent override: `skills_dirs` in `[[ag
 
 Each subdirectory with a `SKILL.md` is loaded. The skill name and description (from YAML frontmatter) are injected into the system prompt. Skills with `command` + `script` frontmatter auto-register as slash commands.
 
+### `[[blocked_paths]]`
+
+Configurable path prefixes that the `write` and `edit` tools will refuse to modify. When a write or edit targets a path under a blocked prefix, the tool returns the `rebuke` message as a successful result (not an error), nudging the agent to use a different approach (e.g. delegating to `claude` via tmux).
+
+Per-agent override: `blocked_paths` in `[[agents]]` — see [Global-or-Agent: Skills & Message Transforms](#skills--message-transforms). Per-agent values replace (not merge with) global values.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `path` | string | required | Directory or file prefix to block. Resolved to absolute for matching. |
+| `rebuke` | string | required | Message returned as the tool result when a blocked write/edit is attempted. |
+
+Example:
+```toml
+[[blocked_paths]]
+path = "/home/foci/myagent/code"
+rebuke = "Do not write code directly. Use claude via tmux to make changes in the code directory."
+
+[[blocked_paths]]
+path = "/home/foci/myagent/config"
+rebuke = "Config files are managed externally. Describe the change you want and the human will apply it."
+```
+
+This is separate from the security-based path blocking in `secrets.toml` (which returns hard errors). Config blocked paths are a soft operational guardrail.
+
 ### `[[commands]]`
 
 Custom slash commands. Each entry is a `[[commands]]` table array.
@@ -597,6 +621,7 @@ Per-agent mana warning thresholds. When set, completely replaces the global `[us
 |-----|------|---------|-----------------|-------------|
 | `skills_dirs` | string[] | `[]` | `[skills] dirs` | Directories to scan for skill subdirectories. `[]` inherits from global `[skills] dirs`. |
 | `message_transforms` | array | `[]` | `[[message_transforms]]` | Regex find/replace rules applied to inbound messages. `[]` inherits from global `[[message_transforms]]`. |
+| `blocked_paths` | array | `[]` | `[[blocked_paths]]` | Path prefixes blocked for write/edit tools. `[]` inherits from global `[[blocked_paths]]`. Per-agent replaces global (not merged). |
 
 ---
 

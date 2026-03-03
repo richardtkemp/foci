@@ -1096,7 +1096,7 @@ func TestSpawnNoneIsolationWritesToTempDir(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil))
+	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
@@ -1157,7 +1157,7 @@ func TestSpawnNoneIsolationBlocksAbsolutePath(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil))
+	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
@@ -1201,7 +1201,7 @@ func TestSpawnNoneIsolationBlocksTraversal(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil))
+	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
@@ -1255,7 +1255,7 @@ func TestSpawnNoneFileListMultiple(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil))
+	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}

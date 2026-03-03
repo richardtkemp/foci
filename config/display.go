@@ -218,6 +218,11 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 		add("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
 	}
 
+	// blocked_paths
+	if len(cfg.BlockedPaths) > 0 {
+		add("blocked_paths", fmt.Sprintf("(%d paths)", len(cfg.BlockedPaths)), "")
+	}
+
 	return formatTableBySection(rows, mw)
 }
 
@@ -310,6 +315,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if agent.MemoryFormation.SessionEndPrompt != "" {
 		add("memory_formation.session_end_prompt", agent.MemoryFormation.SessionEndPrompt)
+	}
+	if len(agent.BlockedPaths) > 0 {
+		add("blocked_paths", fmt.Sprintf("(%d paths)", len(agent.BlockedPaths)))
 	}
 	return rows
 }
@@ -528,6 +536,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 	if len(cfg.MessageTransforms) > 0 {
 		addGlobal("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
+	}
+	if len(cfg.BlockedPaths) > 0 {
+		addGlobal("blocked_paths", fmt.Sprintf("(%d paths)", len(cfg.BlockedPaths)), "")
 	}
 
 	var tables []string

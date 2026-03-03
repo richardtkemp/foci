@@ -136,6 +136,7 @@ type AgentConfig struct {
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDirs        []string           `toml:"skills_dirs"`         // skill directories (empty = use global [skills] dirs)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
+	BlockedPaths      []BlockedPath      `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (empty = use global)
 	// Per-agent tool behaviour (0 = use global [tools] value)
 	ExecAutoBackground  int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
 	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
@@ -326,6 +327,11 @@ type MessageTransform struct {
 	Replace string `toml:"replace"` // replacement string (supports $1, $2, etc.)
 }
 
+type BlockedPath struct {
+	Path   string `toml:"path"`   // directory or file prefix to block
+	Rebuke string `toml:"rebuke"` // message returned when write/edit is attempted
+}
+
 type CommandConfig struct {
 	Name        string `toml:"name"`
 	Description string `toml:"description"`
@@ -420,6 +426,7 @@ type Config struct {
 	MemoryFormation    MemoryFormationConfig `toml:"memory_formation"`
 	Commands           []CommandConfig       `toml:"commands"`
 	MessageTransforms  []MessageTransform    `toml:"message_transforms"`   // regex find/replace rules applied to inbound messages
+	BlockedPaths       []BlockedPath         `toml:"blocked_paths"`        // path prefixes that write/edit tools refuse (with rebuke message)
 	WelcomeFile        string                `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
 	SkipSecurityChecks bool                  `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 	DefinedKeys        map[string]bool       `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)

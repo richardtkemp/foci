@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"foci/config"
 	"foci/secrets"
 )
 
@@ -47,7 +48,7 @@ func TestWriteFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "output.txt")
 
-	tool := NewWriteTool(nil)
+	tool := NewWriteTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":    path,
 		"content": "hello world",
@@ -72,7 +73,7 @@ func TestWriteFileOverwrite(t *testing.T) {
 	path := filepath.Join(dir, "file.txt")
 	os.WriteFile(path, []byte("old content"), 0644)
 
-	tool := NewWriteTool(nil)
+	tool := NewWriteTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":    path,
 		"content": "new content",
@@ -91,7 +92,7 @@ func TestEditFile(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("hello world, hello"), 0644)
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 
 	// "hello world" is unique, should work
 	params, _ := json.Marshal(map[string]interface{}{
@@ -119,7 +120,7 @@ func TestEditFileNotFound(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("foo bar baz"), 0644)
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "nonexistent string",
@@ -140,7 +141,7 @@ func TestEditFileNonUnique(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("aaa bbb aaa"), 0644)
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "aaa",
@@ -157,7 +158,7 @@ func TestEditFileNonUnique(t *testing.T) {
 }
 
 func TestEditFileMissing(t *testing.T) {
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       "/nonexistent/file.txt",
 		"old_string": "x",
@@ -175,7 +176,7 @@ func TestEditFileSyntaxValidToValid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "old"}`), 0644)
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "old",
@@ -201,7 +202,7 @@ func TestEditFileSyntaxValidToInvalid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"}`), 0644)
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"}`,
@@ -228,7 +229,7 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"`), 0644)  // missing closing brace
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"`,
@@ -249,7 +250,7 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": bad}`), 0644)  // already invalid
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "bad",
@@ -270,7 +271,7 @@ func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("hello"), 0644)
 
-	tool := NewEditTool(nil)
+	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "hello",
@@ -366,7 +367,7 @@ func TestReadBlockedProcEnviron(t *testing.T) {
 
 func TestWriteBlockedSecretsToml(t *testing.T) {
 	store := loadTestStore(t)
-	tool := NewWriteTool(store)
+	tool := NewWriteTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":    "secrets.toml",
 		"content": "malicious content",
@@ -383,7 +384,7 @@ func TestWriteBlockedSecretsToml(t *testing.T) {
 
 func TestEditBlockedSecretsToml(t *testing.T) {
 	store := loadTestStore(t)
-	tool := NewEditTool(store)
+	tool := NewEditTool(store, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       "secrets.toml",
 		"old_string": "old",
@@ -602,5 +603,144 @@ func TestReadAllowedWithStore(t *testing.T) {
 	}
 	if !strings.Contains(result, "safe content") {
 		t.Errorf("result = %q, want safe content", result)
+	}
+}
+
+// --- Config blocked paths tests ---
+
+func TestWriteBlockedByConfig(t *testing.T) {
+	dir := t.TempDir()
+	blocked := []config.BlockedPath{
+		{Path: dir, Rebuke: "Don't write here, use tmux instead."},
+	}
+	tool := NewWriteTool(nil, blocked)
+	path := filepath.Join(dir, "file.go")
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    path,
+		"content": "package main",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("config blocked path should return nil error, got: %v", err)
+	}
+	if result != "Don't write here, use tmux instead." {
+		t.Errorf("result = %q, want rebuke message", result)
+	}
+	// File should not exist
+	if _, err := os.Stat(path); err == nil {
+		t.Error("file was created despite blocked path")
+	}
+}
+
+func TestWriteNotBlockedByConfig(t *testing.T) {
+	blockedDir := t.TempDir()
+	writeDir := t.TempDir()
+	blocked := []config.BlockedPath{
+		{Path: blockedDir, Rebuke: "nope"},
+	}
+	tool := NewWriteTool(nil, blocked)
+	path := filepath.Join(writeDir, "ok.txt")
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    path,
+		"content": "allowed",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("non-blocked write should succeed: %v", err)
+	}
+	if !strings.Contains(result, "Wrote") {
+		t.Errorf("result = %q, want Wrote", result)
+	}
+	data, _ := os.ReadFile(path)
+	if string(data) != "allowed" {
+		t.Errorf("content = %q", string(data))
+	}
+}
+
+func TestEditBlockedByConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "file.go")
+	os.WriteFile(path, []byte("old content"), 0644)
+
+	blocked := []config.BlockedPath{
+		{Path: dir, Rebuke: "Use claude via tmux for this workspace."},
+	}
+	tool := NewEditTool(nil, blocked)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":       path,
+		"old_string": "old content",
+		"new_string": "new content",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("config blocked path should return nil error, got: %v", err)
+	}
+	if result != "Use claude via tmux for this workspace." {
+		t.Errorf("result = %q, want rebuke message", result)
+	}
+	// File should be unchanged
+	data, _ := os.ReadFile(path)
+	if string(data) != "old content" {
+		t.Errorf("file was modified despite blocked path: %q", string(data))
+	}
+}
+
+func TestBlockedPathPrefixMatching(t *testing.T) {
+	// /naughty blocks /naughty/sub/file.go but not /not-naughty/file.go
+	naughty := t.TempDir() // e.g. /tmp/xxx
+	notNaughty := t.TempDir()
+
+	blocked := []config.BlockedPath{
+		{Path: naughty, Rebuke: "blocked"},
+	}
+
+	// Write to naughty subdir — should be blocked
+	tool := NewWriteTool(nil, blocked)
+	sub := filepath.Join(naughty, "sub")
+	os.MkdirAll(sub, 0755)
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    filepath.Join(sub, "file.go"),
+		"content": "x",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "blocked" {
+		t.Errorf("subdir should be blocked, got: %q", result)
+	}
+
+	// Write to not-naughty — should succeed
+	params, _ = json.Marshal(map[string]interface{}{
+		"path":    filepath.Join(notNaughty, "file.go"),
+		"content": "ok",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("not-naughty write failed: %v", err)
+	}
+	if !strings.Contains(result, "Wrote") {
+		t.Errorf("not-naughty should succeed, got: %q", result)
+	}
+}
+
+func TestWriteNoBlockedPaths(t *testing.T) {
+	dir := t.TempDir()
+	tool := NewWriteTool(nil, nil)
+	path := filepath.Join(dir, "file.txt")
+	params, _ := json.Marshal(map[string]interface{}{
+		"path":    path,
+		"content": "hello",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("write with nil blocked paths should succeed: %v", err)
+	}
+	if !strings.Contains(result, "Wrote") {
+		t.Errorf("result = %q", result)
 	}
 }
