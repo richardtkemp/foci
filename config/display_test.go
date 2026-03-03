@@ -62,6 +62,7 @@ func testConfig() (*Config, AgentConfig) {
 			WebFetchMaxBytes:        1048576,
 				WebSearchTimeout:        "15s",
 			MaxConcurrentSpawns:     3,
+			ExploreMaxDepth:         100,
 			ToolCallPreviewChars:    450,
 			TmuxMemoryCheckInterval: "5m",
 			TmuxMemoryWarn:          "10%",

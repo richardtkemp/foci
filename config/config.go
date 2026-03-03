@@ -143,6 +143,7 @@ type AgentConfig struct {
 	// Per-agent tool behaviour (0 = use global [tools] value)
 	ExecAutoBackground  int    `toml:"exec_auto_background"`  // seconds before auto-backgrounding exec
 	MaxConcurrentSpawns int    `toml:"max_concurrent_spawns"` // max concurrent spawn sessions
+	ExploreMaxDepth     int    `toml:"explore_max_depth"`     // max tool loops for explore spawn mode (0 = use global)
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
 	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
@@ -320,6 +321,7 @@ type ToolsConfig struct {
 	WebFetchMaxBytes        int    `toml:"web_fetch_max_bytes"`        // max bytes to read from web fetch (default 1048576 = 1MB)
 	WebSearchTimeout        string `toml:"web_search_timeout"`         // HTTP timeout for web search (default "15s")
 	MaxConcurrentSpawns     int    `toml:"max_concurrent_spawns"`      // max concurrent spawn inherit sessions per agent (default 3)
+	ExploreMaxDepth         int    `toml:"explore_max_depth"`          // max tool loops for explore spawn mode (default 100)
 	ToolCallPreviewChars    int    `toml:"tool_call_preview_chars"`    // max chars for tool call param preview in Telegram (default 450)
 	TmuxMemoryCheckInterval string `toml:"tmux_memory_check_interval"` // how often to check tmux RSS (default "5m", "0" disables)
 	TmuxMemoryWarn          string `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
@@ -877,6 +879,7 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Tools.WebFetchMaxBytes, 1048576) // 1MB
 	setStringDefault(&cfg.Tools.WebSearchTimeout, "15s")
 	setIntDefault(&cfg.Tools.MaxConcurrentSpawns, 3)
+	setIntDefault(&cfg.Tools.ExploreMaxDepth, 100)
 	setInt64Default(&cfg.Tools.MaxUploadFileSize, 50*1024*1024) // 50MB
 	setIntDefault(&cfg.Tools.ToolCallPreviewChars, 450)
 	setStringDefault(&cfg.Tools.TmuxMemoryCheckInterval, "5m")
