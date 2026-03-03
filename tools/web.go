@@ -21,7 +21,7 @@ func NewWebFetchTool() *Tool {
 	return &Tool{
 		Name:        "web_fetch",
 		ExecExport:  true,
-		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability). Set raw=true for unprocessed HTML.",
+		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability). Prefer the default Markdown mode; only set raw=true when you specifically need HTML.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -31,7 +31,7 @@ func NewWebFetchTool() *Tool {
 				},
 				"raw": {
 					"type": "boolean",
-					"description": "Return raw HTML with no processing (default false)"
+					"description": "Return raw HTML instead of Markdown. Not recommended — only use when you specifically need HTML (default false)"
 				}
 			},
 			"required": ["url"]
