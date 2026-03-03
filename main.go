@@ -2698,7 +2698,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("- **model** — current model\n")
 	b.WriteString("- **prev_cost** — USD equivalent cost of previous turn\n")
 	b.WriteString("- **prev_tokens** — token breakdown: in (new input), out (output), cR (cache read), cW (cache write)\n")
-	b.WriteString("- **mana** — remaining API quota percentage\n")
+	b.WriteString("- **mana** — remaining API quota percentage, followed by 🟢 (above invest threshold — safe for heavy work) or 🔴 (low — conserve, avoid expensive operations)\n")
 
 	// Session Structure
 	b.WriteString("\n## Session Structure\n")
