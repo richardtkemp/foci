@@ -6,7 +6,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Language | Go | Node.js/TypeScript | Python |
 | Binary size / runtime | ~15 MB static binary | Node 22+, ~500 MB+ | Python 3.11+, pip |
-| Typical RAM | ~30–70 MB | ~500 MB+ | ~45 MB |
+| Typical RAM | ~30 MB | ~500 MB+ | ~45 MB |
 | Core LOC | ~35k | ~250k+ | ~4k |
 | License | Proprietary | MIT | MIT |
 
@@ -15,77 +15,52 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Anthropic Claude | ✅ | ✅ | ✅ |
-| OpenAI / GPT | ❌ | ✅ | ✅ |
-| Google Gemini | ❌ | ✅ | ✅ |
-| OpenRouter | ❌ | ✅ | ✅ via LiteLLM |
-| Ollama / local models | ❌ | ✅ | ✅ |
-| Amazon Bedrock | ❌ | ✅ | ✅ |
-| DeepSeek / Groq / Mistral | ❌ | ✅ | ✅ |
+| Other popular platforms | ❌ | ✅ | ✅ |
 | Model failover chain | ❌ | ✅ ordered fallbacks | ❌ |
-| Model aliasing | ✅ opus/sonnet/haiku | ✅ provider/model syntax | ✅ auto-routing by name |
-| Per-session model switch | ✅ `/model` | ✅ `/model` | ❌ |
-| Extended thinking | ✅ adaptive, Opus only | ✅ off/low/medium/high/xhigh | ✅ configurable effort |
-| Separate image model | ❌ | ✅ with fallbacks | ❌ |
+| Model aliasing | ✅ | ✅ | ✅ |
+| Per-session model switch | ✅ | ✅ | ❌ |
+| Extended thinking | ✅ | ✅ | ✅ |
 
 ## Chat Channels
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Telegram | ✅ long-poll, inline keyboards | ✅ via grammY | ✅ long-poll, vision, voice |
-| Discord | ❌ | ✅ | ✅ |
-| WhatsApp | ❌ | ✅ via Baileys | ✅ via Baileys |
-| Slack | ❌ | ✅ via Bolt | ✅ Socket Mode |
-| Signal | ❌ | ✅ | ❌ |
-| iMessage | ❌ | ✅ via BlueBubbles | ❌ |
-| Matrix | ❌ | ✅ | ✅ E2EE support |
-| IRC | ❌ | ✅ | ❌ |
-| Microsoft Teams | ❌ | ✅ | ❌ |
-| Feishu / Lark | ❌ | ✅ | ✅ |
-| DingTalk | ❌ | ❌ | ✅ |
-| QQ | ❌ | ❌ | ✅ |
-| Email (IMAP/SMTP) | ❌ | ❌ | ✅ |
-| Google Chat | ❌ | ✅ | ❌ |
-| LINE | ❌ | ✅ | ❌ |
+| Telegram | ✅ | ✅ | ✅ |
+| Other popular platforms | ❌ | ✅ | ✅ |
+| Android app | 🔜 coming soon | 🔜 coming soon | ❌ |
 | WebChat UI | ❌ | ✅ Control UI | ❌ |
 | CLI interactive mode | ❌ | ✅ `openclaw tui` | ✅ `nanobot agent` |
 | HTTP gateway | ✅ REST API | ✅ WebSocket hub | ❌ |
-| Total platforms | 1 | 20+ | 10+ |
 
 ## Tool System
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Shell execution | ✅ with timeout, process groups | ✅ with elevated mode | ✅ configurable timeout |
-| File read/write/edit | ✅ syntax validation on edit | ✅ apply_patch multi-hunk | ✅ exact-match patch |
-| HTTP requests | ✅ domain-locked, secret templates | ❌ no dedicated tool | ❌ |
+| Shell execution | ✅ with async execution | ✅ | ✅ |
+| File read/write/edit | ✅ syntax validation on edit | ✅ | ✅ |
+| HTTP requests | ✅ domain-locked API secret protection | ❌ | ❌ |
 | Web search | ✅ Anthropic or Brave | ✅ Brave | ✅ Brave |
-| Web fetch | ✅ builtin or Anthropic | ✅ HTML→markdown | ✅ Readability parsing |
-| File summarization | ✅ Haiku-powered | ❌ | ❌ |
+| Web fetch | ✅ | ✅ | ✅ |
+| Low-cost summarization | ✅ Haiku-powered | ❌ | ❌ |
 | Tmux integration | ✅ full lifecycle, autopilot | ❌ | ❌ |
 | Browser automation | ❌ | ✅ full CDP control | ❌ |
 | Reminders / alarms | ✅ time/duration/date | ❌ | ❌ |
 | Scratchpad | ✅ survives compaction | ❌ | ❌ |
 | Todo / task list | ✅ priority + tags | ❌ | ❌ |
-| Cross-session messaging | ✅ `send_to_session` | ✅ `sessions_send` | ❌ |
-| Outbound chat messages | ✅ media, TTS, voice | ✅ cross-platform `message` | ✅ mid-turn sends |
+| Cross-session messaging | ✅ | ✅ | ❌ |
 | Sub-agent spawning | ✅ 3 context modes | ✅ `sessions_spawn` | ✅ background |
-| Bitwarden vault access | ✅ approval-gated | ❌ | ❌ |
+| [Bitwarden vault access](SECRETS.md) | ✅ approval-gated | ❌ | ❌ |
 | Canvas / visual workspace | ❌ | ✅ A2UI, HTML/CSS/JS | ❌ |
 | PDF analysis | ❌ | ✅ | ❌ |
-| Image analysis | ❌ | ✅ dedicated tool | ❌ |
-| Tool result guard | ✅ auto-summarize large output | ❌ | ✅ truncation at 500 chars |
-| Tool piping to shell | ✅ unix socket bridge | ❌ | ❌ |
+| Tool result guard | ✅ auto-summarize large output to preserve meaningful context while conserving tokens | ❌ | ✅ truncation at 500 chars |
+| [Tool piping](TOOLS.md#tool-piping-exec-bridge) | ✅ tools ↔ shell ↔ each other | ❌ | ❌ |
 | Loop detection | ✅ configurable threshold | ✅ pattern-based detectors | ❌ |
 
 ## Session Management
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Persistence format | JSONL append-only | JSONL with tree structure | JSONL per-conversation |
-| Session branching | ✅ cron/spawn/multiball/voice | ✅ thread fork on overflow | ❌ |
-| Session index | ✅ SQLite | ✅ sessions.json | ❌ |
-| Per-chat sessions | ✅ | ✅ configurable DM scope | ✅ channel:chat_id keying |
-| Session reset | ✅ `/reset` with mid-turn guard | ✅ `/new`, `/reset`, auto | ✅ `/new` with archive |
+| Session branching | ✅ cron/spawn/multiball | ❌ | ❌ |
 | Crash recovery | ✅ orphan repair on startup | ❌ | ❌ |
 | Parallel conversations | ✅ multiball bot pool | ❌ | ❌ |
 
@@ -93,15 +68,11 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Auto-compaction | ✅ threshold-based | ✅ reserve token based | ✅ threshold-based |
-| Pre-compaction memory flush | ✅ agent saves memories | ✅ silent agentic turn | ✅ LLM consolidation |
 | Preserved messages | ✅ configurable count | ✅ configurable token count | ❌ |
-| Manual compaction | ✅ `/compact` | ✅ `/compact` | ❌ |
 | Scratchpad preservation | ✅ survives compaction | ❌ | ❌ |
 | Compaction archives | ✅ numbered rotation | ✅ stored in transcript | ❌ |
 | Async-pending guard | ✅ defers if results pending | ❌ | ❌ |
-| Token counting API | ✅ Anthropic endpoint | ❌ estimated | ❌ estimated |
-| Context breakdown | ✅ `/context` per-component | ✅ `/status` summary | ❌ |
+| Context breakdown | ✅ | ✅ | ❌ |
 
 ## Prompt Caching
 
@@ -109,9 +80,9 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Anthropic cache support | ✅ | ✅ | ✅ |
 | Cache breakpoints | ✅ 2 per request | ✅ configurable | ✅ on system prompt |
-| Cache keepalive | ✅ 55 min timer | ✅ configurable heartbeat | ❌ |
-| Cache-aware architecture | ✅ all design decisions | ✅ cache-TTL pruning mode | ❌ |
-| Cache monitoring | ✅ `/cache` last 5 calls | ✅ trace diagnostics | ❌ |
+| Cache keepalive | ✅ | ✅ | ❌ |
+| Cache-aware architecture | ✅ all design decisions | ❌ very frequent cache busts | ❌ |
+| Cache monitoring | ✅ `/cache` + SQLite log | ✅ JSONL trace log | ❌ |
 | Cache bust detection | ✅ alerts on >50% drop | ❌ | ❌ |
 | Cache preservation on branch | ✅ shares parent prefix | ❌ | ❌ |
 
@@ -119,17 +90,14 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Long-term memory file | ✅ MEMORY.md in prompt | ✅ MEMORY.md in prompt | ✅ MEMORY.md |
-| Daily memory logs | ✅ YYYY-MM-DD.md | ✅ YYYY-MM-DD.md | ✅ HISTORY.md |
-| Search method | FTS5 + Porter stemming | Vector embeddings + BM25 | Grep via exec |
-| Embedding providers | ❌ pure text search | ✅ OpenAI/Gemini/Ollama/etc | ❌ |
+| Search method | ✅ fast, local, powerful (FTS5/Bleve) | ✅ various good options, including semantic search | Grep via exec |
 | Weighted memory sources | ✅ per-source multipliers | ❌ | ❌ |
-| Conversation indexing | ✅ FTS5 | ✅ session memory (experimental) | ❌ |
+| Conversation indexing | ✅ | ✅ | ❌ |
 | Auto-reindex on change | ✅ fsnotify | ❌ | ❌ |
-| Periodic consolidation | ✅ configurable interval | ❌ manual | ✅ threshold-based |
-| Interval memory formation | ✅ timer + activity gate | ❌ | ❌ |
+| Periodic consolidation | ✅ built-in explicit task, sensible defaults | ❌ manual | ✅ threshold-based |
+| Interval memory formation | ✅ built-in explicit task, sensible defaults | ❌ | ❌ |
 | Temporal decay scoring | ❌ | ✅ configurable half-life | ❌ |
-| Per-agent memory isolation | ✅ separate FTS5 indexes | ✅ per-agent workspace | ❌ |
+| Per-agent memory isolation | ✅ | ✅ | ❌ |
 
 ## Cost & Usage Tracking
 
@@ -137,19 +105,19 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Per-turn cost display | ✅ injected as metadata | ✅ `/usage full` footer | ❌ |
 | Cumulative cost tracking | ✅ `/cost` | ✅ `/usage cost` | ❌ |
-| Mana / quota monitoring | ✅ Anthropic usage API | ❌ | ❌ |
-| API call log | ✅ JSONL + SQLite | ❌ | ❌ |
-| Budget gating | ✅ manamometer + invest period | ❌ | ❌ |
-| Full payload recording | ✅ optional | ❌ | ❌ |
+| Quota monitoring | ✅ Anthropic usage API | ❌ | ❌ |
+| API call log | ✅ JSONL + SQLite | ✅ JSONL | ❌ |
+| Budget gating | ✅ smart scheduling of background work to preserve quota | ❌ | ❌ |
+| Full payload recording | ✅ optional | ✅ optional | ❌ |
 
 ## Multi-Agent
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Multiple agents per process | ✅ | ✅ | ❌ single agent |
-| Per-agent config override | ✅ TOML `[[agents]]` | ✅ `agents.list` | ❌ |
-| Agent-to-agent messaging | ✅ `send_to_session` | ✅ `sessions_send` | ❌ |
-| Agent isolation | ✅ secrets, memory, sessions | ✅ workspaces, auth profiles | ❌ |
+| Multiple agents per process | ✅ | ✅ | ❌ |
+| Per-agent config override | ✅ | ✅ | ❌ |
+| Agent-to-agent messaging | ✅ | ✅ | ❌ |
+| Agent isolation | ✅ secrets only accessible to their owning agent | ✅ | ❌ |
 | Binding-based routing | ❌ per-bot routing | ✅ specificity hierarchy | ❌ |
 | Orchestrator pattern | ✅ spawn + clone_current | ✅ spawning + sub-agents | ✅ SpawnTool |
 
@@ -157,35 +125,33 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Speech-to-text | ✅ Whisper via Groq/OpenRouter | ✅ Whisper (OpenAI/local) | ❌ |
-| Text-to-speech | ✅ Edge TTS or OpenAI | ✅ ElevenLabs | ❌ |
-| Voice mode toggle | ✅ `/voice` per-session | ✅ Talk Mode | ❌ |
-| Wake word detection | ❌ | ✅ Porcupine | ❌ |
-| WebSocket voice endpoint | ✅ real-time Opus/MP3 | ❌ | ❌ |
-| Voice note transcription | ✅ Telegram voice notes | ✅ | ✅ Telegram only |
+| Speech-to-text | ✅ | ✅ | ❌ |
+| Text-to-speech | ✅ | ✅ | ❌ |
+| Voice mode toggle | ✅ | ✅ | ❌ |
+| Wake word detection | ❌ | ✅ native apps only | ❌ |
+| Voice note transcription | ✅ | ✅ | ✅ |
 
 ## Security
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Secrets out of context | ✅ template resolution | ✅ auth-profiles.json | ❌ |
-| Secret redaction in output | ✅ | ✅ `logging.redactSensitive` | ❌ |
+| Secrets never visible to agent | ✅ | ❌ | ❌ |
+| Secret redaction | ✅ always | ✅ logging only | ❌ |
 | Domain-locked HTTP | ✅ per-secret allowed hosts | ❌ | ❌ |
 | OS-level file permissions | ✅ Unix group enforcement | ✅ 600/700 modes | ❌ |
-| Sandbox / container isolation | ❌ | ✅ Docker per-session/agent | ❌ |
+| Native sandbox / container isolation | ✅ can run in Docker | ✅ Docker per-session/agent | ✅ can run in Docker |
 | Workspace-only filesystem | ❌ | ✅ `tools.fs.workspaceOnly` | ✅ `restrictToWorkspace` |
-| User allowlist | ✅ Telegram user IDs | ✅ DM pairing + allowlist | ✅ per-channel allowFrom |
-| Security audit tool | ❌ | ✅ `openclaw security audit` | ❌ |
+| User allowlist | ✅ | ✅ | ✅ |
+| Security audit | ✅ verifies secret store integrity on startup | ✅ deep | ❌ |
 | Bitwarden integration | ✅ approval-gated unlock | ❌ | ❌ |
-| Elevated mode escape hatch | ❌ | ✅ `/elevated` | ❌ |
-| Child process group dropping | ✅ | ❌ | ❌ |
+| Elevated mode escape hatch | ❌ [aisudo](https://github.com/richardtkemp/ai-sudo) | ✅ `/elevated` | ❌ |
 
 ## Configuration
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Config format | TOML | JSON5 | JSON |
-| Separate secrets file | ✅ secrets.toml | ❌ inline SecretRef | ❌ env vars |
+| Separate secrets file | ✅ inaccessible to agent | ❌ inline SecretRef | ❌ env vars |
 | Per-agent overrides | ✅ all keys | ✅ per agent | ❌ |
 | Hot-reload | ✅ `/reload` | ✅ automatic | ❌ |
 | Interactive setup wizard | ✅ setup.sh | ✅ `openclaw onboard` | ✅ `nanobot onboard` |
@@ -254,7 +220,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | systemd integration | ✅ setup.sh | ✅ `openclaw onboard` | ✅ user service |
 | Docker | ❌ | ✅ Compose + sandbox | ✅ Compose |
 | Nix | ❌ | ✅ | ❌ |
-| Native apps (macOS/iOS/Android) | ❌ Android voice app only | ✅ all three | ❌ |
+| Native apps (macOS/iOS/Android) | 🔜 Android coming soon | ✅ all three | ❌ |
 | Idempotent setup script | ✅ | ✅ | ✅ |
 
 ## Message Handling
@@ -262,20 +228,18 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Message transforms (regex) | ✅ per-agent | ❌ | ❌ |
-| Queue modes | ❌ | ✅ steer/followup/collect/interrupt | ❌ |
-| Block streaming | ❌ | ✅ chunked delivery | ❌ |
+| Queue modes | NYI | ✅ steer/followup/collect/interrupt | ❌ |
+| Block streaming | NYI | ✅ chunked delivery | ❌ |
 | Deferred partial replies | ✅ batch or immediate | ❌ | ❌ |
-| Typing indicators | ✅ Telegram | ✅ per-channel | ✅ Discord, Matrix |
 | Tool call display modes | ✅ off/preview/full | ✅ verbose toggle | ❌ |
-| Duplicate message injection | ✅ configurable repeats | ❌ | ❌ |
+| [Optimised comprehension](https://arxiv.org/abs/2512.14982) | ✅ | ❌ | ❌ |
 
-## Device Nodes
+## Platform Support
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| macOS app | ❌ | ✅ menu bar + Voice Wake | ❌ |
-| iOS app | ❌ | ✅ pairing + canvas | ❌ |
-| Android app | ✅ voice only | ✅ full node | ❌ |
-| Camera / screen control | ❌ | ✅ snap/clip/record | ❌ |
-| Device notifications | ❌ | ✅ push to device | ❌ |
-| Device discovery | ❌ | ✅ Bonjour/mDNS | ❌ |
+| Linux | ✅ | ✅ | ✅ |
+| macOS | NYI | ✅ native app | ✅ |
+| iOS app | ❌ | ✅ | ❌ |
+| Android app | 🔜 client, coming soon | ✅ | ❌ |
+| Camera / screen control | ❌ | ✅ Apple only | ❌ |
