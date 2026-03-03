@@ -1367,7 +1367,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	if handoffMsg == "" {
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
-	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, handoffMsg); err != nil {
+	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, handoffMsg, false); err != nil {
 		a.logger().Errorf("compaction failed: %v", err)
 	} else {
 		if a.CompactionNotifyFunc != nil {
