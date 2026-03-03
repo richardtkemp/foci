@@ -21,6 +21,7 @@ import (
 	"foci/mana"
 	"foci/memory"
 	"foci/prompts"
+	"foci/provider"
 	"foci/session"
 	"foci/state"
 	"foci/tools"
@@ -71,7 +72,7 @@ type CacheBustFunc func(session string, prevRead, curRead int)
 
 // Agent is the core agent loop.
 type Agent struct {
-	Client        *anthropic.Client
+	Client        provider.Client
 	Sessions      *session.Store
 	Tools         *tools.Registry
 	Bootstrap     *workspace.Bootstrap
@@ -83,7 +84,7 @@ type Agent struct {
 	Log           *log.ComponentLogger  // structured logger for this agent
 
 	EnvironmentBlock            string                          // pre-built environment context block (prepended first in system prompt)
-	ExtraSystemBlocks           []anthropic.SystemBlock         // additional system blocks (e.g. skills list), injected before cache marker
+	ExtraSystemBlocks           []provider.SystemBlock          // additional system blocks (e.g. skills list), injected before cache marker
 	CacheStrategy               string                          // "auto" (top-level) or "explicit" (manual breakpoints)
 	CacheBustDetect             bool                            // detect cache busts (cache_read drop >50%)
 	CacheBustIdleThreshold      time.Duration                   // suppress cache bust alert if session idle > this (default 10m)
@@ -122,7 +123,7 @@ type Agent struct {
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 	ManaInvestInterval          time.Duration                   // invest interval for mana good/bad indicator; 0 = no indicator
-	ServerTools                 []anthropic.ToolDef             // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
+	ServerTools                 []provider.ToolDef              // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey           func() string                   // returns the main/default session key; reminders only inject into this session
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls

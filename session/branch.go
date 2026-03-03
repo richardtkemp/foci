@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"foci/anthropic"
 	"foci/log"
+	"foci/provider"
 )
 
 // BranchMeta is stored as the first line of a branch session file.
@@ -67,9 +67,9 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 
 	// Write orientation message as first user message if provided.
 	if opts.OrientationMessage != "" {
-		orientMsg := anthropic.Message{
+		orientMsg := provider.Message{
 			Role:    "user",
-			Content: anthropic.TextContent(opts.OrientationMessage),
+			Content: provider.TextContent(opts.OrientationMessage),
 		}
 		orientData, err := json.Marshal(orientMsg)
 		if err != nil {
@@ -103,7 +103,7 @@ func (s *Store) GetBranchMeta(key string) (*BranchMeta, error) {
 // LoadFull loads the full message history for a session.
 // For branch sessions, this is parent[:branch_point] + branch messages.
 // For regular sessions, this is the same as Load.
-func (s *Store) LoadFull(key string) ([]anthropic.Message, error) {
+func (s *Store) LoadFull(key string) ([]provider.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -134,7 +134,7 @@ func (s *Store) LoadFull(key string) ([]anthropic.Message, error) {
 		return nil, fmt.Errorf("load branch messages: %w", err)
 	}
 
-	result := make([]anthropic.Message, 0, len(prefix)+len(ownMsgs))
+	result := make([]provider.Message, 0, len(prefix)+len(ownMsgs))
 	result = append(result, prefix...)
 	result = append(result, ownMsgs...)
 	log.Debugf("session", "branch loaded key=%s parent_msgs=%d own_msgs=%d total=%d", key, len(prefix), len(ownMsgs), len(result))

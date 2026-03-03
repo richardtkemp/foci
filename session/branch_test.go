@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
 func TestCreateBranchAndLoadFull(t *testing.T) {
@@ -37,18 +37,18 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	}
 
 	// First 4 from parent
-	if anthropic.TextOf(msgs[0].Content) != "hello" {
-		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "hello" {
+		t.Errorf("msgs[0] = %q", provider.TextOf(msgs[0].Content))
 	}
-	if anthropic.TextOf(msgs[3].Content) != "good" {
-		t.Errorf("msgs[3] = %q", anthropic.TextOf(msgs[3].Content))
+	if provider.TextOf(msgs[3].Content) != "good" {
+		t.Errorf("msgs[3] = %q", provider.TextOf(msgs[3].Content))
 	}
 	// Last 2 from branch
-	if anthropic.TextOf(msgs[4].Content) != "branch question" {
-		t.Errorf("msgs[4] = %q", anthropic.TextOf(msgs[4].Content))
+	if provider.TextOf(msgs[4].Content) != "branch question" {
+		t.Errorf("msgs[4] = %q", provider.TextOf(msgs[4].Content))
 	}
-	if anthropic.TextOf(msgs[5].Content) != "branch answer" {
-		t.Errorf("msgs[5] = %q", anthropic.TextOf(msgs[5].Content))
+	if provider.TextOf(msgs[5].Content) != "branch answer" {
+		t.Errorf("msgs[5] = %q", provider.TextOf(msgs[5].Content))
 	}
 }
 
@@ -76,14 +76,14 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 	}
 
 	// Should see parent[0:2], not parent[0:4]
-	if anthropic.TextOf(msgs[0].Content) != "one" {
-		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "one" {
+		t.Errorf("msgs[0] = %q", provider.TextOf(msgs[0].Content))
 	}
-	if anthropic.TextOf(msgs[1].Content) != "two" {
-		t.Errorf("msgs[1] = %q", anthropic.TextOf(msgs[1].Content))
+	if provider.TextOf(msgs[1].Content) != "two" {
+		t.Errorf("msgs[1] = %q", provider.TextOf(msgs[1].Content))
 	}
-	if anthropic.TextOf(msgs[2].Content) != "branch msg" {
-		t.Errorf("msgs[2] = %q", anthropic.TextOf(msgs[2].Content))
+	if provider.TextOf(msgs[2].Content) != "branch msg" {
+		t.Errorf("msgs[2] = %q", provider.TextOf(msgs[2].Content))
 	}
 }
 
@@ -103,8 +103,8 @@ func TestBranchFromEmptyParent(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("len = %d, want 1", len(msgs))
 	}
-	if anthropic.TextOf(msgs[0].Content) != "branch only" {
-		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "branch only" {
+		t.Errorf("msgs[0] = %q", provider.TextOf(msgs[0].Content))
 	}
 }
 
@@ -285,8 +285,8 @@ func TestCreateBranchWithOrientationMessage(t *testing.T) {
 	if msgs[2].Role != "user" {
 		t.Errorf("orientation role = %q, want user", msgs[2].Role)
 	}
-	if anthropic.TextOf(msgs[2].Content) != orientText {
-		t.Errorf("orientation text = %q, want %q", anthropic.TextOf(msgs[2].Content), orientText)
+	if provider.TextOf(msgs[2].Content) != orientText {
+		t.Errorf("orientation text = %q, want %q", provider.TextOf(msgs[2].Content), orientText)
 	}
 }
 

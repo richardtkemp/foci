@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/anthropic"
+	"foci/provider"
 	"foci/config"
 	"foci/secrets"
 )
@@ -304,7 +304,7 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		encoded := base64.StdEncoding.EncodeToString(data)
 		return ToolResult{
 			Text:        fmt.Sprintf("[PDF: %s, %d bytes]", filepath.Base(resolved), len(data)),
-			ExtraBlocks: []anthropic.ContentBlock{anthropic.DocumentBlock("application/pdf", encoded)},
+			ExtraBlocks: []provider.ContentBlock{provider.DocumentBlock("application/pdf", encoded)},
 		}, nil
 	}
 

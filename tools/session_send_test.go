@@ -7,18 +7,18 @@ import (
 	"strings"
 	"testing"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
 // mockSessionAppender captures Append calls.
 type mockSessionAppender struct {
 	key      string
-	msg      anthropic.Message
+	msg      provider.Message
 	err      error
 	appended bool
 }
 
-func (m *mockSessionAppender) Append(key string, msg anthropic.Message) error {
+func (m *mockSessionAppender) Append(key string, msg provider.Message) error {
 	m.key = key
 	m.msg = msg
 	m.appended = true
@@ -56,7 +56,7 @@ func TestSendToSession(t *testing.T) {
 	if store.msg.Role != "user" {
 		t.Errorf("msg role = %q, want user", store.msg.Role)
 	}
-	text := anthropic.TextOf(store.msg.Content)
+	text := provider.TextOf(store.msg.Content)
 	if !strings.Contains(text, "MESSAGE FROM SESSION agent:test:multiball:mb-111") {
 		t.Errorf("expected origin tag, got %q", text)
 	}

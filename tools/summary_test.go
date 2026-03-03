@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"foci/anthropic"
+	"foci/provider"
 )
 
 func TestSummaryTool_MissingParams(t *testing.T) {
@@ -107,7 +108,7 @@ func TestSummaryTool_Success(t *testing.T) {
 	fileContent := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
 	os.WriteFile(tmp, []byte(fileContent), 0644)
 
-	var gotReq anthropic.MessageRequest
+	var gotReq provider.MessageRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
@@ -116,15 +117,15 @@ func TestSummaryTool_Success(t *testing.T) {
 
 		json.NewDecoder(r.Body).Decode(&gotReq)
 
-		resp := anthropic.MessageResponse{
+		resp := provider.MessageResponse{
 			ID:   "msg_test",
 			Type: "message",
 			Role: "assistant",
-			Content: []anthropic.ContentBlock{
+			Content: []provider.ContentBlock{
 				{Type: "text", Text: "This is a Go hello world program."},
 			},
 			Model:      "claude-haiku-4-5",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 20},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 20},
 			StopReason: "end_turn",
 		}
 		json.NewEncoder(w).Encode(resp)
@@ -160,7 +161,7 @@ func TestSummaryTool_Success(t *testing.T) {
 		t.Fatalf("messages count = %d, want 1", len(gotReq.Messages))
 	}
 
-	msgText := anthropic.TextOf(gotReq.Messages[0].Content)
+	msgText := provider.TextOf(gotReq.Messages[0].Content)
 	if !strings.Contains(msgText, fileContent) {
 		t.Error("request message does not contain file content")
 	}
@@ -175,16 +176,16 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 
 	var gotModel string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req anthropic.MessageRequest
+		var req provider.MessageRequest
 		json.NewDecoder(r.Body).Decode(&req)
 		gotModel = req.Model
 
-		resp := anthropic.MessageResponse{
+		resp := provider.MessageResponse{
 			ID:      "msg_test",
 			Type:    "message",
 			Role:    "assistant",
-			Content: []anthropic.ContentBlock{{Type: "text", Text: "ok"}},
-			Usage:   anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Content: []provider.ContentBlock{{Type: "text", Text: "ok"}},
+			Usage:   provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))

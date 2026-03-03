@@ -5,23 +5,23 @@ import (
 	"strings"
 	"testing"
 
-	"foci/anthropic"
+	"foci/provider"
 	"foci/session"
 	"foci/tools"
 	"foci/workspace"
 )
 
 func TestEnvironmentBlockPrepended(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	var receivedReq *provider.MessageRequest
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -71,16 +71,16 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 }
 
 func TestEnvironmentBlockOmittedWhenEmpty(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	var receivedReq *provider.MessageRequest
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()

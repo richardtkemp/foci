@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"time"
 
-	"foci/anthropic"
 	"foci/log"
 	"foci/memory"
 	"foci/prompts"
+	"foci/provider"
 	"foci/session"
 )
 
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
 	log              *log.ComponentLogger
-	client           *anthropic.Client
+	client           provider.Client
 	sessions         *session.Store
 	model            string
 	threshold        float64 // fraction of context window (e.g. 0.8)
@@ -28,7 +28,7 @@ type Compactor struct {
 }
 
 // NewCompactor creates a new Compactor with defaults.
-func NewCompactor(client *anthropic.Client, sessions *session.Store, model string, threshold float64) *Compactor {
+func NewCompactor(client provider.Client, sessions *session.Store, model string, threshold float64) *Compactor {
 	return &Compactor{
 		log:         log.NewComponentLogger("compaction"),
 		client:      client,
@@ -94,7 +94,7 @@ func ContextLimit(model string) int {
 }
 
 // hasToolUse returns true if the message contains any tool_use content blocks.
-func hasToolUse(msg anthropic.Message) bool {
+func hasToolUse(msg provider.Message) bool {
 	for _, b := range msg.Content {
 		if b.Type == "tool_use" {
 			return true
@@ -104,7 +104,7 @@ func hasToolUse(msg anthropic.Message) bool {
 }
 
 // toolUseIDs returns the IDs of all tool_use blocks in the message.
-func toolUseIDs(msg anthropic.Message) []string {
+func toolUseIDs(msg provider.Message) []string {
 	var ids []string
 	for _, b := range msg.Content {
 		if b.Type == "tool_use" {
@@ -115,7 +115,7 @@ func toolUseIDs(msg anthropic.Message) []string {
 }
 
 // toolResultIDs returns the tool_use_id values of all tool_result blocks in the message.
-func toolResultIDs(msg anthropic.Message) map[string]bool {
+func toolResultIDs(msg provider.Message) map[string]bool {
 	ids := make(map[string]bool)
 	for _, b := range msg.Content {
 		if b.Type == "tool_result" {
@@ -129,7 +129,7 @@ func toolResultIDs(msg anthropic.Message) map[string]bool {
 // tool_use/tool_result pairs are not broken across the split boundary.
 // An assistant message with tool_use blocks must be followed by a user message
 // with matching tool_result blocks — splitting between them creates orphans.
-func safeSplitPoint(messages []anthropic.Message, splitIdx, maxWalkBack int) int {
+func safeSplitPoint(messages []provider.Message, splitIdx, maxWalkBack int) int {
 	for steps := 0; steps < maxWalkBack && splitIdx > 0; steps++ {
 		prev := messages[splitIdx-1]
 		if prev.Role != "assistant" || !hasToolUse(prev) {
@@ -145,8 +145,8 @@ func safeSplitPoint(messages []anthropic.Message, splitIdx, maxWalkBack int) int
 // repairOrphanedToolUse scans messages for assistant tool_use blocks that lack
 // matching tool_result blocks in the immediately following user message, and
 // injects synthetic error tool_results. Returns a new slice; the input is not modified.
-func repairOrphanedToolUse(messages []anthropic.Message) []anthropic.Message {
-	result := make([]anthropic.Message, 0, len(messages))
+func repairOrphanedToolUse(messages []provider.Message) []provider.Message {
+	result := make([]provider.Message, 0, len(messages))
 	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
 		result = append(result, msg)
@@ -177,9 +177,9 @@ func repairOrphanedToolUse(messages []anthropic.Message) []anthropic.Message {
 		log.Warnf("compaction", "repairing %d orphaned tool_use blocks", len(unmatched))
 
 		// Build synthetic tool_results.
-		var synthetic []anthropic.ContentBlock
+		var synthetic []provider.ContentBlock
 		for _, id := range unmatched {
-			synthetic = append(synthetic, anthropic.ToolResultBlock(
+			synthetic = append(synthetic, provider.ToolResultBlock(
 				id, "Tool result lost (repaired during compaction)", true,
 			))
 		}
@@ -188,14 +188,14 @@ func repairOrphanedToolUse(messages []anthropic.Message) []anthropic.Message {
 		// synthetic results so the pair stays together.
 		if i+1 < len(messages) && messages[i+1].Role == "user" {
 			next := messages[i+1]
-			combined := make([]anthropic.ContentBlock, 0, len(synthetic)+len(next.Content))
+			combined := make([]provider.ContentBlock, 0, len(synthetic)+len(next.Content))
 			combined = append(combined, synthetic...)
 			combined = append(combined, next.Content...)
-			result = append(result, anthropic.Message{Role: "user", Content: combined})
+			result = append(result, provider.Message{Role: "user", Content: combined})
 			i++ // skip the original
 		} else {
 			// No user message follows — inject a standalone user message.
-			result = append(result, anthropic.Message{
+			result = append(result, provider.Message{
 				Role:    "user",
 				Content: synthetic,
 			})
@@ -206,7 +206,7 @@ func repairOrphanedToolUse(messages []anthropic.Message) []anthropic.Message {
 
 // estimateTokens gives a rough token estimate for messages.
 // ~4 chars per token is a common heuristic.
-func estimateTokens(messages []anthropic.Message) int {
+func estimateTokens(messages []provider.Message) int {
 	total := 0
 	for _, msg := range messages {
 		for _, block := range msg.Content {
@@ -218,7 +218,7 @@ func estimateTokens(messages []anthropic.Message) int {
 }
 
 // ShouldCompact returns true if the session likely exceeds the threshold.
-func (c *Compactor) ShouldCompact(messages []anthropic.Message, lastUsage *anthropic.Usage) bool {
+func (c *Compactor) ShouldCompact(messages []provider.Message, lastUsage *provider.Usage) bool {
 	limit := contextLimit(c.model)
 	threshold := int(float64(limit) * c.threshold)
 	estimated := estimateTokens(messages)
@@ -248,7 +248,7 @@ var DefaultHandoffMessage = prompts.CompactionHandoff()
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
 // When dryRun is true, the full pipeline runs (API call, summary generation)
 // but sessions.Replace() is skipped — the session is left unchanged.
-func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, error) {
+func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, error) {
 	if summaryPrompt == "" {
 		summaryPrompt = prompts.CompactionSummary()
 	}
@@ -282,7 +282,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	}
 
 	toSummarise := messages
-	var preserved []anthropic.Message
+	var preserved []provider.Message
 	if preserveN > 0 {
 		splitIdx := len(messages) - preserveN
 
@@ -318,23 +318,23 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	repairedSummary := repairOrphanedToolUse(toSummarise)
 
 	// Ask model to summarize the conversation
-	summaryMessages := make([]anthropic.Message, len(repairedSummary))
+	summaryMessages := make([]provider.Message, len(repairedSummary))
 	copy(summaryMessages, repairedSummary)
-	summaryMessages = append(summaryMessages, anthropic.Message{
+	summaryMessages = append(summaryMessages, provider.Message{
 		Role:    "user",
-		Content: anthropic.TextContent(summaryPrompt),
+		Content: provider.TextContent(summaryPrompt),
 	})
 
 	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s", c.model, c.maxTokens, len(summaryMessages), c.effort)
 	start := time.Now()
-	req := &anthropic.MessageRequest{
+	req := &provider.MessageRequest{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
 		System:    system,
 		Messages:  summaryMessages,
 	}
 	if c.effort != "" {
-		req.Output = &anthropic.OutputConfig{Effort: c.effort}
+		req.Output = &provider.OutputConfig{Effort: c.effort}
 	}
 	resp, err := c.client.SendMessage(ctx, req)
 	if err != nil {
@@ -359,7 +359,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		CallType:   "compaction",
 	})
 
-	summary := anthropic.TextOf(resp.Content)
+	summary := provider.TextOf(resp.Content)
 
 	// Collect scratchpad contents to preserve through compaction
 	handoff := handoffMessage
@@ -388,32 +388,32 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 	// When preserved messages start with "assistant" (or there are none),
 	// keep the standard 3-message header:
 	//   [user_marker, assistant_summary, user_handoff, assistant_preserved[0], ...]
-	var compacted []anthropic.Message
+	var compacted []provider.Message
 	if preserveN > 0 && preserved[0].Role == "user" {
 		// Fold handoff into assistant summary to avoid user→user
-		compacted = []anthropic.Message{
+		compacted = []provider.Message{
 			{
 				Role:    "user",
-				Content: anthropic.TextContent("[Session compacted. Previous conversation summary follows.]"),
+				Content: provider.TextContent("[Session compacted. Previous conversation summary follows.]"),
 			},
 			{
 				Role:    "assistant",
-				Content: anthropic.TextContent(summary + "\n\n" + handoff),
+				Content: provider.TextContent(summary + "\n\n" + handoff),
 			},
 		}
 	} else {
-		compacted = []anthropic.Message{
+		compacted = []provider.Message{
 			{
 				Role:    "user",
-				Content: anthropic.TextContent("[Session compacted. Previous conversation summary follows.]"),
+				Content: provider.TextContent("[Session compacted. Previous conversation summary follows.]"),
 			},
 			{
 				Role:    "assistant",
-				Content: anthropic.TextContent(summary),
+				Content: provider.TextContent(summary),
 			},
 			{
 				Role:    "user",
-				Content: anthropic.TextContent(handoff),
+				Content: provider.TextContent(handoff),
 			},
 		}
 	}

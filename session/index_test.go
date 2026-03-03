@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
 func tempIndex(t *testing.T) *SessionIndex {
@@ -318,7 +318,7 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 	}
 
 	// Replace should fire compacted event
-	store.Replace("agent:bot:chat:100", []anthropic.Message{msg("user", "compacted")})
+	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "compacted")})
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCompacted {
 		t.Errorf("expected compacted after Replace, got %s", entries[0].Status)

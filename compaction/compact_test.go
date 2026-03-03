@@ -13,13 +13,14 @@ import (
 
 	"foci/anthropic"
 	"foci/memory"
+	"foci/provider"
 	"foci/session"
 )
 
 func TestEstimateTokens(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("hello world")},    // 11 chars / 4 = 2
-		{Role: "assistant", Content: anthropic.TextContent("hi there!")}, // 9 chars / 4 = 2
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello world")},    // 11 chars / 4 = 2
+		{Role: "assistant", Content: provider.TextContent("hi there!")}, // 9 chars / 4 = 2
 	}
 
 	tokens := estimateTokens(msgs)
@@ -59,19 +60,19 @@ func TestShouldCompactWithUsage(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
 
 	// Under threshold (160k = 200k * 0.8)
-	usage := &anthropic.Usage{InputTokens: 100_000}
+	usage := &provider.Usage{InputTokens: 100_000}
 	if c.ShouldCompact(nil, usage) {
 		t.Error("should not compact at 100k tokens")
 	}
 
 	// Over threshold
-	usage = &anthropic.Usage{InputTokens: 170_000}
+	usage = &provider.Usage{InputTokens: 170_000}
 	if !c.ShouldCompact(nil, usage) {
 		t.Error("should compact at 170k tokens")
 	}
 
 	// Cache tokens count toward total
-	usage = &anthropic.Usage{
+	usage = &provider.Usage{
 		InputTokens:          50_000,
 		CacheReadInputTokens: 120_000,
 	}
@@ -84,9 +85,9 @@ func TestShouldCompactWithEstimate(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
 
 	// Small conversation — should not compact
-	small := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("hello")},
-		{Role: "assistant", Content: anthropic.TextContent("hi")},
+	small := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: provider.TextContent("hi")},
 	}
 	if c.ShouldCompact(small, nil) {
 		t.Error("should not compact small conversation")
@@ -97,13 +98,13 @@ func TestShouldCompactExactThreshold(t *testing.T) {
 	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
 
 	// Exactly at threshold (200k * 0.8 = 160k)
-	usage := &anthropic.Usage{InputTokens: 160_000}
+	usage := &provider.Usage{InputTokens: 160_000}
 	if c.ShouldCompact(nil, usage) {
 		t.Error("should not compact at exact threshold (> not >=)")
 	}
 
 	// One over
-	usage = &anthropic.Usage{InputTokens: 160_001}
+	usage = &provider.Usage{InputTokens: 160_001}
 	if !c.ShouldCompact(nil, usage) {
 		t.Error("should compact one above threshold")
 	}
@@ -113,13 +114,13 @@ func TestShouldCompactExactThreshold(t *testing.T) {
 func mockCompactionServer(summaryText string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+		json.NewEncoder(w).Encode(provider.MessageResponse{
 			ID:         "msg_compact",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent(summaryText),
+			Content:    provider.TextContent(summaryText),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		})
 	}))
 }
@@ -134,8 +135,8 @@ func TestCompactBasic(t *testing.T) {
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("user message")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("assistant reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -154,24 +155,24 @@ func TestCompactBasic(t *testing.T) {
 	}
 
 	// First message: compaction marker
-	if !strings.Contains(anthropic.TextOf(msgs[0].Content), "compacted") {
-		t.Errorf("msgs[0] = %q, want compaction marker", anthropic.TextOf(msgs[0].Content))
+	if !strings.Contains(provider.TextOf(msgs[0].Content), "compacted") {
+		t.Errorf("msgs[0] = %q, want compaction marker", provider.TextOf(msgs[0].Content))
 	}
 	if msgs[0].Role != "user" {
 		t.Errorf("msgs[0].Role = %q, want user", msgs[0].Role)
 	}
 
 	// Second message: summary from model
-	if !strings.Contains(anthropic.TextOf(msgs[1].Content), "Summary") {
-		t.Errorf("msgs[1] = %q, want summary", anthropic.TextOf(msgs[1].Content))
+	if !strings.Contains(provider.TextOf(msgs[1].Content), "Summary") {
+		t.Errorf("msgs[1] = %q, want summary", provider.TextOf(msgs[1].Content))
 	}
 	if msgs[1].Role != "assistant" {
 		t.Errorf("msgs[1].Role = %q, want assistant", msgs[1].Role)
 	}
 
 	// Third message: handoff
-	if !strings.Contains(anthropic.TextOf(msgs[2].Content), "Compaction complete") {
-		t.Errorf("msgs[2] = %q, want handoff", anthropic.TextOf(msgs[2].Content))
+	if !strings.Contains(provider.TextOf(msgs[2].Content), "Compaction complete") {
+		t.Errorf("msgs[2] = %q, want handoff", provider.TextOf(msgs[2].Content))
 	}
 	if msgs[2].Role != "user" {
 		t.Errorf("msgs[2].Role = %q, want user", msgs[2].Role)
@@ -188,8 +189,8 @@ func TestCompactDryRun(t *testing.T) {
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("user message")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("assistant reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -211,8 +212,8 @@ func TestCompactDryRun(t *testing.T) {
 	}
 
 	// Verify original messages are still there
-	if anthropic.TextOf(msgs[0].Content) != "user message" {
-		t.Errorf("msgs[0] = %q, want original user message", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "user message" {
+		t.Errorf("msgs[0] = %q, want original user message", provider.TextOf(msgs[0].Content))
 	}
 }
 
@@ -221,8 +222,8 @@ func TestCompactTooFewMessages(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	// Add only 2 messages (below default minMessages=4)
-	store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")})
-	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("hello")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
 
 	c := NewCompactor(nil, store, "claude-haiku-4-5", 0.8)
 	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
@@ -261,8 +262,8 @@ func TestCompactWithScratchpad(t *testing.T) {
 
 	// Add enough messages
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -280,7 +281,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 	}
 
 	// Handoff message should include scratchpad content
-	handoff := anthropic.TextOf(msgs[2].Content)
+	handoff := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, "scratchpad") {
 		t.Errorf("handoff missing scratchpad mention: %q", handoff)
 	}
@@ -309,8 +310,8 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	defer sp.Close()
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -323,7 +324,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	}
 
 	msgs, _ := store.Load(sessionKey)
-	handoff := anthropic.TextOf(msgs[2].Content)
+	handoff := provider.TextOf(msgs[2].Content)
 	// Should have default handoff without scratchpad section
 	if strings.Contains(handoff, "scratchpad") {
 		t.Errorf("handoff should not mention scratchpad when empty: %q", handoff)
@@ -342,8 +343,8 @@ func TestCompactAPIError(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -403,13 +404,13 @@ func TestCompactCustomPrompts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+		json.NewEncoder(w).Encode(provider.MessageResponse{
 			ID:         "msg_compact",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Summary."),
+			Content:    provider.TextContent("Summary."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		})
 	}))
 	defer server.Close()
@@ -419,8 +420,8 @@ func TestCompactCustomPrompts(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -439,7 +440,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
-	handoff := anthropic.TextOf(msgs[2].Content)
+	handoff := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, "custom handoff msg") {
 		t.Errorf("handoff = %q, want custom handoff msg", handoff)
 	}
@@ -450,13 +451,13 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+		json.NewEncoder(w).Encode(provider.MessageResponse{
 			ID:         "msg_compact",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Summary."),
+			Content:    provider.TextContent("Summary."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		})
 	}))
 	defer server.Close()
@@ -466,8 +467,8 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -484,7 +485,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	// Verify default handoff message
 	msgs, _ := store.Load(sessionKey)
-	handoff := anthropic.TextOf(msgs[2].Content)
+	handoff := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, DefaultHandoffMessage) {
 		t.Errorf("handoff = %q, want default handoff", handoff)
 	}
@@ -500,8 +501,8 @@ func TestCompactPreserveMessages(t *testing.T) {
 
 	// Add 10 messages (5 user + 5 assistant)
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent(fmt.Sprintf("user msg %d", i))})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent(fmt.Sprintf("assistant reply %d", i))})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("user msg %d", i))})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("assistant reply %d", i))})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -523,7 +524,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 	}
 
 	// Summary+handoff (folded) should contain the preservation note
-	summaryText := anthropic.TextOf(msgs[1].Content)
+	summaryText := provider.TextOf(msgs[1].Content)
 	if !strings.Contains(summaryText, "last 4 messages") {
 		t.Errorf("summary missing preservation note: %q", summaryText)
 	}
@@ -550,8 +551,8 @@ func TestCompactPreserveMessages(t *testing.T) {
 		if msgs[idx].Role != exp.role {
 			t.Errorf("preserved[%d].Role = %q, want %q", i, msgs[idx].Role, exp.role)
 		}
-		if anthropic.TextOf(msgs[idx].Content) != exp.text {
-			t.Errorf("preserved[%d] = %q, want %q", i, anthropic.TextOf(msgs[idx].Content), exp.text)
+		if provider.TextOf(msgs[idx].Content) != exp.text {
+			t.Errorf("preserved[%d] = %q, want %q", i, provider.TextOf(msgs[idx].Content), exp.text)
 		}
 	}
 
@@ -572,8 +573,8 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -590,7 +591,7 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 	}
 
 	// Summary should NOT contain preservation note
-	summaryText := anthropic.TextOf(msgs[1].Content)
+	summaryText := provider.TextOf(msgs[1].Content)
 	if strings.Contains(summaryText, "last") {
 		t.Errorf("summary should not have preservation note when preserve=0: %q", summaryText)
 	}
@@ -606,8 +607,8 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 
 	// 10 messages, minMessages=4, preserve=100
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -638,8 +639,8 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 		store := session.NewStore(t.TempDir())
 		key := "agent:test:main"
 		for i := 0; i < 5; i++ {
-			store.Append(key, anthropic.Message{Role: "user", Content: anthropic.TextContent("u")})
-			store.Append(key, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("a")})
+			store.Append(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
+			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
 		c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -661,7 +662,7 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 			}
 		}
 		// Handoff text should be folded into the assistant summary
-		if !strings.Contains(anthropic.TextOf(msgs[1].Content), "Compaction complete") {
+		if !strings.Contains(provider.TextOf(msgs[1].Content), "Compaction complete") {
 			t.Errorf("summary should contain folded handoff")
 		}
 	})
@@ -671,8 +672,8 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 		store := session.NewStore(t.TempDir())
 		key := "agent:test:main"
 		for i := 0; i < 5; i++ {
-			store.Append(key, anthropic.Message{Role: "user", Content: anthropic.TextContent("u")})
-			store.Append(key, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("a")})
+			store.Append(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
+			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
 		c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -703,30 +704,30 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 // --- tool_use / tool_result repair tests ---
 
 // toolUseMsg builds an assistant message with one or more tool_use blocks.
-func toolUseMsg(ids ...string) anthropic.Message {
-	var blocks []anthropic.ContentBlock
+func toolUseMsg(ids ...string) provider.Message {
+	var blocks []provider.ContentBlock
 	for _, id := range ids {
-		blocks = append(blocks, anthropic.ContentBlock{
+		blocks = append(blocks, provider.ContentBlock{
 			Type:  "tool_use",
 			ID:    id,
 			Name:  "test_tool",
 			Input: json.RawMessage(`{}`),
 		})
 	}
-	return anthropic.Message{Role: "assistant", Content: blocks}
+	return provider.Message{Role: "assistant", Content: blocks}
 }
 
 // toolResultMsg builds a user message with tool_result blocks matching the given IDs.
-func toolResultMsg(ids ...string) anthropic.Message {
-	var blocks []anthropic.ContentBlock
+func toolResultMsg(ids ...string) provider.Message {
+	var blocks []provider.ContentBlock
 	for _, id := range ids {
-		blocks = append(blocks, anthropic.ToolResultBlock(id, "ok", false))
+		blocks = append(blocks, provider.ToolResultBlock(id, "ok", false))
 	}
-	return anthropic.Message{Role: "user", Content: blocks}
+	return provider.Message{Role: "user", Content: blocks}
 }
 
 func TestHasToolUse(t *testing.T) {
-	if hasToolUse(anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")}) {
+	if hasToolUse(provider.Message{Role: "user", Content: provider.TextContent("hi")}) {
 		t.Error("plain user message should not have tool_use")
 	}
 	if !hasToolUse(toolUseMsg("toolu_1")) {
@@ -749,11 +750,11 @@ func TestToolResultIDs(t *testing.T) {
 }
 
 func TestSafeSplitPointNoToolUse(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
-		{Role: "assistant", Content: anthropic.TextContent("a0")},
-		{Role: "user", Content: anthropic.TextContent("u1")},
-		{Role: "assistant", Content: anthropic.TextContent("a1")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
+		{Role: "assistant", Content: provider.TextContent("a0")},
+		{Role: "user", Content: provider.TextContent("u1")},
+		{Role: "assistant", Content: provider.TextContent("a1")},
 	}
 	// Split at 2 — no tool_use, should stay at 2.
 	got := safeSplitPoint(msgs, 2, 25)
@@ -763,13 +764,13 @@ func TestSafeSplitPointNoToolUse(t *testing.T) {
 }
 
 func TestSafeSplitPointBreaksPair(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},      // 0
-		{Role: "assistant", Content: anthropic.TextContent("a0")}, // 1
-		{Role: "user", Content: anthropic.TextContent("u1")},      // 2
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},      // 0
+		{Role: "assistant", Content: provider.TextContent("a0")}, // 1
+		{Role: "user", Content: provider.TextContent("u1")},      // 2
 		toolUseMsg("toolu_1"),    // 3: assistant tool_use
 		toolResultMsg("toolu_1"), // 4: user tool_result
-		{Role: "assistant", Content: anthropic.TextContent("done")}, // 5
+		{Role: "assistant", Content: provider.TextContent("done")}, // 5
 	}
 	// Split at 4 would separate tool_use (3) from tool_result (4).
 	// Should walk back to 3.
@@ -781,12 +782,12 @@ func TestSafeSplitPointBreaksPair(t *testing.T) {
 
 func TestSafeSplitPointConsecutiveToolPairs(t *testing.T) {
 	// In a corrupt session, two assistant tool_use messages in a row.
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_A"),                                       // 1: assistant tool_use (corrupt — no result follows)
 		toolUseMsg("toolu_B"),                                       // 2: assistant tool_use
 		toolResultMsg("toolu_B"),                                    // 3: user tool_result
-		{Role: "assistant", Content: anthropic.TextContent("done")}, // 4
+		{Role: "assistant", Content: provider.TextContent("done")}, // 4
 	}
 	// Split at 3: prev is toolUseMsg("toolu_B") → walk to 2.
 	// Split at 2: prev is toolUseMsg("toolu_A") → walk to 1.
@@ -799,13 +800,13 @@ func TestSafeSplitPointConsecutiveToolPairs(t *testing.T) {
 
 func TestSafeSplitPointBounded(t *testing.T) {
 	// Walk-back bounded by maxWalkBack.
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_A"),                                       // 1
 		toolUseMsg("toolu_B"),                                       // 2
 		toolUseMsg("toolu_C"),                                       // 3
 		toolResultMsg("toolu_C"),                                    // 4
-		{Role: "assistant", Content: anthropic.TextContent("done")}, // 5
+		{Role: "assistant", Content: provider.TextContent("done")}, // 5
 	}
 	// Split at 4, maxWalkBack=2 → walks to 3, then 2, stops (2 steps).
 	got := safeSplitPoint(msgs, 4, 2)
@@ -815,7 +816,7 @@ func TestSafeSplitPointBounded(t *testing.T) {
 }
 
 func TestSafeSplitPointAtZero(t *testing.T) {
-	msgs := []anthropic.Message{
+	msgs := []provider.Message{
 		toolUseMsg("toolu_1"),
 		toolResultMsg("toolu_1"),
 	}
@@ -827,11 +828,11 @@ func TestSafeSplitPointAtZero(t *testing.T) {
 }
 
 func TestRepairOrphanedToolUseNoOrphans(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_1"),
 		toolResultMsg("toolu_1"),
-		{Role: "assistant", Content: anthropic.TextContent("done")},
+		{Role: "assistant", Content: provider.TextContent("done")},
 	}
 	repaired := repairOrphanedToolUse(msgs)
 	if len(repaired) != len(msgs) {
@@ -841,12 +842,12 @@ func TestRepairOrphanedToolUseNoOrphans(t *testing.T) {
 
 func TestRepairOrphanedToolUseMissingResult(t *testing.T) {
 	// Assistant has tool_use but no tool_result follows at all.
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_1"),
 		// Missing: tool_result for toolu_1
-		{Role: "user", Content: anthropic.TextContent("u1")},
-		{Role: "assistant", Content: anthropic.TextContent("a1")},
+		{Role: "user", Content: provider.TextContent("u1")},
+		{Role: "assistant", Content: provider.TextContent("a1")},
 	}
 	repaired := repairOrphanedToolUse(msgs)
 
@@ -874,8 +875,8 @@ func TestRepairOrphanedToolUseMissingResult(t *testing.T) {
 
 func TestRepairOrphanedToolUseNoNextMessage(t *testing.T) {
 	// Tool_use is the last message — no following message at all.
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_1"),
 	}
 	repaired := repairOrphanedToolUse(msgs)
@@ -894,11 +895,11 @@ func TestRepairOrphanedToolUseNoNextMessage(t *testing.T) {
 
 func TestRepairOrphanedToolUsePartialMatch(t *testing.T) {
 	// Assistant has 2 tool_use blocks, but only 1 has a result.
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_A", "toolu_B"),
 		toolResultMsg("toolu_A"), // only A matched
-		{Role: "assistant", Content: anthropic.TextContent("done")},
+		{Role: "assistant", Content: provider.TextContent("done")},
 	}
 	repaired := repairOrphanedToolUse(msgs)
 
@@ -922,10 +923,10 @@ func TestRepairOrphanedToolUsePartialMatch(t *testing.T) {
 
 func TestRepairOrphanedToolUseNextIsAssistant(t *testing.T) {
 	// Corrupt: assistant tool_use followed by another assistant message.
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("u0")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_1"),
-		{Role: "assistant", Content: anthropic.TextContent("a1")},
+		{Role: "assistant", Content: provider.TextContent("a1")},
 	}
 	repaired := repairOrphanedToolUse(msgs)
 
@@ -951,13 +952,13 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 
 	// Build session: 5 text pairs + 1 tool pair + 1 text pair = 14 messages
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent(fmt.Sprintf("u%d", i))})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent(fmt.Sprintf("a%d", i))})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("u%d", i))})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("a%d", i))})
 	}
-	store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("run tool")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("run tool")})
 	store.Append(sessionKey, toolUseMsg("toolu_SPLIT"))
 	store.Append(sessionKey, toolResultMsg("toolu_SPLIT"))
-	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("tool done")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("tool done")})
 
 	// preserve=3 would split between tool_use[11] and tool_result[12].
 	// safeSplitPoint should adjust to 11, making preserve=3.
@@ -1010,13 +1011,13 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	// Build session with an orphaned tool_use deep in history.
-	store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("u0")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
 	store.Append(sessionKey, toolUseMsg("toolu_ORPHAN"))
 	// Missing tool_result — simulate data corruption.
-	store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("u1")})
-	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("a1")})
-	store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("u2")})
-	store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("a2")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a1")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u2")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a2")})
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 0) // no preservation — all messages summarized
@@ -1046,8 +1047,8 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 	sp.Write("test", "plan", "my plan")
 
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -1067,7 +1068,7 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 	}
 
 	// Handoff should include scratchpad
-	handoff := anthropic.TextOf(msgs[2].Content)
+	handoff := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, "scratchpad") {
 		t.Errorf("handoff missing scratchpad: %q", handoff)
 	}
@@ -1076,8 +1077,8 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 	}
 
 	// Preserved messages should be present after handoff
-	if msgs[3].Role != "assistant" || anthropic.TextOf(msgs[3].Content) != "reply" {
-		t.Errorf("preserved[0] = role=%q text=%q", msgs[3].Role, anthropic.TextOf(msgs[3].Content))
+	if msgs[3].Role != "assistant" || provider.TextOf(msgs[3].Content) != "reply" {
+		t.Errorf("preserved[0] = role=%q text=%q", msgs[3].Role, provider.TextOf(msgs[3].Content))
 	}
 }
 
@@ -1086,13 +1087,13 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+		json.NewEncoder(w).Encode(provider.MessageResponse{
 			ID:         "msg_compact",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Summary."),
+			Content:    provider.TextContent("Summary."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		})
 	}))
 	defer server.Close()
@@ -1102,8 +1103,8 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
@@ -1127,13 +1128,13 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.MessageResponse{
+		json.NewEncoder(w).Encode(provider.MessageResponse{
 			ID:         "msg_compact",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Summary."),
+			Content:    provider.TextContent("Summary."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		})
 	}))
 	defer server.Close()
@@ -1143,8 +1144,8 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 	sessionKey := "agent:test:main"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, anthropic.Message{Role: "user", Content: anthropic.TextContent("msg")})
-		store.Append(sessionKey, anthropic.Message{Role: "assistant", Content: anthropic.TextContent("reply")})
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)

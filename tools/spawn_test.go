@@ -14,21 +14,22 @@ import (
 	"time"
 
 	"foci/anthropic"
+	"foci/provider"
 )
 
 // mockBootstrap implements SystemBlocksProvider for tests.
 type mockBootstrap struct {
-	blocks []anthropic.SystemBlock
+	blocks []provider.SystemBlock
 }
 
-func (m *mockBootstrap) SystemBlocks() []anthropic.SystemBlock {
+func (m *mockBootstrap) SystemBlocks() []provider.SystemBlock {
 	return m.blocks
 }
 
 // mockModelServer returns a test server that captures requests and returns canned responses.
-func mockModelServer(handler func(req *anthropic.MessageRequest) *anthropic.MessageResponse) *httptest.Server {
+func mockModelServer(handler func(req *provider.MessageRequest) *provider.MessageResponse) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req anthropic.MessageRequest
+		var req provider.MessageRequest
 		json.NewDecoder(r.Body).Decode(&req)
 		resp := handler(&req)
 		w.Header().Set("Content-Type", "application/json")
@@ -69,25 +70,25 @@ func (m *mockSpawnAgent) HandleMessage(ctx context.Context, sessionKey string, u
 	return m.response, m.err
 }
 
-func okResponse(text string) func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-	return func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+func okResponse(text string) func(req *provider.MessageRequest) *provider.MessageResponse {
+	return func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent(text), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Content: provider.TextContent(text), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	}
 }
 
 func TestSpawnContextRaw(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("The answer is 42."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 50, OutputTokens: 20},
+			Content: provider.TextContent("The answer is 42."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 50, OutputTokens: 20},
 		}
 	})
 	defer server.Close()
@@ -95,10 +96,11 @@ func TestSpawnContextRaw(t *testing.T) {
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client: client,
-		Bootstrap: &mockBootstrap{blocks: []anthropic.SystemBlock{
+		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am a character file."},
 		}},
-		Model: "claude-haiku-4-5",
+		Model:        "claude-haiku-4-5",
+		MaxToolLoops: 10,
 	}
 	tool := NewSpawnTool(deps, nil)
 
@@ -131,14 +133,14 @@ func TestSpawnContextRaw(t *testing.T) {
 }
 
 func TestSpawnContextCharacter(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Deep analysis complete."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Content: provider.TextContent("Deep analysis complete."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 100, OutputTokens: 50},
 		}
 	})
 	defer server.Close()
@@ -146,11 +148,12 @@ func TestSpawnContextCharacter(t *testing.T) {
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client: client,
-		Bootstrap: &mockBootstrap{blocks: []anthropic.SystemBlock{
+		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am the identity file."},
 			{Type: "text", Text: "I am the soul file."},
 		}},
-		Model: "claude-haiku-4-5",
+		Model:        "claude-haiku-4-5",
+		MaxToolLoops: 10,
 	}
 	tool := NewSpawnTool(deps, nil)
 
@@ -298,17 +301,17 @@ func TestSpawnModelShortNames(t *testing.T) {
 
 	for _, tt := range tests {
 		var receivedModel string
-		server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 			receivedModel = req.Model
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_test", Type: "message", Role: "assistant",
-				Content: anthropic.TextContent("ok"), StopReason: "end_turn",
-				Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Content: provider.TextContent("ok"), StopReason: "end_turn",
+				Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		})
 
 		client := anthropic.NewClientWithBase(server.URL, "test-token")
-		deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5"}
+		deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
 		params, _ := json.Marshal(map[string]string{
@@ -327,18 +330,18 @@ func TestSpawnModelShortNames(t *testing.T) {
 
 func TestSpawnModelDefault(t *testing.T) {
 	var receivedModel string
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedModel = req.Model
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("ok"), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Content: provider.TextContent("ok"), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-sonnet-4-5"}
+	deps := SpawnDeps{Client: client, Model: "claude-sonnet-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	// No model specified — should use parent's default
@@ -361,7 +364,7 @@ func TestSpawnTimeout(t *testing.T) {
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -387,10 +390,11 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
-		MaxInherit: 3,
+		Sessions:     mockSessions,
+		AgentID:      "test",
+		Model:        "claude-haiku-4-5",
+		MaxInherit:   3,
+		MaxToolLoops: 10,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -796,28 +800,28 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 func TestSpawnOneShotWithTools(t *testing.T) {
 	// Verify one-shot modes get tool definitions and can execute tools.
 	callCount := 0
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
 			// First call: model uses a tool
 			if len(req.Tools) == 0 {
 				t.Error("expected tools in request")
 			}
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_1", Type: "message", Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_1", Name: "echo_tool", Input: json.RawMessage(`{"text":"hello"}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
 		// Second call: model returns final text
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_2", Type: "message", Role: "assistant",
-			Content:    anthropic.TextContent("Tool said: echo hello"),
+			Content:    provider.TextContent("Tool said: echo hello"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -836,7 +840,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	})
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -970,13 +974,13 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 
 func TestSpawnCharacterAllTools(t *testing.T) {
 	// Verify character mode includes all tools (no blacklist).
-	var receivedReq *anthropic.MessageRequest
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	var receivedReq *provider.MessageRequest
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("ok"), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Content: provider.TextContent("ok"), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -991,7 +995,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	}
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1040,17 +1044,17 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 
 func TestSpawnRawCreatesTempDir(t *testing.T) {
 	var spawnTempDir string
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Done."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Content: provider.TextContent("Done."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1072,22 +1076,22 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	callCount := 0
 	var spawnTempDir string
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_1", Type: "message", Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"output.txt","content":"test data"}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_2", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("File written."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			Content: provider.TextContent("File written."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -1096,7 +1100,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1133,22 +1137,22 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 
 func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	callCount := 0
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_1", Type: "message", Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"/tmp/malicious.txt","content":"bad"}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_2", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Error received."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			Content: provider.TextContent("Error received."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -1157,7 +1161,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1177,22 +1181,22 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 
 func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	callCount := 0
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_1", Type: "message", Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"../../../tmp/escape.txt","content":"bad"}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_2", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Error received."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			Content: provider.TextContent("Error received."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -1201,7 +1205,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1221,32 +1225,32 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 
 func TestSpawnRawFileListMultiple(t *testing.T) {
 	callCount := 0
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_1", Type: "message", Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_1", Name: "write", Input: json.RawMessage(`{"path":"a.txt","content":"aaa"}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
 		if callCount == 2 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID: "msg_2", Type: "message", Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_2", Name: "write", Input: json.RawMessage(`{"path":"b.txt","content":"bbbbb"}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_3", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Files written."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 30, OutputTokens: 15},
+			Content: provider.TextContent("Files written."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 30, OutputTokens: 15},
 		}
 	})
 	defer server.Close()
@@ -1255,7 +1259,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1426,14 +1430,14 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 }
 
 func TestSpawnExploreMode(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
-			Content: anthropic.TextContent("Found 3 Go files."), StopReason: "end_turn",
-			Usage: anthropic.Usage{InputTokens: 50, OutputTokens: 20},
+			Content: provider.TextContent("Found 3 Go files."), StopReason: "end_turn",
+			Usage: provider.Usage{InputTokens: 50, OutputTokens: 20},
 		}
 	})
 	defer server.Close()
@@ -1452,9 +1456,10 @@ func TestSpawnExploreMode(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{
-		Client:   client,
-		Registry: reg,
-		Model:    "claude-opus-4-6", // parent uses opus
+		Client:          client,
+		Registry:        reg,
+		Model:           "claude-opus-4-6", // parent uses opus
+		ExploreMaxDepth: 10,
 	}
 	tool := NewSpawnTool(deps, nil)
 

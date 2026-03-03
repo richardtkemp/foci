@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"foci/anthropic"
 	"foci/log"
+	"foci/provider"
 )
 
 // DefaultFileOrder is the default order for loading workspace files.
@@ -30,8 +30,8 @@ type Bootstrap struct {
 	fileOrder     []string
 	secretNames   []string // available secret names for {{secret:NAME}} templates
 	hasBitwarden  bool     // bitwarden integration is enabled
-	cached        []anthropic.SystemBlock
-	cachedWithSec []anthropic.SystemBlock // cached blocks with secrets injected
+	cached        []provider.SystemBlock
+	cachedWithSec []provider.SystemBlock // cached blocks with secrets injected
 	mu            sync.RWMutex
 }
 
@@ -59,7 +59,7 @@ func (b *Bootstrap) SetSecretNames(names []string, hasBitwarden bool) {
 
 // SystemBlocks returns the cached system prompt blocks for the API request,
 // including injected secret names if available.
-func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
+func (b *Bootstrap) SystemBlocks() []provider.SystemBlock {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -69,7 +69,7 @@ func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 	}
 
 	// Build blocks with secrets injected
-	blocks := make([]anthropic.SystemBlock, len(b.cached))
+	blocks := make([]provider.SystemBlock, len(b.cached))
 	copy(blocks, b.cached)
 
 	// Inject secrets block if we have secret names or bitwarden
@@ -80,14 +80,14 @@ func (b *Bootstrap) SystemBlocks() []anthropic.SystemBlock {
 
 	// Mark last block for caching
 	if len(blocks) > 0 {
-		blocks[len(blocks)-1].CacheControl = anthropic.Ephemeral()
+		blocks[len(blocks)-1].CacheControl = provider.Ephemeral()
 	}
 
 	return blocks
 }
 
 // buildSecretsBlock creates a system block listing available secrets
-func buildSecretsBlock(names []string, hasBitwarden bool) anthropic.SystemBlock {
+func buildSecretsBlock(names []string, hasBitwarden bool) provider.SystemBlock {
 	var text string
 	if len(names) > 0 {
 		text = "Available secrets for {{secret:NAME}} templates in http_request headers/body: " + strings.Join(names, ", ")
@@ -98,7 +98,7 @@ func buildSecretsBlock(names []string, hasBitwarden bool) anthropic.SystemBlock 
 		}
 		text += "Bitwarden vault is available. Use bitwarden_search to find items, then bitwarden_unlock to unlock a specific item (requires administrator approval). Once unlocked, reference with {{secret:bw.ITEM_ID}} in http_request. Host validation uses the vault item's URI fields."
 	}
-	return anthropic.SystemBlock{
+	return provider.SystemBlock{
 		Type: "text",
 		Text: text,
 	}
@@ -166,8 +166,8 @@ func (b *Bootstrap) CheckSizes(maxFileChars, maxTotalChars int) []string {
 }
 
 // loadFromDisk reads workspace files and builds system blocks.
-func (b *Bootstrap) loadFromDisk() []anthropic.SystemBlock {
-	var blocks []anthropic.SystemBlock
+func (b *Bootstrap) loadFromDisk() []provider.SystemBlock {
+	var blocks []provider.SystemBlock
 
 	for _, name := range b.fileOrder {
 		data, err := os.ReadFile(filepath.Join(b.dir, name))
@@ -181,7 +181,7 @@ func (b *Bootstrap) loadFromDisk() []anthropic.SystemBlock {
 		if content == "" {
 			continue
 		}
-		blocks = append(blocks, anthropic.SystemBlock{
+		blocks = append(blocks, provider.SystemBlock{
 			Type: "text",
 			Text: content,
 		})
@@ -189,7 +189,7 @@ func (b *Bootstrap) loadFromDisk() []anthropic.SystemBlock {
 
 	// Mark last block for caching
 	if len(blocks) > 0 {
-		blocks[len(blocks)-1].CacheControl = anthropic.Ephemeral()
+		blocks[len(blocks)-1].CacheControl = provider.Ephemeral()
 	}
 
 	return blocks
