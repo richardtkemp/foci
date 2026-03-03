@@ -94,8 +94,8 @@ info "Target user: $FOCI_USER (home: $FOCI_HOME)"
 # ---------- Check Go ----------
 info "Checking Go installation"
 if ! command -v go &>/dev/null; then
-    error "Go not found. Install Go 1.22+ first."
-    error "Ubuntu: sudo apt install golang-go"
+    error "Go not found. Install Go 1.23+ first."
+    error "Run: sudo ./prerequisites.sh"
     error "Or download from https://go.dev/dl/"
     exit 1
 fi
@@ -103,9 +103,9 @@ fi
 GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
 GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
 GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
-if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt 22 ]]; then
-    error "Go $GO_VERSION found, but Go 1.22+ is required (go.mod declares go 1.22.2)."
-    error "Ubuntu: sudo apt install golang-go"
+if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt 23 ]]; then
+    error "Go $GO_VERSION found, but Go 1.23+ is required (go.mod declares go 1.23)."
+    error "Run: sudo ./prerequisites.sh"
     error "Or download from https://go.dev/dl/"
     exit 1
 fi

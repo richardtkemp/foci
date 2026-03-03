@@ -36,21 +36,21 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			},
 			"required": ["text", "when"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Text string `json:"text"`
 				When string `json:"when"`
 				Wake bool   `json:"wake"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 
 			if p.Text == "" {
-				return "", fmt.Errorf("text is required")
+				return ToolResult{}, fmt.Errorf("text is required")
 			}
 			if p.When == "" {
-				return "", fmt.Errorf("when is required")
+				return ToolResult{}, fmt.Errorf("when is required")
 			}
 
 			if p.Wake {
@@ -59,37 +59,37 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 
 			// Passive reminder — store in ReminderStore
 			if err := rs.Add(agentID, p.Text, p.When); err != nil {
-				return "", fmt.Errorf("add reminder: %w", err)
+				return ToolResult{}, fmt.Errorf("add reminder: %w", err)
 			}
 
-			return fmt.Sprintf("Reminder set for %s: %s", p.When, p.Text), nil
+			return TextResult(fmt.Sprintf("Reminder set for %s: %s", p.When, p.Text)), nil
 		},
 	}
 }
 
 // remindWake stores a wake reminder in the DB, then schedules it in-memory.
-func remindWake(rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn) (string, error) {
+func remindWake(rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn) (ToolResult, error) {
 	if wakeFn == nil {
-		return "", fmt.Errorf("wake not configured")
+		return ToolResult{}, fmt.Errorf("wake not configured")
 	}
 
 	dur, err := resolveWakeDuration(when)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	id, err := rs.AddWake(agentID, text, when)
 	if err != nil {
-		return "", fmt.Errorf("store wake: %w", err)
+		return ToolResult{}, fmt.Errorf("store wake: %w", err)
 	}
 
 	if err := wakeFn(id, dur, text); err != nil {
 		_ = rs.Dismiss(id) // clean up DB row on schedule failure
-		return "", fmt.Errorf("schedule wake: %w", err)
+		return ToolResult{}, fmt.Errorf("schedule wake: %w", err)
 	}
 
 	log.Debugf("remind", "scheduled wake id=%d in %v: %q", id, dur, text)
-	return fmt.Sprintf("Wake scheduled in %v: %q", dur, text), nil
+	return TextResult(fmt.Sprintf("Wake scheduled in %v: %q", dur, text)), nil
 }
 
 // resolveWakeDuration converts a when string to a duration from now.

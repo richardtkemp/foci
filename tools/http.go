@@ -123,13 +123,13 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			},
 			"required": ["url"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, notifier)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) (string, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) (ToolResult, error) {
 	var p struct {
 		URL        string            `json:"url"`
 		Method     string            `json:"method"`
@@ -146,14 +146,14 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		Background       bool             `json:"background"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	if p.Method == "" {
 		p.Method = "GET"
 	}
 	if p.SaveFromJSONPath != "" && p.SaveTo == "" {
-		return "", fmt.Errorf("save_from_json_path requires save_to")
+		return ToolResult{}, fmt.Errorf("save_from_json_path requires save_to")
 	}
 	// Mutual exclusivity: body, body_file, files
 	bodySourceCount := 0
@@ -167,27 +167,27 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		bodySourceCount++
 	}
 	if bodySourceCount > 1 {
-		return "", fmt.Errorf("body, body_file, and files are mutually exclusive")
+		return ToolResult{}, fmt.Errorf("body, body_file, and files are mutually exclusive")
 	}
 	if len(p.FormFields) > 0 && len(p.Files) == 0 {
-		return "", fmt.Errorf("form_fields requires files")
+		return ToolResult{}, fmt.Errorf("form_fields requires files")
 	}
 
 	// Read body_file contents early so secrets can be scanned
 	if p.BodyFile != "" {
 		info, err := os.Stat(p.BodyFile)
 		if err != nil {
-			return "", fmt.Errorf("body_file %q: %w", p.BodyFile, err)
+			return ToolResult{}, fmt.Errorf("body_file %q: %w", p.BodyFile, err)
 		}
 		if info.IsDir() {
-			return "", fmt.Errorf("body_file %q is a directory", p.BodyFile)
+			return ToolResult{}, fmt.Errorf("body_file %q is a directory", p.BodyFile)
 		}
 		if info.Size() > maxUploadFileSize {
-			return "", fmt.Errorf("body_file %q is %d bytes, exceeds %dMB limit", p.BodyFile, info.Size(), maxUploadFileSize/(1024*1024))
+			return ToolResult{}, fmt.Errorf("body_file %q is %d bytes, exceeds %dMB limit", p.BodyFile, info.Size(), maxUploadFileSize/(1024*1024))
 		}
 		data, err := os.ReadFile(p.BodyFile)
 		if err != nil {
-			return "", fmt.Errorf("read body_file %q: %w", p.BodyFile, err)
+			return ToolResult{}, fmt.Errorf("read body_file %q: %w", p.BodyFile, err)
 		}
 		p.Body = string(data)
 	}
@@ -225,11 +225,11 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	// Validate regular secrets against allowed_hosts
 	if len(regularRefs) > 0 {
 		if store == nil {
-			return "", fmt.Errorf("secrets referenced but no secret store configured")
+			return ToolResult{}, fmt.Errorf("secrets referenced but no secret store configured")
 		}
 		for _, name := range regularRefs {
 			if err := store.CheckHostAllowed(name, p.URL); err != nil {
-				return "", fmt.Errorf("secret host check: %w", err)
+				return ToolResult{}, fmt.Errorf("secret host check: %w", err)
 			}
 		}
 	}
@@ -237,12 +237,12 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	// Validate bitwarden secrets against vault item URIs
 	if hasBWSecrets {
 		if bwStore == nil {
-			return "", fmt.Errorf("bitwarden secrets referenced but bitwarden is not configured")
+			return ToolResult{}, fmt.Errorf("bitwarden secrets referenced but bitwarden is not configured")
 		}
 		for _, name := range bwRefs {
 			id := bitwarden.ExtractID(name)
 			if err := bwStore.CheckHostAllowed(id, p.URL); err != nil {
-				return "", fmt.Errorf("bitwarden host check: %w", err)
+				return ToolResult{}, fmt.Errorf("bitwarden host check: %w", err)
 			}
 		}
 	}
@@ -271,14 +271,14 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	for k, v := range p.Headers {
 		resolved, err := resolveValue(v, fmt.Sprintf("header %q", k))
 		if err != nil {
-			return "", err
+			return ToolResult{}, err
 		}
 		resolvedHeaders[k] = resolved
 	}
 	if hasSecrets && p.Body != "" {
 		resolved, err := resolveValue(p.Body, "body")
 		if err != nil {
-			return "", err
+			return ToolResult{}, err
 		}
 		p.Body = resolved
 	}
@@ -288,7 +288,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	if len(p.Query) > 0 {
 		parsed, err := url.Parse(reqURL)
 		if err != nil {
-			return "", fmt.Errorf("parse URL: %w", err)
+			return ToolResult{}, fmt.Errorf("parse URL: %w", err)
 		}
 		q := parsed.Query()
 		for k, v := range p.Query {
@@ -302,7 +302,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	for k, v := range p.FormFields {
 		resolved, err := resolveValue(v, fmt.Sprintf("form_field %q", k))
 		if err != nil {
-			return "", err
+			return ToolResult{}, err
 		}
 		resolvedFormFields[k] = resolved
 	}
@@ -313,7 +313,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	if len(p.Files) > 0 {
 		buf, contentType, err := buildMultipartBody(p.Files, resolvedFormFields, maxUploadFileSize)
 		if err != nil {
-			return "", err
+			return ToolResult{}, err
 		}
 		bodyReader = buf
 		multipartContentType = contentType
@@ -333,7 +333,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	// either via context.WithTimeout (auto-background path) or directly on the client.
 	req, err := http.NewRequestWithContext(ctx, p.Method, reqURL, bodyReader)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return ToolResult{}, fmt.Errorf("create request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", "Foci/1.0")
@@ -361,11 +361,11 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 
 	// doAndProcess performs the HTTP call and processes the response.
 	// It uses its own context (may be detached from agent turn for auto-background).
-	doAndProcess := func(reqCtx context.Context) (string, error) {
+	doAndProcess := func(reqCtx context.Context) (ToolResult, error) {
 		reqWithCtx := req.WithContext(reqCtx)
 		resp, err := client.Do(reqWithCtx)
 		if err != nil {
-			return "", fmt.Errorf("request failed: %w", err)
+			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
 
@@ -390,11 +390,11 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			if err != nil {
 				msg = fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, err)
 			} else {
-				msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, result)
+				msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, result.Text)
 			}
 			notifier.Notify(sk, msg)
 		}()
-		return fmt.Sprintf("Request running in background. Results will be delivered when complete.\n%s", displayURL), nil
+		return TextResult(fmt.Sprintf("Request running in background. Results will be delivered when complete.\n%s", displayURL)), nil
 	}
 
 	// Auto-background: start the request and wait with a timer
@@ -403,7 +403,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
 
 		type httpResult struct {
-			output string
+			output ToolResult
 			err    error
 		}
 		done := make(chan httpResult, 1)
@@ -417,7 +417,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		case r := <-done:
 			bgCancel()
 			if r.err != nil {
-				return "", r.err
+				return ToolResult{}, r.err
 			}
 			return r.output, nil
 
@@ -432,11 +432,11 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 				if r.err != nil {
 					msg = fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, r.err)
 				} else {
-					msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, r.output)
+					msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, r.output.Text)
 				}
 				notifier.Notify(sk, msg)
 			}()
-			return fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL), nil
+			return TextResult(fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL)), nil
 
 		case <-ctx.Done():
 			// Agent turn cancelled — let the request continue in background
@@ -444,7 +444,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 				defer bgCancel()
 				<-done
 			}()
-			return "", ctx.Err()
+			return ToolResult{}, ctx.Err()
 		}
 	}
 
@@ -453,7 +453,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 }
 
 // processHTTPResponse reads and formats an HTTP response.
-func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (string, error) {
+func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (ToolResult, error) {
 	// Read response — 10MB when saving to file, 1MB when returning to context
 	bodyLimit := int64(1024 * 1024)
 	if saveTo != "" || isBinaryContentType(resp.Header.Get("Content-Type")) {

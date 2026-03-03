@@ -36,7 +36,9 @@ func NewWebFetchTool() *Tool {
 			},
 			"required": ["url"]
 		}`),
-		Execute: webFetch,
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return webFetch(ctx, params)
+		},
 	}
 }
 
@@ -55,19 +57,19 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 			},
 			"required": ["query"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return webSearch(ctx, params, braveAPIKey)
 		},
 	}
 }
 
-func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
+func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	var p struct {
 		URL string `json:"url"`
 		Raw bool   `json:"raw"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	parsed, err := url.Parse(p.URL)
@@ -78,24 +80,24 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET", p.URL, nil)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return ToolResult{}, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", "Foci/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetch URL: %w", err)
+		return ToolResult{}, fmt.Errorf("fetch URL: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return ToolResult{}, fmt.Errorf("read response: %w", err)
 	}
 
 	// Raw mode: return unprocessed HTML
 	if p.Raw {
-		return string(body), nil
+		return TextResult(string(body)), nil
 	}
 
 	// Try readability extraction, then convert to markdown
@@ -118,25 +120,25 @@ func webFetch(ctx context.Context, params json.RawMessage) (string, error) {
 		}
 	}
 
-	return md, nil
+	return TextResult(md), nil
 }
 
-func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (string, error) {
+func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (ToolResult, error) {
 	var p struct {
 		Query string `json:"query"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	if apiKey == "" {
-		return "", fmt.Errorf("brave_api_key not configured")
+		return ToolResult{}, fmt.Errorf("brave_api_key not configured")
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.search.brave.com/res/v1/web/search", nil)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return ToolResult{}, fmt.Errorf("create request: %w", err)
 	}
 
 	q := req.URL.Query()
@@ -147,17 +149,17 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (stri
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("search request: %w", err)
+		return ToolResult{}, fmt.Errorf("search request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return ToolResult{}, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("search API error (status %d): %s", resp.StatusCode, string(body))
+		return ToolResult{}, fmt.Errorf("search API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -170,7 +172,7 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (stri
 		} `json:"web"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("parse search results: %w", err)
+		return ToolResult{}, fmt.Errorf("parse search results: %w", err)
 	}
 
 	log.Debugf("web_search", "search query=%q results=%d", p.Query, len(result.Web.Results))
@@ -181,7 +183,7 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (stri
 	}
 
 	if out.Len() == 0 {
-		return "No results found.", nil
+		return TextResult("No results found."), nil
 	}
-	return out.String(), nil
+	return TextResult(out.String()), nil
 }

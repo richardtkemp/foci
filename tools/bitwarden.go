@@ -25,20 +25,20 @@ func NewBitwardenSearchTool(store *bitwarden.Store) *Tool {
 			},
 			"required": ["query"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Query string `json:"query"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Query == "" {
-				return "", fmt.Errorf("query is required")
+				return ToolResult{}, fmt.Errorf("query is required")
 			}
 
 			results := store.Search(p.Query)
 			if len(results) == 0 {
-				return "No matching items found.", nil
+				return TextResult("No matching items found."), nil
 			}
 
 			var sb strings.Builder
@@ -55,7 +55,7 @@ func NewBitwardenSearchTool(store *bitwarden.Store) *Tool {
 					fmt.Fprintf(&sb, "\n  Folder: %s", item.Folder)
 				}
 			}
-			return sb.String(), nil
+			return TextResult(sb.String()), nil
 		},
 	}
 }
@@ -78,15 +78,15 @@ func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 			},
 			"required": ["id"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				ID string `json:"id"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.ID == "" {
-				return "", fmt.Errorf("id is required")
+				return ToolResult{}, fmt.Errorf("id is required")
 			}
 
 			// Look up item metadata for the response message
@@ -99,7 +99,7 @@ func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 			// This call blocks until aisudo approval or denial
 			_, err := store.GetPassword(p.ID)
 			if err != nil {
-				return "", err
+				return ToolResult{}, err
 			}
 
 			// Never return the actual value
@@ -109,7 +109,7 @@ func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 			if item != nil && len(item.URIs) > 0 {
 				fmt.Fprintf(&sb, "\nAllowed hosts (from vault URIs): %s", strings.Join(item.URIs, ", "))
 			}
-			return sb.String(), nil
+			return TextResult(sb.String()), nil
 		},
 	}
 }

@@ -44,35 +44,35 @@ func NewSummaryTool(client *anthropic.Client, modelAliases map[string]string) *T
 			},
 			"required": ["file", "prompt"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return summaryExecute(ctx, params, client, resolveModel)
 		},
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client *anthropic.Client, resolveModel func(string) string) (string, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client *anthropic.Client, resolveModel func(string) string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	if p.File == "" {
-		return "", fmt.Errorf("file parameter is required")
+		return ToolResult{}, fmt.Errorf("file parameter is required")
 	}
 	if p.Prompt == "" {
-		return "", fmt.Errorf("prompt parameter is required")
+		return ToolResult{}, fmt.Errorf("prompt parameter is required")
 	}
 
 	data, err := os.ReadFile(p.File)
 	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
+		return ToolResult{}, fmt.Errorf("read file: %w", err)
 	}
 
 	if len(data) == 0 {
-		return "", fmt.Errorf("file is empty: %s", p.File)
+		return ToolResult{}, fmt.Errorf("file is empty: %s", p.File)
 	}
 
 	// Detect binary files by checking for null bytes in first 512 bytes
@@ -82,7 +82,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 	}
 	for _, b := range data[:checkLen] {
 		if b == 0 {
-			return "", fmt.Errorf("file appears to be binary: %s", p.File)
+			return ToolResult{}, fmt.Errorf("file appears to be binary: %s", p.File)
 		}
 	}
 
@@ -107,7 +107,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 
 	resp, err := client.SendMessage(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("summary API call: %w", err)
+		return ToolResult{}, fmt.Errorf("summary API call: %w", err)
 	}
 
 	duration := time.Since(start)
@@ -134,7 +134,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 
 	text := anthropic.TextOf(resp.Content)
 	if text == "" {
-		return "(empty response)", nil
+		return TextResult("(empty response)"), nil
 	}
-	return text, nil
+	return TextResult(text), nil
 }

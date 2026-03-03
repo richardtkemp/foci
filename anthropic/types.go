@@ -10,18 +10,18 @@ type CacheControl struct {
 	Type string `json:"type"`
 }
 
-// ImageSource holds base64-encoded image data for the API.
-type ImageSource struct {
+// ContentSource holds base64-encoded data for image and document content blocks.
+type ContentSource struct {
 	Type      string `json:"type"`       // "base64"
-	MediaType string `json:"media_type"` // "image/jpeg", "image/png", etc.
-	Data      string `json:"data"`       // base64-encoded image data
+	MediaType string `json:"media_type"` // "image/jpeg", "image/png", "application/pdf", etc.
+	Data      string `json:"data"`       // base64-encoded data
 }
 
 // knownBlockTypes lists content block types fully modeled by struct fields.
 // Server tool types (server_tool_use, web_search_tool_result, web_fetch_tool_result)
 // are NOT in this set — they use Raw passthrough.
 var knownBlockTypes = map[string]bool{
-	"text": true, "image": true, "tool_use": true, "tool_result": true,
+	"text": true, "image": true, "document": true, "tool_use": true, "tool_result": true,
 	"thinking": true, "redacted_thinking": true,
 }
 
@@ -35,7 +35,7 @@ type ContentBlock struct {
 	Thinking     string          `json:"thinking,omitempty"`  // thinking: internal reasoning text
 	Signature    string          `json:"signature,omitempty"` // thinking: encrypted verification signature (must be preserved)
 	Data         string          `json:"data,omitempty"`      // redacted_thinking: encrypted thinking data
-	Source       *ImageSource    `json:"source,omitempty"`    // image: base64 source
+	Source       *ContentSource  `json:"source,omitempty"`    // image/document: base64 source
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 	ID           string          `json:"id,omitempty"`        // tool_use / server_tool_use: block ID
 	Name         string          `json:"name,omitempty"`      // tool_use / server_tool_use: tool name
@@ -217,7 +217,19 @@ func CachedTextContent(text string) []ContentBlock {
 func ImageBlock(mediaType, base64Data string) ContentBlock {
 	return ContentBlock{
 		Type: "image",
-		Source: &ImageSource{
+		Source: &ContentSource{
+			Type:      "base64",
+			MediaType: mediaType,
+			Data:      base64Data,
+		},
+	}
+}
+
+// DocumentBlock creates a document content block from base64-encoded data.
+func DocumentBlock(mediaType, base64Data string) ContentBlock {
+	return ContentBlock{
+		Type: "document",
+		Source: &ContentSource{
 			Type:      "base64",
 			MediaType: mediaType,
 			Data:      base64Data,
