@@ -1683,6 +1683,7 @@ func setupAgent(p setupParams) *agentInstance {
 		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:              acfg.DuplicateMessages,
 		BatchPartialAssistantMessages:  acfg.BatchPartialAssistantMessages,
+		BatchPartialJoiner:             acfg.BatchPartialJoiner,
 		MaxResultChars:              resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
 		ToolResultTempDir:           p.cfg.Tools.TempDir,
 		ModelAliases:                p.cfg.Models.Aliases,

@@ -21,6 +21,7 @@ thinking = "adaptive"                     # adaptive (default), off
 # turn_lock_warn_threshold = "3m"         # warn if turn lock wait exceeds this duration
 # duplicate_messages = false              # send user text twice per API call
 # batch_partial_assistant_messages = false # accumulate mid-turn text; send on turn end
+# batch_partial_joiner = ""               # separator between batched partial messages
 # inject_agent_warnings = false           # inject warnings/errors into session
 # show_tool_calls = "off"                 # off, preview, full
 # show_thinking = "off"                   # off, compact, true
