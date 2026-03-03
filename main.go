@@ -1111,13 +1111,13 @@ func main() {
 			}
 		}
 		if anyInjection {
-			log.WarnHook = func(level log.Level, component string, msg string) {
+			log.SetWarnHook(func(level log.Level, component string, msg string) {
 				for _, inst := range agents {
 					if inst.ag.Warnings != nil {
 						inst.ag.Warnings.Push(level.String(), component, msg)
 					}
 				}
-			}
+			})
 			log.Infof("main", "warning injection into agent sessions enabled")
 		}
 	}
