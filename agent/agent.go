@@ -103,7 +103,6 @@ type Agent struct {
 	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
 	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
 	RateLimitFunc               func(retryAfter int)            // callback when API returns 429 (rate limit exhausted)
-	OverloadedFunc              func()                          // callback when API returns 529 (Anthropic servers overloaded)
 	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
 	CompactionDebugFunc         func(string, string)            // callback for compaction debug (session key, summary text)
 	OnActivity                  func(string)                    // callback when a session has activity (session key); nil disables
@@ -1242,9 +1241,6 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	}
 	if errors.As(err, &apiErr) && apiErr.IsOverloaded() {
 		a.logger().Warnf("overloaded: status=%d (retries exhausted)", apiErr.StatusCode)
-		if a.OverloadedFunc != nil {
-			a.OverloadedFunc()
-		}
 		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsRetryable() {

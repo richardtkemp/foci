@@ -2547,11 +2547,6 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		primaryBot.SendNotification("⚡ " + msg)
 	}
 
-	// Wire overloaded notifications to Telegram
-	ag.OverloadedFunc = func() {
-		primaryBot.SendNotification("🔥 Anthropic servers are overloaded — request failed after retries. Will try again next turn.")
-	}
-
 	// Wire max_tokens warnings to Telegram
 	ag.MaxTokensWarnFunc = func(warn string) {
 		primaryBot.SendNotification("⚠️ " + warn)
