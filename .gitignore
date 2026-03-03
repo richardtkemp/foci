@@ -1,5 +1,5 @@
 /foci
-/focigw
+/foci-gw
 foci.toml
 sessions/
 tasks/
@@ -18,5 +18,5 @@ conversation.db-shm
 coverage.out
 update.sh
 foci
-focigw
+foci-gw
 foci-call

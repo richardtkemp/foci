@@ -3,7 +3,7 @@
 Foci uses two TOML files: `foci.toml` (main config) and `secrets.toml` (credentials). By default, foci looks for `foci.toml` in the current working directory. Override with `--config`:
 
 ```
-focigw --config /home/foci/config/foci.toml
+foci-gw --config /home/foci/config/foci.toml
 ```
 
 Secrets are loaded from `secrets.toml` in the same directory as the config file. Values in `secrets.toml` override matching fields in `foci.toml`.

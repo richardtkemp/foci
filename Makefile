@@ -13,7 +13,7 @@ LDFLAGS = -X main.version=$(VERSION) \
 all: build cli foci-call
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o focigw .
+	go build -ldflags "$(LDFLAGS)" -o foci-gw .
 
 cli:
 	go build -ldflags "$(LDFLAGS)" -o foci ./cmd/foci
@@ -25,7 +25,7 @@ test:
 	go test ./...
 
 clean:
-	rm -f focigw foci foci-call
+	rm -f foci-gw foci foci-call
 
 vet:
 	go vet ./...
