@@ -3364,16 +3364,23 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 	return nil, nil, nil // unreachable
 }
 
-// startClaudeForRefresh runs `claude auth status` in a subprocess to trigger
-// a token refresh. Fire-and-forget — logs errors but never blocks.
+// startClaudeForRefresh sends a trivial query via Claude Code to force a
+// token refresh. `claude auth status` doesn't actually refresh tokens —
+// only a real API call does. Fire-and-forget — logs errors but never blocks.
 func startClaudeForRefresh() {
-	cmd := exec.Command("claude", "auth", "status")
+	cmd := exec.Command("claude",
+		"--model", "haiku",
+		"--system-prompt", "",
+		"--print",
+		"--effort", "low",
+		"1+1",
+	)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
-		log.Warnf("main", "claude auth status failed (CC may not be installed): %v", err)
+		log.Warnf("main", "claude token refresh failed (CC may not be installed): %v", err)
 	} else {
-		log.Infof("main", "claude auth status completed — tokens may have been refreshed")
+		log.Infof("main", "claude token refresh completed")
 	}
 }
 
