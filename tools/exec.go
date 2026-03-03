@@ -208,26 +208,16 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		return "", fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr concurrently to avoid deadlock, then wait for
-	// all reads to complete before calling proc.Wait — calling Wait first
-	// closes the pipe read-ends and races with the in-progress reads.
-	var stdoutBuf, stderrBuf bytes.Buffer
-	doneRead := make(chan struct{})
-	go func() {
-		defer close(doneRead)
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
-		go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
-		wg.Wait()
-	}()
+	// Read stdout and stderr concurrently — all reads must complete before
+	// proc.Wait is called (Wait closes pipe read-ends, racing in-progress reads).
+	stdoutBuf, stderrBuf, combined, doneRead := startPipeReaders(stdout, stderr, outputMode)
 	<-doneRead
 	err = proc.Wait()
 
 	if outputMode == "separated" {
 		return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
 	}
-	return formatResult(stdoutBuf.String()+stderrBuf.String(), err, ctx, timeout, displayCmd, store, bwStore), nil
+	return formatResult(combined.String(), err, ctx, timeout, displayCmd, store, bwStore), nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
@@ -283,19 +273,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		return "", fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr concurrently to avoid deadlock. All reads must
-	// complete before proc.Wait is called — Wait closes the pipe read-ends
-	// and would race with in-progress reads (Go 1.22+ parentIOPipes behavior).
-	var stdoutBuf, stderrBuf bytes.Buffer
-	doneRead := make(chan struct{})
-	go func() {
-		defer close(doneRead)
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
-		go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
-		wg.Wait()
-	}()
+	// Read stdout and stderr concurrently — all reads must complete before
+	// proc.Wait is called (Wait closes pipe read-ends, racing in-progress reads).
+	stdoutBuf, stderrBuf, combined, doneRead := startPipeReaders(stdout, stderr, outputMode)
 
 	// done goroutine waits for all reads before calling proc.Wait so that
 	// pipe read-ends are not closed while reads are still in progress.
@@ -316,30 +296,13 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		if outputMode == "separated" {
 			return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
 		}
-		return formatResult(stdoutBuf.String()+stderrBuf.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
+		return formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
 		log.Infof("exec", "auto-backgrounding after %v: %s", threshold, truncateCmd(displayCmd, 100))
-		notifier.MarkPending(sessionKey)
-
-		// Continue waiting in background goroutine
-		go func() {
-			defer cmdCancel()
-			defer notifier.MarkDone(sessionKey)
-			if bridge != nil {
-				defer bridge.Close()
-			}
-			err := <-done // reads already complete (done goroutine waited)
-			var result string
-			if outputMode == "separated" {
-				result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
-			} else {
-				result = formatResult(stdoutBuf.String()+stderrBuf.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
-			}
-			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
-			notifier.Notify(sessionKey, msg)
-		}()
+		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
+			stdoutBuf, stderrBuf, combined, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 
 		return fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd), nil
 
@@ -350,26 +313,84 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		// on process restart. Persisting them (e.g. to a spool file)
 		// would require plumbing a workspace path here; left as future work.
 		log.Infof("exec", "turn cancelled, backgrounding: %s", truncateCmd(displayCmd, 100))
-		notifier.MarkPending(sessionKey)
-
-		go func() {
-			defer cmdCancel()
-			defer notifier.MarkDone(sessionKey)
-			if bridge != nil {
-				defer bridge.Close()
-			}
-			err := <-done // reads already complete (done goroutine waited)
-			var result string
-			if outputMode == "separated" {
-				result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
-			} else {
-				result = formatResult(stdoutBuf.String()+stderrBuf.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
-			}
-			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
-			notifier.Notify(sessionKey, msg)
-		}()
+		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
+			stdoutBuf, stderrBuf, combined, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 		return "", ctx.Err()
 	}
+}
+
+// lockedWriter wraps a bytes.Buffer with a mutex so concurrent goroutines can
+// write without interleaving mid-write. Each Write call is atomic with respect
+// to other writes, producing approximately chronological interleaving of
+// stdout and stderr chunks.
+type lockedWriter struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *lockedWriter) String() string { return w.buf.String() }
+
+// startPipeReaders launches goroutines to read stdout and stderr concurrently.
+// All reads must complete before proc.Wait is called (Go 1.22+ closes pipe
+// read-ends in Wait, racing in-progress reads).
+//
+// For "separated" mode, stdout and stderr are captured into independent buffers.
+// For combined mode, both streams write through a mutex-protected buffer so
+// output appears in roughly chronological order (not all-stdout-then-all-stderr).
+//
+// Returns (stdoutBuf, stderrBuf, combined, doneRead). Use stdoutBuf/stderrBuf
+// for separated mode; use combined for combined mode. doneRead is closed when
+// all reads are finished.
+func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string) (stdoutBuf, stderrBuf *bytes.Buffer, combined *lockedWriter, doneRead chan struct{}) {
+	stdoutBuf = &bytes.Buffer{}
+	stderrBuf = &bytes.Buffer{}
+	combined = &lockedWriter{}
+	doneRead = make(chan struct{})
+
+	go func() {
+		defer close(doneRead)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		if outputMode == "separated" {
+			go func() { defer wg.Done(); _, _ = io.Copy(stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
+		} else {
+			go func() { defer wg.Done(); _, _ = io.Copy(combined, io.LimitReader(stdout, execMaxOutputBytes)) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(combined, io.LimitReader(stderr, execMaxOutputBytes)) }()
+		}
+		wg.Wait()
+	}()
+	return
+}
+
+// bgDeliverResult waits for a backgrounded command to complete and delivers
+// its results via the notifier. Used by both the threshold-exceeded and
+// ctx.Done() paths in execWithAutoBackground.
+func bgDeliverResult(notifier *AsyncNotifier, sessionKey string, done <-chan error, cmdCancel context.CancelFunc, bridge *ExecBridge,
+	stdoutBuf, stderrBuf *bytes.Buffer, combined *lockedWriter, outputMode string, cmdCtx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) {
+	notifier.MarkPending(sessionKey)
+	go func() {
+		defer cmdCancel()
+		defer notifier.MarkDone(sessionKey)
+		if bridge != nil {
+			defer bridge.Close()
+		}
+		err := <-done // reads already complete (done goroutine waited)
+		var result string
+		if outputMode == "separated" {
+			result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
+		} else {
+			result = formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+		}
+		msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
+		notifier.Notify(sessionKey, msg)
+	}()
 }
 
 // formatResult formats command output with error info, truncation, and redaction.

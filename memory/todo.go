@@ -159,6 +159,9 @@ func migrateTodosCompositeKey(db *sql.DB) error {
 		return fmt.Errorf("rename new table: %w", err)
 	}
 
+	// Clean up orphaned sqlite_sequence entry from the old AUTOINCREMENT table.
+	_, _ = tx.Exec("DELETE FROM sqlite_sequence WHERE name = 'todos'")
+
 	return tx.Commit()
 }
 
