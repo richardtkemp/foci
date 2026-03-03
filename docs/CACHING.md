@@ -1,5 +1,12 @@
 # Cache Architecture
 
+> **TL;DR** — Anthropic caches the **prefix** of each request. Foci uses two strategies to exploit this:
+>
+> 1. **Stable system prompt**: character files, config, and skills are assembled in a fixed order at the start of every request. This prefix rarely changes, so it's served from cache at ~90% discount on every turn.
+> 2. **Append-only conversation**: new messages are only ever added at the end. Nothing is inserted in the middle, so the cached prefix (system prompt + prior conversation) is never invalidated.
+>
+> **Benefits**: Opus cache reads cost 92% less than writes. A well-cached session uses ~5x less mana (rate limit quota) per turn. Branch sessions and forks share the parent's cache automatically.
+
 Foci is designed around Anthropic's prompt cache. Every architectural decision considers cache impact.
 
 ## How Anthropic's Cache Works
@@ -37,28 +44,28 @@ Items 1–4 form the **cached prefix**. They change rarely (character edits, con
 
 ## Cache Breakpoints
 
-Two `cache_control: {"type": "ephemeral"}` breakpoints per API request:
+Two cache breakpoints per API request:
 
-1. **System prompt** — on the last `SystemBlock` (set by `bootstrap.SystemBlocks()`). Caches the entire system prompt so it's not re-tokenized each turn.
+1. **System prompt** — on the last system block. Caches the entire system prompt so it's not re-tokenized each turn.
 
-2. **Conversation history** — on the last content block of the second-to-last message (set by `withCacheBreakpoint()` in `agent.go`). Caches system prompt + all conversation history up to the previous turn.
+2. **Conversation history** — on the second-to-last message. Caches system prompt + all conversation history up to the previous turn.
 
-Breakpoints are added **only to the API request payload**, never persisted to session storage. `withCacheBreakpoint()` returns a shallow copy of the messages slice — the originals saved to session history never have `cache_control` markers.
+Breakpoints are added **only to the API request payload**, never persisted to session storage.
 
 ## Cache Stability Invariant
 
-**The conversation history sent to the Anthropic API MUST be a strict append-only extension of the previous request.** New messages must only ever appear at the end — never inserted in the middle.
+**The conversation history sent to the API MUST be a strict append-only extension of the previous request.** New messages must only ever appear at the end — never inserted in the middle.
 
-Anthropic's cache is prefix-matched. If any message shifts position (because an injected message was inserted before it), all cached tokens after that point are invalidated.
+If any message shifts position (because something was inserted before it), all cached tokens after that point are invalidated.
 
-**Per-session turn lock:** `HandleMessageWithAttachments` acquires a per-session mutex before doing any work. This serializes all turns on the same session — concurrent callers (Telegram messages, async notifications, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
+**Per-session turn lock:** Turns on the same session are serialized — concurrent callers (Telegram messages, async notifications, scheduled wakes, HTTP sends) wait until the current turn completes. Each turn loads the full session history, processes, and saves — guaranteeing strict append-only ordering.
 
 Different sessions run concurrently — the lock is per-session, not global. Branch sessions and parent sessions have different keys and do not block each other.
 
 ## Design Decisions That Preserve Cache
 
 ### Message metadata injection
-Time, cost, mana, token breakdown — all injected into each user message, not the system prompt. The system prompt stays stable. Dynamic values like timestamps go on messages because they're past the cache breakpoint.
+Time, cost, mana, token breakdown — all injected into each user message, not the system prompt. Dynamic values go on messages because they're past the cache breakpoint.
 
 ### Message transforms
 Regex transforms on inbound messages happen inside user messages, not by modifying the system prompt.
@@ -67,19 +74,19 @@ Regex transforms on inbound messages happen inside user messages, not by modifyi
 When conversation history is compressed, only the conversation portion changes. The system prompt prefix is untouched — the cache survives compaction.
 
 ### Character file stability
-Character files are loaded into memory at startup and rebuilt from disk only on compaction or restart. Editing a character file doesn't immediately bust the cache — changes take effect at the next natural reload point (like a compaction).
+Character files are loaded into memory at startup and rebuilt from disk only on compaction or restart. Editing a character file doesn't immediately bust the cache — changes take effect at the next natural reload point.
 
 ### Session branching (cache sharing)
-Branch sessions copy the parent's system prompt + message history at a point in time. When `LoadFull()` builds a message list starting with the parent's prefix, the cache breakpoint lands on the same byte-identical prefix. The API hits cache (read pricing) instead of re-tokenizing (write pricing). The system prompt MUST be byte-identical between parent and branch for cache hit.
+Branch sessions copy the parent's system prompt + message history at a point in time. Because the prefix is byte-identical, the API hits cache (read pricing) instead of re-tokenizing (write pricing).
 
 ### Multiball forking
 Forked sessions share the parent's system prompt prefix. Since the prefix is identical, the fork benefits from the existing cache immediately.
 
 ### Tool result guard
-Oversized tool results are truncated *before* entering the conversation. This matters because the conversation is part of what follows the cached prefix — keeping it smaller means more of the total prompt can benefit from caching.
+Oversized tool results are truncated *before* entering the conversation. Keeping conversations smaller means more of the total prompt benefits from caching.
 
 ### Keepalive
-When idle, the keepalive timer fires a lightweight branch session to keep the cache prefix warm. Does no real work — just ensures the cache TTL doesn't expire during quiet periods.
+When idle, a lightweight branch session fires to keep the cache prefix warm — just ensures the cache TTL doesn't expire during quiet periods.
 
 ## What Busts the Cache
 
