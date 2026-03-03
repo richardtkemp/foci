@@ -363,14 +363,30 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		return fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd), nil
 
 	case <-ctx.Done():
-		// Agent turn cancelled — let the command continue in background
+		// Agent turn cancelled — deliver results asynchronously like the
+		// threshold path. Without this, command output is silently lost.
+		// NOTE: async results live only in goroutine memory and are lost
+		// on process restart. Persisting them (e.g. to a spool file)
+		// would require plumbing a workspace path here; left as future work.
+		log.Infof("exec", "turn cancelled, backgrounding: %s", truncateCmd(displayCmd, 100))
+		notifier.MarkPending(sessionKey)
+
 		go func() {
 			defer cmdCancel()
+			defer notifier.MarkDone(sessionKey)
 			if bridge != nil {
 				defer bridge.Close()
 			}
-			<-done
+			err := <-done
 			<-doneRead
+			var result string
+			if outputMode == "separated" {
+				result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
+			} else {
+				result = formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+			}
+			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
+			notifier.Notify(sessionKey, msg)
 		}()
 		return "", ctx.Err()
 	}
