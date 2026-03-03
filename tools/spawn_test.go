@@ -883,7 +883,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 	// Register every tool that exists in the real system.
 	reg := NewRegistry()
 	allTools := []string{
-		"exec", "tmux",
+		"shell", "tmux",
 		"read", "write", "edit",
 		"web_fetch", "web_search", "http_request",
 		"memory_search", "scratchpad", "todo",
@@ -982,7 +982,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	for _, name := range []string{"web_search", "send_telegram", "send_to_session", "exec"} {
+	for _, name := range []string{"web_search", "send_telegram", "send_to_session", "shell"} {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
@@ -1024,14 +1024,14 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
 	})
 	reg.Register(&Tool{
-		Name:       "exec",
+		Name:       "shell",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
 		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
 	})
 
 	defs, tools := spawnToolSet(reg, nil)
-	if len(defs) != 1 || defs[0].Name() != "exec" {
-		t.Errorf("defs = %v, want [exec] only", defs)
+	if len(defs) != 1 || defs[0].Name() != "shell" {
+		t.Errorf("defs = %v, want [shell] only", defs)
 	}
 	if _, ok := tools["spawn"]; ok {
 		t.Error("spawn should be excluded from tool set")
@@ -1297,7 +1297,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 	// Register all real tools in a registry.
 	reg := NewRegistry()
 	allRegistryTools := []string{
-		"exec", "tmux",
+		"shell", "tmux",
 		"read", "write", "edit",
 		"web_fetch", "web_search", "http_request",
 		"memory_search", "scratchpad", "todo",
@@ -1347,7 +1347,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 
 	// Must exclude: dangerous tools
 	excluded := []string{
-		"exec", "write", "edit", "spawn", "send_telegram",
+		"shell", "write", "edit", "spawn", "send_telegram",
 		"send_to_session", "scratchpad", "todo", "remind",
 		"http_request", "tmux", "bitwarden_search", "bitwarden_unlock",
 	}
@@ -1383,7 +1383,7 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 
 	// Tools blocked from explore mode (everything not in the allowlist).
 	blockedInExplore := map[string]bool{
-		"exec":             true,
+		"shell":            true,
 		"tmux":             true,
 		"write":            true,
 		"edit":             true,
@@ -1400,7 +1400,7 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 
 	// Every tool in the real system.
 	allTools := []string{
-		"exec", "tmux",
+		"shell", "tmux",
 		"read", "write", "edit",
 		"web_fetch", "web_search", "http_request",
 		"memory_search", "scratchpad", "todo",
@@ -1445,7 +1445,7 @@ func TestSpawnExploreMode(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
 	})
 	reg.Register(&Tool{
-		Name:       "exec",
+		Name:       "shell",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
 		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
 	})
@@ -1496,8 +1496,8 @@ func TestSpawnExploreMode(t *testing.T) {
 			t.Errorf("expected %s in explore tools", expected)
 		}
 	}
-	if toolNames["exec"] {
-		t.Error("exec should not be in explore tools")
+	if toolNames["shell"] {
+		t.Error("shell should not be in explore tools")
 	}
 }
 

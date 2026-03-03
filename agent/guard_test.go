@@ -115,7 +115,7 @@ func TestGuardToolResult_MessageFormat(t *testing.T) {
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
 	result := "0123456789extra" // 15 chars, limit 10
-	got := a.guardToolResult(context.Background(), "exec", result, nil)
+	got := a.guardToolResult(context.Background(), "shell", result, nil)
 
 	if !strings.Contains(got, "(15 chars, limit 10)") {
 		t.Errorf("missing size info in %q", got)
@@ -454,7 +454,7 @@ func TestRecentContext_SkipsToolBlocks(t *testing.T) {
 	msgs := []anthropic.Message{
 		{Role: "user", Content: anthropic.TextContent("run ls")},
 		{Role: "assistant", Content: []anthropic.ContentBlock{
-			{Type: "tool_use", ID: "t1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
+			{Type: "tool_use", ID: "t1", Name: "shell", Input: json.RawMessage(`{"cmd":"ls"}`)},
 		}},
 		{Role: "user", Content: []anthropic.ContentBlock{
 			{Type: "tool_result", ToolUseID: "t1", Content: "file1\nfile2"},

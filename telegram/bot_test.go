@@ -1130,7 +1130,7 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 	}
 
 	// Step 1: First tool call → sends new message (ID=1)
-	toolCallObserver("exec", json.RawMessage(`{"command":"ls"}`))
+	toolCallObserver("shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Fatalf("after first tool call: sends=%d, want 1", mock.sentCount())
 	}
@@ -1179,7 +1179,7 @@ func TestShowToolCalls_Preview(t *testing.T) {
 		}
 	}
 
-	observer("exec", json.RawMessage(`{"command":"ls"}`))
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Errorf("sends=%d, want 1", mock.sentCount())
 	}
@@ -1215,7 +1215,7 @@ func TestShowToolCalls_Off(t *testing.T) {
 		}
 	}
 
-	observer("exec", json.RawMessage(`{"command":"ls"}`))
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
 	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
 
 	if mock.sentCount() != 0 {
@@ -1262,11 +1262,11 @@ func TestShowToolCalls_Full(t *testing.T) {
 	}
 
 	// First tool call: new message with compact summary.
-	observer("exec", json.RawMessage(`{"command":"ls"}`))
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Errorf("sends=%d, want 1", mock.sentCount())
 	}
-	if !strings.Contains(mock.lastSendText, "exec") {
+	if !strings.Contains(mock.lastSendText, "shell") {
 		t.Errorf("sent text should contain tool name, got: %s", mock.lastSendText)
 	}
 
@@ -1292,11 +1292,11 @@ func TestShowToolCalls_Full(t *testing.T) {
 
 func TestFormatToolCall(t *testing.T) {
 	b := &Bot{}
-	text := b.formatToolCall("exec", json.RawMessage(`{"command":"ls -la"}`))
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"ls -la"}`))
 	if !strings.Contains(text, "▶️") {
 		t.Error("missing tool emoji")
 	}
-	if !strings.Contains(text, "<b>exec</b>") {
+	if !strings.Contains(text, "<b>shell</b>") {
 		t.Errorf("missing tool name in %q", text)
 	}
 	if !strings.Contains(text, "ls -la") {
@@ -1306,7 +1306,7 @@ func TestFormatToolCall(t *testing.T) {
 
 func TestFormatToolCall_HTMLEscape(t *testing.T) {
 	b := &Bot{}
-	text := b.formatToolCall("exec", json.RawMessage(`{"command":"echo <script>"}`))
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo <script>"}`))
 	if strings.Contains(text, "<script>") {
 		t.Errorf("HTML not escaped in %q", text)
 	}
@@ -1318,7 +1318,7 @@ func TestFormatToolCall_HTMLEscape(t *testing.T) {
 func TestFormatToolCall_LongParams(t *testing.T) {
 	b := &Bot{}
 	longVal := strings.Repeat("x", 500)
-	text := b.formatToolCall("exec", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
+	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
 	if len(text) > 500 {
 		// Should be truncated
 	}
@@ -1355,7 +1355,7 @@ func TestFormatToolCallCompact(t *testing.T) {
 		contains string // expected substring in output
 		emoji    string // expected per-tool emoji
 	}{
-		{"exec", "exec", `{"command":"ls -la /tmp"}`, "ls -la /tmp", "▶️"},
+		{"shell", "shell", `{"command":"ls -la /tmp"}`, "ls -la /tmp", "▶️"},
 		{"web_search", "web_search", `{"query":"golang generics"}`, "golang generics", "🔍"},
 		{"web_fetch", "web_fetch", `{"url":"https://example.com/page"}`, "https://example.com/page", "🔗"},
 		{"http_request GET", "http_request", `{"url":"https://api.example.com/v1"}`, "GET https://api.example.com/v1", "🌍"},
@@ -1389,7 +1389,7 @@ func TestFormatToolCallCompact(t *testing.T) {
 }
 
 func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
-	result := formatToolCallCompact("exec", json.RawMessage(`{"command":"echo <script>"}`))
+	result := formatToolCallCompact("shell", json.RawMessage(`{"command":"echo <script>"}`))
 	if strings.Contains(result, "<script>") {
 		t.Errorf("HTML not escaped in %q", result)
 	}
@@ -1400,7 +1400,7 @@ func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
 
 func TestFormatToolCallCompact_Truncation(t *testing.T) {
 	longCmd := strings.Repeat("x", 200)
-	result := formatToolCallCompact("exec", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longCmd)))
+	result := formatToolCallCompact("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longCmd)))
 	// Should be truncated to ~60 chars + "..."
 	if !strings.Contains(result, "...") {
 		t.Errorf("long command should be truncated: %s", result)
@@ -2313,7 +2313,7 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 		})
 	}
 
-	observer("exec", json.RawMessage(`{"command":"ls"}`))
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
 
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
@@ -2353,8 +2353,8 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 
 	// Pre-store a tool result with compact text, full input, and result.
 	var msgID int64 = 42
-	compactText := `▶️ <b>exec</b>: ls`
-	fullInput := "▶️ <b>exec</b>\n<pre>ls</pre>"
+	compactText := `▶️ <b>shell</b>: ls`
+	fullInput := "▶️ <b>shell</b>\n<pre>ls</pre>"
 	b.toolResults.Store(msgID, toolResultEntry{
 		compactText: compactText,
 		fullInput:   fullInput,
@@ -2385,7 +2385,7 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 	if !strings.Contains(mock.lastEditText, "Result:") {
 		t.Errorf("expected edit text to contain result, got: %s", mock.lastEditText)
 	}
-	if !strings.Contains(mock.lastEditText, "exec") {
+	if !strings.Contains(mock.lastEditText, "shell") {
 		t.Errorf("expected edit text to contain full tool input, got: %s", mock.lastEditText)
 	}
 	// Button should now be "Hide"
@@ -2566,7 +2566,7 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 		})
 	}
 
-	observer("exec", "file1.txt\nfile2.txt", false)
+	observer("shell", "file1.txt\nfile2.txt", false)
 
 	val, ok := b.toolResults.Load(int64(99))
 	if !ok {

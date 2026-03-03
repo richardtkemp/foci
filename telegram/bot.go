@@ -1896,7 +1896,7 @@ func closingHTMLTag(openTag string) string {
 
 // toolEmoji maps tool names to per-tool display emoji.
 var toolEmoji = map[string]string{
-	"exec":            "▶️",
+	"shell":           "▶️",
 	"web_fetch":       "🔗",
 	"web_search":      "🔍",
 	"http_request":    "🌍",
@@ -1976,7 +1976,7 @@ func compactSummary(toolName string, m map[string]json.RawMessage) string {
 	}
 
 	switch toolName {
-	case "exec":
+	case "shell":
 		return truncate(str("command"), 60)
 	case "web_fetch":
 		return truncate(str("url"), 80)

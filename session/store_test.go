@@ -347,7 +347,7 @@ func toolUseMsg(ids ...string) anthropic.Message {
 		blocks = append(blocks, anthropic.ContentBlock{
 			Type:  "tool_use",
 			ID:    id,
-			Name:  "exec",
+			Name:  "shell",
 			Input: []byte(`{"command":"ls"}`),
 		})
 	}
@@ -856,7 +856,7 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 	// Create an archive file with the same orphaned pattern
 	archiveDir := filepath.Join(dir, "agent", "test", "chat")
 	archiveData := `{"role":"user","content":[{"type":"text","text":"old"}]}` + "\n" +
-		`{"role":"assistant","content":[{"type":"tool_use","id":"tool_2","name":"exec","input":{}}]}` + "\n"
+		`{"role":"assistant","content":[{"type":"tool_use","id":"tool_2","name":"shell","input":{}}]}` + "\n"
 	os.WriteFile(filepath.Join(archiveDir, "444.1.jsonl"), []byte(archiveData), 0644)
 
 	repaired, err := s.RepairOrphans()

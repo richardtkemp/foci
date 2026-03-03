@@ -9,7 +9,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `read` | Read file contents with line numbers (truncates at 2000 lines). |
 | `write` | Create or overwrite files. |
 | `edit` | Find-and-replace in files. `old_string` must be unique. Syntax validation for `.json`, `.toml`, `.go`, `.yaml`/`.yml`, `.xml`, `.py`, `.sh`/`.bash` — rejects edits that would break a valid file. |
-| `exec` | Run shell commands via `sh -c` with process group kill on timeout. Output redacted for secrets. Supports `background: true` for daemons and auto-background for long-running commands. Regular `{{secret:}}` templates are blocked (use `http_request`); Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated). |
+| `shell` | Run shell commands via `sh -c` with process group kill on timeout. Output redacted for secrets. Supports `background: true` for daemons and auto-background for long-running commands. Regular `{{secret:}}` templates are blocked (use `http_request`); Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated). |
 | `web_search` | Search the web. Default: Anthropic server-side tool (`search_provider = "anthropic"`). Fallback: Brave Search API (`search_provider = "brave"`). |
 | `web_fetch` | Fetch web page content. Two providers: `"builtin"` (default) — client-side HTTP GET with readability extraction, goes through tool result guard and auto-summarise. `"anthropic"` — server-side fetch, bypasses guard/summarise. Set via `fetch_provider` in config. |
 | `memory_search` | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency). |
@@ -76,7 +76,7 @@ All registered slash commands are automatically exposed to the agent as tools wi
 
 ## Tool Piping (Exec Bridge)
 
-Tool piping exposes foci tools as shell functions inside `exec` commands. Instead of chaining tool calls through the model (one inference pass per step), you can compose tools with unix pipes in a single exec invocation. Intermediate data never enters context.
+Tool piping exposes foci tools as shell functions inside `shell` commands. Instead of chaining tool calls through the model (one inference pass per step), you can compose tools with unix pipes in a single shell invocation. Intermediate data never enters context.
 
 ### Architecture
 
@@ -90,7 +90,7 @@ exec subprocess                       foci process
     /tmp/foci-exec-<pid>-<n>.sock
 ```
 
-Each exec call creates a per-exec unix socket (0600 perms). The `foci-call` binary connects, sends a JSON request, and prints the result. Shell wrapper functions provide ergonomic interfaces on top of `foci-call`.
+Each shell call creates a per-shell unix socket (0600 perms). The `foci-call` binary connects, sends a JSON request, and prints the result. Shell wrapper functions provide ergonomic interfaces on top of `foci-call`.
 
 ### Available Functions
 
@@ -177,7 +177,7 @@ foci_web_fetch https://example.com/docs | grep -i "api" > /tmp/api-notes.txt
 
 ### How It Works Internally
 
-1. When `exec` runs a command (non-background mode), it creates an `ExecBridge`
+1. When `shell` runs a command (non-background mode), it creates an `ExecBridge`
 2. The bridge opens a unix socket at `/tmp/foci-exec-<pid>-<n>.sock`
 3. A shell functions file is generated with `foci_<toolname>()` for each tool with `ExecExport: true`
 4. The command is wrapped: `set -o pipefail; source <funcs.sh>; <original command>`
@@ -187,7 +187,7 @@ foci_web_fetch https://example.com/docs | grep -i "api" > /tmp/api-notes.txt
 
 ### Limitations
 
-- **Background mode:** Tool piping is not available in `background: true` exec calls (daemon mode)
+- **Background mode:** Tool piping is not available in `background: true` shell calls (daemon mode)
 - **Large responses:** 1MB scanner buffer limit (tools already truncate output)
 - **jq dependency:** Functions fail with "command not found" if jq is not installed
 - **foci-call not in PATH:** Functions fail if the binary is not installed

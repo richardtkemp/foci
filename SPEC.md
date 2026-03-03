@@ -62,7 +62,7 @@ Default orientation text is embedded in `prompts/branch-orientation-headless.md`
 - Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
 - Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
 - Session file rotation: on compaction, the pre-compaction file is renamed to a numbered archive (e.g. `5970082313.1.jsonl`, `.2.jsonl`) before writing the new compacted session. Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
-- Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone, auto-backgrounded exec/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
+- Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone, auto-backgrounded shell/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
 
 **Configuration:**
 ```toml
@@ -304,7 +304,7 @@ Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API defa
 Tools are Go functions registered at compile time. No dynamic loading, no plugin discovery. See [docs/TOOLS.md](docs/TOOLS.md) for the canonical tool reference.
 
 **Alpha tools:**
-- `exec` — run shell commands (with timeout, background, auto-background)
+- `shell` — run shell commands (with timeout, background, auto-background)
 - `tmux` — manage tmux sessions (start, send keys, read pane output, list, kill)
 - `read` — read file contents
 - `write` — create/overwrite files
@@ -324,13 +324,13 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 
 ### Tool Piping (Exec Bridge)
 
-Selected tools are exposed as shell functions inside `exec` commands. A per-exec unix socket bridges the subprocess back to the foci process, enabling unix-style composition without consuming inference passes for intermediate results.
+Selected tools are exposed as shell functions inside `shell` commands. A per-shell unix socket bridges the subprocess back to the foci process, enabling unix-style composition without consuming inference passes for intermediate results.
 
 **How it works:**
-- Each non-background exec call creates an `ExecBridge` with a unique unix socket
+- Each non-background shell call creates an `ExecBridge` with a unique unix socket
 - Shell functions (`foci_web_search`, `foci_http_request`, etc.) are generated and sourced at startup
 - Functions use `jq` for safe JSON argument construction and `foci-call` for socket communication
-- `set -o pipefail` is prepended to all exec commands
+- `set -o pipefail` is prepended to all shell commands
 
 **Exported tools** (controlled by `ExecExport: true` on the Tool struct):
 - `foci_http_request <url> [--method M] [--header 'K: V'] [--body B] [--save-to P]`
@@ -398,7 +398,7 @@ When a tool returns a result exceeding a configurable character threshold (defau
 1. Write the full result to a temp file: `{temp_dir}/tool-result-{tool}-{random}.txt`
 2. Return only a guard message — no partial content is included:
    ```
-   Result too large (47231 chars, limit 5000). Full output saved to /tmp/foci-tool-results/tool-result-exec-a1b2c3d4.txt.
+   Result too large (47231 chars, limit 5000). Full output saved to /tmp/foci-tool-results/tool-result-shell-a1b2c3d4.txt.
    Use `head -n 50` to preview, or `grep`/`ack` to search for specific content.
    ```
 
@@ -406,7 +406,7 @@ The tool hint is contextual: `jq` for JSON results, `mdq` for markdown, `grep`/`
 
 Before returning the guard message, the agent makes a side-call to Haiku to auto-summarise the oversized content. Recent conversation turns are included as context so the summary focuses on what the agent likely needs. If the Haiku call fails, the agent falls back to the guard message with hints. This eliminates the wasted turns the agent would otherwise spend re-reading the saved file.
 
-This prevents large tool results (e.g. `exec cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via the saved file — it just doesn't sit in context forever.
+This prevents large tool results (e.g. `shell cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via the saved file — it just doesn't sit in context forever.
 
 ```toml
 [tools]
@@ -421,7 +421,7 @@ summary_context_chars = 6000          # max chars of context sent to Haiku
 - `save_from_json_path` — extract a value from JSON response by dot path (e.g. `data.0.url`); if it's a `data:` URI, decodes base64 to binary. Requires `save_to`. Designed for image generation APIs that return base64 data URIs.
 - Binary content types (`image/*`, `audio/*`, `video/*`, etc.) auto-save to temp file when `save_to` is not set
 - `background` parameter — if `true`, request runs immediately in background and result is delivered asynchronously
-- Auto-background — if a request exceeds the `exec_auto_background` threshold, it auto-backgrounds and the result is delivered when complete (same mechanism as exec)
+- Auto-background — if a request exceeds the `exec_auto_background` threshold, it auto-backgrounds and the result is delivered when complete (same mechanism as shell)
 
 **http_request — body_file (large payload support):**
 - `body_file` — read request body from a local file path instead of inline `body`. Solves the problem of large payloads (e.g. 1.7MB base64 audio JSON) that can't be passed as inline string parameters.
@@ -666,13 +666,13 @@ github_token = "ghp_default"
 [agents.fotini.custom]
 github_token = "ghp_fotini_account"
 ```
-Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.setup_token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (exec templates, http_request, redaction, system prompt secret names).
+Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.setup_token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (shell templates, http_request, redaction, system prompt secret names).
 
 ### What the agent knows about secrets
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
   - Available secret names are injected into the system prompt at startup so the agent can discover what's available
   - Per-agent overrides add or replace names visible to that agent
-  - Unresolved secret references in exec commands are errors (not silently passed through)
+  - Unresolved secret references in shell commands are errors (not silently passed through)
 - If bitwarden is enabled, the agent knows it can search the vault and request unlocks
   - The agent never sees password values — only template references `{{secret:bw.ID}}`
 - How to reference them: `{{secret:NAME}}` (static) or `{{secret:bw.UUID}}` (bitwarden)
@@ -704,7 +704,7 @@ Every agent turn gets a `context.Context`. When a cancel signal arrives (new `/s
 - In-flight tool executions (exec, web_fetch) abort via process kill
 - The agent loop checks `ctx.Err()` between tool calls and after API responses
 
-**Stop means stop, immediately.** Not "after the current tool finishes." If exec is running a 3-minute command and the user sends `/stop`, the process is killed within seconds. This is a first-class design constraint.
+**Stop means stop, immediately.** Not "after the current tool finishes." If shell is running a 3-minute command and the user sends `/stop`, the process is killed within seconds. This is a first-class design constraint.
 
 ```go
 func (a *Agent) RunTurn(ctx context.Context, msg string) error {

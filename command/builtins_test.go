@@ -638,7 +638,7 @@ func TestThinkingCommandContextRouting(t *testing.T) {
 func TestToolsCommand(t *testing.T) {
 	cmd := NewToolsCommand(func() []ToolInfo {
 		return []ToolInfo{
-			{Name: "exec", Description: "Run commands"},
+			{Name: "shell", Description: "Run commands"},
 			{Name: "read", Description: "Read files"},
 		}
 	})
@@ -647,11 +647,11 @@ func TestToolsCommand(t *testing.T) {
 	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
 		t.Errorf("result not wrapped in code block:\n%s", result)
 	}
-	if !strings.Contains(result, "exec") || !strings.Contains(result, "read") {
+	if !strings.Contains(result, "shell") || !strings.Contains(result, "read") {
 		t.Errorf("missing tools in:\n%s", result)
 	}
 	// Check alignment (both names should have same column width)
-	if !strings.Contains(result, "exec  Run commands") {
+	if !strings.Contains(result, "shell  Run commands") {
 		t.Errorf("expected aligned columns:\n%s", result)
 	}
 }
