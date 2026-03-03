@@ -643,6 +643,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
+			if b.agent == nil || b.agent.Warnings == nil {
+				b.sendReply(msg, userID, "Could not download voice note — please try again.")
+			}
 		} else {
 			transcript, err := b.transcriber.Transcribe(ctx, data, "voice.ogg")
 			if err != nil {
@@ -1536,29 +1539,50 @@ func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioD
 }
 
 // downloadFile downloads a file from Telegram by file ID.
+// It retries up to 3 times with linear backoff for server errors and
+// network failures, but returns immediately on 4xx client errors.
 func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	file, err := b.client.GetFile(fileID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get file info: %w", err)
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.botToken, file.FilePath)
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("download file: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	dlURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.botToken, file.FilePath)
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download file: status %d", resp.StatusCode)
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := range maxAttempts {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+
+		resp, err := client.Get(dlURL)
+		if err != nil {
+			lastErr = fmt.Errorf("download file: %w", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("download file: status %d", resp.StatusCode)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return nil, lastErr
+			}
+			continue
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read file body: %w", err)
+			continue
+		}
+
+		return data, nil
 	}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read file body: %w", err)
-	}
-
-	return data, nil
+	return nil, lastErr
 }
 
 // extForMediaType returns a file extension for the given media type.
@@ -1692,6 +1716,9 @@ func (b *Bot) downloadImage(fileID, mimeType string, chatID int64) (imageAttachm
 	data, err := b.downloadFile(fileID)
 	if err != nil {
 		b.logger().Errorf("download image: %s", b.sanitizeError(err))
+		if b.agent == nil || b.agent.Warnings == nil {
+			_ = b.SendTextToChat(chatID, "Could not download image — please try again.")
+		}
 		return imageAttachment{}, false
 	}
 	att := imageAttachment{data: data, mediaType: mimeType}
@@ -1716,6 +1743,9 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 			return fmt.Sprintf("[%s too large to download (%d MB)]\n\n%s", label, fileSize/(1024*1024), text)
 		}
 		b.logger().Errorf("download %s: %s", mediaType, b.sanitizeError(err))
+		if b.agent == nil || b.agent.Warnings == nil {
+			_ = b.SendTextToChat(chatID, fmt.Sprintf("Could not download %s — please try again.", label))
+		}
 		return text
 	}
 	b.logger().Infof("saved %s to %s", mediaType, path)
