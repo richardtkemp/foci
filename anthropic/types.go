@@ -1,6 +1,9 @@
 package anthropic
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // CacheControl marks a content block for prompt caching.
 type CacheControl struct {
@@ -234,10 +237,11 @@ func ToolResultBlock(toolUseID string, content string, isError bool) ContentBloc
 
 // TextOf extracts the concatenated text from content blocks.
 func TextOf(blocks []ContentBlock) string {
+	var parts []string
 	for _, b := range blocks {
-		if b.Type == "text" {
-			return b.Text
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n\n")
 }
