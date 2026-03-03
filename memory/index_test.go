@@ -389,20 +389,35 @@ func TestSearchRecency(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go concurrency", "recency")
+	results, err := idx.Search("Go concurrency", "newest")
 	if err != nil {
-		t.Fatalf("Search: %v", err)
+		t.Fatalf("Search newest: %v", err)
 	}
 	if len(results) < 2 {
 		t.Fatalf("expected at least 2 results, got %d", len(results))
 	}
 
-	// Newest file should come first in recency sort
+	// Newest file should come first in newest sort
 	if results[0].Path != "new.md" {
 		t.Errorf("first result = %q, want 'new.md' (newest first)", results[0].Path)
 	}
 	if results[1].Path != "old.md" {
 		t.Errorf("second result = %q, want 'old.md'", results[1].Path)
+	}
+
+	// Oldest sort — old file should come first
+	results, err = idx.Search("Go concurrency", "oldest")
+	if err != nil {
+		t.Fatalf("Search oldest: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results for oldest, got %d", len(results))
+	}
+	if results[0].Path != "old.md" {
+		t.Errorf("oldest first result = %q, want 'old.md'", results[0].Path)
+	}
+	if results[1].Path != "new.md" {
+		t.Errorf("oldest second result = %q, want 'new.md'", results[1].Path)
 	}
 }
 

@@ -188,14 +188,20 @@ func (idx *Index) buildWeightedRankCase() string {
 }
 
 // Search queries the FTS5 index. sort controls result ordering:
-// "relevance" (default/empty) orders by weighted rank, "recency" orders by file mtime descending.
+// "relevance" (default/empty) orders by weighted rank,
+// "newest" orders by file mtime descending, "oldest" orders by mtime ascending.
 func (idx *Index) Search(query string, sort string) ([]Result, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	var sqlStr string
-	if sort == "recency" {
-		sqlStr = `
+	switch sort {
+	case "newest", "oldest":
+		order := "DESC"
+		if sort == "oldest" {
+			order = "ASC"
+		}
+		sqlStr = fmt.Sprintf(`
 			SELECT f.path,
 			       snippet(memory_fts, 0, '>', '<', '...', 40),
 			       f.source,
@@ -203,10 +209,10 @@ func (idx *Index) Search(query string, sort string) ([]Result, error) {
 			FROM memory_fts f
 			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
 			WHERE memory_fts MATCH ?
-			ORDER BY mtime DESC
+			ORDER BY mtime %s
 			LIMIT 20
-		`
-	} else {
+		`, order)
+	default:
 		weightedRankCase := idx.buildWeightedRankCase()
 		sqlStr = fmt.Sprintf(`
 			SELECT path,

@@ -142,11 +142,21 @@ func TestMemorySearchSortParam(t *testing.T) {
 
 	tool := NewMemorySearchTool(idx)
 
-	// Test with sort=recency
-	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "recency"})
+	// Test with sort=newest
+	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "newest"})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
-		t.Fatalf("Execute with sort=recency: %v", err)
+		t.Fatalf("Execute with sort=newest: %v", err)
+	}
+	if !strings.Contains(result, "recent.md") {
+		t.Errorf("missing recent.md in result: %q", result)
+	}
+
+	// Test with sort=oldest
+	params, _ = json.Marshal(map[string]string{"query": "sorting", "sort": "oldest"})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with sort=oldest: %v", err)
 	}
 	if !strings.Contains(result, "recent.md") {
 		t.Errorf("missing recent.md in result: %q", result)

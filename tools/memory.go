@@ -13,7 +13,7 @@ func NewMemorySearchTool(idx *memory.Index) *Tool {
 	return &Tool{
 		Name:        "memory_search",
 		ExecExport:  true,
-		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default) or recency (newest files first).",
+		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -23,8 +23,8 @@ func NewMemorySearchTool(idx *memory.Index) *Tool {
 				},
 				"sort": {
 					"type": "string",
-					"enum": ["relevance", "recency"],
-					"description": "Sort order: relevance (default) or recency (newest files first)"
+					"enum": ["relevance", "newest", "oldest"],
+					"description": "Sort order: relevance (default, weighted by source), newest (most recently modified first), or oldest (least recently modified first)"
 				}
 			},
 			"required": ["query"]
