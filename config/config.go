@@ -205,10 +205,21 @@ type MemorySource struct {
 
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
+	SearchBackends     []string       `toml:"search_backends"`     // active search backends: "fts5", "bleve" (default ["fts5"])
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        int            `toml:"search_limit"`        // max search results to return (default 20)
 	SweepInterval      string         `toml:"sweep_interval"`      // periodic full reindex interval (default "1h", "0" disables)
+}
+
+// HasBackend reports whether the given search backend is enabled.
+func (m MemoryConfig) HasBackend(name string) bool {
+	for _, b := range m.SearchBackends {
+		if b == name {
+			return true
+		}
+	}
+	return false
 }
 
 type DatabaseConfig struct {
@@ -482,6 +493,11 @@ func validate(cfg *Config) error {
 	for i, src := range cfg.Memory.Sources {
 		if src.Weight < 0 || src.Weight > 1.0 {
 			return fmt.Errorf("[memory] sources[%d] (%s) weight = %g: must be between 0.0 and 1.0", i, src.Name, src.Weight)
+		}
+	}
+	for _, backend := range cfg.Memory.SearchBackends {
+		if backend != "fts5" && backend != "bleve" {
+			return fmt.Errorf("[memory] search_backends: unknown backend %q (must be \"fts5\" or \"bleve\")", backend)
 		}
 	}
 	if cfg.Memory.ConversationWeight < 0 || cfg.Memory.ConversationWeight > 1.0 {
@@ -838,6 +854,9 @@ func Load(path string) (*Config, error) {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
 	}
 	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
+	if len(cfg.Memory.SearchBackends) == 0 {
+		cfg.Memory.SearchBackends = []string{"fts5"}
+	}
 	setFloatDefault(&cfg.Memory.ConversationWeight, 0.1)
 	setIntDefault(&cfg.Memory.SearchLimit, 20)
 	setStringDefault(&cfg.Memory.SweepInterval, "1h")

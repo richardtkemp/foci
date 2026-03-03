@@ -162,16 +162,19 @@ When no config override is set, embedded defaults from `prompts/` are used:
 
 ### `[memory]`
 
-Memory system (FTS5 search over markdown files + conversation history).
+Memory system (full-text search over markdown files + conversation history).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `search_backends` | string[] | `["fts5"]` | Active search backends. Valid values: `"fts5"` (SQLite FTS5), `"bleve"` (blevesearch/bleve). Both can run simultaneously for A/B comparison. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format. |
-| `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
+| `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. FTS5 only — bleve does not index conversations. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
 | `sweep_interval` | string | `"1h"` | Periodic full reindex interval. Catches files added via git, rsync, or other mechanisms that bypass fsnotify. Go duration format. `"0"` disables. First sweep runs 30s after startup. |
 
-When set, creates SQLite databases in the data directory (`$HOME/data/` by default): `memory.db`, `reminders.db`, `scratchpad.db`.
+When set, creates databases in the data directory (`$HOME/data/` by default): `memory.db` (FTS5), `memory.bleve/` (bleve), `reminders.db`, `scratchpad.db`. Only the active backends' databases are created.
+
+When multiple backends are active, the `memory_search` tool exposes a `backend` parameter so the agent can choose which to query. When only one is active, the parameter is hidden.
 
 #### `[[memory.sources]]`
 

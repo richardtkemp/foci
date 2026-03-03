@@ -4,17 +4,42 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"foci/memory"
 )
 
-func NewMemorySearchTool(idx *memory.Index) *Tool {
+// NewMemorySearchTool creates the memory_search tool backed by one or more search backends.
+// backends maps backend names (e.g. "fts5", "bleve") to their Searcher implementation.
+// If only one backend is configured, the "backend" parameter is hidden from the tool schema.
+func NewMemorySearchTool(backends map[string]memory.Searcher) *Tool {
+	// Determine the sorted list of backend names for deterministic enum order
+	names := make([]string, 0, len(backends))
+	for name := range backends {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	// Build the JSON schema dynamically
+	schema := buildMemorySearchSchema(names)
+
 	return &Tool{
 		Name:        "memory_search",
 		ExecExport:  true,
 		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest.",
-		Parameters: json.RawMessage(`{
+		Parameters:  schema,
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return memorySearch(ctx, params, backends, names[0])
+		},
+	}
+}
+
+// buildMemorySearchSchema builds the tool parameter schema.
+// When multiple backends are available, includes the "backend" parameter.
+func buildMemorySearchSchema(names []string) json.RawMessage {
+	if len(names) <= 1 {
+		return json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"query": {
@@ -28,23 +53,59 @@ func NewMemorySearchTool(idx *memory.Index) *Tool {
 				}
 			},
 			"required": ["query"]
-		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return memorySearch(ctx, params, idx)
-		},
+		}`)
 	}
+
+	// Build backend enum JSON
+	enumParts := make([]string, len(names))
+	for i, n := range names {
+		enumParts[i] = fmt.Sprintf("%q", n)
+	}
+	enumJSON := "[" + strings.Join(enumParts, ", ") + "]"
+
+	return json.RawMessage(fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"query": {
+				"type": "string",
+				"description": "Search query (supports natural language with stemming)"
+			},
+			"sort": {
+				"type": "string",
+				"enum": ["relevance", "newest", "oldest"],
+				"description": "Sort order: relevance (default, weighted by source), newest (most recently modified first), or oldest (least recently modified first)"
+			},
+			"backend": {
+				"type": "string",
+				"enum": %s,
+				"description": "Search backend to query (default: %s)"
+			}
+		},
+		"required": ["query"]
+	}`, enumJSON, names[0]))
 }
 
-func memorySearch(ctx context.Context, params json.RawMessage, idx *memory.Index) (string, error) {
+func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string) (string, error) {
 	var p struct {
-		Query string `json:"query"`
-		Sort  string `json:"sort"`
+		Query   string `json:"query"`
+		Sort    string `json:"sort"`
+		Backend string `json:"backend"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", fmt.Errorf("parse params: %w", err)
 	}
 
-	results, err := idx.Search(p.Query, p.Sort)
+	backendName := p.Backend
+	if backendName == "" {
+		backendName = defaultBackend
+	}
+
+	searcher, ok := backends[backendName]
+	if !ok {
+		return "", fmt.Errorf("unknown search backend %q", backendName)
+	}
+
+	results, err := searcher.Search(p.Query, p.Sort)
 	if err != nil {
 		return "", fmt.Errorf("search: %w", err)
 	}

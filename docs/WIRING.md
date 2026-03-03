@@ -29,7 +29,7 @@ config.Load(path)                                        ← validates values; l
   → session.NewSessionIndex(session_index.db)             ← SQLite index of all session files; rebuilt on startup
   → sessions.OnSessionEvent(→ sessionIndex)               ← lifecycle hook: create/compact/clear → update index
   → memory: ReminderStore + Scratchpad + TodoStore       ← shared across agents (scoped per-agent via agent_id)
-  → memory.NewIndex                                      ← shared OR per-agent (see below)
+  → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent (see below)
   → telegram.NewToolDetailStore(tool_details.db)           ← shared; persists inline keyboard expansion data across restarts
   → voice STT/TTS providers                              ← shared across agents
   → telegram.NewBotManager()
@@ -61,7 +61,7 @@ config.Load(path)                                        ← validates values; l
 
 **Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Shared resources (anthropic client, session store, voice providers) are passed to each agent.
 
-**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single `memory.db` index (backward compat). Reminder and scratchpad stores are always shared.
+**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). Reminder and scratchpad stores are always shared. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
 
 **Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
 
@@ -109,7 +109,7 @@ main
  │   └── secrets/bitwarden → log
  ├── anthropic     (no deps)
  ├── session       → anthropic, log
- ├── memory        → modernc.org/sqlite, fsnotify/v4 (file watching for auto-reindex)
+ ├── memory        → modernc.org/sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → log, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
@@ -409,7 +409,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 | `web_fetch` | web.go / server | Fetch web content (server-side default, client-side fallback) |
 | `web_search` | web.go / server | Web search (server-side default, Brave fallback) |
 | `summary` | summary.go | Summarize/extract from large files via Haiku call |
-| `memory_search` | memory.go | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency) |
+| `memory_search` | memory.go | Full-text search over memory files (+ conversation history for FTS5). Pluggable backends: FTS5 (default) and bleve. Porter stemming, weighted ranking, sort by relevance or recency. Optional `backend` parameter when multiple backends are active. |
 | `remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
 | `scratchpad` | scratchpad.go | Working notes that survive compaction (write/read/clear/list via `action` parameter) |
 | `spawn` | spawn.go | Unified sub-call: four context modes. All modes have tool access with a tool-call loop. `raw`: one-shot, no system prompt (`send_telegram` and `send_to_session` blacklisted — no character context means no communication awareness). `character`: one-shot with character files (all tools). `clone` (default): branch session — a headless self-fork. `explore`: one-shot safe exploration with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch` only — no file mutation, no shell exec, no messaging, always haiku. clone creates branch `agent:ID:spawn:spawn-TIMESTAMP`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive clone blocked via context key. Concurrent clone limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. |

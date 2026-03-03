@@ -27,7 +27,8 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 	}
 	t.Cleanup(func() { idx.Close() })
 
-	return NewMemorySearchTool(idx), memDir
+	backends := map[string]memory.Searcher{"fts5": idx}
+	return NewMemorySearchTool(backends), memDir
 }
 
 func TestMemorySearch(t *testing.T) {
@@ -44,7 +45,8 @@ func TestMemorySearch(t *testing.T) {
 	defer idx.Close()
 	idx.Reindex()
 
-	tool2 := NewMemorySearchTool(idx)
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool2 := NewMemorySearchTool(backends)
 	params, _ := json.Marshal(map[string]string{"query": "buy"})
 
 	result, err := tool2.Execute(context.Background(), params)
@@ -74,7 +76,8 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	defer idx.Close()
 	idx.Reindex()
 
-	tool := NewMemorySearchTool(idx)
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends)
 	params, _ := json.Marshal(map[string]string{"query": "xyzzy"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -111,7 +114,8 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx.Reindex()
 	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")
 
-	tool := NewMemorySearchTool(idx)
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends)
 	params, _ := json.Marshal(map[string]string{"query": "weather"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -140,7 +144,8 @@ func TestMemorySearchSortParam(t *testing.T) {
 	defer idx.Close()
 	idx.Reindex()
 
-	tool := NewMemorySearchTool(idx)
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends)
 
 	// Test with sort=newest
 	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "newest"})
@@ -180,5 +185,98 @@ func TestMemorySearchSortParam(t *testing.T) {
 	}
 	if !strings.Contains(result, "recent.md") {
 		t.Errorf("missing recent.md in result: %q", result)
+	}
+}
+
+func TestMemorySearchBackendParam(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Testing backend selection parameter"), 0644)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+
+	// Create both FTS5 and bleve backends
+	fts5Idx, err := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer fts5Idx.Close()
+	fts5Idx.Reindex()
+
+	bleveIdx, err := memory.NewBleveIndex(filepath.Join(dir, "memory.bleve"), sources, 0)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer bleveIdx.Close()
+	bleveIdx.Reindex()
+
+	backends := map[string]memory.Searcher{
+		"fts5":  fts5Idx,
+		"bleve": bleveIdx,
+	}
+	tool := NewMemorySearchTool(backends)
+
+	// Tool schema should include "backend" parameter when multiple backends
+	schemaStr := string(tool.Parameters)
+	if !strings.Contains(schemaStr, "backend") {
+		t.Error("schema should include 'backend' parameter when multiple backends configured")
+	}
+
+	// Search with explicit backend=fts5
+	params, _ := json.Marshal(map[string]string{"query": "backend selection", "backend": "fts5"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with backend=fts5: %v", err)
+	}
+	if !strings.Contains(result, "notes.md") {
+		t.Errorf("fts5 backend should find notes.md: %q", result)
+	}
+
+	// Search with explicit backend=bleve
+	params, _ = json.Marshal(map[string]string{"query": "backend selection", "backend": "bleve"})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with backend=bleve: %v", err)
+	}
+	if !strings.Contains(result, "notes.md") {
+		t.Errorf("bleve backend should find notes.md: %q", result)
+	}
+
+	// Search without backend (should use default)
+	params, _ = json.Marshal(map[string]string{"query": "backend selection"})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with default backend: %v", err)
+	}
+	if !strings.Contains(result, "notes.md") {
+		t.Errorf("default backend should find notes.md: %q", result)
+	}
+}
+
+func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, err := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+
+	// Single backend — schema should NOT include "backend" parameter
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends)
+
+	schemaStr := string(tool.Parameters)
+	if strings.Contains(schemaStr, "backend") {
+		t.Error("schema should NOT include 'backend' parameter when only one backend configured")
 	}
 }

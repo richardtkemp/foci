@@ -917,10 +917,12 @@ func main() {
 	}
 
 	for _, acfg := range cfg.Agents {
-		// Resolve memory index: per-agent (if configured) or shared
-		agentMemIdx := mem.sharedIdx
-		if idx, ok := mem.agentIndices[acfg.ID]; ok {
-			agentMemIdx = idx
+		// Resolve memory backends: per-agent (if configured) or shared
+		var agentBackends map[string]memory.Searcher
+		if ab, ok := mem.agentBackends[acfg.ID]; ok {
+			agentBackends = ab
+		} else {
+			agentBackends = mem.sharedBackends
 		}
 
 		inst := setupAgent(setupParams{
@@ -932,7 +934,7 @@ func main() {
 			store:           store,
 			bwStore:         bwStore,
 			stateStore:      stateStore,
-			memIdx:          agentMemIdx,
+			memBackends:     agentBackends,
 			reminderStore:   mem.reminderStore,
 			scratchpadStore: mem.scratchpadStore,
 			todoStore:       mem.todoStore,
@@ -1446,7 +1448,7 @@ type setupParams struct {
 	store           *secrets.Store
 	bwStore         *bitwarden.Store
 	stateStore      *state.Store
-	memIdx          *memory.Index
+	memBackends     map[string]memory.Searcher
 	reminderStore   *memory.ReminderStore
 	scratchpadStore *memory.Scratchpad
 	todoStore       *memory.TodoStore
@@ -1602,8 +1604,8 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Memory tools (shared stores, registered per-agent)
-	if p.memIdx != nil {
-		registry.Register(tools.NewMemorySearchTool(p.memIdx))
+	if len(p.memBackends) > 0 {
+		registry.Register(tools.NewMemorySearchTool(p.memBackends))
 	}
 	if p.scratchpadStore != nil {
 		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))
@@ -3140,12 +3142,14 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 
 // memoryResult holds the outputs of initMemorySystem.
 type memoryResult struct {
-	sharedIdx     *memory.Index
-	agentIndices  map[string]*memory.Index
-	reminderStore *memory.ReminderStore
+	sharedBackends  map[string]memory.Searcher            // backend name -> searcher (shared mode)
+	agentBackends   map[string]map[string]memory.Searcher // agentID -> backend name -> searcher
+	sharedFTS5      *memory.Index                         // for conversation hook (shared mode)
+	agentFTS5       map[string]*memory.Index              // for conversation hook (per-agent mode)
+	reminderStore   *memory.ReminderStore
 	scratchpadStore *memory.Scratchpad
-	todoStore     *memory.TodoStore
-	cleanup       func()
+	todoStore       *memory.TodoStore
+	cleanup         func()
 }
 
 // initMemorySystem sets up memory indices, reminder/scratchpad/todo stores,
@@ -3154,8 +3158,10 @@ type memoryResult struct {
 func initMemorySystem(cfg *config.Config) memoryResult {
 	var closers []io.Closer
 	result := memoryResult{
-		agentIndices: make(map[string]*memory.Index),
-		cleanup:      func() {},
+		sharedBackends: make(map[string]memory.Searcher),
+		agentBackends:  make(map[string]map[string]memory.Searcher),
+		agentFTS5:      make(map[string]*memory.Index),
+		cleanup:        func() {},
 	}
 
 	// Build global source map from [memory] config
@@ -3198,6 +3204,61 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	}
 
+	wantFTS5 := cfg.Memory.HasBackend("fts5")
+	wantBleve := cfg.Memory.HasBackend("bleve")
+
+	// initBackends creates FTS5 and/or bleve backends for a given set of sources,
+	// returning the backend map and (optionally) the FTS5 index for conversation hooks.
+	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPrefix string, blevePrefix string) (map[string]memory.Searcher, *memory.Index) {
+		backends := make(map[string]memory.Searcher)
+		var fts5Idx *memory.Index
+
+		if wantFTS5 {
+			dbPath := cfg.DataPath(dbPrefix)
+			idx, err := memory.NewIndex(dbPath, sources, memDebounce, cfg.Memory.ConversationWeight)
+			if err != nil {
+				log.Fatalf("main", "create FTS5 index (%s): %v", label, err)
+			}
+			closers = append(closers, idx)
+			if err := idx.Reindex(); err != nil {
+				log.Errorf("main", "reindex FTS5 (%s): %v", label, err)
+			}
+			if memDebounce > 0 || len(sources) > 0 {
+				if err := idx.Watch(); err != nil {
+					log.Errorf("main", "start FTS5 file watching (%s): %v", label, err)
+				}
+			}
+			if sweepInterval > 0 {
+				idx.StartSweep(30*time.Second, sweepInterval)
+			}
+			backends["fts5"] = idx
+			fts5Idx = idx
+		}
+
+		if wantBleve {
+			blevePath := cfg.DataPath(blevePrefix)
+			bidx, err := memory.NewBleveIndex(blevePath, sources, memDebounce)
+			if err != nil {
+				log.Fatalf("main", "create bleve index (%s): %v", label, err)
+			}
+			closers = append(closers, bidx)
+			if err := bidx.Reindex(); err != nil {
+				log.Errorf("main", "reindex bleve (%s): %v", label, err)
+			}
+			if memDebounce > 0 || len(sources) > 0 {
+				if err := bidx.Watch(); err != nil {
+					log.Errorf("main", "start bleve file watching (%s): %v", label, err)
+				}
+			}
+			if sweepInterval > 0 {
+				bidx.StartSweep(30*time.Second, sweepInterval)
+			}
+			backends["bleve"] = bidx
+		}
+
+		return backends, fts5Idx
+	}
+
 	if hasPerAgentMemory {
 		// Per-agent indices: each agent gets global + agent-specific sources
 		for _, acfg := range cfg.Agents {
@@ -3205,58 +3266,39 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if len(combined) == 0 {
 				continue
 			}
-			dbPath := cfg.DataPath(fmt.Sprintf("memory-%s.db", acfg.ID))
-			idx, err := memory.NewIndex(dbPath, combined, memDebounce, cfg.Memory.ConversationWeight)
-			if err != nil {
-				log.Fatalf("main", "create memory index for agent %q: %v", acfg.ID, err)
+			backends, fts5Idx := initBackends(
+				fmt.Sprintf("agent %s", acfg.ID),
+				combined,
+				fmt.Sprintf("memory-%s.db", acfg.ID),
+				fmt.Sprintf("memory-%s.bleve", acfg.ID),
+			)
+			result.agentBackends[acfg.ID] = backends
+			if fts5Idx != nil {
+				result.agentFTS5[acfg.ID] = fts5Idx
 			}
-			closers = append(closers, idx)
-			if err := idx.Reindex(); err != nil {
-				log.Errorf("main", "reindex memory for agent %q: %v", acfg.ID, err)
-			}
-			if memDebounce > 0 || len(combined) > 0 {
-				if err := idx.Watch(); err != nil {
-					log.Errorf("main", "start memory file watching for agent %q: %v", acfg.ID, err)
-				}
-			}
-			if sweepInterval > 0 {
-				idx.StartSweep(30*time.Second, sweepInterval)
-			}
-			result.agentIndices[acfg.ID] = idx
-			log.Infof("main", "agent %q: memory index with %d sources", acfg.ID, len(combined))
+			log.Infof("main", "agent %q: memory backends %v with %d sources", acfg.ID, cfg.Memory.SearchBackends, len(combined))
 		}
 
-		// Conversation hook: route to agent's index by session key prefix
-		log.ConversationHook = func(text, session string) {
-			for agentID, idx := range result.agentIndices {
-				if strings.HasPrefix(session, "agent:"+agentID+":") {
-					idx.IndexConversation(text, session)
-					return
+		// Conversation hook: route to agent's FTS5 index by session key prefix
+		if wantFTS5 {
+			log.ConversationHook = func(text, session string) {
+				for agentID, idx := range result.agentFTS5 {
+					if strings.HasPrefix(session, "agent:"+agentID+":") {
+						idx.IndexConversation(text, session)
+						return
+					}
 				}
 			}
 		}
 	} else {
-		// Shared index (backward compat — no agent has per-agent memory)
-		memDbPath := cfg.DataPath("memory.db")
-		var err error
-		result.sharedIdx, err = memory.NewIndex(memDbPath, globalMemSources, memDebounce, cfg.Memory.ConversationWeight)
-		if err != nil {
-			log.Fatalf("main", "create memory index: %v", err)
-		}
-		closers = append(closers, result.sharedIdx)
+		// Shared indices (backward compat — no agent has per-agent memory)
+		backends, fts5Idx := initBackends("shared", globalMemSources, "memory.db", "memory.bleve")
+		result.sharedBackends = backends
+		result.sharedFTS5 = fts5Idx
 
-		if err := result.sharedIdx.Reindex(); err != nil {
-			log.Errorf("main", "reindex memory: %v", err)
+		if fts5Idx != nil {
+			log.ConversationHook = fts5Idx.IndexConversation
 		}
-		if memDebounce > 0 || len(cfg.Memory.Sources) > 0 {
-			if err := result.sharedIdx.Watch(); err != nil {
-				log.Errorf("main", "start memory file watching: %v", err)
-			}
-		}
-		if sweepInterval > 0 {
-			result.sharedIdx.StartSweep(30*time.Second, sweepInterval)
-		}
-		log.ConversationHook = result.sharedIdx.IndexConversation
 	}
 
 	// Reminder store (shared across agents)

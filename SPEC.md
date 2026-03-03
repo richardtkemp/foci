@@ -539,7 +539,9 @@ If `sources` array is empty, fall back to single `dir` field (default weight=1.0
 dir = "/home/foci/workspace/memory"   # old way, still works
 ```
 
-**Search:** SQLite FTS5 index over multiple sources with conversation history:
+**Search:** Pluggable search backends — FTS5 (default) and bleve. Both can run simultaneously for A/B comparison.
+
+**FTS5 backend** — SQLite FTS5 index over multiple sources with conversation history:
 
 ```sql
 CREATE VIRTUAL TABLE memory_fts USING fts5(
@@ -560,6 +562,15 @@ WHERE memory_fts MATCH ?
 ORDER BY weighted_rank;
 ```
 
+**Bleve backend** — blevesearch/bleve full-text index. Files only (no conversation history). English analyzer with Porter stemming, per-source weighted ranking, highlighted snippets. Index stored at `{data_dir}/memory.bleve`. Clean rebuild on each reindex (close → remove → recreate).
+
+```toml
+[memory]
+search_backends = ["fts5", "bleve"]   # run both simultaneously
+```
+
+When multiple backends are active, the `memory_search` tool exposes a `backend` parameter so the agent can choose which to query. When only one backend is active, the parameter is hidden.
+
 **Indexing and Auto-Reindex:**
 
 - Memory files: re-indexed on startup
@@ -571,7 +582,7 @@ ORDER BY weighted_rank;
 reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
 ```
 
-- Conversation history: indexed as messages are logged (already going to SQLite)
+- Conversation history: indexed as messages are logged (FTS5 only — bleve skips conversations)
 
 **Why FTS5 over vector embeddings:**
 - Zero dependencies (built into SQLite, which we already use)
@@ -579,7 +590,13 @@ reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
 - Deterministic, debuggable
 - Covers 90% of memory recall — you usually remember roughly what you wrote
 
-**Maybe later:** Vector embeddings for semantic search when FTS5 misses. But not until FTS5 proves insufficient.
+**Why bleve as an alternative:**
+- Pure Go, no CGo — simpler builds
+- Smaller index without conversation history (files only)
+- Richer analysis pipeline (built-in English analyzer, term vectors, highlighting)
+- Can run alongside FTS5 for A/B comparison
+
+**Maybe later:** Vector embeddings for semantic search when keyword search proves insufficient.
 
 ## Scheduling & Background
 
