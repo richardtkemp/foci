@@ -1457,9 +1457,10 @@ func setupAgent(p setupParams) *agentInstance {
 		tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
 		registry.Register(tmuxTool)
 	}
+	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
 	registry.Register(tools.NewReadTool(agentStore))
-	registry.Register(tools.NewWriteTool(agentStore))
-	registry.Register(tools.NewEditTool(agentStore))
+	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
+	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
 	registry.Register(tools.NewSummaryTool(p.client, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
@@ -3245,6 +3246,14 @@ func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []con
 		return acfg.MessageTransforms
 	}
 	return cfg.MessageTransforms
+}
+
+// resolveBlockedPaths returns per-agent blocked paths if set, otherwise global.
+func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.BlockedPath {
+	if len(acfg.BlockedPaths) > 0 {
+		return acfg.BlockedPaths
+	}
+	return cfg.BlockedPaths
 }
 
 // hasMemoryFormation returns true if any memory formation feature is enabled.

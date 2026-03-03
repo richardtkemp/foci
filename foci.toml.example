@@ -96,6 +96,11 @@ system_files = [
 # compaction_debug = false
 # compaction_preserve_messages = 25
 
+# Per-agent blocked paths (replaces global):
+# [[agents.blocked_paths]]
+# path = "/home/foci/myagent/code"
+# rebuke = "Use claude via tmux for code changes."
+
 # Per-agent message transforms:
 # [[agents.message_transforms]]
 # find = "pattern"
@@ -319,6 +324,13 @@ bind = "127.0.0.1"
 # consolidation_prompt = ""
 # session_end_enabled = true
 # session_end_prompt = ""
+
+# ─── Blocked Paths ───────────────────────────────────────────────────
+# Soft guardrails for write/edit tools. Returns rebuke as tool result (not error).
+# Per-agent override: [[agents.blocked_paths]] replaces global.
+# [[blocked_paths]]
+# path = "/home/foci/myagent/code"
+# rebuke = "Do not write code directly. Use claude via tmux."
 
 # ─── Message Transforms ──────────────────────────────────────────────
 # [[message_transforms]]

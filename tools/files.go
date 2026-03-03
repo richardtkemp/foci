@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"foci/config"
 	"foci/secrets"
 )
 
@@ -31,7 +32,7 @@ func NewReadTool(store *secrets.Store) *Tool {
 	}
 }
 
-func NewWriteTool(store *secrets.Store) *Tool {
+func NewWriteTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool {
 	return &Tool{
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
@@ -50,12 +51,12 @@ func NewWriteTool(store *secrets.Store) *Tool {
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return writeFile(ctx, params, store, "")
+			return writeFile(ctx, params, store, "", blockedPaths)
 		},
 	}
 }
 
-func NewEditTool(store *secrets.Store) *Tool {
+func NewEditTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -78,7 +79,7 @@ func NewEditTool(store *secrets.Store) *Tool {
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return editFile(ctx, params, store, "")
+			return editFile(ctx, params, store, "", blockedPaths)
 		},
 	}
 }
@@ -223,6 +224,29 @@ func checkBlockedPath(store *secrets.Store, path string) error {
 	return nil
 }
 
+// checkConfigBlockedPath checks if the resolved path falls under any configured
+// blocked path prefix. Returns (rebuke, true) if blocked. This is a soft nudge,
+// not a security boundary — the rebuke is returned as a successful tool result.
+func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) (string, bool) {
+	if len(blockedPaths) == 0 {
+		return "", false
+	}
+	abs, err := filepath.Abs(resolved)
+	if err != nil {
+		abs = resolved
+	}
+	for _, bp := range blockedPaths {
+		prefix, err := filepath.Abs(bp.Path)
+		if err != nil {
+			prefix = bp.Path
+		}
+		if abs == prefix || strings.HasPrefix(abs, prefix+string(filepath.Separator)) {
+			return bp.Rebuke, true
+		}
+	}
+	return "", false
+}
+
 func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
 	var p struct {
 		Path string `json:"path"`
@@ -261,7 +285,7 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 	return out.String(), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
+func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (string, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -279,6 +303,12 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 		return "", err
 	}
 
+	if len(blockedPaths) > 0 {
+		if rebuke, blocked := checkConfigBlockedPath(blockedPaths[0], resolved); blocked {
+			return rebuke, nil
+		}
+	}
+
 	if err := os.WriteFile(resolved, []byte(p.Content), 0644); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
 	}
@@ -286,7 +316,7 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 	return fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
+func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (string, error) {
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
@@ -303,6 +333,12 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 
 	if err := checkBlockedPath(store, resolved); err != nil {
 		return "", err
+	}
+
+	if len(blockedPaths) > 0 {
+		if rebuke, blocked := checkConfigBlockedPath(blockedPaths[0], resolved); blocked {
+			return rebuke, nil
+		}
 	}
 
 	data, err := os.ReadFile(resolved)
