@@ -236,6 +236,44 @@ func TestImageBlockJSON(t *testing.T) {
 	}
 }
 
+func TestDocumentBlock(t *testing.T) {
+	block := DocumentBlock("application/pdf", "JVBER...")
+	if block.Type != "document" {
+		t.Errorf("Type = %q, want %q", block.Type, "document")
+	}
+	if block.Source == nil {
+		t.Fatal("Source is nil")
+	}
+	if block.Source.Type != "base64" {
+		t.Errorf("Source.Type = %q, want %q", block.Source.Type, "base64")
+	}
+	if block.Source.MediaType != "application/pdf" {
+		t.Errorf("Source.MediaType = %q", block.Source.MediaType)
+	}
+	if block.Source.Data != "JVBER..." {
+		t.Errorf("Source.Data = %q", block.Source.Data)
+	}
+}
+
+func TestDocumentBlockJSON(t *testing.T) {
+	block := DocumentBlock("application/pdf", "AAAA")
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded ContentBlock
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.Type != "document" {
+		t.Errorf("decoded.Type = %q", decoded.Type)
+	}
+	if decoded.Source == nil || decoded.Source.MediaType != "application/pdf" {
+		t.Errorf("decoded.Source = %+v", decoded.Source)
+	}
+}
+
 func TestEphemeral(t *testing.T) {
 	cc := Ephemeral()
 	if cc.Type != "ephemeral" {

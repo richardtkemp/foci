@@ -45,8 +45,8 @@ func TestSendToSession(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Message sent to session agent:test:main") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "Message sent to session agent:test:main") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Check the appended message
@@ -100,8 +100,8 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "reply_to=session") {
-		t.Errorf("result = %q, want reply_to=session", result)
+	if !strings.Contains(result.Text, "reply_to=session") {
+		t.Errorf("result = %q, want reply_to=session", result.Text)
 	}
 
 	// Check sessionNotifyFn was called, not the caller notifier
@@ -205,8 +205,8 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Message sent") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "Message sent") {
+		t.Errorf("result = %q", result.Text)
 	}
 	// Should still have appended
 	if store.key != "agent:test:branch" {
@@ -249,8 +249,8 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "reply_to=session") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "reply_to=session") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Verify sessionNotifyFn receives the TARGET session key (Eleni's),
@@ -276,8 +276,8 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute (caller): %v", err)
 	}
-	if !strings.Contains(result, "reply_to=caller") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "reply_to=caller") {
+		t.Errorf("result = %q", result.Text)
 	}
 	// Verify the message was appended to the target session
 	if store.key != eleniSession {

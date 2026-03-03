@@ -13,8 +13,8 @@ func TestRegistryRegisterAndGet(t *testing.T) {
 		Name:        "test_tool",
 		Description: "a test",
 		Parameters:  json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "ok", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("ok"), nil
 		},
 	}
 

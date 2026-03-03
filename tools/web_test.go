@@ -28,11 +28,11 @@ func TestWebFetchSuccess(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Content should be extracted as markdown (no HTML tags)
-	if !strings.Contains(result, "Hello World") {
-		t.Errorf("result = %q, want 'Hello World'", result)
+	if !strings.Contains(result.Text, "Hello World") {
+		t.Errorf("result = %q, want 'Hello World'", result.Text)
 	}
-	if strings.Contains(result, "<p>") {
-		t.Errorf("result still has HTML tags: %q", result)
+	if strings.Contains(result.Text, "<p>") {
+		t.Errorf("result still has HTML tags: %q", result.Text)
 	}
 }
 
@@ -54,11 +54,11 @@ func TestWebFetchRaw(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Raw mode should return unprocessed HTML
-	if !strings.Contains(result, "<h1>Title</h1>") {
-		t.Errorf("raw mode should preserve HTML tags, got: %q", result)
+	if !strings.Contains(result.Text, "<h1>Title</h1>") {
+		t.Errorf("raw mode should preserve HTML tags, got: %q", result.Text)
 	}
-	if !strings.Contains(result, "<p>Content</p>") {
-		t.Errorf("raw mode should preserve HTML tags, got: %q", result)
+	if !strings.Contains(result.Text, "<p>Content</p>") {
+		t.Errorf("raw mode should preserve HTML tags, got: %q", result.Text)
 	}
 }
 
@@ -79,8 +79,8 @@ func TestWebFetchReadabilityFallback(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Should still produce output via fallback
-	if !strings.Contains(result, "Just some text") {
-		t.Errorf("fallback should extract text, got: %q", result)
+	if !strings.Contains(result.Text, "Just some text") {
+		t.Errorf("fallback should extract text, got: %q", result.Text)
 	}
 }
 
@@ -107,16 +107,16 @@ func TestWebFetchMarkdownStructure(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Should contain markdown heading
-	if !strings.Contains(result, "# ") && !strings.Contains(result, "Main Heading") {
-		t.Errorf("expected markdown heading, got: %q", result)
+	if !strings.Contains(result.Text, "# ") && !strings.Contains(result.Text, "Main Heading") {
+		t.Errorf("expected markdown heading, got: %q", result.Text)
 	}
 	// Should contain markdown link
-	if !strings.Contains(result, "[link]") {
-		t.Errorf("expected markdown link, got: %q", result)
+	if !strings.Contains(result.Text, "[link]") {
+		t.Errorf("expected markdown link, got: %q", result.Text)
 	}
 	// No raw HTML tags
-	if strings.Contains(result, "<h1>") || strings.Contains(result, "<p>") {
-		t.Errorf("should not contain HTML tags, got: %q", result)
+	if strings.Contains(result.Text, "<h1>") || strings.Contains(result.Text, "<p>") {
+		t.Errorf("should not contain HTML tags, got: %q", result.Text)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestWebFetchNoTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(result, "truncated") {
+	if strings.Contains(result.Text, "truncated") {
 		t.Errorf("web_fetch should no longer truncate output (guardToolResult handles it)")
 	}
 }
@@ -159,8 +159,8 @@ func TestWebFetchServerError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(result, "server error") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "server error") {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 

@@ -2,12 +2,14 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"foci/anthropic"
 	"foci/config"
 	"foci/secrets"
 )
@@ -267,6 +269,19 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read file: %w", err)
+	}
+
+	// PDF files: base64-encode and return as document content block
+	if strings.EqualFold(filepath.Ext(resolved), ".pdf") {
+		const maxPDFSize = 32 * 1024 * 1024
+		if len(data) > maxPDFSize {
+			return ToolResult{}, fmt.Errorf("PDF too large: %d bytes (max %d)", len(data), maxPDFSize)
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		return ToolResult{
+			Text:        fmt.Sprintf("[PDF: %s, %d bytes]", filepath.Base(resolved), len(data)),
+			ExtraBlocks: []anthropic.ContentBlock{anthropic.DocumentBlock("application/pdf", encoded)},
+		}, nil
 	}
 
 	content := string(data)

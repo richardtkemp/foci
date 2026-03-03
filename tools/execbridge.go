@@ -145,11 +145,12 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	// The tool returns "HTTP <status>\nHeader: val\n...\n\n<body>" — in a pipe
 	// context only the body is useful (e.g. `foci_http_request url | jq .`).
 	// Pass --include-headers to foci_http_request to keep status/headers.
+	text := result.Text
 	if req.Tool == "http_request" && !req.IncludeHeaders {
-		result = stripHTTPHeaders(result)
+		text = stripHTTPHeaders(text)
 	}
 
-	writeResponse(conn, result, "")
+	writeResponse(conn, text, "")
 }
 
 func writeResponse(conn net.Conn, result, errMsg string) {

@@ -40,8 +40,8 @@ type botClient interface {
 	AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.AnswerCallbackQueryOpts) (bool, error)
 }
 
-// imageAttachment is a downloaded image ready for the agent.
-type imageAttachment struct {
+// attachment is a downloaded image ready for the agent.
+type attachment struct {
 	data      []byte
 	mediaType string
 	savedPath string // non-empty if saved to disk
@@ -52,7 +52,7 @@ type queuedMessage struct {
 	msg    *gotgbot.Message
 	userID string
 	text   string
-	images []imageAttachment
+	images []attachment
 }
 
 // Bot wraps the Telegram bot API with agent integration.
@@ -661,17 +661,33 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		return
 	}
 
-	// Download images from photos or image documents
-	var images []imageAttachment
+	// Download images/PDFs from photos or documents
+	var images []attachment
 	if len(msg.Photo) > 0 {
 		// Take the largest photo (last in the array)
 		photo := msg.Photo[len(msg.Photo)-1]
-		if att, ok := b.downloadImage(photo.FileId, "image/jpeg", msg.Chat.Id); ok {
+		if att, ok := b.downloadAttachment(photo.FileId, "image/jpeg", msg.Chat.Id); ok {
 			images = append(images, att)
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
-		if att, ok := b.downloadImage(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
+		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
 			images = append(images, att)
+		}
+	} else if msg.Document != nil && isPDFMIME(msg.Document.MimeType) {
+		// PDFs under 32MB go through the content-block path (like images);
+		// over-size PDFs fall back to save-to-disk via handleMediaMessage.
+		const maxPDFSize = 32 * 1024 * 1024
+		if msg.Document.FileSize > 0 && msg.Document.FileSize > maxPDFSize {
+			text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "PDF", msg.Chat.Id, ".pdf")
+		} else if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
+			if len(att.data) > maxPDFSize {
+				// Downloaded size exceeded limit — save to disk instead
+				if att.savedPath != "" {
+					text = fmt.Sprintf("[PDF saved to: %s]\n\n%s", att.savedPath, text)
+				}
+			} else {
+				images = append(images, att)
+			}
 		}
 	}
 
@@ -685,8 +701,8 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		text = b.handleMediaMessage(text, msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", "Video", msg.Chat.Id, ".mp4")
 	}
 
-	// Handle non-image document attachments
-	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) {
+	// Handle non-image, non-PDF document attachments
+	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) && !isPDFMIME(msg.Document.MimeType) {
 		ext := filepath.Ext(msg.Document.FileName)
 		if ext == "" {
 			ext = extForMIME(msg.Document.MimeType)
@@ -966,11 +982,11 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	var err error
 	if len(qm.images) > 0 {
 		// Convert telegram images to agent image data
-		agentImages := make([]agent.ImageData, len(qm.images))
+		agentImages := make([]agent.Attachment, len(qm.images))
 		for i, img := range qm.images {
-			agentImages[i] = agent.ImageData{MediaType: img.mediaType, Data: img.data, SavedPath: img.savedPath}
+			agentImages[i] = agent.Attachment{MediaType: img.mediaType, Data: img.data, SavedPath: img.savedPath}
 		}
-		response, err = b.agent.HandleMessageWithImages(turnCtx, sk, qm.text, agentImages)
+		response, err = b.agent.HandleMessageWithAttachments(turnCtx, sk, qm.text, agentImages)
 	} else {
 		response, err = b.agent.HandleMessage(turnCtx, sk, qm.text)
 	}
@@ -1596,6 +1612,8 @@ func extForMediaType(mt string) string {
 		return ".gif"
 	case "image/webp":
 		return ".webp"
+	case "application/pdf":
+		return ".pdf"
 	default:
 		return ".bin"
 	}
@@ -1696,8 +1714,8 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string)
 	return path, nil
 }
 
-// saveImage writes image data to disk and returns the saved file path.
-func (b *Bot) saveImage(data []byte, mediaType string, chatID int64) (string, error) {
+// saveAttachment writes image data to disk and returns the saved file path.
+func (b *Bot) saveAttachment(data []byte, mediaType string, chatID int64) (string, error) {
 	if err := os.MkdirAll(b.receivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create image dir: %w", err)
 	}
@@ -1710,20 +1728,20 @@ func (b *Bot) saveImage(data []byte, mediaType string, chatID int64) (string, er
 	return path, nil
 }
 
-// downloadImage downloads a file and returns it as an imageAttachment,
+// downloadAttachment downloads a file and returns it as an attachment,
 // optionally saving to disk. Returns (attachment, true) on success.
-func (b *Bot) downloadImage(fileID, mimeType string, chatID int64) (imageAttachment, bool) {
+func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachment, bool) {
 	data, err := b.downloadFile(fileID)
 	if err != nil {
 		b.logger().Errorf("download image: %s", b.sanitizeError(err))
 		if b.agent == nil || b.agent.Warnings == nil {
 			_ = b.SendTextToChat(chatID, "Could not download image — please try again.")
 		}
-		return imageAttachment{}, false
+		return attachment{}, false
 	}
-	att := imageAttachment{data: data, mediaType: mimeType}
+	att := attachment{data: data, mediaType: mimeType}
 	if b.receivedFilesDir != "" {
-		if path, err := b.saveImage(data, mimeType, chatID); err != nil {
+		if path, err := b.saveAttachment(data, mimeType, chatID); err != nil {
 			b.logger().Warnf("save image: %v", err)
 		} else {
 			att.savedPath = path
@@ -1750,6 +1768,11 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 	}
 	b.logger().Infof("saved %s to %s", mediaType, path)
 	return fmt.Sprintf("[%s saved to: %s]\n\n%s", label, path, text)
+}
+
+// isPDFMIME returns true if the MIME type is a PDF document.
+func isPDFMIME(mime string) bool {
+	return mime == "application/pdf"
 }
 
 // isImageMIME returns true if the MIME type is a supported image format.

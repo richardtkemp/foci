@@ -55,11 +55,11 @@ func TestMemorySearch(t *testing.T) {
 	}
 
 	// Should find "buy" in both files
-	if !strings.Contains(result, "notes.md") {
-		t.Errorf("missing notes.md in result: %q", result)
+	if !strings.Contains(result.Text,"notes.md") {
+		t.Errorf("missing notes.md in result: %q", result.Text)
 	}
-	if !strings.Contains(result, "todo.md") {
-		t.Errorf("missing todo.md in result: %q", result)
+	if !strings.Contains(result.Text,"todo.md") {
+		t.Errorf("missing todo.md in result: %q", result.Text)
 	}
 
 }
@@ -84,8 +84,8 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result != "No matches found." {
-		t.Errorf("result = %q", result)
+	if result.Text != "No matches found." {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -97,8 +97,8 @@ func TestMemorySearchEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result != "No matches found." {
-		t.Errorf("result = %q", result)
+	if result.Text != "No matches found." {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -124,11 +124,11 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	}
 
 	// Should show both memory and conversation results with source labels
-	if !strings.Contains(result, "[memory]") {
-		t.Errorf("missing [memory] source label in result: %q", result)
+	if !strings.Contains(result.Text,"[memory]") {
+		t.Errorf("missing [memory] source label in result: %q", result.Text)
 	}
-	if !strings.Contains(result, "[conversation]") {
-		t.Errorf("missing [conversation] source label in result: %q", result)
+	if !strings.Contains(result.Text,"[conversation]") {
+		t.Errorf("missing [conversation] source label in result: %q", result.Text)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with sort=newest: %v", err)
 	}
-	if !strings.Contains(result, "recent.md") {
-		t.Errorf("missing recent.md in result: %q", result)
+	if !strings.Contains(result.Text,"recent.md") {
+		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 
 	// Test with sort=oldest
@@ -163,8 +163,8 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with sort=oldest: %v", err)
 	}
-	if !strings.Contains(result, "recent.md") {
-		t.Errorf("missing recent.md in result: %q", result)
+	if !strings.Contains(result.Text,"recent.md") {
+		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 
 	// Test with sort=relevance (explicit)
@@ -173,8 +173,8 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with sort=relevance: %v", err)
 	}
-	if !strings.Contains(result, "recent.md") {
-		t.Errorf("missing recent.md in result: %q", result)
+	if !strings.Contains(result.Text,"recent.md") {
+		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 
 	// Test with no sort param (default)
@@ -183,8 +183,8 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with default sort: %v", err)
 	}
-	if !strings.Contains(result, "recent.md") {
-		t.Errorf("missing recent.md in result: %q", result)
+	if !strings.Contains(result.Text,"recent.md") {
+		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 }
 
@@ -232,8 +232,8 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with backend=fts5: %v", err)
 	}
-	if !strings.Contains(result, "notes.md") {
-		t.Errorf("fts5 backend should find notes.md: %q", result)
+	if !strings.Contains(result.Text,"notes.md") {
+		t.Errorf("fts5 backend should find notes.md: %q", result.Text)
 	}
 
 	// Search with explicit backend=bleve
@@ -242,8 +242,8 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with backend=bleve: %v", err)
 	}
-	if !strings.Contains(result, "notes.md") {
-		t.Errorf("bleve backend should find notes.md: %q", result)
+	if !strings.Contains(result.Text,"notes.md") {
+		t.Errorf("bleve backend should find notes.md: %q", result.Text)
 	}
 
 	// Search without backend (should use default)
@@ -252,8 +252,8 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with default backend: %v", err)
 	}
-	if !strings.Contains(result, "notes.md") {
-		t.Errorf("default backend should find notes.md: %q", result)
+	if !strings.Contains(result.Text,"notes.md") {
+		t.Errorf("default backend should find notes.md: %q", result.Text)
 	}
 }
 

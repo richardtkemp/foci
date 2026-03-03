@@ -25,12 +25,12 @@ func TestReadFile(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "line one") {
-		t.Errorf("missing content in result: %q", result)
+	if !strings.Contains(result.Text, "line one") {
+		t.Errorf("missing content in result: %q", result.Text)
 	}
 	// Should have line numbers
-	if !strings.Contains(result, "   1\t") {
-		t.Errorf("missing line numbers in result: %q", result)
+	if !strings.Contains(result.Text, "   1\t") {
+		t.Errorf("missing line numbers in result: %q", result.Text)
 	}
 }
 
@@ -58,8 +58,8 @@ func TestWriteFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Wrote") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "Wrote") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	data, _ := os.ReadFile(path)
@@ -105,8 +105,8 @@ func TestEditFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Edited") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "Edited") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	data, _ := os.ReadFile(path)
@@ -187,8 +187,8 @@ func TestEditFileSyntaxValidToValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid→valid edit should succeed: %v", err)
 	}
-	if !strings.Contains(result, "Edited") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "Edited") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	data, _ := os.ReadFile(path)
@@ -240,8 +240,8 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid→valid edit should succeed: %v", err)
 	}
-	if !strings.Contains(result, "Warning") || !strings.Contains(result, "syntax errors") {
-		t.Errorf("expected warning about pre-existing syntax errors, got: %q", result)
+	if !strings.Contains(result.Text, "Warning") || !strings.Contains(result.Text, "syntax errors") {
+		t.Errorf("expected warning about pre-existing syntax errors, got: %q", result.Text)
 	}
 }
 
@@ -261,8 +261,8 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invalid→invalid edit should proceed: %v", err)
 	}
-	if !strings.Contains(result, "Warning") {
-		t.Errorf("expected warning, got: %q", result)
+	if !strings.Contains(result.Text, "Warning") {
+		t.Errorf("expected warning, got: %q", result.Text)
 	}
 }
 
@@ -282,8 +282,8 @@ func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("txt edit should succeed: %v", err)
 	}
-	if strings.Contains(result, "Warning") {
-		t.Errorf("no warning expected for .txt: %q", result)
+	if strings.Contains(result.Text, "Warning") {
+		t.Errorf("no warning expected for .txt: %q", result.Text)
 	}
 }
 
@@ -305,7 +305,7 @@ func TestReadLargeFile(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "truncated") {
+	if !strings.Contains(result.Text, "truncated") {
 		t.Error("expected truncation notice for large file")
 	}
 }
@@ -397,6 +397,68 @@ func TestEditBlockedSecretsToml(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "access denied") {
 		t.Errorf("error = %q, want access denied", err.Error())
+	}
+}
+
+func TestReadPDF(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.pdf")
+	// Write a small fake PDF (doesn't need to be valid PDF for this test)
+	pdfData := []byte("%PDF-1.4 fake content")
+	os.WriteFile(path, pdfData, 0644)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]string{"path": path})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Text should describe the PDF
+	if !strings.Contains(result.Text, "[PDF: test.pdf") {
+		t.Errorf("text should mention PDF filename, got: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "bytes]") {
+		t.Errorf("text should mention byte count, got: %q", result.Text)
+	}
+
+	// ExtraBlocks should contain a document block
+	if len(result.ExtraBlocks) != 1 {
+		t.Fatalf("expected 1 extra block, got %d", len(result.ExtraBlocks))
+	}
+	block := result.ExtraBlocks[0]
+	if block.Type != "document" {
+		t.Errorf("block.Type = %q, want document", block.Type)
+	}
+	if block.Source == nil {
+		t.Fatal("block.Source is nil")
+	}
+	if block.Source.MediaType != "application/pdf" {
+		t.Errorf("block.Source.MediaType = %q", block.Source.MediaType)
+	}
+	if block.Source.Data == "" {
+		t.Error("block.Source.Data is empty")
+	}
+}
+
+func TestReadPDFCaseInsensitive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "report.PDF")
+	os.WriteFile(path, []byte("%PDF-1.4"), 0644)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]string{"path": path})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.ExtraBlocks) != 1 {
+		t.Fatalf("uppercase .PDF should still be detected, got %d extra blocks", len(result.ExtraBlocks))
+	}
+	if result.ExtraBlocks[0].Type != "document" {
+		t.Errorf("block.Type = %q, want document", result.ExtraBlocks[0].Type)
 	}
 }
 
@@ -518,8 +580,8 @@ func TestIsolatedReadInside(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read inside should succeed: %v", err)
 	}
-	if !strings.Contains(result, "hello") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "hello") {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -601,8 +663,8 @@ func TestReadAllowedWithStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allowed read should succeed: %v", err)
 	}
-	if !strings.Contains(result, "safe content") {
-		t.Errorf("result = %q, want safe content", result)
+	if !strings.Contains(result.Text, "safe content") {
+		t.Errorf("result = %q, want safe content", result.Text)
 	}
 }
 
@@ -624,8 +686,8 @@ func TestWriteBlockedByConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config blocked path should return nil error, got: %v", err)
 	}
-	if result != "Don't write here, use tmux instead." {
-		t.Errorf("result = %q, want rebuke message", result)
+	if result.Text != "Don't write here, use tmux instead." {
+		t.Errorf("result = %q, want rebuke message", result.Text)
 	}
 	// File should not exist
 	if _, err := os.Stat(path); err == nil {
@@ -650,8 +712,8 @@ func TestWriteNotBlockedByConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("non-blocked write should succeed: %v", err)
 	}
-	if !strings.Contains(result, "Wrote") {
-		t.Errorf("result = %q, want Wrote", result)
+	if !strings.Contains(result.Text, "Wrote") {
+		t.Errorf("result = %q, want Wrote", result.Text)
 	}
 	data, _ := os.ReadFile(path)
 	if string(data) != "allowed" {
@@ -678,8 +740,8 @@ func TestEditBlockedByConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config blocked path should return nil error, got: %v", err)
 	}
-	if result != "Use claude via tmux for this workspace." {
-		t.Errorf("result = %q, want rebuke message", result)
+	if result.Text != "Use claude via tmux for this workspace." {
+		t.Errorf("result = %q, want rebuke message", result.Text)
 	}
 	// File should be unchanged
 	data, _ := os.ReadFile(path)
@@ -709,8 +771,8 @@ func TestBlockedPathPrefixMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "blocked" {
-		t.Errorf("subdir should be blocked, got: %q", result)
+	if result.Text != "blocked" {
+		t.Errorf("subdir should be blocked, got: %q", result.Text)
 	}
 
 	// Write to not-naughty — should succeed
@@ -722,8 +784,8 @@ func TestBlockedPathPrefixMatching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("not-naughty write failed: %v", err)
 	}
-	if !strings.Contains(result, "Wrote") {
-		t.Errorf("not-naughty should succeed, got: %q", result)
+	if !strings.Contains(result.Text, "Wrote") {
+		t.Errorf("not-naughty should succeed, got: %q", result.Text)
 	}
 }
 
@@ -740,7 +802,7 @@ func TestWriteNoBlockedPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write with nil blocked paths should succeed: %v", err)
 	}
-	if !strings.Contains(result, "Wrote") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "Wrote") {
+		t.Errorf("result = %q", result.Text)
 	}
 }

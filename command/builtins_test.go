@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"foci/tools"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -2049,13 +2050,16 @@ func TestSecretsHostsUsage(t *testing.T) {
 }
 
 // mockTmuxExec returns a mock execFn that records the JSON params it receives.
-func mockTmuxExec(result string, err error) (func(ctx context.Context, params json.RawMessage) (string, error), *[]map[string]interface{}) {
+func mockTmuxExec(result string, err error) (func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error), *[]map[string]interface{}) {
 	var calls []map[string]interface{}
-	return func(ctx context.Context, params json.RawMessage) (string, error) {
+	return func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
 		var m map[string]interface{}
 		json.Unmarshal(params, &m)
 		calls = append(calls, m)
-		return result, err
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
+		return tools.TextResult(result), err
 	}, &calls
 }
 

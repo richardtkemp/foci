@@ -6,7 +6,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 
 | Tool | Description |
 |------|-------------|
-| `read` | Read file contents with line numbers (truncates at 2000 lines). |
+| `read` | Read file contents with line numbers (truncates at 2000 lines). PDFs are returned as native document content blocks (base64-encoded, ≤32MB). |
 | `write` | Create or overwrite files. |
 | `edit` | Find-and-replace in files. `old_string` must be unique. Syntax validation for `.json`, `.toml`, `.go`, `.yaml`/`.yml`, `.xml`, `.py`, `.sh`/`.bash` — rejects edits that would break a valid file. |
 | `shell` | Run shell commands via `sh -c` with process group kill on timeout. Output redacted for secrets. Supports `background: true` for daemons and auto-background for long-running commands. Regular `{{secret:}}` templates are blocked (use `http_request`); Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated). |

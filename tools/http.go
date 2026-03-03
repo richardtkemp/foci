@@ -464,7 +464,7 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return ToolResult{}, fmt.Errorf("read response: %w", err)
 	}
 
 	if parsed, err := url.Parse(reqURL); err == nil {
@@ -482,7 +482,7 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 			dir = os.TempDir()
 		}
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", fmt.Errorf("create temp dir: %w", err)
+			return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 		}
 		ext := extensionForContentType(contentType)
 		var randBytes [4]byte
@@ -509,7 +509,7 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 		if saveFromJSONPath != "" {
 			extracted, err := extractJSONPath(body, saveFromJSONPath)
 			if err != nil {
-				return "", fmt.Errorf("extract %s from JSON: %w", saveFromJSONPath, err)
+				return ToolResult{}, fmt.Errorf("extract %s from JSON: %w", saveFromJSONPath, err)
 			}
 			// If it's a data: URI, decode it
 			if decoded, err := decodeDataURI(extracted); err == nil {
@@ -521,13 +521,13 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 		}
 
 		if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
-			return "", fmt.Errorf("create parent dirs for save_to: %w", err)
+			return ToolResult{}, fmt.Errorf("create parent dirs for save_to: %w", err)
 		}
 		if err := os.WriteFile(savePath, saveData, 0644); err != nil {
-			return "", fmt.Errorf("write response to %s: %w", savePath, err)
+			return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, err)
 		}
 		log.Debugf("http_request", "saved %d bytes to %s", len(saveData), savePath)
-		return fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath), nil
+		return TextResult(fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath)), nil
 	}
 
 	// Text response — return inline
@@ -541,7 +541,7 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 		bodyStr = bwStore.Redact(bodyStr)
 	}
 
-	return formatHeaders() + "\n" + bodyStr, nil
+	return TextResult(formatHeaders() + "\n" + bodyStr), nil
 }
 
 // isBinaryContentType returns true for content types that are binary (not text).
@@ -795,22 +795,22 @@ func NewIsolatedHTTPRequestTool(base *Tool) *Tool {
 		Name:        base.Name,
 		Description: base.Description,
 		Parameters:  base.Parameters,
-		Execute: func(ctx context.Context, input json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, input json.RawMessage) (ToolResult, error) {
 			var p struct {
 				URL string `json:"url"`
 			}
 			if err := json.Unmarshal(input, &p); err != nil {
-				return "", fmt.Errorf("parse input: %w", err)
+				return ToolResult{}, fmt.Errorf("parse input: %w", err)
 			}
 
 			parsed, err := url.Parse(p.URL)
 			if err != nil {
-				return "", fmt.Errorf("invalid URL: %w", err)
+				return ToolResult{}, fmt.Errorf("invalid URL: %w", err)
 			}
 
 			hostname := parsed.Hostname()
 			if isPrivateIP(hostname) {
-				return "", fmt.Errorf("requests to private/loopback addresses are blocked in isolated mode")
+				return ToolResult{}, fmt.Errorf("requests to private/loopback addresses are blocked in isolated mode")
 			}
 
 			return base.Execute(ctx, input)

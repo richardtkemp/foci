@@ -8,7 +8,7 @@ Anthropic caches the **prefix** of your prompt. If the first N tokens of a reque
 
 - **Prefix-based**: sessions with identical prompt prefixes share the same cache
 - **Prefix-matched**: only contiguous tokens from the start count
-- **Time-limited**: ~5 minutes TTL, refreshed on each hit
+- **Time-limited**: 60 minutes TTL, refreshed on each hit
 - **Minimum size**: 1,024 tokens (shorter prefixes aren't cached)
 
 This means: **anything that changes the beginning of your prompt busts the entire cache.**
@@ -35,8 +35,6 @@ The system prompt is assembled in a stable order:
 
 Items 1–4 form the **cached prefix**. They change rarely (character edits, config changes, skill additions). The conversation history grows at the end, which doesn't affect the prefix cache.
 
-Character file order matters: most-stable files first maximises cache prefix length.
-
 ## Cache Breakpoints
 
 Two `cache_control: {"type": "ephemeral"}` breakpoints per API request:
@@ -53,7 +51,7 @@ Breakpoints are added **only to the API request payload**, never persisted to se
 
 Anthropic's cache is prefix-matched. If any message shifts position (because an injected message was inserted before it), all cached tokens after that point are invalidated.
 
-**Per-session turn lock:** `HandleMessageWithImages` acquires a per-session mutex before doing any work. This serializes all turns on the same session — concurrent callers (Telegram messages, async notifications, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
+**Per-session turn lock:** `HandleMessageWithAttachments` acquires a per-session mutex before doing any work. This serializes all turns on the same session — concurrent callers (Telegram messages, async notifications, scheduled wakes, HTTP `/send`) wait until the current turn completes. Each turn loads the full session history (including messages saved by the previous turn), processes, and saves — guaranteeing strict append-only ordering.
 
 Different sessions run concurrently — the lock is per-session, not global. Branch sessions and parent sessions have different keys and do not block each other.
 
@@ -69,7 +67,7 @@ Regex transforms on inbound messages happen inside user messages, not by modifyi
 When conversation history is compressed, only the conversation portion changes. The system prompt prefix is untouched — the cache survives compaction.
 
 ### Character file stability
-Character files are loaded into memory at startup and rebuilt from disk only on compaction or restart. Editing a character file doesn't immediately bust the cache — changes take effect at the next natural reload point.
+Character files are loaded into memory at startup and rebuilt from disk only on compaction or restart. Editing a character file doesn't immediately bust the cache — changes take effect at the next natural reload point (like a compaction).
 
 ### Session branching (cache sharing)
 Branch sessions copy the parent's system prompt + message history at a point in time. When `LoadFull()` builds a message list starting with the parent's prefix, the cache breakpoint lands on the same byte-identical prefix. The API hits cache (read pricing) instead of re-tokenizing (write pricing). The system prompt MUST be byte-identical between parent and branch for cache hit.
@@ -91,7 +89,7 @@ When idle, the keepalive timer fires a lightweight branch session to keep the ca
 | `/reload` | System prompt changes | ~$2.50 eq |
 | Service restart | New session, new cache | ~$2.50 eq |
 | Character file edit | No immediate impact; applies at next compaction/restart | Deferred |
-| Adding/removing skills | System prompt changes at next restart | Deferred |
+| Adding/removing skills | System prompt changes at next compaction/restart | Deferred |
 
 ### Cache bust alerts
 
@@ -115,7 +113,7 @@ Check cache efficiency:
 
 ```
 /cache          — last 5 API calls with cache breakdown
-/cost           — cumulative cost with cache savings
+/cost           — cumulative cost
 ```
 
 The `prev_tokens` in message metadata shows: `in` (new input), `out` (output), `cR` (cache read — the good number), `cW` (cache write — first-time cost).

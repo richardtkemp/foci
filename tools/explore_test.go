@@ -20,11 +20,11 @@ func TestLsBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "hello.txt") {
-		t.Errorf("expected hello.txt in output, got %q", result)
+	if !strings.Contains(result.Text,"hello.txt") {
+		t.Errorf("expected hello.txt in output, got %q", result.Text)
 	}
-	if !strings.Contains(result, "world.txt") {
-		t.Errorf("expected world.txt in output, got %q", result)
+	if !strings.Contains(result.Text,"world.txt") {
+		t.Errorf("expected world.txt in output, got %q", result.Text)
 	}
 }
 
@@ -42,8 +42,8 @@ func TestLsFlags(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	// -l includes permissions, -a includes . and ..
-	if !strings.Contains(result, "test.txt") {
-		t.Errorf("expected test.txt in output, got %q", result)
+	if !strings.Contains(result.Text,"test.txt") {
+		t.Errorf("expected test.txt in output, got %q", result.Text)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestLsNonexistentPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v (should return error in output)", err)
 	}
-	if !strings.Contains(result, "Error:") {
-		t.Errorf("expected error in result for nonexistent path, got %q", result)
+	if !strings.Contains(result.Text,"Error:") {
+		t.Errorf("expected error in result for nonexistent path, got %q", result.Text)
 	}
 }
 
@@ -73,11 +73,11 @@ func TestFindByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "foo.go") {
-		t.Errorf("expected foo.go in output, got %q", result)
+	if !strings.Contains(result.Text,"foo.go") {
+		t.Errorf("expected foo.go in output, got %q", result.Text)
 	}
-	if strings.Contains(result, "bar.txt") {
-		t.Errorf("should not contain bar.txt, got %q", result)
+	if strings.Contains(result.Text,"bar.txt") {
+		t.Errorf("should not contain bar.txt, got %q", result.Text)
 	}
 }
 
@@ -95,8 +95,8 @@ func TestFindByType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "subdir") {
-		t.Errorf("expected subdir in output, got %q", result)
+	if !strings.Contains(result.Text,"subdir") {
+		t.Errorf("expected subdir in output, got %q", result.Text)
 	}
 }
 
@@ -115,11 +115,11 @@ func TestFindMaxdepth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "shallow.txt") {
-		t.Errorf("expected shallow.txt in output, got %q", result)
+	if !strings.Contains(result.Text,"shallow.txt") {
+		t.Errorf("expected shallow.txt in output, got %q", result.Text)
 	}
-	if strings.Contains(result, "deep.txt") {
-		t.Errorf("should not contain deep.txt, got %q", result)
+	if strings.Contains(result.Text,"deep.txt") {
+		t.Errorf("should not contain deep.txt, got %q", result.Text)
 	}
 }
 
@@ -154,8 +154,8 @@ func TestGrepBasicMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "hello") {
-		t.Errorf("expected 'hello' in output, got %q", result)
+	if !strings.Contains(result.Text,"hello") {
+		t.Errorf("expected 'hello' in output, got %q", result.Text)
 	}
 }
 
@@ -175,8 +175,8 @@ func TestGrepParams(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	// -i -c should count all 3 matches
-	if !strings.Contains(result, "3") {
-		t.Errorf("expected count of 3, got %q", result)
+	if !strings.Contains(result.Text,"3") {
+		t.Errorf("expected count of 3, got %q", result.Text)
 	}
 }
 
@@ -196,11 +196,11 @@ func TestGrepContextLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "line2") {
-		t.Errorf("expected context line 'line2', got %q", result)
+	if !strings.Contains(result.Text,"line2") {
+		t.Errorf("expected context line 'line2', got %q", result.Text)
 	}
-	if !strings.Contains(result, "line4") {
-		t.Errorf("expected context line 'line4', got %q", result)
+	if !strings.Contains(result.Text,"line4") {
+		t.Errorf("expected context line 'line4', got %q", result.Text)
 	}
 }
 
@@ -218,8 +218,8 @@ func TestGrepNoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "(no matches)") {
-		t.Errorf("expected '(no matches)', got %q", result)
+	if !strings.Contains(result.Text,"(no matches)") {
+		t.Errorf("expected '(no matches)', got %q", result.Text)
 	}
 }
 
@@ -238,11 +238,11 @@ func TestGrepRejectedParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "--badopt was ignored") {
-		t.Errorf("expected notice about --badopt, got %q", result)
+	if !strings.Contains(result.Text,"--badopt was ignored") {
+		t.Errorf("expected notice about --badopt, got %q", result.Text)
 	}
-	if !strings.Contains(result, "hello") {
-		t.Errorf("expected match output, got %q", result)
+	if !strings.Contains(result.Text,"hello") {
+		t.Errorf("expected match output, got %q", result.Text)
 	}
 }
 
@@ -266,8 +266,8 @@ func TestGrepGlobFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "hello") {
-		t.Errorf("expected match, got %q", result)
+	if !strings.Contains(result.Text,"hello") {
+		t.Errorf("expected match, got %q", result.Text)
 	}
 }
 

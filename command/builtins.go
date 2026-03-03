@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"foci/table"
+	"foci/tools"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1259,7 +1260,7 @@ func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *
 
 // NewTmuxCommand returns a /tmux command that wraps the tmux tool, exposing all
 // operations via slash-command syntax. It delegates to execFn (the tool's Execute).
-func NewTmuxCommand(execFn func(ctx context.Context, params json.RawMessage) (string, error)) *Command {
+func NewTmuxCommand(execFn func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error)) *Command {
 	const usage = `Usage: /tmux <command> [args...]
 
 Commands: list, start, send, read, kill, watch, unwatch`
@@ -1285,12 +1286,12 @@ Commands: list, start, send, read, kill, watch, unwatch`
 			// List owned + watched sessions to build dynamic buttons
 			listParams, _ := json.Marshal(map[string]interface{}{"operation": "list"})
 			result, err := execFn(ctx, listParams)
-			if err != nil || result == "No tmux sessions." {
+			if err != nil || result.Text == "No tmux sessions." {
 				return nil
 			}
 			var opts []KeyboardOption
 			seen := make(map[string]bool)
-			for _, line := range strings.Split(result, "\n") {
+			for _, line := range strings.Split(result.Text, "\n") {
 				line = strings.TrimSpace(line)
 				if line == "" || strings.HasPrefix(line, "SESSION") {
 					continue
@@ -1367,7 +1368,7 @@ Commands: list, start, send, read, kill, watch, unwatch`
 					name, _ := params["name"].(string)
 					if name == "" {
 						// Auto-generated name — parse from result
-						name = strings.TrimPrefix(result, "Session started: ")
+						name = strings.TrimPrefix(result.Text, "Session started: ")
 					}
 					watchParams, _ := json.Marshal(map[string]interface{}{
 						"operation": "watch",
@@ -1375,11 +1376,11 @@ Commands: list, start, send, read, kill, watch, unwatch`
 					})
 					watchResult, watchErr := execFn(ctx, watchParams)
 					if watchErr != nil {
-						return result + "\n(auto-watch failed: " + watchErr.Error() + ")", nil
+						return result.Text + "\n(auto-watch failed: " + watchErr.Error() + ")", nil
 					}
-					return result + "\n" + watchResult, nil
+					return result.Text + "\n" + watchResult.Text, nil
 				}
-				return result, nil
+				return result.Text, nil
 
 			case "send":
 				if len(fields) < 2 {
@@ -1410,7 +1411,7 @@ Commands: list, start, send, read, kill, watch, unwatch`
 				if err != nil {
 					return "", err
 				}
-				return "```\n" + result + "\n```", nil
+				return "```\n" + result.Text + "\n```", nil
 
 			case "kill":
 				if len(fields) < 1 {
@@ -1449,7 +1450,8 @@ Commands: list, start, send, read, kill, watch, unwatch`
 			}
 
 			raw, _ := json.Marshal(params)
-			return execFn(ctx, raw)
+			r, err := execFn(ctx, raw)
+			return r.Text, err
 		},
 	}
 }

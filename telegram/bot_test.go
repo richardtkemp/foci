@@ -690,10 +690,10 @@ func TestReceiveMessage_DocumentImageQueued(t *testing.T) {
 func TestReceiveMessage_NonImageDocumentIgnored(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	msg := makeMsgWithDocument(111, "owner", "application/pdf")
+	msg := makeMsgWithDocument(111, "owner", "application/zip")
 	b.receiveMessage(context.Background(), msg)
 
-	// Non-image document with no text should be dropped
+	// Non-image, non-PDF document with no text should be dropped
 	if len(b.queue) != 0 {
 		t.Error("non-image document should not be queued")
 	}
@@ -829,6 +829,7 @@ func TestExtForMediaType(t *testing.T) {
 		{"image/png", ".png"},
 		{"image/gif", ".gif"},
 		{"image/webp", ".webp"},
+		{"application/pdf", ".pdf"},
 		{"image/tiff", ".bin"},
 		{"", ".bin"},
 	}
@@ -839,15 +840,30 @@ func TestExtForMediaType(t *testing.T) {
 	}
 }
 
+func TestIsPDFMIME(t *testing.T) {
+	if !isPDFMIME("application/pdf") {
+		t.Error("application/pdf should be PDF")
+	}
+	if isPDFMIME("image/jpeg") {
+		t.Error("image/jpeg should not be PDF")
+	}
+	if isPDFMIME("application/json") {
+		t.Error("application/json should not be PDF")
+	}
+	if isPDFMIME("") {
+		t.Error("empty string should not be PDF")
+	}
+}
+
 func TestSaveImage(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
 
 	data := []byte("fake-jpeg-data")
-	path, err := b.saveImage(data, "image/jpeg", 12345)
+	path, err := b.saveAttachment(data, "image/jpeg", 12345)
 	if err != nil {
-		t.Fatalf("saveImage: %v", err)
+		t.Fatalf("saveAttachment: %v", err)
 	}
 
 	// Verify file exists with correct content
@@ -871,13 +887,13 @@ func TestSaveImage(t *testing.T) {
 
 func TestSaveImageDisabled(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	// receivedFilesDir not set — verify saveImage is only called when dir is set
+	// receivedFilesDir not set — verify saveAttachment is only called when dir is set
 	if b.receivedFilesDir != "" {
 		t.Error("expected empty receivedFilesDir by default")
 	}
 
 	// Directly construct an attachment to verify no savedPath
-	att := imageAttachment{data: []byte("test"), mediaType: "image/jpeg"}
+	att := attachment{data: []byte("test"), mediaType: "image/jpeg"}
 	if att.savedPath != "" {
 		t.Error("expected empty savedPath when receivedFilesDir is not set")
 	}
@@ -889,9 +905,9 @@ func TestSaveImagePNG(t *testing.T) {
 	b.receivedFilesDir = dir
 
 	data := []byte("fake-png-data")
-	path, err := b.saveImage(data, "image/png", 99999)
+	path, err := b.saveAttachment(data, "image/png", 99999)
 	if err != nil {
-		t.Fatalf("saveImage: %v", err)
+		t.Fatalf("saveAttachment: %v", err)
 	}
 
 	if !strings.HasSuffix(path, ".png") {
@@ -913,9 +929,9 @@ func TestSaveImageCreatesDir(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
 
-	path, err := b.saveImage([]byte("data"), "image/jpeg", 1)
+	path, err := b.saveAttachment([]byte("data"), "image/jpeg", 1)
 	if err != nil {
-		t.Fatalf("saveImage: %v", err)
+		t.Fatalf("saveAttachment: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("saved file not found: %v", err)
@@ -923,15 +939,15 @@ func TestSaveImageCreatesDir(t *testing.T) {
 }
 
 func TestSavedPathPropagatedToQueue(t *testing.T) {
-	// Test that imageAttachment.savedPath flows through queuedMessage
-	att := imageAttachment{
+	// Test that attachment.savedPath flows through queuedMessage
+	att := attachment{
 		data:      []byte("test"),
 		mediaType: "image/jpeg",
 		savedPath: "/tmp/test.jpg",
 	}
 	qm := queuedMessage{
 		text:   "look at this",
-		images: []imageAttachment{att},
+		images: []attachment{att},
 	}
 	if qm.images[0].savedPath != "/tmp/test.jpg" {
 		t.Errorf("savedPath not propagated: got %q", qm.images[0].savedPath)

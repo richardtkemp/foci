@@ -145,8 +145,8 @@ func TestSummaryTool_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result != "This is a Go hello world program." {
-		t.Errorf("result = %q, want %q", result, "This is a Go hello world program.")
+	if result.Text != "This is a Go hello world program." {
+		t.Errorf("result = %q, want %q", result.Text, "This is a Go hello world program.")
 	}
 
 	// Verify the request sent to the API
