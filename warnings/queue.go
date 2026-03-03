@@ -1,4 +1,8 @@
-package agent
+// Package warnings provides self-contained warning collection and dispatch.
+//
+// Queue collects log warnings and errors for injection into agent turns.
+// Dispatcher handles rate-limited proactive warning delivery.
+package warnings
 
 import (
 	"fmt"
@@ -26,21 +30,21 @@ func NormalizeWarning(msg string) string {
 
 // warningBucket tracks rate-limiting state for one unique warning key.
 type warningBucket struct {
-	windowStart        time.Time
-	allowed            int // messages passed through in this window
+	windowStart          time.Time
+	allowed              int // messages passed through in this window
 	suppressedSinceDrain int // suppressed count since last Drain()
-	component          string // for summary messages
-	level              string
+	component            string // for summary messages
+	level                string
 }
 
-// WarningQueue collects log warnings and errors for injection into agent turns.
+// Queue collects log warnings and errors for injection into agent turns.
 // Thread-safe: warnings may be pushed from any goroutine and are drained
 // by the agent loop before each turn.
 //
 // When maxPerWindow > 0, repeated identical warnings (after normalization) are
 // suppressed within a time window. Drain() appends summary lines for suppressed
 // messages.
-type WarningQueue struct {
+type Queue struct {
 	mu             sync.Mutex
 	warnings       []string
 	maxSize        int // drop oldest if exceeded (default 50)
@@ -50,10 +54,10 @@ type WarningQueue struct {
 	nowFunc        func() time.Time // for deterministic testing
 }
 
-// NewWarningQueue creates a warning queue with optional rate-limiting.
+// NewQueue creates a warning queue with optional rate-limiting.
 // Set maxPerWindow <= 0 to disable rate-limiting (all warnings pass through).
-func NewWarningQueue(maxPerWindow int, windowDuration time.Duration) *WarningQueue {
-	return &WarningQueue{
+func NewQueue(maxPerWindow int, windowDuration time.Duration) *Queue {
+	return &Queue{
 		maxSize:        50,
 		maxPerWindow:   maxPerWindow,
 		windowDuration: windowDuration,
@@ -63,7 +67,7 @@ func NewWarningQueue(maxPerWindow int, windowDuration time.Duration) *WarningQue
 }
 
 // Push adds a warning to the queue, subject to rate-limiting.
-func (q *WarningQueue) Push(level, component, msg string) {
+func (q *Queue) Push(level, component, msg string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -81,7 +85,7 @@ func (q *WarningQueue) Push(level, component, msg string) {
 	if !exists || now.Sub(b.windowStart) >= q.windowDuration {
 		// Flush summary for expiring bucket before resetting
 		if exists && b.suppressedSinceDrain > 0 {
-			dur := formatDuration(now.Sub(b.windowStart))
+			dur := FormatDuration(now.Sub(b.windowStart))
 			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
 				b.level, b.component, b.suppressedSinceDrain, dur)
 			q.warnings = append(q.warnings, summary)
@@ -108,7 +112,7 @@ func (q *WarningQueue) Push(level, component, msg string) {
 }
 
 // pushLocked appends a formatted warning (caller must hold mu).
-func (q *WarningQueue) pushLocked(level, component, msg string) {
+func (q *Queue) pushLocked(level, component, msg string) {
 	entry := fmt.Sprintf("[%s] [%s] %s", level, component, msg)
 	q.warnings = append(q.warnings, entry)
 
@@ -120,7 +124,7 @@ func (q *WarningQueue) pushLocked(level, component, msg string) {
 // Drain returns all queued warnings and clears the queue.
 // For any rate-limited keys with suppressed messages, a summary line is appended.
 // Expired buckets are pruned to prevent unbounded growth.
-func (q *WarningQueue) Drain() []string {
+func (q *Queue) Drain() []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -128,7 +132,7 @@ func (q *WarningQueue) Drain() []string {
 	now := q.nowFunc()
 	for key, b := range q.buckets {
 		if b.suppressedSinceDrain > 0 {
-			dur := formatDuration(now.Sub(b.windowStart))
+			dur := FormatDuration(now.Sub(b.windowStart))
 			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
 				b.level, b.component, b.suppressedSinceDrain, dur)
 			q.warnings = append(q.warnings, summary)
@@ -151,7 +155,7 @@ func (q *WarningQueue) Drain() []string {
 // Pending returns true if there are queued warnings or suppressed warnings
 // that would produce summary lines on Drain(). Used by proactive dispatch
 // to check without draining.
-func (q *WarningQueue) Pending() bool {
+func (q *Queue) Pending() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.warnings) > 0 {
@@ -166,14 +170,14 @@ func (q *WarningQueue) Pending() bool {
 }
 
 // Len returns the number of queued warnings.
-func (q *WarningQueue) Len() int {
+func (q *Queue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.warnings)
 }
 
-// formatDuration returns a human-readable duration string.
-func formatDuration(d time.Duration) string {
+// FormatDuration returns a human-readable duration string.
+func FormatDuration(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}

@@ -119,11 +119,14 @@ main
  ├── compaction    → anthropic, prompts, session, log
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
  ├── command       → table, provision
- ├── agent         → anthropic, compaction, session, tools, workspace, log
+ ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
+ ├── warnings      → log (leaf — warning queue and proactive dispatch)
+ ├── agent         → anthropic, compaction, mana, warnings, session, tools, workspace, log
+ ├── keepalive     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
  └── telegram      → agent, command, log, table, voice
 ```
 
-No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`.
+No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`. `keepalive` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`, `IsValidBotToken`, `IsValidUserID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`).
 
@@ -448,7 +451,7 @@ exec subprocess                       foci process
 
 Background goroutine that checks the RSS of the tmux server process at configurable intervals. Three thresholds (warn, critical, kill) fire Telegram notifications and, at the kill threshold, run `tmux kill-server` and call `ClearAll()` on all tmux tool instances. Notifications use dedup — same threshold level won't re-fire until memory drops below it or tmux is killed.
 
-Wired in `main.go` after agent setup. Notification callback sends to agents whose `inject_agent_warnings` is false (agents with injection see warnings via their WarningQueue — proactively dispatched as independent agent turns via the keepalive runner's `maybeWarningDispatch`). Cleanup callback calls `tmuxClearAll` on each agent instance (stored on `agentInstance` struct).
+Wired in `main.go` after agent setup. Notification callback sends to agents whose `inject_agent_warnings` is false (agents with injection see warnings via their `warnings.Queue` — proactively dispatched as independent agent turns via `warnings.Dispatcher`). Cleanup callback calls `tmuxClearAll` on each agent instance (stored on `agentInstance` struct).
 
 ### System Memory Guard (`resources/memory_guard.go`)
 
@@ -714,16 +717,16 @@ Memory formation and consolidation run in the keepalive timer loop (30s ticks):
 5. Fire branch: `branchFn("consolidation", promptText, true)`
 6. On completion: persist timestamp to state store
 
-**Proactive warning dispatch** (`maybeWarningDispatch`):
-1. Check `warningQueue != nil` and `warningDispatchFn != nil` — skip if no injection configured
-2. Check `warningQueue.Pending()` — skip if no warnings
-3. Check `warningDispatching` guard — skip if dispatch in flight
-4. Determine rate limit interval: call `lastUserMessageTimeFn()`, if within `warningActivityThreshold` → use active interval, else → inactive interval
+**Proactive warning dispatch** (`warnings.Dispatcher.MaybeFire`):
+1. Check `queue != nil` and `dispatchFn != nil` — skip if no injection configured
+2. Check `queue.Pending()` — skip if no warnings
+3. Check `dispatching` guard — skip if dispatch in flight
+4. Determine rate limit interval: call `lastUserMessageTimeFn()`, if within `activityThreshold` → use active interval, else → inactive interval
 5. Check `sinceLastDispatch < interval` — skip if too soon
-6. Drain warnings, format as `[proactive system warnings]\n- ...\n- ...`
-7. Dispatch in goroutine: `warningDispatchFn(text)`, clear `warningDispatching` on return
+6. Drain warnings, format as `- ...\n- ...`, wrap via `formatFn` (wired to `prompts.FormatInjectedMessage`)
+7. Dispatch in goroutine: `dispatchFn(text)`, clear `dispatching` on return
 
-Warnings are only delivered via this proactive dispatch path — they always fire as independent agent turns rather than being bundled into user messages. This ensures the agent processes and responds to warnings before handling the next user message.
+The `warnings.Dispatcher` is created in `main.go` and injected into `keepalive.RunnerConfig`. The keepalive timer loop calls `dispatcher.MaybeFire()` each tick. Warnings are only delivered via this proactive dispatch path — they always fire as independent agent turns rather than being bundled into user messages.
 
 ## Compaction (`compaction/compact.go`)
 
@@ -740,7 +743,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 **Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone_current, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
 
-**Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this via `maybeWarningDispatch()` on the next keepalive tick and can gracefully conclude rather than hitting the context limit unexpectedly.
+**Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this via `warnings.Dispatcher.MaybeFire()` on the next keepalive tick and can gracefully conclude rather than hitting the context limit unexpectedly.
 
 
 **Branch compaction:** When `Replace()` is called on a branch session (e.g., during compaction), it preserves the `branch_meta` header with `branch_point=0`. The compacted messages are self-contained (the summary includes parent context), so subsequent `LoadFull()` loads `parent[:0] + compacted_msgs` = just the compacted messages.
