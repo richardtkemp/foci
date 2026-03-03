@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"foci/memory"
@@ -12,14 +11,16 @@ import (
 
 // NewMemorySearchTool creates the memory_search tool backed by one or more search backends.
 // backends maps backend names (e.g. "fts5", "bleve") to their Searcher implementation.
+// order is the config-specified backend order — the first entry is the default.
 // If only one backend is configured, the "backend" parameter is hidden from the tool schema.
-func NewMemorySearchTool(backends map[string]memory.Searcher) *Tool {
-	// Determine the sorted list of backend names for deterministic enum order
-	names := make([]string, 0, len(backends))
-	for name := range backends {
-		names = append(names, name)
+func NewMemorySearchTool(backends map[string]memory.Searcher, order []string) *Tool {
+	// Use config order; only include names that are actually in the backends map.
+	names := make([]string, 0, len(order))
+	for _, n := range order {
+		if _, ok := backends[n]; ok {
+			names = append(names, n)
+		}
 	}
-	sort.Strings(names)
 
 	// Build the JSON schema dynamically
 	schema := buildMemorySearchSchema(names)

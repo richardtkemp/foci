@@ -1605,7 +1605,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Memory tools (shared stores, registered per-agent)
 	if len(p.memBackends) > 0 {
-		registry.Register(tools.NewMemorySearchTool(p.memBackends))
+		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.cfg.Memory.SearchBackends))
 	}
 	if p.scratchpadStore != nil {
 		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))

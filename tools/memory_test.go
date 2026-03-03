@@ -28,7 +28,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 	t.Cleanup(func() { idx.Close() })
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	return NewMemorySearchTool(backends), memDir
+	return NewMemorySearchTool(backends, []string{"fts5"}), memDir
 }
 
 func TestMemorySearch(t *testing.T) {
@@ -46,7 +46,7 @@ func TestMemorySearch(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool2 := NewMemorySearchTool(backends)
+	tool2 := NewMemorySearchTool(backends, []string{"fts5"})
 	params, _ := json.Marshal(map[string]string{"query": "buy"})
 
 	result, err := tool2.Execute(context.Background(), params)
@@ -77,7 +77,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends)
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
 	params, _ := json.Marshal(map[string]string{"query": "xyzzy"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -115,7 +115,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends)
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
 	params, _ := json.Marshal(map[string]string{"query": "weather"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -145,7 +145,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends)
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
 
 	// Test with sort=newest
 	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "newest"})
@@ -218,7 +218,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 		"fts5":  fts5Idx,
 		"bleve": bleveIdx,
 	}
-	tool := NewMemorySearchTool(backends)
+	tool := NewMemorySearchTool(backends, []string{"fts5", "bleve"})
 
 	// Tool schema should include "backend" parameter when multiple backends
 	schemaStr := string(tool.Parameters)
@@ -273,7 +273,7 @@ func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
 
 	// Single backend — schema should NOT include "backend" parameter
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends)
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
 
 	schemaStr := string(tool.Parameters)
 	if strings.Contains(schemaStr, "backend") {
