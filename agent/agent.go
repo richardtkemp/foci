@@ -118,6 +118,7 @@ type Agent struct {
 	TurnLockWarnThreshold       time.Duration                   // warn if turn lock wait exceeds this (default 3m)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
+	ManaGoodFunc                func(float64, time.Time) bool   // returns true if mana is above invest threshold; nil = no indicator
 	ServerTools                 []anthropic.ToolDef             // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
@@ -131,6 +132,7 @@ type Agent struct {
 	manaCacheMu     sync.Mutex
 	manaCached      string
 	manaResetCached string
+	manaGoodCached  bool
 	manaCacheTime   time.Time
 }
 
@@ -360,15 +362,16 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 // manaString returns a cached mana percentage string (e.g. "75%").
 // Returns empty string if UsageClient is nil or on error.
 func (a *Agent) manaString() string {
-	mana, _ := a.manaAndReset()
+	mana, _, _ := a.manaAndReset()
 	return mana
 }
 
-// manaAndReset returns cached mana percentage and reset time strings.
-// Returns empty strings if UsageClient is nil or on error.
-func (a *Agent) manaAndReset() (mana, reset string) {
+// manaAndReset returns cached mana percentage, reset time strings, and whether
+// mana is "good" (above invest threshold). Returns empty strings and false if
+// UsageClient is nil or on error.
+func (a *Agent) manaAndReset() (mana, reset string, good bool) {
 	if a.UsageClient == nil {
-		return "", ""
+		return "", "", false
 	}
 
 	a.manaCacheMu.Lock()
@@ -376,7 +379,7 @@ func (a *Agent) manaAndReset() (mana, reset string) {
 
 	// Cache for 5 minutes
 	if time.Since(a.manaCacheTime) < 5*time.Minute && a.manaCached != "" {
-		return a.manaCached, a.manaResetCached
+		return a.manaCached, a.manaResetCached, a.manaGoodCached
 	}
 
 	usage, err := a.UsageClient.GetUsage(context.Background())
@@ -385,15 +388,35 @@ func (a *Agent) manaAndReset() (mana, reset string) {
 		// Return stale values only if cache is recent; otherwise return empty
 		// to avoid displaying dangerously outdated mana readings.
 		if time.Since(a.manaCacheTime) > 10*time.Minute {
-			return "", ""
+			return "", "", false
 		}
-		return a.manaCached, a.manaResetCached
+		return a.manaCached, a.manaResetCached, a.manaGoodCached
 	}
 
 	a.manaCached = anthropic.FormatMana(usage)
 	a.manaResetCached = anthropic.FormatManaReset(usage)
+	a.manaGoodCached = a.computeManaGood(usage)
 	a.manaCacheTime = time.Now()
-	return a.manaCached, a.manaResetCached
+	return a.manaCached, a.manaResetCached, a.manaGoodCached
+}
+
+// computeManaGood evaluates whether current mana is above the invest threshold.
+func (a *Agent) computeManaGood(usage *anthropic.UsageResponse) bool {
+	if a.ManaGoodFunc == nil {
+		return false
+	}
+	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
+		return false
+	}
+	mana := 100 - *usage.FiveHour.Utilization
+	if mana < 0 {
+		mana = 0
+	}
+	var resetsAt time.Time
+	if usage.FiveHour.ResetsAt != nil {
+		resetsAt, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
+	}
+	return a.ManaGoodFunc(mana, resetsAt)
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {
@@ -453,7 +476,7 @@ func parseMetaTime(text string) (time.Time, bool) {
 }
 
 // buildMetaPrefix creates the metadata line prepended to user messages.
-func buildMetaPrefix(now time.Time, model string, mana string, sm *sessionMeta) string {
+func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm *sessionMeta) string {
 	gap := "none"
 	if !sm.lastMessageTime.IsZero() {
 		gap = formatGap(now.Sub(sm.lastMessageTime))
@@ -466,7 +489,11 @@ func buildMetaPrefix(now time.Time, model string, mana string, sm *sessionMeta) 
 
 	manaFlag := ""
 	if mana != "" {
-		manaFlag = " mana=" + mana
+		indicator := "🔴"
+		if manaGood {
+			indicator = "🟢"
+		}
+		manaFlag = " mana=" + mana + " " + indicator
 	}
 
 	if sm.prevCost == 0 && sm.prevInput == 0 {
@@ -869,7 +896,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	// Build metadata prefix and prepend to user message
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	mana, manaReset := a.manaAndReset()
+	mana, manaReset, manaGood := a.manaAndReset()
 
 	// Check mana thresholds and notify user for active conversations only
 	// (not keepalives or scheduled wakes)
@@ -894,7 +921,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 	}
 
-	metaPrefix := buildMetaPrefix(now, turnModel, mana, sm)
+	metaPrefix := buildMetaPrefix(now, turnModel, mana, manaGood, sm)
 	reminderBlock := a.collectReminders()
 	msgBody := manaRestoreNote + imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
