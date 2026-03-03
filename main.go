@@ -1623,6 +1623,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Compactor:                   compactor,
 		AsyncNotifier:               notifier,
 		Reminders:                   p.reminderStore,
+		DefaultSessionKey:           defaultSessionKey,
 		AgentID:                     acfg.ID,
 		Model:                       acfg.Model,
 		ExtraSystemBlocks:           extraSystemBlocks,

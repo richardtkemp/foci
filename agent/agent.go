@@ -123,6 +123,7 @@ type Agent struct {
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 	ManaInvestInterval          time.Duration                   // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                 []anthropic.ToolDef             // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
+	DefaultSessionKey           func() string                   // returns the main/default session key; reminders only inject into this session
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu   sync.Mutex
@@ -772,8 +773,14 @@ func looksLikeYAML(trimmed string) bool {
 }
 
 // collectReminders returns due reminders formatted for injection into the user message.
+// Reminders only surface on the default/main session to avoid leaking into branches.
 // Returns empty string if no reminders are due or the store is nil.
-func (a *Agent) collectReminders() string {
+func (a *Agent) collectReminders(sessionKey string) string {
+	if a.DefaultSessionKey != nil {
+		if dsk := a.DefaultSessionKey(); dsk != "" && dsk != sessionKey {
+			return ""
+		}
+	}
 	if a.Reminders == nil {
 		return ""
 	}
@@ -929,7 +936,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 
 	metaPrefix := buildMetaPrefix(now, turnModel, mana, manaGood, sm)
-	reminderBlock := a.collectReminders()
+	reminderBlock := a.collectReminders(sessionKey)
 	msgBody := manaRestoreNote + imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && isUserTrigger(trigger) {
