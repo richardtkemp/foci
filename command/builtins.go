@@ -788,6 +788,7 @@ type PromptInfo struct {
 	Label    string // e.g. "compaction_summary"
 	Path     string // resolved file path, or "" if inline/default/disabled
 	Inline   string // inline value (for handoff_msg, braindead_prompt)
+	Filename string // default prompt filename (e.g. "keepalive.md")
 	Exists   bool   // whether the file exists on disk (only meaningful when Path != "")
 	Default  bool   // true if resolved text matches embedded default
 	Disabled bool   // true if explicitly set to "none"
@@ -806,6 +807,7 @@ type PromptsData struct {
 	Prompts             []PromptInfo
 	PromptDirs          []string           // directories scanned
 	Files               []PromptFile       // files found on disk
+	KnownFilenames      map[string]bool    // recognised prompt filenames (embedded + first-run)
 	WorkspacePromptsDir string             // {workspace}/prompts/ — target for reinstall
 	EmbeddedPrompts     map[string]string  // filename → embedded text (for reinstall)
 	ResolvedTexts       map[string]string  // label → resolved text (for diff)
@@ -831,7 +833,7 @@ func NewPromptsCommand(deps PromptsCmdDeps) *Command {
 			parts := strings.Fields(args)
 
 			if len(parts) == 0 {
-				return promptsDisplay(data), nil
+				return promptsDisplay(ctx, data), nil
 			}
 
 			switch parts[0] {
@@ -849,61 +851,95 @@ func NewPromptsCommand(deps PromptsCmdDeps) *Command {
 	}
 }
 
-// promptsDisplay renders the existing /prompts output (no subcommand).
-func promptsDisplay(data PromptsData) string {
-	var sb strings.Builder
-
-	sb.WriteString("```\n")
-	fmt.Fprintf(&sb, "Prompts (agent: %s):\n", data.AgentID)
-
-	maxLabel := 0
-	for _, p := range data.Prompts {
-		if len(p.Label) > maxLabel {
-			maxLabel = len(p.Label)
-		}
+// relPath returns path relative to the current working directory.
+// Falls back to the absolute path if the relative form starts with "..".
+func relPath(path string) string {
+	pwd, err := os.Getwd()
+	if err != nil {
+		return path
 	}
+	rel, err := filepath.Rel(pwd, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return rel
+}
+
+// promptsDisplay renders the /prompts output (no subcommand).
+func promptsDisplay(ctx context.Context, data PromptsData) string {
+	var sb strings.Builder
+	width := displayWidth(ctx)
+
+	// Part 1 — Configured prompts table
+	fmt.Fprintf(&sb, "Prompts (agent: %s)\n\n", data.AgentID)
+
+	cols := []table.Column{
+		{Header: ""},
+		{Header: "Prompt"},
+		{Header: "Location"},
+	}
+	var rows [][]string
 	for _, p := range data.Prompts {
+		var emoji, location string
 		switch {
 		case p.Disabled:
-			fmt.Fprintf(&sb, "  %-*s  disabled\n", maxLabel, p.Label)
+			emoji = "⛔"
+			location = "disabled"
 		case p.Inline != "":
 			tag := "default"
 			if !p.Default {
 				tag = "custom"
+				emoji = "✏️"
+			} else {
+				emoji = "✅"
 			}
-			fmt.Fprintf(&sb, "  %-*s  [%s inline: %d chars]\n", maxLabel, p.Label, tag, len(p.Inline))
+			location = fmt.Sprintf("[%s inline: %d chars]", tag, len(p.Inline))
 		case p.Path != "" && p.Exists:
-			tag := "default"
-			if !p.Default {
-				tag = "custom"
+			rel := relPath(p.Path)
+			if p.Default {
+				emoji = "✅"
+			} else {
+				emoji = "✏️"
 			}
-			fmt.Fprintf(&sb, "  %-*s  %s  [%s]\n", maxLabel, p.Label, p.Path, tag)
+			// Omit filename when it matches the default
+			if p.Filename != "" && filepath.Base(p.Path) == p.Filename {
+				location = filepath.Dir(rel) + "/"
+			} else {
+				location = rel
+			}
 		case p.Path != "" && !p.Exists:
-			fmt.Fprintf(&sb, "  %-*s  %s  [not found]\n", maxLabel, p.Label, p.Path)
+			emoji = "❌"
+			location = relPath(p.Path) + " [not found]"
 		default:
-			fmt.Fprintf(&sb, "  %-*s  [default]\n", maxLabel, p.Label)
+			emoji = "✅"
+			location = "[default]"
+		}
+		rows = append(rows, []string{emoji, p.Label, location})
+	}
+
+	sb.WriteString("```\n")
+	sb.WriteString(table.FormatWidth(cols, rows, width))
+	sb.WriteString("\n```")
+
+	// Part 2 — Unrecognised files
+	var unrecognised []PromptFile
+	for _, f := range data.Files {
+		if !data.KnownFilenames[f.Name] {
+			unrecognised = append(unrecognised, f)
 		}
 	}
-	sb.WriteString("```")
-
-	if len(data.Files) > 0 {
-		sb.WriteString("\n\n```\n")
-		sb.WriteString("Prompt files on disk:\n")
-		currentDir := ""
-		for _, f := range data.Files {
-			if f.Dir != currentDir {
-				currentDir = f.Dir
-				fmt.Fprintf(&sb, "  %s/\n", f.Dir)
-			}
-			tag := "[cron/other]"
-			if f.Configured {
-				tag = "[configured]"
-			}
-			fmt.Fprintf(&sb, "    %-36s %s\n", f.Name, tag)
+	if len(unrecognised) > 0 {
+		sb.WriteString("\n\nUnrecognised prompt files\n\n```\n")
+		fileCols := []table.Column{
+			{Header: "Dir"},
+			{Header: "File"},
 		}
-		sb.WriteString("```")
-	} else if len(data.PromptDirs) > 0 {
-		sb.WriteString("\n\nNo prompt files found on disk.")
+		var fileRows [][]string
+		for _, f := range unrecognised {
+			fileRows = append(fileRows, []string{relPath(f.Dir) + "/", f.Name})
+		}
+		sb.WriteString(table.FormatWidth(fileCols, fileRows, width))
+		sb.WriteString("\n```")
 	}
 
 	return sb.String()

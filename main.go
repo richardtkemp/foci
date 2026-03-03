@@ -2106,11 +2106,18 @@ func setupAgent(p setupParams) *agentInstance {
 				}
 			}
 
+			knownFilenames := make(map[string]bool, len(embedded)+1)
+			for name := range embedded {
+				knownFilenames[name] = true
+			}
+			knownFilenames["first-run.md"] = true
+
 			return command.PromptsData{
 				AgentID:             acfg.ID,
 				Prompts:             allPrompts,
 				PromptDirs:          promptDirs,
 				Files:               files,
+				KnownFilenames:      knownFilenames,
 				WorkspacePromptsDir: filepath.Join(acfg.Workspace, "prompts"),
 				EmbeddedPrompts:     embedded,
 				ResolvedTexts:       resolvedTexts,
@@ -3649,7 +3656,7 @@ func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string,
 // the resolved text against the embedded default via md5 to detect customisation.
 func resolvePromptInfo(label, configPath, filename, embeddedDefault string, searchDirs []string) command.PromptInfo {
 	if configPath == "none" {
-		return command.PromptInfo{Label: label, Disabled: true}
+		return command.PromptInfo{Label: label, Filename: filename, Disabled: true}
 	}
 
 	resolved := prompts.ResolvePrompt(configPath, filename, embeddedDefault, searchDirs...)
@@ -3670,11 +3677,11 @@ func resolvePromptInfo(label, configPath, filename, embeddedDefault string, sear
 
 	if path == "" || path == "default" {
 		// Using embedded default, no file on disk
-		return command.PromptInfo{Label: label, Default: isDefault}
+		return command.PromptInfo{Label: label, Filename: filename, Default: isDefault}
 	}
 
 	_, err := os.Stat(path)
-	return command.PromptInfo{Label: label, Path: path, Exists: err == nil, Default: isDefault}
+	return command.PromptInfo{Label: label, Path: path, Filename: filename, Exists: err == nil, Default: isDefault}
 }
 
 // inlinePromptInfo builds a PromptInfo for an inline prompt value,

@@ -705,17 +705,20 @@ func TestPromptsCommand(t *testing.T) {
 			return PromptsData{
 				AgentID: "clutch",
 				Prompts: []PromptInfo{
-					{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Exists: true, Default: false},
-					{Label: "keepalive", Default: true},
+					{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Filename: "compaction-summary.md", Exists: true, Default: false},
+					{Label: "keepalive", Filename: "keepalive.md", Default: true},
 					{Label: "handoff_msg", Inline: "You are picking up a compacted session.", Default: false},
-					{Label: "branch_orientation", Path: "/missing/file.md", Exists: false},
-					{Label: "background", Disabled: true},
+					{Label: "branch_orientation", Path: "/missing/file.md", Filename: "branch-orientation.md", Exists: false},
+					{Label: "background", Filename: "background.md", Disabled: true},
 					{Label: "braindead_warning", Inline: "Stop!", Default: true},
 				},
 				PromptDirs: []string{"/home/foci/prompts"},
 				Files: []PromptFile{
 					{Dir: "/home/foci/prompts", Name: "compaction.md", Configured: true},
 					{Dir: "/home/foci/prompts", Name: "daily-review.md", Configured: false},
+				},
+				KnownFilenames: map[string]bool{
+					"compaction.md": true,
 				},
 			}
 		},
@@ -730,31 +733,39 @@ func TestPromptsCommand(t *testing.T) {
 		"```",
 		"agent: clutch",
 		"compaction_summary",
-		"/home/foci/prompts/compaction.md",
-		"[custom]",
+		"✏️",  // custom file
 		"keepalive",
+		"✅",  // default
 		"[default]",
 		"handoff_msg",
 		"[custom inline: 39 chars]",
 		"branch_orientation",
+		"❌",  // not found
 		"[not found]",
 		"background",
+		"⛔",  // disabled
 		"disabled",
 		"braindead_warning",
 		"[default inline: 5 chars]",
-		"Prompt files on disk:",
-		"/home/foci/prompts/",
-		"compaction.md",
-		"[configured]",
+		"─",  // table separator
+		"Unrecognised prompt files",
 		"daily-review.md",
-		"[cron/other]",
 	}
 	for _, check := range checks {
 		if !strings.Contains(result, check) {
 			t.Errorf("missing %q in:\n%s", check, result)
 		}
 	}
-	// Should have 2 separate code blocks (configured prompts + files on disk)
+	// Known filename should be filtered out of unrecognised
+	if strings.Contains(result, "Unrecognised") && strings.Contains(result, "compaction.md") {
+		// compaction.md is known, so it should NOT appear in the unrecognised section
+		// But it could appear in the configured prompts path — check it's not in the unrecognised section specifically
+		parts := strings.SplitN(result, "Unrecognised", 2)
+		if len(parts) == 2 && strings.Contains(parts[1], "compaction.md") {
+			t.Errorf("known filename compaction.md should not appear in unrecognised section:\n%s", result)
+		}
+	}
+	// Should have 2 separate code blocks (configured prompts + unrecognised files)
 	if strings.Count(result, "```") != 4 { // 2 opening + 2 closing
 		t.Errorf("expected 2 code blocks (4 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
 	}
@@ -766,8 +777,9 @@ func TestPromptsCommandEmpty(t *testing.T) {
 			return PromptsData{
 				AgentID: "test",
 				Prompts: []PromptInfo{
-					{Label: "branch_orientation", Default: true},
+					{Label: "branch_orientation", Filename: "branch-orientation.md", Default: true},
 				},
+				KnownFilenames: map[string]bool{},
 			}
 		},
 	})
@@ -779,9 +791,15 @@ func TestPromptsCommandEmpty(t *testing.T) {
 	if !strings.Contains(result, "[default]") {
 		t.Errorf("expected [default] in:\n%s", result)
 	}
-	// No files section when no dirs scanned
-	if strings.Contains(result, "Prompt files on disk") {
-		t.Errorf("should not show files section when no dirs:\n%s", result)
+	if !strings.Contains(result, "✅") {
+		t.Errorf("expected ✅ emoji in:\n%s", result)
+	}
+	if !strings.Contains(result, "─") {
+		t.Errorf("expected table separator in:\n%s", result)
+	}
+	// No unrecognised files section when no files
+	if strings.Contains(result, "Unrecognised") {
+		t.Errorf("should not show unrecognised section when no files:\n%s", result)
 	}
 	// Only 1 code block (configured prompts, no files section)
 	if strings.Count(result, "```") != 2 {
@@ -793,10 +811,11 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
-				AgentID:    "test",
-				Prompts:    []PromptInfo{{Label: "branch_orientation", Default: true}},
-				PromptDirs: []string{"/some/dir"},
-				Files:      nil,
+				AgentID:        "test",
+				Prompts:        []PromptInfo{{Label: "branch_orientation", Filename: "branch-orientation.md", Default: true}},
+				PromptDirs:     []string{"/some/dir"},
+				Files:          nil,
+				KnownFilenames: map[string]bool{},
 			}
 		},
 	})
@@ -805,8 +824,53 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "No prompt files found") {
-		t.Errorf("expected 'No prompt files found' in:\n%s", result)
+	// No unrecognised section when no files
+	if strings.Contains(result, "Unrecognised") {
+		t.Errorf("should not show unrecognised section when no files:\n%s", result)
+	}
+}
+
+func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID: "test",
+				Prompts: []PromptInfo{{Label: "keepalive", Filename: "keepalive.md", Default: true}},
+				PromptDirs: []string{"/ws/prompts"},
+				Files: []PromptFile{
+					{Dir: "/ws/prompts", Name: "keepalive.md", Configured: true},
+					{Dir: "/ws/prompts", Name: "first-run.md", Configured: false},
+					{Dir: "/ws/prompts", Name: "custom-cron.md", Configured: false},
+				},
+				KnownFilenames: map[string]bool{
+					"keepalive.md":  true,
+					"first-run.md":  true,
+				},
+			}
+		},
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Only custom-cron.md should appear in unrecognised
+	if !strings.Contains(result, "custom-cron.md") {
+		t.Errorf("expected custom-cron.md in unrecognised section:\n%s", result)
+	}
+	if !strings.Contains(result, "Unrecognised") {
+		t.Errorf("expected Unrecognised header:\n%s", result)
+	}
+	// Known filenames should NOT appear in unrecognised section
+	parts := strings.SplitN(result, "Unrecognised", 2)
+	if len(parts) == 2 {
+		unrecSection := parts[1]
+		if strings.Contains(unrecSection, "keepalive.md") {
+			t.Errorf("keepalive.md should not appear in unrecognised section:\n%s", result)
+		}
+		if strings.Contains(unrecSection, "first-run.md") {
+			t.Errorf("first-run.md should not appear in unrecognised section:\n%s", result)
+		}
 	}
 }
 
