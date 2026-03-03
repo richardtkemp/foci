@@ -42,6 +42,10 @@ Things like:
 
 Skills are shared. Your setup is yours. Keeping them apart means you can update skills without losing your notes, and share skills without leaking your infrastructure.
 
+## Quick Tip
+
+`spawn:explore` is a low-cost way to search or research without loading results into your main context. Good for "where is this?", "what does this look like?", or "find me examples of X" — the kind of thing you'd do with a scratch terminal.
+
 ---
 
 Add whatever helps you do your job. This is your cheat sheet.
