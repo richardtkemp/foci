@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,7 +15,7 @@ import (
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search"
-	"github.com/blevesearch/bleve/v2/search/highlight/format/html"
+	blevehtml "github.com/blevesearch/bleve/v2/search/highlight/format/html"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -129,7 +130,7 @@ func (b *BleveIndex) Reindex() error {
 			relPath, _ := filepath.Rel(sourceCfg.Dir, path)
 			docID := sourceName + ":" + relPath
 			doc := map[string]interface{}{
-				"content": string(data),
+				"content": html.UnescapeString(string(data)),
 				"path":    relPath,
 				"source":  sourceName,
 				"mtime":   float64(info.ModTime().Unix()),
@@ -159,7 +160,7 @@ func (b *BleveIndex) Search(query string, sortOrder string) ([]Result, error) {
 	req.Fields = []string{"path", "source", "mtime"}
 
 	// Highlight content field for snippets
-	req.Highlight = bleve.NewHighlightWithStyle(html.Name)
+	req.Highlight = bleve.NewHighlightWithStyle(blevehtml.Name)
 	req.Highlight.AddField("content")
 
 	switch sortOrder {
@@ -216,7 +217,7 @@ func buildSnippet(hit *search.DocumentMatch) string {
 		s := frags[0]
 		s = strings.ReplaceAll(s, "<mark>", ">")
 		s = strings.ReplaceAll(s, "</mark>", "<")
-		return s
+		return html.UnescapeString(s)
 	}
 	return ""
 }
