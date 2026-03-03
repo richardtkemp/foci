@@ -2118,6 +2118,8 @@ func setupAgent(p setupParams) *agentInstance {
 			ag.CompactionDebugFunc(sk, summary)
 		}
 		bootstrap.Reload()
+		// Reset cache baseline — compaction changed the prefix
+		ag.ResetCacheBaseline(sk)
 		return mc, nil
 	}))
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
