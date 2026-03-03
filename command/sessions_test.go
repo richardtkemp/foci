@@ -217,7 +217,7 @@ func TestSessionsNoArgsShowsUsage(t *testing.T) {
 func TestSessionsIndexWithResults(t *testing.T) {
 	now := time.Now().UTC()
 	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(sessionType, status string, showAll bool) ([]SessionIndexInfo, error) {
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		all := []SessionIndexInfo{
 			{SessionKey: "agent:bot:chat:123", CreatedAt: now, SessionType: "chat", Status: "active"},
 			{SessionKey: "agent:bot:spawn:spawn-456", CreatedAt: now.Add(-time.Hour), ParentSessionKey: "agent:bot:chat:123", SessionType: "spawn", Status: "active"},
@@ -225,10 +225,10 @@ func TestSessionsIndexWithResults(t *testing.T) {
 		}
 		var filtered []SessionIndexInfo
 		for _, e := range all {
-			if sessionType != "" && e.SessionType != sessionType {
+			if opts.TypeFilter != "" && e.SessionType != opts.TypeFilter {
 				continue
 			}
-			if status != "" && e.Status != status {
+			if opts.StatusFilter != "" && e.Status != opts.StatusFilter {
 				continue
 			}
 			filtered = append(filtered, e)
@@ -237,16 +237,25 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	}
 	cmd := NewSessionsCommand(deps)
 
-	// All entries
+	// Default (active only)
 	result, err := cmd.Execute(context.Background(), "index")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "3 sessions") {
-		t.Errorf("expected 3 sessions, got %q", result)
+	if !strings.Contains(result, "2 sessions") {
+		t.Errorf("expected 2 active sessions, got %q", result)
 	}
 	if !strings.Contains(result, "bot/chat:123") {
 		t.Errorf("expected chat session in output, got %q", result)
+	}
+
+	// All entries
+	result, err = cmd.Execute(context.Background(), "index all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "3 sessions") {
+		t.Errorf("expected 3 sessions with 'all', got %q", result)
 	}
 	if !strings.Contains(result, "spawn") {
 		t.Errorf("expected spawn type in output, got %q", result)
@@ -273,7 +282,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 
 func TestSessionsIndexEmpty(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(sessionType, status string, showAll bool) ([]SessionIndexInfo, error) {
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		return nil, nil
 	}
 	cmd := NewSessionsCommand(deps)
@@ -300,7 +309,7 @@ func TestSessionsIndexNotAvailable(t *testing.T) {
 
 func TestSessionsKeyboardIncludesIndex(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(string, string, bool) ([]SessionIndexInfo, error) { return nil, nil }
+	deps.IndexFn = func(SessionIndexOpts) ([]SessionIndexInfo, error) { return nil, nil }
 	cmd := NewSessionsCommand(deps)
 	opts := cmd.KeyboardOptions(context.Background())
 	found := false

@@ -30,6 +30,7 @@ const (
 	SessionStatusActive    SessionStatus = "active"
 	SessionStatusCompacted SessionStatus = "compacted"
 	SessionStatusCleared   SessionStatus = "cleared"
+	SessionStatusArchived  SessionStatus = "archived"
 )
 
 // SessionIndexEntry represents a row in the session_index table.

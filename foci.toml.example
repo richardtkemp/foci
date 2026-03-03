@@ -175,6 +175,7 @@ compaction_threshold = 0.8
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
 # branch_orientation_prompt = ""
+# archive_after = "168h"                  # gzip idle sessions after 7 days
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]

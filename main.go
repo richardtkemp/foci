@@ -733,11 +733,62 @@ func main() {
 					Status:           session.SessionStatusActive,
 				})
 			case session.SessionStatusCompacted:
-				sessionIndex.SetStatus(e.Key, session.SessionStatusCompacted)
+				// Session was compacted (Replace): the current file is still active,
+				// and the archive file is a new compacted entry.
+				if e.ArchivePath != "" {
+					// Derive archive key from file path
+					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
+					if err == nil {
+						archiveKey := strings.TrimSuffix(rel, ".jsonl")
+						archiveKey = strings.ReplaceAll(archiveKey, string(filepath.Separator), ":")
+						sessionIndex.Upsert(session.SessionIndexEntry{
+							SessionKey:       archiveKey,
+							FilePath:         e.ArchivePath,
+							CreatedAt:        time.Now().UTC(),
+							ParentSessionKey: e.Key,
+							SessionType:      e.Type,
+							Status:           session.SessionStatusCompacted,
+						})
+					}
+				}
+				// Keep the current session as active (don't change its status)
 			case session.SessionStatusCleared:
 				sessionIndex.SetStatus(e.Key, session.SessionStatusCleared)
 			}
 		})
+
+		// Start archive sweep goroutine
+		archiveAfter, err := time.ParseDuration(cfg.Sessions.ArchiveAfter)
+		if err != nil {
+			log.Warnf("main", "invalid sessions.archive_after %q: %v (archive sweep disabled)", cfg.Sessions.ArchiveAfter, err)
+		} else {
+			archiveStop := make(chan struct{})
+			archiveTicker := time.NewTicker(6 * time.Hour)
+			go func() {
+				// Run immediately on startup
+				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
+					log.Warnf("main", "archive sweep: %v", err)
+				} else if n > 0 {
+					log.Infof("main", "archive sweep: archived %d idle session(s)", n)
+				}
+				for {
+					select {
+					case <-archiveTicker.C:
+						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
+							log.Warnf("main", "archive sweep: %v", err)
+						} else if n > 0 {
+							log.Infof("main", "archive sweep: archived %d idle session(s)", n)
+						}
+					case <-archiveStop:
+						return
+					}
+				}
+			}()
+			defer func() {
+				archiveTicker.Stop()
+				close(archiveStop)
+			}()
+		}
 	}
 
 	// Shared: State persistence (JSON file in data dir)
@@ -2171,19 +2222,17 @@ func setupAgent(p setupParams) *agentInstance {
 			p.stateStore.Get("agent:"+acfg.ID+":default_chat", &chatID)
 			return chatID
 		},
-		IndexFn: func(sessionType, status string, showAll bool) ([]command.SessionIndexInfo, error) {
+		IndexFn: func(opts command.SessionIndexOpts) ([]command.SessionIndexInfo, error) {
 			if p.sessionIndex == nil {
 				return nil, fmt.Errorf("session index not available")
 			}
-			opts := session.QueryOptions{
-				SessionType: session.SessionType(sessionType),
-				Status:      session.SessionStatus(status),
+			qopts := session.QueryOptions{
+				SessionType: session.SessionType(opts.TypeFilter),
+				Status:      session.SessionStatus(opts.StatusFilter),
+				MaxAge:      opts.MaxAge,
 				Limit:       50,
 			}
-			if !showAll {
-				opts.MaxAge = 7 * 24 * time.Hour // default: show sessions active in last 7 days
-			}
-			entries, err := p.sessionIndex.Query(opts)
+			entries, err := p.sessionIndex.Query(qopts)
 			if err != nil {
 				return nil, err
 			}
