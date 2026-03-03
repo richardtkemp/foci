@@ -9,13 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"foci/anthropic"
 	"foci/log"
+	"foci/provider"
 )
 
 // SystemBlocksProvider returns the system prompt blocks (for full context mode).
 type SystemBlocksProvider interface {
-	SystemBlocks() []anthropic.SystemBlock
+	SystemBlocks() []provider.SystemBlock
 }
 
 // knownModels maps short names to full model IDs.
@@ -81,13 +81,15 @@ var spawnExploreAllowed = map[string]bool{
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
-	Client             *anthropic.Client
+	Client             provider.Client
 	Bootstrap          SystemBlocksProvider
 	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
 	Model              string                                   // parent's default model
 	MaxInherit         int                                      // semaphore size (from config)
+	MaxToolLoops       int                                      // max tool loops for raw/character spawns
+	ExploreMaxDepth    int                                      // max tool loops for explore spawns
 	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
 	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
 }
@@ -164,7 +166,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
+				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -175,12 +177,12 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return TextResult(result), nil
 
 			case "character":
-				var system []anthropic.SystemBlock
+				var system []provider.SystemBlock
 				if deps.Bootstrap != nil {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				result, err := spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
+				result, err := spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -192,11 +194,11 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				if full, ok := knownModels["haiku"]; ok {
 					exploreModel = full
 				}
-				system := []anthropic.SystemBlock{
+				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, deps.Client, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars)
+				result, err := spawnOneShot(ctx, deps.Client, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -215,12 +217,12 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 // spawnToolSet builds API tool definitions and a name→Tool map from the
 // registry, excluding any tools in the blacklist. Returns nil slices if
 // registry is nil.
-func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]anthropic.ToolDef, map[string]*Tool) {
+func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef, map[string]*Tool) {
 	if reg == nil {
 		return nil, nil
 	}
 	all := reg.All()
-	defs := make([]anthropic.ToolDef, 0, len(all))
+	defs := make([]provider.ToolDef, 0, len(all))
 	tools := make(map[string]*Tool, len(all))
 	for _, t := range all {
 		if blacklist[t.Name] {
@@ -229,18 +231,18 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]anthropic.ToolDef
 		if t.Name == "spawn" {
 			continue
 		}
-		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 		tools[t.Name] = t
 	}
 	return defs, tools
 }
 
-func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir string) ([]anthropic.ToolDef, map[string]*Tool) {
+func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir string) ([]provider.ToolDef, map[string]*Tool) {
 	if reg == nil {
 		return nil, nil
 	}
 	all := reg.All()
-	defs := make([]anthropic.ToolDef, 0, len(all))
+	defs := make([]provider.ToolDef, 0, len(all))
 	tools := make(map[string]*Tool, len(all))
 	for _, t := range all {
 		if blacklist[t.Name] {
@@ -249,7 +251,7 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 		if t.Name == "spawn" {
 			continue
 		}
-		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 		switch t.Name {
 		case "read":
 			tools[t.Name] = NewIsolatedReadTool(nil, baseDir)
@@ -269,8 +271,8 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 // spawnExploreToolSet builds a tool set for explore spawn mode.
 // It creates ls/find/grep tools fresh (not in the registry) and pulls
 // allowed tools from the registry via the explicit allowlist.
-func spawnExploreToolSet(reg *Registry) ([]anthropic.ToolDef, map[string]*Tool) {
-	defs := make([]anthropic.ToolDef, 0, 8)
+func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
+	defs := make([]provider.ToolDef, 0, 8)
 	tools := make(map[string]*Tool, 8)
 
 	// Create exploration tools (not in the main registry).
@@ -280,7 +282,7 @@ func spawnExploreToolSet(reg *Registry) ([]anthropic.ToolDef, map[string]*Tool) 
 	grepTool := NewGrepTool(grepBin, grepName)
 
 	for _, t := range []*Tool{lsTool, findTool, grepTool} {
-		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 		tools[t.Name] = t
 	}
 
@@ -288,7 +290,7 @@ func spawnExploreToolSet(reg *Registry) ([]anthropic.ToolDef, map[string]*Tool) 
 	if reg != nil {
 		for _, t := range reg.All() {
 			if spawnExploreAllowed[t.Name] {
-				defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+				defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 				tools[t.Name] = t
 			}
 		}
@@ -330,8 +332,6 @@ func formatBytes(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-const maxSpawnToolLoops = 25
-
 // spawnMaxResultChars is the threshold for writing oversize tool results
 // to a temp file instead of including them inline. Applied in spawnOneShot
 // to prevent large tool outputs from bloating the spawn's context window.
@@ -361,18 +361,18 @@ func spawnGuardResult(toolName, result string, limit int) string {
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
-func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration, toolDefs []anthropic.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int) (string, error) {
+func spawnOneShot(ctx context.Context, client provider.Client, model string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	log.Infof("spawn", "one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", model, len(system), len(toolDefs), len(prompt))
 
-	messages := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent(prompt)},
+	messages := []provider.Message{
+		{Role: "user", Content: provider.TextContent(prompt)},
 	}
 
-	for i := 0; i < maxSpawnToolLoops; i++ {
-		req := &anthropic.MessageRequest{
+	for i := 0; i < maxLoops; i++ {
+		req := &provider.MessageRequest{
 			Model:     model,
 			MaxTokens: 16384,
 			System:    system,
@@ -418,7 +418,7 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 
 		// If no tool use, return text.
 		if resp.StopReason != "tool_use" {
-			text := anthropic.TextOf(resp.Content)
+			text := provider.TextOf(resp.Content)
 			if text == "" {
 				return "(empty response)", nil
 			}
@@ -426,13 +426,13 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 		}
 
 		// Append assistant response.
-		messages = append(messages, anthropic.Message{
+		messages = append(messages, provider.Message{
 			Role:    "assistant",
 			Content: resp.Content,
 		})
 
 		// Execute tool calls.
-		var toolResults []anthropic.ContentBlock
+		var toolResults []provider.ContentBlock
 		for _, block := range resp.Content {
 			if block.Type != "tool_use" {
 				continue
@@ -442,7 +442,7 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 			}
 			tool, ok := tools[block.Name]
 			if !ok {
-				toolResults = append(toolResults, anthropic.ToolResultBlock(
+				toolResults = append(toolResults, provider.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 				))
 				continue
@@ -450,19 +450,19 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 			log.Debugf("spawn", "tool_use: %s", block.Name)
 			result, err := tool.Execute(callCtx, block.Input)
 			if err != nil {
-				toolResults = append(toolResults, anthropic.ToolResultBlock(
+				toolResults = append(toolResults, provider.ToolResultBlock(
 					block.ID, fmt.Sprintf("Error: %s", err), true,
 				))
 				continue
 			}
 			guarded := spawnGuardResult(block.Name, result.Text, maxResultChars)
-			toolResults = append(toolResults, anthropic.ToolResultBlock(
+			toolResults = append(toolResults, provider.ToolResultBlock(
 				block.ID, guarded, false,
 			))
 			toolResults = append(toolResults, result.ExtraBlocks...)
 		}
 
-		messages = append(messages, anthropic.Message{
+		messages = append(messages, provider.Message{
 			Role:    "user",
 			Content: toolResults,
 		})

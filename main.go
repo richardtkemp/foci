@@ -1818,14 +1818,16 @@ func setupAgent(p setupParams) *agentInstance {
 	// Uses lazy getter for agent since ag is assigned later in this function.
 	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
-		Client:     p.client,
-		Bootstrap:  bootstrap,
-		Registry:   registry,
-		Sessions:   &sessionBranchAdapter{store: p.sessions},
-		AgentID:    acfg.ID,
-		Model:      acfg.Model,
-		MaxInherit: resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
-		Notifier:   notifier,
+		Client:          p.client,
+		Bootstrap:       bootstrap,
+		Registry:        registry,
+		Sessions:        &sessionBranchAdapter{store: p.sessions},
+		AgentID:         acfg.ID,
+		Model:           acfg.Model,
+		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
+		MaxToolLoops:    acfg.MaxToolLoops,
+		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
+		Notifier:        notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
 			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
 		},
