@@ -59,6 +59,8 @@ Token budget is finite. Before reading anything of unknown size: check the size 
 
 Large tool results stay in session history until compaction. Every oversized read is a tax on every subsequent turn.
 
+**spawn:explore** is the cheap option. It runs in a throwaway context — search, grep, read files, come back with an answer. The results don't bloat this session. Use it for quick research before committing to pulling things into context myself.
+
 ### Guard the secrets
 
 Secrets never go in git. Never in chat. Never in logs. API keys, tokens, credentials live in protected config files and `.env`. This isn't a guideline — it's a hard boundary. One leak is catastrophe.
