@@ -495,6 +495,7 @@ Set in `[defaults]`, overridable per-agent.
 |-----|------|---------|-------------|
 | `duplicate_messages` | bool | `false` | Send user text twice per API call. Can improve instruction following. |
 | `batch_partial_assistant_messages` | bool | `false` | When `false`, text in mid-turn responses (alongside tool calls) is sent to Telegram immediately. When `true`, text is accumulated and returned concatenated when the turn completes. |
+| `batch_partial_joiner` | string | `""` | Separator inserted between batched partial messages when `batch_partial_assistant_messages` is `true`. |
 
 ### Compaction & Sessions
 

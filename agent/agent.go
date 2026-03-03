@@ -90,6 +90,7 @@ type Agent struct {
 	CacheBustAlert              CacheBustFunc                   // callback for cache bust alerts
 	DuplicateMessages           bool                            // send user text twice per API call (improves instruction following)
 	BatchPartialAssistantMessages bool                          // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
+	BatchPartialJoiner           string                         // separator between batched partial messages (default "")
 	MaxResultChars              int                             // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir           string                          // where to write large tool results
 	ModelAliases                map[string]string               // for resolving "haiku" → full model ID
@@ -1112,7 +1113,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			finalText := anthropic.TextOf(resp.Content)
 			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
 				if finalText != "" {
-					batchedText.WriteString("\n\n")
+					batchedText.WriteString(a.BatchPartialJoiner)
 					batchedText.WriteString(finalText)
 				}
 				return batchedText.String(), nil
@@ -1124,7 +1125,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		if intermediateText := anthropic.TextOf(resp.Content); intermediateText != "" {
 			if a.BatchPartialAssistantMessages {
 				if batchedText.Len() > 0 {
-					batchedText.WriteString("\n\n")
+					batchedText.WriteString(a.BatchPartialJoiner)
 				}
 				batchedText.WriteString(intermediateText)
 			} else {

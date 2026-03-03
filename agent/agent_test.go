@@ -3850,7 +3850,7 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	expected := "Step 1 done.\n\nStep 2 done.\n\nAll done!"
+	expected := "Step 1 done.Step 2 done.All done!"
 	if finalResp != expected {
 		t.Errorf("final response = %q, want %q", finalResp, expected)
 	}
