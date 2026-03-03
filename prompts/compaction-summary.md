@@ -1,1 +1,1 @@
-Provide a concise summary of the conversation so far, capturing key decisions and context. This summary will replace the conversation history.
+The purpose of this summary is to provide continuity — it will replace the full conversation history, so the next turn must be able to pick up exactly where this one left off. Summarise the conversation so far, capturing key decisions, current goals, open threads, and any context needed to continue seamlessly.

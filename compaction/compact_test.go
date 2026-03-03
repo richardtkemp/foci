@@ -478,7 +478,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	}
 
 	// Verify a fallback summary prompt was sent
-	if !strings.Contains(string(capturedBody), "concise summary") {
+	if !strings.Contains(string(capturedBody), "provide continuity") {
 		t.Errorf("API request body should contain fallback summary prompt")
 	}
 

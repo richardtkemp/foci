@@ -1621,7 +1621,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	compactionMockServer := func(turnCount *atomic.Int32, highTokenTurn int32) *httptest.Server {
 		return mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 			lastMsg := req.Messages[len(req.Messages)-1]
-			if strings.Contains(anthropic.TextOf(lastMsg.Content), "concise summary") {
+			if strings.Contains(anthropic.TextOf(lastMsg.Content), "provide continuity") {
 				return &anthropic.MessageResponse{
 					ID:         "msg_summary",
 					Type:       "message",

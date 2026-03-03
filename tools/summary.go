@@ -93,7 +93,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 		Model:     model,
 		MaxTokens: 4096,
 		System: []anthropic.SystemBlock{
-			{Type: "text", Text: "You are a file summarization assistant. Read the file content and respond to the user's prompt about it. Be concise and precise."},
+			{Type: "text", Text: "You are a file summarization assistant. Read the file content and respond to the user's prompt about it. Be concise and precise. Quote key sections word-for-word where accuracy matters (names, values, instructions, error messages) rather than paraphrasing."},
 		},
 		Messages: []anthropic.Message{
 			{
