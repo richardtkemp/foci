@@ -1103,7 +1103,10 @@ func TestAgentsCommandNoSession(t *testing.T) {
 }
 
 func TestCompactCommand(t *testing.T) {
-	cmd := NewCompactCommand(func(ctx context.Context) (int, error) {
+	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
+		if dryRun {
+			t.Error("expected dryRun=false for normal compact")
+		}
 		return 42, nil
 	})
 
@@ -1119,8 +1122,28 @@ func TestCompactCommand(t *testing.T) {
 	}
 }
 
+func TestCompactCommandDryRun(t *testing.T) {
+	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
+		if !dryRun {
+			t.Error("expected dryRun=true for dry-run compact")
+		}
+		return 42, nil
+	})
+
+	result, err := cmd.Execute(context.Background(), "dry-run")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Dry-run") {
+		t.Errorf("expected dry-run message in result: %q", result)
+	}
+	if !strings.Contains(result, "42 messages") {
+		t.Errorf("expected message count in result: %q", result)
+	}
+}
+
 func TestCompactCommandError(t *testing.T) {
-	cmd := NewCompactCommand(func(ctx context.Context) (int, error) {
+	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
 		return 0, fmt.Errorf("too few messages to compact (3)")
 	})
 

@@ -1782,15 +1782,20 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 
 // NewCompactCommand creates a /compact command that triggers manual session compaction.
 // compactFn performs the compaction and returns the old message count, or an error.
-func NewCompactCommand(compactFn func(ctx context.Context) (int, error)) *Command {
+// Pass "dry-run" as args to run the full pipeline without replacing the session.
+func NewCompactCommand(compactFn func(ctx context.Context, dryRun bool) (int, error)) *Command {
 	return &Command{
 		Name:        "compact",
 		Description: "Trigger manual context compaction",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			oldCount, err := compactFn(ctx)
+			dryRun := strings.TrimSpace(args) == "dry-run"
+			oldCount, err := compactFn(ctx, dryRun)
 			if err != nil {
 				return "", err
+			}
+			if dryRun {
+				return fmt.Sprintf("Dry-run complete — %d messages would be summarised. Summary sent.", oldCount), nil
 			}
 			return fmt.Sprintf("Context compacted — %d messages summarised.", oldCount), nil
 		},

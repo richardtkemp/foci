@@ -246,7 +246,9 @@ var DefaultHandoffMessage = prompts.CompactionHandoff()
 // Compact summarizes a session's history and replaces it.
 // summaryPrompt is read from a file at call time; if empty, compaction uses a
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
-func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string) (string, error) {
+// When dryRun is true, the full pipeline runs (API call, summary generation)
+// but sessions.Replace() is skipped — the session is left unchanged.
+func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []anthropic.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, error) {
 	if summaryPrompt == "" {
 		summaryPrompt = prompts.CompactionSummary()
 	}
@@ -416,6 +418,11 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []ant
 		}
 	}
 	compacted = append(compacted, preserved...)
+
+	if dryRun {
+		c.log.Infof("dry-run complete for %s, summary generated (%d messages would compact to %d)", sessionKey, len(messages), len(compacted))
+		return summary, nil
+	}
 
 	if err := c.sessions.Replace(sessionKey, compacted); err != nil {
 		return "", fmt.Errorf("replace session after compaction: %w", err)

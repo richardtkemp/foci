@@ -2197,7 +2197,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ResolveModel: resolveModelFn,
 	}
 	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
-	cmds.Register(command.NewCompactCommand(func(ctx context.Context) (int, error) {
+	cmds.Register(command.NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
 		if ag.Compactor == nil {
 			return 0, fmt.Errorf("compaction is not configured")
 		}
@@ -2210,7 +2210,11 @@ func setupAgent(p setupParams) *agentInstance {
 			return 0, fmt.Errorf("too few messages to compact (%d)", mc)
 		}
 		if ag.CompactionNotifyFunc != nil {
-			ag.CompactionNotifyFunc(sk, "⏳ Compacting context...")
+			if dryRun {
+				ag.CompactionNotifyFunc(sk, "⏳ Running compaction dry-run...")
+			} else {
+				ag.CompactionNotifyFunc(sk, "⏳ Compacting context...")
+			}
 		}
 		system := bootstrap.SystemBlocks()
 		summaryPrompt := prompts.ResolvePrompt(ag.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), promptSearchDirs...)
@@ -2218,19 +2222,45 @@ func setupAgent(p setupParams) *agentInstance {
 		if handoffMsg == "" {
 			handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), promptSearchDirs...)
 		}
-		summary, err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, handoffMsg)
+		summary, err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, handoffMsg, dryRun)
 		if err != nil {
 			return 0, fmt.Errorf("compaction failed: %w", err)
 		}
-		if ag.CompactionNotifyFunc != nil {
-			ag.CompactionNotifyFunc(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
+		if dryRun {
+			// Dry-run: always send summary as document, skip reload/cache reset
+			if ag.CompactionDebugFunc != nil && summary != "" {
+				ag.CompactionDebugFunc(sk, summary)
+			} else if summary != "" {
+				// No debug func configured — send directly via primary bot
+				if bot := p.botMgr.PrimaryBot(acfg.ID); bot != nil {
+					f, tmpErr := os.CreateTemp("", "compaction-dryrun-*.md")
+					if tmpErr == nil {
+						if _, writeErr := f.WriteString(summary); writeErr == nil {
+							_ = f.Close()
+							if sendErr := bot.SendDocument(f.Name()); sendErr != nil {
+								log.Warnf("agent", "dry-run: send document: %v", sendErr)
+							}
+						} else {
+							_ = f.Close()
+						}
+						_ = os.Remove(f.Name())
+					}
+				}
+			}
+			if ag.CompactionNotifyFunc != nil {
+				ag.CompactionNotifyFunc(sk, "✅ Dry-run complete — summary sent.")
+			}
+		} else {
+			if ag.CompactionNotifyFunc != nil {
+				ag.CompactionNotifyFunc(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
+			}
+			if ag.CompactionDebugFunc != nil && summary != "" {
+				ag.CompactionDebugFunc(sk, summary)
+			}
+			bootstrap.Reload()
+			// Reset cache baseline — compaction changed the prefix
+			ag.ResetCacheBaseline(sk)
 		}
-		if ag.CompactionDebugFunc != nil && summary != "" {
-			ag.CompactionDebugFunc(sk, summary)
-		}
-		bootstrap.Reload()
-		// Reset cache baseline — compaction changed the prefix
-		ag.ResetCacheBaseline(sk)
 		return mc, nil
 	}))
 	cmds.Register(command.NewRepeatCommand(lastMsgStore))
