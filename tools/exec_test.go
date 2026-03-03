@@ -758,6 +758,54 @@ func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
 	}
 }
 
+func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
+	// When the parent context is cancelled mid-execution (turn cancelled),
+	// results should still be delivered via the notifier — not silently lost.
+	completeCh := make(chan string, 1)
+	notifier := NewAsyncNotifier(func(sk, msg string) {
+		completeCh <- msg
+	})
+	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
+	tool := NewExecTool(nil, nil, 10, notifier, "", nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "echo ctx-cancel-result; timeout 3 tail -f /dev/null",
+		"timeout": 10,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = WithSessionKey(ctx, "agent:test:cancel-42")
+
+	// Cancel the context shortly after starting
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected context cancelled error")
+	}
+
+	// The notifier should deliver the result when the command finishes
+	select {
+	case msg := <-completeCh:
+		if !strings.Contains(msg, "ctx-cancel-result") {
+			t.Errorf("expected command output in notification, got %q", msg)
+		}
+		if !strings.Contains(msg, "EXEC RESULT") {
+			t.Errorf("expected [EXEC RESULT] header, got %q", msg)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for notifier — result was silently lost")
+	}
+
+	// Pending count should be back to zero
+	if notifier.HasPending("agent:test:cancel-42") {
+		t.Error("pending count should be zero after delivery")
+	}
+}
+
 func TestExecSleepNotBlockedInMiddle(t *testing.T) {
 	tool := NewExecTool(nil, nil, 0, nil, "", nil)
 
