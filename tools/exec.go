@@ -41,12 +41,21 @@ var execShell = sync.OnceValue(func() string {
 		log.Debugf("exec", "using bash: %s", path)
 		return "bash"
 	}
-	log.Infof("exec", "bash not found, falling back to sh (pipefail and tool-piping shell functions unavailable)")
+	log.Infof("exec", "bash not found, falling back to sh (pipefail/failglob unavailable)")
 	return "sh"
 })
 
 // hasBash reports whether the exec shell is bash.
 func hasBash() bool { return execShell() == "bash" }
+
+// execPreamble returns the shell option preamble for exec commands.
+// bash gets pipefail, nounset, and failglob; sh gets nounset only.
+func execPreamble() string {
+	if hasBash() {
+		return "set -o pipefail -o nounset; shopt -s failglob"
+	}
+	return "set -o nounset"
+}
 
 // NewExecTool creates an exec tool. If store is non-nil, commands get
 // secret template resolution, output redaction, and blocked path checks.
@@ -59,7 +68,7 @@ func hasBash() bool { return execShell() == "bash" }
 func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) *Tool {
 	return &Tool{
 		Name:        "exec",
-		Description: "Run a shell command and return its output. set -e is active (stops on first error). Use timeout to limit execution time. Set background=true for commands that spawn persistent processes (tmux, daemons) — children will survive after the exec call. Regular {{secret:}} templates are blocked — use http_request for API calls. Exception: {{secret:}} templates inside foci_http_request arguments are allowed (passed as literal strings for server-side resolution). Bitwarden {{secret:bw.UUID}} templates are allowed (approval-gated).",
+		Description: "Run a shell command and return its output. pipefail, nounset, and failglob are set. Use timeout to set a generous limit on execution time, or set background=true for persistent processes (tmux, daemons) that should survive after the call. {{secret:}} templates may be used but only inside foci_http_request arguments. Most tools are available as foci_$toolname shell functions. You will find foci_send_telegram and foci_summarize especially useful.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -168,11 +177,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
 		} else {
 			defer bridge.Close()
-			if hasBash() {
-				cmd = fmt.Sprintf("set -e -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
-			} else {
-				cmd = fmt.Sprintf("set -e; source %s; %s", bridge.FuncsPath(), cmd)
-			}
+			cmd = fmt.Sprintf("%s; source %s; %s", execPreamble(), bridge.FuncsPath(), cmd)
 		}
 	}
 
@@ -236,11 +241,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		if err != nil {
 			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
 		} else {
-			if hasBash() {
-				cmd = fmt.Sprintf("set -e -o pipefail; source %s; %s", bridge.FuncsPath(), cmd)
-			} else {
-				cmd = fmt.Sprintf("set -e; source %s; %s", bridge.FuncsPath(), cmd)
-			}
+			cmd = fmt.Sprintf("%s; source %s; %s", execPreamble(), bridge.FuncsPath(), cmd)
 		}
 	}
 
