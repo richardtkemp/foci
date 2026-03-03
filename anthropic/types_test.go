@@ -33,11 +33,37 @@ func TestTextOf(t *testing.T) {
 	blocks := []ContentBlock{
 		{Type: "tool_use", Name: "exec"},
 		{Type: "text", Text: "hello"},
-		{Type: "text", Text: "world"},
 	}
 	got := TextOf(blocks)
 	if got != "hello" {
 		t.Errorf("TextOf = %q, want %q", got, "hello")
+	}
+}
+
+func TestTextOfMultipleBlocks(t *testing.T) {
+	blocks := []ContentBlock{
+		{Type: "text", Text: "before search"},
+		{Type: "server_tool_use", Name: "web_search"},
+		{Type: "web_search_tool_result"},
+		{Type: "text", Text: "after search"},
+	}
+	got := TextOf(blocks)
+	want := "before search\n\nafter search"
+	if got != want {
+		t.Errorf("TextOf = %q, want %q", got, want)
+	}
+}
+
+func TestTextOfSkipsEmptyText(t *testing.T) {
+	blocks := []ContentBlock{
+		{Type: "text", Text: "hello"},
+		{Type: "text", Text: ""},
+		{Type: "text", Text: "world"},
+	}
+	got := TextOf(blocks)
+	want := "hello\n\nworld"
+	if got != want {
+		t.Errorf("TextOf = %q, want %q", got, want)
 	}
 }
 
