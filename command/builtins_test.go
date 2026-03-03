@@ -700,23 +700,25 @@ func TestConfigCommand(t *testing.T) {
 }
 
 func TestPromptsCommand(t *testing.T) {
-	cmd := NewPromptsCommand(func() PromptsData {
-		return PromptsData{
-			AgentID: "clutch",
-			Prompts: []PromptInfo{
-				{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Exists: true, Default: false},
-				{Label: "keepalive", Default: true},
-				{Label: "handoff_msg", Inline: "You are picking up a compacted session.", Default: false},
-				{Label: "branch_orientation", Path: "/missing/file.md", Exists: false},
-				{Label: "background", Disabled: true},
-				{Label: "braindead_warning", Inline: "Stop!", Default: true},
-			},
-			PromptDirs: []string{"/home/foci/prompts"},
-			Files: []PromptFile{
-				{Dir: "/home/foci/prompts", Name: "compaction.md", Configured: true},
-				{Dir: "/home/foci/prompts", Name: "daily-review.md", Configured: false},
-			},
-		}
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID: "clutch",
+				Prompts: []PromptInfo{
+					{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Exists: true, Default: false},
+					{Label: "keepalive", Default: true},
+					{Label: "handoff_msg", Inline: "You are picking up a compacted session.", Default: false},
+					{Label: "branch_orientation", Path: "/missing/file.md", Exists: false},
+					{Label: "background", Disabled: true},
+					{Label: "braindead_warning", Inline: "Stop!", Default: true},
+				},
+				PromptDirs: []string{"/home/foci/prompts"},
+				Files: []PromptFile{
+					{Dir: "/home/foci/prompts", Name: "compaction.md", Configured: true},
+					{Dir: "/home/foci/prompts", Name: "daily-review.md", Configured: false},
+				},
+			}
+		},
 	})
 
 	result, err := cmd.Execute(context.Background(), "")
@@ -759,13 +761,15 @@ func TestPromptsCommand(t *testing.T) {
 }
 
 func TestPromptsCommandEmpty(t *testing.T) {
-	cmd := NewPromptsCommand(func() PromptsData {
-		return PromptsData{
-			AgentID: "test",
-			Prompts: []PromptInfo{
-				{Label: "branch_orientation", Default: true},
-			},
-		}
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID: "test",
+				Prompts: []PromptInfo{
+					{Label: "branch_orientation", Default: true},
+				},
+			}
+		},
 	})
 
 	result, err := cmd.Execute(context.Background(), "")
@@ -786,13 +790,15 @@ func TestPromptsCommandEmpty(t *testing.T) {
 }
 
 func TestPromptsCommandNoFiles(t *testing.T) {
-	cmd := NewPromptsCommand(func() PromptsData {
-		return PromptsData{
-			AgentID:    "test",
-			Prompts:    []PromptInfo{{Label: "branch_orientation", Default: true}},
-			PromptDirs: []string{"/some/dir"},
-			Files:      nil,
-		}
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID:    "test",
+				Prompts:    []PromptInfo{{Label: "branch_orientation", Default: true}},
+				PromptDirs: []string{"/some/dir"},
+				Files:      nil,
+			}
+		},
 	})
 
 	result, err := cmd.Execute(context.Background(), "")
@@ -802,6 +808,276 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 	if !strings.Contains(result, "No prompt files found") {
 		t.Errorf("expected 'No prompt files found' in:\n%s", result)
 	}
+}
+
+func TestPromptsCommandReinstall(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "prompts")
+
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID:             "test",
+				WorkspacePromptsDir: dir,
+				EmbeddedPrompts: map[string]string{
+					"keepalive.md":          "keepalive default text",
+					"compaction-summary.md": "compaction default text",
+				},
+			}
+		},
+	})
+
+	result, err := cmd.Execute(context.Background(), "reinstall")
+	if err != nil {
+		t.Fatalf("Execute reinstall: %v", err)
+	}
+	if !strings.Contains(result, "Wrote 2 of 2") {
+		t.Errorf("expected 'Wrote 2 of 2' in: %s", result)
+	}
+	if !strings.Contains(result, dir) {
+		t.Errorf("expected dir path in: %s", result)
+	}
+
+	// Verify files were written
+	data, err := os.ReadFile(filepath.Join(dir, "keepalive.md"))
+	if err != nil {
+		t.Fatalf("read keepalive.md: %v", err)
+	}
+	if string(data) != "keepalive default text" {
+		t.Errorf("keepalive.md content = %q", string(data))
+	}
+}
+
+func TestPromptsCommandReinstallIdempotent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "prompts")
+
+	embedded := map[string]string{
+		"keepalive.md":          "keepalive default text",
+		"compaction-summary.md": "compaction default text",
+	}
+
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID:             "test",
+				WorkspacePromptsDir: dir,
+				EmbeddedPrompts:     embedded,
+			}
+		},
+	})
+
+	// First run
+	_, err := cmd.Execute(context.Background(), "reinstall")
+	if err != nil {
+		t.Fatalf("first reinstall: %v", err)
+	}
+
+	// Second run — all should match
+	result, err := cmd.Execute(context.Background(), "reinstall")
+	if err != nil {
+		t.Fatalf("second reinstall: %v", err)
+	}
+	if !strings.Contains(result, "Wrote 0 of 2") {
+		t.Errorf("expected 'Wrote 0 of 2' in: %s", result)
+	}
+	if !strings.Contains(result, "2 already match") {
+		t.Errorf("expected '2 already match' in: %s", result)
+	}
+}
+
+func TestPromptsCommandDiff(t *testing.T) {
+	var sentPath string
+
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID: "test",
+				Prompts: []PromptInfo{
+					{Label: "keepalive", Default: false},
+				},
+				ResolvedTexts: map[string]string{
+					"keepalive": "custom keepalive\nwith changes",
+				},
+				DefaultTexts: map[string]string{
+					"keepalive": "default keepalive\noriginal text",
+				},
+			}
+		},
+		SendDocFn: func(path string) error {
+			sentPath = path
+			// Read and keep the content before it gets deleted
+			return nil
+		},
+		DiffSummaryFn: func(ctx context.Context, customText, defaultText, name string) (string, error) {
+			return "Test summary of differences.", nil
+		},
+	})
+
+	result, err := cmd.Execute(context.Background(), "diff keepalive")
+	if err != nil {
+		t.Fatalf("Execute diff: %v", err)
+	}
+	if !strings.Contains(result, "Diff for keepalive sent") {
+		t.Errorf("unexpected result: %s", result)
+	}
+	if !strings.Contains(result, "lines changed") {
+		t.Errorf("expected 'lines changed' in: %s", result)
+	}
+	if sentPath == "" {
+		t.Error("SendDocFn was not called")
+	}
+}
+
+func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"compaction-summary", "compaction_summary"},
+		{"compaction_summary", "compaction_summary"},
+		{"compaction-summary.md", "compaction_summary"},
+		{"keepalive.md", "keepalive"},
+		{"branch-orientation-multiball", "branch_orient_multiball"},
+		{"braindead", "braindead_warning"},
+	}
+
+	data := PromptsData{
+		Prompts: []PromptInfo{
+			{Label: "compaction_summary"},
+			{Label: "keepalive"},
+			{Label: "branch_orient_multiball"},
+			{Label: "braindead_warning"},
+		},
+		ResolvedTexts: map[string]string{
+			"compaction_summary":      "text",
+			"keepalive":               "keepalive text",
+			"branch_orient_multiball": "multiball text",
+			"braindead_warning":       "braindead text",
+		},
+		DefaultTexts: map[string]string{
+			"compaction_summary":      "compaction default",
+			"keepalive":               "keepalive default",
+			"branch_orient_multiball": "multiball default",
+			"braindead_warning":       "",
+		},
+		EmbeddedPrompts: map[string]string{
+			"compaction-summary.md":           "compaction default",
+			"keepalive.md":                    "keepalive default",
+			"branch-orientation-multiball.md": "multiball default",
+		},
+	}
+
+	for _, tt := range tests {
+		got := promptsMatchLabel(tt.input, data)
+		if got != tt.want {
+			t.Errorf("promptsMatchLabel(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestPromptsCommandDiffNotFound(t *testing.T) {
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID: "test",
+				Prompts: []PromptInfo{
+					{Label: "keepalive"},
+					{Label: "background"},
+				},
+				ResolvedTexts: map[string]string{
+					"keepalive":  "text",
+					"background": "text",
+				},
+				DefaultTexts: map[string]string{
+					"keepalive":  "text",
+					"background": "text",
+				},
+			}
+		},
+	})
+
+	_, err := cmd.Execute(context.Background(), "diff nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent prompt")
+	}
+	if !strings.Contains(err.Error(), "no prompt matching") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "keepalive") {
+		t.Errorf("expected valid names in error: %v", err)
+	}
+}
+
+func TestPromptsCommandDiffNoChanges(t *testing.T) {
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				AgentID: "test",
+				Prompts: []PromptInfo{
+					{Label: "keepalive", Default: true},
+				},
+				ResolvedTexts: map[string]string{
+					"keepalive": "same text",
+				},
+				DefaultTexts: map[string]string{
+					"keepalive": "same text",
+				},
+			}
+		},
+	})
+
+	result, err := cmd.Execute(context.Background(), "diff keepalive")
+	if err != nil {
+		t.Fatalf("Execute diff: %v", err)
+	}
+	if !strings.Contains(result, "matches the embedded default") {
+		t.Errorf("expected 'matches the embedded default' in: %s", result)
+	}
+}
+
+func TestDiffLines(t *testing.T) {
+	t.Run("identical", func(t *testing.T) {
+		result := diffLines("hello\nworld\n", "hello\nworld\n", "a", "b")
+		if result != "" {
+			t.Errorf("expected empty for identical, got:\n%s", result)
+		}
+	})
+
+	t.Run("simple change", func(t *testing.T) {
+		result := diffLines("line1\nline2\nline3\n", "line1\nchanged\nline3\n", "a", "b")
+		if !strings.Contains(result, "--- a") {
+			t.Errorf("missing --- header in:\n%s", result)
+		}
+		if !strings.Contains(result, "+++ b") {
+			t.Errorf("missing +++ header in:\n%s", result)
+		}
+		if !strings.Contains(result, "-line2") {
+			t.Errorf("missing -line2 in:\n%s", result)
+		}
+		if !strings.Contains(result, "+changed") {
+			t.Errorf("missing +changed in:\n%s", result)
+		}
+	})
+
+	t.Run("addition", func(t *testing.T) {
+		result := diffLines("a\nb\n", "a\nb\nc\n", "old", "new")
+		if !strings.Contains(result, "+c") {
+			t.Errorf("missing +c in:\n%s", result)
+		}
+	})
+
+	t.Run("deletion", func(t *testing.T) {
+		result := diffLines("a\nb\nc\n", "a\nc\n", "old", "new")
+		if !strings.Contains(result, "-b") {
+			t.Errorf("missing -b in:\n%s", result)
+		}
+	})
+
+	t.Run("empty inputs", func(t *testing.T) {
+		result := diffLines("", "new line\n", "a", "b")
+		if !strings.Contains(result, "+new line") {
+			t.Errorf("missing +new line in:\n%s", result)
+		}
+	})
 }
 
 func TestLogCommand(t *testing.T) {

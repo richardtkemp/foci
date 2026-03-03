@@ -3,11 +3,13 @@ package command
 import (
 	"bufio"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"foci/table"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -800,80 +802,253 @@ type PromptFile struct {
 
 // PromptsData holds all data for the /prompts command.
 type PromptsData struct {
-	AgentID    string
-	Prompts    []PromptInfo
-	PromptDirs []string     // directories scanned
-	Files      []PromptFile // files found on disk
+	AgentID             string
+	Prompts             []PromptInfo
+	PromptDirs          []string           // directories scanned
+	Files               []PromptFile       // files found on disk
+	WorkspacePromptsDir string             // {workspace}/prompts/ — target for reinstall
+	EmbeddedPrompts     map[string]string  // filename → embedded text (for reinstall)
+	ResolvedTexts       map[string]string  // label → resolved text (for diff)
+	DefaultTexts        map[string]string  // label → embedded default text (for diff)
+}
+
+// PromptsCmdDeps holds dependencies for the /prompts command.
+type PromptsCmdDeps struct {
+	DataFn        func() PromptsData
+	SendDocFn     func(path string) error
+	DiffSummaryFn func(ctx context.Context, customText, defaultText, name string) (string, error)
 }
 
 // NewPromptsCommand returns a /prompts command showing prompt config and files.
-func NewPromptsCommand(dataFn func() PromptsData) *Command {
+// Subcommands: reinstall, diff <name>.
+func NewPromptsCommand(deps PromptsCmdDeps) *Command {
 	return &Command{
 		Name:        "prompts",
 		Description: "Show configured prompts and prompt files on disk",
 		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			data := dataFn()
-			var sb strings.Builder
+			data := deps.DataFn()
+			parts := strings.Fields(args)
 
-			// Configured prompts
-			sb.WriteString("```\n")
-			fmt.Fprintf(&sb, "Prompts (agent: %s):\n", data.AgentID)
-
-			maxLabel := 0
-			for _, p := range data.Prompts {
-				if len(p.Label) > maxLabel {
-					maxLabel = len(p.Label)
-				}
-			}
-			for _, p := range data.Prompts {
-				switch {
-				case p.Disabled:
-					fmt.Fprintf(&sb, "  %-*s  disabled\n", maxLabel, p.Label)
-				case p.Inline != "":
-					tag := "default"
-					if !p.Default {
-						tag = "custom"
-					}
-					fmt.Fprintf(&sb, "  %-*s  [%s inline: %d chars]\n", maxLabel, p.Label, tag, len(p.Inline))
-				case p.Path != "" && p.Exists:
-					tag := "default"
-					if !p.Default {
-						tag = "custom"
-					}
-					fmt.Fprintf(&sb, "  %-*s  %s  [%s]\n", maxLabel, p.Label, p.Path, tag)
-				case p.Path != "" && !p.Exists:
-					fmt.Fprintf(&sb, "  %-*s  %s  [not found]\n", maxLabel, p.Label, p.Path)
-				default:
-					fmt.Fprintf(&sb, "  %-*s  [default]\n", maxLabel, p.Label)
-				}
-			}
-			sb.WriteString("```")
-
-			// Files on disk
-			if len(data.Files) > 0 {
-				sb.WriteString("\n\n```\n")
-				sb.WriteString("Prompt files on disk:\n")
-				currentDir := ""
-				for _, f := range data.Files {
-					if f.Dir != currentDir {
-						currentDir = f.Dir
-						fmt.Fprintf(&sb, "  %s/\n", f.Dir)
-					}
-					tag := "[cron/other]"
-					if f.Configured {
-						tag = "[configured]"
-					}
-					fmt.Fprintf(&sb, "    %-36s %s\n", f.Name, tag)
-				}
-				sb.WriteString("```")
-			} else if len(data.PromptDirs) > 0 {
-				sb.WriteString("\n\nNo prompt files found on disk.")
+			if len(parts) == 0 {
+				return promptsDisplay(data), nil
 			}
 
-			return sb.String(), nil
+			switch parts[0] {
+			case "reinstall":
+				return promptsReinstall(data)
+			case "diff":
+				if len(parts) < 2 {
+					return "Usage: /prompts diff <name>", nil
+				}
+				return promptsDiff(ctx, data, strings.Join(parts[1:], " "), deps)
+			default:
+				return "Unknown subcommand. Usage: /prompts [reinstall | diff <name>]", nil
+			}
 		},
 	}
+}
+
+// promptsDisplay renders the existing /prompts output (no subcommand).
+func promptsDisplay(data PromptsData) string {
+	var sb strings.Builder
+
+	sb.WriteString("```\n")
+	fmt.Fprintf(&sb, "Prompts (agent: %s):\n", data.AgentID)
+
+	maxLabel := 0
+	for _, p := range data.Prompts {
+		if len(p.Label) > maxLabel {
+			maxLabel = len(p.Label)
+		}
+	}
+	for _, p := range data.Prompts {
+		switch {
+		case p.Disabled:
+			fmt.Fprintf(&sb, "  %-*s  disabled\n", maxLabel, p.Label)
+		case p.Inline != "":
+			tag := "default"
+			if !p.Default {
+				tag = "custom"
+			}
+			fmt.Fprintf(&sb, "  %-*s  [%s inline: %d chars]\n", maxLabel, p.Label, tag, len(p.Inline))
+		case p.Path != "" && p.Exists:
+			tag := "default"
+			if !p.Default {
+				tag = "custom"
+			}
+			fmt.Fprintf(&sb, "  %-*s  %s  [%s]\n", maxLabel, p.Label, p.Path, tag)
+		case p.Path != "" && !p.Exists:
+			fmt.Fprintf(&sb, "  %-*s  %s  [not found]\n", maxLabel, p.Label, p.Path)
+		default:
+			fmt.Fprintf(&sb, "  %-*s  [default]\n", maxLabel, p.Label)
+		}
+	}
+	sb.WriteString("```")
+
+	if len(data.Files) > 0 {
+		sb.WriteString("\n\n```\n")
+		sb.WriteString("Prompt files on disk:\n")
+		currentDir := ""
+		for _, f := range data.Files {
+			if f.Dir != currentDir {
+				currentDir = f.Dir
+				fmt.Fprintf(&sb, "  %s/\n", f.Dir)
+			}
+			tag := "[cron/other]"
+			if f.Configured {
+				tag = "[configured]"
+			}
+			fmt.Fprintf(&sb, "    %-36s %s\n", f.Name, tag)
+		}
+		sb.WriteString("```")
+	} else if len(data.PromptDirs) > 0 {
+		sb.WriteString("\n\nNo prompt files found on disk.")
+	}
+
+	return sb.String()
+}
+
+// promptsReinstall writes all embedded prompts to the workspace prompts directory.
+func promptsReinstall(data PromptsData) (string, error) {
+	dir := data.WorkspacePromptsDir
+	if dir == "" {
+		return "", fmt.Errorf("workspace prompts directory not configured")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create prompts dir: %w", err)
+	}
+
+	wrote, matched := 0, 0
+	total := len(data.EmbeddedPrompts)
+	for name, content := range data.EmbeddedPrompts {
+		path := filepath.Join(dir, name)
+		existing, err := os.ReadFile(path)
+		if err == nil && md5.Sum(existing) == md5.Sum([]byte(content)) {
+			matched++
+			continue
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return "", fmt.Errorf("write %s: %w", name, err)
+		}
+		wrote++
+	}
+	return fmt.Sprintf("Wrote %d of %d prompts to %s (%d already match defaults)", wrote, total, dir, matched), nil
+}
+
+// promptsDiff generates a unified diff between the current and default prompt text,
+// gets an AI summary, writes both to a temp file, and sends it as a document.
+func promptsDiff(ctx context.Context, data PromptsData, name string, deps PromptsCmdDeps) (string, error) {
+	label := promptsMatchLabel(name, data)
+	if label == "" {
+		var names []string
+		for _, p := range data.Prompts {
+			names = append(names, p.Label)
+		}
+		return "", fmt.Errorf("no prompt matching %q — valid names: %s", name, strings.Join(names, ", "))
+	}
+
+	customText := data.ResolvedTexts[label]
+	defaultText := data.DefaultTexts[label]
+
+	diff := diffLines(defaultText, customText, "default", "current")
+	if diff == "" {
+		return fmt.Sprintf("Prompt %q matches the embedded default — no differences.", label), nil
+	}
+
+	// Get AI summary
+	summary := ""
+	if deps.DiffSummaryFn != nil {
+		var err error
+		summary, err = deps.DiffSummaryFn(ctx, customText, defaultText, label)
+		if err != nil {
+			summary = fmt.Sprintf("(summary unavailable: %v)", err)
+		}
+	}
+
+	// Write combined output to temp file
+	var content strings.Builder
+	fmt.Fprintf(&content, "# Prompt diff: %s\n\n", label)
+	if summary != "" {
+		content.WriteString("## Summary\n\n")
+		content.WriteString(summary)
+		content.WriteString("\n\n")
+	}
+	content.WriteString("## Diff\n\n```diff\n")
+	content.WriteString(diff)
+	content.WriteString("\n```\n")
+
+	tmpFile, err := os.CreateTemp("", "prompt-diff-*.md")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.WriteString(content.String()); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	if deps.SendDocFn != nil {
+		if err := deps.SendDocFn(tmpPath); err != nil {
+			os.Remove(tmpPath)
+			return "", fmt.Errorf("send document: %w", err)
+		}
+	}
+	os.Remove(tmpPath)
+
+	changed := diffChangedLines(diff)
+	return fmt.Sprintf("Diff for %s sent (%d lines changed).", label, changed), nil
+}
+
+// promptsMatchLabel fuzzy-matches a user-provided name to a prompt label.
+func promptsMatchLabel(name string, data PromptsData) string {
+	norm := promptsNormalize(name)
+
+	// Labels that have diff data
+	candidates := make([]string, 0, len(data.Prompts))
+	for _, p := range data.Prompts {
+		if _, ok := data.ResolvedTexts[p.Label]; ok {
+			candidates = append(candidates, p.Label)
+		}
+	}
+
+	// 1. Exact match on label
+	for _, label := range candidates {
+		if promptsNormalize(label) == norm {
+			return label
+		}
+	}
+
+	// 2. Exact match on embedded filename stem → find label via default text
+	for fn, embeddedText := range data.EmbeddedPrompts {
+		fnNorm := promptsNormalize(strings.TrimSuffix(fn, ".md"))
+		if fnNorm == norm {
+			for _, label := range candidates {
+				if data.DefaultTexts[label] == embeddedText {
+					return label
+				}
+			}
+		}
+	}
+
+	// 3. Substring match on labels
+	for _, label := range candidates {
+		labelNorm := promptsNormalize(label)
+		if strings.Contains(labelNorm, norm) || strings.Contains(norm, labelNorm) {
+			return label
+		}
+	}
+
+	return ""
+}
+
+func promptsNormalize(s string) string {
+	s = strings.TrimSuffix(s, ".md")
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-", "_")
+	return s
 }
 
 // NewLogCommand returns a /log command showing recent event log lines.

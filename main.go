@@ -1987,84 +1987,157 @@ func setupAgent(p setupParams) *agentInstance {
 			return "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults", nil
 		}
 	}))
-	cmds.Register(command.NewPromptsCommand(func() command.PromptsData {
-		dirs := promptSearchDirs
+	cmds.Register(command.NewPromptsCommand(command.PromptsCmdDeps{
+		DataFn: func() command.PromptsData {
+			dirs := promptSearchDirs
 
-		// All file-based prompts
-		allPrompts := []command.PromptInfo{
-			resolvePromptInfo("compaction_summary",
-				resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
-				"compaction-summary.md", prompts.CompactionSummary(), dirs),
-			resolvePromptInfo("branch_orient_multiball",
-				resolveOrientPath(acfg.BranchOrientationMultiballPrompt, p.cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt),
-				"branch-orientation-multiball.md", prompts.BranchOrientationMultiball(), dirs),
-			resolvePromptInfo("branch_orient_headless",
-				resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt),
-				"branch-orientation-headless.md", prompts.BranchOrientationHeadless(), dirs),
-			resolvePromptInfo("keepalive",
-				acfg.Keepalive.Prompt,
-				"keepalive.md", prompts.Keepalive(), dirs),
-			resolvePromptInfo("background",
-				acfg.Background.Prompt,
-				"background.md", prompts.Background(), dirs),
-			resolvePromptInfo("memory_formation",
-				acfg.MemoryFormation.IntervalPrompt,
-				"memory-formation.md", prompts.MemoryFormation(), dirs),
-			resolvePromptInfo("memory_consolidation",
-				acfg.MemoryFormation.ConsolidationPrompt,
-				"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
-			resolvePromptInfo("memory_session_end",
-				acfg.MemoryFormation.SessionEndPrompt,
-				"memory-formation.md", prompts.MemoryFormation(), dirs),
-		}
-
-		// Inline prompts (not file-based)
-		allPrompts = append(allPrompts,
-			inlinePromptInfo("compaction_handoff",
-				resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
-				prompts.CompactionHandoff()),
-			inlinePromptInfo("braindead_warning",
-				acfg.BraindeadPrompt, ""),
-		)
-
-		// Build set of configured paths for tagging files
-		configuredPaths := make(map[string]bool)
-		for _, pi := range allPrompts {
-			if pi.Path != "" {
-				configuredPaths[pi.Path] = true
+			// All file-based prompts
+			allPrompts := []command.PromptInfo{
+				resolvePromptInfo("compaction_summary",
+					resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
+					"compaction-summary.md", prompts.CompactionSummary(), dirs),
+				resolvePromptInfo("branch_orient_multiball",
+					resolveOrientPath(acfg.BranchOrientationMultiballPrompt, p.cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt),
+					"branch-orientation-multiball.md", prompts.BranchOrientationMultiball(), dirs),
+				resolvePromptInfo("branch_orient_headless",
+					resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt),
+					"branch-orientation-headless.md", prompts.BranchOrientationHeadless(), dirs),
+				resolvePromptInfo("keepalive",
+					acfg.Keepalive.Prompt,
+					"keepalive.md", prompts.Keepalive(), dirs),
+				resolvePromptInfo("background",
+					acfg.Background.Prompt,
+					"background.md", prompts.Background(), dirs),
+				resolvePromptInfo("memory_formation",
+					acfg.MemoryFormation.IntervalPrompt,
+					"memory-formation.md", prompts.MemoryFormation(), dirs),
+				resolvePromptInfo("memory_consolidation",
+					acfg.MemoryFormation.ConsolidationPrompt,
+					"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
+				resolvePromptInfo("memory_session_end",
+					acfg.MemoryFormation.SessionEndPrompt,
+					"memory-formation.md", prompts.MemoryFormation(), dirs),
 			}
-		}
 
-		// Scan prompt directories
-		var promptDirs []string
-		var files []command.PromptFile
-		sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts")
-		wsDir := filepath.Join(acfg.Workspace, "prompts")
-		for _, dir := range []string{sharedDir, wsDir} {
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				continue
+			// Inline prompts (not file-based)
+			allPrompts = append(allPrompts,
+				inlinePromptInfo("compaction_handoff",
+					resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
+					prompts.CompactionHandoff()),
+				inlinePromptInfo("braindead_warning",
+					acfg.BraindeadPrompt, ""),
+			)
+
+			// Embedded defaults (for reinstall)
+			embedded := map[string]string{
+				"compaction-summary.md":           prompts.CompactionSummary(),
+				"compaction-handoff.md":           prompts.CompactionHandoff(),
+				"branch-orientation-multiball.md": prompts.BranchOrientationMultiball(),
+				"branch-orientation-headless.md":  prompts.BranchOrientationHeadless(),
+				"keepalive.md":                    prompts.Keepalive(),
+				"background.md":                   prompts.Background(),
+				"memory-formation.md":             prompts.MemoryFormation(),
+				"memory-consolidation.md":         prompts.MemoryConsolidation(),
 			}
-			promptDirs = append(promptDirs, dir)
-			for _, e := range entries {
-				if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+
+			// Resolved and default texts per label (for diff)
+			type promptDef struct {
+				label, configPath, filename string
+				embeddedDefault             string
+			}
+			fileDefs := []promptDef{
+				{"compaction_summary", resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt), "compaction-summary.md", prompts.CompactionSummary()},
+				{"branch_orient_multiball", resolveOrientPath(acfg.BranchOrientationMultiballPrompt, p.cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt), "branch-orientation-multiball.md", prompts.BranchOrientationMultiball()},
+				{"branch_orient_headless", resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
+				{"keepalive", acfg.Keepalive.Prompt, "keepalive.md", prompts.Keepalive()},
+				{"background", acfg.Background.Prompt, "background.md", prompts.Background()},
+				{"memory_formation", acfg.MemoryFormation.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation()},
+				{"memory_consolidation", acfg.MemoryFormation.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation()},
+				{"memory_session_end", acfg.MemoryFormation.SessionEndPrompt, "memory-formation.md", prompts.MemoryFormation()},
+			}
+			resolvedTexts := make(map[string]string, len(fileDefs)+2)
+			defaultTexts := make(map[string]string, len(fileDefs)+2)
+			for _, d := range fileDefs {
+				resolvedTexts[d.label] = prompts.ResolvePrompt(d.configPath, d.filename, d.embeddedDefault, dirs...)
+				defaultTexts[d.label] = d.embeddedDefault
+			}
+			// Inline prompts
+			handoffVal := resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg)
+			if handoffVal == "" {
+				resolvedTexts["compaction_handoff"] = prompts.CompactionHandoff()
+			} else if handoffVal != "none" {
+				resolvedTexts["compaction_handoff"] = handoffVal
+			}
+			defaultTexts["compaction_handoff"] = prompts.CompactionHandoff()
+			if acfg.BraindeadPrompt != "" && acfg.BraindeadPrompt != "none" {
+				resolvedTexts["braindead_warning"] = acfg.BraindeadPrompt
+			}
+			defaultTexts["braindead_warning"] = ""
+
+			// Build set of configured paths for tagging files
+			configuredPaths := make(map[string]bool)
+			for _, pi := range allPrompts {
+				if pi.Path != "" {
+					configuredPaths[pi.Path] = true
+				}
+			}
+
+			// Scan prompt directories
+			var promptDirs []string
+			var files []command.PromptFile
+			sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts")
+			wsDir := filepath.Join(acfg.Workspace, "prompts")
+			for _, dir := range []string{sharedDir, wsDir} {
+				entries, err := os.ReadDir(dir)
+				if err != nil {
 					continue
 				}
-				fullPath := filepath.Join(dir, e.Name())
-				files = append(files, command.PromptFile{
-					Dir:        dir,
-					Name:       e.Name(),
-					Configured: configuredPaths[fullPath],
-				})
+				promptDirs = append(promptDirs, dir)
+				for _, e := range entries {
+					if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+						continue
+					}
+					fullPath := filepath.Join(dir, e.Name())
+					files = append(files, command.PromptFile{
+						Dir:        dir,
+						Name:       e.Name(),
+						Configured: configuredPaths[fullPath],
+					})
+				}
 			}
-		}
 
-		return command.PromptsData{
-			AgentID:    acfg.ID,
-			Prompts:    allPrompts,
-			PromptDirs: promptDirs,
-			Files:      files,
-		}
+			return command.PromptsData{
+				AgentID:             acfg.ID,
+				Prompts:             allPrompts,
+				PromptDirs:          promptDirs,
+				Files:               files,
+				WorkspacePromptsDir: filepath.Join(acfg.Workspace, "prompts"),
+				EmbeddedPrompts:     embedded,
+				ResolvedTexts:       resolvedTexts,
+				DefaultTexts:        defaultTexts,
+			}
+		},
+		SendDocFn: func(path string) error {
+			bot := p.botMgr.PrimaryBot(acfg.ID)
+			if bot == nil {
+				return fmt.Errorf("no bot available")
+			}
+			return bot.SendDocument(path)
+		},
+		DiffSummaryFn: func(ctx context.Context, customText, defaultText, name string) (string, error) {
+			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
+			resp, err := p.client.SendMessage(callCtx, &anthropic.MessageRequest{
+				Model:    "claude-haiku-4-5-20251001",
+				MaxTokens: 1024,
+				Messages: []anthropic.Message{{Role: "user", Content: anthropic.TextContent(prompt)}},
+			})
+			if err != nil {
+				return "", err
+			}
+			return anthropic.TextOf(resp.Content), nil
+		},
 	}))
 	cmds.Register(command.NewLogCommand(p.cfg.Logging.EventFile))
 	cmds.Register(command.NewErrorsCommand(p.cfg.Logging.EventFile))
