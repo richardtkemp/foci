@@ -101,7 +101,8 @@ type Agent struct {
 	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
 	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
 	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
-	RateLimitFunc               func(retryAfter int)            // callback when API returns 429/529 (rate limited or overloaded)
+	RateLimitFunc               func(retryAfter int)            // callback when API returns 429 (rate limit exhausted)
+	OverloadedFunc              func()                          // callback when API returns 529 (Anthropic servers overloaded)
 	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
 	CompactionDebugFunc         func(string, string)            // callback for compaction debug (session key, summary text)
 	OnActivity                  func(string)                    // callback when a session has activity (session key); nil disables
@@ -1224,12 +1225,19 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return ctx.Err()
 	}
 	var apiErr *anthropic.APIError
-	if errors.As(err, &apiErr) && (apiErr.IsRateLimit() || apiErr.IsOverloaded()) {
+	if errors.As(err, &apiErr) && apiErr.IsRateLimit() {
 		a.logger().Warnf("rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(apiErr.RetryAfterSeconds())
 		}
 		return fmt.Errorf("rate limited — mana exhausted")
+	}
+	if errors.As(err, &apiErr) && apiErr.IsOverloaded() {
+		a.logger().Warnf("overloaded: status=%d (retries exhausted)", apiErr.StatusCode)
+		if a.OverloadedFunc != nil {
+			a.OverloadedFunc()
+		}
+		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsRetryable() {
 		a.logger().Debugf("server error detail: %s", err)

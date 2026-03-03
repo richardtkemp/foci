@@ -8,7 +8,8 @@ Read `SPEC.md` for the design intent and philosophy.
 
 ## When You Make Changes
 
-If you modify how packages connect, add new packages, change the startup flow, add tools, or alter the agent loop, **update `docs/WIRING.md`** to reflect the change.
+- If you modify how packages connect, add new packages, change the startup flow, add tools, or alter the agent loop, **update `docs/WIRING.md`** to reflect the change.
+- If you add a new feature, **check if it's appropriate to update `docs/COMPARISON.md`**, searching for additional info if required.
 
 ## Key Constraints
 

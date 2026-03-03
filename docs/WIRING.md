@@ -169,7 +169,10 @@ The core of the system. Two entry points:
 
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
 
-**Rate limit handling:** If `client.SendMessage` returns HTTP 429 (rate limit) or 529 (overloaded), the agent detects `*anthropic.APIError`, fires `RateLimitFunc` callback (sends friendly Telegram notification with estimated retry time from `Retry-After` header), and returns a clean `"rate limited — mana exhausted"` error instead of the raw API error.
+**Error handling by status code:**
+- **429 (rate limit):** Our quota is exhausted. `classifyAPIError` fires `RateLimitFunc` callback (Telegram notification with estimated retry time from `Retry-After` header) and returns `"rate limited — mana exhausted"`. No transport-level retry (retrying won't help until the window resets).
+- **529 (overloaded):** Anthropic servers are overloaded (their problem, not ours). `SendMessage` retries 3× with exponential backoff (2s→4s→8s). If still failing, `classifyAPIError` fires `OverloadedFunc` callback (Telegram notification) and returns `"Anthropic API is overloaded — try again shortly"`.
+- **500/502/503 (server error):** `SendMessage` retries 3× with backoff. If still failing, `classifyAPIError` fires `RateLimitFunc(0)` and returns a temporary unavailability message.
 
 ### Cache Stability Invariant
 
