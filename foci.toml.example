@@ -191,6 +191,7 @@ compaction_threshold = 0.8
 # reindex_debounce = "0s"
 # conversation_weight = 0.1
 # search_limit = 20
+# sweep_interval = "1h"                   # periodic full reindex ("0" disables)
 
 # [[memory.sources]]
 # name = "shared"

@@ -39,6 +39,7 @@ type Index struct {
 	watcher            *fsnotify.Watcher
 	debounce           time.Duration
 	reindexTimer       *time.Timer
+	sweepStop          chan struct{} // closed to stop sweep goroutine
 	mu                 sync.Mutex
 }
 
@@ -301,9 +302,49 @@ func (idx *Index) scheduleReindex() {
 	})
 }
 
-// Close closes the watcher and underlying database.
+// StartSweep launches a background goroutine that calls Reindex periodically.
+// The first sweep fires after initial, then repeats every interval.
+// Call Close to stop the goroutine.
+func (idx *Index) StartSweep(initial, interval time.Duration) {
+	idx.mu.Lock()
+	idx.sweepStop = make(chan struct{})
+	stop := idx.sweepStop
+	idx.mu.Unlock()
+
+	go func() {
+		select {
+		case <-time.After(initial):
+		case <-stop:
+			return
+		}
+		log.Infof("memory", "sweep: initial reindex")
+		if err := idx.Reindex(); err != nil {
+			log.Errorf("memory", "sweep reindex: %v", err)
+		}
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Infof("memory", "sweep: periodic reindex")
+				if err := idx.Reindex(); err != nil {
+					log.Errorf("memory", "sweep reindex: %v", err)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+}
+
+// Close closes the watcher, stops the sweep goroutine, and closes the database.
 func (idx *Index) Close() error {
 	idx.mu.Lock()
+	if idx.sweepStop != nil {
+		close(idx.sweepStop)
+		idx.sweepStop = nil
+	}
 	if idx.watcher != nil {
 		_ = idx.watcher.Close()
 	}

@@ -458,6 +458,58 @@ func TestMetaTablePopulated(t *testing.T) {
 	}
 }
 
+func TestStartSweep(t *testing.T) {
+	idx, memDir := testIndex(t)
+
+	// Write a file but don't call Reindex — the sweep should pick it up.
+	os.WriteFile(filepath.Join(memDir, "sweep_test.md"), []byte("sweep discovers this file automatically"), 0644)
+
+	idx.StartSweep(5*time.Millisecond, 1*time.Hour)
+
+	// Wait for the initial sweep to fire and complete.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		results, err := idx.Search("sweep discovers", "")
+		if err != nil {
+			t.Fatalf("Search: %v", err)
+		}
+		if len(results) > 0 {
+			return // success — sweep indexed the file
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("sweep did not index the file within deadline")
+}
+
+func TestStartSweepDisabledByClose(t *testing.T) {
+	idx, memDir := testIndex(t)
+
+	// Start sweep with a long initial delay, then close immediately.
+	idx.StartSweep(1*time.Hour, 1*time.Hour)
+	idx.Close()
+
+	// Write a file after close — should not be indexed.
+	os.WriteFile(filepath.Join(memDir, "post_close.md"), []byte("this should not appear"), 0644)
+	time.Sleep(20 * time.Millisecond)
+
+	// Reopen the index to verify nothing was indexed after close.
+	dbPath := filepath.Join(filepath.Dir(memDir), "memory.db")
+	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx2, err := NewIndex(dbPath, sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx2.Close()
+
+	results, err := idx2.Search("should not appear", "")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results after close, got %d", len(results))
+	}
+}
+
 func TestIndexBusyTimeout(t *testing.T) {
 	idx, _ := testIndex(t)
 
