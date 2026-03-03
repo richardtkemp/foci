@@ -102,6 +102,12 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	if cfg.Sessions.BranchOrientationPrompt != "" {
 		add("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
 	}
+	if cfg.Sessions.BranchOrientationMultiballPrompt != "" {
+		add("sessions", "branch_orientation_multiball_prompt", cfg.Sessions.BranchOrientationMultiballPrompt)
+	}
+	if cfg.Sessions.BranchOrientationHeadlessPrompt != "" {
+		add("sessions", "branch_orientation_headless_prompt", cfg.Sessions.BranchOrientationHeadlessPrompt)
+	}
 
 	// memory
 	if len(cfg.Memory.Sources) > 0 {
@@ -242,6 +248,12 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	add("duplicate_messages", agent.DuplicateMessages)
 	if agent.BranchOrientationPrompt != "" {
 		add("branch_orientation_prompt", agent.BranchOrientationPrompt)
+	}
+	if agent.BranchOrientationMultiballPrompt != "" {
+		add("branch_orientation_multiball_prompt", agent.BranchOrientationMultiballPrompt)
+	}
+	if agent.BranchOrientationHeadlessPrompt != "" {
+		add("branch_orientation_headless_prompt", agent.BranchOrientationHeadlessPrompt)
 	}
 	if agent.TelegramBot != "" {
 		add("telegram_bot", agent.TelegramBot)
@@ -445,6 +457,12 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	addGlobal("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
 	if cfg.Sessions.BranchOrientationPrompt != "" {
 		addGlobal("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
+	}
+	if cfg.Sessions.BranchOrientationMultiballPrompt != "" {
+		addGlobal("sessions", "branch_orientation_multiball_prompt", cfg.Sessions.BranchOrientationMultiballPrompt)
+	}
+	if cfg.Sessions.BranchOrientationHeadlessPrompt != "" {
+		addGlobal("sessions", "branch_orientation_headless_prompt", cfg.Sessions.BranchOrientationHeadlessPrompt)
 	}
 	if len(cfg.Memory.Sources) > 0 {
 		addGlobal("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
@@ -699,8 +717,11 @@ func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	if len(agent.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
-	if agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
-		opts = append(opts, availableOption{"agent", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})
+	if agent.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationMultiballPrompt == "" && agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+		opts = append(opts, availableOption{"agent", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
+	}
+	if agent.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationHeadlessPrompt == "" && agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+		opts = append(opts, availableOption{"agent", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
 	}
 	if agent.TelegramBot == "" {
 		opts = append(opts, availableOption{"agent", "telegram_bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
@@ -760,8 +781,11 @@ func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	if cfg.Sessions.CompactionPreserveMessages == 0 {
 		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
 	}
-	if cfg.Sessions.BranchOrientationPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "branch_orientation_prompt", "\"\"", "prompt file injected into all branch sessions"})
+	if cfg.Sessions.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+		opts = append(opts, availableOption{"sessions", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
+	}
+	if cfg.Sessions.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+		opts = append(opts, availableOption{"sessions", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
 	}
 
 	// Memory fields

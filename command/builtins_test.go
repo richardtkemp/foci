@@ -704,10 +704,12 @@ func TestPromptsCommand(t *testing.T) {
 		return PromptsData{
 			AgentID: "clutch",
 			Prompts: []PromptInfo{
-				{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Exists: true},
-				{Label: "session_reset"},
-				{Label: "handoff_msg", Inline: "You are picking up a compacted session."},
+				{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Exists: true, Default: false},
+				{Label: "keepalive", Default: true},
+				{Label: "handoff_msg", Inline: "You are picking up a compacted session.", Default: false},
 				{Label: "branch_orientation", Path: "/missing/file.md", Exists: false},
+				{Label: "background", Disabled: true},
+				{Label: "braindead_warning", Inline: "Stop!", Default: true},
 			},
 			PromptDirs: []string{"/home/foci/prompts"},
 			Files: []PromptFile{
@@ -727,13 +729,17 @@ func TestPromptsCommand(t *testing.T) {
 		"agent: clutch",
 		"compaction_summary",
 		"/home/foci/prompts/compaction.md",
-		"✓",
-		"session_reset",
+		"[custom]",
+		"keepalive",
 		"[default]",
 		"handoff_msg",
-		"[inline: 39 chars]",
+		"[custom inline: 39 chars]",
 		"branch_orientation",
-		"✗ (not found)",
+		"[not found]",
+		"background",
+		"disabled",
+		"braindead_warning",
+		"[default inline: 5 chars]",
 		"Prompt files on disk:",
 		"/home/foci/prompts/",
 		"compaction.md",
@@ -757,7 +763,7 @@ func TestPromptsCommandEmpty(t *testing.T) {
 		return PromptsData{
 			AgentID: "test",
 			Prompts: []PromptInfo{
-				{Label: "branch_orientation"},
+				{Label: "branch_orientation", Default: true},
 			},
 		}
 	})
@@ -783,7 +789,7 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 	cmd := NewPromptsCommand(func() PromptsData {
 		return PromptsData{
 			AgentID:    "test",
-			Prompts:    []PromptInfo{{Label: "branch_orientation"}},
+			Prompts:    []PromptInfo{{Label: "branch_orientation", Default: true}},
 			PromptDirs: []string{"/some/dir"},
 			Files:      nil,
 		}

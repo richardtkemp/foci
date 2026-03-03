@@ -105,7 +105,9 @@ type AgentConfig struct {
 	DuplicateMessages              bool              `toml:"duplicate_messages"`                // send user text twice per API call (improves instruction following)
 	BatchPartialAssistantMessages  bool              `toml:"batch_partial_assistant_messages"`   // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
 	BatchPartialJoiner             string            `toml:"batch_partial_joiner"`               // separator between batched partial messages (default: "")
-	BranchOrientationPrompt string            `toml:"branch_orientation_prompt"` // path to prompt file injected into all branch sessions (multiball, cron, spawn)
+	BranchOrientationPrompt          string            `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
+	BranchOrientationMultiballPrompt string            `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
+	BranchOrientationHeadlessPrompt  string            `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 	TelegramBot             string            `toml:"telegram_bot"`              // bot name; token resolved via "telegram.<bot>" secret
 	BotSecret               string            `toml:"bot_secret"`                // override secret key for bot token (default: "telegram.<telegram_bot>")
 	MultiballBots           []string          `toml:"multiball_bots"`            // additional bot names for multiball (optional)
@@ -189,7 +191,9 @@ type SessionsConfig struct {
 	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 	CompactionDebug            bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
 	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
-	BranchOrientationPrompt    string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
+	BranchOrientationPrompt          string  `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
+	BranchOrientationMultiballPrompt string  `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
+	BranchOrientationHeadlessPrompt  string  `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 	ArchiveAfter               string  `toml:"archive_after"`                 // gzip idle sessions after this duration (default "168h" = 7 days)
 }
 
@@ -752,6 +756,12 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].BranchOrientationPrompt != "" {
 			cfg.Agents[i].BranchOrientationPrompt = ResolvePath(cfg.Agents[i].BranchOrientationPrompt)
 		}
+		if cfg.Agents[i].BranchOrientationMultiballPrompt != "" {
+			cfg.Agents[i].BranchOrientationMultiballPrompt = ResolvePath(cfg.Agents[i].BranchOrientationMultiballPrompt)
+		}
+		if cfg.Agents[i].BranchOrientationHeadlessPrompt != "" {
+			cfg.Agents[i].BranchOrientationHeadlessPrompt = ResolvePath(cfg.Agents[i].BranchOrientationHeadlessPrompt)
+		}
 	}
 
 	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
@@ -1049,6 +1059,12 @@ func (c *Config) ResolveAllPaths() {
 	}
 	if c.Sessions.BranchOrientationPrompt != "" {
 		c.Sessions.BranchOrientationPrompt = ResolvePath(c.Sessions.BranchOrientationPrompt)
+	}
+	if c.Sessions.BranchOrientationMultiballPrompt != "" {
+		c.Sessions.BranchOrientationMultiballPrompt = ResolvePath(c.Sessions.BranchOrientationMultiballPrompt)
+	}
+	if c.Sessions.BranchOrientationHeadlessPrompt != "" {
+		c.Sessions.BranchOrientationHeadlessPrompt = ResolvePath(c.Sessions.BranchOrientationHeadlessPrompt)
 	}
 	if c.Sessions.CompactionSummaryPrompt != "" {
 		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)

@@ -194,8 +194,11 @@ func TestFormatAvailable(t *testing.T) {
 	result := FormatAvailable(cfg, agent)
 
 	// Unset fields should appear
-	if !strings.Contains(result, "branch_orientation_prompt") {
-		t.Error("expected branch_orientation_prompt in available options")
+	if !strings.Contains(result, "branch_orientation_multiball_prompt") {
+		t.Error("expected branch_orientation_multiball_prompt in available options")
+	}
+	if !strings.Contains(result, "branch_orientation_headless_prompt") {
+		t.Error("expected branch_orientation_headless_prompt in available options")
 	}
 	if !strings.Contains(result, "system_files") {
 		t.Error("expected system_files in available options")
@@ -406,20 +409,24 @@ func TestFormatTableBySection(t *testing.T) {
 
 func TestFormatAvailableDeduplication(t *testing.T) {
 	cfg, agent := testConfig()
-	// Ensure both agent and sessions have branch_orientation_prompt unset
+	// Ensure both agent and sessions have orientation prompts unset
 	agent.BranchOrientationPrompt = ""
+	agent.BranchOrientationMultiballPrompt = ""
+	agent.BranchOrientationHeadlessPrompt = ""
 	cfg.Sessions.BranchOrientationPrompt = ""
+	cfg.Sessions.BranchOrientationMultiballPrompt = ""
+	cfg.Sessions.BranchOrientationHeadlessPrompt = ""
 	// Ensure both agent and defaults have system_files unset
 	agent.SystemFiles = nil
 	cfg.Defaults.SystemFiles = nil
 
 	result := FormatAvailable(cfg, agent)
 
-	// branch_orientation_prompt appears in both agent and sessions sections,
+	// branch_orientation_multiball_prompt appears in both agent and sessions sections,
 	// but after deduplication only the sessions entry should remain.
-	branchCount := strings.Count(result, "branch_orientation_prompt")
-	if branchCount > 1 {
-		t.Errorf("branch_orientation_prompt appears %d times, expected 1 after dedup", branchCount)
+	multiballCount := strings.Count(result, "branch_orientation_multiball_prompt")
+	if multiballCount > 1 {
+		t.Errorf("branch_orientation_multiball_prompt appears %d times, expected 1 after dedup", multiballCount)
 	}
 }
 
