@@ -1716,7 +1716,8 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent environment block
 	var envBlock string
 	if p.cfg.Environment.Enabled {
-		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg)
+		crontabCount := countCrontabJobs()
+		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, crontabCount)
 	}
 
 	// Per-agent agent struct
@@ -1913,7 +1914,9 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
 	if tmuxTool != nil {
-		cmds.Register(command.NewTmuxCommand(tmuxTool.Execute))
+		cmds.Register(command.NewTmuxCommand(func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tmuxTool.Execute(ctx, params)
+		}))
 	}
 	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, buildContextInfoFn(
 		ag, bootstrap, registry, acfg, p.client, p.sessions, defaultSessionKey, compactionThreshold,
@@ -2915,9 +2918,23 @@ func buildContextInfoFn(
 	}
 }
 
+// countCrontabJobs counts the number of active cron jobs for the current user
+func countCrontabJobs() int {
+	cmd := exec.Command("sh", "-c", "crontab -l 2>/dev/null | grep -v '^#' | grep -v '^$' | wc -l")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
 // buildEnvironmentBlock generates the environment system block content
 // from config values known at startup.
-func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config) string {
+func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config, crontabCount int) string {
 	logDir := filepath.Dir(cfg.Logging.EventFile)
 
 	var b strings.Builder
@@ -2935,6 +2952,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	if acfg.TelegramBot != "" {
 		b.WriteString("- Messaging: Telegram\n")
 	}
+	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
 	// Paths
 	b.WriteString("\n## Paths\n")
