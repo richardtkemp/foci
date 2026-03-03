@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -194,6 +195,43 @@ func configureMultiballBot(bot *telegram.Bot, mc multiballBotConfig) {
 			}
 		}
 	}
+}
+
+// authMiddleware returns an HTTP middleware that requires a valid API key on
+// all endpoints except /voice (which has its own auth via voice.api_key).
+// Checks Authorization: Bearer header first, then falls back to api_key query
+// param (for WebSocket compat). Uses constant-time comparison.
+func authMiddleware(apiKey string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /voice has its own auth via voice.api_key
+		if r.URL.Path == "/voice" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check Authorization: Bearer header
+		token := ""
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token = auth[len("Bearer "):]
+		}
+
+		// Fallback: api_key query param (WebSocket compat)
+		if token == "" {
+			token = r.URL.Query().Get("api_key")
+		}
+
+		if token == "" {
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+
+		if subtle.ConstantTimeCompare([]byte(token), []byte(apiKey)) != 1 {
+			http.Error(w, "invalid credentials", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // httpHandlerDeps holds shared state needed by HTTP endpoint handlers.
@@ -645,11 +683,24 @@ func main() {
 		}
 	}
 
+	// Auto-generate HTTP API key if not present
+	httpAPIKey, _ := store.Get("http.api_key")
+	if httpAPIKey == "" {
+		generated, err := secrets.GeneratePassphrase(5)
+		if err != nil {
+			log.Fatalf("main", "generate HTTP API key: %v", err)
+		}
+		store.Set("http.api_key", generated)
+		if err := store.Save(); err != nil {
+			log.Fatalf("main", "save HTTP API key: %v", err)
+		}
+		httpAPIKey = generated
+		log.Infof("main", "generated HTTP API key — add FOCI_API_KEY to crontab: %s", httpAPIKey)
+	}
+
 	// Wire child process group-dropping into the command package
 	// (so script commands also drop supplementary groups).
 	command.ChildSysProcAttr = tools.ChildSysProcAttr
-
-
 
 	// Shared: Bitwarden store (optional)
 	var bwStore *bitwarden.Store
@@ -1249,7 +1300,7 @@ func main() {
 	var httpMu sync.Mutex
 	go func() {
 		for ctx.Err() == nil {
-			srv := &http.Server{Addr: addr, Handler: mux}
+			srv := &http.Server{Addr: addr, Handler: authMiddleware(httpAPIKey, mux)}
 			httpMu.Lock()
 			httpServer = srv
 			httpMu.Unlock()

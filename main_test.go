@@ -719,3 +719,98 @@ func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
 		t.Errorf("status = %d, want 404 (endpoint not registered)", w.Code)
 	}
 }
+
+func TestAuthMiddleware(t *testing.T) {
+	const apiKey = "test-secret-key"
+
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	handler := authMiddleware(apiKey, backend)
+
+	tests := []struct {
+		name       string
+		path       string
+		bearer     string   // Authorization: Bearer value
+		queryKey   string   // api_key query param
+		wantStatus int
+	}{
+		{
+			name:       "bearer valid",
+			path:       "/status",
+			bearer:     apiKey,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "bearer invalid",
+			path:       "/status",
+			bearer:     "wrong-key",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "query param valid",
+			path:       "/status",
+			queryKey:   apiKey,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "query param invalid",
+			path:       "/status",
+			queryKey:   "wrong-key",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "no auth",
+			path:       "/status",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "voice endpoint bypasses auth",
+			path:       "/voice",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "bearer on send",
+			path:       "/send",
+			bearer:     apiKey,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "no auth on command",
+			path:       "/command",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "no auth on reload-credentials",
+			path:       "/-/reload-credentials",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "bearer on reload-credentials",
+			path:       "/-/reload-credentials",
+			bearer:     apiKey,
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := tt.path
+			if tt.queryKey != "" {
+				target += "?api_key=" + tt.queryKey
+			}
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			if tt.bearer != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.bearer)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}

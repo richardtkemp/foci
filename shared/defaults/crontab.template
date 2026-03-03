@@ -4,9 +4,10 @@
 # Replace HOMEDIR with the foci user's home directory (e.g. /home/foci)
 # Add these to the foci user's crontab: crontab -e
 #
-# Prereqs: FOCI_ADDR and PATH should be set at top of crontab:
+# Prereqs: FOCI_ADDR, FOCI_API_KEY, and PATH should be set at top of crontab:
 #   PATH=/usr/local/bin:/usr/bin:/bin
 #   FOCI_ADDR=127.0.0.1:18791
+#   FOCI_API_KEY=<your-http-api-key>
 
 # Memory formation: capture important session memories (every 30 min, only if active in last 30m)
 */30 * * * * foci branch --oneshot --if-active 30m -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log

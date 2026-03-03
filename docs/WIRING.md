@@ -667,6 +667,8 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 ## HTTP Gateway (`main.go`)
 
+**Auth middleware** wraps all HTTP endpoints (except `/voice`, which has its own auth via `voice.api_key`). Requires `Authorization: Bearer <key>` header or `api_key` query param, validated against `http.api_key` from `secrets.toml` using constant-time comparison. Returns 401 (missing) or 403 (invalid). The key is auto-generated on first startup using a 5-word passphrase (~52 bits entropy). The CLI reads the key from `--api-key` flag or `FOCI_API_KEY` env var.
+
 Endpoints for external integration. All endpoints accept an optional `agent` parameter (JSON body or query string) to target a specific agent. When omitted, defaults to the first configured agent.
 
 - `POST /send` — message to agent's default session (activity-gated). Returns 412 if no default session.

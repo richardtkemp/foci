@@ -26,7 +26,17 @@ github_token = "ghp_..."
 openrouter_key = "sk-or-v1-..."
 ```
 
-Keys use `section.key` format. The `[anthropic]` and `[telegram]` sections are used by core wiring; `[custom]` is for user-defined secrets.
+Keys use `section.key` format. The `[anthropic]`, `[telegram]`, and `[http]` sections are used by core wiring; `[custom]` is for user-defined secrets.
+
+### `http.api_key` — HTTP API authentication
+
+All HTTP endpoints (except `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.
+
+**CLI usage:** The `foci` CLI reads the key from `--api-key` flag or `FOCI_API_KEY` env var and sends it as `Authorization: Bearer <key>` on every request.
+
+**Crontab:** Set `FOCI_API_KEY=<key>` at the top of the foci user's crontab so scheduled jobs authenticate automatically.
+
+**Request format:** Either `Authorization: Bearer <key>` header or `api_key=<key>` query param (for WebSocket compat).
 
 ### Referencing secrets
 
