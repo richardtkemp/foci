@@ -847,6 +847,29 @@ allowed_hosts = ["api.example.com", "api.backup.example.com"]
 
 Host matching is case-insensitive (per RFC 4343). Ports are ignored — `api.example.com:8443` matches `api.example.com`. See [SECRETS.md](SECRETS.md) for the full security model.
 
+### `allowed_agents` / `denied_agents`
+
+Each global section can restrict which agents may access it using a whitelist (`allowed_agents`) or blacklist (`denied_agents`). Restrictions are optional — by default all agents see all global sections.
+
+```toml
+[shared_api]
+token = "shared_token"
+allowed_agents = ["alice", "bob"]    # only these agents see this section
+
+[internal]
+token = "internal_token"
+denied_agents = ["untrusted"]        # everyone except these agents
+```
+
+Rules:
+- `allowed_agents` — only listed agents can access the section (whitelist)
+- `denied_agents` — listed agents are excluded, all others can access (blacklist)
+- A section **cannot** have both `allowed_agents` and `denied_agents` — this is a load error
+- Restrictions apply to global sections only. Agent-specific `[agents.ID.section]` values are always visible to that agent, even if the global section denies them
+- When multiple agents exist but no sections have any agent restrictions, a startup warning is logged
+
+For agent-specific secret values (rather than restricting a shared section), use per-agent overrides instead — see below.
+
 ### Per-agent overrides
 
 Agents can have their own secret values via `[agents.ID.section]` tables. Agent-specific values override globals for the same key; keys not overridden fall back to globals. Each agent only sees its own overrides.

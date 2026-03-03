@@ -1226,3 +1226,288 @@ allowed_hosts = ["api.fotini.com"]
 		t.Errorf("fotini AllowedHosts = %v", hosts)
 	}
 }
+
+func TestAllowedAgentsWhitelist(t *testing.T) {
+	path := writeSecrets(t, `
+[shared_api]
+token = "shared_token"
+allowed_agents = ["alice", "bob"]
+
+[open]
+key = "open_key"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alice := s.ForAgent("alice")
+	bob := s.ForAgent("bob")
+	charlie := s.ForAgent("charlie")
+
+	// Alice and Bob see shared_api
+	v, ok := alice.Get("shared_api.token")
+	if !ok || v != "shared_token" {
+		t.Errorf("alice shared_api.token = %q, ok=%v", v, ok)
+	}
+	v, ok = bob.Get("shared_api.token")
+	if !ok || v != "shared_token" {
+		t.Errorf("bob shared_api.token = %q, ok=%v", v, ok)
+	}
+
+	// Charlie does not
+	_, ok = charlie.Get("shared_api.token")
+	if ok {
+		t.Error("charlie should not see shared_api.token")
+	}
+
+	// All see open section
+	for _, name := range []string{"alice", "bob", "charlie"} {
+		as := s.ForAgent(name)
+		v, ok := as.Get("open.key")
+		if !ok || v != "open_key" {
+			t.Errorf("%s open.key = %q, ok=%v", name, v, ok)
+		}
+	}
+}
+
+func TestDeniedAgentsBlacklist(t *testing.T) {
+	path := writeSecrets(t, `
+[internal]
+token = "internal_token"
+denied_agents = ["untrusted"]
+
+[public]
+key = "public_key"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	trusted := s.ForAgent("trusted")
+	untrusted := s.ForAgent("untrusted")
+
+	// Trusted sees internal
+	v, ok := trusted.Get("internal.token")
+	if !ok || v != "internal_token" {
+		t.Errorf("trusted internal.token = %q, ok=%v", v, ok)
+	}
+
+	// Untrusted does not
+	_, ok = untrusted.Get("internal.token")
+	if ok {
+		t.Error("untrusted should not see internal.token")
+	}
+
+	// Both see public
+	v, ok = trusted.Get("public.key")
+	if !ok || v != "public_key" {
+		t.Errorf("trusted public.key = %q, ok=%v", v, ok)
+	}
+	v, ok = untrusted.Get("public.key")
+	if !ok || v != "public_key" {
+		t.Errorf("untrusted public.key = %q, ok=%v", v, ok)
+	}
+}
+
+func TestBothAllowedAndDeniedError(t *testing.T) {
+	path := writeSecrets(t, `
+[broken]
+token = "val"
+allowed_agents = ["alice"]
+denied_agents = ["bob"]
+`)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error when both allowed_agents and denied_agents are set")
+	}
+	if !strings.Contains(err.Error(), "both allowed_agents and denied_agents") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestAgentOverrideSurvivesDeny(t *testing.T) {
+	path := writeSecrets(t, `
+[custom]
+global_key = "global_val"
+denied_agents = ["alice"]
+
+[agents.alice.custom]
+agent_key = "alice_val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alice := s.ForAgent("alice")
+
+	// Global custom.global_key denied to alice
+	_, ok := alice.Get("custom.global_key")
+	if ok {
+		t.Error("alice should not see custom.global_key (denied)")
+	}
+
+	// But alice's own agent override survives
+	v, ok := alice.Get("custom.agent_key")
+	if !ok || v != "alice_val" {
+		t.Errorf("alice custom.agent_key = %q, ok=%v", v, ok)
+	}
+}
+
+func TestNoRestrictionsDefault(t *testing.T) {
+	path := writeSecrets(t, `
+[anthropic]
+setup_token = "sk-global"
+
+[custom]
+key = "val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// No restrictions — all agents see everything
+	for _, name := range []string{"alice", "bob", "unknown"} {
+		as := s.ForAgent(name)
+		v, ok := as.Get("anthropic.setup_token")
+		if !ok || v != "sk-global" {
+			t.Errorf("%s anthropic.setup_token = %q, ok=%v", name, v, ok)
+		}
+		v, ok = as.Get("custom.key")
+		if !ok || v != "val" {
+			t.Errorf("%s custom.key = %q, ok=%v", name, v, ok)
+		}
+	}
+}
+
+func TestHasAgentRestrictions(t *testing.T) {
+	// No restrictions
+	path := writeSecrets(t, `
+[custom]
+key = "val"
+`)
+	s, _ := Load(path)
+	if s.HasAgentRestrictions() {
+		t.Error("expected false with no restrictions")
+	}
+
+	// With allowed_agents
+	path = writeSecrets(t, `
+[custom]
+key = "val"
+allowed_agents = ["alice"]
+`)
+	s, _ = Load(path)
+	if !s.HasAgentRestrictions() {
+		t.Error("expected true with allowed_agents")
+	}
+
+	// With denied_agents
+	path = writeSecrets(t, `
+[custom]
+key = "val"
+denied_agents = ["bob"]
+`)
+	s, _ = Load(path)
+	if !s.HasAgentRestrictions() {
+		t.Error("expected true with denied_agents")
+	}
+}
+
+func TestSavePreservesAgentRestrictions(t *testing.T) {
+	path := writeSecrets(t, `
+[shared]
+token = "shared_tok"
+allowed_agents = ["alice", "bob"]
+
+[internal]
+key = "internal_key"
+denied_agents = ["untrusted"]
+
+[open]
+val = "open_val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Reload and verify
+	s2, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after save: %v", err)
+	}
+
+	// Values preserved
+	v, ok := s2.Get("shared.token")
+	if !ok || v != "shared_tok" {
+		t.Errorf("shared.token = %q, ok=%v", v, ok)
+	}
+
+	// Restrictions preserved — test via ForAgent behavior
+	alice := s2.ForAgent("alice")
+	charlie := s2.ForAgent("charlie")
+	untrusted := s2.ForAgent("untrusted")
+
+	if _, ok := alice.Get("shared.token"); !ok {
+		t.Error("alice should see shared.token after roundtrip")
+	}
+	if _, ok := charlie.Get("shared.token"); ok {
+		t.Error("charlie should not see shared.token after roundtrip")
+	}
+	if _, ok := alice.Get("internal.key"); !ok {
+		t.Error("alice should see internal.key after roundtrip")
+	}
+	if _, ok := untrusted.Get("internal.key"); ok {
+		t.Error("untrusted should not see internal.key after roundtrip")
+	}
+}
+
+func TestAllowedAgentsHostsFiltered(t *testing.T) {
+	path := writeSecrets(t, `
+[restricted]
+token = "restricted_tok"
+allowed_hosts = ["api.restricted.com"]
+allowed_agents = ["alice"]
+
+[open]
+key = "open_key"
+allowed_hosts = ["api.open.com"]
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	alice := s.ForAgent("alice")
+	bob := s.ForAgent("bob")
+
+	// Alice sees restricted hosts
+	hosts := alice.SectionAllowedHosts("restricted")
+	if len(hosts) != 1 || hosts[0] != "api.restricted.com" {
+		t.Errorf("alice restricted hosts = %v", hosts)
+	}
+
+	// Bob does not see restricted hosts
+	hosts = bob.SectionAllowedHosts("restricted")
+	if len(hosts) != 0 {
+		t.Errorf("bob should not see restricted hosts, got %v", hosts)
+	}
+
+	// Both see open hosts
+	hosts = alice.SectionAllowedHosts("open")
+	if len(hosts) != 1 || hosts[0] != "api.open.com" {
+		t.Errorf("alice open hosts = %v", hosts)
+	}
+	hosts = bob.SectionAllowedHosts("open")
+	if len(hosts) != 1 || hosts[0] != "api.open.com" {
+		t.Errorf("bob open hosts = %v", hosts)
+	}
+}

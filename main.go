@@ -683,6 +683,9 @@ func main() {
 			}
 		}
 	}
+	if len(cfg.Agents) > 1 && !store.HasAgentRestrictions() {
+		log.Warnf("security", "multiple agents but no allowed_agents/denied_agents in secrets.toml — all agents can access all secrets")
+	}
 
 	// Auto-generate HTTP API key if not present
 	httpAPIKey, _ := store.Get("http.api_key")
