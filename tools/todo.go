@@ -62,7 +62,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			},
 			"required": ["action"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Action   string  `json:"action"`
 				Text     string  `json:"text"`
@@ -75,7 +75,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Reason   string  `json:"reason"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 
 			switch p.Action {
@@ -94,7 +94,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			case "remove":
 				return todoRemove(store, agentID, p.ID, p.IDs)
 			default:
-				return "", fmt.Errorf("unknown action: %s (use add, list, search, get, complete, edit, or remove)", p.Action)
+				return ToolResult{}, fmt.Errorf("unknown action: %s (use add, list, search, get, complete, edit, or remove)", p.Action)
 			}
 		},
 	}
@@ -123,67 +123,67 @@ func formatTodoLines(items []memory.TodoItem) string {
 	return strings.Join(lines, "\n")
 }
 
-func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (string, error) {
+func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (ToolResult, error) {
 	if text == "" {
-		return "", fmt.Errorf("text is required for add")
+		return ToolResult{}, fmt.Errorf("text is required for add")
 	}
 	id, err := store.Add(agentID, text, priority, tag)
 	if err != nil {
-		return "", fmt.Errorf("add todo: %w", err)
+		return ToolResult{}, fmt.Errorf("add todo: %w", err)
 	}
 	pri := priority
 	if pri == "" {
 		pri = "medium"
 	}
-	return fmt.Sprintf("Added #%d (%s)", id, pri), nil
+	return TextResult(fmt.Sprintf("Added #%d (%s)", id, pri)), nil
 }
 
-func todoList(store *memory.TodoStore, agentID, status, tag string) (string, error) {
+func todoList(store *memory.TodoStore, agentID, status, tag string) (ToolResult, error) {
 	items, err := store.List(agentID, status, tag)
 	if err != nil {
-		return "", fmt.Errorf("list todos: %w", err)
+		return ToolResult{}, fmt.Errorf("list todos: %w", err)
 	}
 	if len(items) == 0 {
 		if status != "" {
-			return fmt.Sprintf("No %s todos.", status), nil
+			return TextResult(fmt.Sprintf("No %s todos.", status)), nil
 		}
-		return "No todos.", nil
+		return TextResult("No todos."), nil
 	}
-	return formatTodoLines(items), nil
+	return TextResult(formatTodoLines(items)), nil
 }
 
-func todoSearch(store *memory.TodoStore, agentID, query string) (string, error) {
+func todoSearch(store *memory.TodoStore, agentID, query string) (ToolResult, error) {
 	if query == "" {
-		return "", fmt.Errorf("query is required for search")
+		return ToolResult{}, fmt.Errorf("query is required for search")
 	}
 	items, err := store.Search(agentID, query)
 	if err != nil {
-		return "", fmt.Errorf("search todos: %w", err)
+		return ToolResult{}, fmt.Errorf("search todos: %w", err)
 	}
 	if len(items) == 0 {
-		return fmt.Sprintf("No todos matching %q.", query), nil
+		return TextResult(fmt.Sprintf("No todos matching %q.", query)), nil
 	}
-	return formatTodoLines(items), nil
+	return TextResult(formatTodoLines(items)), nil
 }
 
-func todoGet(store *memory.TodoStore, agentID string, id int64) (string, error) {
+func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, error) {
 	if id == 0 {
-		return "", fmt.Errorf("id is required for get")
+		return ToolResult{}, fmt.Errorf("id is required for get")
 	}
 	item, err := store.Get(agentID, id)
 	if err != nil {
-		return "", fmt.Errorf("get todo: %w", err)
+		return ToolResult{}, fmt.Errorf("get todo: %w", err)
 	}
-	return formatTodoLine(*item), nil
+	return TextResult(formatTodoLine(*item)), nil
 }
 
-func todoComplete(store *memory.TodoStore, agentID string, id int64, ids []int64, reason string) (string, error) {
+func todoComplete(store *memory.TodoStore, agentID string, id int64, ids []int64, reason string) (ToolResult, error) {
 	if reason == "" {
-		return "", fmt.Errorf("reason is required for complete (e.g. 'implemented in abc1234', 'no longer relevant')")
+		return ToolResult{}, fmt.Errorf("reason is required for complete (e.g. 'implemented in abc1234', 'no longer relevant')")
 	}
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	var results []string
 	for _, rid := range resolved {
@@ -193,22 +193,22 @@ func todoComplete(store *memory.TodoStore, agentID string, id int64, ids []int64
 			results = append(results, fmt.Sprintf("#%d: completed", rid))
 		}
 	}
-	return strings.Join(results, "\n"), nil
+	return TextResult(strings.Join(results, "\n")), nil
 }
 
-func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text, priority, tag string, params json.RawMessage) (string, error) {
+func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, text, priority, tag string, params json.RawMessage) (ToolResult, error) {
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(params, &raw); err != nil {
-		return "", fmt.Errorf("unmarshal params: %w", err)
+		return ToolResult{}, fmt.Errorf("unmarshal params: %w", err)
 	}
 	_, setTags := raw["tag"]
 
 	if text == "" && priority == "" && !setTags {
-		return "", fmt.Errorf("edit requires at least one of: text, priority, tag")
+		return ToolResult{}, fmt.Errorf("edit requires at least one of: text, priority, tag")
 	}
 	var results []string
 	for _, rid := range resolved {
@@ -247,13 +247,13 @@ func todoEdit(store *memory.TodoStore, agentID string, id int64, ids []int64, te
 			results = append(results, fmt.Sprintf("#%d: %s", rid, strings.Join(changes, ", ")))
 		}
 	}
-	return strings.Join(results, "\n"), nil
+	return TextResult(strings.Join(results, "\n")), nil
 }
 
-func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) (string, error) {
+func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) (ToolResult, error) {
 	resolved, err := resolveIDs(id, ids)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 	var results []string
 	for _, rid := range resolved {
@@ -263,7 +263,7 @@ func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) 
 			results = append(results, fmt.Sprintf("#%d: removed", rid))
 		}
 	}
-	return strings.Join(results, "\n"), nil
+	return TextResult(strings.Join(results, "\n")), nil
 }
 
 func formatTodoTimestamp(item memory.TodoItem) string {

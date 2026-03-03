@@ -26,7 +26,7 @@ func NewReadTool(store *secrets.Store) *Tool {
 			},
 			"required": ["path"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return readFile(ctx, params, store, "")
 		},
 	}
@@ -50,7 +50,7 @@ func NewWriteTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool
 			},
 			"required": ["path", "content"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return writeFile(ctx, params, store, "", blockedPaths)
 		},
 	}
@@ -78,7 +78,7 @@ func NewEditTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool 
 			},
 			"required": ["path", "old_string", "new_string"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return editFile(ctx, params, store, "", blockedPaths)
 		},
 	}
@@ -98,7 +98,7 @@ func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 			},
 			"required": ["path"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return readFile(ctx, params, store, baseDir)
 		},
 	}
@@ -122,7 +122,7 @@ func NewIsolatedWriteTool(store *secrets.Store, baseDir string) *Tool {
 			},
 			"required": ["path", "content"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return writeFile(ctx, params, store, baseDir)
 		},
 	}
@@ -150,7 +150,7 @@ func NewIsolatedEditTool(store *secrets.Store, baseDir string) *Tool {
 			},
 			"required": ["path", "old_string", "new_string"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return editFile(ctx, params, store, baseDir)
 		},
 	}
@@ -247,26 +247,26 @@ func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) 
 	return "", false
 }
 
-func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (string, error) {
+func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (ToolResult, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	resolved, err := resolveAndValidatePath(p.Path, baseDir)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	if err := checkBlockedPath(store, resolved); err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
+		return ToolResult{}, fmt.Errorf("read file: %w", err)
 	}
 
 	content := string(data)
@@ -282,78 +282,78 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 	for i, line := range lines {
 		fmt.Fprintf(&out, "%4d\t%s\n", i+1, line)
 	}
-	return out.String(), nil
+	return TextResult(out.String()), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (string, error) {
+func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	resolved, err := resolveAndValidatePath(p.Path, baseDir)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	if err := checkBlockedPath(store, resolved); err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	if len(blockedPaths) > 0 {
 		if rebuke, blocked := checkConfigBlockedPath(blockedPaths[0], resolved); blocked {
-			return rebuke, nil
+			return TextResult(rebuke), nil
 		}
 	}
 
 	if err := os.WriteFile(resolved, []byte(p.Content), 0644); err != nil {
-		return "", fmt.Errorf("write file: %w", err)
+		return ToolResult{}, fmt.Errorf("write file: %w", err)
 	}
 
-	return fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path), nil
+	return TextResult(fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path)), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (string, error) {
+func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
 		NewString string `json:"new_string"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	resolved, err := resolveAndValidatePath(p.Path, baseDir)
 	if err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	if err := checkBlockedPath(store, resolved); err != nil {
-		return "", err
+		return ToolResult{}, err
 	}
 
 	if len(blockedPaths) > 0 {
 		if rebuke, blocked := checkConfigBlockedPath(blockedPaths[0], resolved); blocked {
-			return rebuke, nil
+			return TextResult(rebuke), nil
 		}
 	}
 
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return "", fmt.Errorf("read file: %w", err)
+		return ToolResult{}, fmt.Errorf("read file: %w", err)
 	}
 
 	content := string(data)
 	count := strings.Count(content, p.OldString)
 
 	if count == 0 {
-		return "", fmt.Errorf("old_string not found in %s", p.Path)
+		return ToolResult{}, fmt.Errorf("old_string not found in %s", p.Path)
 	}
 	if count > 1 {
-		return "", fmt.Errorf("old_string found %d times in %s (must be unique)", count, p.Path)
+		return ToolResult{}, fmt.Errorf("old_string found %d times in %s (must be unique)", count, p.Path)
 	}
 
 	preErr := checkSyntax(resolved, data)
@@ -361,17 +361,17 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 
 	if preErr == nil {
 		if postErr := checkSyntax(resolved, []byte(newContent)); postErr != nil {
-			return "", fmt.Errorf("edit rejected — would introduce syntax error: %v", postErr)
+			return ToolResult{}, fmt.Errorf("edit rejected — would introduce syntax error: %v", postErr)
 		}
 	}
 
 	if err := os.WriteFile(resolved, []byte(newContent), 0644); err != nil {
-		return "", fmt.Errorf("write file: %w", err)
+		return ToolResult{}, fmt.Errorf("write file: %w", err)
 	}
 
 	msg := fmt.Sprintf("Edited %s", p.Path)
 	if preErr != nil {
 		msg += fmt.Sprintf("\nWarning: file already had syntax errors: %v", preErr)
 	}
-	return msg, nil
+	return TextResult(msg), nil
 }

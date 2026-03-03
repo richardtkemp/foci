@@ -86,16 +86,16 @@ func NewLsTool() *Tool {
 			},
 			"required": ["path"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Path   string `json:"path"`
 				Params string `json:"params"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Path == "" {
-				return "", fmt.Errorf("path is required")
+				return ToolResult{}, fmt.Errorf("path is required")
 			}
 
 			var args []string
@@ -108,11 +108,11 @@ func NewLsTool() *Tool {
 			out, err := runCmd(ctx, "ls", args...)
 			if err != nil {
 				if out != "" {
-					return out + "\nError: " + err.Error(), nil
+					return TextResult(out + "\nError: " + err.Error()), nil
 				}
-				return "", err
+				return ToolResult{}, err
 			}
-			return out, nil
+			return TextResult(out), nil
 		},
 	}
 }
@@ -136,41 +136,41 @@ func NewFindTool() *Tool {
 			},
 			"required": ["path", "params"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Path   string `json:"path"`
 				Params string `json:"params"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Path == "" {
-				return "", fmt.Errorf("path is required")
+				return ToolResult{}, fmt.Errorf("path is required")
 			}
 			if p.Params == "" {
-				return "", fmt.Errorf("params is required")
+				return ToolResult{}, fmt.Errorf("params is required")
 			}
 
 			// Check for blocked predicates before splitting
 			if blocked := checkFindBlocked(p.Params); blocked != "" {
-				return "", fmt.Errorf("blocked predicate: %s (dangerous — not allowed in explore mode)", blocked)
+				return ToolResult{}, fmt.Errorf("blocked predicate: %s (dangerous — not allowed in explore mode)", blocked)
 			}
 
 			// Build args: find <path> <params...>
 			findArgs, err := splitShellArgs(p.Params)
 			if err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			args := append([]string{p.Path}, findArgs...)
 
 			out, err := runCmd(ctx, "find", args...)
 			if err != nil {
 				if out != "" {
-					return out + "\nError: " + err.Error(), nil
+					return TextResult(out + "\nError: " + err.Error()), nil
 				}
-				return "", err
+				return ToolResult{}, err
 			}
-			return out, nil
+			return TextResult(out), nil
 		},
 	}
 }
@@ -200,17 +200,17 @@ func NewGrepTool(binary, name string) *Tool {
 			},
 			"required": ["pattern"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Pattern string `json:"pattern"`
 				Path    string `json:"path"`
 				Params  string `json:"params"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Pattern == "" {
-				return "", fmt.Errorf("pattern is required")
+				return ToolResult{}, fmt.Errorf("pattern is required")
 			}
 			if p.Path == "" {
 				p.Path = "."
@@ -231,16 +231,16 @@ func NewGrepTool(binary, name string) *Tool {
 				// grep returns exit 1 for no matches — not an error
 				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 					if result == "" {
-						return "(no matches)", nil
+						return TextResult("(no matches)"), nil
 					}
-					return result, nil
+					return TextResult(result), nil
 				}
 				if result != "" {
-					return result + "\nError: " + err.Error(), nil
+					return TextResult(result + "\nError: " + err.Error()), nil
 				}
-				return "", err
+				return ToolResult{}, err
 			}
-			return result, nil
+			return TextResult(result), nil
 		},
 	}
 }

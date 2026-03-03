@@ -30,7 +30,7 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, order []string) *T
 		ExecExport:  true,
 		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest.",
 		Parameters:  schema,
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return memorySearch(ctx, params, backends, names[0])
 		},
 	}
@@ -86,14 +86,14 @@ func buildMemorySearchSchema(names []string) json.RawMessage {
 	}`, enumJSON, names[0]))
 }
 
-func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string) (string, error) {
+func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string) (ToolResult, error) {
 	var p struct {
 		Query   string `json:"query"`
 		Sort    string `json:"sort"`
 		Backend string `json:"backend"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	backendName := p.Backend
@@ -103,21 +103,21 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 
 	searcher, ok := backends[backendName]
 	if !ok {
-		return "", fmt.Errorf("unknown search backend %q", backendName)
+		return ToolResult{}, fmt.Errorf("unknown search backend %q", backendName)
 	}
 
 	results, err := searcher.Search(p.Query, p.Sort)
 	if err != nil {
-		return "", fmt.Errorf("search: %w", err)
+		return ToolResult{}, fmt.Errorf("search: %w", err)
 	}
 
 	if len(results) == 0 {
-		return "No matches found.", nil
+		return TextResult("No matches found."), nil
 	}
 
 	var sb strings.Builder
 	for _, r := range results {
 		fmt.Fprintf(&sb, "[%s] %s: %s\n", r.Source, r.Path, r.Snippet)
 	}
-	return sb.String(), nil
+	return TextResult(sb.String()), nil
 }

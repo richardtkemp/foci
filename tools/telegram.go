@@ -63,17 +63,17 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 				}
 			}
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Text     string `json:"text"`
 				FilePath string `json:"file_path"`
 				SendAs   string `json:"send_as"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Text == "" && p.FilePath == "" {
-				return "", fmt.Errorf("at least one of text or file_path is required")
+				return ToolResult{}, fmt.Errorf("at least one of text or file_path is required")
 			}
 			if p.SendAs == "" {
 				p.SendAs = "document"
@@ -82,7 +82,7 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 			sessionKey := SessionKeyFromContext(ctx)
 			bot := getSender(sessionKey)
 			if bot == nil {
-				return "", fmt.Errorf("telegram not configured")
+				return ToolResult{}, fmt.Errorf("telegram not configured")
 			}
 
 			// Extract chat ID from session key for targeted delivery.
@@ -93,11 +93,11 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 			// TTS synthesis: send_as="voice" + text + no file_path
 			if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
 				if tts == nil {
-					return "", fmt.Errorf("tts not configured")
+					return ToolResult{}, fmt.Errorf("tts not configured")
 				}
 				audioData, err := tts.Synthesize(ctx, p.Text)
 				if err != nil {
-					return "", fmt.Errorf("tts: %w", err)
+					return ToolResult{}, fmt.Errorf("tts: %w", err)
 				}
 				if chatID != 0 {
 					err = bot.SendVoiceDataToChat(chatID, audioData)
@@ -105,9 +105,9 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 					err = bot.SendVoiceData(audioData)
 				}
 				if err != nil {
-					return "", fmt.Errorf("send voice note: %w", err)
+					return ToolResult{}, fmt.Errorf("send voice note: %w", err)
 				}
-				return "Sent: voice note", nil
+				return TextResult("Sent: voice note"), nil
 			}
 
 			if p.Text != "" {
@@ -118,7 +118,7 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 					err = bot.SendText(p.Text)
 				}
 				if err != nil {
-					return "", fmt.Errorf("send text: %w", err)
+					return ToolResult{}, fmt.Errorf("send text: %w", err)
 				}
 				sent = append(sent, "text")
 			}
@@ -171,12 +171,12 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 					label = "document"
 				}
 				if err != nil {
-					return "", fmt.Errorf("send %s: %w", label, err)
+					return ToolResult{}, fmt.Errorf("send %s: %w", label, err)
 				}
 				sent = append(sent, label)
 			}
 
-			return fmt.Sprintf("Sent: %s", joinWords(sent)), nil
+			return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil
 		},
 	}
 }

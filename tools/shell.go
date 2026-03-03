@@ -92,13 +92,13 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 			},
 			"required": ["command"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) (string, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) (ToolResult, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -106,18 +106,18 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		OutputMode string `json:"output_mode"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	// Check blocked paths
 	if store != nil && store.IsBlockedCommand(p.Command) {
-		return "", fmt.Errorf("command references a blocked path")
+		return ToolResult{}, fmt.Errorf("command references a blocked path")
 	}
 
 	// Block bare sleep commands - they block for up to 10s then silently
 	// background, which is the worst of both worlds. Use remind instead.
 	if sleepRegexp.MatchString(p.Command) {
-		return "", fmt.Errorf("sleep is not allowed via exec — use remind for timed check-ins instead")
+		return ToolResult{}, fmt.Errorf("sleep is not allowed via exec — use remind for timed check-ins instead")
 	}
 
 	// Block regular secret templates — secrets must not reach child processes.
@@ -128,7 +128,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	if refs := secrets.FindSecretRefs(cmd); refs != nil {
 		for _, ref := range refs {
 			if !bitwarden.IsBitwardenRef(ref) && !allSecretRefsInHTTPRequestScope(cmd) {
-				return "", fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool or foci_http_request shell function instead")
+				return ToolResult{}, fmt.Errorf("{{secret:}} templates are not allowed in exec — use the http_request tool or foci_http_request shell function instead")
 			}
 		}
 	}
@@ -136,7 +136,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 	if bwStore != nil {
 		resolved, err := bwStore.Resolve(cmd)
 		if err != nil {
-			return "", fmt.Errorf("resolve bitwarden secrets: %w", err)
+			return ToolResult{}, fmt.Errorf("resolve bitwarden secrets: %w", err)
 		}
 		cmd = resolved
 	}
@@ -164,7 +164,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string) (string, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string) (ToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -202,15 +202,15 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	// Use pipes with LimitReader to cap memory usage (Bug #115)
 	stdout, err := proc.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("create stdout pipe: %w", err)
+		return ToolResult{}, fmt.Errorf("create stdout pipe: %w", err)
 	}
 	stderr, err := proc.StderrPipe()
 	if err != nil {
-		return "", fmt.Errorf("create stderr pipe: %w", err)
+		return ToolResult{}, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	if err := proc.Start(); err != nil {
-		return "", fmt.Errorf("start command: %w", err)
+		return ToolResult{}, fmt.Errorf("start command: %w", err)
 	}
 
 	// Read stdout and stderr concurrently — all reads must complete before
@@ -220,14 +220,14 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	err = proc.Wait()
 
 	if outputMode == "separated" {
-		return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
+		return TextResult(formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)), nil
 	}
-	return formatResult(combined.String(), err, ctx, timeout, displayCmd, store, bwStore), nil
+	return TextResult(formatResult(combined.String(), err, ctx, timeout, displayCmd, store, bwStore)), nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string) (string, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string) (ToolResult, error) {
 	// Use a separate context for the command (not tied to agent turn)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -261,17 +261,17 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	stdout, err := proc.StdoutPipe()
 	if err != nil {
 		cmdCancel()
-		return "", fmt.Errorf("create stdout pipe: %w", err)
+		return ToolResult{}, fmt.Errorf("create stdout pipe: %w", err)
 	}
 	stderr, err := proc.StderrPipe()
 	if err != nil {
 		cmdCancel()
-		return "", fmt.Errorf("create stderr pipe: %w", err)
+		return ToolResult{}, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	if err := proc.Start(); err != nil {
 		cmdCancel()
-		return "", fmt.Errorf("start command: %w", err)
+		return ToolResult{}, fmt.Errorf("start command: %w", err)
 	}
 
 	// Read stdout and stderr concurrently — all reads must complete before
@@ -295,9 +295,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			bridge.Close()
 		}
 		if outputMode == "separated" {
-			return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
+			return TextResult(formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)), nil
 		}
-		return formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
+		return TextResult(formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)), nil
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
@@ -305,7 +305,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
 			stdoutBuf, stderrBuf, combined, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 
-		return fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd), nil
+		return TextResult(fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd)), nil
 
 	case <-ctx.Done():
 		// Agent turn cancelled — deliver results asynchronously like the
@@ -316,7 +316,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		log.Infof("exec", "turn cancelled, backgrounding: %s", truncateCmd(displayCmd, 100))
 		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
 			stdoutBuf, stderrBuf, combined, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
-		return "", ctx.Err()
+		return ToolResult{}, ctx.Err()
 	}
 }
 

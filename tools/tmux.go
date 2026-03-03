@@ -207,13 +207,13 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 			},
 			"required": ["operation"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return inst.execute(ctx, params)
 		},
 	}, inst.ClearAll
 }
 
-func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (string, error) {
+func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	var p struct {
 		Operation        string `json:"operation"`
 		Name             string `json:"name"`
@@ -228,7 +228,7 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 		Raw              bool   `json:"raw"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return "", fmt.Errorf("parse params: %w", err)
+		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
 	switch p.Operation {
@@ -267,7 +267,7 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 	case "unwatch":
 		return inst.unwatch(ctx, p.Name)
 	default:
-		return "", fmt.Errorf("unknown operation: %q (valid: start, send, read, list, kill, watch, unwatch)", p.Operation)
+		return ToolResult{}, fmt.Errorf("unknown operation: %q (valid: start, send, read, list, kill, watch, unwatch)", p.Operation)
 	}
 }
 
@@ -335,7 +335,7 @@ func (inst *tmuxInstance) ClearAll() {
 	log.Debugf("tmux", "ClearAll: cleared all watches and owned sessions")
 }
 
-func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string, watch bool) (string, error) {
+func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir string, watch bool) (ToolResult, error) {
 	if name == "" {
 		n := atomic.AddUint64(&tmuxCounter, 1)
 		name = fmt.Sprintf("foci-%d", n)
@@ -373,7 +373,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir stri
 
 	out, err := runTmux(ctx, args...)
 	if err != nil {
-		return "", fmt.Errorf("tmux new-session: %s %w", strings.TrimSpace(out), err)
+		return ToolResult{}, fmt.Errorf("tmux new-session: %s %w", strings.TrimSpace(out), err)
 	}
 
 	// Resize window so output isn't truncated to a small default terminal size.
@@ -393,26 +393,26 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir stri
 
 	// Auto-watch for inactivity if requested and notifier is available
 	if watch && inst.notifier != nil {
-		watchResult, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
+		watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
 		if watchErr != nil {
 			log.Warnf("tmux", "auto-watch failed for %s: %v", name, watchErr)
 		} else {
-			result += "\n" + watchResult
+			result += "\n" + watchRes.Text
 		}
 	}
 
-	return result, nil
+	return TextResult(result), nil
 }
 
-func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter bool) (string, error) {
+func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter bool) (ToolResult, error) {
 	if name == "" {
-		return "", fmt.Errorf("name is required for send")
+		return ToolResult{}, fmt.Errorf("name is required for send")
 	}
 	if keys == "" && !enter {
-		return "", fmt.Errorf("keys is required for send (or set enter=true to send just Enter)")
+		return ToolResult{}, fmt.Errorf("keys is required for send (or set enter=true to send just Enter)")
 	}
 	if !inst.owns(name) {
-		return "", fmt.Errorf("session %q not owned by this agent", name)
+		return ToolResult{}, fmt.Errorf("session %q not owned by this agent", name)
 	}
 
 	log.Debugf("tmux", "send: name=%s keys=%q enter=%v", name, keys, enter)
@@ -436,7 +436,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if keys != "" {
 		out, err = runTmux(ctx, "send-keys", "-t", name, keys)
 		if err != nil {
-			return "", fmt.Errorf("tmux send-keys: %s %w", strings.TrimSpace(out), err)
+			return ToolResult{}, fmt.Errorf("tmux send-keys: %s %w", strings.TrimSpace(out), err)
 		}
 	}
 	if enter {
@@ -445,7 +445,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 		time.Sleep(200 * time.Millisecond)
 		out, err = runTmux(ctx, "send-keys", "-t", name, "Enter")
 		if err != nil {
-			return "", fmt.Errorf("tmux send-keys Enter: %s %w", strings.TrimSpace(out), err)
+			return ToolResult{}, fmt.Errorf("tmux send-keys Enter: %s %w", strings.TrimSpace(out), err)
 		}
 	}
 
@@ -465,53 +465,53 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 		inst.mu.Unlock()
 
 		if !alreadyWatched {
-			watchResult, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
+			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
 			if watchErr != nil {
 				log.Warnf("tmux", "autopilot: auto-watch failed for %s: %v", name, watchErr)
 			} else {
 				log.Debugf("tmux", "autopilot: auto-watching %s after send", name)
-				result += "\n" + watchResult
+				result += "\n" + watchRes.Text
 			}
 		}
 	}
 
-	return result, nil
+	return TextResult(result), nil
 }
 
-func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw bool) (string, error) {
+func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw bool) (ToolResult, error) {
 	if name == "" {
-		return "", fmt.Errorf("name is required for read")
+		return ToolResult{}, fmt.Errorf("name is required for read")
 	}
 	if !inst.owns(name) {
-		return "", fmt.Errorf("session %q not owned by this agent", name)
+		return ToolResult{}, fmt.Errorf("session %q not owned by this agent", name)
 	}
 
 	log.Debugf("tmux", "read: name=%s lines=%d raw=%v", name, lines, raw)
 
 	out, err := runTmux(ctx, "capture-pane", "-t", name, "-p", fmt.Sprintf("-S-%d", lines))
 	if err != nil {
-		return "", fmt.Errorf("tmux capture-pane: %s %w", strings.TrimSpace(out), err)
+		return ToolResult{}, fmt.Errorf("tmux capture-pane: %s %w", strings.TrimSpace(out), err)
 	}
 	content := strings.TrimRight(out, "\n")
 
 	if raw {
-		return content, nil
+		return TextResult(content), nil
 	}
 
 	agent := detectTUIAgent(content)
 	if agent == "" {
-		return content, nil
+		return TextResult(content), nil
 	}
-	return cleanTUIOutput(content, agent), nil
+	return TextResult(cleanTUIOutput(content, agent)), nil
 }
 
-func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
+func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
 	if err != nil {
 		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
-			return "No tmux sessions.", nil
+			return TextResult("No tmux sessions."), nil
 		}
-		return "", fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
+		return ToolResult{}, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
 	}
 
 	inst.mu.Lock()
@@ -564,7 +564,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
 	}
 
 	if len(lines) == 0 {
-		return "No tmux sessions.", nil
+		return TextResult("No tmux sessions."), nil
 	}
 
 	// Clean up stale owned entries if none still exist in tmux
@@ -576,7 +576,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (string, error) {
 	}
 
 	header := fmt.Sprintf("%-20s %s  %6s  %-8s %s", "SESSION", "W", "AGE", "STATUS", "WATCH")
-	return header + "\n" + strings.Join(lines, "\n"), nil
+	return TextResult(header + "\n" + strings.Join(lines, "\n")), nil
 }
 
 // formatTmuxAge converts a Unix timestamp to a human-readable age string.
@@ -598,12 +598,12 @@ func formatTmuxAge(createdUnix int64) string {
 	return fmt.Sprintf("%dd %dh", int(age.Hours())/24, int(age.Hours())%24)
 }
 
-func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error) {
+func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, error) {
 	if name == "" {
-		return "", fmt.Errorf("name is required for kill")
+		return ToolResult{}, fmt.Errorf("name is required for kill")
 	}
 	if !inst.owns(name) {
-		return "", fmt.Errorf("session %q not owned by this agent", name)
+		return ToolResult{}, fmt.Errorf("session %q not owned by this agent", name)
 	}
 
 	log.Debugf("tmux", "kill: name=%s", name)
@@ -636,7 +636,7 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 	// Kill the tmux session
 	out, err := runTmux(ctx, "kill-session", "-t", name)
 	if err != nil {
-		return "", fmt.Errorf("tmux kill-session: %s %w", strings.TrimSpace(out), err)
+		return ToolResult{}, fmt.Errorf("tmux kill-session: %s %w", strings.TrimSpace(out), err)
 	}
 
 	// Clean up child processes that survived SIGHUP
@@ -664,7 +664,7 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (string, error)
 		log.Infof("tmux", "kill %s: no sessions remain, killed tmux server", name)
 	}
 
-	return result, nil
+	return TextResult(result), nil
 }
 
 // maybeKillTmuxServer kills the tmux server if no sessions remain.
@@ -806,9 +806,9 @@ func terminateProcesses(pids []int) int {
 	return len(pids)
 }
 
-func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresholdSeconds int) (string, error) {
+func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresholdSeconds int) (ToolResult, error) {
 	if name == "" {
-		return "", fmt.Errorf("name is required for watch")
+		return ToolResult{}, fmt.Errorf("name is required for watch")
 	}
 	if thresholdSeconds < 1 {
 		thresholdSeconds = 30
@@ -820,7 +820,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	key := fmt.Sprintf("%s:%d", name, window)
 	if _, exists := inst.watched[key]; exists {
 		inst.mu.Unlock()
-		return "", fmt.Errorf("session %s is already being watched", key)
+		return ToolResult{}, fmt.Errorf("session %s is already being watched", key)
 	}
 
 	// Capture initial pane content so the first poll doesn't reset the
@@ -852,12 +852,12 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	// Start monitoring goroutine
 	go tmuxWatchMonitor(ws, inst, key)
 
-	return fmt.Sprintf("Watching session %s (window %d) for inactivity (threshold: %ds)", name, window, thresholdSeconds), nil
+	return TextResult(fmt.Sprintf("Watching session %s (window %d) for inactivity (threshold: %ds)", name, window, thresholdSeconds)), nil
 }
 
-func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (string, error) {
+func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (ToolResult, error) {
 	if name == "" {
-		return "", fmt.Errorf("name is required for unwatch")
+		return ToolResult{}, fmt.Errorf("name is required for unwatch")
 	}
 
 	log.Debugf("tmux", "unwatch: name=%s", name)
@@ -874,7 +874,7 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (string, err
 	}
 	if len(toCancel) == 0 {
 		inst.mu.Unlock()
-		return "", fmt.Errorf("session %s is not being watched", name)
+		return ToolResult{}, fmt.Errorf("session %s is not being watched", name)
 	}
 	inst.persistWatches()
 	inst.mu.Unlock()
@@ -884,7 +884,7 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (string, err
 		ws.cancel()
 		<-ws.done
 	}
-	return fmt.Sprintf("Stopped watching session %s", name), nil
+	return TextResult(fmt.Sprintf("Stopped watching session %s", name)), nil
 }
 
 // detectTUIAgent inspects pane content for known TUI agent markers.

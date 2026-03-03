@@ -9,12 +9,21 @@ import (
 	"foci/anthropic"
 )
 
+// ToolResult is the return value from a tool execution.
+type ToolResult struct {
+	Text        string                   // primary text result (goes into tool_result content)
+	ExtraBlocks []anthropic.ContentBlock // additional content blocks (e.g. document) placed alongside tool_result
+}
+
+// TextResult creates a ToolResult with only text (no extra blocks).
+func TextResult(s string) ToolResult { return ToolResult{Text: s} }
+
 // Tool is a callable tool with a JSON Schema for parameters.
 type Tool struct {
 	Name        string
 	Description string
 	Parameters  json.RawMessage
-	Execute     func(ctx context.Context, params json.RawMessage) (string, error)
+	Execute     func(ctx context.Context, params json.RawMessage) (ToolResult, error)
 	ExecExport  bool // expose as shell function inside exec calls via ExecBridge
 }
 

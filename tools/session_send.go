@@ -48,26 +48,26 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			},
 			"required": ["session_key", "message"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				SessionKey string `json:"session_key"`
 				Message    string `json:"message"`
 				ReplyTo    string `json:"reply_to"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.SessionKey == "" {
-				return "", fmt.Errorf("session_key is required")
+				return ToolResult{}, fmt.Errorf("session_key is required")
 			}
 			if p.Message == "" {
-				return "", fmt.Errorf("message is required")
+				return ToolResult{}, fmt.Errorf("message is required")
 			}
 			if p.ReplyTo == "" {
 				p.ReplyTo = "caller"
 			}
 			if p.ReplyTo != "caller" && p.ReplyTo != "session" {
-				return "", fmt.Errorf("reply_to must be 'caller' or 'session', got %q", p.ReplyTo)
+				return ToolResult{}, fmt.Errorf("reply_to must be 'caller' or 'session', got %q", p.ReplyTo)
 			}
 
 			originSession := SessionKeyFromContext(ctx)
@@ -97,14 +97,14 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 					Content: anthropic.TextContent(tagged),
 				}
 				if err := sessions.Append(p.SessionKey, msg); err != nil {
-					return "", fmt.Errorf("append to session %s: %w", p.SessionKey, err)
+					return ToolResult{}, fmt.Errorf("append to session %s: %w", p.SessionKey, err)
 				}
 				if notifier != nil {
 					notifier.Notify(p.SessionKey, tagged)
 				}
 			}
 
-			return fmt.Sprintf("Message sent to session %s (reply_to=%s).", p.SessionKey, p.ReplyTo), nil
+			return TextResult(fmt.Sprintf("Message sent to session %s (reply_to=%s).", p.SessionKey, p.ReplyTo)), nil
 		},
 	}
 }
