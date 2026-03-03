@@ -1642,6 +1642,15 @@ func setupAgent(p setupParams) *agentInstance {
 		TurnLockWarnThreshold:       parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
+		ManaGoodFunc: func() func(float64, time.Time) bool {
+			investInterval, err := time.ParseDuration(acfg.Background.InvestInterval)
+			if err != nil {
+				investInterval = 30 * time.Minute
+			}
+			return func(mana float64, resetsAt time.Time) bool {
+				return keepalive.ManaIsGood(mana, resetsAt, investInterval, time.Now())
+			}
+		}(),
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
