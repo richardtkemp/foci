@@ -433,6 +433,13 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 	return m
 }
 
+// ResetCacheBaseline clears the cache-read baseline for a session so that the
+// next API call won't trigger a false cache-bust warning. Call this after any
+// operation that changes the message prefix (e.g. manual compaction).
+func (a *Agent) ResetCacheBaseline(sessionKey string) {
+	a.getSessionMeta(sessionKey).prevCacheRead = 0
+}
+
 // SeedSessionMeta loads the session history and extracts the last user message's
 // [meta] time= timestamp to seed lastMessageTime. This ensures the first turn
 // after a restart shows a correct gap instead of gap=none.
@@ -1040,6 +1047,9 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 				a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
 			}
 		}
+		// Update cache baseline after every API call so subsequent iterations
+		// within the same tool_use turn don't re-fire the detection.
+		sm.prevCacheRead = resp.Usage.CacheReadInputTokens
 
 		// Warn on max_tokens — response was truncated mid-thought
 		if resp.StopReason == "max_tokens" {
@@ -1088,7 +1098,6 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			sm.prevCost = cost
 			sm.prevInput = resp.Usage.InputTokens
 			sm.prevOutput = resp.Usage.OutputTokens
-			sm.prevCacheRead = resp.Usage.CacheReadInputTokens
 			sm.prevCacheWrite = resp.Usage.CacheCreationInputTokens
 
 			a.maybeCompact(ctx, sessionKey, messages, system, &resp.Usage, sm)

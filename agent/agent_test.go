@@ -3092,6 +3092,163 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 	}
 }
 
+func TestCacheBustOnlyOncePerTurn(t *testing.T) {
+	// A multi-step turn with tool_use iterations should fire at most one cache bust
+	// warning per turn, not one per API call.
+	var callCount atomic.Int32
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		n := int(callCount.Add(1))
+		switch n {
+		case 1:
+			// First turn — establish baseline with high cache read
+			return &anthropic.MessageResponse{
+				ID:         "msg_1",
+				Type:       "message",
+				Role:       "assistant",
+				Content:    anthropic.TextContent("baseline"),
+				StopReason: "end_turn",
+				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000},
+			}
+		case 2:
+			// Second turn, iteration 1: tool_use with cache bust (drops to 0)
+			return &anthropic.MessageResponse{
+				ID:   "msg_2",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{Type: "text", Text: "running tool"},
+					{
+						Type:  "tool_use",
+						ID:    "tu_001",
+						Name:  "echo_tool",
+						Input: json.RawMessage(`{"text":"a"}`),
+					},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
+			}
+		case 3:
+			// Second turn, iteration 2: another tool_use, still 0 cache read
+			return &anthropic.MessageResponse{
+				ID:   "msg_3",
+				Type: "message",
+				Role: "assistant",
+				Content: []anthropic.ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "tu_002",
+						Name:  "echo_tool",
+						Input: json.RawMessage(`{"text":"b"}`),
+					},
+				},
+				StopReason: "tool_use",
+				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
+			}
+		default:
+			// Second turn, final: end_turn
+			return &anthropic.MessageResponse{
+				ID:         "msg_4",
+				Type:       "message",
+				Role:       "assistant",
+				Content:    anthropic.TextContent("done"),
+				StopReason: "end_turn",
+				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
+			}
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:        "echo_tool",
+		Description: "echoes text",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+			return "ok", nil
+		},
+	})
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var alerts []string
+	ag := &Agent{
+		Client:          client,
+		Sessions:        store,
+		Tools:           registry,
+		Bootstrap:       bootstrap,
+		Model:           "claude-haiku-4-5",
+		CacheBustDetect: true,
+		CacheBustAlert: func(session string, prevRead, curRead int) {
+			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
+		},
+	}
+
+	// First turn — establishes baseline (prevCacheRead=15000)
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	// Second turn — 3 API calls (2 tool_use + 1 end_turn), all with cache_read=0
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+
+	if len(alerts) != 1 {
+		t.Fatalf("expected exactly 1 cache bust alert for the turn, got %d: %v", len(alerts), alerts)
+	}
+}
+
+func TestCacheBustResetAfterManualCompact(t *testing.T) {
+	// After ResetCacheBaseline (as called by /compact), the next request should
+	// not trigger a false cache bust warning.
+	callCount := 0
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		callCount++
+		resp := &anthropic.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", callCount),
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("ok"),
+			StopReason: "end_turn",
+		}
+		if callCount == 1 {
+			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+		} else {
+			// After compaction, cache read drops to 0 — but baseline was reset
+			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+		}
+		return resp
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	var alerts []string
+	ag := &Agent{
+		Client:          client,
+		Sessions:        store,
+		Tools:           registry,
+		Bootstrap:       bootstrap,
+		Model:           "claude-haiku-4-5",
+		CacheBustDetect: true,
+		CacheBustAlert: func(session string, prevRead, curRead int) {
+			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
+		},
+	}
+
+	// First request — establishes baseline (prevCacheRead=15000)
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+
+	// Simulate manual /compact: reset the cache baseline
+	ag.ResetCacheBaseline("agent:test:main")
+
+	// Second request — cache_read=0, but baseline was reset → no alert
+	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+
+	if len(alerts) != 0 {
+		t.Fatalf("expected 0 alerts after cache baseline reset, got %d: %v", len(alerts), alerts)
+	}
+}
+
 func TestThinkingAdaptiveInRequest(t *testing.T) {
 	var capturedReq *anthropic.MessageRequest
 	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
