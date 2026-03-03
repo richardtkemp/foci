@@ -1,12 +1,13 @@
 package command
 
 import (
-	"foci/table"
 	"context"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+
+	"foci/table"
 )
 
 // SessionChatInfo holds per-chat session data for display.
@@ -28,13 +29,20 @@ type SessionIndexInfo struct {
 	Status           string
 }
 
+// SessionIndexOpts controls filtering for the /sessions index subcommand.
+type SessionIndexOpts struct {
+	TypeFilter   string
+	StatusFilter string
+	MaxAge       time.Duration // 0 = no limit
+}
+
 // SessionsDeps holds dependencies for the /sessions command.
 type SessionsDeps struct {
 	AgentID       string
 	ListFn        func() ([]SessionChatInfo, error)
 	SetDefaultFn  func(chatID int64) error
 	DefaultChatFn func() int64
-	IndexFn       func(sessionType, status string, showAll bool) ([]SessionIndexInfo, error) // nil = index not available
+	IndexFn       func(opts SessionIndexOpts) ([]SessionIndexInfo, error) // nil = index not available
 }
 
 // NewSessionsCommand creates the /sessions command for managing per-chat sessions.
@@ -52,11 +60,13 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			switch subcmd {
 			case "":
-				return "Usage: /sessions [list|default <chat_id>|info|index [type] [status] [all]]\n\n" +
+				return "Usage: /sessions [list|default <chat_id>|info|index [filters...]]\n\n" +
 					"  list              List all chat sessions for this agent\n" +
 					"  default <chat_id> Set the default session (used by keepalive, cron)\n" +
 					"  info              Show details for the current chat's session\n" +
-					"  index [type] [status]  Query session index (all agents)", nil
+					"  index [filters]   Query session index (all agents)\n\n" +
+					"Index filters: type (chat/spawn/cron/multiball/branch),\n" +
+					"  status (active/compacted/archived/cleared/all), duration (3d/4h)", nil
 
 			case "list":
 				chatID, _ := ctx.Value(ChatIDKey{}).(int64)
@@ -77,24 +87,11 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 				return sessionsInfoCmd(deps, chatID)
 
 			case "index":
-				var typeFilter, statusFilter string
-				showAll := false
-				for _, p := range parts[1:] {
-					switch p {
-					case "all":
-						showAll = true
-					default:
-						if typeFilter == "" {
-							typeFilter = p
-						} else if statusFilter == "" {
-							statusFilter = p
-						}
-					}
-				}
-				return sessionsIndexCmd(deps, typeFilter, statusFilter, showAll, displayWidth(ctx))
+				opts := parseIndexArgs(parts[1:])
+				return sessionsIndexCmd(deps, opts, displayWidth(ctx))
 
 			default:
-				return "Usage: /sessions [list|default <chat_id>|info|index [type] [status] [all]]", nil
+				return "Usage: /sessions [list|default <chat_id>|info|index [filters...]]", nil
 			}
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
@@ -108,6 +105,77 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 			return opts
 		},
 	}
+}
+
+// knownSessionStatuses is the set of valid status filter values.
+var knownSessionStatuses = map[string]bool{
+	"active":    true,
+	"compacted": true,
+	"archived":  true,
+	"cleared":   true,
+	"all":       true,
+}
+
+// knownSessionTypes is the set of valid type filter values.
+var knownSessionTypes = map[string]bool{
+	"chat":      true,
+	"spawn":     true,
+	"cron":      true,
+	"multiball": true,
+	"branch":    true,
+}
+
+// parseIndexArgs parses flexible filter arguments for /sessions index.
+// Each arg is classified as a status, type, or duration.
+// Default: status=active, no age limit.
+func parseIndexArgs(args []string) SessionIndexOpts {
+	opts := SessionIndexOpts{
+		StatusFilter: "active", // default to showing only active sessions
+	}
+
+	for _, arg := range args {
+		lower := strings.ToLower(arg)
+
+		// Check for status keywords
+		if knownSessionStatuses[lower] {
+			if lower == "all" {
+				opts.StatusFilter = "" // no status filter
+			} else {
+				opts.StatusFilter = lower
+			}
+			continue
+		}
+
+		// Check for type keywords
+		if knownSessionTypes[lower] {
+			opts.TypeFilter = lower
+			continue
+		}
+
+		// Try to parse as a duration (e.g. "3d", "4h", "168h")
+		if d, ok := parseFriendlyDuration(lower); ok {
+			opts.MaxAge = d
+			continue
+		}
+	}
+
+	return opts
+}
+
+// parseFriendlyDuration parses duration strings including "Nd" for days.
+func parseFriendlyDuration(s string) (time.Duration, bool) {
+	// Handle "Nd" (days) syntax
+	if strings.HasSuffix(s, "d") {
+		numStr := strings.TrimSuffix(s, "d")
+		if n, err := strconv.Atoi(numStr); err == nil && n > 0 {
+			return time.Duration(n) * 24 * time.Hour, true
+		}
+	}
+	// Standard Go duration
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d, true
+	}
+	return 0, false
 }
 
 func sessionsListCmd(deps SessionsDeps, currentChatID int64, maxWidth int) (string, error) {
@@ -226,18 +294,18 @@ func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 	return sb.String(), nil
 }
 
-func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, showAll bool, maxWidth int) (string, error) {
+func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts, maxWidth int) (string, error) {
 	if deps.IndexFn == nil {
 		return "Session index not available.", nil
 	}
 
-	entries, err := deps.IndexFn(typeFilter, statusFilter, showAll)
+	entries, err := deps.IndexFn(opts)
 	if err != nil {
 		return "", fmt.Errorf("query session index: %w", err)
 	}
 	if len(entries) == 0 {
 		msg := "No sessions found"
-		if typeFilter != "" || statusFilter != "" {
+		if opts.TypeFilter != "" || opts.StatusFilter != "" {
 			msg += " matching filters"
 		}
 		return msg + ".", nil
@@ -273,11 +341,14 @@ func sessionsIndexCmd(deps SessionsDeps, typeFilter, statusFilter string, showAl
 	}
 
 	filterDesc := ""
-	if typeFilter != "" {
-		filterDesc += " type=" + typeFilter
+	if opts.TypeFilter != "" {
+		filterDesc += " type=" + opts.TypeFilter
 	}
-	if statusFilter != "" {
-		filterDesc += " status=" + statusFilter
+	if opts.StatusFilter != "" {
+		filterDesc += " status=" + opts.StatusFilter
+	}
+	if opts.MaxAge > 0 {
+		filterDesc += " age<=" + opts.MaxAge.String()
 	}
 	if filterDesc != "" {
 		filterDesc = " (" + strings.TrimSpace(filterDesc) + ")"

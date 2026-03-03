@@ -144,6 +144,7 @@ Session storage. Compaction and prompt fields that can be overridden per-agent a
 | `compaction_min_messages` | int | `4` | Minimum messages in session before compaction is allowed. |
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
 | `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
+| `archive_after` | string | `"168h"` | Gzip idle session files after this duration of inactivity. Go duration format. Sessions with active branches are skipped. Archived sessions are transparently decompressed when accessed. `"0"` effectively disables (no sessions will be old enough). |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 

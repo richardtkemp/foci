@@ -547,6 +547,7 @@ func validate(cfg *Config) error {
 		{"telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout},
 		{"telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL},
 		{"http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout},
+		{"sessions", "archive_after", cfg.Sessions.ArchiveAfter},
 	}
 	if cfg.Bitwarden.Enabled {
 		durations = append(durations,
@@ -772,6 +773,7 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
+	setStringDefault(&cfg.Sessions.ArchiveAfter, "168h")
 	setIntDefault(&cfg.HTTP.Port, 18791)
 	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")
 	if cfg.DataDir == "" {

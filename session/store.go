@@ -2,8 +2,10 @@ package session
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +68,14 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return nil, nil
+		// Check for gzipped archive and decompress if found
+		if err := s.decompressIfGzipped(path); err != nil {
+			return nil, err
+		}
+		f, err = os.Open(path)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open session %s: %w", key, err)
@@ -102,6 +111,48 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 
 	log.Debugf("session", "session loaded key=%s messages=%d", key, len(messages))
 	return messages, nil
+}
+
+// decompressIfGzipped checks if a .jsonl.gz version of the file exists.
+// If found, it decompresses the gzip to the original .jsonl path and
+// removes the .gz file. This transparently restores archived sessions.
+func (s *Store) decompressIfGzipped(jsonlPath string) error {
+	gzPath := jsonlPath + ".gz"
+	gf, err := os.Open(gzPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open gzipped session %s: %w", gzPath, err)
+	}
+	defer func() { _ = gf.Close() }()
+
+	gr, err := gzip.NewReader(gf)
+	if err != nil {
+		return fmt.Errorf("gzip reader %s: %w", gzPath, err)
+	}
+	defer func() { _ = gr.Close() }()
+
+	if err := os.MkdirAll(filepath.Dir(jsonlPath), 0755); err != nil {
+		return fmt.Errorf("create dir for decompressed session: %w", err)
+	}
+
+	out, err := os.Create(jsonlPath)
+	if err != nil {
+		return fmt.Errorf("create decompressed session %s: %w", jsonlPath, err)
+	}
+	if _, err := io.Copy(out, gr); err != nil {
+		_ = out.Close()
+		_ = os.Remove(jsonlPath)
+		return fmt.Errorf("decompress session %s: %w", gzPath, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close decompressed session: %w", err)
+	}
+
+	_ = os.Remove(gzPath)
+	log.Infof("session", "decompressed archived session %s", filepath.Base(jsonlPath))
+	return nil
 }
 
 // Append adds a message to the session file, creating it if needed.
@@ -244,8 +295,9 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 	createdAt := s.getStoredCreatedAt(key)
 
 	// Rotate existing file to numbered archive
+	var archivePath string
 	if _, err := os.Stat(path); err == nil {
-		archivePath := nextArchivePath(path)
+		archivePath = nextArchivePath(path)
 		if err := os.Rename(path, archivePath); err != nil {
 			return fmt.Errorf("rotate session file: %w", err)
 		}
@@ -295,8 +347,11 @@ func (s *Store) Replace(key string, msgs []anthropic.Message) error {
 	}
 	log.Infof("session", "session replaced key=%s messages=%d", key, len(msgs))
 	s.fireEvent(SessionEvent{
-		Key:    key,
-		Status: SessionStatusCompacted,
+		Key:         key,
+		Type:        ClassifySessionKey(key),
+		Status:      SessionStatusCompacted,
+		FilePath:    path,
+		ArchivePath: archivePath,
 	})
 	return nil
 }
@@ -570,12 +625,13 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 
 // SessionEvent describes a lifecycle event on a session.
 type SessionEvent struct {
-	Key       string
-	Type      SessionType
-	Status    SessionStatus
-	ParentKey string // for branches
-	FilePath  string
-	CreatedAt time.Time
+	Key         string
+	Type        SessionType
+	Status      SessionStatus
+	ParentKey   string // for branches
+	FilePath    string
+	CreatedAt   time.Time
+	ArchivePath string // set on compaction: path to the rotated archive file
 }
 
 // OnSessionEvent is an optional callback fired on session lifecycle events.
@@ -621,7 +677,10 @@ func splitKeyParts(key string) []string {
 	return strings.Split(key, ":")
 }
 
-// ScanAllSessions walks all non-archive session files and returns index entries.
+// ScanAllSessions walks all session files and returns index entries.
+// Current (non-archive) files are always marked active.
+// Numbered archive files (e.g. .1.jsonl) are returned as compacted entries.
+// Gzipped files (.jsonl.gz) are returned as archived entries.
 func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -631,13 +690,58 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() || !strings.HasSuffix(path, ".jsonl") {
-			return nil
-		}
-		if isArchiveFile(filepath.Base(path)) {
+		if info.IsDir() {
 			return nil
 		}
 
+		name := filepath.Base(path)
+
+		// Handle gzipped (archived) session files
+		if strings.HasSuffix(name, ".jsonl.gz") {
+			rel, err := filepath.Rel(s.dir, path)
+			if err != nil {
+				return nil
+			}
+			rel = strings.TrimSuffix(rel, ".jsonl.gz")
+			key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+			stype := ClassifySessionKey(key)
+			entries = append(entries, SessionIndexEntry{
+				SessionKey:  key,
+				FilePath:    path,
+				CreatedAt:   info.ModTime(),
+				SessionType: stype,
+				Status:      SessionStatusArchived,
+			})
+			return nil
+		}
+
+		if !strings.HasSuffix(name, ".jsonl") {
+			return nil
+		}
+
+		// Handle numbered archive files (e.g. 5970082313.1.jsonl)
+		if isArchiveFile(name) {
+			rel, err := filepath.Rel(s.dir, path)
+			if err != nil {
+				return nil
+			}
+			rel = strings.TrimSuffix(rel, ".jsonl")
+			key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+			// Derive parent key: remove the ".N" suffix to get the base session key
+			parentKey := archiveParentKey(key)
+			stype := ClassifySessionKey(parentKey)
+			entries = append(entries, SessionIndexEntry{
+				SessionKey:       key,
+				FilePath:         path,
+				CreatedAt:        info.ModTime(),
+				ParentSessionKey: parentKey,
+				SessionType:      stype,
+				Status:           SessionStatusCompacted,
+			})
+			return nil
+		}
+
+		// Current (non-archive) session file — always active
 		rel, err := filepath.Rel(s.dir, path)
 		if err != nil {
 			return nil
@@ -665,22 +769,13 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 			parentKey = bm.ParentKey
 		}
 
-		// Determine status: if archives exist, this file has been compacted
-		status := SessionStatusActive
-		basePath := path
-		ext := filepath.Ext(basePath)
-		stem := strings.TrimSuffix(basePath, ext)
-		if _, err := os.Stat(stem + ".1" + ext); err == nil {
-			status = SessionStatusCompacted
-		}
-
 		entries = append(entries, SessionIndexEntry{
 			SessionKey:       key,
 			FilePath:         path,
 			CreatedAt:        createdAt,
 			ParentSessionKey: parentKey,
 			SessionType:      stype,
-			Status:           status,
+			Status:           SessionStatusActive,
 		})
 		return nil
 	})
@@ -688,4 +783,15 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 		return entries, err
 	}
 	return entries, nil
+}
+
+// archiveParentKey derives the parent session key from an archive key.
+// "agent:main:chat:123.1" → "agent:main:chat:123"
+func archiveParentKey(archiveKey string) string {
+	// The archive suffix is ".N" appended to the last segment of the key
+	lastDot := strings.LastIndex(archiveKey, ".")
+	if lastDot < 0 {
+		return archiveKey
+	}
+	return archiveKey[:lastDot]
 }
