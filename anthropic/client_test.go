@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -206,7 +208,11 @@ func TestSendMessageRateLimit(t *testing.T) {
 }
 
 func TestSendMessageOverloaded(t *testing.T) {
+	// Always-529 server: should exhaust both phase 1 (4 attempts) and
+	// phase 2 (extended overload retries), totaling >4 attempts.
+	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
 		w.WriteHeader(529)
 		w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
 	}))
@@ -230,6 +236,185 @@ func TestSendMessageOverloaded(t *testing.T) {
 	if apiErr.IsRateLimit() {
 		t.Error("529 should not be IsRateLimit")
 	}
+	// Phase 1 = 4 attempts, phase 2 = additional overload attempts
+	if got := int(attempts.Load()); got <= 4 {
+		t.Errorf("attempts = %d, want >4 (phase 1 + phase 2 overload retries)", got)
+	}
+}
+
+func TestSendMessage529RecoveryMidOverload(t *testing.T) {
+	// 529 for first 6 attempts, then success. Verifies the extended loop
+	// eventually succeeds and returns the response.
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int(attempts.Add(1))
+		if n <= 6 {
+			w.WriteHeader(529)
+			w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MessageResponse{
+			ID:         "msg_recovered",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    TextContent("back online"),
+			StopReason: "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	resp, err := client.SendMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+	if err != nil {
+		t.Fatalf("expected success after recovery, got: %v", err)
+	}
+	if resp.ID != "msg_recovered" {
+		t.Errorf("resp.ID = %q, want msg_recovered", resp.ID)
+	}
+	if got := int(attempts.Load()); got != 7 {
+		t.Errorf("attempts = %d, want 7 (4 phase1 + 2 overload failures + 1 success)", got)
+	}
+}
+
+func TestSendMessage529CrossGoroutineRecovery(t *testing.T) {
+	// Goroutine A retries 529 with long backoff. Goroutine B succeeds on the
+	// same client, signaling recovery. A should wake and succeed quickly.
+	var mu sync.Mutex
+	goroutineACalls := 0 // requests from goroutine A (path /v1/messages with marker)
+	goroutineBCalls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req MessageRequest
+		json.NewDecoder(r.Body).Decode(&req)
+
+		mu.Lock()
+		isA := req.MaxTokens == 111
+		isB := req.MaxTokens == 222
+		if isA {
+			goroutineACalls++
+			callNum := goroutineACalls
+			mu.Unlock()
+
+			if callNum <= 5 {
+				// First 5 calls from A return 529
+				w.WriteHeader(529)
+				w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
+				return
+			}
+			// After recovery signal, A succeeds
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(MessageResponse{
+				ID: "msg_a_ok", Type: "message", Role: "assistant",
+				Content: TextContent("a ok"), StopReason: "end_turn",
+			})
+			return
+		}
+		if isB {
+			goroutineBCalls++
+			mu.Unlock()
+			// B always succeeds (triggers signalRecovery)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(MessageResponse{
+				ID: "msg_b_ok", Type: "message", Role: "assistant",
+				Content: TextContent("b ok"), StopReason: "end_turn",
+			})
+			return
+		}
+		mu.Unlock()
+		w.WriteHeader(500)
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	var wg sync.WaitGroup
+	var aErr error
+	var aResp *MessageResponse
+	var aStart, aEnd time.Time
+
+	// Goroutine A: will hit 529, enter extended retry
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		aStart = time.Now()
+		aResp, aErr = client.SendMessage(context.Background(), &MessageRequest{
+			Model: "claude-haiku-4-5", MaxTokens: 111,
+			Messages: []Message{{Role: "user", Content: TextContent("a")}},
+		})
+		aEnd = time.Now()
+	}()
+
+	// Wait for A to enter overload state (at least past phase 1)
+	time.Sleep(20 * time.Millisecond)
+
+	// Goroutine B: succeeds immediately, triggering signalRecovery
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = client.SendMessage(context.Background(), &MessageRequest{
+			Model: "claude-haiku-4-5", MaxTokens: 222,
+			Messages: []Message{{Role: "user", Content: TextContent("b")}},
+		})
+	}()
+
+	wg.Wait()
+
+	if aErr != nil {
+		t.Fatalf("goroutine A: unexpected error: %v", aErr)
+	}
+	if aResp.ID != "msg_a_ok" {
+		t.Errorf("goroutine A resp.ID = %q, want msg_a_ok", aResp.ID)
+	}
+
+	// A should complete quickly (recovery signal woke it) — well under 1s
+	aDuration := aEnd.Sub(aStart)
+	if aDuration > 500*time.Millisecond {
+		t.Errorf("goroutine A took %v, expected <500ms (recovery signal should wake it)", aDuration)
+	}
+}
+
+func TestSendMessage500DoesNotExtend(t *testing.T) {
+	// Always-500 server: should get exactly 4 attempts (phase 1 only),
+	// no extended overload retries.
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	_, err := client.SendMessage(context.Background(), &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if got := int(attempts.Load()); got != 4 {
+		t.Errorf("attempts = %d, want 4 (phase 1 only, no extended overload)", got)
+	}
+
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatal("expected *APIError")
+	}
+	if apiErr.StatusCode != 500 {
+		t.Errorf("StatusCode = %d, want 500", apiErr.StatusCode)
+	}
+}
+
+func TestSignalRecoveryNoOp(t *testing.T) {
+	// signalRecovery with nil channel should not panic.
+	client := NewClient("test-key")
+	client.signalRecovery() // no-op, no panic
 }
 
 func TestSendMessageServerError(t *testing.T) {

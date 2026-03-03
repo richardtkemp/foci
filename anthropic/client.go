@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -73,6 +74,9 @@ type Client struct {
 	httpClient     *http.Client
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for server error retries; 0 = default 2s
+
+	overloadMu      sync.Mutex
+	overloadRecover chan struct{} // closed to signal recovery from 529; nil when not overloaded
 }
 
 // resolveToken returns the token to use for API requests.
@@ -120,6 +124,47 @@ func NewClientWithBase(baseURL, apiKey string) *Client {
 		baseURL:        baseURL,
 		retryBaseDelay: time.Millisecond, // fast retries for tests
 	}
+}
+
+// enterOverload lazily creates the overload recovery channel and returns it.
+// Callers should listen on the returned channel to wake early when another
+// goroutine's API call succeeds (proving the server has recovered).
+func (c *Client) enterOverload() <-chan struct{} {
+	c.overloadMu.Lock()
+	defer c.overloadMu.Unlock()
+	if c.overloadRecover == nil {
+		c.overloadRecover = make(chan struct{})
+	}
+	return c.overloadRecover
+}
+
+// signalRecovery closes the overload recovery channel (waking all waiting
+// goroutines) and nils it. Safe to call when not overloaded (no-op).
+func (c *Client) signalRecovery() {
+	c.overloadMu.Lock()
+	defer c.overloadMu.Unlock()
+	if c.overloadRecover != nil {
+		close(c.overloadRecover)
+		c.overloadRecover = nil
+	}
+}
+
+// overloadBaseDelay returns the initial backoff for the extended 529 retry loop.
+// Production: 5s. Test mode (retryBaseDelay < 1s): retryBaseDelay * 5.
+func (c *Client) overloadBaseDelay() time.Duration {
+	if c.retryBaseDelay > 0 && c.retryBaseDelay < time.Second {
+		return c.retryBaseDelay * 5
+	}
+	return 5 * time.Second
+}
+
+// overloadMaxDuration returns the maximum wall-clock time for extended 529 retries.
+// Production: 2h. Test mode (retryBaseDelay < 1s): retryBaseDelay * 500.
+func (c *Client) overloadMaxDuration() time.Duration {
+	if c.retryBaseDelay > 0 && c.retryBaseDelay < time.Second {
+		return c.retryBaseDelay * 500
+	}
+	return 2 * time.Hour
 }
 
 // sendOnce performs a single HTTP request to the messages API and returns the
@@ -177,14 +222,21 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 }
 
 // SendMessage sends a message request and returns the response.
-// Retries up to 3 times on retryable server errors (500, 502, 503, 529)
+//
+// Phase 1: Retries up to 3 times on retryable server errors (500, 502, 503, 529)
 // with exponential backoff (2s, 4s, 8s).
+//
+// Phase 2 (529 only): If phase 1 exhausts on a 529, enters an extended
+// duration-based retry loop (~2h production, scaled in tests) with 5s base
+// backoff doubling without cap. A cross-goroutine recovery signal wakes
+// sleeping retriers early when any SendMessage on the same Client succeeds.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	// Phase 1: standard retries for all retryable errors.
 	const maxRetries = 3
 	backoff := c.retryBaseDelay
 	if backoff == 0 {
@@ -210,6 +262,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 		attemptDur := time.Since(attemptStart)
 		if err == nil {
 			slog.Debug("anthropic: send_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
+			c.signalRecovery()
 			return resp, nil
 		}
 		lastErr = err
@@ -226,6 +279,47 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	slog.Debug("anthropic: send_exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
+
+	// Phase 2: extended overload retries (529 only).
+	var apiErr *APIError
+	if !errors.As(lastErr, &apiErr) || !apiErr.IsOverloaded() {
+		return nil, lastErr
+	}
+
+	overloadBackoff := c.overloadBaseDelay()
+	maxDuration := c.overloadMaxDuration()
+	overloadStart := time.Now()
+	recoverCh := c.enterOverload()
+
+	for time.Since(overloadStart) < maxDuration {
+		slog.Warn("anthropic: overload retry", "backoff", overloadBackoff.String(), "elapsed", time.Since(overloadStart).String(), "max", maxDuration.String())
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(overloadBackoff):
+		case <-recoverCh:
+			slog.Info("anthropic: overload recovery signal received, retrying immediately")
+			recoverCh = c.enterOverload() // re-acquire for next iteration
+		}
+
+		resp, err := c.sendOnce(ctx, body)
+		if err == nil {
+			slog.Info("anthropic: recovered from overload", "elapsed", time.Since(overloadStart).String())
+			c.signalRecovery()
+			return resp, nil
+		}
+		lastErr = err
+
+		var retryAPIErr *APIError
+		if !errors.As(err, &retryAPIErr) || !retryAPIErr.IsRetryable() {
+			return nil, err
+		}
+
+		overloadBackoff *= 2
+	}
+
+	slog.Warn("anthropic: overload retries exhausted", "elapsed", time.Since(overloadStart).String())
 	return nil, lastErr
 }
 

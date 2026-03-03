@@ -2855,7 +2855,6 @@ func TestHandleMessageOverloaded(t *testing.T) {
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
-	var overloadedCalled bool
 	var rateLimitCalled bool
 
 	ag := &Agent{
@@ -2866,9 +2865,6 @@ func TestHandleMessageOverloaded(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 		RateLimitFunc: func(retryAfter int) {
 			rateLimitCalled = true
-		},
-		OverloadedFunc: func() {
-			overloadedCalled = true
 		},
 	}
 
@@ -2883,42 +2879,8 @@ func TestHandleMessageOverloaded(t *testing.T) {
 		t.Errorf("error = %q, should not mention mana exhausted for 529", err.Error())
 	}
 
-	if !overloadedCalled {
-		t.Error("OverloadedFunc not called for 529")
-	}
 	if rateLimitCalled {
 		t.Error("RateLimitFunc should not be called for 529")
-	}
-}
-
-func TestHandleMessageOverloadedNoCallback(t *testing.T) {
-	// 529 without OverloadedFunc — should still return friendly error, not crash.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(529)
-		w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL, "test-token")
-	store := session.NewStore(t.TempDir())
-	registry := tools.NewRegistry()
-	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-
-	ag := &Agent{
-		Client:    client,
-		Sessions:  store,
-		Tools:     registry,
-		Bootstrap: bootstrap,
-		Model:     "claude-haiku-4-5",
-		// OverloadedFunc intentionally nil
-	}
-
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "overloaded") {
-		t.Errorf("error = %q, want overloaded message", err.Error())
 	}
 }
 
