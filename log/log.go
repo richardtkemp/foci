@@ -325,10 +325,34 @@ func FilePaths() (event, api, payload string) {
 	return std.eventPath, std.apiPath, std.payloadPath
 }
 
-// WarnHook is called for each WARN or ERROR log event, if set.
-// The callback receives the severity level, component, and message.
-// Used to inject warnings into the agent session.
-var WarnHook func(level Level, component string, msg string)
+// warnHookEntry is a buffered warning from before the hook was set.
+type warnHookEntry struct {
+	level     Level
+	component string
+	msg       string
+}
+
+var (
+	// warnHook is called for each WARN or ERROR log event, if set.
+	// The callback receives the severity level, component, and message.
+	// Used to inject warnings into the agent session.
+	// Set via SetWarnHook, which replays any buffered early warnings.
+	warnHook   func(level Level, component string, msg string)
+	warnBuffer []warnHookEntry
+	warnMu     sync.Mutex
+)
+
+// SetWarnHook sets the warn hook and replays any warnings that were
+// buffered before the hook was ready.
+func SetWarnHook(fn func(level Level, component string, msg string)) {
+	warnMu.Lock()
+	defer warnMu.Unlock()
+	warnHook = fn
+	for _, e := range warnBuffer {
+		fn(e.level, e.component, e.msg)
+	}
+	warnBuffer = nil
+}
 
 // event writes a formatted log line if the level is at or above the configured level.
 func (l *Logger) event(level Level, component string, format string, args ...interface{}) {
@@ -351,9 +375,16 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	}
 	l.mu.Unlock()
 
-	// Fire warn hook for WARN and ERROR levels
-	if (level == WARN || level == ERROR) && WarnHook != nil {
-		WarnHook(level, component, msg)
+	// Fire warn hook for WARN and ERROR levels, buffering if hook not yet set.
+	if level == WARN || level == ERROR {
+		warnMu.Lock()
+		if warnHook != nil {
+			warnMu.Unlock()
+			warnHook(level, component, msg)
+		} else {
+			warnBuffer = append(warnBuffer, warnHookEntry{level, component, msg})
+			warnMu.Unlock()
+		}
 	}
 }
 
