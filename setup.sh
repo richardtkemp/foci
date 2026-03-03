@@ -238,6 +238,7 @@ if $HAS_SYSTEMCTL; then
     else
         grep -q "SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "focigw" "$SERVICE_FILE" 2>/dev/null && NEED_SERVICE_PATCH=true
     fi
 fi
 
@@ -431,12 +432,15 @@ EMIT_SERVICE
         emit "systemctl daemon-reload"
         emit "systemctl enable \"$SERVICE_NAME\""
     elif $NEED_SERVICE_PATCH; then
-        emit_comment "Patch systemd service — add secrets group and CAP_SETGID to older service files"
+        emit_comment "Patch systemd service — add secrets group, CAP_SETGID, and migrate binary name"
         if ! grep -q "SupplementaryGroups=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^User=/a SupplementaryGroups=$SECRETS_GROUP' \"$SERVICE_FILE\""
         fi
         if ! grep -q "AmbientCapabilities=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID' \"$SERVICE_FILE\""
+        fi
+        if grep -q "focigw" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i 's|/usr/local/bin/focigw|$INSTALL_DIR/foci-gw|g' \"$SERVICE_FILE\""
         fi
         emit "systemctl daemon-reload"
     else

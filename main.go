@@ -1458,6 +1458,9 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tmuxTool)
 	}
 	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
+	if len(blockedPaths) > 0 {
+		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
+	}
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
