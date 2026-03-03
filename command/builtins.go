@@ -708,7 +708,7 @@ func NewThinkingCommand(getThinking func(context.Context) string, setThinking fu
 			}
 			switch arg {
 			case "off", "none":
-				setThinking(ctx, "")
+				setThinking(ctx, "off")
 				return "Thinking: off", nil
 			case "adaptive":
 				setThinking(ctx, "adaptive")

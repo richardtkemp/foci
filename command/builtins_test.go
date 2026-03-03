@@ -580,8 +580,8 @@ func TestThinkingCommand(t *testing.T) {
 
 	// Set via numeric alias
 	result, _ = cmd.Execute(context.Background(), "0")
-	if thinking != "" {
-		t.Errorf("thinking not cleared via '0': %q", thinking)
+	if thinking != "off" {
+		t.Errorf("thinking not set to 'off' via '0': %q", thinking)
 	}
 
 	result, _ = cmd.Execute(context.Background(), "1")
@@ -597,8 +597,8 @@ func TestThinkingCommand(t *testing.T) {
 
 	// Turn off
 	result, _ = cmd.Execute(context.Background(), "off")
-	if thinking != "" {
-		t.Errorf("thinking not cleared: %q", thinking)
+	if thinking != "off" {
+		t.Errorf("thinking not set to 'off': %q", thinking)
 	}
 	if !strings.Contains(result, "off") {
 		t.Errorf("result = %q", result)
