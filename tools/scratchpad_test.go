@@ -31,8 +31,8 @@ func TestScratchpadToolWriteRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	if !strings.Contains(result, "written") {
-		t.Errorf("write result = %q", result)
+	if !strings.Contains(result.Text,"written") {
+		t.Errorf("write result = %q", result.Text)
 	}
 
 	// Read
@@ -41,8 +41,8 @@ func TestScratchpadToolWriteRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if result != "working on auth" {
-		t.Errorf("read result = %q", result)
+	if result.Text != "working on auth" {
+		t.Errorf("read result = %q", result.Text)
 	}
 }
 
@@ -54,8 +54,8 @@ func TestScratchpadToolReadEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if !strings.Contains(result, "empty") {
-		t.Errorf("expected empty message, got %q", result)
+	if !strings.Contains(result.Text,"empty") {
+		t.Errorf("expected empty message, got %q", result.Text)
 	}
 }
 
@@ -72,15 +72,15 @@ func TestScratchpadToolClear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
-	if !strings.Contains(result, "cleared") {
-		t.Errorf("clear result = %q", result)
+	if !strings.Contains(result.Text,"cleared") {
+		t.Errorf("clear result = %q", result.Text)
 	}
 
 	// Verify cleared
 	params, _ = json.Marshal(map[string]string{"action": "read", "key": "temp"})
 	result, _ = tool.Execute(ctx, params)
-	if !strings.Contains(result, "empty") {
-		t.Errorf("after clear, read = %q", result)
+	if !strings.Contains(result.Text,"empty") {
+		t.Errorf("after clear, read = %q", result.Text)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestScratchpadToolListEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if result != "No scratchpad entries." {
-		t.Errorf("expected empty message, got %q", result)
+	if result.Text != "No scratchpad entries." {
+		t.Errorf("expected empty message, got %q", result.Text)
 	}
 }
 
@@ -120,14 +120,14 @@ func TestScratchpadToolListWithEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if !strings.Contains(result, "notes") {
-		t.Errorf("missing notes in result: %q", result)
+	if !strings.Contains(result.Text,"notes") {
+		t.Errorf("missing notes in result: %q", result.Text)
 	}
-	if !strings.Contains(result, "context") {
-		t.Errorf("missing context in result: %q", result)
+	if !strings.Contains(result.Text,"context") {
+		t.Errorf("missing context in result: %q", result.Text)
 	}
-	if !strings.Contains(result, "Scratchpad entries:") {
-		t.Errorf("missing header in result: %q", result)
+	if !strings.Contains(result.Text,"Scratchpad entries:") {
+		t.Errorf("missing header in result: %q", result.Text)
 	}
 }
 

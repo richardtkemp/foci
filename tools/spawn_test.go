@@ -113,8 +113,8 @@ func TestSpawnContextRaw(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if result != "The answer is 42." {
-		t.Errorf("result = %q", result)
+	if result.Text != "The answer is 42." {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// No system prompt in raw mode
@@ -165,8 +165,8 @@ func TestSpawnContextCharacter(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if result != "Deep analysis complete." {
-		t.Errorf("result = %q", result)
+	if result.Text != "Deep analysis complete." {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Character mode includes system blocks
@@ -212,11 +212,11 @@ func TestSpawnContextClone(t *testing.T) {
 	}
 
 	// Should return async ack, not the agent result
-	if !strings.Contains(result, "Spawn started in background") {
-		t.Errorf("expected async ack, got %q", result)
+	if !strings.Contains(result.Text, "Spawn started in background") {
+		t.Errorf("expected async ack, got %q", result.Text)
 	}
-	if !strings.Contains(result, "Branch: agent:test:spawn:spawn-") {
-		t.Errorf("expected branch key in ack, got %q", result)
+	if !strings.Contains(result.Text, "Branch: agent:test:spawn:spawn-") {
+		t.Errorf("expected branch key in ack, got %q", result.Text)
 	}
 
 	// Should have created a branch
@@ -280,8 +280,8 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 	}
 
 	// Nil notifier = sync fallback, should get direct result
-	if result != "Done." {
-		t.Errorf("result = %q, want Done.", result)
+	if result.Text != "Done." {
+		t.Errorf("result = %q, want Done.", result.Text)
 	}
 }
 
@@ -426,8 +426,8 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("raw mode from spawn inherit should work: %v", err)
 	}
-	if result != "ok" {
-		t.Errorf("result = %q", result)
+	if result.Text != "ok" {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	params, _ = json.Marshal(map[string]string{
@@ -438,8 +438,8 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("full mode from spawn inherit should work: %v", err)
 	}
-	if result != "ok" {
-		t.Errorf("result = %q", result)
+	if result.Text != "ok" {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -486,8 +486,8 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("spawn %d: %v", i, err)
 		}
-		if !strings.Contains(result, "Spawn started in background") {
-			t.Fatalf("spawn %d: expected async ack, got %q", i, result)
+		if !strings.Contains(result.Text, "Spawn started in background") {
+			t.Fatalf("spawn %d: expected async ack, got %q", i, result.Text)
 		}
 	}
 
@@ -572,8 +572,8 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Spawn started in background") {
-		t.Fatalf("expected async ack, got %q", result)
+	if !strings.Contains(result.Text, "Spawn started in background") {
+		t.Fatalf("expected async ack, got %q", result.Text)
 	}
 
 	select {
@@ -627,8 +627,8 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Spawn started in background") {
-		t.Fatalf("expected async ack, got %q", result)
+	if !strings.Contains(result.Text, "Spawn started in background") {
+		t.Fatalf("expected async ack, got %q", result.Text)
 	}
 
 	select {
@@ -673,8 +673,8 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	}
 
 	// Should return the actual result, not an async ack
-	if result != "Sync result." {
-		t.Errorf("result = %q, want Sync result.", result)
+	if result.Text != "Sync result." {
+		t.Errorf("result = %q, want Sync result.", result.Text)
 	}
 
 	// Agent should have been called synchronously
@@ -826,12 +826,12 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	reg.Register(&Tool{
 		Name:       "echo_tool",
 		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Text string `json:"text"`
 			}
 			json.Unmarshal(params, &p)
-			return "echo: " + p.Text, nil
+			return TextResult("echo: " + p.Text), nil
 		},
 	})
 
@@ -847,8 +847,8 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result != "Tool said: echo hello" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Tool said: echo hello" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if callCount != 2 {
 		t.Errorf("callCount = %d, want 2", callCount)
@@ -895,7 +895,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-			Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+			Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 		})
 	}
 
@@ -986,7 +986,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-			Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+			Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 		})
 	}
 
@@ -1021,12 +1021,12 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 	reg.Register(&Tool{
 		Name:       "spawn",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 	})
 	reg.Register(&Tool{
 		Name:       "shell",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 	})
 
 	defs, tools := spawnToolSet(reg, nil)
@@ -1063,8 +1063,8 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if strings.Contains(result, "Files created in /tmp/foci-spawn-") {
-		spawnTempDir = extractTempDir(result)
+	if strings.Contains(result.Text, "Files created in /tmp/foci-spawn-") {
+		spawnTempDir = extractTempDir(result.Text)
 	}
 	_ = spawnTempDir
 }
@@ -1109,15 +1109,15 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "File written.") {
-		t.Errorf("expected result, got %q", result)
+	if !strings.Contains(result.Text, "File written.") {
+		t.Errorf("expected result, got %q", result.Text)
 	}
 
-	if !strings.Contains(result, "Files created in /tmp/foci-spawn-") {
-		t.Errorf("expected file list in result, got %q", result)
+	if !strings.Contains(result.Text, "Files created in /tmp/foci-spawn-") {
+		t.Errorf("expected file list in result, got %q", result.Text)
 	}
 
-	spawnTempDir = extractTempDir(result)
+	spawnTempDir = extractTempDir(result.Text)
 	if spawnTempDir == "" {
 		t.Fatal("failed to extract temp dir from result")
 	}
@@ -1170,8 +1170,8 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Error received.") {
-		t.Errorf("expected result, got %q", result)
+	if !strings.Contains(result.Text, "Error received.") {
+		t.Errorf("expected result, got %q", result.Text)
 	}
 }
 
@@ -1214,8 +1214,8 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Error received.") {
-		t.Errorf("expected result, got %q", result)
+	if !strings.Contains(result.Text, "Error received.") {
+		t.Errorf("expected result, got %q", result.Text)
 	}
 }
 
@@ -1268,14 +1268,14 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "a.txt") {
-		t.Errorf("expected a.txt in file list, got %q", result)
+	if !strings.Contains(result.Text, "a.txt") {
+		t.Errorf("expected a.txt in file list, got %q", result.Text)
 	}
-	if !strings.Contains(result, "b.txt") {
-		t.Errorf("expected b.txt in file list, got %q", result)
+	if !strings.Contains(result.Text, "b.txt") {
+		t.Errorf("expected b.txt in file list, got %q", result.Text)
 	}
-	if !strings.Contains(result, "3 B") && !strings.Contains(result, "5 B") {
-		t.Errorf("expected file sizes in file list, got %q", result)
+	if !strings.Contains(result.Text, "3 B") && !strings.Contains(result.Text, "5 B") {
+		t.Errorf("expected file sizes in file list, got %q", result.Text)
 	}
 }
 
@@ -1309,7 +1309,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-			Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+			Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 		})
 	}
 
@@ -1442,12 +1442,12 @@ func TestSpawnExploreMode(t *testing.T) {
 	reg.Register(&Tool{
 		Name:       "read",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 	})
 	reg.Register(&Tool{
 		Name:       "shell",
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 	})
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
@@ -1469,8 +1469,8 @@ func TestSpawnExploreMode(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if result != "Found 3 Go files." {
-		t.Errorf("result = %q", result)
+	if result.Text != "Found 3 Go files." {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Should always use haiku regardless of parent model or explicit model param

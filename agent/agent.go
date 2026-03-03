@@ -30,11 +30,11 @@ import (
 
 const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
 
-// ImageData holds a raw image for inclusion in a message.
-type ImageData struct {
-	MediaType string // "image/jpeg", "image/png", etc.
+// Attachment holds a raw image or document for inclusion in a message.
+type Attachment struct {
+	MediaType string // "image/jpeg", "image/png", "application/pdf", etc.
 	Data      []byte // raw bytes (base64-encoded when building content blocks)
-	SavedPath string // non-empty if image was persisted to disk
+	SavedPath string // non-empty if attachment was persisted to disk
 }
 
 // sessionMeta tracks per-session state for metadata injection.
@@ -825,13 +825,13 @@ func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 	return mu
 }
 
-// HandleMessage processes a text-only user message. Delegates to HandleMessageWithImages.
+// HandleMessage processes a text-only user message. Delegates to HandleMessageWithAttachments.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
-	return a.HandleMessageWithImages(ctx, sessionKey, userMessage, nil)
+	return a.HandleMessageWithAttachments(ctx, sessionKey, userMessage, nil)
 }
 
-// HandleMessageWithImages processes a user message with optional image attachments.
-func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, userMessage string, images []ImageData) (string, error) {
+// HandleMessageWithAttachments processes a user message with optional image/document attachments.
+func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, images []Attachment) (string, error) {
 	// Serialize turns on the same session. Without this, concurrent callers
 	// (keepalive, tmux watch, scheduled wakes, exec auto-background) could
 	// load the same session state, run concurrent turns, and interleave their
@@ -927,11 +927,15 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 		}
 	}
 
-	// Annotate with saved image paths so the agent knows where files are
+	// Annotate with saved attachment paths so the agent knows where files are
 	var imagePaths string
 	for _, img := range images {
 		if img.SavedPath != "" {
-			imagePaths += "[Image saved to: " + img.SavedPath + "]\n"
+			label := "Image"
+			if img.MediaType == "application/pdf" {
+				label = "PDF"
+			}
+			imagePaths += "[" + label + " saved to: " + img.SavedPath + "]\n"
 		}
 	}
 
@@ -944,13 +948,19 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 	}
 	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
 
-	// Build content blocks: images first, then text
+	// Build content blocks: attachments first, then text
+	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
 	var contentBlocks []anthropic.ContentBlock
 	for _, img := range images {
-		contentBlocks = append(contentBlocks, anthropic.ImageBlock(
-			img.MediaType,
-			base64.StdEncoding.EncodeToString(img.Data),
-		))
+		encoded := base64.StdEncoding.EncodeToString(img.Data)
+		if img.MediaType == "application/pdf" {
+			if len(img.Data) > maxPDFSize {
+				continue // over-size PDFs already have save-to-disk annotation
+			}
+			contentBlocks = append(contentBlocks, anthropic.DocumentBlock(img.MediaType, encoded))
+		} else {
+			contentBlocks = append(contentBlocks, anthropic.ImageBlock(img.MediaType, encoded))
+		}
 	}
 	contentBlocks = append(contentBlocks, anthropic.ContentBlock{Type: "text", Text: annotatedMessage})
 
@@ -1182,7 +1192,7 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			}
 
 			// Guard against oversized tool results
-			guardedResult := a.guardToolResult(ctx, block.Name, result, messages)
+			guardedResult := a.guardToolResult(ctx, block.Name, result.Text, messages)
 			// Redact secrets from tool output
 			if a.Redact != nil {
 				guardedResult = a.Redact(guardedResult)
@@ -1190,6 +1200,8 @@ func (a *Agent) HandleMessageWithImages(ctx context.Context, sessionKey string, 
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
 				block.ID, guardedResult, false,
 			))
+			// Append extra content blocks (e.g. document blocks from PDF reads)
+			toolResults = append(toolResults, result.ExtraBlocks...)
 			notifyToolResultCtx(ctx, block.Name, guardedResult, false)
 			signalActivityCtx(ctx)
 		}

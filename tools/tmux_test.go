@@ -46,8 +46,8 @@ func TestTmuxStartAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !strings.Contains(result, name) {
-		t.Errorf("start result = %q, want session name", result)
+	if !strings.Contains(result.Text,name) {
+		t.Errorf("start result = %q, want session name", result.Text)
 	}
 
 	// List
@@ -58,16 +58,16 @@ func TestTmuxStartAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if !strings.Contains(result, name) {
-		t.Errorf("list result = %q, want %q", result, name)
+	if !strings.Contains(result.Text,name) {
+		t.Errorf("list result = %q, want %q", result.Text,name)
 	}
 	// Should have header line
-	if !strings.Contains(result, "SESSION") {
-		t.Errorf("list result missing header: %q", result)
+	if !strings.Contains(result.Text,"SESSION") {
+		t.Errorf("list result missing header: %q", result.Text)
 	}
 	// Owned session should show "owned" status
-	if !strings.Contains(result, "owned") {
-		t.Errorf("list result missing 'owned' status: %q", result)
+	if !strings.Contains(result.Text,"owned") {
+		t.Errorf("list result missing 'owned' status: %q", result.Text)
 	}
 }
 
@@ -112,8 +112,8 @@ func TestTmuxSendAndRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(result, "hello tmux") {
-		t.Errorf("read result = %q, want 'hello tmux'", result)
+	if !strings.Contains(result.Text,"hello tmux") {
+		t.Errorf("read result = %q, want 'hello tmux'", result.Text)
 	}
 }
 
@@ -173,8 +173,8 @@ func TestTmuxKill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kill: %v", err)
 	}
-	if !strings.Contains(result, name) {
-		t.Errorf("kill result = %q", result)
+	if !strings.Contains(result.Text,name) {
+		t.Errorf("kill result = %q", result.Text)
 	}
 
 	// Verify gone from list
@@ -185,7 +185,7 @@ func TestTmuxKill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if strings.Contains(result, name) {
+	if strings.Contains(result.Text,name) {
 		t.Errorf("session %q still in list after kill", name)
 	}
 }
@@ -219,12 +219,12 @@ func TestTmuxStartNoName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !strings.Contains(result, "foci-") {
-		t.Errorf("result = %q, want auto-generated foci-N name", result)
+	if !strings.Contains(result.Text,"foci-") {
+		t.Errorf("result = %q, want auto-generated foci-N name", result.Text)
 	}
 
 	// Extract name and clean up
-	name := strings.TrimPrefix(result, "Session started: ")
+	name := strings.TrimPrefix(result.Text, "Session started: ")
 	defer tmuxCleanup(t, name)
 }
 
@@ -257,8 +257,8 @@ func TestTmuxSendNoEnter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if result != "Keys sent." {
-		t.Errorf("result = %q", result)
+	if result.Text != "Keys sent." {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -289,8 +289,8 @@ func TestTmuxSendBareEnter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bare enter send should succeed: %v", err)
 	}
-	if result != "Keys sent." {
-		t.Errorf("result = %q, want %q", result, "Keys sent.")
+	if result.Text != "Keys sent." {
+		t.Errorf("result = %q, want %q", result.Text,"Keys sent.")
 	}
 
 	// Verify: no keys + no enter should fail
@@ -339,8 +339,8 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start with workdir: %v", err)
 	}
-	if !strings.Contains(result, name) {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text,name) {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	time.Sleep(200 * time.Millisecond)
@@ -369,8 +369,8 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 	}
 	// Resolve any symlinks (e.g. /tmp -> /private/tmp on macOS)
 	resolvedDir, _ := filepath.EvalSymlinks(dir)
-	if !strings.Contains(output, dir) && !strings.Contains(output, resolvedDir) {
-		t.Errorf("output = %q, want workdir %q or %q", output, dir, resolvedDir)
+	if !strings.Contains(output.Text, dir) && !strings.Contains(output.Text, resolvedDir) {
+		t.Errorf("output = %q, want workdir %q or %q", output.Text, dir, resolvedDir)
 	}
 }
 
@@ -404,8 +404,8 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("watch: %v", err)
 	}
-	if !strings.Contains(result, "Watching") {
-		t.Errorf("watch result = %q", result)
+	if !strings.Contains(result.Text,"Watching") {
+		t.Errorf("watch result = %q", result.Text)
 	}
 
 	// Unwatch
@@ -417,8 +417,8 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unwatch: %v", err)
 	}
-	if !strings.Contains(result, "Stopped watching") {
-		t.Errorf("unwatch result = %q", result)
+	if !strings.Contains(result.Text,"Stopped watching") {
+		t.Errorf("unwatch result = %q", result.Text)
 	}
 }
 
@@ -691,11 +691,11 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent A list: %v", err)
 	}
-	if !strings.Contains(result, nameA) {
-		t.Errorf("agent A list missing own session: %q", result)
+	if !strings.Contains(result.Text,nameA) {
+		t.Errorf("agent A list missing own session: %q", result.Text)
 	}
 	// A should see its own session as "owned" and B's as "idle"
-	for _, line := range strings.Split(result, "\n") {
+	for _, line := range strings.Split(result.Text, "\n") {
 		if strings.Contains(line, nameA) && !strings.Contains(line, "owned") {
 			t.Errorf("agent A list should show %q as owned: %q", nameA, line)
 		}
@@ -708,11 +708,11 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent B list: %v", err)
 	}
-	if !strings.Contains(result, nameB) {
-		t.Errorf("agent B list missing own session: %q", result)
+	if !strings.Contains(result.Text,nameB) {
+		t.Errorf("agent B list missing own session: %q", result.Text)
 	}
 	// B should see its own session as "owned" and A's as "idle"
-	for _, line := range strings.Split(result, "\n") {
+	for _, line := range strings.Split(result.Text, "\n") {
 		if strings.Contains(line, nameB) && !strings.Contains(line, "owned") {
 			t.Errorf("agent B list should show %q as owned: %q", nameB, line)
 		}
@@ -1322,8 +1322,8 @@ func TestTmuxReadRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read raw: %v", err)
 	}
-	if !strings.Contains(result, "Claude Code") {
-		t.Errorf("raw read should preserve all content, got:\n%s", result)
+	if !strings.Contains(result.Text,"Claude Code") {
+		t.Errorf("raw read should preserve all content, got:\n%s", result.Text)
 	}
 
 	// Read with raw=false (default) — CC version line should be stripped
@@ -1530,8 +1530,8 @@ func TestTmuxNoStateStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if !strings.Contains(result, name) {
-		t.Errorf("list result = %q, want to contain %s", result, name)
+	if !strings.Contains(result.Text,name) {
+		t.Errorf("list result = %q, want to contain %s", result.Text, name)
 	}
 }
 
@@ -1946,11 +1946,11 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !strings.Contains(result, "Session started") {
-		t.Errorf("result missing 'Session started': %q", result)
+	if !strings.Contains(result.Text,"Session started") {
+		t.Errorf("result missing 'Session started': %q", result.Text)
 	}
-	if !strings.Contains(result, "Watching") {
-		t.Errorf("result missing watch confirmation: %q", result)
+	if !strings.Contains(result.Text,"Watching") {
+		t.Errorf("result missing watch confirmation: %q", result.Text)
 	}
 
 	// Verify watch was persisted
@@ -2002,11 +2002,11 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !strings.Contains(result, "Session started") {
-		t.Errorf("result missing 'Session started': %q", result)
+	if !strings.Contains(result.Text,"Session started") {
+		t.Errorf("result missing 'Session started': %q", result.Text)
 	}
-	if strings.Contains(result, "Watching") {
-		t.Errorf("result should NOT contain watch confirmation when watch=false: %q", result)
+	if strings.Contains(result.Text,"Watching") {
+		t.Errorf("result should NOT contain watch confirmation when watch=false: %q", result.Text)
 	}
 
 	// Verify no watches persisted
@@ -2035,12 +2035,12 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !strings.Contains(result, "Session started") {
-		t.Errorf("result missing 'Session started': %q", result)
+	if !strings.Contains(result.Text,"Session started") {
+		t.Errorf("result missing 'Session started': %q", result.Text)
 	}
 	// Should not contain watch info since no notifier
-	if strings.Contains(result, "Watching") {
-		t.Errorf("result should NOT contain watch when no notifier: %q", result)
+	if strings.Contains(result.Text,"Watching") {
+		t.Errorf("result should NOT contain watch when no notifier: %q", result.Text)
 	}
 }
 
@@ -2078,8 +2078,8 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	if !strings.Contains(result, "Watching") {
-		t.Fatalf("expected auto-watch on start: %q", result)
+	if !strings.Contains(result.Text,"Watching") {
+		t.Fatalf("expected auto-watch on start: %q", result.Text)
 	}
 
 	// Wait for inactivity notification (threshold=2s, monitor polls every 2s)
@@ -2101,8 +2101,8 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if strings.Contains(result, "watched") {
-		t.Errorf("expected watch to be auto-removed after inactivity (autopilot), got: %q", result)
+	if strings.Contains(result.Text,"watched") {
+		t.Errorf("expected watch to be auto-removed after inactivity (autopilot), got: %q", result.Text)
 	}
 }
 
@@ -2146,8 +2146,8 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if !strings.Contains(result, "Watching") {
-		t.Errorf("expected auto-watch on send (autopilot), got: %q", result)
+	if !strings.Contains(result.Text,"Watching") {
+		t.Errorf("expected auto-watch on send (autopilot), got: %q", result.Text)
 	}
 
 	// Second send should NOT add another watch
@@ -2160,8 +2160,8 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if strings.Contains(result, "Watching") {
-		t.Errorf("should not re-watch already watched session, got: %q", result)
+	if strings.Contains(result.Text,"Watching") {
+		t.Errorf("should not re-watch already watched session, got: %q", result.Text)
 	}
 
 	// Cleanup
@@ -2212,8 +2212,8 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if strings.Contains(result, "Watching") {
-		t.Errorf("should not auto-watch when autopilot=false, got: %q", result)
+	if strings.Contains(result.Text,"Watching") {
+		t.Errorf("should not auto-watch when autopilot=false, got: %q", result.Text)
 	}
 }
 
@@ -2256,8 +2256,8 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kill: %v", err)
 	}
-	if !strings.Contains(result, name) {
-		t.Errorf("kill result = %q, want session name", result)
+	if !strings.Contains(result.Text, name) {
+		t.Errorf("kill result = %q, want session name", result.Text)
 	}
 
 	// Wait for processes to actually die

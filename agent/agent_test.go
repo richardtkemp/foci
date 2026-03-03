@@ -138,10 +138,10 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 		Name:        "echo_tool",
 		Description: "echoes text",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
 			var p struct{ Text string }
 			json.Unmarshal(params, &p)
-			return fmt.Sprintf("echo: %s", p.Text), nil
+			return tools.TextResult(fmt.Sprintf("echo: %s", p.Text)), nil
 		},
 	})
 
@@ -435,9 +435,9 @@ func TestHandleMessageCancellation(t *testing.T) {
 		Name:        "slow_tool",
 		Description: "blocks forever",
 		Parameters:  json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
 			<-ctx.Done()
-			return "", ctx.Err()
+			return tools.ToolResult{}, ctx.Err()
 		},
 	})
 
@@ -555,7 +555,7 @@ func TestProcessingDetails(t *testing.T) {
 	}()
 
 	<-started
-	time.Sleep(50 * time.Millisecond) // let HandleMessageWithImages register
+	time.Sleep(50 * time.Millisecond) // let HandleMessageWithAttachments register
 
 	details := ag.ProcessingDetails()
 	if len(details) != 1 {
@@ -642,8 +642,8 @@ func TestDeferredReply(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "test_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "tool result", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("tool result"), nil
 		},
 	})
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -688,7 +688,7 @@ func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 	return anthropic.NewClientWithBase(baseURL, apiKey)
 }
 
-func TestHandleMessageWithImages(t *testing.T) {
+func TestHandleMessageWithAttachments(t *testing.T) {
 	var receivedReq *anthropic.MessageRequest
 
 	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -715,12 +715,12 @@ func TestHandleMessageWithImages(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []ImageData{
+	images := []Attachment{
 		{MediaType: "image/jpeg", Data: []byte("fake-jpeg-data")},
 	}
-	resp, err := ag.HandleMessageWithImages(context.Background(), "agent:test:img", "What is this?", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:img", "What is this?", images)
 	if err != nil {
-		t.Fatalf("HandleMessageWithImages: %v", err)
+		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
 	if resp != "I see a cat!" {
 		t.Errorf("response = %q", resp)
@@ -759,7 +759,110 @@ func TestHandleMessageWithImages(t *testing.T) {
 	}
 }
 
-func TestHandleMessageWithImagesNoText(t *testing.T) {
+func TestHandleMessageWithPDFAttachment(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("I read the PDF."),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	attachments := []Attachment{
+		{MediaType: "application/pdf", Data: []byte("%PDF-1.4 fake")},
+	}
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:pdf", "Read this PDF", attachments)
+	if err != nil {
+		t.Fatalf("HandleMessageWithAttachments: %v", err)
+	}
+	if resp != "I read the PDF." {
+		t.Errorf("response = %q", resp)
+	}
+
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+
+	// Check the user message has document + text blocks
+	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	if len(userMsg.Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(userMsg.Content))
+	}
+
+	// First block should be document (not image)
+	if userMsg.Content[0].Type != "document" {
+		t.Errorf("content[0].Type = %q, want document", userMsg.Content[0].Type)
+	}
+	if userMsg.Content[0].Source == nil {
+		t.Fatal("content[0].Source is nil")
+	}
+	if userMsg.Content[0].Source.MediaType != "application/pdf" {
+		t.Errorf("content[0].Source.MediaType = %q", userMsg.Content[0].Source.MediaType)
+	}
+}
+
+func TestHandleMessageWithPDFSavedPath(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    anthropic.TextContent("Got it!"),
+			StopReason: "end_turn",
+			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	attachments := []Attachment{
+		{MediaType: "application/pdf", Data: []byte("%PDF-1.4"), SavedPath: "/tmp/docs/report.pdf"},
+	}
+	_, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:pdfsaved", "Check this", attachments)
+	if err != nil {
+		t.Fatalf("HandleMessageWithAttachments: %v", err)
+	}
+
+	// Check the text block contains PDF-specific saved path annotation
+	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	textBlock := userMsg.Content[len(userMsg.Content)-1]
+	if !strings.Contains(textBlock.Text, "[PDF saved to: /tmp/docs/report.pdf]") {
+		t.Errorf("text block should have PDF saved path annotation, got: %q", textBlock.Text)
+	}
+}
+
+func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 		return &anthropic.MessageResponse{
 			ID:         "msg_test",
@@ -783,13 +886,13 @@ func TestHandleMessageWithImagesNoText(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []ImageData{
+	images := []Attachment{
 		{MediaType: "image/png", Data: []byte("fake-png-data")},
 	}
 	// Empty text — image only
-	resp, err := ag.HandleMessageWithImages(context.Background(), "agent:test:imgonly", "", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:imgonly", "", images)
 	if err != nil {
-		t.Fatalf("HandleMessageWithImages: %v", err)
+		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
 	if resp != "I see an image." {
 		t.Errorf("response = %q", resp)
@@ -836,7 +939,7 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 	}
 }
 
-func TestHandleMessageWithImagesSavedPath(t *testing.T) {
+func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 	var receivedReq *anthropic.MessageRequest
 
 	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -863,12 +966,12 @@ func TestHandleMessageWithImagesSavedPath(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []ImageData{
+	images := []Attachment{
 		{MediaType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
 	}
-	resp, err := ag.HandleMessageWithImages(context.Background(), "agent:test:savedpath", "What is this?", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:savedpath", "What is this?", images)
 	if err != nil {
-		t.Fatalf("HandleMessageWithImages: %v", err)
+		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
 	if resp != "Got it!" {
 		t.Errorf("response = %q", resp)
@@ -885,7 +988,7 @@ func TestHandleMessageWithImagesSavedPath(t *testing.T) {
 	}
 }
 
-func TestHandleMessageWithImagesNoSavedPath(t *testing.T) {
+func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	var receivedReq *anthropic.MessageRequest
 
 	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -912,10 +1015,10 @@ func TestHandleMessageWithImagesNoSavedPath(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []ImageData{
+	images := []Attachment{
 		{MediaType: "image/jpeg", Data: []byte("fake")},
 	}
-	ag.HandleMessageWithImages(context.Background(), "agent:test:nosaved", "Look", images)
+	ag.HandleMessageWithAttachments(context.Background(), "agent:test:nosaved", "Look", images)
 
 	// Text block should NOT contain [Image saved to:] when SavedPath is empty
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -2141,8 +2244,8 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "test_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "ok", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
 		},
 	})
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -2660,8 +2763,8 @@ func TestToolResultRedaction(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "leak_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "output contains sk-ant-12345-secret-key here", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("output contains sk-ant-12345-secret-key here"), nil
 		},
 	})
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -2731,8 +2834,8 @@ func TestToolErrorRedaction(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "err_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "", fmt.Errorf("auth failed with token sk-ant-12345-secret-key")
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.ToolResult{}, fmt.Errorf("auth failed with token sk-ant-12345-secret-key")
 		},
 	})
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -3169,8 +3272,8 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 		Name:        "echo_tool",
 		Description: "echoes text",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "ok", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("ok"), nil
 		},
 	})
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -3425,7 +3528,7 @@ func TestBraindeadWarningInjected(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
 	})
 
 	ag := &Agent{
@@ -3495,7 +3598,7 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
 	})
 
 	ag := &Agent{
@@ -3562,7 +3665,7 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "noop",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
 	})
 
 	ag := &Agent{
@@ -3632,8 +3735,8 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "test_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "done", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("done"), nil
 		},
 	})
 	ag := &Agent{
@@ -3706,8 +3809,8 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "test_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "done", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("done"), nil
 		},
 	})
 	ag := &Agent{
@@ -3793,8 +3896,8 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 	registry.Register(&tools.Tool{
 		Name:       "test_tool",
 		Parameters: json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "done", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			return tools.TextResult("done"), nil
 		},
 	})
 	ag := &Agent{

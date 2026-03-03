@@ -17,26 +17,26 @@ func testRegistry() *Registry {
 		Name:       "echo_tool",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct{ Text string `json:"text"` }
 			json.Unmarshal(params, &p)
-			return "echo: " + p.Text, nil
+			return TextResult("echo: " + p.Text), nil
 		},
 	})
 	r.Register(&Tool{
 		Name:       "error_tool",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "", fmt.Errorf("intentional error")
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return ToolResult{}, fmt.Errorf("intentional error")
 		},
 	})
 	r.Register(&Tool{
 		Name:       "private_tool",
 		ExecExport: false,
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "should not be callable", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("should not be callable"), nil
 		},
 	})
 	return r
@@ -185,9 +185,9 @@ func TestExecBridgeSessionKeyPropagated(t *testing.T) {
 		Name:       "key_tool",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			capturedKey = SessionKeyFromContext(ctx)
-			return "ok", nil
+			return TextResult("ok"), nil
 		},
 	})
 
@@ -380,8 +380,8 @@ func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 		Name:       "http_request",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "HTTP 200 OK\nContent-Type: application/json\nContent-Length: 27\n\n{\"origin\":\"1.2.3.4\"}", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("HTTP 200 OK\nContent-Type: application/json\nContent-Length: 27\n\n{\"origin\":\"1.2.3.4\"}"), nil
 		},
 	})
 
@@ -411,8 +411,8 @@ func TestExecBridgeHTTPRequestIncludeHeaders(t *testing.T) {
 		Name:       "http_request",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "HTTP 200 OK\nContent-Type: application/json\n\n{\"key\":\"value\"}", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("HTTP 200 OK\nContent-Type: application/json\n\n{\"key\":\"value\"}"), nil
 		},
 	})
 
@@ -454,8 +454,8 @@ func TestExecBridgeHTTPRequestIncludeHeadersFalse(t *testing.T) {
 		Name:       "http_request",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "HTTP 404 Not Found\nContent-Type: text/plain\n\nnot found", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("HTTP 404 Not Found\nContent-Type: text/plain\n\nnot found"), nil
 		},
 	})
 
@@ -481,8 +481,8 @@ func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 		Name:       "http_request",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult(""), nil
 		},
 	})
 
@@ -515,8 +515,8 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 		Name:       "tmux",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"},"name":{"type":"string"},"command":{"type":"string"},"workdir":{"type":"string"},"watch":{"type":"boolean"},"keys":{"type":"string"},"enter":{"type":"boolean"},"lines":{"type":"integer"},"window":{"type":"integer"},"threshold_seconds":{"type":"integer"},"raw":{"type":"boolean"}}}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
-			return "ok", nil
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("ok"), nil
 		},
 	})
 

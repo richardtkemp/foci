@@ -442,7 +442,7 @@ type Tool struct {
     Name        string
     Description string
     Parameters  json.RawMessage  // JSON Schema
-    Execute     func(ctx context.Context, params json.RawMessage) (string, error)
+    Execute     func(ctx context.Context, params json.RawMessage) (ToolResult, error)
 }
 ```
 

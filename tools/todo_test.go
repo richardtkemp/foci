@@ -259,7 +259,8 @@ func TestTodoToolGetWrongAgent(t *testing.T) {
 
 func executeTodoTool(tool *Tool, params map[string]interface{}) (string, error) {
 	raw, _ := json.Marshal(params)
-	return tool.Execute(context.Background(), raw)
+	result, err := tool.Execute(context.Background(), raw)
+	return result.Text, err
 }
 
 func newTestTodoStore(t *testing.T) *memory.TodoStore {

@@ -133,8 +133,8 @@ No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompt
 ## The Agent Loop (`agent/agent.go`)
 
 The core of the system. Two entry points:
-- `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithImages`
-- `HandleMessageWithImages(ctx, sessionKey, text, images)` — full version with optional image attachments
+- `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithAttachments`
+- `HandleMessageWithAttachments(ctx, sessionKey, text, attachments)` — full version with optional image/document attachments
 
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
@@ -146,7 +146,7 @@ The core of the system. Two entry points:
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
 2. buildMetaPrefix() + prepend to user message text
-3. build content blocks: image block(s) first, then text block (with metadata)
+3. build content blocks: image/document block(s) first, then text block (with metadata)
 4. append user message
 5. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
    prepend EnvironmentBlock if set        ← runtime context block
@@ -176,7 +176,7 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 
 ### Cache Stability Invariant
 
-Conversation history sent to the API must be a strict append-only extension of the previous request — inserting a message in the middle invalidates all cached tokens after that point. `HandleMessageWithImages` enforces this via a per-session turn lock that serializes all callers (Telegram, `AsyncNotifier`, scheduled wakes, HTTP `/send`). Different sessions run concurrently. See [CACHING.md](CACHING.md) for the full cache stability contract.
+Conversation history sent to the API must be a strict append-only extension of the previous request — inserting a message in the middle invalidates all cached tokens after that point. `HandleMessageWithAttachments` enforces this via a per-session turn lock that serializes all callers (Telegram, `AsyncNotifier`, scheduled wakes, HTTP `/send`). Different sessions run concurrently. See [CACHING.md](CACHING.md) for the full cache stability contract.
 
 ## Message Metadata
 
@@ -311,7 +311,7 @@ agent:main:cron:morning   → {dir}/agent/main/cron/morning.jsonl
 
 System blocks are assembled in this order:
 
-1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, platform URL, messaging platform, config/log paths, message metadata docs, and session structure. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessageWithImages`. Omitted when `[environment] enabled = false` (empty string).
+1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, platform URL, messaging platform, config/log paths, message metadata docs, and session structure. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessageWithAttachments`. Omitted when `[environment] enabled = false` (empty string).
 
 2. **Character files** (`workspace/bootstrap.go`) — reads markdown files from workspace dir in order:
 ```
@@ -396,7 +396,7 @@ Four outputs:
 
 ## Tool System (`tools/`)
 
-Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. Registry maps name → tool. See [TOOLS.md](TOOLS.md) for the canonical tool reference. Data-flow summary:
+Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)`. `ToolResult` contains `Text` (the tool's text output) and optional `ExtraBlocks` (additional content blocks like document blocks for PDFs). Registry maps name → tool. See [TOOLS.md](TOOLS.md) for the canonical tool reference. Data-flow summary:
 
 | Tool | File | What it does |
 |------|------|-------------|
@@ -533,9 +533,9 @@ Two goroutines:
 [receiver goroutine]   →  receive msg  →  wizard active?  →  yes: route to wizard, reply
                                        →  slash command?  →  yes: execute, reply
                                        →  voice note?     →  download OGG, transcribe via Whisper → text
-                                       →  photo/doc?      →  download image via Telegram file API
-                                                           →  enqueue (buffered chan) with text + images
-[agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage[WithImages]  →  reply
+                                       →  photo/doc/PDF?  →  download attachment via Telegram file API
+                                                           →  enqueue (buffered chan) with text + attachments
+[agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage[WithAttachments]  →  reply
 ```
 
 The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
@@ -546,7 +546,7 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 
 **Wizard routing (`WizardHandler`):** Interactive wizards (e.g. `/agents new`) take over message routing via `Registry.HandleMessage()`. When a wizard is active, ALL messages (including non-`/` text) are intercepted by the receiver goroutine before reaching slash command dispatch or the agent queue. `/cancel` and `/stop` abort the active wizard. The wizard is cleared automatically when it signals completion (`done=true`).
 
-**Image handling:** Photos (`msg.Photo`, largest size selected) and image documents (`msg.Document` with image MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `imageAttachment` structs alongside the message text (which may come from `msg.Caption` for photos). The agent worker converts these to `agent.ImageData` and calls `HandleMessageWithImages`.
+**Attachment handling:** Photos (`msg.Photo`, largest size selected), image documents (`msg.Document` with image MIME type), and PDF documents (`msg.Document` with `application/pdf` MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `attachment` structs alongside the message text (which may come from `msg.Caption` for photos). PDFs over 32MB fall back to save-to-disk with a text annotation. The agent worker converts these to `agent.Attachment` and calls `HandleMessageWithAttachments`, which routes images to `ImageBlock()` and PDFs to `DocumentBlock()` content blocks.
 
 **Turn cancellation:** Each agent turn gets its own `context.WithCancel`. `/stop` calls `turnCancel()`, which propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). The agent loop checks `ctx.Err()` after API responses and between tool calls.
 

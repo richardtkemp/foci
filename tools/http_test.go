@@ -49,14 +49,14 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200 in result: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200 in result: %s", result.Text)
 	}
-	if !strings.Contains(result, `"status":"ok"`) {
-		t.Errorf("expected response body in result: %s", result)
+	if !strings.Contains(result.Text,`"status":"ok"`) {
+		t.Errorf("expected response body in result: %s", result.Text)
 	}
-	if !strings.Contains(result, `"method":"GET"`) {
-		t.Errorf("expected GET method in result: %s", result)
+	if !strings.Contains(result.Text,`"method":"GET"`) {
+		t.Errorf("expected GET method in result: %s", result.Text)
 	}
 }
 
@@ -88,8 +88,8 @@ allowed_hosts = ["%s"]
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result.Text)
 	}
 	// Verify the secret was resolved server-side (actual value sent in header)
 	if receivedAuth != "Bearer sk-secret-123" {
@@ -185,8 +185,8 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "public data") {
-		t.Errorf("expected response body: %s", result)
+	if !strings.Contains(result.Text,"public data") {
+		t.Errorf("expected response body: %s", result.Text)
 	}
 }
 
@@ -216,10 +216,10 @@ allowed_hosts = ["%s"]
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if strings.Contains(result, "sk-supersecret-should-be-redacted") {
+	if strings.Contains(result.Text,"sk-supersecret-should-be-redacted") {
 		t.Error("secret value should be redacted from response")
 	}
-	if !strings.Contains(result, "[REDACTED]") {
+	if !strings.Contains(result.Text,"[REDACTED]") {
 		t.Error("expected [REDACTED] placeholder in response")
 	}
 }
@@ -244,11 +244,11 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "q=test query") {
-		t.Errorf("expected query param q: %s", result)
+	if !strings.Contains(result.Text,"q=test query") {
+		t.Errorf("expected query param q: %s", result.Text)
 	}
-	if !strings.Contains(result, "page=2") {
-		t.Errorf("expected query param page: %s", result)
+	if !strings.Contains(result.Text,"page=2") {
+		t.Errorf("expected query param page: %s", result.Text)
 	}
 }
 
@@ -302,13 +302,13 @@ func TestHTTPRequestSaveToText(t *testing.T) {
 	}
 
 	// Result should have status and path but not the body
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result.Text)
 	}
-	if !strings.Contains(result, savePath) {
-		t.Errorf("expected save path in result: %s", result)
+	if !strings.Contains(result.Text,savePath) {
+		t.Errorf("expected save path in result: %s", result.Text)
 	}
-	if strings.Contains(result, "hello world") {
+	if strings.Contains(result.Text,"hello world") {
 		t.Error("body should not be in result when save_to is used")
 	}
 
@@ -368,15 +368,15 @@ func TestHTTPRequestBinaryAutoSave(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Saved") {
-		t.Errorf("expected Saved in result: %s", result)
+	if !strings.Contains(result.Text,"Saved") {
+		t.Errorf("expected Saved in result: %s", result.Text)
 	}
-	if !strings.Contains(result, ".png") {
-		t.Errorf("expected .png extension in result: %s", result)
+	if !strings.Contains(result.Text,".png") {
+		t.Errorf("expected .png extension in result: %s", result.Text)
 	}
 
 	// Extract the saved path from result
-	for _, line := range strings.Split(result, "\n") {
+	for _, line := range strings.Split(result.Text, "\n") {
 		if strings.HasPrefix(line, "Saved") {
 			parts := strings.Fields(line)
 			savedPath := parts[len(parts)-1]
@@ -411,11 +411,11 @@ func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
 	}
 
 	// Text responses should be returned inline, not saved
-	if strings.Contains(result, "Saved") {
-		t.Errorf("text response should not be auto-saved: %s", result)
+	if strings.Contains(result.Text,"Saved") {
+		t.Errorf("text response should not be auto-saved: %s", result.Text)
 	}
-	if !strings.Contains(result, `"status":"ok"`) {
-		t.Errorf("expected body in result: %s", result)
+	if !strings.Contains(result.Text,`"status":"ok"`) {
+		t.Errorf("expected body in result: %s", result.Text)
 	}
 }
 
@@ -439,8 +439,8 @@ func TestHTTPRequestSaveFromJSONPath(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Saved") {
-		t.Errorf("expected Saved in result: %s", result)
+	if !strings.Contains(result.Text,"Saved") {
+		t.Errorf("expected Saved in result: %s", result.Text)
 	}
 
 	data, err := os.ReadFile(savePath)
@@ -482,8 +482,8 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result, "Saved") {
-		t.Errorf("expected Saved in result: %s", result)
+	if !strings.Contains(result.Text,"Saved") {
+		t.Errorf("expected Saved in result: %s", result.Text)
 	}
 
 	data, err := os.ReadFile(savePath)
@@ -616,8 +616,8 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "ok") {
-		t.Errorf("expected ok in result: %s", result)
+	if !strings.Contains(result.Text,"ok") {
+		t.Errorf("expected ok in result: %s", result.Text)
 	}
 }
 
@@ -674,8 +674,8 @@ func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 	if len(data) != 2*1024*1024 {
 		t.Errorf("saved %d bytes, want %d", len(data), 2*1024*1024)
 	}
-	if !strings.Contains(result, "2097152") {
-		t.Errorf("result should mention byte count: %s", result)
+	if !strings.Contains(result.Text,"2097152") {
+		t.Errorf("result should mention byte count: %s", result.Text)
 	}
 }
 
@@ -699,8 +699,8 @@ func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	// Body in result should be at most 256KB (plus headers/truncation text)
-	if len(result) > 300*1024 {
-		t.Errorf("result too large: %d bytes", len(result))
+	if len(result.Text) > 300*1024 {
+		t.Errorf("result too large: %d bytes", len(result.Text))
 	}
 }
 
@@ -755,8 +755,8 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "fast response") {
-		t.Errorf("result = %q, want 'fast response'", result)
+	if !strings.Contains(result.Text,"fast response") {
+		t.Errorf("result = %q, want 'fast response'", result.Text)
 	}
 	if called {
 		t.Error("notifier should not be called for fast requests")
@@ -787,8 +787,8 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	}
 
 	// Should get the auto-background message
-	if !strings.Contains(result, "still running") {
-		t.Errorf("expected auto-background message, got %q", result)
+	if !strings.Contains(result.Text,"still running") {
+		t.Errorf("expected auto-background message, got %q", result.Text)
 	}
 
 	// Wait for the request to complete
@@ -831,8 +831,8 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out, "still running") {
-		t.Fatalf("expected auto-background message, got %q", out)
+	if !strings.Contains(out.Text, "still running") {
+		t.Fatalf("expected auto-background message, got %q", out.Text)
 	}
 
 	select {
@@ -871,8 +871,8 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	}
 
 	// Should get the background message
-	if !strings.Contains(result, "background") {
-		t.Errorf("expected background message, got %q", result)
+	if !strings.Contains(result.Text,"background") {
+		t.Errorf("expected background message, got %q", result.Text)
 	}
 
 	// Wait for the request to complete
@@ -904,8 +904,8 @@ func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "sync response") {
-		t.Errorf("expected sync response, got %q", result)
+	if !strings.Contains(result.Text,"sync response") {
+		t.Errorf("expected sync response, got %q", result.Text)
 	}
 }
 
@@ -979,8 +979,8 @@ func TestHTTPRequestMultipartSingleFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result.Text)
 	}
 	if f, ok := receivedFiles["document"]; !ok {
 		t.Error("expected file part 'document'")
@@ -1029,8 +1029,8 @@ func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result.Text)
 	}
 	if _, ok := receivedFiles["photo"]; !ok {
 		t.Error("expected file part 'photo'")
@@ -1303,8 +1303,8 @@ func TestHTTPRequestMultipartCustomSizeLimitAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result.Text)
 	}
 }
 
@@ -1334,8 +1334,8 @@ func TestHTTPRequestBodyFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "HTTP 200") {
-		t.Errorf("expected HTTP 200: %s", result)
+	if !strings.Contains(result.Text,"HTTP 200") {
+		t.Errorf("expected HTTP 200: %s", result.Text)
 	}
 	if receivedBody != `{"audio":"base64data","model":"whisper"}` {
 		t.Errorf("server received body = %q", receivedBody)

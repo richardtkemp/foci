@@ -126,7 +126,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			},
 			"required": ["prompt"]
 		}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (string, error) {
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Prompt  string `json:"prompt"`
 				Model   string `json:"model"`
@@ -134,10 +134,10 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				Timeout int    `json:"timeout"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
-				return "", fmt.Errorf("parse params: %w", err)
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Prompt == "" {
-				return "", fmt.Errorf("prompt is required")
+				return ToolResult{}, fmt.Errorf("prompt is required")
 			}
 			if p.Context == "" {
 				p.Context = "clone"
@@ -161,18 +161,18 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			case "raw":
 				tempDir, err := os.MkdirTemp("", "foci-spawn-*")
 				if err != nil {
-					return "", fmt.Errorf("create temp dir: %w", err)
+					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
 				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
 				if err != nil {
-					return "", err
+					return ToolResult{}, err
 				}
 				filesCreated := listCreatedFiles(tempDir)
 				if filesCreated != "" {
 					result += "\n\n---\nFiles created in " + tempDir + "/:\n" + filesCreated
 				}
-				return result, nil
+				return TextResult(result), nil
 
 			case "character":
 				var system []anthropic.SystemBlock
@@ -180,7 +180,11 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
+				result, err := spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				return TextResult(result), nil
 
 			case "explore":
 				// Always use haiku for exploration — cheap and fast.
@@ -192,13 +196,17 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				return spawnOneShot(ctx, deps.Client, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars)
+				result, err := spawnOneShot(ctx, deps.Client, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				return TextResult(result), nil
 
 			case "clone":
 				return spawnInherit(ctx, deps, agentFn, sem, p.Prompt, timeout)
 
 			default:
-				return "", fmt.Errorf("invalid context: %q (use raw, character, clone, or explore)", p.Context)
+				return ToolResult{}, fmt.Errorf("invalid context: %q (use raw, character, clone, or explore)", p.Context)
 			}
 		},
 	}
@@ -447,10 +455,11 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 				))
 				continue
 			}
-			result = spawnGuardResult(block.Name, result, maxResultChars)
+			guarded := spawnGuardResult(block.Name, result.Text, maxResultChars)
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
-				block.ID, result, false,
+				block.ID, guarded, false,
 			))
+			toolResults = append(toolResults, result.ExtraBlocks...)
 		}
 
 		messages = append(messages, anthropic.Message{
@@ -466,15 +475,15 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 // When a notifier is available, the spawn runs asynchronously in a background
 // goroutine and delivers results via the notifier. When notifier is nil, it
 // falls back to synchronous execution (for tests).
-func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent, sem chan struct{}, prompt string, timeout time.Duration) (string, error) {
+func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent, sem chan struct{}, prompt string, timeout time.Duration) (ToolResult, error) {
 	// No-recursion guard: reject inherit calls from inside a spawn inherit session.
 	if IsSpawnInherit(ctx) {
-		return "", fmt.Errorf("nested inherit spawns not allowed — use context='raw' or context='character' instead")
+		return ToolResult{}, fmt.Errorf("nested inherit spawns not allowed — use context='raw' or context='character' instead")
 	}
 
 	parentSession := SessionKeyFromContext(ctx)
 	if parentSession == "" {
-		return "", fmt.Errorf("spawn inherit: no parent session in context")
+		return ToolResult{}, fmt.Errorf("spawn inherit: no parent session in context")
 	}
 
 	// Build unique branch key.
@@ -491,12 +500,12 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		NoResetHook:        true,
 		OrientationMessage: orientText,
 	}); err != nil {
-		return "", fmt.Errorf("spawn inherit: create branch: %w", err)
+		return ToolResult{}, fmt.Errorf("spawn inherit: create branch: %w", err)
 	}
 
 	agent := agentFn()
 	if agent == nil {
-		return "", fmt.Errorf("spawn inherit: agent not available")
+		return ToolResult{}, fmt.Errorf("spawn inherit: agent not available")
 	}
 
 	log.Infof("spawn", "inherit branch=%s parent=%s prompt=%d chars timeout=%s",
@@ -508,7 +517,7 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return ToolResult{}, ctx.Err()
 		}
 
 		deps.Notifier.MarkPending(parentSession)
@@ -539,7 +548,7 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		if len(promptPreview) > 100 {
 			promptPreview = promptPreview[:100] + "..."
 		}
-		return fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview), nil
+		return TextResult(fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview)), nil
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
@@ -547,7 +556,7 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	case sem <- struct{}{}:
 		defer func() { <-sem }()
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return ToolResult{}, ctx.Err()
 	}
 
 	spawnCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -557,10 +566,10 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 
 	result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
 	if err != nil {
-		return "", fmt.Errorf("spawn inherit: %w", err)
+		return ToolResult{}, fmt.Errorf("spawn inherit: %w", err)
 	}
 	if result == "" {
-		return "(empty response)", nil
+		return TextResult("(empty response)"), nil
 	}
-	return result, nil
+	return TextResult(result), nil
 }

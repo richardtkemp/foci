@@ -140,8 +140,8 @@ func TestSendTelegramTextOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: text" {
-		t.Errorf("result = %q, want %q", result, "Sent: text")
+	if result.Text != "Sent: text" {
+		t.Errorf("result = %q, want %q", result.Text, "Sent: text")
 	}
 	if len(mock.textCalls) != 1 || mock.textCalls[0] != "hello user" {
 		t.Errorf("textCalls = %v", mock.textCalls)
@@ -163,8 +163,8 @@ func TestSendTelegramDocumentOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: document" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: document" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.documentCalls) != 1 || mock.documentCalls[0] != "/tmp/report.pdf" {
 		t.Errorf("documentCalls = %v", mock.documentCalls)
@@ -184,8 +184,8 @@ func TestSendTelegramVoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: voice note" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: voice note" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.voiceCalls) != 1 || mock.voiceCalls[0] != "/tmp/note.ogg" {
 		t.Errorf("voiceCalls = %v", mock.voiceCalls)
@@ -205,8 +205,8 @@ func TestSendTelegramTextAndDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: text + document" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: text + document" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.textCalls) != 1 {
 		t.Errorf("textCalls = %v", mock.textCalls)
@@ -332,8 +332,8 @@ func TestSendTelegramChatRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: text" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: text" {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Should use chat-targeted method, not default
@@ -492,8 +492,8 @@ func TestSendTelegramSendAsVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: video" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: video" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.videoCalls) != 1 || mock.videoCalls[0] != "/tmp/clip.mp4" {
 		t.Errorf("videoCalls = %v", mock.videoCalls)
@@ -516,8 +516,8 @@ func TestSendTelegramSendAsVoice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: voice note" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: voice note" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.voiceCalls) != 1 {
 		t.Errorf("voiceCalls = %v", mock.voiceCalls)
@@ -537,8 +537,8 @@ func TestSendTelegramSendAsDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: document" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: document" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.documentCalls) != 1 {
 		t.Errorf("documentCalls = %v", mock.documentCalls)
@@ -558,8 +558,8 @@ func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: document" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: document" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.documentCalls) != 1 {
 		t.Errorf("documentCalls = %v", mock.documentCalls)
@@ -624,8 +624,8 @@ func TestSendTelegramTextAndVideo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: text + video" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: text + video" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.textCalls) != 1 {
 		t.Errorf("textCalls = %v", mock.textCalls)
@@ -650,8 +650,8 @@ func TestSendTelegramSendAsPhoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: photo" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: photo" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.photoCalls) != 1 || mock.photoCalls[0] != "/tmp/image.jpg" {
 		t.Errorf("photoCalls = %v", mock.photoCalls)
@@ -713,8 +713,8 @@ func TestSendTelegramSendAsAudio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: audio" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: audio" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.audioCalls) != 1 || mock.audioCalls[0] != "/tmp/song.mp3" {
 		t.Errorf("audioCalls = %v", mock.audioCalls)
@@ -776,8 +776,8 @@ func TestSendTelegramSendAsAnimation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: animation" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: animation" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.animationCalls) != 1 || mock.animationCalls[0] != "/tmp/funny.gif" {
 		t.Errorf("animationCalls = %v", mock.animationCalls)
@@ -849,8 +849,8 @@ func TestSendTelegramMultiballRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: text" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: text" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(multiballMock.textCalls) != 1 || multiballMock.textCalls[0] != "multiball message" {
 		t.Errorf("multiball textCalls = %v", multiballMock.textCalls)
@@ -917,8 +917,8 @@ func TestSendTelegramVoiceTTS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: voice note" {
-		t.Errorf("result = %q, want %q", result, "Sent: voice note")
+	if result.Text != "Sent: voice note" {
+		t.Errorf("result = %q, want %q", result.Text, "Sent: voice note")
 	}
 	if len(mock.voiceDataCalls) != 1 {
 		t.Fatalf("expected 1 voiceDataCall, got %d", len(mock.voiceDataCalls))
@@ -947,8 +947,8 @@ func TestSendTelegramVoiceTTSChatRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: voice note" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: voice note" {
+		t.Errorf("result = %q", result.Text)
 	}
 	if len(mock.chatVoiceDataCalls) != 1 {
 		t.Fatalf("expected 1 chatVoiceDataCall, got %d", len(mock.chatVoiceDataCalls))
@@ -1013,8 +1013,8 @@ func TestSendTelegramVoiceFilePathStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "Sent: voice note" {
-		t.Errorf("result = %q", result)
+	if result.Text != "Sent: voice note" {
+		t.Errorf("result = %q", result.Text)
 	}
 	// Should use file-based voice, not TTS synthesis
 	if len(mock.voiceCalls) != 1 {

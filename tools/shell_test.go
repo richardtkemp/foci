@@ -24,8 +24,8 @@ func TestExecEcho(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if strings.TrimSpace(result) != "hello world" {
-		t.Errorf("result = %q", result)
+	if strings.TrimSpace(result.Text) != "hello world" {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestExecWorkDir(t *testing.T) {
 
 	// Resolve symlinks (macOS /tmp -> /private/tmp, etc.)
 	want, _ := filepath.EvalSymlinks(dir)
-	got := strings.TrimSpace(result)
+	got := strings.TrimSpace(result.Text)
 	if got != want {
 		t.Errorf("workdir: got %q, want %q", got, want)
 	}
@@ -62,8 +62,8 @@ func TestExecWithTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "fast") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text,"fast") {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -80,8 +80,8 @@ func TestExecTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute returned Go error: %v", err)
 	}
-	if !strings.Contains(result, "Error:") {
-		t.Errorf("expected error in result, got %q", result)
+	if !strings.Contains(result.Text,"Error:") {
+		t.Errorf("expected error in result, got %q", result.Text)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestExecFailedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute returned Go error: %v", err)
 	}
-	if !strings.Contains(result, "Error:") {
-		t.Errorf("expected error in result, got %q", result)
+	if !strings.Contains(result.Text,"Error:") {
+		t.Errorf("expected error in result, got %q", result.Text)
 	}
 }
 
@@ -112,8 +112,8 @@ func TestExecStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "stderr_msg") {
-		t.Errorf("expected stderr in result, got %q", result)
+	if !strings.Contains(result.Text,"stderr_msg") {
+		t.Errorf("expected stderr in result, got %q", result.Text)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestExecMultilineOutput(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(result), "\n")
+	lines := strings.Split(strings.TrimSpace(result.Text), "\n")
 	if len(lines) != 3 {
 		t.Errorf("got %d lines, want 3", len(lines))
 	}
@@ -155,8 +155,8 @@ func TestExecBackgroundMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "bg") {
-		t.Errorf("result = %q, want 'bg'", result)
+	if !strings.Contains(result.Text,"bg") {
+		t.Errorf("result = %q, want 'bg'", result.Text)
 	}
 }
 
@@ -218,8 +218,8 @@ func TestExecBitwardenSecretsAllowed(t *testing.T) {
 		t.Fatalf("bitwarden refs should not be blocked in exec: %v", err)
 	}
 	// With nil bwStore, template passes through literally
-	if !strings.Contains(result, "{{secret:bw.aaaa-1111}}") {
-		t.Errorf("result = %q, want template passed through", result)
+	if !strings.Contains(result.Text,"{{secret:bw.aaaa-1111}}") {
+		t.Errorf("result = %q, want template passed through", result.Text)
 	}
 }
 
@@ -281,11 +281,11 @@ func TestExecOutputNoTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if strings.Contains(result, "truncated") {
+	if strings.Contains(result.Text,"truncated") {
 		t.Errorf("exec should no longer truncate output (guardToolResult handles it)")
 	}
-	if len(result) < 110_000 {
-		t.Errorf("result length = %d, expected full output", len(result))
+	if len(result.Text) < 110_000 {
+		t.Errorf("result length = %d, expected full output", len(result.Text))
 	}
 }
 
@@ -321,8 +321,8 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "fast") {
-		t.Errorf("result = %q, want 'fast'", result)
+	if !strings.Contains(result.Text,"fast") {
+		t.Errorf("result = %q, want 'fast'", result.Text)
 	}
 	if called {
 		t.Error("notifier should not be called for fast commands")
@@ -347,8 +347,8 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	}
 
 	// Should get the auto-background message
-	if !strings.Contains(result, "still running") {
-		t.Errorf("expected auto-background message, got %q", result)
+	if !strings.Contains(result.Text,"still running") {
+		t.Errorf("expected auto-background message, got %q", result.Text)
 	}
 
 	// Wait for the command to complete
@@ -382,8 +382,8 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out, "still running") {
-		t.Fatalf("expected auto-background message, got %q", out)
+	if !strings.Contains(out.Text, "still running") {
+		t.Fatalf("expected auto-background message, got %q", out.Text)
 	}
 
 	select {
@@ -569,8 +569,8 @@ func TestExecOutputModeSeparated(t *testing.T) {
 	}
 
 	var out separatedOutput
-	if err := json.Unmarshal([]byte(result), &out); err != nil {
-		t.Fatalf("unmarshal: %v (raw: %q)", err, result)
+	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
+		t.Fatalf("unmarshal: %v (raw: %q)", err, result.Text)
 	}
 	if strings.TrimSpace(out.Stdout) != "out" {
 		t.Errorf("stdout = %q, want %q", out.Stdout, "out\n")
@@ -597,7 +597,7 @@ func TestExecOutputModeSeparatedStdoutOnly(t *testing.T) {
 	}
 
 	var out separatedOutput
-	if err := json.Unmarshal([]byte(result), &out); err != nil {
+	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if strings.TrimSpace(out.Stdout) != "hello" {
@@ -625,7 +625,7 @@ func TestExecOutputModeSeparatedStderrOnly(t *testing.T) {
 	}
 
 	var out separatedOutput
-	if err := json.Unmarshal([]byte(result), &out); err != nil {
+	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.Stdout != "" {
@@ -650,7 +650,7 @@ func TestExecOutputModeSeparatedFailure(t *testing.T) {
 	}
 
 	var out separatedOutput
-	if err := json.Unmarshal([]byte(result), &out); err != nil {
+	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if strings.TrimSpace(out.Stdout) != "before-fail" {
@@ -674,15 +674,15 @@ func TestExecOutputModeCombinedDefault(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	// Combined mode returns raw text, not JSON
-	if !strings.Contains(result, "out") {
-		t.Errorf("result should contain stdout, got %q", result)
+	if !strings.Contains(result.Text,"out") {
+		t.Errorf("result should contain stdout, got %q", result.Text)
 	}
-	if !strings.Contains(result, "err") {
-		t.Errorf("result should contain stderr, got %q", result)
+	if !strings.Contains(result.Text,"err") {
+		t.Errorf("result should contain stderr, got %q", result.Text)
 	}
 	// Should NOT be valid separatedOutput JSON
 	var out separatedOutput
-	if json.Unmarshal([]byte(result), &out) == nil && out.Stdout != "" {
+	if json.Unmarshal([]byte(result.Text),&out) == nil && out.Stdout != "" {
 		t.Error("combined mode should not return separated JSON")
 	}
 }
@@ -817,7 +817,7 @@ func TestExecSleepNotBlockedInMiddle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "going to sleep") {
-		t.Errorf("expected 'going to sleep' in output, got: %q", result)
+	if !strings.Contains(result.Text,"going to sleep") {
+		t.Errorf("expected 'going to sleep' in output, got: %q", result.Text)
 	}
 }

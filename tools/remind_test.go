@@ -47,11 +47,11 @@ func TestRemind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "next_keepalive") {
-		t.Errorf("result = %q, expected mention of next_keepalive", result)
+	if !strings.Contains(result.Text, "next_keepalive") {
+		t.Errorf("result = %q, expected mention of next_keepalive", result.Text)
 	}
-	if !strings.Contains(result, "check FTS5 phrase boosting") {
-		t.Errorf("result = %q, expected mention of text", result)
+	if !strings.Contains(result.Text, "check FTS5 phrase boosting") {
+		t.Errorf("result = %q, expected mention of text", result.Text)
 	}
 }
 
@@ -66,8 +66,8 @@ func TestRemindTomorrow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "tomorrow") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "tomorrow") {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -126,8 +126,8 @@ func TestRemindWakeDelay(t *testing.T) {
 	if gotMsg != "check inbox" {
 		t.Errorf("message = %q, want %q", gotMsg, "check inbox")
 	}
-	if !strings.Contains(result, "check inbox") {
-		t.Errorf("result = %q, want message in result", result)
+	if !strings.Contains(result.Text, "check inbox") {
+		t.Errorf("result = %q, want message in result", result.Text)
 	}
 }
 
