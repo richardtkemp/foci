@@ -1060,7 +1060,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				idleThresh = 10 * time.Minute
 			}
 			idle := !sm.lastMessageTime.IsZero() && now.Sub(sm.lastMessageTime) > idleThresh
-			if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead/2 {
+			if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead {
 				a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
 			}
 		}
