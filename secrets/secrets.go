@@ -44,21 +44,25 @@ var defaultBlockedPaths = []string{
 // Store holds secrets loaded from secrets.toml.
 // Values are stored as flat keys: "anthropic.setup_token", "custom.github_token", etc.
 type Store struct {
-	path         string
-	values       map[string]string
-	allowedHosts map[string][]string            // section name → allowed hosts
-	blockedPaths []string
-	agentValues  map[string]map[string]string   // agent ID → flat key → value
-	agentHosts   map[string]map[string][]string // agent ID → section → allowed hosts
+	path          string
+	values        map[string]string
+	allowedHosts  map[string][]string            // section name → allowed hosts
+	allowedAgents map[string][]string            // section name → agent whitelist
+	deniedAgents  map[string][]string            // section name → agent blacklist
+	blockedPaths  []string
+	agentValues   map[string]map[string]string   // agent ID → flat key → value
+	agentHosts    map[string]map[string][]string // agent ID → section → allowed hosts
 }
 
 // Load reads secrets from a TOML file. Returns an empty store (not error) if the file doesn't exist.
 func Load(path string) (*Store, error) {
 	s := &Store{
-		path:         path,
-		values:       make(map[string]string),
-		allowedHosts: make(map[string][]string),
-		blockedPaths: append([]string{}, defaultBlockedPaths...),
+		path:          path,
+		values:        make(map[string]string),
+		allowedHosts:  make(map[string][]string),
+		allowedAgents: make(map[string][]string),
+		deniedAgents:  make(map[string][]string),
+		blockedPaths:  append([]string{}, defaultBlockedPaths...),
 	}
 
 	// Add the secrets file itself to blocked paths
@@ -99,19 +103,31 @@ func Load(path string) (*Store, error) {
 			case int64:
 				s.values[section+"."+key] = strconv.FormatInt(v, 10)
 			case []interface{}:
-				if key == "allowed_hosts" {
-					hosts := make([]string, 0, len(v))
-					for _, h := range v {
-						if hs, ok := h.(string); ok {
-							hosts = append(hosts, hs)
-						}
+				strs := make([]string, 0, len(v))
+				for _, h := range v {
+					if hs, ok := h.(string); ok {
+						strs = append(strs, hs)
 					}
-					s.allowedHosts[section] = hosts
+				}
+				switch key {
+				case "allowed_hosts":
+					s.allowedHosts[section] = strs
+				case "allowed_agents":
+					s.allowedAgents[section] = strs
+				case "denied_agents":
+					s.deniedAgents[section] = strs
 				}
 				// silently skip other array keys
 			default:
 				// silently skip unknown types
 			}
+		}
+	}
+
+	// Validate: no section may have both allowed_agents and denied_agents
+	for section := range s.allowedAgents {
+		if _, ok := s.deniedAgents[section]; ok {
+			return nil, fmt.Errorf("section [%s] has both allowed_agents and denied_agents — use one or the other", section)
 		}
 	}
 
@@ -155,21 +171,34 @@ func flattenInto(agentID string, table map[string]interface{}, s *Store) {
 
 // ForAgent returns a new Store scoped to the given agent ID.
 // Agent-specific values overlay globals; keys not overridden fall back to globals.
+// Global sections with allowed_agents/denied_agents are filtered before overlay.
 // The returned Store has no path (cannot Save) and no agentValues (doesn't nest further).
 func (s *Store) ForAgent(agentID string) *Store {
+	// 1. Copy globals
 	merged := make(map[string]string, len(s.values))
 	for k, v := range s.values {
 		merged[k] = v
 	}
+	// 2. Filter globals by agent restrictions
+	for k := range merged {
+		section := k[:strings.IndexByte(k, '.')]
+		if !s.agentAllowed(agentID, section) {
+			delete(merged, k)
+		}
+	}
+	// 3. Overlay agent-specific (always allowed)
 	if s.agentValues != nil {
 		for k, v := range s.agentValues[agentID] {
 			merged[k] = v
 		}
 	}
 
+	// Same for hosts: filter globals, then overlay agent hosts
 	mergedHosts := make(map[string][]string, len(s.allowedHosts))
 	for k, v := range s.allowedHosts {
-		mergedHosts[k] = v
+		if s.agentAllowed(agentID, k) {
+			mergedHosts[k] = v
+		}
 	}
 	if s.agentHosts != nil {
 		for k, v := range s.agentHosts[agentID] {
@@ -182,6 +211,32 @@ func (s *Store) ForAgent(agentID string) *Store {
 		allowedHosts: mergedHosts,
 		blockedPaths: s.blockedPaths,
 	}
+}
+
+// agentAllowed checks whether agentID is permitted to access the given section
+// based on allowed_agents/denied_agents rules. No restrictions means allowed.
+func (s *Store) agentAllowed(agentID, section string) bool {
+	if allowed, ok := s.allowedAgents[section]; ok {
+		for _, a := range allowed {
+			if a == agentID {
+				return true
+			}
+		}
+		return false
+	}
+	if denied, ok := s.deniedAgents[section]; ok {
+		for _, a := range denied {
+			if a == agentID {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// HasAgentRestrictions reports whether any section has allowed_agents or denied_agents.
+func (s *Store) HasAgentRestrictions() bool {
+	return len(s.allowedAgents) > 0 || len(s.deniedAgents) > 0
 }
 
 // Get returns a secret value by its flat key (e.g. "anthropic.setup_token").
@@ -221,14 +276,16 @@ func (s *Store) Save() error {
 	var buf strings.Builder
 
 	// Write global sections
-	secNames := sortedKeyUnion(keysOf(sections), keysOf(s.allowedHosts))
+	secNames := sortedKeyUnion(keysOf(sections), keysOf(s.allowedHosts), keysOf(s.allowedAgents), keysOf(s.deniedAgents))
 	for i, sec := range secNames {
 		if i > 0 {
 			buf.WriteByte('\n')
 		}
 		fmt.Fprintf(&buf, "[%s]\n", sec)
 		writeKeyValues(&buf, sections[sec])
-		writeAllowedHosts(&buf, s.allowedHosts[sec])
+		writeStringArrayField(&buf, "allowed_hosts", s.allowedHosts[sec])
+		writeStringArrayField(&buf, "allowed_agents", s.allowedAgents[sec])
+		writeStringArrayField(&buf, "denied_agents", s.deniedAgents[sec])
 	}
 
 	// Write [agents.*] sections
@@ -244,7 +301,7 @@ func (s *Store) Save() error {
 			buf.WriteByte('\n')
 			fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
 			writeKeyValues(&buf, agentSections[sec])
-			writeAllowedHosts(&buf, agentHosts[sec])
+			writeStringArrayField(&buf, "allowed_hosts", agentHosts[sec])
 		}
 	}
 
@@ -313,17 +370,18 @@ func writeKeyValues(buf *strings.Builder, pairs map[string]string) {
 	}
 }
 
-// writeAllowedHosts writes an allowed_hosts TOML array if non-empty.
-func writeAllowedHosts(buf *strings.Builder, hosts []string) {
-	if len(hosts) == 0 {
+// writeStringArrayField writes a TOML array field (e.g. allowed_hosts, allowed_agents) if non-empty.
+func writeStringArrayField(buf *strings.Builder, key string, values []string) {
+	if len(values) == 0 {
 		return
 	}
-	buf.WriteString("allowed_hosts = [")
-	for i, h := range hosts {
+	buf.WriteString(key)
+	buf.WriteString(" = [")
+	for i, v := range values {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
-		fmt.Fprintf(buf, "%q", h)
+		fmt.Fprintf(buf, "%q", v)
 	}
 	buf.WriteString("]\n")
 }
