@@ -959,7 +959,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 ### What it does
 
 1. **System user:** Create `foci` user if it doesn't exist (no login shell, home at `/home/foci`)
-2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `foci` and `focigw` to `/usr/local/bin/`
+2. **Binary:** Build from source (`go build`) or download prebuilt release. Install `foci-gw`, `foci`, and `foci-call` to `/usr/local/bin/`
 3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
 4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token

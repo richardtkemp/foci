@@ -56,7 +56,7 @@ The wizard prompts for:
 
 Setup creates:
 - System user `foci` with home at `/home/foci`
-- Binaries at `/usr/local/bin/` (`focigw`, `foci`, `foci-call`)
+- Binaries at `/usr/local/bin/` (`foci-gw`, `foci`, `foci-call`)
 - Systemd service `foci`
 - Config at `/home/foci/config/foci.toml`
 - Secrets at `/home/foci/config/secrets.toml` (restricted permissions: `root:foci-secrets`, mode `0660`)
@@ -208,7 +208,7 @@ In Telegram, type `/help` to see available slash commands: `/status`, `/model`, 
 ### Build targets
 
 ```bash
-make              # build all 3 binaries (focigw, foci CLI, foci-call)
+make              # build all 3 binaries (foci-gw, foci, foci-call)
 make build        # gateway only
 make cli          # CLI only
 make test         # run all tests

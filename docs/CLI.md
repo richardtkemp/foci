@@ -1,6 +1,6 @@
 # Foci CLI Reference
 
-The `foci` CLI is a lightweight client that talks to the `focigw` HTTP gateway. It is built separately:
+The `foci` CLI is a lightweight client that talks to the `foci-gw` HTTP gateway. It is built separately:
 
 ```
 go build ./cmd/foci

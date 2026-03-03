@@ -114,7 +114,7 @@ info "  Go $GO_VERSION — OK"
 # ---------- Detect update ----------
 OLD_COMMIT=""
 IS_UPDATE=false
-if [[ -f "$INSTALL_DIR/focigw" ]]; then
+if [[ -f "$INSTALL_DIR/foci-gw" ]] || [[ -f "$INSTALL_DIR/focigw" ]]; then
     IS_UPDATE=true
     if [[ -f "$COMMIT_FILE" ]] && [[ -r "$COMMIT_FILE" ]]; then
         OLD_COMMIT="$(cat "$COMMIT_FILE" 2>/dev/null || true)"
@@ -133,8 +133,8 @@ LDFLAGS="-X main.gitCommit=$NEW_COMMIT -X main.buildTime=$BUILD_TIME"
 if ! $DRY_RUN; then
     cd "$SCRIPT_DIR"
 
-    info "  Building focigw (gateway)..."
-    go build -ldflags "$LDFLAGS" -o focigw . || { error "Failed to build focigw"; exit 1; }
+    info "  Building foci-gw (gateway)..."
+    go build -ldflags "$LDFLAGS" -o foci-gw . || { error "Failed to build foci-gw"; exit 1; }
 
     info "  Building foci (CLI)..."
     go build -ldflags "$LDFLAGS" -o foci ./cmd/foci/ || { error "Failed to build foci"; exit 1; }
@@ -144,7 +144,7 @@ if ! $DRY_RUN; then
 
     info "  Binaries built in $SCRIPT_DIR"
 else
-    info "  (dry-run) Would build focigw, foci, foci-call in $SCRIPT_DIR"
+    info "  (dry-run) Would build foci-gw, foci, foci-call in $SCRIPT_DIR"
 fi
 
 # ---------- Stage changelog ----------
@@ -358,7 +358,7 @@ fi
 
 # --- Install binaries ---
 emit_comment "Install binaries"
-emit "install -m 755 \"$SCRIPT_DIR/focigw\" \"$INSTALL_DIR/focigw\""
+emit "install -m 755 \"$SCRIPT_DIR/foci-gw\" \"$INSTALL_DIR/foci-gw\""
 emit "install -m 755 \"$SCRIPT_DIR/foci\" \"$INSTALL_DIR/foci\""
 emit "install -m 755 \"$SCRIPT_DIR/foci-call\" \"$INSTALL_DIR/foci-call\""
 
@@ -418,7 +418,7 @@ SupplementaryGroups=$SECRETS_GROUP
 AmbientCapabilities=CAP_SETGID
 WorkingDirectory=$FOCI_HOME
 Environment="PATH=$SERVICE_PATH"
-ExecStart=$INSTALL_DIR/focigw -config $FOCI_HOME/config/foci.toml
+ExecStart=$INSTALL_DIR/foci-gw -config $FOCI_HOME/config/foci.toml
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -487,7 +487,7 @@ if [[ "$INSTALL_LINES" -le 3 ]]; then
 elif $DRY_RUN; then
     echo ""
     info "Dry run — nothing was built or installed."
-    info "Build would produce: focigw, foci, foci-call in $SCRIPT_DIR"
+    info "Build would produce: foci-gw, foci, foci-call in $SCRIPT_DIR"
     echo ""
     info "The following install script would be generated and run as root:"
     echo ""
