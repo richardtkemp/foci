@@ -781,12 +781,14 @@ func NewConfigCommand(configFn func(ctx context.Context, args string) (string, e
 	}
 }
 
-// PromptInfo describes one configured prompt path/value.
+// PromptInfo describes one configured prompt.
 type PromptInfo struct {
-	Label  string // e.g. "compaction_summary"
-	Path   string // file path, or "" if inline/default
-	Inline string // inline value (for handoff_msg)
-	Exists bool   // whether the file exists on disk
+	Label    string // e.g. "compaction_summary"
+	Path     string // resolved file path, or "" if inline/default/disabled
+	Inline   string // inline value (for handoff_msg, braindead_prompt)
+	Exists   bool   // whether the file exists on disk (only meaningful when Path != "")
+	Default  bool   // true if resolved text matches embedded default
+	Disabled bool   // true if explicitly set to "none"
 }
 
 // PromptFile describes a prompt file found on disk.
@@ -816,7 +818,7 @@ func NewPromptsCommand(dataFn func() PromptsData) *Command {
 
 			// Configured prompts
 			sb.WriteString("```\n")
-			fmt.Fprintf(&sb, "Configured prompts (agent: %s):\n", data.AgentID)
+			fmt.Fprintf(&sb, "Prompts (agent: %s):\n", data.AgentID)
 
 			maxLabel := 0
 			for _, p := range data.Prompts {
@@ -825,14 +827,25 @@ func NewPromptsCommand(dataFn func() PromptsData) *Command {
 				}
 			}
 			for _, p := range data.Prompts {
-				if p.Inline != "" {
-					fmt.Fprintf(&sb, "  %-*s  [inline: %d chars]\n", maxLabel, p.Label, len(p.Inline))
-				} else if p.Path == "" {
+				switch {
+				case p.Disabled:
+					fmt.Fprintf(&sb, "  %-*s  disabled\n", maxLabel, p.Label)
+				case p.Inline != "":
+					tag := "default"
+					if !p.Default {
+						tag = "custom"
+					}
+					fmt.Fprintf(&sb, "  %-*s  [%s inline: %d chars]\n", maxLabel, p.Label, tag, len(p.Inline))
+				case p.Path != "" && p.Exists:
+					tag := "default"
+					if !p.Default {
+						tag = "custom"
+					}
+					fmt.Fprintf(&sb, "  %-*s  %s  [%s]\n", maxLabel, p.Label, p.Path, tag)
+				case p.Path != "" && !p.Exists:
+					fmt.Fprintf(&sb, "  %-*s  %s  [not found]\n", maxLabel, p.Label, p.Path)
+				default:
 					fmt.Fprintf(&sb, "  %-*s  [default]\n", maxLabel, p.Label)
-				} else if p.Exists {
-					fmt.Fprintf(&sb, "  %-*s  %s  ✓\n", maxLabel, p.Label, p.Path)
-				} else {
-					fmt.Fprintf(&sb, "  %-*s  %s  ✗ (not found)\n", maxLabel, p.Label, p.Path)
 				}
 			}
 			sb.WriteString("```")

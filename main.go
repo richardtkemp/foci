@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/subtle"
 	"encoding/json"
 	"flag"
@@ -449,7 +450,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		branchID := fmt.Sprintf("wake-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:cron:%s", inst.id, branchID)
 
-		orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, d.cfg.Sessions.BranchOrientationPrompt)
+		orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, d.cfg.Sessions.BranchOrientationPrompt)
 		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
 		branchErr := d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        req.NoResetHook,
@@ -949,7 +950,7 @@ func main() {
 
 		// Keepalive & background work runner (per-agent config, falls back to global)
 		if acfg.Keepalive.Enabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) || acfg.InjectAgentWarnings {
-			kaOrientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+			kaOrientPrompt := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			branchFn := buildBranchFunc(
 				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
 				func(branchKey, parentKey, branchType string) string {
@@ -1083,7 +1084,7 @@ func main() {
 					inst := agents[id]
 					prefix := "agent:" + id + ":"
 					if strings.HasPrefix(sessionKey, prefix) {
-						orientPath := resolveString(inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+						orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 						fireSessionEndMemory(inst.ag, sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
 							return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
 						}, inst.promptSearchDirs, ctx)
@@ -1809,7 +1810,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
 	// Uses lazy getter for agent since ag is assigned later in this function.
-	spawnOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
 		Client:     p.client,
 		Bootstrap:  bootstrap,
@@ -1920,7 +1921,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if sk == "" {
 			return fmt.Errorf("no active session to reset")
 		}
-		resetOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		resetOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		fireSessionEndMemory(ag, p.sessions, sk, acfg.MemoryFormation, func(bk, pk, bt string) string {
 			return buildBranchOrientation(resetOrientPath, bk, pk, bt, false, promptSearchDirs)
 		}, promptSearchDirs, p.ctx)
@@ -1987,24 +1988,48 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 	}))
 	cmds.Register(command.NewPromptsCommand(func() command.PromptsData {
-		// Configured prompts
-		var prompts []command.PromptInfo
-		resolvedSummaryPrompt := resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt)
-		resolvedHandoffMsg := resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg)
-		prompts = append(prompts, promptInfo("compaction_summary", resolvedSummaryPrompt))
-		if resolvedHandoffMsg != "" {
-			prompts = append(prompts, command.PromptInfo{
-				Label:  "handoff_msg",
-				Inline: resolvedHandoffMsg,
-			})
-		} else {
-			prompts = append(prompts, command.PromptInfo{Label: "handoff_msg"})
+		dirs := promptSearchDirs
+
+		// All file-based prompts
+		allPrompts := []command.PromptInfo{
+			resolvePromptInfo("compaction_summary",
+				resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
+				"compaction-summary.md", prompts.CompactionSummary(), dirs),
+			resolvePromptInfo("branch_orient_multiball",
+				resolveOrientPath(acfg.BranchOrientationMultiballPrompt, p.cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt),
+				"branch-orientation-multiball.md", prompts.BranchOrientationMultiball(), dirs),
+			resolvePromptInfo("branch_orient_headless",
+				resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt),
+				"branch-orientation-headless.md", prompts.BranchOrientationHeadless(), dirs),
+			resolvePromptInfo("keepalive",
+				acfg.Keepalive.Prompt,
+				"keepalive.md", prompts.Keepalive(), dirs),
+			resolvePromptInfo("background",
+				acfg.Background.Prompt,
+				"background.md", prompts.Background(), dirs),
+			resolvePromptInfo("memory_formation",
+				acfg.MemoryFormation.IntervalPrompt,
+				"memory-formation.md", prompts.MemoryFormation(), dirs),
+			resolvePromptInfo("memory_consolidation",
+				acfg.MemoryFormation.ConsolidationPrompt,
+				"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
+			resolvePromptInfo("memory_session_end",
+				acfg.MemoryFormation.SessionEndPrompt,
+				"memory-formation.md", prompts.MemoryFormation(), dirs),
 		}
-		resolvedOrientPrompt := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
-		prompts = append(prompts, promptInfo("branch_orientation", resolvedOrientPrompt))
+
+		// Inline prompts (not file-based)
+		allPrompts = append(allPrompts,
+			inlinePromptInfo("compaction_handoff",
+				resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
+				prompts.CompactionHandoff()),
+			inlinePromptInfo("braindead_warning",
+				acfg.BraindeadPrompt, ""),
+		)
+
 		// Build set of configured paths for tagging files
 		configuredPaths := make(map[string]bool)
-		for _, pi := range prompts {
+		for _, pi := range allPrompts {
 			if pi.Path != "" {
 				configuredPaths[pi.Path] = true
 			}
@@ -2013,9 +2038,7 @@ func setupAgent(p setupParams) *agentInstance {
 		// Scan prompt directories
 		var promptDirs []string
 		var files []command.PromptFile
-		// Shared prompts dir (conventional location)
 		sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts")
-		// Agent workspace prompts dir
 		wsDir := filepath.Join(acfg.Workspace, "prompts")
 		for _, dir := range []string{sharedDir, wsDir} {
 			entries, err := os.ReadDir(dir)
@@ -2038,7 +2061,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 		return command.PromptsData{
 			AgentID:    acfg.ID,
-			Prompts:    prompts,
+			Prompts:    allPrompts,
 			PromptDirs: promptDirs,
 			Files:      files,
 		}
@@ -2161,7 +2184,7 @@ func setupAgent(p setupParams) *agentInstance {
 		branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
 		branchKey := fmt.Sprintf("agent:%s:multiball:%s", acfg.ID, branchID)
 
-		orientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		orientPath := resolveOrientPath(acfg.BranchOrientationMultiballPrompt, p.cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true, promptSearchDirs)
 		if err := p.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			OrientationMessage: orientText,
@@ -2541,7 +2564,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 			pool.SetSessionTTL(ttl, p.sessions)
 			log.Infof("main", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
 		}
-		reclaimOrientPath := resolveString(acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		reclaimOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		reclaimMfCfg := acfg.MemoryFormation
 		reclaimSearchDirs := []string{
 			filepath.Join(acfg.Workspace, "prompts"),
@@ -3374,6 +3397,18 @@ func resolveInt64(perAgent, global int64) int64 {
 	return global
 }
 
+// resolveOrientPath resolves the branch orientation prompt path for a given variant.
+// Precedence: specific per-agent → specific global → deprecated per-agent → deprecated global.
+func resolveOrientPath(specificAgent, specificGlobal, deprecatedAgent, deprecatedGlobal string) string {
+	if specificAgent != "" {
+		return specificAgent
+	}
+	if specificGlobal != "" {
+		return specificGlobal
+	}
+	return resolveString(deprecatedAgent, deprecatedGlobal)
+}
+
 // resolveIntPtr returns *perAgent if non-nil, otherwise global.
 func resolveIntPtr(perAgent *int, global int) int {
 	if perAgent != nil {
@@ -3522,13 +3557,49 @@ func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string,
 	})
 }
 
-// promptInfo builds a PromptInfo for a file-path-based prompt config field.
-func promptInfo(label, path string) command.PromptInfo {
-	if path == "" {
-		return command.PromptInfo{Label: label}
+// resolvePromptInfo builds a PromptInfo for a file-path-based prompt, comparing
+// the resolved text against the embedded default via md5 to detect customisation.
+func resolvePromptInfo(label, configPath, filename, embeddedDefault string, searchDirs []string) command.PromptInfo {
+	if configPath == "none" {
+		return command.PromptInfo{Label: label, Disabled: true}
 	}
+
+	resolved := prompts.ResolvePrompt(configPath, filename, embeddedDefault, searchDirs...)
+	isDefault := md5.Sum([]byte(resolved)) == md5.Sum([]byte(embeddedDefault))
+
+	// Find the actual file path being used
+	path := configPath
+	if path == "" || path == "default" {
+		// Search dirs — find which file was used
+		for _, dir := range searchDirs {
+			fp := filepath.Join(dir, filename)
+			if _, err := os.Stat(fp); err == nil {
+				path = fp
+				break
+			}
+		}
+	}
+
+	if path == "" || path == "default" {
+		// Using embedded default, no file on disk
+		return command.PromptInfo{Label: label, Default: isDefault}
+	}
+
 	_, err := os.Stat(path)
-	return command.PromptInfo{Label: label, Path: path, Exists: err == nil}
+	return command.PromptInfo{Label: label, Path: path, Exists: err == nil, Default: isDefault}
+}
+
+// inlinePromptInfo builds a PromptInfo for an inline prompt value,
+// comparing against the embedded default via md5.
+func inlinePromptInfo(label, value, embeddedDefault string) command.PromptInfo {
+	if value == "" {
+		return command.PromptInfo{Label: label, Inline: embeddedDefault, Default: true}
+	}
+	if value == "none" {
+		return command.PromptInfo{Label: label, Disabled: true}
+	}
+	isDefault := md5.Sum([]byte(value)) == md5.Sum([]byte(embeddedDefault))
+	return command.PromptInfo{Label: label, Inline: value, Default: isDefault}
 }
 
 // fireSessionEndMemory runs memory formation on the expiring session before it is cleared.

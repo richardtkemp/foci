@@ -68,7 +68,9 @@ id = "myagent"
 # telegram_bot = "myagent"               # bot name; token via "telegram.<bot>" secret
 # bot_secret = "custom.key"              # override secret key (default: "telegram.<telegram_bot>")
 # multiball_bots = ["bot2", "bot3"]       # additional bots for multiball
-# branch_orientation_prompt = "prompts/branch-orientation.md"
+# branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
+# branch_orientation_multiball_prompt = "prompts/orient-multiball.md"  # prompt for user-attached multiball branches
+# branch_orientation_headless_prompt = "prompts/orient-headless.md"   # prompt for headless branches (cron, spawn, keepalive)
 # received_files_dir = "received"         # save received Telegram files here
 # allowed_users = ["12345"]               # per-agent Telegram user filter
 # skills_dirs = ["skills"]                # per-agent skill directories
@@ -175,7 +177,9 @@ compaction_threshold = 0.8
 # compaction_preserve_messages = 25
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
-# branch_orientation_prompt = ""
+# branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
+# branch_orientation_multiball_prompt = ""                        # prompt for user-attached multiball branches
+# branch_orientation_headless_prompt = ""                         # prompt for headless branches (cron, spawn, keepalive)
 # archive_after = "168h"                  # gzip idle sessions after 7 days
 
 # ─── Skills ───────────────────────────────────────────────────────────

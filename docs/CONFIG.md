@@ -148,7 +148,7 @@ Session storage. Compaction and prompt fields that can be overridden per-agent a
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `branch_orientation_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+All prompt fields (`compaction_summary_prompt`, `branch_orientation_multiball_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
 When no config override is set, embedded defaults from `prompts/` are used:
 - `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
@@ -511,7 +511,9 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
 | `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
-| `branch_orientation_prompt` | string | `""` | Path to prompt file injected into all branch sessions (multiball, cron, spawn). Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded defaults from `prompts/branch-orientation-headless.md` or `prompts/branch-orientation-multiball.md`. |
+| `branch_orientation_prompt` | string | `""` | **Deprecated.** Sets both multiball and headless if the specific fields below are empty. |
+| `branch_orientation_multiball_prompt` | string | `""` | Path to prompt file for user-attached multiball branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-multiball.md`. |
+| `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
 
 ### Tool Behavior
 
