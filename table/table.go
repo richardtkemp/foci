@@ -320,6 +320,7 @@ var zeroWidthRanges = &unicode.RangeTable{
 		{0x2060, 0x2063, 1},  // Invisible operators
 		{0x2066, 0x2069, 1},  // Bidi isolates
 		{0x20D0, 0x20FF, 1},  // Combining Marks for Symbols
+		{0xFE00, 0xFE0F, 1},  // Variation Selectors
 		{0xFE20, 0xFE2F, 1},  // Combining Half Marks
 		{0xFEFF, 0xFEFF, 1},  // BOM / Zero Width No-Break Space
 	},

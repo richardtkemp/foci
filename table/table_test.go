@@ -223,6 +223,8 @@ func TestDisplayWidthZeroWidth(t *testing.T) {
 		{"combining 1DC0", "y\u1DC0", 1},  // y + combining mark
 		{"combining 20D0", "z\u20D0", 1},  // z + combining mark
 		{"combining FE20", "w\uFE20", 1},  // w + combining mark
+		{"VS16 emoji", "✏\uFE0F", 2},  // pencil + VS16 (emoji presentation)
+		{"VS15 text", "✏\uFE0E", 2},   // pencil + VS15 (text presentation)
 		{"VS selector E0100", string([]rune{'A', 0xE0100}), 1},
 		{"bidi LRE", "\u202A", 0},
 		{"WJ", "\u2060", 0},
@@ -335,6 +337,35 @@ func TestFormatWidth(t *testing.T) {
 		w := DisplayWidth(line)
 		if w > 12 {
 			t.Errorf("line exceeds maxWidth 12 (width %d): %q", w, line)
+		}
+	}
+}
+
+func TestFormatEmojiColumnAlignment(t *testing.T) {
+	// Regression: ✏️ (U+270F + U+FE0F) was measured wider than ✅ (U+2705)
+	// because variation selector U+FE0F wasn't treated as zero-width.
+	cols := []Column{
+		{Header: ""},
+		{Header: "Prompt"},
+		{Header: "Location"},
+	}
+	rows := [][]string{
+		{"✏\uFE0F", "keepalive", "clutch/prompts/"},
+		{"✅", "branch_orient", "shared/prompts/"},
+	}
+
+	got := Format(cols, rows)
+	lines := strings.Split(got, "\n")
+
+	headerW := DisplayWidth(lines[0])
+	for i, line := range lines {
+		if i == 1 { // separator
+			continue
+		}
+		w := DisplayWidth(line)
+		if w != headerW {
+			t.Errorf("line %d display width %d != header width %d\nline: %q\nfull:\n%s",
+				i, w, headerW, line, got)
 		}
 	}
 }
