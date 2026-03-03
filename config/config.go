@@ -208,6 +208,7 @@ type MemoryConfig struct {
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        int            `toml:"search_limit"`        // max search results to return (default 20)
+	SweepInterval      string         `toml:"sweep_interval"`      // periodic full reindex interval (default "1h", "0" disables)
 }
 
 type DatabaseConfig struct {
@@ -839,6 +840,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
 	setFloatDefault(&cfg.Memory.ConversationWeight, 0.1)
 	setIntDefault(&cfg.Memory.SearchLimit, 20)
+	setStringDefault(&cfg.Memory.SweepInterval, "1h")
 
 	// Database defaults
 	setStringDefault(&cfg.Database.BusyTimeout, "5s")

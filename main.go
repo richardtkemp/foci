@@ -3178,6 +3178,16 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		return result
 	}
 
+	// Parse sweep interval ("0" disables)
+	var sweepInterval time.Duration
+	if cfg.Memory.SweepInterval != "" && cfg.Memory.SweepInterval != "0" {
+		var err error
+		sweepInterval, err = time.ParseDuration(cfg.Memory.SweepInterval)
+		if err != nil {
+			log.Fatalf("main", "invalid sweep_interval: %v", err)
+		}
+	}
+
 	if hasPerAgentMemory {
 		// Per-agent indices: each agent gets global + agent-specific sources
 		for _, acfg := range cfg.Agents {
@@ -3198,6 +3208,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				if err := idx.Watch(); err != nil {
 					log.Errorf("main", "start memory file watching for agent %q: %v", acfg.ID, err)
 				}
+			}
+			if sweepInterval > 0 {
+				idx.StartSweep(30*time.Second, sweepInterval)
 			}
 			result.agentIndices[acfg.ID] = idx
 			log.Infof("main", "agent %q: memory index with %d sources", acfg.ID, len(combined))
@@ -3229,6 +3242,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if err := result.sharedIdx.Watch(); err != nil {
 				log.Errorf("main", "start memory file watching: %v", err)
 			}
+		}
+		if sweepInterval > 0 {
+			result.sharedIdx.StartSweep(30*time.Second, sweepInterval)
 		}
 		log.ConversationHook = result.sharedIdx.IndexConversation
 	}

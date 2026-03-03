@@ -169,6 +169,7 @@ Memory system (FTS5 search over markdown files + conversation history).
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format. |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
+| `sweep_interval` | string | `"1h"` | Periodic full reindex interval. Catches files added via git, rsync, or other mechanisms that bypass fsnotify. Go duration format. `"0"` disables. First sweep runs 30s after startup. |
 
 When set, creates SQLite databases in the data directory (`$HOME/data/` by default): `memory.db`, `reminders.db`, `scratchpad.db`.
 
