@@ -34,6 +34,41 @@ func TestReadFile(t *testing.T) {
 	}
 }
 
+func TestReadDirectory(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("x"), 0644)
+	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]string{"path": dir})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "aaa.txt") {
+		t.Errorf("missing file in listing: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "subdir/") {
+		t.Errorf("missing trailing slash on directory: %q", result.Text)
+	}
+}
+
+func TestReadDirectoryEmpty(t *testing.T) {
+	dir := t.TempDir()
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]string{"path": dir})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "(empty directory)") {
+		t.Errorf("expected empty directory message: %q", result.Text)
+	}
+}
+
 func TestReadFileMissing(t *testing.T) {
 	tool := NewReadTool(nil)
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/file.txt"})

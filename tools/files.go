@@ -17,7 +17,7 @@ import (
 func NewReadTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "read",
-		Description: "Read the contents of a file. Returns file contents with line numbers.",
+		Description: "Read the contents of a file (line-numbered) or list a directory.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -89,7 +89,7 @@ func NewEditTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool 
 func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 	return &Tool{
 		Name:        "read",
-		Description: "Read the contents of a file. Returns file contents with line numbers.",
+		Description: "Read the contents of a file (line-numbered) or list a directory.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -264,6 +264,30 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 
 	if err := checkBlockedPath(store, resolved); err != nil {
 		return ToolResult{}, err
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("read file: %w", err)
+	}
+	if info.IsDir() {
+		entries, err := os.ReadDir(resolved)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("read directory: %w", err)
+		}
+		var out strings.Builder
+		fmt.Fprintf(&out, "Directory listing: %s\n\n", p.Path)
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
+			}
+			fmt.Fprintf(&out, "  %s\n", name)
+		}
+		if len(entries) == 0 {
+			fmt.Fprintf(&out, "  (empty directory)\n")
+		}
+		return TextResult(out.String()), nil
 	}
 
 	data, err := os.ReadFile(resolved)
