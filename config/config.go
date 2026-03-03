@@ -189,6 +189,7 @@ type SessionsConfig struct {
 	CompactionDebug            bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
 	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
 	BranchOrientationPrompt    string  `toml:"branch_orientation_prompt"`     // path to prompt file injected into all branch sessions
+	ArchiveAfter               string  `toml:"archive_after"`                 // gzip idle sessions after this duration (default "168h" = 7 days)
 }
 
 type MemorySource struct {
@@ -312,7 +313,7 @@ type ToolsConfig struct {
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 	SummaryContextTurns        int      `toml:"summary_context_turns"`         // recent turns for auto-summary context (default 5)
 	SummaryContextChars        int      `toml:"summary_context_chars"`         // max chars of context for auto-summary (default 6000)
-	SearchProvider             string   `toml:"search_provider"`               // "anthropic" (default) or "brave"
+	SearchProvider             string   `toml:"search_provider"`               // "brave" (default) or "anthropic"
 	FetchProvider              string   `toml:"fetch_provider"`                // "anthropic" (default) or "builtin"
 	WebSearchMaxUses           int      `toml:"web_search_max_uses"`           // max searches per API call (0 = unlimited)
 	WebSearchAllowedDomains    []string `toml:"web_search_allowed_domains"`    // domain whitelist (mutually exclusive with blocked)
@@ -363,7 +364,7 @@ type DefaultsConfig struct {
 	AutoSummarise       *bool            `toml:"auto_summarise"`        // default auto_summarise (nil = use [tools] value)
 	SummaryContextTurns int              `toml:"summary_context_turns"` // default summary_context_turns (default 5)
 	SummaryContextChars int              `toml:"summary_context_chars"` // default summary_context_chars (default 6000)
-	SearchProvider      string           `toml:"search_provider"`       // default search provider: "anthropic" (default) or "brave"
+	SearchProvider      string           `toml:"search_provider"`       // default search provider: "brave" (default) or "anthropic"
 	FetchProvider       string           `toml:"fetch_provider"`        // default fetch provider: "anthropic" (default) or "builtin"
 }
 
@@ -816,7 +817,7 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Tools.AutoSummarise, true, md.IsDefined("tools", "auto_summarise"))
 	setBoolDefaultDefined(&cfg.Tools.TmuxAutopilot, true, md.IsDefined("tools", "tmux_autopilot"))
 	setStringDefault(&cfg.Tools.TmuxWatchThreshold, "30s")
-	setStringDefault(&cfg.Tools.SearchProvider, "anthropic")
+	setStringDefault(&cfg.Tools.SearchProvider, "brave")
 	setStringDefault(&cfg.Tools.FetchProvider, "builtin")
 	if len(cfg.Telegram.StopAliases) == 0 {
 		cfg.Telegram.StopAliases = []string{"stop", "wait"}
