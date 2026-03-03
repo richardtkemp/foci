@@ -7,6 +7,63 @@ import (
 	"testing"
 )
 
+func TestGeneratePassphrase(t *testing.T) {
+	// Basic generation
+	p, err := GeneratePassphrase(5)
+	if err != nil {
+		t.Fatalf("GeneratePassphrase(5): %v", err)
+	}
+
+	words := strings.Split(p, "-")
+	if len(words) != 5 {
+		t.Errorf("expected 5 words, got %d: %q", len(words), p)
+	}
+
+	// All words should be from the wordlist
+	wordSet := make(map[string]bool, len(effShortWordlist))
+	for _, w := range effShortWordlist {
+		wordSet[w] = true
+	}
+	for _, w := range words {
+		if !wordSet[w] {
+			t.Errorf("word %q not in EFF wordlist", w)
+		}
+	}
+
+	// Single word
+	p1, err := GeneratePassphrase(1)
+	if err != nil {
+		t.Fatalf("GeneratePassphrase(1): %v", err)
+	}
+	if strings.Contains(p1, "-") {
+		t.Errorf("single word should have no hyphens: %q", p1)
+	}
+	if !wordSet[p1] {
+		t.Errorf("single word %q not in wordlist", p1)
+	}
+
+	// Zero or negative word count
+	if _, err := GeneratePassphrase(0); err == nil {
+		t.Error("expected error for wordCount=0")
+	}
+	if _, err := GeneratePassphrase(-1); err == nil {
+		t.Error("expected error for wordCount=-1")
+	}
+
+	// Uniqueness: two calls should (almost certainly) produce different results
+	p2, _ := GeneratePassphrase(5)
+	p3, _ := GeneratePassphrase(5)
+	if p2 == p3 {
+		t.Errorf("two consecutive passphrases are identical: %q (extremely unlikely)", p2)
+	}
+}
+
+func TestEFFWordlistSize(t *testing.T) {
+	if len(effShortWordlist) != 1296 {
+		t.Errorf("EFF short wordlist has %d words, expected 1296", len(effShortWordlist))
+	}
+}
+
 func writeSecrets(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

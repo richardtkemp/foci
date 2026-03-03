@@ -927,3 +927,70 @@ func TestWantsHelp(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAPIKeyFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantKey  string
+		wantRest []string
+	}{
+		{
+			name:     "no flag",
+			args:     []string{"send", "hello"},
+			wantKey:  "",
+			wantRest: []string{"send", "hello"},
+		},
+		{
+			name:     "--api-key with value",
+			args:     []string{"--api-key", "my-secret", "send", "hello"},
+			wantKey:  "my-secret",
+			wantRest: []string{"send", "hello"},
+		},
+		{
+			name:     "--api-key=value",
+			args:     []string{"--api-key=my-secret", "send", "hello"},
+			wantKey:  "my-secret",
+			wantRest: []string{"send", "hello"},
+		},
+		{
+			name:     "flag in middle",
+			args:     []string{"send", "--api-key", "key123", "hello"},
+			wantKey:  "key123",
+			wantRest: []string{"send", "hello"},
+		},
+		{
+			name:     "--api-key without value at end",
+			args:     []string{"send", "--api-key"},
+			wantKey:  "",
+			wantRest: []string{"send", "--api-key"},
+		},
+		{
+			name:     "empty args",
+			args:     []string{},
+			wantKey:  "",
+			wantRest: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, rest := parseAPIKeyFlag(tt.args)
+			if key != tt.wantKey {
+				t.Errorf("apiKey = %q, want %q", key, tt.wantKey)
+			}
+			if len(rest) == 0 && len(tt.wantRest) == 0 {
+				return
+			}
+			if len(rest) != len(tt.wantRest) {
+				t.Errorf("rest = %v (len %d), want %v (len %d)", rest, len(rest), tt.wantRest, len(tt.wantRest))
+				return
+			}
+			for i := range rest {
+				if rest[i] != tt.wantRest[i] {
+					t.Errorf("rest[%d] = %q, want %q", i, rest[i], tt.wantRest[i])
+				}
+			}
+		})
+	}
+}

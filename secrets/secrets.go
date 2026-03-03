@@ -1,7 +1,9 @@
 package secrets
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"net/url"
 	"os"
 	"os/user"
@@ -13,6 +15,25 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
+
+// GeneratePassphrase picks wordCount random words from the EFF Short Wordlist
+// using crypto/rand and joins them with hyphens. 5 words ≈ 52 bits of entropy.
+// Example: "maple-thunder-basket-olive-crane".
+func GeneratePassphrase(wordCount int) (string, error) {
+	if wordCount < 1 {
+		return "", fmt.Errorf("word count must be at least 1")
+	}
+	n := big.NewInt(int64(len(effShortWordlist)))
+	words := make([]string, wordCount)
+	for i := range words {
+		idx, err := rand.Int(rand.Reader, n)
+		if err != nil {
+			return "", fmt.Errorf("crypto/rand: %w", err)
+		}
+		words[i] = effShortWordlist[idx.Int64()]
+	}
+	return strings.Join(words, "-"), nil
+}
 
 // Default paths that the exec tool should refuse to read.
 var defaultBlockedPaths = []string{

@@ -82,6 +82,42 @@ func parseAddrFlag(args []string) (addr string, rest []string) {
 	return "", args
 }
 
+// parseAPIKeyFlag extracts --api-key from args, returning the key and remaining args.
+func parseAPIKeyFlag(args []string) (apiKey string, rest []string) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--api-key" && i+1 < len(args) {
+			apiKey = args[i+1]
+			rest = append(rest, args[:i]...)
+			rest = append(rest, args[i+2:]...)
+			return apiKey, rest
+		}
+		if strings.HasPrefix(args[i], "--api-key=") {
+			apiKey = args[i][len("--api-key="):]
+			rest = append(rest, args[:i]...)
+			rest = append(rest, args[i+1:]...)
+			return apiKey, rest
+		}
+	}
+	return "", args
+}
+
+// authTransport is an http.RoundTripper that injects an Authorization: Bearer
+// header on every request. Wraps an underlying transport.
+type authTransport struct {
+	key  string
+	base http.RoundTripper
+}
+
+func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.key)
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -104,12 +140,17 @@ func main() {
 		return
 	}
 
-	// Parse --addr from global args (before command)
+	// Parse --addr and --api-key from global args (before command)
 	allArgs := os.Args[1:]
 	addrFlag, allArgs := parseAddrFlag(allArgs)
+	apiKeyFlag, allArgs := parseAPIKeyFlag(allArgs)
 	addr := envDefault(addrFlag, "FOCI_ADDR")
 	if addr == "" {
 		addr = defaultAddr
+	}
+	apiKey := envDefault(apiKeyFlag, "FOCI_API_KEY")
+	if apiKey != "" {
+		client.Transport = &authTransport{key: apiKey, base: client.Transport}
 	}
 	base := "http://" + addr
 
@@ -173,6 +214,7 @@ Commands:
 
 Flags:
   --addr <host:port>   Gateway address (default: %s)
+  --api-key <key>      HTTP API key for authentication
   -a, --agent <id>     Target a specific agent (default: first agent)
   -s, --session <id>   Target a specific session (default: main)
   --if-active <dur>    Skip if no user activity within duration (e.g. 8h, 30m)
@@ -181,6 +223,7 @@ Flags:
 
 Environment (flag > env var > default):
   FOCI_ADDR            Gateway address (--addr)
+  FOCI_API_KEY         HTTP API key (--api-key)
   FOCI_AGENT           Target agent (-a)
   FOCI_SESSION         Target session (-s)
   FOCI_IF_ACTIVE       Activity gate duration (--if-active)
@@ -652,6 +695,9 @@ Flags:
                         Default secrets path: ~/config/secrets.toml
   --addr <host:port>    Gateway address for credential hot-reload notification
                         Env: FOCI_ADDR / Default: %s
+
+The HTTP API key (http.api_key in secrets.toml) is read automatically
+to authenticate the reload request to the gateway.
 `, defaultAddr)
 }
 
@@ -719,17 +765,29 @@ func cmdAuth(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Setup token saved to %s\n", secretsPath)
 
+	// Read HTTP API key from secrets for gateway notification auth
+	httpAPIKey, _ := store.Get("http.api_key")
+
 	// Notify running gateway to hot-reload credentials.
-	notifyGatewayReload(addr)
+	notifyGatewayReload(addr, httpAPIKey)
 	return nil
 }
 
 // notifyGatewayReload sends a POST to the gateway's /-/reload-credentials endpoint.
 // Best-effort: if the gateway isn't running, prints a note and continues.
-func notifyGatewayReload(addr string) {
-	url := fmt.Sprintf("http://%s/-/reload-credentials", addr)
+func notifyGatewayReload(addr, apiKey string) {
+	u := fmt.Sprintf("http://%s/-/reload-credentials", addr)
+	req, err := http.NewRequest(http.MethodPost, u, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Gateway not reachable at %s — restart to use new credentials.\n", addr)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	c := &http.Client{Timeout: 3 * time.Second}
-	resp, err := c.Post(url, "application/json", nil)
+	resp, err := c.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Gateway not reachable at %s — restart to use new credentials.\n", addr)
 		return
