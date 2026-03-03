@@ -42,18 +42,41 @@ type SpawnAgent interface {
 	HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error)
 }
 
-// spawnNoneBlacklist lists tools excluded from "none" mode spawns.
+// spawnRawBlacklist lists tools excluded from "raw" mode spawns.
 // No character context means no awareness of communication conventions.
 // exec and tmux are excluded because they bypass file tool sandboxing —
 // the isolated file tools enforce path containment, but shell access
 // allows arbitrary filesystem access and symlink creation.
-var spawnNoneBlacklist = map[string]bool{
+var spawnRawBlacklist = map[string]bool{
 	"exec":            true,
 	"tmux":            true,
 	"send_telegram":   true,
 	"send_to_session": true,
 	"scratchpad":      true,
 	"todo":            true,
+}
+
+// exploreSystemPrompt is the system prompt for explore spawn mode.
+const exploreSystemPrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
+
+Use ack for searching file contents. Use find for locating files. Use read/summary for examining files.
+
+Match your response to the question type:
+- "Where is X defined?" → file paths and line numbers only
+- "Where is X used/called?" → file paths, line numbers, and the calling context (one line)
+- "How does X work?" → trace the call chain, summarise the logic, quote key sections
+- "What does X depend on?" → list imports, function calls, config references
+- "Find all X" → list matches, grouped by file
+
+Keep responses concise. Quote code when it clarifies; don't dump entire files. If the codebase is large, start with directory structure before diving in.`
+
+// spawnExploreAllowed is the explicit allowlist of registry tools for explore mode.
+// New tools do NOT leak into this mode — they must be explicitly opted in.
+var spawnExploreAllowed = map[string]bool{
+	"read":          true,
+	"memory_search": true,
+	"web_search":    true,
+	"web_fetch":     true,
 }
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
@@ -79,22 +102,22 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
-		Description: "Spawn a sub-call to a model. Three context modes: 'none' (just your prompt, no system context — send_telegram and send_to_session excluded), 'character_only' (your prompt + character files), 'clone_current' (branch session — a headless self-fork). All modes have tool access. Use 'none'/'character_only' for one-shot queries to different models. Use 'clone_current' to delegate complex multi-step tasks.",
+		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_telegram and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (safe exploration — ls, find, grep, read, memory_search, web_search, web_fetch only — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"prompt": {
 					"type": "string",
-					"description": "Self-contained prompt with all necessary context. For none/character_only: the model gets only this (synchronous, result returned directly). For clone_current: injected as the user message in the branch session."
+					"description": "Self-contained prompt with all necessary context. For raw/character: the model gets only this (synchronous, result returned directly). For clone: injected as the user message in the branch session."
 				},
 				"model": {
 					"type": "string",
-					"description": "Model to use: 'opus', 'sonnet', 'haiku', or a full model ID. Empty uses the current model. Ignored for clone_current mode (inherits parent model)."
+					"description": "Model to use: 'opus', 'sonnet', 'haiku', or a full model ID. Empty uses the current model. Ignored for clone mode (inherits parent model)."
 				},
 				"context": {
 					"type": "string",
-					"enum": ["none", "character_only", "clone_current"],
-					"description": "Context mode. 'none': just your prompt, no system context (sync). 'character_only': your prompt + character files (sync). 'clone_current' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete."
+					"enum": ["raw", "character", "clone", "explore"],
+					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': safe exploration agent with ls, find, grep, read, memory_search, web_search, web_fetch (sync, no mutation, always haiku — model param ignored)."
 				},
 				"timeout": {
 					"type": "integer",
@@ -117,7 +140,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return "", fmt.Errorf("prompt is required")
 			}
 			if p.Context == "" {
-				p.Context = "clone_current"
+				p.Context = "clone"
 			}
 			if p.Timeout <= 0 {
 				p.Timeout = 120
@@ -135,13 +158,13 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			timeout := time.Duration(p.Timeout) * time.Second
 
 			switch p.Context {
-			case "none":
+			case "raw":
 				tempDir, err := os.MkdirTemp("", "foci-spawn-*")
 				if err != nil {
 					return "", fmt.Errorf("create temp dir: %w", err)
 				}
-				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnNoneBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions)
+				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
+				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
 				if err != nil {
 					return "", err
 				}
@@ -151,19 +174,31 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				}
 				return result, nil
 
-			case "character_only":
+			case "character":
 				var system []anthropic.SystemBlock
 				if deps.Bootstrap != nil {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions)
+				return spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars)
 
-			case "clone_current":
+			case "explore":
+				// Always use haiku for exploration — cheap and fast.
+				exploreModel := model
+				if full, ok := knownModels["haiku"]; ok {
+					exploreModel = full
+				}
+				system := []anthropic.SystemBlock{
+					{Type: "text", Text: exploreSystemPrompt},
+				}
+				toolDefs, tools := spawnExploreToolSet(deps.Registry)
+				return spawnOneShot(ctx, deps.Client, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars)
+
+			case "clone":
 				return spawnInherit(ctx, deps, agentFn, sem, p.Prompt, timeout)
 
 			default:
-				return "", fmt.Errorf("invalid context: %q (use none, character_only, or clone_current)", p.Context)
+				return "", fmt.Errorf("invalid context: %q (use raw, character, clone, or explore)", p.Context)
 			}
 		},
 	}
@@ -223,6 +258,37 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 	return defs, tools
 }
 
+// spawnExploreToolSet builds a tool set for explore spawn mode.
+// It creates ls/find/grep tools fresh (not in the registry) and pulls
+// allowed tools from the registry via the explicit allowlist.
+func spawnExploreToolSet(reg *Registry) ([]anthropic.ToolDef, map[string]*Tool) {
+	defs := make([]anthropic.ToolDef, 0, 8)
+	tools := make(map[string]*Tool, 8)
+
+	// Create exploration tools (not in the main registry).
+	lsTool := NewLsTool()
+	findTool := NewFindTool()
+	grepBin, grepName := resolveGrepBinary()
+	grepTool := NewGrepTool(grepBin, grepName)
+
+	for _, t := range []*Tool{lsTool, findTool, grepTool} {
+		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+		tools[t.Name] = t
+	}
+
+	// Pull allowed tools from the registry.
+	if reg != nil {
+		for _, t := range reg.All() {
+			if spawnExploreAllowed[t.Name] {
+				defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+				tools[t.Name] = t
+			}
+		}
+	}
+
+	return defs, tools
+}
+
 func listCreatedFiles(dir string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -258,8 +324,36 @@ func formatBytes(n int64) string {
 
 const maxSpawnToolLoops = 25
 
-// spawnOneShot makes API calls with optional tool access (none/character_only modes).
-func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration, toolDefs []anthropic.ToolDef, tools map[string]*Tool, sessions SessionBrancher) (string, error) {
+// spawnMaxResultChars is the threshold for writing oversize tool results
+// to a temp file instead of including them inline. Applied in spawnOneShot
+// to prevent large tool outputs from bloating the spawn's context window.
+const spawnMaxResultChars = 15000
+
+// spawnExploreMaxResultChars is the threshold for explore mode (4x normal).
+// Explore agents read more raw output since they're doing research.
+const spawnExploreMaxResultChars = spawnMaxResultChars * 4
+
+// spawnGuardResult checks if a tool result exceeds the given limit.
+// If so, writes the full result to a temp file and returns a guard message
+// with the file path. No summarisation — the spawn agent reads the file itself.
+func spawnGuardResult(toolName, result string, limit int) string {
+	if len(result) <= limit {
+		return result
+	}
+	f, err := os.CreateTemp("", "spawn-result-"+toolName+"-*.txt")
+	if err != nil {
+		return result // fallback: return original
+	}
+	if _, err := f.WriteString(result); err != nil {
+		f.Close()
+		return result
+	}
+	f.Close()
+	return fmt.Sprintf("Result too large (%d chars). Full output saved to %s. Use the read tool to inspect it.", len(result), f.Name())
+}
+
+// spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
+func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, system []anthropic.SystemBlock, prompt string, timeout time.Duration, toolDefs []anthropic.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -353,6 +447,7 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 				))
 				continue
 			}
+			result = spawnGuardResult(block.Name, result, maxResultChars)
 			toolResults = append(toolResults, anthropic.ToolResultBlock(
 				block.ID, result, false,
 			))
@@ -374,7 +469,7 @@ func spawnOneShot(ctx context.Context, client *anthropic.Client, model string, s
 func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent, sem chan struct{}, prompt string, timeout time.Duration) (string, error) {
 	// No-recursion guard: reject inherit calls from inside a spawn inherit session.
 	if IsSpawnInherit(ctx) {
-		return "", fmt.Errorf("nested inherit spawns not allowed — use context='none' or context='full' instead")
+		return "", fmt.Errorf("nested inherit spawns not allowed — use context='raw' or context='character' instead")
 	}
 
 	parentSession := SessionKeyFromContext(ctx)

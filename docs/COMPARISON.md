@@ -119,7 +119,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | Agent-to-agent messaging | ✅ | ✅ | ❌ |
 | Agent isolation | ✅ secrets only accessible to their owning agent | ✅ | ❌ |
 | Binding-based routing | ❌ per-bot routing | ✅ specificity hierarchy | ❌ |
-| Orchestrator pattern | ✅ spawn + clone_current | ✅ spawning + sub-agents | ✅ SpawnTool |
+| Orchestrator pattern | ✅ spawn + clone | ✅ spawning + sub-agents | ✅ SpawnTool |
 
 ## Voice & Speech
 

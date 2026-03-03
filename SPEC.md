@@ -62,7 +62,7 @@ Default orientation text is embedded in `prompts/branch-orientation-headless.md`
 - Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
 - Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
 - Session file rotation: on compaction, the pre-compaction file is renamed to a numbered archive (e.g. `5970082313.1.jsonl`, `.2.jsonl`) before writing the new compacted session. Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
-- Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone_current, auto-backgrounded exec/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
+- Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone, auto-backgrounded exec/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
 
 **Configuration:**
 ```toml
@@ -213,25 +213,26 @@ Stored in SQLite, scoped per-agent via `agent_id` column. On compaction, scratch
 The `spawn` tool is a unified sub-call mechanism with three context modes:
 
 ```
-spawn(prompt="Evaluate this architecture", model="opus", context="none")
-spawn(prompt="Research this topic thoroughly", context="clone_current")
+spawn(prompt="Evaluate this architecture", model="opus", context="raw")
+spawn(prompt="Research this topic thoroughly", context="clone")
 ```
 
 **Context modes:**
 
-- **`none`** — just the prompt, no system context. One-shot cold call with tool access. Tools run in an isolated temp directory (`/tmp/foci-spawn-*`). File writes are sandboxed: absolute paths and `../` traversal are blocked. Any created files are listed in the spawn result with sizes. Good for tasks that need file output without workspace access.
-- **`full`** — character files + prompt, no tools. One-shot call with full personality context. Good for tasks that need "you" without tool access.
-- **`clone_current`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. Always runs asynchronously — returns an immediate acknowledgment and delivers the result via `AsyncNotifier` when complete.
+- **`raw`** — just the prompt, no system context. One-shot cold call with tool access. Tools run in an isolated temp directory (`/tmp/foci-spawn-*`). File writes are sandboxed: absolute paths and `../` traversal are blocked. Any created files are listed in the spawn result with sizes. Good for tasks that need file output without workspace access.
+- **`character`** — character files + prompt. One-shot call with full personality context. Good for tasks that need "you".
+- **`clone`** (default) — creates a branch session with full tool access. A headless self-fork: the spawned session inherits the parent's context, tools, and model. Always runs asynchronously — returns an immediate acknowledgment and delivers the result via `AsyncNotifier` when complete.
+- **`explore`** — safe exploration agent with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch`. One-shot, no file mutation, no shell exec, no messaging. Always runs on haiku. Exploration tools are created fresh (not in the main registry) and use direct `exec.CommandContext` (no shell). Good for codebase research tasks where the parent wants to delegate exploration without risk.
 
-**Inherit mode details:**
+**Clone mode details:**
 - Creates a branch session: `agent:AGENTID:spawn:spawn-TIMESTAMP`
 - Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
-- Recursive clone_current spawns are blocked — a spawned session can use `none`/`character_only` but not `clone_current`
-- Concurrent clone_current spawns are limited by `max_concurrent_spawns` (default 3)
+- Recursive clone spawns are blocked — a spawned session can use `raw`/`character` but not `clone`
+- Concurrent clone spawns are limited by `max_concurrent_spawns` (default 3)
 - Runs as a full agent turn with all tools available
 - Always async: returns `"Spawn started in background."` immediately, delivers `[SPAWN RESULT]` via notifier on completion (matching the `[EXEC RESULT]`/`[HTTP RESULT]` pattern)
 
-**Model resolution:** Short names (`opus`, `sonnet`, `haiku`) resolve to full model IDs. Empty model defaults to the parent's model. Model is ignored for clone_current mode (inherits parent model).
+**Model resolution:** Short names (`opus`, `sonnet`, `haiku`) resolve to full model IDs. Empty model defaults to the parent's model. Model is ignored for clone mode (inherits parent model).
 
 ### Thought Queue
 
@@ -314,7 +315,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `memory_search` — FTS5 search over memory files + conversation history (sort by relevance or recency)
 - `remind` — defer a thought for later (delay, tomorrow, specific date); wake=true actively wakes the session
 - `scratchpad` — working notes that survive compaction (write/read/clear/list)
-- `spawn` — sub-call to a model (none/character_only: one-shot, clone_current: branch session with full tools)
+- `spawn` — sub-call to a model (raw/character: one-shot, clone: branch session with full tools, explore: read-only codebase research)
 - `send_telegram` — send proactive Telegram messages and media. `send_as` parameter controls file type: `"document"` (default), `"voice"`, `"video"`, `"photo"`, `"audio"`, `"animation"` (GIF). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS and sends as a voice note.
 - `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering

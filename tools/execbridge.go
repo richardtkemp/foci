@@ -490,7 +490,7 @@ func generateShellFunc(t *Tool) string {
   done
   prompt="${prompt# }"
   if [ -z "$prompt" ]; then
-    echo "usage: %s <prompt> [--model MODEL] [--context none|character_only|clone_current]" >&2
+    echo "usage: %s <prompt> [--model MODEL] [--context raw|character|clone|explore]" >&2
     return 1
   fi
   local params

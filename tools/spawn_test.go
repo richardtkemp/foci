@@ -79,7 +79,7 @@ func okResponse(text string) func(req *anthropic.MessageRequest) *anthropic.Mess
 	}
 }
 
-func TestSpawnContextNone(t *testing.T) {
+func TestSpawnContextRaw(t *testing.T) {
 	var receivedReq *anthropic.MessageRequest
 
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -105,7 +105,7 @@ func TestSpawnContextNone(t *testing.T) {
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "What is the meaning of life?",
 		"model":   "opus",
-		"context": "none",
+		"context": "raw",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -117,9 +117,9 @@ func TestSpawnContextNone(t *testing.T) {
 		t.Errorf("result = %q", result)
 	}
 
-	// No system prompt in none mode
+	// No system prompt in raw mode
 	if len(receivedReq.System) != 0 {
-		t.Errorf("expected 0 system blocks (none), got %d", len(receivedReq.System))
+		t.Errorf("expected 0 system blocks (raw), got %d", len(receivedReq.System))
 	}
 
 	// Should resolve opus
@@ -127,13 +127,10 @@ func TestSpawnContextNone(t *testing.T) {
 		t.Errorf("model = %q, want claude-opus-4-6", receivedReq.Model)
 	}
 
-	// No tools
-	if len(receivedReq.Tools) != 0 {
-		t.Errorf("expected no tools, got %d", len(receivedReq.Tools))
-	}
+	// Has tools (raw mode has tools)
 }
 
-func TestSpawnContextCharacterOnly(t *testing.T) {
+func TestSpawnContextCharacter(t *testing.T) {
 	var receivedReq *anthropic.MessageRequest
 
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -160,7 +157,7 @@ func TestSpawnContextCharacterOnly(t *testing.T) {
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Analyze this deeply",
 		"model":   "opus",
-		"context": "character_only",
+		"context": "character",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -172,16 +169,16 @@ func TestSpawnContextCharacterOnly(t *testing.T) {
 		t.Errorf("result = %q", result)
 	}
 
-	// Full mode includes system blocks
+	// Character mode includes system blocks
 	if len(receivedReq.System) != 2 {
-		t.Fatalf("expected 2 system blocks (full), got %d", len(receivedReq.System))
+		t.Fatalf("expected 2 system blocks (character), got %d", len(receivedReq.System))
 	}
 	if receivedReq.System[0].Text != "I am the identity file." {
 		t.Errorf("system[0] = %q", receivedReq.System[0].Text)
 	}
 }
 
-func TestSpawnContextCloneCurrent(t *testing.T) {
+func TestSpawnContextClone(t *testing.T) {
 	// With a notifier, inherit returns an async ack immediately.
 	called := make(chan string, 1)
 	mockAgent := &channelSpawnAgent{
@@ -206,7 +203,7 @@ func TestSpawnContextCloneCurrent(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do the research task",
-		"context": "clone_current",
+		"context": "clone",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -254,8 +251,8 @@ func TestSpawnContextCloneCurrent(t *testing.T) {
 	}
 }
 
-func TestSpawnContextCloneCurrentDefault(t *testing.T) {
-	// Inherit should be the default context mode — nil notifier = sync fallback
+func TestSpawnContextCloneDefault(t *testing.T) {
+	// Clone should be the default context mode — nil notifier = sync fallback
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
 
@@ -277,9 +274,9 @@ func TestSpawnContextCloneCurrentDefault(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Verify branch was created (meaning inherit mode was used)
+	// Verify branch was created (meaning clone mode was used)
 	if mockSessions.parentKey == "" {
-		t.Error("expected branch creation (inherit as default), but no branch was created")
+		t.Error("expected branch creation (clone as default), but no branch was created")
 	}
 
 	// Nil notifier = sync fallback, should get direct result
@@ -317,7 +314,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 		params, _ := json.Marshal(map[string]string{
 			"model":   tt.short,
 			"prompt":  "test",
-			"context": "none",
+			"context": "raw",
 		})
 		tool.Execute(context.Background(), params)
 		server.Close()
@@ -347,7 +344,7 @@ func TestSpawnModelDefault(t *testing.T) {
 	// No model specified — should use parent's default
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 	})
 	tool.Execute(context.Background(), params)
 
@@ -369,7 +366,7 @@ func TestSpawnTimeout(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 		"timeout": 1, // 1 second timeout
 	})
 
@@ -404,7 +401,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	// Inherit should be rejected
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "nested task",
-		"context": "clone_current",
+		"context": "clone",
 	})
 	_, err := tool.Execute(ctx, params)
 	if err == nil {
@@ -414,7 +411,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 		t.Errorf("error = %q, want 'nested inherit spawns not allowed'", err.Error())
 	}
 
-	// But none/full should still work from inside a spawn inherit
+	// But raw/character should still work from inside a spawn inherit
 	server := mockModelServer(okResponse("ok"))
 	defer server.Close()
 
@@ -423,11 +420,11 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 
 	params, _ = json.Marshal(map[string]string{
 		"prompt":  "simple query",
-		"context": "none",
+		"context": "raw",
 	})
 	result, err := tool.Execute(ctx, params)
 	if err != nil {
-		t.Fatalf("none mode from spawn inherit should work: %v", err)
+		t.Fatalf("raw mode from spawn inherit should work: %v", err)
 	}
 	if result != "ok" {
 		t.Errorf("result = %q", result)
@@ -435,7 +432,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 
 	params, _ = json.Marshal(map[string]string{
 		"prompt":  "full query",
-		"context": "character_only",
+		"context": "character",
 	})
 	result, err = tool.Execute(ctx, params)
 	if err != nil {
@@ -483,7 +480,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		params, _ := json.Marshal(map[string]string{
 			"prompt":  "task",
-			"context": "clone_current",
+			"context": "clone",
 		})
 		result, err := tool.Execute(ctx, params)
 		if err != nil {
@@ -568,7 +565,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do research",
-		"context": "clone_current",
+		"context": "clone",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -623,7 +620,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
-		"context": "clone_current",
+		"context": "clone",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -667,7 +664,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
-		"context": "clone_current",
+		"context": "clone",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -692,7 +689,7 @@ func TestSpawnEmptyPrompt(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "",
-		"context": "none",
+		"context": "raw",
 	})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -741,7 +738,7 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 	// No session key in context
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "task",
-		"context": "clone_current",
+		"context": "clone",
 	})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -774,7 +771,7 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	ctx := WithSessionKey(context.Background(), "agent:test:main")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do something",
-		"context": "clone_current",
+		"context": "clone",
 	})
 
 	_, err := tool.Execute(ctx, params)
@@ -844,7 +841,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "character_only",
+		"context": "character",
 	})
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -858,19 +855,19 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	}
 }
 
-func TestSpawnNoneToolAllowlist(t *testing.T) {
+func TestSpawnRawToolAllowlist(t *testing.T) {
 	// This test ensures every tool registered in the system is explicitly
-	// classified as either allowed or blocked for none-mode spawns.
+	// classified as either allowed or blocked for raw-mode spawns.
 	// If you add a new tool and this test fails, you MUST decide:
 	//   - Is the tool safe in an isolated sandbox (no shell access, no
-	//     external communication)? Add it to allowedInNone.
+	//     external communication)? Add it to allowedInRaw.
 	//   - Can it escape the sandbox or communicate externally?
-	//     Add it to spawnNoneBlacklist in spawn.go.
+	//     Add it to spawnRawBlacklist in spawn.go.
 
-	// Tools that should be available in none-mode spawns.
+	// Tools that should be available in raw-mode spawns.
 	// These are safe within the file-tool sandbox (no shell access,
 	// no external communication, no sandbox escape).
-	allowedInNone := map[string]bool{
+	allowedInRaw := map[string]bool{
 		"read":             true,
 		"write":            true,
 		"edit":             true,
@@ -902,7 +899,7 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 		})
 	}
 
-	defs, tools := spawnIsolatedToolSet(reg, spawnNoneBlacklist, "/tmp/test-sandbox")
+	defs, tools := spawnIsolatedToolSet(reg, spawnRawBlacklist, "/tmp/test-sandbox")
 
 	// Build a set of tool names present in the API schema (defs).
 	defNames := make(map[string]bool, len(defs))
@@ -923,38 +920,38 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 			continue
 		}
 		_, isAllowed := tools[name]
-		_, isBlocked := spawnNoneBlacklist[name]
+		_, isBlocked := spawnRawBlacklist[name]
 		if !isAllowed && !isBlocked {
-			t.Errorf("tool %q is neither allowed nor blacklisted for none-mode spawns — "+
-				"add it to allowedInNone in this test (if safe) or spawnNoneBlacklist in spawn.go (if not)", name)
+			t.Errorf("tool %q is neither allowed nor blacklisted for raw-mode spawns — "+
+				"add it to allowedInRaw in this test (if safe) or spawnRawBlacklist in spawn.go (if not)", name)
 		}
 		if isAllowed && isBlocked {
-			t.Errorf("tool %q is both allowed and blacklisted — check spawnNoneBlacklist", name)
+			t.Errorf("tool %q is both allowed and blacklisted — check spawnRawBlacklist", name)
 		}
 	}
 
 	// Verify the exact set of allowed tools matches expectations.
-	for name := range allowedInNone {
+	for name := range allowedInRaw {
 		if _, ok := tools[name]; !ok {
-			t.Errorf("tool %q should be allowed in none-mode but is missing", name)
+			t.Errorf("tool %q should be allowed in raw-mode but is missing", name)
 		}
 	}
 	for name := range tools {
-		if !allowedInNone[name] {
-			t.Errorf("tool %q is available in none-mode but not in allowedInNone — "+
-				"either add it to allowedInNone (if safe) or to spawnNoneBlacklist (if not)", name)
+		if !allowedInRaw[name] {
+			t.Errorf("tool %q is available in raw-mode but not in allowedInRaw — "+
+				"either add it to allowedInRaw (if safe) or to spawnRawBlacklist (if not)", name)
 		}
 	}
 
 	// Verify blacklisted tools are excluded from BOTH the tools map and the
 	// API schema (defs). Previously only the tools map was checked, so a
 	// blacklisted tool could still appear in the schema sent to the model.
-	for name := range spawnNoneBlacklist {
+	for name := range spawnRawBlacklist {
 		if _, ok := tools[name]; ok {
-			t.Errorf("tool %q is blacklisted but still available in none-mode tools map", name)
+			t.Errorf("tool %q is blacklisted but still available in raw-mode tools map", name)
 		}
 		if defNames[name] {
-			t.Errorf("tool %q is blacklisted but still appears in none-mode tool schema", name)
+			t.Errorf("tool %q is blacklisted but still appears in raw-mode tool schema", name)
 		}
 	}
 
@@ -971,8 +968,8 @@ func TestSpawnNoneToolAllowlist(t *testing.T) {
 	}
 }
 
-func TestSpawnCharacterOnlyAllTools(t *testing.T) {
-	// Verify character_only mode includes all tools (no blacklist).
+func TestSpawnCharacterAllTools(t *testing.T) {
+	// Verify character mode includes all tools (no blacklist).
 	var receivedReq *anthropic.MessageRequest
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 		receivedReq = req
@@ -999,7 +996,7 @@ func TestSpawnCharacterOnlyAllTools(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "character_only",
+		"context": "character",
 	})
 	_, err := tool.Execute(context.Background(), params)
 	if err != nil {
@@ -1012,10 +1009,10 @@ func TestSpawnCharacterOnlyAllTools(t *testing.T) {
 	}
 
 	if !toolNames["send_telegram"] {
-		t.Error("send_telegram should be included in character_only mode")
+		t.Error("send_telegram should be included in character mode")
 	}
 	if !toolNames["send_to_session"] {
-		t.Error("send_to_session should be included in character_only mode")
+		t.Error("send_to_session should be included in character mode")
 	}
 }
 
@@ -1041,7 +1038,7 @@ func TestSpawnToolSetExcludesSpawn(t *testing.T) {
 	}
 }
 
-func TestSpawnNoneCreatesTempDir(t *testing.T) {
+func TestSpawnRawCreatesTempDir(t *testing.T) {
 	var spawnTempDir string
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 		return &anthropic.MessageResponse{
@@ -1058,7 +1055,7 @@ func TestSpawnNoneCreatesTempDir(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -1072,7 +1069,7 @@ func TestSpawnNoneCreatesTempDir(t *testing.T) {
 	_ = spawnTempDir
 }
 
-func TestSpawnNoneIsolationWritesToTempDir(t *testing.T) {
+func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	callCount := 0
 	var spawnTempDir string
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
@@ -1104,7 +1101,7 @@ func TestSpawnNoneIsolationWritesToTempDir(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -1134,7 +1131,7 @@ func TestSpawnNoneIsolationWritesToTempDir(t *testing.T) {
 	}
 }
 
-func TestSpawnNoneIsolationBlocksAbsolutePath(t *testing.T) {
+func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	callCount := 0
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 		callCount++
@@ -1165,7 +1162,7 @@ func TestSpawnNoneIsolationBlocksAbsolutePath(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -1178,7 +1175,7 @@ func TestSpawnNoneIsolationBlocksAbsolutePath(t *testing.T) {
 	}
 }
 
-func TestSpawnNoneIsolationBlocksTraversal(t *testing.T) {
+func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	callCount := 0
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 		callCount++
@@ -1209,7 +1206,7 @@ func TestSpawnNoneIsolationBlocksTraversal(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -1222,7 +1219,7 @@ func TestSpawnNoneIsolationBlocksTraversal(t *testing.T) {
 	}
 }
 
-func TestSpawnNoneFileListMultiple(t *testing.T) {
+func TestSpawnRawFileListMultiple(t *testing.T) {
 	callCount := 0
 	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
 		callCount++
@@ -1263,7 +1260,7 @@ func TestSpawnNoneFileListMultiple(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
-		"context": "none",
+		"context": "raw",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -1294,4 +1291,236 @@ func extractTempDir(result string) string {
 		return ""
 	}
 	return result[start : start+end]
+}
+
+func TestSpawnExploreToolSet(t *testing.T) {
+	// Register all real tools in a registry.
+	reg := NewRegistry()
+	allRegistryTools := []string{
+		"exec", "tmux",
+		"read", "write", "edit",
+		"web_fetch", "web_search", "http_request",
+		"memory_search", "scratchpad", "todo",
+		"bitwarden_search", "bitwarden_unlock",
+		"send_telegram", "send_to_session",
+		"remind", "spawn",
+	}
+	for _, name := range allRegistryTools {
+		reg.Register(&Tool{
+			Name:       name,
+			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+			Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+		})
+	}
+
+	defs, tools := spawnExploreToolSet(reg)
+
+	// Build name sets.
+	defNames := make(map[string]bool, len(defs))
+	for _, d := range defs {
+		defNames[d.Name()] = true
+	}
+	toolNames := make(map[string]bool, len(tools))
+	for name := range tools {
+		toolNames[name] = true
+	}
+
+	// Must include: ls, find, grep (exploration tools)
+	for _, name := range []string{"ls", "find", "grep"} {
+		if !toolNames[name] {
+			t.Errorf("expected exploration tool %q in explore mode", name)
+		}
+		if !defNames[name] {
+			t.Errorf("expected exploration tool %q in explore defs", name)
+		}
+	}
+
+	// Must include: allowed registry tools
+	for name := range spawnExploreAllowed {
+		if !toolNames[name] {
+			t.Errorf("expected allowed tool %q in explore mode", name)
+		}
+		if !defNames[name] {
+			t.Errorf("expected allowed tool %q in explore defs", name)
+		}
+	}
+
+	// Must exclude: dangerous tools
+	excluded := []string{
+		"exec", "write", "edit", "spawn", "send_telegram",
+		"send_to_session", "scratchpad", "todo", "remind",
+		"http_request", "tmux", "bitwarden_search", "bitwarden_unlock",
+	}
+	for _, name := range excluded {
+		if toolNames[name] {
+			t.Errorf("tool %q should be excluded from explore mode", name)
+		}
+		if defNames[name] {
+			t.Errorf("tool %q should not appear in explore defs", name)
+		}
+	}
+
+	// Verify defs and tools map are consistent.
+	for _, d := range defs {
+		if _, ok := tools[d.Name()]; !ok {
+			t.Errorf("tool %q has a def but no handler", d.Name())
+		}
+	}
+	for name := range tools {
+		if !defNames[name] {
+			t.Errorf("tool %q has a handler but no def", name)
+		}
+	}
+}
+
+func TestSpawnExploreToolAllowlist(t *testing.T) {
+	// Exhaustive audit: every known tool must be explicitly classified
+	// as either allowed or excluded for explore mode.
+	// If you add a new tool and this test fails, you MUST decide:
+	//   - Is the tool safe for read-only exploration (no mutation, no messaging)?
+	//     Add it to spawnExploreAllowed in spawn.go.
+	//   - Otherwise, add it to blockedInExplore below.
+
+	// Tools blocked from explore mode (everything not in the allowlist).
+	blockedInExplore := map[string]bool{
+		"exec":             true,
+		"tmux":             true,
+		"write":            true,
+		"edit":             true,
+		"http_request":     true,
+		"send_telegram":    true,
+		"send_to_session":  true,
+		"scratchpad":       true,
+		"todo":             true,
+		"remind":           true,
+		"bitwarden_search": true,
+		"bitwarden_unlock": true,
+		"spawn":            true,
+	}
+
+	// Every tool in the real system.
+	allTools := []string{
+		"exec", "tmux",
+		"read", "write", "edit",
+		"web_fetch", "web_search", "http_request",
+		"memory_search", "scratchpad", "todo",
+		"bitwarden_search", "bitwarden_unlock",
+		"send_telegram", "send_to_session",
+		"remind", "spawn",
+	}
+
+	for _, name := range allTools {
+		_, isAllowed := spawnExploreAllowed[name]
+		_, isBlocked := blockedInExplore[name]
+		if !isAllowed && !isBlocked {
+			t.Errorf("tool %q is neither allowed nor blocked for explore mode — "+
+				"add it to spawnExploreAllowed (if safe) or blockedInExplore in this test (if not)", name)
+		}
+		if isAllowed && isBlocked {
+			t.Errorf("tool %q is both allowed and blocked for explore mode — resolve the conflict", name)
+		}
+	}
+
+	// ls, find, grep are NOT in the main registry — they're created fresh
+	// inside spawnExploreToolSet. They don't need classification here.
+}
+
+func TestSpawnExploreMode(t *testing.T) {
+	var receivedReq *anthropic.MessageRequest
+
+	server := mockModelServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		receivedReq = req
+		return &anthropic.MessageResponse{
+			ID: "msg_test", Type: "message", Role: "assistant",
+			Content: anthropic.TextContent("Found 3 Go files."), StopReason: "end_turn",
+			Usage: anthropic.Usage{InputTokens: 50, OutputTokens: 20},
+		}
+	})
+	defer server.Close()
+
+	reg := NewRegistry()
+	reg.Register(&Tool{
+		Name:       "read",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+	reg.Register(&Tool{
+		Name:       "exec",
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (string, error) { return "ok", nil },
+	})
+
+	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	deps := SpawnDeps{
+		Client:   client,
+		Registry: reg,
+		Model:    "claude-opus-4-6", // parent uses opus
+	}
+	tool := NewSpawnTool(deps, nil)
+
+	params, _ := json.Marshal(map[string]string{
+		"prompt":  "Find all Go files in the project",
+		"model":   "opus", // explicitly request opus
+		"context": "explore",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if result != "Found 3 Go files." {
+		t.Errorf("result = %q", result)
+	}
+
+	// Should always use haiku regardless of parent model or explicit model param
+	if receivedReq.Model != "claude-haiku-4-5" {
+		t.Errorf("model = %q, want claude-haiku-4-5 (explore always uses haiku)", receivedReq.Model)
+	}
+
+	// Should have the explore system prompt
+	if len(receivedReq.System) != 1 {
+		t.Fatalf("expected 1 system block, got %d", len(receivedReq.System))
+	}
+	if !strings.Contains(receivedReq.System[0].Text, "read-only code explorer") {
+		t.Errorf("system[0] = %q, want explore system prompt", receivedReq.System[0].Text)
+	}
+
+	// Should have tools (ls, find, grep, read — but NOT exec)
+	toolNames := make(map[string]bool)
+	for _, td := range receivedReq.Tools {
+		toolNames[td.Name()] = true
+	}
+	for _, expected := range []string{"ls", "find", "grep", "read"} {
+		if !toolNames[expected] {
+			t.Errorf("expected %s in explore tools", expected)
+		}
+	}
+	if toolNames["exec"] {
+		t.Error("exec should not be in explore tools")
+	}
+}
+
+func TestSpawnGuardResult(t *testing.T) {
+	// Small result — returned as-is
+	small := strings.Repeat("x", 100)
+	if got := spawnGuardResult("test", small, spawnMaxResultChars); got != small {
+		t.Errorf("small result should pass through, got %q", got[:50])
+	}
+
+	// Large result — written to temp file
+	large := strings.Repeat("y", spawnMaxResultChars+1)
+	got := spawnGuardResult("grep", large, spawnMaxResultChars)
+	if strings.Contains(got, "yyy") {
+		t.Errorf("large result should be replaced with guard message, got %d chars", len(got))
+	}
+	if !strings.Contains(got, "Result too large") {
+		t.Errorf("expected 'Result too large', got %q", got)
+	}
+	if !strings.Contains(got, "spawn-result-grep-") {
+		t.Errorf("expected temp file path in guard, got %q", got)
+	}
+	if !strings.Contains(got, "read tool") {
+		t.Errorf("expected 'read tool' hint, got %q", got)
+	}
 }

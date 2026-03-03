@@ -789,7 +789,7 @@ func isPrivateIP(hostname string) bool {
 }
 
 // NewIsolatedHTTPRequestTool creates an http_request tool that blocks requests
-// to private/loopback/link-local IP addresses. Used in spawn none-mode to prevent SSRF.
+// to private/loopback/link-local IP addresses. Used in spawn raw-mode to prevent SSRF.
 func NewIsolatedHTTPRequestTool(base *Tool) *Tool {
 	return &Tool{
 		Name:        base.Name,
