@@ -208,37 +208,26 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		return "", fmt.Errorf("start command: %w", err)
 	}
 
-	if outputMode == "separated" {
-		var stdoutBuf, stderrBuf bytes.Buffer
-		doneRead := make(chan struct{})
-		go func() {
-			defer close(doneRead)
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
-			go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
-			wg.Wait()
-		}()
-		err = proc.Wait()
-		<-doneRead
-		return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
-	}
-
-	// Read stdout and stderr with limits. Pipes close when process exits,
-	// so we must read in goroutines and wait for them after Wait().
-	var combined bytes.Buffer
+	// Read stdout and stderr concurrently to avoid deadlock, then wait for
+	// all reads to complete before calling proc.Wait — calling Wait first
+	// closes the pipe read-ends and races with the in-progress reads.
+	var stdoutBuf, stderrBuf bytes.Buffer
 	doneRead := make(chan struct{})
-
 	go func() {
 		defer close(doneRead)
-		_, _ = io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
-		_, _ = io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
+		go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
+		wg.Wait()
 	}()
-
+	<-doneRead
 	err = proc.Wait()
-	<-doneRead // Wait for all output to be read
 
-	return formatResult(combined.String(), err, ctx, timeout, displayCmd, store, bwStore), nil
+	if outputMode == "separated" {
+		return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
+	}
+	return formatResult(stdoutBuf.String()+stderrBuf.String(), err, ctx, timeout, displayCmd, store, bwStore), nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
@@ -294,39 +283,32 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		return "", fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr with limits
-	var combined bytes.Buffer
+	// Read stdout and stderr concurrently to avoid deadlock. All reads must
+	// complete before proc.Wait is called — Wait closes the pipe read-ends
+	// and would race with in-progress reads (Go 1.22+ parentIOPipes behavior).
 	var stdoutBuf, stderrBuf bytes.Buffer
 	doneRead := make(chan struct{})
+	go func() {
+		defer close(doneRead)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
+		go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
+		wg.Wait()
+	}()
 
-	if outputMode == "separated" {
-		go func() {
-			defer close(doneRead)
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() { defer wg.Done(); _, _ = io.Copy(&stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
-			go func() { defer wg.Done(); _, _ = io.Copy(&stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
-			wg.Wait()
-		}()
-	} else {
-		go func() {
-			defer close(doneRead)
-			_, _ = io.Copy(&combined, io.LimitReader(stdout, execMaxOutputBytes))
-			_, _ = io.Copy(&combined, io.LimitReader(stderr, execMaxOutputBytes))
-		}()
-	}
-
-	// Wait for completion or threshold
+	// done goroutine waits for all reads before calling proc.Wait so that
+	// pipe read-ends are not closed while reads are still in progress.
 	done := make(chan error, 1)
 	go func() {
+		<-doneRead
 		done <- proc.Wait()
 	}()
 
 	threshold := time.Duration(thresholdSecs) * time.Second
 	select {
 	case err := <-done:
-		// Command finished before threshold
-		<-doneRead // Wait for output reading to complete
+		// Command finished before threshold; reads already complete (done goroutine waited).
 		cmdCancel()
 		if bridge != nil {
 			bridge.Close()
@@ -334,7 +316,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		if outputMode == "separated" {
 			return formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore), nil
 		}
-		return formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
+		return formatResult(stdoutBuf.String()+stderrBuf.String(), err, cmdCtx, timeout, displayCmd, store, bwStore), nil
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
@@ -348,13 +330,12 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			if bridge != nil {
 				defer bridge.Close()
 			}
-			err := <-done
-			<-doneRead // Wait for output reading to complete
+			err := <-done // reads already complete (done goroutine waited)
 			var result string
 			if outputMode == "separated" {
 				result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
 			} else {
-				result = formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+				result = formatResult(stdoutBuf.String()+stderrBuf.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
 			}
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
 			notifier.Notify(sessionKey, msg)
@@ -377,13 +358,12 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			if bridge != nil {
 				defer bridge.Close()
 			}
-			err := <-done
-			<-doneRead
+			err := <-done // reads already complete (done goroutine waited)
 			var result string
 			if outputMode == "separated" {
 				result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
 			} else {
-				result = formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+				result = formatResult(stdoutBuf.String()+stderrBuf.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
 			}
 			msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
 			notifier.Notify(sessionKey, msg)
