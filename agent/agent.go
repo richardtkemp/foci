@@ -18,11 +18,13 @@ import (
 	"foci/anthropic"
 	"foci/compaction"
 	"foci/log"
+	"foci/mana"
 	"foci/memory"
 	"foci/prompts"
 	"foci/session"
 	"foci/state"
 	"foci/tools"
+	"foci/warnings"
 	"foci/workspace"
 )
 
@@ -95,7 +97,7 @@ type Agent struct {
 	SummaryContextChars         int                             // max chars of context to send to Haiku
 	MaxSummaryChars             int                             // max chars to auto-summarise (skip Haiku above this)
 	AutoSummarise               bool                            // enable auto-summarise of oversized tool results (default true)
-	Warnings                    *WarningQueue                   // nil disables warning injection into session
+	Warnings                    *warnings.Queue                 // nil disables warning injection into session
 	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
 	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
 	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
@@ -118,7 +120,7 @@ type Agent struct {
 	TurnLockWarnThreshold       time.Duration                   // warn if turn lock wait exceeds this (default 3m)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
-	ManaGoodFunc                func(float64, time.Time) bool   // returns true if mana is above invest threshold; nil = no indicator
+	ManaInvestInterval          time.Duration                   // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                 []anthropic.ToolDef             // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 
 	processing      int32 // atomic: number of in-flight HandleMessage calls
@@ -402,21 +404,21 @@ func (a *Agent) manaAndReset() (mana, reset string, good bool) {
 
 // computeManaGood evaluates whether current mana is above the invest threshold.
 func (a *Agent) computeManaGood(usage *anthropic.UsageResponse) bool {
-	if a.ManaGoodFunc == nil {
+	if a.ManaInvestInterval == 0 {
 		return false
 	}
 	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
 		return false
 	}
-	mana := 100 - *usage.FiveHour.Utilization
-	if mana < 0 {
-		mana = 0
+	manaVal := 100 - *usage.FiveHour.Utilization
+	if manaVal < 0 {
+		manaVal = 0
 	}
 	var resetsAt time.Time
 	if usage.FiveHour.ResetsAt != nil {
 		resetsAt, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
 	}
-	return a.ManaGoodFunc(mana, resetsAt)
+	return mana.IsGood(manaVal, resetsAt, a.ManaInvestInterval, time.Now())
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {

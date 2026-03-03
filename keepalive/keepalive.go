@@ -16,37 +16,26 @@ package keepalive
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	"foci/agent"
-	"foci/anthropic"
 	"foci/config"
 	"foci/log"
+	"foci/mana"
 	"foci/memory"
 	"foci/prompts"
-	"foci/session"
 	"foci/state"
+	"foci/warnings"
 )
 
 const (
 	tickInterval = 30 * time.Second
-	manaWindow   = 5 * time.Hour
-
-	// Minimum interval between usage API calls.
-	usagePollInterval = 60 * time.Second
 )
 
 // BranchFunc is called to dispatch a branch session. It receives the branch type
 // ("keepalive" or "background"), the prompt text, and whether to skip compaction.
 // It must handle branch creation and agent execution internally.
 type BranchFunc func(branchType, promptText string, noCompact bool)
-
-// WarningDispatchFunc is called to dispatch a proactive warning turn.
-// It receives the formatted warning text and should inject it as a user message
-// into the agent's default session, triggering a full agent turn.
-type WarningDispatchFunc func(warningText string)
 
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
@@ -57,16 +46,17 @@ type Runner struct {
 	mfCfg            config.MemoryFormationConfig
 	promptSearchDirs []string
 	todoStore        *memory.TodoStore
-	usageClient *anthropic.UsageClient
-	stateStore  *state.Store
-	branchFn    BranchFunc
+	stateStore       *state.Store
+	branchFn         BranchFunc
+	manaMonitor      *mana.Monitor
+	warningDispatcher *warnings.Dispatcher
 
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
 	lastInteraction       time.Time
 	keepaliveRunning      bool
 	backgroundRunning     bool
-	lastBackgroundEnded time.Time // when the last background session finished
+	lastBackgroundEnded   time.Time // when the last background session finished
 
 	// Memory formation state
 	lastMemoryFormation    time.Time
@@ -74,77 +64,43 @@ type Runner struct {
 	memoryFormationRunning bool
 	consolidationRunning   bool
 
-	// Proactive warning dispatch state
-	warningQueue              *agent.WarningQueue
-	warningDispatchFn         WarningDispatchFunc
-	warningActiveInterval     time.Duration
-	warningInactiveInterval   time.Duration
-	warningActivityThreshold  time.Duration
-	lastUserMessageTimeFn     func() time.Time
-	lastWarningDispatch       time.Time
-	warningDispatching        bool
-
-	// Cached mana state
-	lastUsagePoll        time.Time
-	cachedMana           float64 // 0-100 (100 = fully available)
-	cachedReset          time.Time
-	manaStalenessTimeout time.Duration
-
 	cancel context.CancelFunc
 	done   chan struct{}
 }
 
 // RunnerConfig holds all the dependencies for creating a Runner.
 type RunnerConfig struct {
-	AgentID         string
-	Keepalive       config.KeepaliveConfig
-	Background      config.BackgroundConfig
-	MemoryFormation config.MemoryFormationConfig
-	PromptSearchDirs []string // directories to search for prompt files (agent workspace, shared)
-	TodoStore       *memory.TodoStore
-	UsageClient     *anthropic.UsageClient
-	StateStore      *state.Store
-	BranchFunc      BranchFunc
-
-	// Proactive warning dispatch
-	WarningQueue              *agent.WarningQueue
-	WarningDispatchFn         WarningDispatchFunc
-	WarningActiveInterval     time.Duration
-	WarningInactiveInterval   time.Duration
-	WarningActivityThreshold  time.Duration
-	LastUserMessageTimeFn     func() time.Time
+	AgentID              string
+	Keepalive            config.KeepaliveConfig
+	Background           config.BackgroundConfig
+	MemoryFormation      config.MemoryFormationConfig
+	PromptSearchDirs     []string // directories to search for prompt files (agent workspace, shared)
+	TodoStore            *memory.TodoStore
+	StateStore           *state.Store
+	BranchFunc           BranchFunc
+	ManaMonitor          *mana.Monitor
+	WarningDispatcher    *warnings.Dispatcher
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
 func New(cfg RunnerConfig) *Runner {
-	manaStaleness, err := time.ParseDuration(cfg.Background.ManaStalenessTimeout)
-	if err != nil || manaStaleness <= 0 {
-		manaStaleness = 10 * time.Minute
-	}
-
 	now := time.Now()
 	r := &Runner{
-		log:                      log.NewComponentLogger("keepalive:" + cfg.AgentID),
-		agentID:                  cfg.AgentID,
-		kaCfg:                    cfg.Keepalive,
-		bgCfg:                    cfg.Background,
-		mfCfg:                    cfg.MemoryFormation,
-		promptSearchDirs:         cfg.PromptSearchDirs,
-		manaStalenessTimeout:     manaStaleness,
-		todoStore:                cfg.TodoStore,
-		usageClient:              cfg.UsageClient,
-		stateStore:               cfg.StateStore,
-		branchFn:                 cfg.BranchFunc,
-		warningQueue:             cfg.WarningQueue,
-		warningDispatchFn:        cfg.WarningDispatchFn,
-		warningActiveInterval:    cfg.WarningActiveInterval,
-		warningInactiveInterval:  cfg.WarningInactiveInterval,
-		warningActivityThreshold: cfg.WarningActivityThreshold,
-		lastUserMessageTimeFn:    cfg.LastUserMessageTimeFn,
-		lastCacheWarmed:          now,
-		lastInteraction:          now,
-		lastMemoryFormation:      now,
-		done:                     make(chan struct{}),
+		log:               log.NewComponentLogger("keepalive:" + cfg.AgentID),
+		agentID:           cfg.AgentID,
+		kaCfg:             cfg.Keepalive,
+		bgCfg:             cfg.Background,
+		mfCfg:             cfg.MemoryFormation,
+		promptSearchDirs:  cfg.PromptSearchDirs,
+		todoStore:         cfg.TodoStore,
+		stateStore:        cfg.StateStore,
+		branchFn:          cfg.BranchFunc,
+		manaMonitor:       cfg.ManaMonitor,
+		warningDispatcher: cfg.WarningDispatcher,
+		lastCacheWarmed:   now,
+		lastInteraction:   now,
+		lastMemoryFormation: now,
+		done:              make(chan struct{}),
 	}
 	// Restore consolidation timestamp from persistent state
 	if cfg.StateStore != nil {
@@ -199,7 +155,9 @@ func (r *Runner) run(ctx context.Context) {
 			r.maybeBackgroundWork(ctx)
 			r.maybeMemoryFormation()
 			r.maybeConsolidation()
-			r.maybeWarningDispatch()
+			if r.warningDispatcher != nil {
+				r.warningDispatcher.MaybeFire()
+			}
 		}
 	}
 }
@@ -289,8 +247,14 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	}
 
 	// Check mana
-	if !r.manaIsGood(ctx) {
-		return
+	if r.manaMonitor != nil {
+		investInterval, err := time.ParseDuration(r.bgCfg.InvestInterval)
+		if err != nil {
+			investInterval = 30 * time.Minute
+		}
+		if !r.manaMonitor.IsGoodFor(ctx, investInterval) {
+			return
+		}
 	}
 
 	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background.md", prompts.Background(), r.promptSearchDirs...)
@@ -417,209 +381,4 @@ func (r *Runner) maybeConsolidation() {
 		}()
 		r.branchFn("consolidation", promptText, true)
 	}()
-}
-
-// maybeWarningDispatch checks for pending warnings and dispatches them proactively
-// as a user-role message. Rate limited by user activity: active interval if the user
-// has been recently active, inactive interval otherwise.
-func (r *Runner) maybeWarningDispatch() {
-	if r.warningQueue == nil || r.warningDispatchFn == nil {
-		return
-	}
-
-	if !r.warningQueue.Pending() {
-		return
-	}
-
-	r.mu.Lock()
-	dispatching := r.warningDispatching
-	sinceLastDispatch := time.Since(r.lastWarningDispatch)
-	r.mu.Unlock()
-
-	if dispatching {
-		return
-	}
-
-	// Determine rate limit interval based on user activity
-	interval := r.warningInactiveInterval
-	if r.lastUserMessageTimeFn != nil {
-		lastMsg := r.lastUserMessageTimeFn()
-		if !lastMsg.IsZero() && time.Since(lastMsg) < r.warningActivityThreshold {
-			interval = r.warningActiveInterval
-		}
-	}
-
-	if sinceLastDispatch < interval {
-		return
-	}
-
-	// Drain and format
-	warnings := r.warningQueue.Drain()
-	if len(warnings) == 0 {
-		return
-	}
-
-	body := ""
-	for i, w := range warnings {
-		if i > 0 {
-			body += "\n"
-		}
-		body += "- " + w
-	}
-	text := prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
-
-	r.mu.Lock()
-	r.warningDispatching = true
-	r.lastWarningDispatch = time.Now()
-	r.mu.Unlock()
-
-	r.log.Infof("dispatching %d proactive warnings for agent %s", len(warnings), r.agentID)
-
-	go func() {
-		defer func() {
-			r.mu.Lock()
-			r.warningDispatching = false
-			r.mu.Unlock()
-		}()
-		r.warningDispatchFn(text)
-	}()
-}
-
-// manaIsGood checks whether we can afford to run background work.
-// Uses the manamometer: linear interpolation of expected mana over the 5-hour window.
-func (r *Runner) manaIsGood(ctx context.Context) bool {
-	if r.usageClient == nil {
-		return true // no usage client = no rate limiting
-	}
-
-	r.mu.Lock()
-	needPoll := time.Since(r.lastUsagePoll) >= usagePollInterval
-	r.mu.Unlock()
-
-	if needPoll {
-		usage, err := r.usageClient.GetUsage(ctx)
-		if err != nil {
-			r.log.Warnf("usage API: %v", err)
-			return false // err on the side of caution
-		}
-
-		r.mu.Lock()
-		r.lastUsagePoll = time.Now()
-		if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
-			r.cachedMana = 100 - *usage.FiveHour.Utilization
-			if r.cachedMana < 0 {
-				r.cachedMana = 0
-			}
-		}
-		if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
-			r.cachedReset, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
-		}
-		r.mu.Unlock()
-	}
-
-	// Staleness guard: if the last successful poll is too old, deny spending.
-	r.mu.Lock()
-	pollAge := time.Since(r.lastUsagePoll)
-	staleThreshold := r.manaStalenessTimeout
-	r.mu.Unlock()
-
-	if r.lastUsagePoll.IsZero() || pollAge > staleThreshold {
-		r.log.Debugf("mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), staleThreshold)
-		return false
-	}
-
-	investInterval, err := time.ParseDuration(r.bgCfg.InvestInterval)
-	if err != nil {
-		investInterval = 30 * time.Minute
-	}
-
-	r.mu.Lock()
-	mana := r.cachedMana
-	resetsAt := r.cachedReset
-	r.mu.Unlock()
-
-	return ManaIsGood(mana, resetsAt, investInterval, time.Now())
-}
-
-// ManaIsGood implements the manamometer check. Exported for testing.
-//
-// Logic:
-//  1. Calculate time_since_reset = window - (resetsAt - now)
-//  2. If time_since_reset < investInterval: return false (investing period)
-//  3. expected_mana = 100 * (window - time_since_reset) / (window - investInterval)
-//  4. Return actualMana > expectedMana
-func ManaIsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration, now time.Time) bool {
-	if resetsAt.IsZero() {
-		return false // no data = don't spend
-	}
-
-	timeSinceReset := manaWindow - resetsAt.Sub(now)
-	if timeSinceReset < 0 {
-		timeSinceReset = 0
-	}
-
-	// Investing period — don't spend
-	if timeSinceReset < investInterval {
-		return false
-	}
-
-	// Linear interpolation: expected mana line from 100% at investInterval to 0% at window end
-	denominator := manaWindow - investInterval
-	if denominator <= 0 {
-		return actualMana > 0
-	}
-
-	expectedMana := 100 * float64(manaWindow-timeSinceReset) / float64(denominator)
-
-	return actualMana > expectedMana
-}
-
-// OrientationBuilder constructs orientation text for a branch session given the
-// branch key, parent key, and branch type. Injected from main to avoid duplicating
-// prompt defaults.
-type OrientationBuilder func(branchKey, parentKey, branchType string) string
-
-// BuildBranchFunc creates a BranchFunc that dispatches branch sessions using the
-// provided agent infrastructure. This is the bridge between the keepalive package
-// and the main package's agent/session handling.
-func BuildBranchFunc(
-	agentID string,
-	ag *agent.Agent,
-	sessions *session.Store,
-	defaultSessionKey func() string,
-	buildOrientation OrientationBuilder,
-	ctx context.Context,
-) BranchFunc {
-	return func(branchType, promptText string, noCompact bool) {
-		parentKey := defaultSessionKey()
-		if parentKey == "" {
-			log.Warnf("keepalive", "no default session for agent %q, skipping %s", agentID, branchType)
-			return
-		}
-
-		branchID := fmt.Sprintf("%s-%d", branchType, time.Now().Unix())
-		branchKey := fmt.Sprintf("agent:%s:cron:%s", agentID, branchID)
-
-		orientText := buildOrientation(branchKey, parentKey, branchType)
-		err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
-			NoResetHook:        true,
-			OrientationMessage: orientText,
-		})
-		if err != nil {
-			log.Errorf("keepalive", "%s branch error: %v", branchType, err)
-			return
-		}
-
-		turnCtx := agent.WithTrigger(ctx, branchType)
-		if noCompact {
-			turnCtx = agent.WithNoCompact(turnCtx)
-		}
-
-		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
-		if err != nil {
-			log.Errorf("keepalive", "%s turn error: %v", branchType, err)
-			return
-		}
-		_ = resp // keepalive/background responses are not delivered to user
-	}
 }

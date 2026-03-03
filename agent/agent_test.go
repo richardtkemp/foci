@@ -19,6 +19,7 @@ import (
 	"foci/session"
 	"foci/state"
 	"foci/tools"
+	"foci/warnings"
 	"foci/workspace"
 )
 
@@ -1963,7 +1964,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
 
 		var notified []string
-		warnings := NewWarningQueue(0, 0)
+		warnQ := warnings.NewQueue(0, 0)
 		ag := &Agent{
 			Client:    client,
 			Sessions:  store,
@@ -1971,7 +1972,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			Bootstrap: bootstrap,
 			Compactor: compactor,
 			Model:     "claude-haiku-4-5",
-			Warnings:  warnings,
+			Warnings:  warnQ,
 			CompactionNotifyFunc: func(session string, msg string) {
 				notified = append(notified, msg)
 			},
@@ -2014,7 +2015,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 
 		// No warning should be pushed for no_compact sessions (removed in 63f8f6b2)
-		warned := warnings.Drain()
+		warned := warnQ.Drain()
 		if len(warned) != 0 {
 			t.Fatalf("expected 0 warnings for no_compact session, got %d: %v", len(warned), warned)
 		}

@@ -26,6 +26,7 @@ import (
 	"foci/config"
 	"foci/keepalive"
 	"foci/log"
+	"foci/mana"
 	"foci/memory"
 	"foci/prompts"
 	"foci/resources"
@@ -38,6 +39,7 @@ import (
 	"foci/telegram"
 	"foci/tools"
 	"foci/voice"
+	"foci/warnings"
 	"foci/workspace"
 )
 
@@ -846,72 +848,79 @@ func main() {
 		// Keepalive & background work runner (per-agent config, falls back to global)
 		if acfg.Keepalive.Enabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) || acfg.InjectAgentWarnings {
 			kaOrientPrompt := resolveString(acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
-			branchFn := keepalive.BuildBranchFunc(
+			branchFn := buildBranchFunc(
 				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
 				func(branchKey, parentKey, branchType string) string {
 					return buildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false, inst.promptSearchDirs)
 				},
 				ctx,
 			)
-			// Proactive warning dispatch config
-			var warningQueue *agent.WarningQueue
-			var warningDispatchFn keepalive.WarningDispatchFunc
-			var warningActiveInterval, warningInactiveInterval, warningActivityThreshold time.Duration
-			var lastUserMessageTimeFn func() time.Time
 
+			// Mana monitor for background work throttling
+			manaStaleness, err := time.ParseDuration(acfg.Background.ManaStalenessTimeout)
+			if err != nil || manaStaleness <= 0 {
+				manaStaleness = 10 * time.Minute
+			}
+			manaMonitor := mana.NewMonitor(usageClient, manaStaleness)
+
+			// Proactive warning dispatcher
+			var warningDispatcher *warnings.Dispatcher
 			if acfg.InjectAgentWarnings {
-				warningQueue = inst.ag.Warnings // may be nil until log hook wires it; set after setupAgent
-				warningActiveInterval, _ = time.ParseDuration(cfg.Logging.WarningProactiveActiveInterval)
-				warningInactiveInterval, _ = time.ParseDuration(cfg.Logging.WarningProactiveInactiveInterval)
-				warningActivityThreshold, _ = time.ParseDuration(cfg.Logging.WarningProactiveActivityThreshold)
+				warningActiveInterval, _ := time.ParseDuration(cfg.Logging.WarningProactiveActiveInterval)
+				warningInactiveInterval, _ := time.ParseDuration(cfg.Logging.WarningProactiveInactiveInterval)
+				warningActivityThreshold, _ := time.ParseDuration(cfg.Logging.WarningProactiveActivityThreshold)
 
 				agentID := acfg.ID
 				agentInst := inst
-				warningDispatchFn = func(warningText string) {
-					sk := agentInst.defaultSessionKey()
-					if sk == "" {
-						log.Warnf("keepalive", "no default session for proactive warning dispatch on agent %q", agentID)
-						return
-					}
-					resp, err := agentInst.ag.HandleMessage(agent.WithTrigger(ctx, "proactive_warning"), sk, warningText)
-					if err != nil {
-						log.Errorf("keepalive", "proactive warning turn error: %v", err)
-						return
-					}
-					if resp == "" {
-						return
-					}
-					if bot := botMgr.BotForSessionOrPrimary(sk, agentID); bot != nil {
-						if err := bot.SendText(resp); err != nil {
-							log.Errorf("keepalive", "proactive warning telegram delivery: %v", err)
+				warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
+					Queue: inst.ag.Warnings,
+					FormatFn: func(body string) string {
+						return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
+					},
+					DispatchFn: func(warningText string) {
+						sk := agentInst.defaultSessionKey()
+						if sk == "" {
+							log.Warnf("keepalive", "no default session for proactive warning dispatch on agent %q", agentID)
+							return
 						}
-					}
-				}
-				lastUserMessageTimeFn = func() time.Time {
-					sk := agentInst.defaultSessionKey()
-					if sk == "" {
-						return time.Time{}
-					}
-					return agentInst.ag.LastUserMessageTime(sk)
-				}
+						resp, err := agentInst.ag.HandleMessage(agent.WithTrigger(ctx, "proactive_warning"), sk, warningText)
+						if err != nil {
+							log.Errorf("keepalive", "proactive warning turn error: %v", err)
+							return
+						}
+						if resp == "" {
+							return
+						}
+						if bot := botMgr.BotForSessionOrPrimary(sk, agentID); bot != nil {
+							if err := bot.SendText(resp); err != nil {
+								log.Errorf("keepalive", "proactive warning telegram delivery: %v", err)
+							}
+						}
+					},
+					ActiveInterval:    warningActiveInterval,
+					InactiveInterval:  warningInactiveInterval,
+					ActivityThreshold: warningActivityThreshold,
+					LastUserMessageTimeFn: func() time.Time {
+						sk := agentInst.defaultSessionKey()
+						if sk == "" {
+							return time.Time{}
+						}
+						return agentInst.ag.LastUserMessageTime(sk)
+					},
+				})
 			}
 
 			inst.kaRunner = keepalive.New(keepalive.RunnerConfig{
-				AgentID:                   acfg.ID,
-				Keepalive:                 acfg.Keepalive,
-				Background:                acfg.Background,
-				MemoryFormation:           acfg.MemoryFormation,
-				PromptSearchDirs:          inst.promptSearchDirs,
-				TodoStore:                 mem.todoStore,
-				UsageClient:               usageClient,
-				StateStore:                stateStore,
-				BranchFunc:                branchFn,
-				WarningQueue:              warningQueue,
-				WarningDispatchFn:         warningDispatchFn,
-				WarningActiveInterval:     warningActiveInterval,
-				WarningInactiveInterval:   warningInactiveInterval,
-				WarningActivityThreshold:  warningActivityThreshold,
-				LastUserMessageTimeFn:     lastUserMessageTimeFn,
+				AgentID:           acfg.ID,
+				Keepalive:         acfg.Keepalive,
+				Background:        acfg.Background,
+				MemoryFormation:   acfg.MemoryFormation,
+				PromptSearchDirs:  inst.promptSearchDirs,
+				TodoStore:         mem.todoStore,
+				StateStore:        stateStore,
+				BranchFunc:        branchFn,
+				ManaMonitor:       manaMonitor,
+				WarningDispatcher: warningDispatcher,
 			})
 			inst.kaRunner.Start(ctx)
 
@@ -1642,14 +1651,12 @@ func setupAgent(p setupParams) *agentInstance {
 		TurnLockWarnThreshold:       parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
-		ManaGoodFunc: func() func(float64, time.Time) bool {
-			investInterval, err := time.ParseDuration(acfg.Background.InvestInterval)
+		ManaInvestInterval: func() time.Duration {
+			d, err := time.ParseDuration(acfg.Background.InvestInterval)
 			if err != nil {
-				investInterval = 30 * time.Minute
+				return 30 * time.Minute
 			}
-			return func(mana float64, resetsAt time.Time) bool {
-				return keepalive.ManaIsGood(mana, resetsAt, investInterval, time.Now())
-			}
+			return d
 		}(),
 	}
 	if p.store != nil && p.bwStore != nil {
@@ -1676,7 +1683,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if err != nil {
 			warningWindow = 5 * time.Minute
 		}
-		ag.Warnings = agent.NewWarningQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
+		ag.Warnings = warnings.NewQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
 	}
 
 	// Mana threshold warnings (per-agent thresholds override global)
@@ -3309,6 +3316,51 @@ func seedDefaultPrompts(dir string) {
 			continue
 		}
 		log.Infof("main", "seeded default prompt: %s", path)
+	}
+}
+
+// buildBranchFunc creates a keepalive.BranchFunc that dispatches branch sessions
+// using the provided agent infrastructure. This is the bridge between the keepalive
+// package and the main package's agent/session handling.
+func buildBranchFunc(
+	agentID string,
+	ag *agent.Agent,
+	sessions *session.Store,
+	defaultSessionKey func() string,
+	buildOrientation func(branchKey, parentKey, branchType string) string,
+	ctx context.Context,
+) keepalive.BranchFunc {
+	return func(branchType, promptText string, noCompact bool) {
+		parentKey := defaultSessionKey()
+		if parentKey == "" {
+			log.Warnf("keepalive", "no default session for agent %q, skipping %s", agentID, branchType)
+			return
+		}
+
+		branchID := fmt.Sprintf("%s-%d", branchType, time.Now().Unix())
+		branchKey := fmt.Sprintf("agent:%s:cron:%s", agentID, branchID)
+
+		orientText := buildOrientation(branchKey, parentKey, branchType)
+		err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+			NoResetHook:        true,
+			OrientationMessage: orientText,
+		})
+		if err != nil {
+			log.Errorf("keepalive", "%s branch error: %v", branchType, err)
+			return
+		}
+
+		turnCtx := agent.WithTrigger(ctx, branchType)
+		if noCompact {
+			turnCtx = agent.WithNoCompact(turnCtx)
+		}
+
+		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
+		if err != nil {
+			log.Errorf("keepalive", "%s turn error: %v", branchType, err)
+			return
+		}
+		_ = resp // keepalive/background responses are not delivered to user
 	}
 }
 

@@ -1,4 +1,4 @@
-package agent
+package warnings
 
 import (
 	"strings"
@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func TestWarningQueue_PushAndDrain(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_PushAndDrain(t *testing.T) {
+	q := NewQueue(0, 0)
 
 	q.Push("WARN", "config", "unknown key: foo")
 	q.Push("ERROR", "telegram", "get updates failed")
@@ -29,15 +29,15 @@ func TestWarningQueue_PushAndDrain(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_DrainEmpty(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_DrainEmpty(t *testing.T) {
+	q := NewQueue(0, 0)
 	if warnings := q.Drain(); warnings != nil {
 		t.Errorf("Drain() on empty queue = %v, want nil", warnings)
 	}
 }
 
-func TestWarningQueue_MaxSize(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_MaxSize(t *testing.T) {
+	q := NewQueue(0, 0)
 	q.maxSize = 3
 
 	for i := 0; i < 10; i++ {
@@ -49,8 +49,8 @@ func TestWarningQueue_MaxSize(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Format(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_Format(t *testing.T) {
+	q := NewQueue(0, 0)
 	q.Push("WARN", "config", "unknown key: foo.bar")
 
 	warnings := q.Drain()
@@ -88,14 +88,14 @@ func TestNormalizeWarning(t *testing.T) {
 
 // --- Rate-limiting tests ---
 
-func newTestQueue(max int, window time.Duration) (*WarningQueue, *time.Time) {
+func newTestQueue(max int, window time.Duration) (*Queue, *time.Time) {
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	q := NewWarningQueue(max, window)
+	q := NewQueue(max, window)
 	q.nowFunc = func() time.Time { return now }
 	return q, &now
 }
 
-func TestWarningQueue_Dedup_AllowsUpToMax(t *testing.T) {
+func TestQueue_Dedup_AllowsUpToMax(t *testing.T) {
 	q, _ := newTestQueue(3, 5*time.Minute)
 
 	for i := 0; i < 3; i++ {
@@ -113,7 +113,7 @@ func TestWarningQueue_Dedup_AllowsUpToMax(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Dedup_SuppressesAfterMax(t *testing.T) {
+func TestQueue_Dedup_SuppressesAfterMax(t *testing.T) {
 	q, _ := newTestQueue(2, 5*time.Minute)
 
 	for i := 0; i < 10; i++ {
@@ -134,7 +134,7 @@ func TestWarningQueue_Dedup_SuppressesAfterMax(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Dedup_WindowExpiry(t *testing.T) {
+func TestQueue_Dedup_WindowExpiry(t *testing.T) {
 	q, now := newTestQueue(2, 5*time.Minute)
 
 	// Fill window
@@ -155,7 +155,7 @@ func TestWarningQueue_Dedup_WindowExpiry(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Dedup_DifferentKeysIndependent(t *testing.T) {
+func TestQueue_Dedup_DifferentKeysIndependent(t *testing.T) {
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "telegram", "error A")
@@ -168,7 +168,7 @@ func TestWarningQueue_Dedup_DifferentKeysIndependent(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Dedup_NormalizationGroups(t *testing.T) {
+func TestQueue_Dedup_NormalizationGroups(t *testing.T) {
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	// These should all normalize to the same key
@@ -190,7 +190,7 @@ func TestWarningQueue_Dedup_NormalizationGroups(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Dedup_DrainResetsSuppressed(t *testing.T) {
+func TestQueue_Dedup_DrainResetsSuppressed(t *testing.T) {
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "test", "error")
@@ -215,7 +215,7 @@ func TestWarningQueue_Dedup_DrainResetsSuppressed(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Dedup_DrainPrunesExpired(t *testing.T) {
+func TestQueue_Dedup_DrainPrunesExpired(t *testing.T) {
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "test", "error")
@@ -238,22 +238,22 @@ func TestWarningQueue_Dedup_DrainPrunesExpired(t *testing.T) {
 
 // --- Pending() tests ---
 
-func TestWarningQueue_Pending_Empty(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_Pending_Empty(t *testing.T) {
+	q := NewQueue(0, 0)
 	if q.Pending() {
 		t.Error("Pending() on empty queue should be false")
 	}
 }
 
-func TestWarningQueue_Pending_WithWarnings(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_Pending_WithWarnings(t *testing.T) {
+	q := NewQueue(0, 0)
 	q.Push("WARN", "test", "something happened")
 	if !q.Pending() {
 		t.Error("Pending() with queued warnings should be true")
 	}
 }
 
-func TestWarningQueue_Pending_SuppressedOnly(t *testing.T) {
+func TestQueue_Pending_SuppressedOnly(t *testing.T) {
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	// One allowed, two suppressed
@@ -275,8 +275,8 @@ func TestWarningQueue_Pending_SuppressedOnly(t *testing.T) {
 	}
 }
 
-func TestWarningQueue_Pending_AfterDrain(t *testing.T) {
-	q := NewWarningQueue(0, 0)
+func TestQueue_Pending_AfterDrain(t *testing.T) {
+	q := NewQueue(0, 0)
 	q.Push("WARN", "test", "something")
 	q.Drain()
 	if q.Pending() {
@@ -284,36 +284,7 @@ func TestWarningQueue_Pending_AfterDrain(t *testing.T) {
 	}
 }
 
-// --- LastUserMessageTime tests ---
-
-func TestLastUserMessageTime_Default(t *testing.T) {
-	a := &Agent{}
-	got := a.LastUserMessageTime("test-session")
-	if !got.IsZero() {
-		t.Errorf("LastUserMessageTime for new session = %v, want zero", got)
-	}
-}
-
-func TestLastUserMessageTime_AfterSeed(t *testing.T) {
-	a := &Agent{}
-	sm := a.getSessionMeta("test-session")
-	now := time.Now()
-	sm.lastMessageTime = now
-
-	got := a.LastUserMessageTime("test-session")
-	if !got.Equal(now) {
-		t.Errorf("LastUserMessageTime = %v, want %v", got, now)
-	}
-}
-
-func TestIsSystemMessage_ProactiveWarnings(t *testing.T) {
-	if !isSystemMessage("[proactive system warnings]\n- [WARN] disk full") {
-		t.Error("isSystemMessage should recognize proactive system warnings prefix")
-	}
-	if isSystemMessage("Hello, how are you?") {
-		t.Error("isSystemMessage should not match regular messages")
-	}
-}
+// --- FormatDuration tests ---
 
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
@@ -328,9 +299,9 @@ func TestFormatDuration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
-			got := formatDuration(tt.d)
+			got := FormatDuration(tt.d)
 			if got != tt.want {
-				t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
+				t.Errorf("FormatDuration(%v) = %q, want %q", tt.d, got, tt.want)
 			}
 		})
 	}
