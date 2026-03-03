@@ -2535,10 +2535,14 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 
 	// Wire rate limit notifications to Telegram
 	ag.RateLimitFunc = func(retryAfter int) {
-		msg := "I've hit my rate limit (mana exhausted). Mana refills on a rolling window — should have capacity again soon."
+		msg := "I've run out of mana, it will reset in ~5 hours."
 		if retryAfter > 0 {
 			mins := (retryAfter + 59) / 60
-			msg = fmt.Sprintf("I've hit my rate limit (mana exhausted). Should have capacity again in roughly %d minutes.", mins)
+			if mins >= 60 {
+				msg = fmt.Sprintf("I've run out of mana, it will reset in ~%dh %dm.", mins/60, mins%60)
+			} else {
+				msg = fmt.Sprintf("I've run out of mana, it will reset in ~%d minutes.", mins)
+			}
 		}
 		primaryBot.SendNotification("⚡ " + msg)
 	}
