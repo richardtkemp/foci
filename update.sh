@@ -52,7 +52,7 @@ for svcfile in /etc/systemd/system/foci*.service; do
             echo ""
             echo "## Changes"
             echo ""
-            git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" log --oneline "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null || echo "(could not read git log)"
+            git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" log --format='- **%s**%n%n%w(0,2,2)%b' "$OLD_COMMIT..$NEW_COMMIT" 2>/dev/null || echo "(could not read git log)"
             echo ""
             echo "## Instructions"
             echo ""
