@@ -3,7 +3,7 @@ package session
 import (
 	"testing"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
 func TestListChatSessions_Empty(t *testing.T) {
@@ -24,9 +24,9 @@ func TestListChatSessions_WithSessions(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create two chat sessions
-	store.Append("agent:test:chat:111", anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")})
-	store.Append("agent:test:chat:111", anthropic.Message{Role: "assistant", Content: anthropic.TextContent("hello")})
-	store.Append("agent:test:chat:222", anthropic.Message{Role: "user", Content: anthropic.TextContent("hey")})
+	store.Append("agent:test:chat:111", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.Append("agent:test:chat:111", provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
+	store.Append("agent:test:chat:222", provider.Message{Role: "user", Content: provider.TextContent("hey")})
 
 	sessions, err := store.ListChatSessions("test")
 	if err != nil {
@@ -61,8 +61,8 @@ func TestListChatSessions_IgnoresNonChat(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a main session and a chat session
-	store.Append("agent:test:main", anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")})
-	store.Append("agent:test:chat:111", anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")})
+	store.Append("agent:test:main", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.Append("agent:test:chat:111", provider.Message{Role: "user", Content: provider.TextContent("hi")})
 
 	sessions, err := store.ListChatSessions("test")
 	if err != nil {
@@ -80,8 +80,8 @@ func TestListChatSessions_DifferentAgents(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	store.Append("agent:alice:chat:111", anthropic.Message{Role: "user", Content: anthropic.TextContent("hi")})
-	store.Append("agent:bob:chat:222", anthropic.Message{Role: "user", Content: anthropic.TextContent("hey")})
+	store.Append("agent:alice:chat:111", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.Append("agent:bob:chat:222", provider.Message{Role: "user", Content: provider.TextContent("hey")})
 
 	// Should only list alice's sessions
 	sessions, err := store.ListChatSessions("alice")

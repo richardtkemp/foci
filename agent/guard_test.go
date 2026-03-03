@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"foci/anthropic"
+	"foci/provider"
 )
 
 func TestGuardToolResult_UnderLimit(t *testing.T) {
@@ -274,8 +275,8 @@ func TestGuardToolResult_FileExtension(t *testing.T) {
 // It captures the request and returns a canned response.
 type mockSendMessage struct {
 	called  bool
-	request *anthropic.MessageRequest
-	resp    *anthropic.MessageResponse
+	request *provider.MessageRequest
+	resp    *provider.MessageResponse
 	err     error
 }
 
@@ -286,10 +287,10 @@ func TestGuardToolResult_AutoSummary(t *testing.T) {
 	// Create a fake HTTP server that returns a canned Haiku response
 	client := &anthropic.Client{} // will be replaced by mock
 	mock := &mockSendMessage{
-		resp: &anthropic.MessageResponse{
+		resp: &provider.MessageResponse{
 			Role:    "assistant",
-			Content: []anthropic.ContentBlock{{Type: "text", Text: "Summary: lots of x characters"}},
-			Usage:   anthropic.Usage{InputTokens: 50, OutputTokens: 10},
+			Content: []provider.ContentBlock{{Type: "text", Text: "Summary: lots of x characters"}},
+			Usage:   provider.Usage{InputTokens: 50, OutputTokens: 10},
 		},
 	}
 
@@ -359,15 +360,15 @@ func TestRecentContext_Empty(t *testing.T) {
 		t.Errorf("expected empty string for nil messages, got %q", got)
 	}
 
-	got = recentContext([]anthropic.Message{}, 5, 6000)
+	got = recentContext([]provider.Message{}, 5, 6000)
 	if got != "" {
 		t.Errorf("expected empty string for empty messages, got %q", got)
 	}
 }
 
 func TestRecentContext_ZeroTurns(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("hello")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
 	}
 	got := recentContext(msgs, 0, 6000)
 	if got != "" {
@@ -376,8 +377,8 @@ func TestRecentContext_ZeroTurns(t *testing.T) {
 }
 
 func TestRecentContext_ZeroChars(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("hello")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
 	}
 	got := recentContext(msgs, 5, 0)
 	if got != "" {
@@ -386,10 +387,10 @@ func TestRecentContext_ZeroChars(t *testing.T) {
 }
 
 func TestRecentContext_BasicMessages(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("What is Go?")},
-		{Role: "assistant", Content: anthropic.TextContent("Go is a programming language.")},
-		{Role: "user", Content: anthropic.TextContent("Show me the code.")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("What is Go?")},
+		{Role: "assistant", Content: provider.TextContent("Go is a programming language.")},
+		{Role: "user", Content: provider.TextContent("Show me the code.")},
 	}
 	got := recentContext(msgs, 5, 6000)
 
@@ -413,12 +414,12 @@ func TestRecentContext_BasicMessages(t *testing.T) {
 }
 
 func TestRecentContext_TurnLimit(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("msg1")},
-		{Role: "assistant", Content: anthropic.TextContent("msg2")},
-		{Role: "user", Content: anthropic.TextContent("msg3")},
-		{Role: "assistant", Content: anthropic.TextContent("msg4")},
-		{Role: "user", Content: anthropic.TextContent("msg5")},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("msg1")},
+		{Role: "assistant", Content: provider.TextContent("msg2")},
+		{Role: "user", Content: provider.TextContent("msg3")},
+		{Role: "assistant", Content: provider.TextContent("msg4")},
+		{Role: "user", Content: provider.TextContent("msg5")},
 	}
 	got := recentContext(msgs, 2, 6000)
 
@@ -431,9 +432,9 @@ func TestRecentContext_TurnLimit(t *testing.T) {
 }
 
 func TestRecentContext_CharLimit(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("short")},
-		{Role: "assistant", Content: anthropic.TextContent(strings.Repeat("a", 100))},
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("short")},
+		{Role: "assistant", Content: provider.TextContent(strings.Repeat("a", 100))},
 	}
 	got := recentContext(msgs, 5, 20)
 
@@ -451,15 +452,15 @@ func TestRecentContext_CharLimit(t *testing.T) {
 }
 
 func TestRecentContext_SkipsToolBlocks(t *testing.T) {
-	msgs := []anthropic.Message{
-		{Role: "user", Content: anthropic.TextContent("run ls")},
-		{Role: "assistant", Content: []anthropic.ContentBlock{
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("run ls")},
+		{Role: "assistant", Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "t1", Name: "shell", Input: json.RawMessage(`{"cmd":"ls"}`)},
 		}},
-		{Role: "user", Content: []anthropic.ContentBlock{
+		{Role: "user", Content: []provider.ContentBlock{
 			{Type: "tool_result", ToolUseID: "t1", Content: "file1\nfile2"},
 		}},
-		{Role: "assistant", Content: anthropic.TextContent("Here are the files.")},
+		{Role: "assistant", Content: provider.TextContent("Here are the files.")},
 	}
 	got := recentContext(msgs, 10, 6000)
 

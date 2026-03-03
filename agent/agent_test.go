@@ -15,6 +15,7 @@ import (
 
 	"foci/anthropic"
 	"foci/compaction"
+	"foci/provider"
 	"foci/memory"
 	"foci/session"
 	"foci/state"
@@ -25,9 +26,9 @@ import (
 
 // mockServer returns a test HTTP server that returns canned Anthropic responses.
 // responseFunc is called for each request and should return the MessageResponse.
-func mockServer(responseFunc func(req *anthropic.MessageRequest) *anthropic.MessageResponse) *httptest.Server {
+func mockServer(responseFunc func(req *provider.MessageRequest) *provider.MessageResponse) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req anthropic.MessageRequest
+		var req provider.MessageRequest
 		json.NewDecoder(r.Body).Decode(&req)
 
 		resp := responseFunc(&req)
@@ -44,14 +45,14 @@ func mockServer(responseFunc func(req *anthropic.MessageRequest) *anthropic.Mess
 
 func TestHandleMessageEndTurn(t *testing.T) {
 	// Set up mock API server
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Hello from mock!"),
+			Content:    provider.TextContent("Hello from mock!"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -94,16 +95,16 @@ func TestHandleMessageEndTurn(t *testing.T) {
 func TestHandleMessageWithToolUse(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 
 		if n == 1 {
 			// First call: respond with tool_use
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Let me run that."},
 					{
 						Type:  "tool_use",
@@ -113,18 +114,18 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 					},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
 
 		// Second call: after tool result, respond with end_turn
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("The tool returned: hello"),
+			Content:    provider.TextContent("The tool returned: hello"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 15},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
 		}
 	})
 	defer server.Close()
@@ -177,14 +178,14 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 func TestHandleMessageUnknownTool(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{
 						Type:  "tool_use",
 						ID:    "tu_001",
@@ -193,16 +194,16 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 					},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Sorry, that tool doesn't exist."),
+			Content:    provider.TextContent("Sorry, that tool doesn't exist."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -231,16 +232,16 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 }
 
 func TestHandleMessageSessionContinuity(t *testing.T) {
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		// Count messages in request to verify session history is sent
 		msgCount := len(req.Messages)
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent(fmt.Sprintf("Received %d messages", msgCount)),
+			Content:    provider.TextContent(fmt.Sprintf("Received %d messages", msgCount)),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -274,7 +275,7 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 func TestWithCacheBreakpoint(t *testing.T) {
 	tests := []struct {
 		name     string
-		messages []anthropic.Message
+		messages []provider.Message
 		wantIdx  int // index that should get cache_control (-1 for none)
 	}{
 		{
@@ -284,25 +285,25 @@ func TestWithCacheBreakpoint(t *testing.T) {
 		},
 		{
 			name: "single message",
-			messages: []anthropic.Message{
-				{Role: "user", Content: anthropic.TextContent("hi")},
+			messages: []provider.Message{
+				{Role: "user", Content: provider.TextContent("hi")},
 			},
 			wantIdx: -1,
 		},
 		{
 			name: "two messages",
-			messages: []anthropic.Message{
-				{Role: "user", Content: anthropic.TextContent("hi")},
-				{Role: "user", Content: anthropic.TextContent("second")},
+			messages: []provider.Message{
+				{Role: "user", Content: provider.TextContent("hi")},
+				{Role: "user", Content: provider.TextContent("second")},
 			},
 			wantIdx: 0, // second-to-last
 		},
 		{
 			name: "three messages",
-			messages: []anthropic.Message{
-				{Role: "user", Content: anthropic.TextContent("first")},
-				{Role: "assistant", Content: anthropic.TextContent("reply")},
-				{Role: "user", Content: anthropic.TextContent("second")},
+			messages: []provider.Message{
+				{Role: "user", Content: provider.TextContent("first")},
+				{Role: "assistant", Content: provider.TextContent("reply")},
+				{Role: "user", Content: provider.TextContent("second")},
 			},
 			wantIdx: 1, // second-to-last
 		},
@@ -346,17 +347,17 @@ func TestWithCacheBreakpoint(t *testing.T) {
 
 func TestCacheBreakpointInRequest(t *testing.T) {
 	// Verify that the API request includes cache_control but saved session does not
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("reply"),
+			Content:    provider.TextContent("reply"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -407,12 +408,12 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 
 func TestHandleMessageCancellation(t *testing.T) {
 	// Verify that a cancelled context causes HandleMessage to return ctx.Err()
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:   "msg_1",
 			Type: "message",
 			Role: "assistant",
-			Content: []anthropic.ContentBlock{
+			Content: []provider.ContentBlock{
 				{
 					Type:  "tool_use",
 					ID:    "tu_001",
@@ -421,7 +422,7 @@ func TestHandleMessageCancellation(t *testing.T) {
 				},
 			},
 			StopReason: "tool_use",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -471,14 +472,14 @@ func TestHandleMessageCancellation(t *testing.T) {
 }
 
 func TestIsProcessing(t *testing.T) {
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("done"),
+			Content:    provider.TextContent("done"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -608,30 +609,30 @@ func TestDeferredReply(t *testing.T) {
 	// Verify that text in tool_use responses is sent via ReplyFunc
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
 			// First response: text + tool_use (deferred reply scenario)
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Looking into this, give me a moment..."},
 					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
 		// Second response: final answer
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Here's the full answer."),
+			Content:    provider.TextContent("Here's the full answer."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 15},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
 		}
 	})
 	defer server.Close()
@@ -689,17 +690,17 @@ func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
 }
 
 func TestHandleMessageWithAttachments(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("I see a cat!"),
+			Content:    provider.TextContent("I see a cat!"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -760,17 +761,17 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 }
 
 func TestHandleMessageWithPDFAttachment(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("I read the PDF."),
+			Content:    provider.TextContent("I read the PDF."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -820,17 +821,17 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 }
 
 func TestHandleMessageWithPDFSavedPath(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Got it!"),
+			Content:    provider.TextContent("Got it!"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -863,14 +864,14 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("I see an image."),
+			Content:    provider.TextContent("I see an image."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -901,17 +902,17 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 
 func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 	// Verify HandleMessage (text-only) still works correctly
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -940,17 +941,17 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Got it!"),
+			Content:    provider.TextContent("Got it!"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -989,17 +990,17 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
 	defer server.Close()
@@ -1090,17 +1091,17 @@ func TestBuildMetaPrefix(t *testing.T) {
 }
 
 func TestMetadataInjectedInMessage(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -1124,7 +1125,7 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 
 	// The user message should have the meta prefix
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	text := anthropic.TextOf(lastMsg.Content)
+	text := provider.TextOf(lastMsg.Content)
 	if !strings.Contains(text, "[meta]") {
 		t.Errorf("user message missing [meta] prefix: %q", text)
 	}
@@ -1353,17 +1354,17 @@ func TestBuildMetaPrefix_Mana(t *testing.T) {
 }
 
 func TestDuplicateMessages(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -1384,7 +1385,7 @@ func TestDuplicateMessages(t *testing.T) {
 
 	// The user message text should contain the instruction twice
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	text := anthropic.TextOf(lastMsg.Content)
+	text := provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Do the thing"); count != 2 {
 		t.Errorf("expected user text duplicated (2 occurrences), got %d in: %q", count, text)
 	}
@@ -1396,24 +1397,24 @@ func TestDuplicateMessages(t *testing.T) {
 
 	// Saved session should also have the duplicated text (for cache coherence)
 	saved, _ := store.Load("agent:test:dup")
-	savedText := anthropic.TextOf(saved[0].Content)
+	savedText := provider.TextOf(saved[0].Content)
 	if count := strings.Count(savedText, "Do the thing"); count != 2 {
 		t.Errorf("saved session should have duplicated text, got %d occurrences", count)
 	}
 }
 
 func TestDuplicateMessagesDisabled(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -1433,24 +1434,24 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 	ag.HandleMessage(context.Background(), "agent:test:nodup", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	text := anthropic.TextOf(lastMsg.Content)
+	text := provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Do the thing"); count != 1 {
 		t.Errorf("expected user text once (no duplication), got %d in: %q", count, text)
 	}
 }
 
 func TestDuplicateMessagesSkippedForWake(t *testing.T) {
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -1472,7 +1473,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	ag.HandleMessage(wakeCtx, "agent:test:wake", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	text := anthropic.TextOf(lastMsg.Content)
+	text := provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Do the thing"); count != 1 {
 		t.Errorf("wake trigger should not duplicate: expected 1 occurrence, got %d", count)
 	}
@@ -1482,7 +1483,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	ag.HandleMessage(kaCtx, "agent:test:ka", "Check stuff")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
-	text = anthropic.TextOf(lastMsg.Content)
+	text = provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Check stuff"); count != 1 {
 		t.Errorf("keepalive trigger should not duplicate: expected 1 occurrence, got %d", count)
 	}
@@ -1492,7 +1493,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	ag.HandleMessage(userCtx, "agent:test:user", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
-	text = anthropic.TextOf(lastMsg.Content)
+	text = provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Do the thing"); count != 2 {
 		t.Errorf("user trigger should duplicate: expected 2 occurrences, got %d", count)
 	}
@@ -1502,7 +1503,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	ag.HandleMessage(tgCtx, "agent:test:tg", "Say something")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
-	text = anthropic.TextOf(lastMsg.Content)
+	text = provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Say something"); count != 2 {
 		t.Errorf("telegram trigger should duplicate: expected 2 occurrences, got %d", count)
 	}
@@ -1512,7 +1513,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	ag.HandleMessage(voiceCtx, "agent:test:voice", "Tell me")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
-	text = anthropic.TextOf(lastMsg.Content)
+	text = provider.TextOf(lastMsg.Content)
 	if count := strings.Count(text, "Tell me"); count != 2 {
 		t.Errorf("voice trigger should duplicate: expected 2 occurrences, got %d", count)
 	}
@@ -1523,7 +1524,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 		ag.HandleMessage(sysCtx, "agent:test:sys:"+sysT, "System msg")
 
 		lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
-		text = anthropic.TextOf(lastMsg.Content)
+		text = provider.TextOf(lastMsg.Content)
 		if count := strings.Count(text, "System msg"); count != 1 {
 			t.Errorf("%s trigger should not duplicate: expected 1 occurrence, got %d", sysT, count)
 		}
@@ -1538,8 +1539,8 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	})
 
 	t.Run("last message is user", func(t *testing.T) {
-		msgs := []anthropic.Message{
-			{Role: "user", Content: anthropic.TextContent("hi")},
+		msgs := []provider.Message{
+			{Role: "user", Content: provider.TextContent("hi")},
 		}
 		if got := repairInterruptedToolCalls(msgs); got != nil {
 			t.Errorf("expected nil when last message is user, got %v", got)
@@ -1547,9 +1548,9 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	})
 
 	t.Run("assistant with text only", func(t *testing.T) {
-		msgs := []anthropic.Message{
-			{Role: "user", Content: anthropic.TextContent("hi")},
-			{Role: "assistant", Content: anthropic.TextContent("hello")},
+		msgs := []provider.Message{
+			{Role: "user", Content: provider.TextContent("hi")},
+			{Role: "assistant", Content: provider.TextContent("hello")},
 		}
 		if got := repairInterruptedToolCalls(msgs); got != nil {
 			t.Errorf("expected nil when no tool_use blocks, got %v", got)
@@ -1557,9 +1558,9 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	})
 
 	t.Run("single tool_use", func(t *testing.T) {
-		msgs := []anthropic.Message{
-			{Role: "user", Content: anthropic.TextContent("hi")},
-			{Role: "assistant", Content: []anthropic.ContentBlock{
+		msgs := []provider.Message{
+			{Role: "user", Content: provider.TextContent("hi")},
+			{Role: "assistant", Content: []provider.ContentBlock{
 				{Type: "text", Text: "Let me check."},
 				{Type: "tool_use", ID: "tu_123", Name: "some_tool", Input: json.RawMessage(`{}`)},
 			}},
@@ -1589,9 +1590,9 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 	})
 
 	t.Run("multiple tool_use blocks", func(t *testing.T) {
-		msgs := []anthropic.Message{
-			{Role: "user", Content: anthropic.TextContent("hi")},
-			{Role: "assistant", Content: []anthropic.ContentBlock{
+		msgs := []provider.Message{
+			{Role: "user", Content: provider.TextContent("hi")},
+			{Role: "assistant", Content: []provider.ContentBlock{
 				{Type: "tool_use", ID: "tu_a", Name: "tool_a", Input: json.RawMessage(`{}`)},
 				{Type: "tool_use", ID: "tu_b", Name: "tool_b", Input: json.RawMessage(`{}`)},
 			}},
@@ -1615,17 +1616,17 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 	// Simulate a session with an interrupted tool call, then verify
 	// HandleMessage repairs it before sending to the API.
-	var receivedReq *anthropic.MessageRequest
+	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Recovered."),
+			Content:    provider.TextContent("Recovered."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 50, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 50, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -1636,11 +1637,11 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 
 	// Pre-populate session with an interrupted tool call
 	sessionKey := "agent:test:repair"
-	store.Append(sessionKey, anthropic.Message{
-		Role: "user", Content: anthropic.TextContent("do something"),
+	store.Append(sessionKey, provider.Message{
+		Role: "user", Content: provider.TextContent("do something"),
 	})
-	store.Append(sessionKey, anthropic.Message{
-		Role: "assistant", Content: []anthropic.ContentBlock{
+	store.Append(sessionKey, provider.Message{
+		Role: "assistant", Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "tu_interrupted", Name: "some_tool", Input: json.RawMessage(`{}`)},
 		},
 	})
@@ -1722,16 +1723,16 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	// and normal end_turn responses otherwise. Turn highTokenTurn gets
 	// InputTokens=170000 to exceed the 160k threshold (0.8 * 200k).
 	compactionMockServer := func(turnCount *atomic.Int32, highTokenTurn int32) *httptest.Server {
-		return mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+		return mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 			lastMsg := req.Messages[len(req.Messages)-1]
-			if strings.Contains(anthropic.TextOf(lastMsg.Content), "provide continuity") {
-				return &anthropic.MessageResponse{
+			if strings.Contains(provider.TextOf(lastMsg.Content), "provide continuity") {
+				return &provider.MessageResponse{
 					ID:         "msg_summary",
 					Type:       "message",
 					Role:       "assistant",
-					Content:    anthropic.TextContent("This is the compacted summary of the conversation."),
+					Content:    provider.TextContent("This is the compacted summary of the conversation."),
 					StopReason: "end_turn",
-					Usage:      anthropic.Usage{InputTokens: 500, OutputTokens: 100},
+					Usage:      provider.Usage{InputTokens: 500, OutputTokens: 100},
 				}
 			}
 
@@ -1740,13 +1741,13 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			if n == highTokenTurn {
 				inputTokens = 170_000
 			}
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:         fmt.Sprintf("msg_%d", n),
 				Type:       "message",
 				Role:       "assistant",
-				Content:    anthropic.TextContent(fmt.Sprintf("Response %d", n)),
+				Content:    provider.TextContent(fmt.Sprintf("Response %d", n)),
 				StopReason: "end_turn",
-				Usage:      anthropic.Usage{InputTokens: inputTokens, OutputTokens: 50},
+				Usage:      provider.Usage{InputTokens: inputTokens, OutputTokens: 50},
 			}
 		})
 	}
@@ -1804,16 +1805,16 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 
 		// msg[0]: marker
-		if !strings.Contains(anthropic.TextOf(msgs[0].Content), "compacted") {
-			t.Errorf("msg[0] should contain 'compacted': %q", anthropic.TextOf(msgs[0].Content))
+		if !strings.Contains(provider.TextOf(msgs[0].Content), "compacted") {
+			t.Errorf("msg[0] should contain 'compacted': %q", provider.TextOf(msgs[0].Content))
 		}
 		// msg[1]: summary from mock
-		if !strings.Contains(anthropic.TextOf(msgs[1].Content), "compacted summary") {
-			t.Errorf("msg[1] should contain summary: %q", anthropic.TextOf(msgs[1].Content))
+		if !strings.Contains(provider.TextOf(msgs[1].Content), "compacted summary") {
+			t.Errorf("msg[1] should contain summary: %q", provider.TextOf(msgs[1].Content))
 		}
 		// msg[2]: handoff
-		if !strings.Contains(anthropic.TextOf(msgs[2].Content), "Compaction complete") {
-			t.Errorf("msg[2] should contain handoff: %q", anthropic.TextOf(msgs[2].Content))
+		if !strings.Contains(provider.TextOf(msgs[2].Content), "Compaction complete") {
+			t.Errorf("msg[2] should contain handoff: %q", provider.TextOf(msgs[2].Content))
 		}
 
 		// Phase 3: Turn 6 — post-compaction continuity
@@ -1883,7 +1884,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 
 		// Verify handoff message contains scratchpad data
-		handoff := anthropic.TextOf(msgs[2].Content)
+		handoff := provider.TextOf(msgs[2].Content)
 		if !strings.Contains(handoff, "scratchpad") {
 			t.Errorf("handoff should mention scratchpad: %q", handoff)
 		}
@@ -1976,15 +1977,15 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("preserved[1].Role = %q, want assistant", preserved[1].Role)
 		}
 		// Verify content of preserved messages (Turn 4 user msg has metadata prefix, so check contains)
-		if !strings.Contains(anthropic.TextOf(preserved[0].Content), "Turn 4") {
-			t.Errorf("preserved[0] should contain 'Turn 4': %q", anthropic.TextOf(preserved[0].Content))
+		if !strings.Contains(provider.TextOf(preserved[0].Content), "Turn 4") {
+			t.Errorf("preserved[0] should contain 'Turn 4': %q", provider.TextOf(preserved[0].Content))
 		}
-		if anthropic.TextOf(preserved[1].Content) != "Response 4" {
-			t.Errorf("preserved[1] = %q, want 'Response 4'", anthropic.TextOf(preserved[1].Content))
+		if provider.TextOf(preserved[1].Content) != "Response 4" {
+			t.Errorf("preserved[1] = %q, want 'Response 4'", provider.TextOf(preserved[1].Content))
 		}
 
 		// Summary+handoff should mention preservation and contain handoff text
-		summaryText := anthropic.TextOf(msgs[1].Content)
+		summaryText := provider.TextOf(msgs[1].Content)
 		if !strings.Contains(summaryText, "last 4 messages") {
 			t.Errorf("summary missing preservation note: %q", summaryText)
 		}
@@ -2008,8 +2009,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 
 		// The preserved messages should still be at positions 2-5
-		if !strings.Contains(anthropic.TextOf(msgs[2].Content), "Turn 4") {
-			t.Errorf("preserved msg should survive post-compaction turn: %q", anthropic.TextOf(msgs[2].Content))
+		if !strings.Contains(provider.TextOf(msgs[2].Content), "Turn 4") {
+			t.Errorf("preserved msg should survive post-compaction turn: %q", provider.TextOf(msgs[2].Content))
 		}
 	})
 
@@ -2212,28 +2213,28 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	// tool call notifications in the chat.
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Let me check..."},
 					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Done."),
+			Content:    provider.TextContent("Done."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -2304,10 +2305,10 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 	var mu sync.Mutex
 	var apiCallOrder []string // tracks which turn's messages were seen by API
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		// Identify which turn this is by looking at the last user message
 		lastMsg := req.Messages[len(req.Messages)-1]
-		text := anthropic.TextOf(lastMsg.Content)
+		text := provider.TextOf(lastMsg.Content)
 
 		mu.Lock()
 		apiCallOrder = append(apiCallOrder, text)
@@ -2318,13 +2319,13 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Reply to: " + text),
+			Content:    provider.TextContent("Reply to: " + text),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -2372,7 +2373,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 	}
 
 	// Messages must be strictly ordered: Turn A's pair first, then Turn B's pair
-	textA := anthropic.TextOf(msgs[0].Content)
+	textA := provider.TextOf(msgs[0].Content)
 	if !strings.Contains(textA, "Turn A") {
 		t.Errorf("msgs[0] should be Turn A's user message, got: %s", textA)
 	}
@@ -2380,7 +2381,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 		t.Errorf("msgs[0].Role = %q, want user", msgs[0].Role)
 	}
 
-	replyA := anthropic.TextOf(msgs[1].Content)
+	replyA := provider.TextOf(msgs[1].Content)
 	if !strings.Contains(replyA, "Reply to") {
 		t.Errorf("msgs[1] should be Turn A's assistant reply, got: %s", replyA)
 	}
@@ -2388,7 +2389,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 		t.Errorf("msgs[1].Role = %q, want assistant", msgs[1].Role)
 	}
 
-	textB := anthropic.TextOf(msgs[2].Content)
+	textB := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(textB, "Turn B") {
 		t.Errorf("msgs[2] should be Turn B's user message, got: %s", textB)
 	}
@@ -2396,7 +2397,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 		t.Errorf("msgs[2].Role = %q, want user", msgs[2].Role)
 	}
 
-	replyB := anthropic.TextOf(msgs[3].Content)
+	replyB := provider.TextOf(msgs[3].Content)
 	if !strings.Contains(replyB, "Reply to") {
 		t.Errorf("msgs[3] should be Turn B's assistant reply, got: %s", replyB)
 	}
@@ -2426,7 +2427,7 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 	var activeConcurrent int32
 	var maxConcurrent int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		cur := atomic.AddInt32(&activeConcurrent, 1)
 		defer atomic.AddInt32(&activeConcurrent, -1)
 
@@ -2438,13 +2439,13 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 
 		time.Sleep(50 * time.Millisecond) // ensure overlap
 
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("OK"),
+			Content:    provider.TextContent("OK"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -2486,15 +2487,15 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 func TestConcurrentTurnCancellation(t *testing.T) {
 	// Verify that a cancelled context while waiting for the turn lock
 	// returns immediately without processing.
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		time.Sleep(200 * time.Millisecond) // slow turn
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Done"),
+			Content:    provider.TextContent("Done"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -2614,21 +2615,21 @@ func TestSeedSessionMeta(t *testing.T) {
 	}
 
 	// Add some messages with meta headers
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "user",
-		Content: anthropic.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
+		Content: provider.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
 	})
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "assistant",
-		Content: anthropic.TextContent("Hi there!"),
+		Content: provider.TextContent("Hi there!"),
 	})
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "user",
-		Content: anthropic.TextContent("[meta] time=2026-02-23T12:30:00Z gap=2h30m model=claude-haiku-4-5\nHow are you?"),
+		Content: provider.TextContent("[meta] time=2026-02-23T12:30:00Z gap=2h30m model=claude-haiku-4-5\nHow are you?"),
 	})
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "assistant",
-		Content: anthropic.TextContent("Good!"),
+		Content: provider.TextContent("Good!"),
 	})
 
 	// Seed from a fresh agent (simulating restart)
@@ -2643,14 +2644,14 @@ func TestSeedSessionMeta(t *testing.T) {
 }
 
 func TestMaxTokensWarning(t *testing.T) {
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("This response was cut off bec"),
+			Content:    provider.TextContent("This response was cut off bec"),
 			StopReason: "max_tokens",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 8192},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 8192},
 		}
 	})
 	defer server.Close()
@@ -2694,14 +2695,14 @@ func TestMaxTokensWarning(t *testing.T) {
 }
 
 func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Normal response."),
+			Content:    provider.TextContent("Normal response."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		}
 	})
 	defer server.Close()
@@ -2732,27 +2733,27 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 func TestToolResultRedaction(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_001", Name: "leak_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Done."),
+			Content:    provider.TextContent("Done."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -2803,27 +2804,27 @@ func TestToolResultRedaction(t *testing.T) {
 func TestToolErrorRedaction(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: "tu_001", Name: "err_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("Done."),
+			Content:    provider.TextContent("Done."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -2878,17 +2879,17 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 	sessionKey := "agent:test:seedskip"
 
 	// First message has meta, second user message is a restart marker (no meta)
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "user",
-		Content: anthropic.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
+		Content: provider.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
 	})
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "assistant",
-		Content: anthropic.TextContent("Hi!"),
+		Content: provider.TextContent("Hi!"),
 	})
-	store.Append(sessionKey, anthropic.Message{
+	store.Append(sessionKey, provider.Message{
 		Role:    "user",
-		Content: anthropic.TextContent("[System restarted at 2026-02-23T11:00:00Z]"),
+		Content: provider.TextContent("[System restarted at 2026-02-23T11:00:00Z]"),
 	})
 
 	ag.SeedSessionMeta(sessionKey)
@@ -3097,21 +3098,21 @@ func TestHandleMessageServerErrorNoCallback(t *testing.T) {
 
 func TestCacheBustDetection(t *testing.T) {
 	callCount := 0
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
-		resp := &anthropic.MessageResponse{
+		resp := &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", callCount),
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
 		}
 		if callCount == 1 {
 			// First call: high cache read to establish baseline
-			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+			resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
 		} else {
 			// Second call: cache read drops to 0 — potential bust
-			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+			resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
 		}
 		return resp
 	})
@@ -3150,19 +3151,19 @@ func TestCacheBustDetection(t *testing.T) {
 
 func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 	callCount := 0
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
-		resp := &anthropic.MessageResponse{
+		resp := &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", callCount),
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
 		}
 		if callCount == 1 {
-			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+			resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
 		} else {
-			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+			resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
 		}
 		return resp
 	})
@@ -3203,26 +3204,26 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 	// A multi-step turn with tool_use iterations should fire at most one cache bust
 	// warning per turn, not one per API call.
 	var callCount atomic.Int32
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		switch n {
 		case 1:
 			// First turn — establish baseline with high cache read
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:         "msg_1",
 				Type:       "message",
 				Role:       "assistant",
-				Content:    anthropic.TextContent("baseline"),
+				Content:    provider.TextContent("baseline"),
 				StopReason: "end_turn",
-				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000},
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000},
 			}
 		case 2:
 			// Second turn, iteration 1: tool_use with cache bust (drops to 0)
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_2",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "running tool"},
 					{
 						Type:  "tool_use",
@@ -3232,15 +3233,15 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 					},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
 			}
 		case 3:
 			// Second turn, iteration 2: another tool_use, still 0 cache read
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_3",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{
 						Type:  "tool_use",
 						ID:    "tu_002",
@@ -3249,17 +3250,17 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 					},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
 			}
 		default:
 			// Second turn, final: end_turn
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:         "msg_4",
 				Type:       "message",
 				Role:       "assistant",
-				Content:    anthropic.TextContent("done"),
+				Content:    provider.TextContent("done"),
 				StopReason: "end_turn",
-				Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
+				Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0},
 			}
 		}
 	})
@@ -3305,20 +3306,20 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 	// After ResetCacheBaseline (as called by /compact), the next request should
 	// not trigger a false cache bust warning.
 	callCount := 0
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
-		resp := &anthropic.MessageResponse{
+		resp := &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", callCount),
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("ok"),
+			Content:    provider.TextContent("ok"),
 			StopReason: "end_turn",
 		}
 		if callCount == 1 {
-			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+			resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
 		} else {
 			// After compaction, cache read drops to 0 — but baseline was reset
-			resp.Usage = anthropic.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+			resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
 		}
 		return resp
 	})
@@ -3357,16 +3358,16 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 }
 
 func TestThinkingAdaptiveInRequest(t *testing.T) {
-	var capturedReq *anthropic.MessageRequest
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	var capturedReq *provider.MessageRequest
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		capturedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_think",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("I thought about it."),
+			Content:    provider.TextContent("I thought about it."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -3399,16 +3400,16 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 }
 
 func TestThinkingOffOmitsField(t *testing.T) {
-	var capturedReq *anthropic.MessageRequest
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	var capturedReq *provider.MessageRequest
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		capturedReq = req
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_nothink",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("No thinking."),
+			Content:    provider.TextContent("No thinking."),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -3438,17 +3439,17 @@ func TestThinkingOffOmitsField(t *testing.T) {
 }
 
 func TestThinkingBlocksPreservedInSession(t *testing.T) {
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
-		return &anthropic.MessageResponse{
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
 			ID:   "msg_think_blocks",
 			Type: "message",
 			Role: "assistant",
-			Content: []anthropic.ContentBlock{
+			Content: []provider.ContentBlock{
 				{Type: "thinking", Thinking: "Let me reason..."},
 				{Type: "text", Text: "Here's my answer."},
 			},
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 15},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 15},
 		}
 	})
 	defer server.Close()
@@ -3498,26 +3499,26 @@ func TestBraindeadWarningInjected(t *testing.T) {
 	var callCount atomic.Int32
 	threshold := 3
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= threshold+1 {
 			// Return tool_use to keep the loop going
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   fmt.Sprintf("msg_%d", n),
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", n),
 			Role:       "assistant",
-			Content:    anthropic.TextContent("done"),
+			Content:    provider.TextContent("done"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -3569,25 +3570,25 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 	totalLoops := 6
 	threshold := 2
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= totalLoops {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   fmt.Sprintf("msg_%d", n),
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", n),
 			Role:       "assistant",
-			Content:    anthropic.TextContent("done"),
+			Content:    provider.TextContent("done"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -3636,25 +3637,25 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 func TestBraindeadDisabledWhenZero(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= 5 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   fmt.Sprintf("msg_%d", n),
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 			}
 		}
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", n),
 			Role:       "assistant",
-			Content:    anthropic.TextContent("done"),
+			Content:    provider.TextContent("done"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 10, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
 	defer server.Close()
@@ -3701,30 +3702,30 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	// and the final response text returned from HandleMessage.
 	// This also covers the bug where final response has empty content.
 	callCount := 0
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
 			// First response: text + tool_use (intermediate text)
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Working on it..."},
 					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
 		// Second response: empty content (the bug scenario)
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    []anthropic.ContentBlock{},
+			Content:    []provider.ContentBlock{},
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 1},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 1},
 		}
 	})
 	defer server.Close()
@@ -3776,29 +3777,29 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	// When batch=true, intermediate text should be accumulated and returned
 	// concatenated from HandleMessage. No ReplyFunc calls.
 	callCount := 0
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Working on it..."},
 					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
 		// Second response: empty content
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_2",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    []anthropic.ContentBlock{},
+			Content:    []provider.ContentBlock{},
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 1},
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 1},
 		}
 	})
 	defer server.Close()
@@ -3850,42 +3851,42 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 	// When batch=true with multiple intermediate text blocks and a final text,
 	// all text should be concatenated with double newlines.
 	callCount := 0
-	server := mockServer(func(req *anthropic.MessageRequest) *anthropic.MessageResponse {
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_1",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Step 1 done."},
 					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 			}
 		}
 		if callCount == 2 {
-			return &anthropic.MessageResponse{
+			return &provider.MessageResponse{
 				ID:   "msg_2",
 				Type: "message",
 				Role: "assistant",
-				Content: []anthropic.ContentBlock{
+				Content: []provider.ContentBlock{
 					{Type: "text", Text: "Step 2 done."},
 					{Type: "tool_use", ID: "tu_002", Name: "test_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: "tool_use",
-				Usage:      anthropic.Usage{InputTokens: 30, OutputTokens: 10},
+				Usage:      provider.Usage{InputTokens: 30, OutputTokens: 10},
 			}
 		}
 		// Third response: final text
-		return &anthropic.MessageResponse{
+		return &provider.MessageResponse{
 			ID:         "msg_3",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    anthropic.TextContent("All done!"),
+			Content:    provider.TextContent("All done!"),
 			StopReason: "end_turn",
-			Usage:      anthropic.Usage{InputTokens: 40, OutputTokens: 5},
+			Usage:      provider.Usage{InputTokens: 40, OutputTokens: 5},
 		}
 	})
 	defer server.Close()

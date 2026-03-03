@@ -6,13 +6,13 @@ import (
 	"sort"
 	"strings"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
 // ToolResult is the return value from a tool execution.
 type ToolResult struct {
 	Text        string                   // primary text result (goes into tool_result content)
-	ExtraBlocks []anthropic.ContentBlock // additional content blocks (e.g. document) placed alongside tool_result
+	ExtraBlocks []provider.ContentBlock // additional content blocks (e.g. document) placed alongside tool_result
 }
 
 // TextResult creates a ToolResult with only text (no extra blocks).
@@ -90,10 +90,10 @@ func (r *Registry) FinalizeExecDescription() {
 // ToolDefs returns tool definitions for the Anthropic API, sorted by name
 // for deterministic ordering (required for prompt caching — tools are part
 // of the cached prefix).
-func (r *Registry) ToolDefs() []anthropic.ToolDef {
-	defs := make([]anthropic.ToolDef, 0, len(r.tools))
+func (r *Registry) ToolDefs() []provider.ToolDef {
+	defs := make([]provider.ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
-		defs = append(defs, anthropic.NewCustomTool(t.Name, t.Description, t.Parameters))
+		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 	}
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name() < defs[j].Name() })
 	return defs

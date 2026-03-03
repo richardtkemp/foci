@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"foci/anthropic"
 	"foci/log"
 	"foci/prompts"
+	"foci/provider"
 )
 
 // SessionMeta is stored as the first line in a session file to preserve metadata
@@ -53,14 +53,14 @@ func (s *Store) SessionPath(key string) (string, error) {
 
 // Load reads all messages from a session file.
 // Returns nil (not error) if file doesn't exist.
-func (s *Store) Load(key string) ([]anthropic.Message, error) {
+func (s *Store) Load(key string) ([]provider.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.loadUnlocked(key)
 }
 
-func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
+func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 	path, err := s.SessionPath(key)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	var messages []anthropic.Message
+	var messages []provider.Message
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
@@ -99,7 +99,7 @@ func (s *Store) loadUnlocked(key string) ([]anthropic.Message, error) {
 			continue
 		}
 
-		var msg anthropic.Message
+		var msg provider.Message
 		if err := json.Unmarshal(line, &msg); err != nil {
 			return nil, fmt.Errorf("decode message in %s: %w", key, err)
 		}
@@ -156,14 +156,14 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 }
 
 // Append adds a message to the session file, creating it if needed.
-func (s *Store) Append(key string, msg anthropic.Message) error {
+func (s *Store) Append(key string, msg provider.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	return s.appendUnlocked(key, msg)
 }
 
-func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
+func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 	path, err := s.SessionPath(key)
 	if err != nil {
 		return err
@@ -222,7 +222,7 @@ func (s *Store) appendUnlocked(key string, msg anthropic.Message) error {
 }
 
 // AppendAll adds multiple messages to the session file.
-func (s *Store) AppendAll(key string, msgs []anthropic.Message) error {
+func (s *Store) AppendAll(key string, msgs []provider.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -278,7 +278,7 @@ func isArchiveFile(name string) bool {
 
 // Replace overwrites a session with the given messages, rotating the old file
 // to a numbered archive (e.g. 5970082313.1.jsonl) for audit/history.
-func (s *Store) Replace(key string, msgs []anthropic.Message) error {
+func (s *Store) Replace(key string, msgs []provider.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -435,11 +435,11 @@ func (s *Store) RepairOrphans() (int, error) {
 		}
 
 		// Build synthetic tool_result message
-		var results []anthropic.ContentBlock
+		var results []provider.ContentBlock
 		for _, id := range toolUseIDs {
-			results = append(results, anthropic.ToolResultBlock(id, "Tool call interrupted by service restart", true))
+			results = append(results, provider.ToolResultBlock(id, "Tool call interrupted by service restart", true))
 		}
-		repairMsg := anthropic.Message{Role: "user", Content: results}
+		repairMsg := provider.Message{Role: "user", Content: results}
 
 		if err := s.appendUnlocked(key, repairMsg); err != nil {
 			return fmt.Errorf("repair %s: %w", key, err)
@@ -492,9 +492,9 @@ func (s *Store) InjectRestartMarkers(maxAge time.Duration) (int, error) {
 		rel = strings.TrimSuffix(rel, ".jsonl")
 		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
 
-		marker := anthropic.Message{
+		marker := provider.Message{
 			Role:    "user",
-			Content: anthropic.TextContent(prompts.FormatInjectedMessage("SYSTEM RESTART", now, "")),
+			Content: provider.TextContent(prompts.FormatInjectedMessage("SYSTEM RESTART", now, "")),
 		}
 		if err := s.appendUnlocked(key, marker); err != nil {
 			return fmt.Errorf("mark %s: %w", key, err)

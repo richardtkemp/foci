@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
-func msg(role, text string) anthropic.Message {
-	return anthropic.Message{
+func msg(role, text string) provider.Message {
+	return provider.Message{
 		Role:    role,
-		Content: anthropic.TextContent(text),
+		Content: provider.TextContent(text),
 	}
 }
 
@@ -82,10 +82,10 @@ func TestAppendAndLoad(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("len = %d, want 2", len(msgs))
 	}
-	if msgs[0].Role != "user" || anthropic.TextOf(msgs[0].Content) != "hello" {
+	if msgs[0].Role != "user" || provider.TextOf(msgs[0].Content) != "hello" {
 		t.Errorf("msgs[0] = %+v", msgs[0])
 	}
-	if msgs[1].Role != "assistant" || anthropic.TextOf(msgs[1].Content) != "hi there" {
+	if msgs[1].Role != "assistant" || provider.TextOf(msgs[1].Content) != "hi there" {
 		t.Errorf("msgs[1] = %+v", msgs[1])
 	}
 }
@@ -94,7 +94,7 @@ func TestAppendAll(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "agent:test:main"
 
-	batch := []anthropic.Message{
+	batch := []provider.Message{
 		msg("user", "one"),
 		msg("assistant", "two"),
 		msg("user", "three"),
@@ -148,7 +148,7 @@ func TestReplace(t *testing.T) {
 	s.Append(key, msg("user", "old3"))
 
 	// Replace
-	replacement := []anthropic.Message{
+	replacement := []provider.Message{
 		msg("user", "summary"),
 		msg("assistant", "acknowledged"),
 	}
@@ -163,8 +163,8 @@ func TestReplace(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("len = %d, want 2", len(msgs))
 	}
-	if anthropic.TextOf(msgs[0].Content) != "summary" {
-		t.Errorf("msgs[0] text = %q", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "summary" {
+		t.Errorf("msgs[0] text = %q", provider.TextOf(msgs[0].Content))
 	}
 }
 
@@ -252,7 +252,7 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 	}
 
 	// Replace (simulating compaction)
-	replacement := []anthropic.Message{
+	replacement := []provider.Message{
 		msg("user", "summary"),
 	}
 	s.Replace(key, replacement)
@@ -341,17 +341,17 @@ func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
 
 // --- RepairOrphans tests ---
 
-func toolUseMsg(ids ...string) anthropic.Message {
-	var blocks []anthropic.ContentBlock
+func toolUseMsg(ids ...string) provider.Message {
+	var blocks []provider.ContentBlock
 	for _, id := range ids {
-		blocks = append(blocks, anthropic.ContentBlock{
+		blocks = append(blocks, provider.ContentBlock{
 			Type:  "tool_use",
 			ID:    id,
 			Name:  "shell",
 			Input: []byte(`{"command":"ls"}`),
 		})
 	}
-	return anthropic.Message{Role: "assistant", Content: blocks}
+	return provider.Message{Role: "assistant", Content: blocks}
 }
 
 func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
@@ -529,7 +529,7 @@ func TestInjectRestartMarkersRecentFile(t *testing.T) {
 	if marker.Role != "user" {
 		t.Errorf("marker role = %q, want user", marker.Role)
 	}
-	text := anthropic.TextOf(marker.Content)
+	text := provider.TextOf(marker.Content)
 	if !strings.Contains(text, "SYSTEM RESTART") {
 		t.Errorf("marker text = %q, want restart marker", text)
 	}
@@ -640,7 +640,7 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 	}
 
 	// Replace (simulating compaction)
-	compacted := []anthropic.Message{
+	compacted := []provider.Message{
 		msg("user", "[Session compacted]"),
 		msg("assistant", "summary of parent + branch"),
 	}
@@ -674,8 +674,8 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("LoadFull len = %d, want 2", len(msgs))
 	}
-	if anthropic.TextOf(msgs[0].Content) != "[Session compacted]" {
-		t.Errorf("msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "[Session compacted]" {
+		t.Errorf("msgs[0] = %q", provider.TextOf(msgs[0].Content))
 	}
 
 	// Parent should be unaffected
@@ -696,7 +696,7 @@ func TestReplaceRotatesFile(t *testing.T) {
 	s.Append(key, msg("user", "old3"))
 
 	// Replace (simulating compaction)
-	compacted := []anthropic.Message{
+	compacted := []provider.Message{
 		msg("user", "summary"),
 		msg("assistant", "acknowledged"),
 	}
@@ -709,8 +709,8 @@ func TestReplaceRotatesFile(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("current len = %d, want 2", len(msgs))
 	}
-	if anthropic.TextOf(msgs[0].Content) != "summary" {
-		t.Errorf("current msgs[0] = %q", anthropic.TextOf(msgs[0].Content))
+	if provider.TextOf(msgs[0].Content) != "summary" {
+		t.Errorf("current msgs[0] = %q", provider.TextOf(msgs[0].Content))
 	}
 
 	// Archive file should exist with old messages
@@ -737,7 +737,7 @@ func TestReplaceMultipleRotations(t *testing.T) {
 		s.Append(key, msg("user", fmt.Sprintf("round %d", round)))
 		s.Append(key, msg("assistant", fmt.Sprintf("reply %d", round)))
 
-		compacted := []anthropic.Message{
+		compacted := []provider.Message{
 			msg("user", fmt.Sprintf("summary %d", round)),
 		}
 		if err := s.Replace(key, compacted); err != nil {
@@ -759,8 +759,8 @@ func TestReplaceMultipleRotations(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("current len = %d, want 1", len(msgs))
 	}
-	if anthropic.TextOf(msgs[0].Content) != "summary 3" {
-		t.Errorf("current = %q, want %q", anthropic.TextOf(msgs[0].Content), "summary 3")
+	if provider.TextOf(msgs[0].Content) != "summary 3" {
+		t.Errorf("current = %q, want %q", provider.TextOf(msgs[0].Content), "summary 3")
 	}
 }
 
@@ -776,7 +776,7 @@ func TestReplaceBranchRotation(t *testing.T) {
 	s.Append(branchKey, msg("user", "branch q"))
 	s.Append(branchKey, msg("assistant", "branch a"))
 
-	compacted := []anthropic.Message{
+	compacted := []provider.Message{
 		msg("user", "[compacted]"),
 		msg("assistant", "summary"),
 	}
@@ -846,9 +846,9 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 	// Create a session with an orphaned tool_use
 	key := "agent:test:chat:444"
 	s.Append(key, msg("user", "hello"))
-	s.Append(key, anthropic.Message{
+	s.Append(key, provider.Message{
 		Role: "assistant",
-		Content: []anthropic.ContentBlock{
+		Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "tool_1", Name: "exec", Input: json.RawMessage(`{}`)},
 		},
 	})
@@ -875,7 +875,7 @@ func TestReplaceNonexistentFile(t *testing.T) {
 	key := "agent:test:chat:333"
 
 	// Replace on a key with no existing file should work (no rotation needed)
-	compacted := []anthropic.Message{
+	compacted := []provider.Message{
 		msg("user", "fresh"),
 	}
 	if err := s.Replace(key, compacted); err != nil {

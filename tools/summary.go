@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"foci/anthropic"
 	"foci/log"
+	"foci/provider"
 )
 
 // NewSummaryTool creates a tool that summarizes/extracts information from a file
 // via a Haiku call without loading the full content into the agent's context.
 // modelAliases maps short names (e.g. "haiku") to full model IDs; used to
 // resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(client *anthropic.Client, modelAliases map[string]string) *Tool {
+func NewSummaryTool(client provider.Client, modelAliases map[string]string) *Tool {
 	resolveModel := func(alias string) string {
 		if modelAliases != nil {
 			if full, ok := modelAliases[strings.ToLower(alias)]; ok {
@@ -50,7 +50,7 @@ func NewSummaryTool(client *anthropic.Client, modelAliases map[string]string) *T
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client *anthropic.Client, resolveModel func(string) string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, resolveModel func(string) string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -89,16 +89,16 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 	model := resolveModel("haiku")
 	start := time.Now()
 
-	req := &anthropic.MessageRequest{
+	req := &provider.MessageRequest{
 		Model:     model,
 		MaxTokens: 4096,
-		System: []anthropic.SystemBlock{
+		System: []provider.SystemBlock{
 			{Type: "text", Text: "You are a file summarization assistant. Read the file content and respond to the user's prompt about it. Be concise and precise. Quote key sections word-for-word where accuracy matters (names, values, instructions, error messages) rather than paraphrasing."},
 		},
-		Messages: []anthropic.Message{
+		Messages: []provider.Message{
 			{
 				Role: "user",
-				Content: anthropic.TextContent(
+				Content: provider.TextContent(
 					fmt.Sprintf("<file path=%q>\n%s\n</file>\n\n%s", p.File, string(data), p.Prompt),
 				),
 			},
@@ -132,7 +132,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client *anthrop
 		CallType:   "summary",
 	})
 
-	text := anthropic.TextOf(resp.Content)
+	text := provider.TextOf(resp.Content)
 	if text == "" {
 		return TextResult("(empty response)"), nil
 	}

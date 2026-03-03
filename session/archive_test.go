@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/anthropic"
+	"foci/provider"
 )
 
 func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
@@ -125,7 +125,7 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 
 	// Create a session and compact it (creates .1.jsonl archive)
 	store.Append("agent:bot:chat:100", msg("user", "hello"))
-	store.Replace("agent:bot:chat:100", []anthropic.Message{msg("user", "compacted")})
+	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "compacted")})
 	idx.Rebuild(store)
 
 	// Set last activity to past
@@ -227,7 +227,7 @@ func TestScanAllSessions_IncludesArchivesAndGzipped(t *testing.T) {
 
 	// Create a session with an archive
 	store.Append("agent:bot:chat:100", msg("user", "hello"))
-	store.Replace("agent:bot:chat:100", []anthropic.Message{msg("user", "compacted")})
+	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "compacted")})
 
 	entries, err := store.ScanAllSessions()
 	if err != nil {
@@ -262,8 +262,8 @@ func TestScanAllSessions_CurrentFileAlwaysActive(t *testing.T) {
 
 	// Create a session with archives — current file should still be active
 	store.Append("agent:bot:chat:100", msg("user", "v1"))
-	store.Replace("agent:bot:chat:100", []anthropic.Message{msg("user", "v2")})
-	store.Replace("agent:bot:chat:100", []anthropic.Message{msg("user", "v3")})
+	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "v2")})
+	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "v3")})
 
 	entries, err := store.ScanAllSessions()
 	if err != nil {

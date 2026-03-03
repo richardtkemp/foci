@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"time"
 
-	"foci/anthropic"
+	"foci/provider"
 	"foci/log"
 	"foci/prompts"
 )
 
 // SessionAppender appends a message to a session.
 type SessionAppender interface {
-	Append(key string, msg anthropic.Message) error
+	Append(key string, msg provider.Message) error
 }
 
 // SessionNotifyFn handles routing a response back to the target session's
@@ -92,9 +92,9 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				// Default: route the response back to the caller.
 				// Append first since the notifier just triggers processing
 				// of the already-appended message.
-				msg := anthropic.Message{
+				msg := provider.Message{
 					Role:    "user",
-					Content: anthropic.TextContent(tagged),
+					Content: provider.TextContent(tagged),
 				}
 				if err := sessions.Append(p.SessionKey, msg); err != nil {
 					return ToolResult{}, fmt.Errorf("append to session %s: %w", p.SessionKey, err)

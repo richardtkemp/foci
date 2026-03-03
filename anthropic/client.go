@@ -9,62 +9,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 )
 
-// APIError is returned when the API responds with a non-200 status code.
-// Use errors.As to check for this type and inspect StatusCode or RetryAfter.
-type APIError struct {
-	StatusCode int    // HTTP status code
-	Body       string // response body
-	RetryAfter string // retry-after header value (seconds or date), empty if not present
-}
-
-func (e *APIError) Error() string {
-	return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Body)
-}
-
-// IsRateLimit returns true if this is a 429 Too Many Requests error.
-func (e *APIError) IsRateLimit() bool {
-	return e.StatusCode == http.StatusTooManyRequests
-}
-
-// IsOverloaded returns true if this is a 529 Overloaded error.
-func (e *APIError) IsOverloaded() bool {
-	return e.StatusCode == 529
-}
-
-// IsRetryable returns true if the error is a server-side issue worth retrying.
-// Covers 500 (Internal Server Error), 502 (Bad Gateway), 503 (Service Unavailable),
-// and 529 (Overloaded — Anthropic-specific).
-func (e *APIError) IsRetryable() bool {
-	switch e.StatusCode {
-	case http.StatusInternalServerError, // 500
-		http.StatusBadGateway,        // 502
-		http.StatusServiceUnavailable, // 503
-		529:                           // Overloaded (Anthropic-specific)
-		return true
-	}
-	return false
-}
-
-// IsAuthError returns true if this is a 401 Unauthorized error.
-func (e *APIError) IsAuthError() bool {
-	return e.StatusCode == http.StatusUnauthorized
-}
-
-// RetryAfterSeconds parses the retry-after header as seconds.
-// Returns 0 if not present or unparseable.
-func (e *APIError) RetryAfterSeconds() int {
-	if e.RetryAfter == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(e.RetryAfter); err == nil {
-		return secs
-	}
-	return 0
+// CountTokensResponse is the response from the /v1/messages/count_tokens endpoint.
+type CountTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
 }
 
 // Client is an Anthropic API client with prompt caching support.
