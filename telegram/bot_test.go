@@ -713,15 +713,18 @@ func makeMsgWithVoice(userID int64, username string) *gotgbot.Message {
 func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
-	// No transcriber set — voice note should be dropped (no text, no images)
+	// No transcriber set — voice note should not be queued but should get an error reply
 	msg := makeMsgWithVoice(111, "owner")
 	b.receiveMessage(context.Background(), msg)
 
 	if len(b.queue) != 0 {
 		t.Error("voice without transcriber should not be queued")
 	}
-	if mock.sentCount() != 0 {
-		t.Error("should not send reply for voice without transcriber")
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 error reply for voice without transcriber, got %d", mock.sentCount())
+	}
+	if !strings.Contains(mock.lastSendText, "Voice notes require") {
+		t.Errorf("reply text = %q, want it to mention 'Voice notes require'", mock.lastSendText)
 	}
 }
 
