@@ -64,7 +64,7 @@ func (r *Registry) ExportedNames() []string {
 // the current list of ExecExport shell functions. Call this after all tools
 // have been registered so the description stays in sync.
 func (r *Registry) FinalizeExecDescription() {
-	execTool := r.Get("exec")
+	execTool := r.Get("shell")
 	if execTool == nil {
 		return
 	}

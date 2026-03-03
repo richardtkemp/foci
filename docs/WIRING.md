@@ -355,7 +355,7 @@ Two `cache_control: ephemeral` breakpoints per API request: one on the system pr
 Loaded from `secrets.toml` (same directory as `foci.toml`). Stored as flat keys: `anthropic.setup_token`, `custom.github_token`, etc. Overrides `foci.toml` credentials at startup. See [SECRETS.md](SECRETS.md) for the full security model, OS-level protection, setup, and Bitwarden configuration.
 
 Data flow:
-- **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in exec (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in exec (approval-gated via aisudo).
+- **Template resolution:** `{{secret:custom.github_token}}` in `http_request` headers/body → replaced with actual value before sending. Regular secret templates are blocked in shell (returns error). Bitwarden `{{secret:bw.*}}` templates are allowed in shell (approval-gated via aisudo).
 - **Domain locking:** `allowed_hosts` per section restricts which hosts a secret can be sent to via `http_request`. `secrets.FindSecretRefs()` extracts template refs; `store.CheckHostAllowed()` validates the target URL (userinfo-safe via `url.Parse().Hostname()`)
 - **Output redaction:** Secret values in command/response output → `[REDACTED]` (skips values < 4 chars)
 - **Path blocking:** Commands referencing `secrets.toml` or `/proc/self/environ` are refused
@@ -363,7 +363,7 @@ Data flow:
 **Bitwarden integration** (`secrets/bitwarden/`): Optional dynamic secret store. Depends only on `log` (leaf package). Two-tier aisudo model:
 - Metadata refresh: `sudo -u bitwarden bw list items` (allowlisted, auto-approved)
 - Password fetch: `sudo -u bitwarden bw get password <id>` (requires Telegram approval)
-- Template syntax: `{{secret:bw.UUID}}` — resolved in both `http_request` and `exec` (approval-gated, safe for both)
+- Template syntax: `{{secret:bw.UUID}}` — resolved in both `http_request` and `shell` (approval-gated, safe for both)
 - Host validation: vault item URI fields → allowed hosts (same pattern as `allowed_hosts` in secrets.toml)
 - TTL-based caching with background cleanup goroutine
 
@@ -400,7 +400,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 
 | Tool | File | What it does |
 |------|------|-------------|
-| `exec` | exec.go | Shell commands via `sh -c`, process group kill on timeout, output redaction. Regular `{{secret:}}` templates are blocked (returns error — use http_request). Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated via aisudo). |
+| `shell` | shell.go | Shell commands via `sh -c`, process group kill on timeout, output redaction. Regular `{{secret:}}` templates are blocked (returns error — use http_request). Bitwarden `{{secret:bw.*}}` templates are allowed (approval-gated via aisudo). |
 | `http_request` | http.go | Domain-locked HTTP requests. Secrets in headers/body validated against per-section `allowed_hosts` before sending. Cross-domain redirects blocked when secrets present. Response redacted. Binary responses (image/*, audio/*, etc.) auto-saved to temp file. `save_to` saves any response to a specific path. `save_from_json_path` extracts a value from JSON response and decodes data: URIs (base64 images from generation APIs). |
 | `tmux` | tmux.go | Manage tmux sessions — start (auto-watches by default), send keys, read pane output, list, kill, watch for inactivity, unwatch. Owned sessions persist across app restarts via state store. Autopilot mode (default on): auto-unwatches after inactivity notification, auto-watches on send. |
 | `read` | files.go | File contents with line numbers, truncates at 2000 lines |
@@ -424,7 +424,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (string, error)`. R
 
 ### Exec Bridge / Tool Piping (`tools/execbridge.go`)
 
-Exposes selected tools as shell functions inside `exec` calls via a per-exec unix socket. This allows unix-style composition (pipes, filters) in a single exec invocation — intermediate data never enters agent context.
+Exposes selected tools as shell functions inside `shell` calls via a per-shell unix socket. This allows unix-style composition (pipes, filters) in a single shell invocation — intermediate data never enters agent context.
 
 **Architecture:**
 ```

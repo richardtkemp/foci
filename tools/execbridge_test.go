@@ -555,7 +555,7 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 func TestFinalizeExecDescription(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(&Tool{
-		Name:        "exec",
+		Name:        "shell",
 		Description: "Run a shell command.",
 		Parameters:  json.RawMessage(`{}`),
 	})
@@ -580,27 +580,27 @@ func TestFinalizeExecDescription(t *testing.T) {
 
 	reg.FinalizeExecDescription()
 
-	exec := reg.Get("exec")
-	if !strings.Contains(exec.Description, "foci_summary") {
-		t.Errorf("exec description missing foci_summary: %s", exec.Description)
+	shell := reg.Get("shell")
+	if !strings.Contains(shell.Description, "foci_summary") {
+		t.Errorf("shell description missing foci_summary: %s", shell.Description)
 	}
-	if !strings.Contains(exec.Description, "foci_web_search") {
-		t.Errorf("exec description missing foci_web_search: %s", exec.Description)
+	if !strings.Contains(shell.Description, "foci_web_search") {
+		t.Errorf("shell description missing foci_web_search: %s", shell.Description)
 	}
-	if strings.Contains(exec.Description, "foci_read") {
-		t.Errorf("exec description should not contain foci_read (ExecExport=false): %s", exec.Description)
+	if strings.Contains(shell.Description, "foci_read") {
+		t.Errorf("shell description should not contain foci_read (ExecExport=false): %s", shell.Description)
 	}
 
 	// List should be alphabetically sorted
-	sumIdx := strings.Index(exec.Description, "foci_summary")
-	wsIdx := strings.Index(exec.Description, "foci_web_search")
+	sumIdx := strings.Index(shell.Description, "foci_summary")
+	wsIdx := strings.Index(shell.Description, "foci_web_search")
 	if sumIdx > wsIdx {
 		t.Error("exported names should be in alphabetical order (foci_summary before foci_web_search)")
 	}
 
 	// Calling FinalizeExecDescription again should not duplicate the list
 	reg.FinalizeExecDescription()
-	count := strings.Count(exec.Description, "Shell functions are available")
+	count := strings.Count(shell.Description, "Shell functions are available")
 	if count != 1 {
 		t.Errorf("expected 1 occurrence of shell functions sentence, got %d", count)
 	}
@@ -668,7 +668,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 	// Tools that intentionally do NOT have ExecExport:true.
 	// Each entry documents why the tool is skipped from the exec bridge.
 	skippedTools := map[string]string{
-		"exec":              "recursive — exec is the bridge host itself",
+		"shell":             "recursive — shell is the bridge host itself",
 		"read":              "use cat/head/tail in shell",
 		"write":             "use shell redirection (echo > file)",
 		"edit":              "use sed/awk in shell",
@@ -683,7 +683,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 	// and main.go registration). Dynamic command wrapper tools are excluded
 	// because they depend on user config.
 	allTools := []string{
-		"exec",
+		"shell",
 		"http_request",
 		"memory_search",
 		"read",

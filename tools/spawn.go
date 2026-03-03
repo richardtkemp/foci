@@ -48,7 +48,7 @@ type SpawnAgent interface {
 // the isolated file tools enforce path containment, but shell access
 // allows arbitrary filesystem access and symlink creation.
 var spawnRawBlacklist = map[string]bool{
-	"exec":            true,
+	"shell":           true,
 	"tmux":            true,
 	"send_telegram":   true,
 	"send_to_session": true,

@@ -61,7 +61,7 @@ func TestRegistryAll(t *testing.T) {
 func TestRegistryToolDefs(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Tool{
-		Name:        "exec",
+		Name:        "shell",
 		Description: "run commands",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"cmd":{"type":"string"}}}`),
 	})
@@ -70,7 +70,7 @@ func TestRegistryToolDefs(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("len = %d, want 1", len(defs))
 	}
-	if defs[0].Name() != "exec" {
+	if defs[0].Name() != "shell" {
 		t.Errorf("Name = %q", defs[0].Name())
 	}
 
