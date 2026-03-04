@@ -5,6 +5,10 @@
 foci.toml
 sessions/
 tasks/
+state.json
+state.db
+state.db-wal
+state.db-shm
 workspace/*.md
 *.log
 api.jsonl
