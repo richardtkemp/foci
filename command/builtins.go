@@ -578,20 +578,21 @@ func NewResetCommand(resetFn func() error) *Command {
 }
 
 // NewModelCommand returns a /model command to show or switch the model.
-// getModel returns current model; setModel switches it; resolveModel resolves aliases.
+// getModel returns current model; setModel switches it with provider and model;
+// resolveModel resolves input (possibly "provider:alias") to (provider, model).
 // modelAliases provides the alias map for keyboard options (may be nil).
 // Callbacks receive the command's context so callers can resolve per-session state.
-func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string), resolveModel func(string) string, modelAliases map[string]string) *Command {
+func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string), resolveModel func(string) (string, string), modelAliases map[string]string) *Command {
 	return &Command{
 		Name:        "model",
-		Description: "Show or switch model",
+		Description: "Show or switch model (supports provider:alias syntax, e.g. gemini:flash)",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if args == "" {
 				return fmt.Sprintf("Current model: %s", getModel(ctx)), nil
 			}
-			resolved := resolveModel(args)
-			setModel(ctx, resolved)
+			prov, resolved := resolveModel(args)
+			setModel(ctx, prov, resolved)
 			return fmt.Sprintf("Model switched to: %s", resolved), nil
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {

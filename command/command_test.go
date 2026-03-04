@@ -303,8 +303,8 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 		}
 		cmd := NewModelCommand(
 			func(context.Context) string { return "claude-sonnet-4-6" },
-			func(context.Context, string) {},
-			func(s string) string { return s },
+			func(context.Context, string, string) {},
+			func(s string) (string, string) { return "", s },
 			aliases,
 		)
 		if cmd.KeyboardOptions == nil {
@@ -332,8 +332,8 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 	t.Run("model_no_aliases", func(t *testing.T) {
 		cmd := NewModelCommand(
 			func(context.Context) string { return "claude-opus-4-6" },
-			func(context.Context, string) {},
-			func(s string) string { return s },
+			func(context.Context, string, string) {},
+			func(s string) (string, string) { return "", s },
 			nil,
 		)
 		opts := cmd.KeyboardOptions(context.Background())

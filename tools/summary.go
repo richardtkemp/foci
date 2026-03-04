@@ -14,11 +14,13 @@ import (
 
 // NewSummaryTool creates a tool that summarizes/extracts information from a file
 // via a fast, cheap model call without loading the full content into the agent's context.
+// defaultClient is the agent's default provider client.
+// clients maps provider names ("anthropic", "gemini") to clients for cross-provider resolution.
 // agentModel is the agent's configured model, used to pick the right lightweight model
 // for the summary call (e.g. haiku for Anthropic, flash for Gemini).
 // modelAliases maps short names (e.g. "haiku") to full model IDs; used to
 // resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(client provider.Client, agentModel string, modelAliases map[string]string) *Tool {
+func NewSummaryTool(defaultClient provider.Client, clients map[string]provider.Client, agentModel string, modelAliases map[string]string) *Tool {
 	resolveModel := func(alias string) string {
 		if modelAliases != nil {
 			if full, ok := modelAliases[strings.ToLower(alias)]; ok {
@@ -32,6 +34,17 @@ func NewSummaryTool(client provider.Client, agentModel string, modelAliases map[
 	summaryAlias := "haiku"
 	if strings.HasPrefix(agentModel, "gemini-") {
 		summaryAlias = "flash"
+	}
+
+	// Resolve which client to use based on the summary model.
+	resolveClient := func() provider.Client {
+		model := resolveModel(summaryAlias)
+		if strings.HasPrefix(model, "gemini-") {
+			if gc := clients["gemini"]; gc != nil {
+				return gc
+			}
+		}
+		return defaultClient
 	}
 
 	return &Tool{
@@ -53,7 +66,7 @@ func NewSummaryTool(client provider.Client, agentModel string, modelAliases map[
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, client, resolveModel, summaryAlias)
+			return summaryExecute(ctx, params, resolveClient(), resolveModel, summaryAlias)
 		},
 	}
 }
