@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -367,5 +369,191 @@ func TestMultipleServers(t *testing.T) {
 	}
 	if result.Text != "from server2/tool_b" {
 		t.Errorf("server2 result = %q, want %q", result.Text, "from server2/tool_b")
+	}
+}
+
+func TestLoadConfig_MissingFile(t *testing.T) {
+	cfg, err := LoadConfig(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadConfig missing file: %v", err)
+	}
+	if len(cfg.Servers) != 0 {
+		t.Errorf("expected 0 servers, got %d", len(cfg.Servers))
+	}
+}
+
+func TestLoadConfig_ValidFile(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+[[servers]]
+name = "fs"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/sse"
+agents = ["research", "assistant"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "mcp.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if len(cfg.Servers) != 2 {
+		t.Fatalf("expected 2 servers, got %d", len(cfg.Servers))
+	}
+
+	// First server: stdio
+	if cfg.Servers[0].Name != "fs" {
+		t.Errorf("server[0].Name = %q, want %q", cfg.Servers[0].Name, "fs")
+	}
+	if cfg.Servers[0].Command != "npx" {
+		t.Errorf("server[0].Command = %q, want %q", cfg.Servers[0].Command, "npx")
+	}
+	if len(cfg.Servers[0].Args) != 3 {
+		t.Errorf("server[0].Args len = %d, want 3", len(cfg.Servers[0].Args))
+	}
+	if len(cfg.Servers[0].Agents) != 0 {
+		t.Errorf("server[0].Agents len = %d, want 0", len(cfg.Servers[0].Agents))
+	}
+
+	// Second server: HTTP with agent restriction
+	if cfg.Servers[1].Name != "remote" {
+		t.Errorf("server[1].Name = %q, want %q", cfg.Servers[1].Name, "remote")
+	}
+	if cfg.Servers[1].URL != "https://mcp.example.com/sse" {
+		t.Errorf("server[1].URL = %q", cfg.Servers[1].URL)
+	}
+	if len(cfg.Servers[1].Agents) != 2 {
+		t.Fatalf("server[1].Agents len = %d, want 2", len(cfg.Servers[1].Agents))
+	}
+	if cfg.Servers[1].Agents[0] != "research" || cfg.Servers[1].Agents[1] != "assistant" {
+		t.Errorf("server[1].Agents = %v", cfg.Servers[1].Agents)
+	}
+}
+
+func TestLoadConfig_InvalidTOML(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mcp.toml"), []byte("not valid toml [[["), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfig(dir)
+	if err == nil {
+		t.Fatal("expected error for invalid TOML")
+	}
+}
+
+func TestServersForAgent(t *testing.T) {
+	cfg := MCPConfig{
+		Servers: []ServerConfig{
+			{Name: "global", Command: "echo"},                                 // no agents → all
+			{Name: "research-only", Command: "echo", Agents: []string{"research"}}, // only research
+			{Name: "shared", Command: "echo", Agents: []string{"research", "assistant"}},
+		},
+	}
+
+	// Agent "research" gets all three
+	res := cfg.ServersForAgent("research")
+	if len(res) != 3 {
+		t.Errorf("research: got %d servers, want 3", len(res))
+	}
+
+	// Agent "assistant" gets global + shared
+	res = cfg.ServersForAgent("assistant")
+	if len(res) != 2 {
+		t.Errorf("assistant: got %d servers, want 2", len(res))
+	}
+	names := make([]string, len(res))
+	for i, s := range res {
+		names[i] = s.Name
+	}
+	if names[0] != "global" || names[1] != "shared" {
+		t.Errorf("assistant servers: %v", names)
+	}
+
+	// Agent "other" gets only global
+	res = cfg.ServersForAgent("other")
+	if len(res) != 1 {
+		t.Errorf("other: got %d servers, want 1", len(res))
+	}
+	if res[0].Name != "global" {
+		t.Errorf("other server name = %q, want %q", res[0].Name, "global")
+	}
+}
+
+func TestServerConfigsEqual(t *testing.T) {
+	a := []ServerConfig{{Name: "a", Command: "echo", Args: []string{"1"}}}
+	b := []ServerConfig{{Name: "a", Command: "echo", Args: []string{"1"}}}
+	if !serverConfigsEqual(a, b) {
+		t.Error("identical configs should be equal")
+	}
+
+	c := []ServerConfig{{Name: "a", Command: "echo", Args: []string{"2"}}}
+	if serverConfigsEqual(a, c) {
+		t.Error("different args should not be equal")
+	}
+
+	if serverConfigsEqual(a, nil) {
+		t.Error("nil vs non-nil should not be equal")
+	}
+	if !serverConfigsEqual(nil, nil) {
+		t.Error("nil vs nil should be equal")
+	}
+}
+
+func TestDynamicReload(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dir := t.TempDir()
+
+	// Start with no mcp.toml — manager should have no servers.
+	m := NewManagerForAgent(dir, "test")
+	defer m.Close()
+
+	// Tool should still be non-nil (dynamic mode).
+	tool := m.Tool()
+	if tool == nil {
+		t.Fatal("Tool() should be non-nil in dynamic mode")
+	}
+
+	// Write mcp.toml with one server.
+	content := `
+[[servers]]
+name = "test"
+command = "echo"
+`
+	if err := os.WriteFile(filepath.Join(dir, "mcp.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up a test transport factory.
+	_, ct := newTestServer(ctx, t)
+	m.tf = func(cfg ServerConfig) (mcp.Transport, error) {
+		return ct, nil
+	}
+
+	// refreshServers should detect the change and connect.
+	m.refreshServers(ctx)
+
+	if m.ServerCount() != 1 {
+		t.Fatalf("after refresh: ServerCount = %d, want 1", m.ServerCount())
+	}
+
+	// Calling refreshServers again with same config should be a no-op.
+	m.refreshServers(ctx)
+	if m.ServerCount() != 1 {
+		t.Fatalf("after second refresh: ServerCount = %d, want 1", m.ServerCount())
+	}
+
+	// Remove mcp.toml — should disconnect.
+	os.Remove(filepath.Join(dir, "mcp.toml"))
+	m.refreshServers(ctx)
+	if m.ServerCount() != 0 {
+		t.Fatalf("after remove: ServerCount = %d, want 0", m.ServerCount())
 	}
 }

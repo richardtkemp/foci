@@ -30,6 +30,7 @@ import (
 	"foci/keepalive"
 	"foci/log"
 	"foci/mana"
+	mcpkg "foci/mcp"
 	"foci/memory"
 	"foci/prompts"
 	"foci/provider"
@@ -90,6 +91,7 @@ type agentInstance struct {
 	promptSearchDirs  []string           // directories to search for prompt files
 	tmuxClearAll      func()             // clears tmux tool state (watches, owned sessions)
 	kaRunner          *keepalive.Runner  // keepalive & background work timer (nil if disabled)
+	mcpManager        *mcpkg.Manager     // nil if no MCP servers configured
 }
 
 // applyAgentDisplaySettings sets per-agent display settings on a bot,
@@ -1468,6 +1470,13 @@ func main() {
 	}
 	gracefulShutdown(agents, shutdownTimeout)
 
+	// Close MCP managers — disconnect from MCP servers
+	for _, inst := range agents {
+		if inst.mcpManager != nil {
+			_ = inst.mcpManager.Close()
+		}
+	}
+
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
 	cancel()
 
@@ -1655,6 +1664,12 @@ func setupAgent(p setupParams) *agentInstance {
 	if p.bwStore != nil {
 		registry.Register(tools.NewBitwardenSearchTool(p.bwStore))
 		registry.Register(tools.NewBitwardenUnlockTool(p.bwStore))
+	}
+
+	// MCP servers (dynamic — re-reads mcp.toml on each tool call)
+	mcpMgr := mcpkg.NewManagerForAgent(filepath.Dir(p.configPath), acfg.ID)
+	if tool := mcpMgr.Tool(); tool != nil {
+		registry.Register(tool)
 	}
 
 	// Per-agent workspace bootstrap
@@ -2532,6 +2547,7 @@ func setupAgent(p setupParams) *agentInstance {
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
 		tmuxClearAll:      tmuxClearAll,
+		mcpManager:        mcpMgr,
 	}
 }
 

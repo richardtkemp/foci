@@ -20,6 +20,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `send_to_session` | Inject a message into another session for cross-session communication. `reply_to` param controls where the response goes: `"caller"` (default) or `"session"`. |
 | `bitwarden_search` | Search Bitwarden vault items by name/URI/folder/username (metadata only, no passwords). Only available when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | Unlock a vault item by ID — requires admin approval via aisudo/Telegram. Caches value for `secret_ttl`. Never returns the actual password. |
+| `mcp` | Call a tool on a connected MCP server. Re-reads `mcp.toml` on each call — servers can be added/removed without restarting. Only registered when `mcp.toml` exists or `configDir` is set. See [CONFIG.md](CONFIG.md#mcptoml) for configuration. |
 
 ## Complex Tools
 

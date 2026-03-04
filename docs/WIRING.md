@@ -40,6 +40,7 @@ config.Load(path)                                        ← validates values; l
   → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap}
     → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
+    → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
     → skills.Load(cfg.Skills.Dirs)
@@ -74,6 +75,7 @@ SIGTERM/SIGINT received
   → close HTTP server
   → gracefulShutdown(agents, timeout)    ← wait for in-flight agent turns
   → startup.RecordCleanShutdown()        ← record timestamp for crash detection
+  → close MCP managers                   ← disconnect from MCP servers
   → cancel context                        ← stops Telegram poll loops, triggers update ack
   → botMgr.Wait()                         ← block until all bots finish ack
   → deferred closes run (SQLite DBs, log files)
@@ -117,6 +119,7 @@ main
  ├── voice         → log, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
+ ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
  ├── tools         → provider, log, memory, secrets, voice
  ├── workspace     → provider
  ├── prompts       (no deps — embedded .md files)

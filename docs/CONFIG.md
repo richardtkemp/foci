@@ -256,6 +256,31 @@ secret_ttl = "30m"
 
 See [SECRETS.md](SECRETS.md) for the full security model and URI-based host validation.
 
+### `mcp.toml`
+
+Separate config file in the same directory as `foci.toml`. Defines MCP server connections. Missing file = no MCP servers (no error). The file is re-read on every MCP tool call, so changes take effect without restarting.
+
+```toml
+[[servers]]
+name = "filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/docs"]
+
+[[servers]]
+name = "remote"
+url = "https://mcp.example.com/sse"
+agents = ["research", "assistant"]
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | required | Unique server name (used in tool calls). |
+| `command` | string | `""` | Command to start a stdio MCP server. Mutually exclusive with `url`. |
+| `args` | string[] | `[]` | Arguments passed to `command`. |
+| `env` | string[] | `[]` | Extra environment variables (`KEY=VALUE`). |
+| `url` | string | `""` | HTTP endpoint for Streamable HTTP MCP server. Mutually exclusive with `command`. |
+| `agents` | string[] | `[]` | Agent IDs that can use this server. Empty = all agents. |
+
 ### `[environment]`
 
 Environment block injected as the first system prompt block, providing the agent with runtime context (workspace, paths, messaging platform, message metadata format).
