@@ -82,7 +82,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 			case "add":
 				return todoAdd(store, agentID, p.Text, p.Priority, p.Tag)
 			case "list":
-				return todoList(store, agentID, p.Status, p.Tag)
+				return todoList(store, agentID, p.Status, p.Tag, p.Priority)
 			case "search":
 				return todoSearch(store, agentID, p.Query)
 			case "get":
@@ -138,8 +138,8 @@ func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (Tool
 	return TextResult(fmt.Sprintf("Added #%d (%s)", id, pri)), nil
 }
 
-func todoList(store *memory.TodoStore, agentID, status, tag string) (ToolResult, error) {
-	items, err := store.List(agentID, status, tag)
+func todoList(store *memory.TodoStore, agentID, status, tag, priority string) (ToolResult, error) {
+	items, err := store.List(agentID, status, tag, priority)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list todos: %w", err)
 	}

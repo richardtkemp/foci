@@ -185,8 +185,8 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	return nextID, nil
 }
 
-// List returns todo items for an agent, optionally filtered by status and/or tag.
-func (s *TodoStore) List(agentID, status, tag string) ([]TodoItem, error) {
+// List returns todo items for an agent, optionally filtered by status, tag, and/or priority.
+func (s *TodoStore) List(agentID, status, tag, priority string) ([]TodoItem, error) {
 	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
@@ -198,6 +198,10 @@ func (s *TodoStore) List(agentID, status, tag string) ([]TodoItem, error) {
 		// Match tag as whole word in comma-separated list
 		query += ` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`
 		args = append(args, tag)
+	}
+	if priority != "" {
+		query += ` AND priority = ?`
+		args = append(args, priority)
 	}
 
 	if status != "" {

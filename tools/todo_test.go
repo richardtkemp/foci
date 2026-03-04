@@ -31,7 +31,7 @@ func TestTodoToolBatchComplete(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "")
+	items, _ := store.List("agent1", "done", "", "")
 	if len(items) != 3 {
 		t.Errorf("expected 3 done items, got %d", len(items))
 	}
@@ -58,7 +58,7 @@ func TestTodoToolBatchEdit(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "", "")
+	items, _ := store.List("agent1", "", "", "")
 	for _, item := range items {
 		if item.Priority != "high" {
 			t.Errorf("item %d priority = %q, want high", item.ID, item.Priority)
@@ -86,7 +86,7 @@ func TestTodoToolBatchRemove(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "", "")
+	items, _ := store.List("agent1", "", "", "")
 	if len(items) != 1 {
 		t.Errorf("expected 1 remaining item, got %d", len(items))
 	}
@@ -132,7 +132,7 @@ func TestTodoToolBatchPartialFailure(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "")
+	items, _ := store.List("agent1", "done", "", "")
 	if len(items) != 2 {
 		t.Errorf("expected 2 done items (valid ones), got %d", len(items))
 	}
@@ -157,7 +157,7 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "")
+	items, _ := store.List("agent1", "done", "", "")
 	if len(items) != 1 {
 		t.Errorf("expected 1 done item, got %d", len(items))
 	}
