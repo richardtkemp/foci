@@ -541,8 +541,12 @@ func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) 
 		return "", fmt.Errorf("no active session to fork from")
 	}
 
-	branchID := fmt.Sprintf("mb-%d", time.Now().Unix())
-	branchKey := fmt.Sprintf("agent:%s:multiball:%s", p.acfg.ID, branchID)
+	// Multiball is a branch from the parent session
+	branchKey, err := session.BranchFromSession(parentKey)
+	if err != nil {
+		secBot.SetSessionKey("")
+		return "", fmt.Errorf("create multiball key: %w", err)
+	}
 
 	orientPath := resolveOrientPath(
 		p.acfg.BranchOrientationMultiballPrompt, p.cfg.Sessions.BranchOrientationMultiballPrompt,

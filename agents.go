@@ -858,8 +858,12 @@ func buildBranchFunc(
 			return
 		}
 
-		branchID := fmt.Sprintf("%s-%d", branchType, time.Now().Unix())
-		branchKey := fmt.Sprintf("agent:%s:cron:%s", agentID, branchID)
+		// Cron tasks are branches from the default session
+		branchKey, branchErr := session.BranchFromSession(parentKey)
+		if branchErr != nil {
+			log.Errorf("keepalive", "%s branch key error: %v", branchType, branchErr)
+			return
+		}
 
 		orientText := buildOrientation(branchKey, parentKey, branchType)
 		err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
@@ -976,8 +980,12 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 
 	// Branch from expiring session so the memory formation job has conversation history.
 	// The caller proceeds immediately to clear the main session.
-	branchID := fmt.Sprintf("session-end-%d", time.Now().Unix())
-	branchKey := sessionKey + ":branch:" + branchID
+	// Create session-end memory branch
+	branchKey, err := session.BranchFromSession(sessionKey)
+	if err != nil {
+		log.Errorf("session-end-memory", "create branch key: %v", err)
+		return
+	}
 	orientText := buildOrientation(branchKey, sessionKey, "session-end-memory")
 	if err := sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
 		NoResetHook:        true,

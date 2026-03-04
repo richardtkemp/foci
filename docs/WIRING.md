@@ -4,43 +4,47 @@ How the pieces connect. Read this before touching the code.
 
 ## Startup Flow (`main.go`)
 
+Each phase is extracted into its own file. `main()` is a ~100-line orchestrator.
+
 ```
 config.Load(path)                                        ← validates values; logs to stderr + buffer
-  → log.Init(cfg.Logging)                                ← opens event file, replays buffered events
-  → log.InitAPIDB(cfg.Logging.APIDB)                     ← SQLite API call log (api.db)
-  → log.InitConversation(cfg.Logging.ConversationFile)   ← SQLite conversation log
+
+→ initLogging(cfg)                                       ← logging_init.go
+  → log.Init, log.InitAPIDB, log.InitConversation, log rotation
+  → returns cleanup func
+
+→ initSecrets(configPath, cfg)                           ← secrets_init.go
   → secrets.Load(secretsPath)                            ← secrets.toml overrides foci.toml
   → [if bitwarden.enabled] bitwarden.New(executor, ttl) ← aisudo-backed vault store
-    → DefaultExecutor{SessionFile: cfg.SessionFile} — bitwarden user reads its own session file
-    → bwStore.Refresh() → initial metadata load (allowlisted in aisudo)
-    → start background refresh ticker (refresh_interval)
-    → bwStore.StartCleanup(cleanup_interval)
+  → seedDefaultPrompts (per-agent)
+  → returns secretsResult{store, bwStore, httpAPIKey, cleanup}
 
-  Shared resources (created once):
-  → configDir = filepath.Dir(configPath)                  ← base for relative paths
-  → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
-  → Anthropic token resolution (priority order):
-  →   1. Setup token: anthropic.setup_token from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
-  →   2. API key: anthropic.api_key from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
-  →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
+→ newClientRegistry(cfg, store, anthropicClient, ctx)   ← clients.go
   → Lazy client registry: clients created on first use per endpoint:format pair (sync.Once)
-  →   getClient(endpoint, format) — lazy-init, returns provider.Client
-  →   peekClient(endpoint, format) — no-init check, returns nil if not yet created
-  →   resolveEndpointClient(endpoint, modelID) — infers format from model name, calls getClient
-  → Per-agent model resolution: config.ParseModel(agent.Model) → (endpoint, modelID) → resolveEndpointClient
+  →   GetClient(endpoint, format) — lazy-init, returns provider.Client
+  →   PeekClient(endpoint, format) — no-init check, returns nil if not yet created
+  →   ResolveEndpointClient(endpoint, modelID) — infers format from model name, calls GetClient
+
+→ initSessions(cfg)                                      ← sessions_init.go
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
-  → session.NewSessionIndex(session_index.db)             ← SQLite index of all session files; rebuilt on startup
+  → session.NewSessionIndex(session_index.db)             ← SQLite index; rebuilt on startup
   → sessions.OnSessionEvent(→ sessionIndex)               ← lifecycle hook: create/compact/clear → update index
+  → state.NewStore (state.json)
+  → returns sessionInfra{sessions, sessionIndex, stateStore, cleanup}
+
+→ initMemorySystem(cfg)                                  ← memory_init.go
   → memory: ReminderStore + Scratchpad + TodoStore       ← shared across agents (scoped per-agent via agent_id)
-  → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent (see below)
+  → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
+
+  Shared resources (created once in main.go):
   → telegram.NewToolDetailStore(tool_details.db)           ← shared; persists inline keyboard expansion data across restarts
   → voice STT/TTS providers                              ← shared across agents
   → telegram.NewBotManager()
 
   Per-agent loop (for each cfg.Agents[i]):
-  → setupAgent(params) → agentInstance{ag, cmds, registry, bootstrap}
+  → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
     → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
     → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
@@ -49,7 +53,7 @@ config.Load(path)                                        ← validates values; l
     → skills.Load(cfg.Skills.Dirs)
     → compaction.NewCompactor(sessions, model, threshold)
     → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
-    → command.NewRegistry() + register built-ins + custom scripts + skill commands
+    → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
@@ -57,12 +61,19 @@ config.Load(path)                                        ← validates values; l
     → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store
     → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
-  → signal.Notify(SIGINT, SIGTERM)                         ← must register before goroutines that could trigger SIGTERM
+  → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
+  → setupSharedMultiball(...)                              ← post_agent_setup.go
+  → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
+  → setupTmuxMemoryMonitor(...)                            ← post_agent_setup.go
+  → setupMemoryGuard(...)                                  ← post_agent_setup.go
+
+  → signal.Notify(SIGINT, SIGTERM)
   → restoreMultiballSessions()                             ← restore bot→session mappings from state store
-  → botMgr.StartAll(ctx)                                  ← starts all bots
-  → http.Server{"/send", "/status", "/command", "/wake", "/voice (ws)", "/-/reload-credentials"}  ← routes by agent param
-  → injectWelcomeFile()                                    ← setup.sh changelog injection
-  → block on signal → shutdown
+  → botMgr.StartAll(ctx)
+  → sendStartupNotifications(...)                          ← post_agent_setup.go
+  → http.Server{...}                                       ← http.go (registerHTTPHandlers)
+  → handleWelcomeAndFirstRun(...)                          ← notifications.go
+  → block on signal → runShutdown(...)                     ← shutdown.go
 ```
 
 **Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
@@ -71,16 +82,18 @@ config.Load(path)                                        ← validates values; l
 
 **Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
 
-## Shutdown Flow (`main.go`)
+## Shutdown Flow (`shutdown.go`)
 
 ```
 SIGTERM/SIGINT received
-  → close HTTP server
-  → gracefulShutdown(agents, timeout)    ← wait for in-flight agent turns
-  → startup.RecordCleanShutdown()        ← record timestamp for crash detection
-  → close MCP managers                   ← disconnect from MCP servers
-  → cancel context                        ← stops Telegram poll loops, triggers update ack
-  → botMgr.Wait()                         ← block until all bots finish ack
+  → runShutdown(agents, httpServer, botMgr, ...)   ← shutdown.go
+    → stop keepalive timers (per-agent)
+    → close HTTP server
+    → gracefulShutdown(agents, timeout)             ← wait for in-flight agent turns
+    → startup.RecordCleanShutdown()                 ← record timestamp for crash detection
+    → close MCP managers                            ← disconnect from MCP servers
+    → cancel context                                ← stops Telegram poll loops, triggers update ack
+    → botMgr.Wait()                                 ← block until all bots finish ack
   → deferred closes run (SQLite DBs, log files)
 ```
 
@@ -129,7 +142,7 @@ main
  ├── prompts       (no deps — embedded .md files)
  ├── compaction    → provider, prompts, session, log
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
- ├── command       → table, provision
+ ├── command       → table, provision, agent, session, workspace, config, state, provider
  ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
@@ -310,13 +323,29 @@ The cache miss on branch sessions was caused by a trailing newline difference.
 
 **Format:** JSONL files, one JSON-encoded `provider.Message` per line.
 
+**Key format:** `{agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]`
+
+**Type codes:**
+- `c` — chat (Telegram, external stable ID)
+- `i` — independent (HTTP, ephemeral)
+- Child types: `b` (branch), `i` (independent spawn)
+
 **Key → Path mapping:**
 ```
-agent:main:main           → {dir}/agent/main/main.jsonl
-agent:main:cron:morning   → {dir}/agent/main/cron/morning.jsonl
+Root sessions:   {key}/root.jsonl
+Child sessions:  {key}.jsonl
+
+Examples:
+main/c123/1709590000                    → sessions/main/c123/1709590000/root.jsonl
+main/c123/1709590000/b1709596800        → sessions/main/c123/1709590000/b1709596800.jsonl
+main/i1709596800/1709596800             → sessions/main/i1709596800/1709596800/root.jsonl
 ```
 
+**Versioning:** Each chat/independent session has version directories (created at first message, incremented on compaction). When compacted, the old `root.jsonl` is rotated to `root.{timestamp}.jsonl` and a new version directory is created. Children remain in their original version directories. This allows stable chat IDs across compactions while preserving compaction history.
+
 **Branching:** Branch files start with a `{"type":"branch_meta",...}` line containing `parent_key` and `branch_point`. `LoadFull()` reads parent[:branch_point] + branch's own messages. This is what makes cache sharing work — the API sees the same prefix bytes.
+
+**See also:** [SESSION_KEYS.md](SESSION_KEYS.md) for complete format specification, migration guide, and API reference.
 
 ## System Prompt Assembly (`workspace/bootstrap.go`, `agent/agent.go`)
 
@@ -568,7 +597,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 
 **`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The `resolveModel` callback in `main.go` parses the endpoint prefix, resolves aliases (which now include endpoint prefixes, e.g. `opus` → `anthropic:claude-opus-4-6`), and returns `(endpoint, model)`. The `setModel` callback calls `resolveEndpointClient(endpoint, model)` to lazy-init the correct client and calls `ag.SetSessionModel(sessionKey, model, endpoint, client)` to store the model, endpoint, and per-session client override. Both endpoint and model are persisted to state store for restoration across restarts.
 
-Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
+**Command registration** (`commands.go` in main package): All per-agent slash commands are registered in `registerAgentCommands()`, which takes a `cmdRegParams` struct bundling agent references, config, clients, and stores. Large command bodies (e.g. `/prompts` data builder, `/compact`, `/sessions`) are extracted into named top-level functions in `commands.go` rather than inline closures, reducing cognitive complexity. The `command` package also defines `AgentDeps` (`command/deps.go`) which documents the dependency surface between commands and agent internals. Commands use callbacks for telegram operations to avoid importing the `telegram` package (which imports `command`).
 
 ## Config (`config/config.go`)
 

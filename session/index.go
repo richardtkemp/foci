@@ -174,7 +174,7 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 
 	if opts.AgentID != "" {
 		query += ` AND session_key LIKE ?`
-		args = append(args, "agent:"+opts.AgentID+":%")
+		args = append(args, opts.AgentID+"/%")
 	}
 	if opts.SessionType != "" {
 		query += ` AND session_type = ?`
