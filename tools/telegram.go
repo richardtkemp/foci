@@ -12,6 +12,9 @@ import (
 
 // TelegramSender abstracts the telegram bot methods needed by the send_telegram tool.
 type TelegramSender interface {
+	// SessionKey returns the session key the bot is currently attached to.
+	SessionKey() string
+
 	// Default-chat methods (send to bot's last known chat).
 	SendText(text string) error
 	SendDocument(filePath string) error
@@ -83,6 +86,15 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 			bot := getSender(sessionKey)
 			if bot == nil {
 				return ToolResult{}, fmt.Errorf("telegram not configured")
+			}
+
+			// If the message originates from a different session than the bot's
+			// own session, prepend a header so the user knows which session sent it.
+			if p.Text != "" && sessionKey != "" {
+				botSession := bot.SessionKey()
+				if botSession != "" && sessionKey != botSession {
+					p.Text = "[[ message from " + sessionKey + " ]]\n" + p.Text
+				}
 			}
 
 			// Extract chat ID from session key for targeted delivery.
