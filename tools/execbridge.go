@@ -341,16 +341,17 @@ func generateShellFunc(t *Tool) string {
 		// Text as args or stdin; optional --file flag
 		return fmt.Sprintf(`%s() {
 %s
-  local text="" file_path="" send_as=""
+  local text="" file_path="" send_as="" read_stdin=false
   while [ $# -gt 0 ]; do
     case "$1" in
       --file) file_path="$2"; shift 2 ;;
       --send-as) send_as="$2"; shift 2 ;;
+      -) read_stdin=true; shift ;;
       *) text="$text $1"; shift ;;
     esac
   done
   text="${text# }"
-  if [ -z "$text" ] && [ -z "$file_path" ]; then
+  if [ "$read_stdin" = true ] || ([ -z "$text" ] && [ -z "$file_path" ]); then
     if [ ! -t 0 ]; then
       text="$(cat)"
     fi
@@ -358,6 +359,7 @@ func generateShellFunc(t *Tool) string {
   if [ -z "$text" ] && [ -z "$file_path" ]; then
     echo "usage: %s <text> [--file PATH] [--send-as TYPE]" >&2
     echo "  or: echo 'message' | %s" >&2
+    echo "  or: echo 'message' | %s -" >&2
     return 1
   fi
   local params="{}"
@@ -372,7 +374,7 @@ func generateShellFunc(t *Tool) string {
   fi
   foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_telegram","params":$p}')"
 }
-`, name, guard, name, name)
+`, name, guard, name, name, name)
 
 	case "todo":
 		// action as first arg, rest varies by action
