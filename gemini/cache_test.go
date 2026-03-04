@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"testing"
 
 	"google.golang.org/genai"
@@ -44,11 +45,8 @@ func TestContentHash_DiffersOnChange(t *testing.T) {
 func TestContentHash_NilInputs(t *testing.T) {
 	h := contentHash(nil, nil)
 	// Should not panic, and should return a valid hash
-	if h == [16]byte{} {
-		// MD5 of empty input is still a valid hash (not all zeros)
-		// Actually encoding nothing still writes nothing, so it IS all zeros.
-		// That's fine — it represents "nothing to cache".
-	}
+	// MD5 of encoding nothing produces all zeros - that's fine, it represents "nothing to cache"
+	_ = h
 }
 
 func TestContentHash_ToolsOnly(t *testing.T) {
@@ -81,7 +79,7 @@ func TestNewCacheManager_DefaultTTL(t *testing.T) {
 func TestEnsureCache_NothingToCache(t *testing.T) {
 	m := NewCacheManager(nil, 0)
 	// nil system and no tools → nothing to cache
-	name := m.EnsureCache(nil, "model", nil, nil)
+	name := m.EnsureCache(context.TODO(), "model", nil, nil)
 	if name != "" {
 		t.Errorf("expected empty cache name, got %q", name)
 	}

@@ -504,12 +504,12 @@ func TestModelCommand(t *testing.T) {
 		t.Errorf("result = %q", result)
 	}
 
-	result, _ = cmd.Execute(context.Background(), "opus")
+	_, _ = cmd.Execute(context.Background(), "opus")
 	if model != "claude-opus-4-6" {
 		t.Errorf("short name not resolved: got %q, want %q", model, "claude-opus-4-6")
 	}
 
-	result, _ = cmd.Execute(context.Background(), "sonnet")
+	_, _ = cmd.Execute(context.Background(), "sonnet")
 	if model != "claude-sonnet-4-6" {
 		t.Errorf("short name not resolved: got %q, want %q", model, "claude-sonnet-4-6")
 	}
@@ -608,12 +608,12 @@ func TestThinkingCommand(t *testing.T) {
 	}
 
 	// Set via numeric alias
-	result, _ = cmd.Execute(context.Background(), "0")
+	_, _ = cmd.Execute(context.Background(), "0")
 	if thinking != "off" {
 		t.Errorf("thinking not set to 'off' via '0': %q", thinking)
 	}
 
-	result, _ = cmd.Execute(context.Background(), "1")
+	_, _ = cmd.Execute(context.Background(), "1")
 	if thinking != "adaptive" {
 		t.Errorf("thinking not set via '1': %q", thinking)
 	}

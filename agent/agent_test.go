@@ -2108,7 +2108,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		notifier.MarkDone(sessionKey)
 		turnCount.Store(4) // reset so turn 6 = count 5 → high tokens
 
-		resp, err = env.ag.HandleMessage(context.Background(), sessionKey, "Turn 6")
+		_, err = env.ag.HandleMessage(context.Background(), sessionKey, "Turn 6")
 		if err != nil {
 			t.Fatalf("Turn 6: %v", err)
 		}
