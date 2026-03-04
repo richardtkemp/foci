@@ -133,3 +133,36 @@ func TestFociCallInvalidJSON(t *testing.T) {
 		t.Errorf("output = %q, want invalid JSON error", string(out))
 	}
 }
+
+func TestFociCallHelp(t *testing.T) {
+	bin := buildBinary(t)
+	for _, arg := range []string{"-h", "--help", "help"} {
+		t.Run(arg, func(t *testing.T) {
+			cmd := exec.Command(bin, arg)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", arg, err, out)
+			}
+			if !strings.Contains(string(out), "Usage:") {
+				t.Errorf("output %q does not contain 'Usage:'", string(out))
+			}
+		})
+	}
+}
+
+func TestFociCallVersion(t *testing.T) {
+	bin := buildBinary(t)
+	for _, arg := range []string{"--version", "-v", "version"} {
+		t.Run(arg, func(t *testing.T) {
+			cmd := exec.Command(bin, arg)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", arg, err, out)
+			}
+			output := string(out)
+			if !strings.HasPrefix(output, "foci-call ") {
+				t.Errorf("output %q does not start with 'foci-call '", output)
+			}
+		})
+	}
+}

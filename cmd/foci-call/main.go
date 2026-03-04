@@ -14,11 +14,48 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
+)
+
+// Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+	buildTime = "unknown"
+	goVersion = runtime.Version()
 )
 
 const maxResponseBytes = 1024 * 1024 // 1MB
 
+func printUsage() {
+	fmt.Fprintf(os.Stderr, `foci-call — invoke foci tools via the exec bridge socket
+
+Usage: foci-call '<json>'
+
+The JSON argument must contain a "tool" field and a "params" object.
+Example: foci-call '{"tool":"web_search","params":{"query":"golang"}}'
+
+Environment:
+  FOCI_SOCK    Unix socket path for exec bridge (required)
+
+Flags:
+  -h, --help       Show this help
+  --version, -v    Print version information
+`)
+}
+
 func main() {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "-h", "--help", "help":
+			printUsage()
+			os.Exit(0)
+		case "--version", "-v", "version":
+			fmt.Printf("foci-call %s (commit %s, built %s, %s)\n", version, gitCommit, buildTime, goVersion)
+			os.Exit(0)
+		}
+	}
+
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: foci-call '<json>'")
 		os.Exit(1)

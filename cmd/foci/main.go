@@ -8,11 +8,20 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"foci/anthropic"
 	"foci/secrets"
+)
+
+// Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+	buildTime = "unknown"
+	goVersion = runtime.Version()
 )
 
 const defaultAddr = "127.0.0.1:18791"
@@ -191,6 +200,8 @@ func main() {
 		err = cmdAuth(args)
 	case "help", "--help", "-h":
 		usage()
+	case "version", "--version", "-v":
+		fmt.Printf("foci %s (commit %s, built %s, %s)\n", version, gitCommit, buildTime, goVersion)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		usage()
@@ -219,6 +230,7 @@ Commands:
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
   ping                 Shorthand for 'command /ping'
+  version              Print version information
 
 Flags:
   --addr <host:port>   Gateway address (default: %s)
@@ -827,7 +839,13 @@ Flags:
 }
 
 func cmdSecrets(args []string) error {
-	if wantsHelp(args) || len(args) == 0 {
+	if len(args) == 0 {
+		secretsUsage()
+		return nil
+	}
+	// Show top-level secrets help only when -h/--help is the first arg
+	// (not a subcommand). Subcommands handle their own help.
+	if args[0] == "-h" || args[0] == "--help" {
 		secretsUsage()
 		return nil
 	}
@@ -869,6 +887,10 @@ func cmdSecrets(args []string) error {
 
 	switch sub {
 	case "list":
+		if wantsHelp(subArgs) {
+			fmt.Fprintf(os.Stderr, "Usage: foci secrets list\n\nList all secret names (values are not shown).\n")
+			return nil
+		}
 		store, err := secrets.Load(secretsPath)
 		if err != nil {
 			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
@@ -884,6 +906,10 @@ func cmdSecrets(args []string) error {
 		return nil
 
 	case "get":
+		if wantsHelp(subArgs) {
+			fmt.Fprintf(os.Stderr, "Usage: foci secrets get <section.key>\n\nPrint the value of a secret to stdout.\n")
+			return nil
+		}
 		if len(subArgs) != 1 {
 			return fmt.Errorf("usage: foci secrets get <section.key>")
 		}
@@ -899,6 +925,10 @@ func cmdSecrets(args []string) error {
 		return nil
 
 	case "set":
+		if wantsHelp(subArgs) {
+			fmt.Fprintf(os.Stderr, "Usage: foci secrets set <section.key> <value>\n\nAdd or update a secret. Key must be in section.key format (e.g. custom.github_token).\n")
+			return nil
+		}
 		if len(subArgs) != 2 {
 			return fmt.Errorf("usage: foci secrets set <section.key> <value>")
 		}
@@ -917,6 +947,10 @@ func cmdSecrets(args []string) error {
 		return nil
 
 	case "delete":
+		if wantsHelp(subArgs) {
+			fmt.Fprintf(os.Stderr, "Usage: foci secrets delete <section.key>\n\nRemove a secret by name.\n")
+			return nil
+		}
 		if len(subArgs) != 1 {
 			return fmt.Errorf("usage: foci secrets delete <section.key>")
 		}
