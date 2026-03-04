@@ -22,4 +22,5 @@ conversation.db-shm
 .staged-WELCOME.md
 .claude/
 coverage.out
+coverage.html
 update.sh
