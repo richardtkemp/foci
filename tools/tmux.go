@@ -119,7 +119,8 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 					inst.lastAccess[name] = time.Now()
 				}
 				if len(owned) > 0 {
-					log.Debugf("tmux", "restored %d owned session(s) from state (legacy format)", len(owned))
+					log.Debugf("tmux", "restored %d owned session(s) from state (legacy format), migrating", len(owned))
+					inst.persistOwned() // migrate to new format
 				}
 			}
 		}

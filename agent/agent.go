@@ -234,7 +234,7 @@ func (a *Agent) SetVoiceMode(sessionKey string, on bool) {
 
 	if a.StateStore != nil {
 		if err := a.StateStore.Set("voice:"+sessionKey, on); err != nil {
-			a.logger().Errorf("persist voice mode: %v", err)
+			a.logger().Errorf("session=%s persist voice mode: %v", sessionKey, err)
 		}
 	}
 }
@@ -277,7 +277,7 @@ func (a *Agent) SetSessionEffort(sessionKey, value string) {
 		if value == "" {
 			_ = a.StateStore.Delete("effort:" + sessionKey)
 		} else if err := a.StateStore.Set("effort:"+sessionKey, value); err != nil {
-			a.logger().Errorf("persist effort: %v", err)
+			a.logger().Errorf("session=%s persist effort: %v", sessionKey, err)
 		}
 	}
 }
@@ -305,7 +305,7 @@ func (a *Agent) SetSessionThinking(sessionKey, value string) {
 		if value == "" {
 			_ = a.StateStore.Delete("thinking:" + sessionKey)
 		} else if err := a.StateStore.Set("thinking:"+sessionKey, value); err != nil {
-			a.logger().Errorf("persist thinking: %v", err)
+			a.logger().Errorf("session=%s persist thinking: %v", sessionKey, err)
 		}
 	}
 }
@@ -338,11 +338,11 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provi
 			_ = a.StateStore.Delete("model_endpoint:" + sessionKey)
 		} else {
 			if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
-				a.logger().Errorf("persist model: %v", err)
+				a.logger().Errorf("session=%s persist model: %v", sessionKey, err)
 			}
 			if endpoint != "" {
 				if err := a.StateStore.Set("model_endpoint:"+sessionKey, endpoint); err != nil {
-					a.logger().Errorf("persist model_endpoint: %v", err)
+					a.logger().Errorf("session=%s persist model_endpoint: %v", sessionKey, err)
 				}
 			}
 		}
@@ -383,7 +383,7 @@ func (a *Agent) SetSessionNoCompact(sessionKey string, value bool) {
 			val = "true"
 		}
 		if err := a.StateStore.Set(key, val); err != nil {
-			a.logger().Errorf("persist no_compact: %v", err)
+			a.logger().Errorf("session=%s persist no_compact: %v", sessionKey, err)
 		}
 	}
 }
@@ -654,19 +654,19 @@ func detectContentExtension(content string) string {
 	return ".txt"
 }
 
-func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, toolName string, result string, messages []anthropic.Message) string {
+func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName string, result string, messages []anthropic.Message) string {
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
 	}
 
 	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
-		a.logger().Warnf("create tool result temp dir: %v", err)
+		a.logger().Warnf("session=%s create tool result temp dir: %v", sessionKey, err)
 		return result
 	}
 
 	var randBytes [8]byte
 	if _, err := rand.Read(randBytes[:]); err != nil {
-		a.logger().Warnf("generate random filename: %v", err)
+		a.logger().Warnf("session=%s generate random filename: %v", sessionKey, err)
 		return result
 	}
 	ext := detectContentExtension(result)
@@ -674,7 +674,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, too
 	fpath := filepath.Join(a.ToolResultTempDir, filename)
 
 	if err := os.WriteFile(fpath, []byte(result), 0o600); err != nil {
-		a.logger().Warnf("write tool result to file: %v", err)
+		a.logger().Warnf("session=%s write tool result to file: %v", sessionKey, err)
 		return result
 	}
 
@@ -682,7 +682,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, too
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
 	if a.AutoSummarise && client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || len(result) <= a.MaxSummaryChars) {
-		if summary := a.summariseToolResult(ctx, client, toolName, result, messages, fpath); summary != "" {
+		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, result, messages, fpath); summary != "" {
 			return summary
 		}
 	}
@@ -693,7 +693,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, too
 
 // summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
 // Returns the formatted summary string, or empty string on failure (caller falls back).
-func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, toolName, result string, messages []anthropic.Message, savedPath string) string {
+func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, result string, messages []anthropic.Message, savedPath string) string {
 	// Pick cheap model based on which provider the client is.
 	summaryAlias := "haiku"
 	if a.isGeminiClient(client) {
@@ -735,7 +735,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	start := time.Now()
 	resp, err := provider.Send(ctx, client, req, nil)
 	if err != nil {
-		a.logger().Warnf("auto-summary failed for %s: %v", toolName, err)
+		a.logger().Warnf("session=%s auto-summary failed for %s: %v", sessionKey, toolName, err)
 		return ""
 	}
 
@@ -882,7 +882,7 @@ func (a *Agent) collectReminders(sessionKey string) string {
 
 	reminders, err := a.Reminders.Due(a.AgentID)
 	if err != nil {
-		a.logger().Errorf("fetch reminders: %v", err)
+		a.logger().Errorf("session=%s fetch reminders: %v", sessionKey, err)
 		return ""
 	}
 	if len(reminders) == 0 {
@@ -897,7 +897,7 @@ func (a *Agent) collectReminders(sessionKey string) string {
 
 	// Auto-dismiss surfaced reminders
 	if err := a.Reminders.DismissAll(a.AgentID); err != nil {
-		a.logger().Errorf("dismiss reminders: %v", err)
+		a.logger().Errorf("session=%s dismiss reminders: %v", sessionKey, err)
 	}
 
 	return block
@@ -992,7 +992,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	if repair := repairInterruptedToolCalls(messages); repair != nil {
 		messages = append(messages, *repair)
 		if err := a.Sessions.Append(sessionKey, *repair); err != nil {
-			a.logger().Errorf("persist tool call repair: %v", err)
+			a.logger().Errorf("session=%s persist tool call repair: %v", sessionKey, err)
 		} else {
 			a.logger().Infof("repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
 		}
@@ -1075,7 +1075,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	defer func() {
 		if len(newMessages) > 0 {
 			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
-				a.logger().Errorf("flush in-flight messages: %v", err)
+				a.logger().Errorf("session=%s flush in-flight messages: %v", sessionKey, err)
 			} else {
 				a.logger().Infof("flushed %d in-flight messages for %s", len(newMessages), sessionKey)
 			}
@@ -1125,7 +1125,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		// Debug: log cache_control placement
-		logCacheDebug(system, reqMessages, turnModel)
+		logCacheDebug(sessionKey, system, reqMessages, turnModel)
 
 		a.logger().Debugf("api_request session=%s model=%s messages=%d tools=%d system_blocks=%d",
 			sessionKey, turnModel, len(reqMessages), len(toolDefs), len(system))
@@ -1294,7 +1294,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 			tool := a.Tools.Get(block.Name)
 			if tool == nil {
-				a.logger().Warnf("unknown tool: %s", block.Name)
+				a.logger().Warnf("session=%s unknown tool: %s", sessionKey, block.Name)
 				toolResults = append(toolResults, anthropic.ToolResultBlock(
 					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 				))
@@ -1325,7 +1325,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			}
 
 			// Guard against oversized tool results
-			guardedResult := a.guardToolResult(ctx, turnClient, block.Name, result.Text, messages)
+			guardedResult := a.guardToolResult(ctx, turnClient, sessionKey, block.Name, result.Text, messages)
 			// Redact secrets from tool output
 			if a.Redact != nil {
 				guardedResult = a.Redact(guardedResult)
@@ -1382,19 +1382,19 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	}
 	var apiErr *anthropic.APIError
 	if errors.As(err, &apiErr) && apiErr.IsRateLimit() {
-		a.logger().Warnf("rate limited: status=%d retry_after=%s", apiErr.StatusCode, apiErr.RetryAfter)
+		a.logger().Warnf("session=%s rate limited: status=%d retry_after=%s", sessionKey, apiErr.StatusCode, apiErr.RetryAfter)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(apiErr.RetryAfterSeconds())
 		}
 		return fmt.Errorf("rate limited — mana exhausted")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsOverloaded() {
-		a.logger().Warnf("overloaded: status=%d (retries exhausted)", apiErr.StatusCode)
+		a.logger().Warnf("session=%s overloaded: status=%d (retries exhausted)", sessionKey, apiErr.StatusCode)
 		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsRetryable() {
 		a.logger().Debugf("server error detail: %s", err)
-		a.logger().Warnf("API server error (status %d)", apiErr.StatusCode)
+		a.logger().Warnf("session=%s API server error (status %d)", sessionKey, apiErr.StatusCode)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(0)
 		}
@@ -1513,7 +1513,7 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
 	if summary, err := a.Compactor.Compact(ctx, client, sessionKey, system, summaryPrompt, handoffMsg, false); err != nil {
-		a.logger().Errorf("compaction failed: %v", err)
+		a.logger().Errorf("session=%s compaction failed: %v", sessionKey, err)
 	} else {
 		if a.CompactionNotifyFunc != nil {
 			a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
@@ -1560,7 +1560,7 @@ func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
 }
 
 // logCacheDebug logs cache_control placement and warns about minimum token thresholds.
-func logCacheDebug(system []anthropic.SystemBlock, messages []anthropic.Message, model string) {
+func logCacheDebug(sessionKey string, system []anthropic.SystemBlock, messages []anthropic.Message, model string) {
 	// Estimate tokens: ~4 chars per token (rough heuristic)
 	const charsPerToken = 4
 
@@ -1594,8 +1594,8 @@ func logCacheDebug(system []anthropic.SystemBlock, messages []anthropic.Message,
 	}
 
 	if len(system) > 0 && systemTokensEst < minTokens {
-		log.Warnf("agent", "system prompt ~%d tokens is below %s minimum of %d for caching — cache will not activate",
-			systemTokensEst, model, minTokens)
+		log.Warnf("agent", "session=%s system prompt ~%d tokens is below %s minimum of %d for caching — cache will not activate",
+			sessionKey, systemTokensEst, model, minTokens)
 	}
 }
 
