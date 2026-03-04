@@ -1226,19 +1226,16 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	}
 	var apiErr *anthropic.APIError
 	if errors.As(err, &apiErr) && apiErr.IsRateLimit() {
-		a.logger().Warnf("session=%s rate limited: status=%d retry_after=%s", sessionKey, apiErr.StatusCode, apiErr.RetryAfter)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(apiErr.RetryAfterSeconds())
 		}
 		return fmt.Errorf("rate limited — mana exhausted")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsOverloaded() {
-		a.logger().Warnf("session=%s overloaded: status=%d (retries exhausted)", sessionKey, apiErr.StatusCode)
 		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
 	}
 	if errors.As(err, &apiErr) && apiErr.IsRetryable() {
 		a.logger().Debugf("server error detail: %s", err)
-		a.logger().Warnf("session=%s API server error (status %d)", sessionKey, apiErr.StatusCode)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(0)
 		}
