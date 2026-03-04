@@ -10,6 +10,7 @@ import (
 
 // mockTelegramSender records calls to all send methods.
 type mockTelegramSender struct {
+	sessionKey    string
 	textCalls     []string
 	documentCalls []string
 	voiceCalls    []string
@@ -36,6 +37,10 @@ type mockTelegramSender struct {
 	chatAudioCalls     []mockChatCall
 	chatAnimationCalls []mockChatCall
 	chatVoiceDataCalls []mockChatDataCall
+}
+
+func (m *mockTelegramSender) SessionKey() string {
+	return m.sessionKey
 }
 
 type mockChatCall struct {
@@ -886,6 +891,79 @@ func TestSendTelegramChatSessionUsesPrimary(t *testing.T) {
 	}
 	if len(multiballMock.textCalls) != 0 && len(multiballMock.chatTextCalls) != 0 {
 		t.Errorf("multiball should not be called for chat session")
+	}
+}
+
+// --- Cross-session header tests ---
+
+func TestSendTelegramCrossSessionHeader(t *testing.T) {
+	// Message from a different session than the bot's own session
+	// should be prepended with a header.
+	mock := &mockTelegramSender{sessionKey: "agent:fotini:chat:99887766"}
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "background task done",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.textCalls) != 1 {
+		t.Fatalf("expected 1 textCall, got %d", len(mock.textCalls))
+	}
+	want := "[[ message from agent:fotini:spawn:spawn-12345 ]]\nbackground task done"
+	if mock.textCalls[0] != want {
+		t.Errorf("text = %q, want %q", mock.textCalls[0], want)
+	}
+}
+
+func TestSendTelegramSameSessionNoHeader(t *testing.T) {
+	// Message from the bot's own session should NOT get a header.
+	mock := &mockTelegramSender{sessionKey: "agent:fotini:chat:99887766"}
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:99887766")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "normal message",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.chatTextCalls) != 1 {
+		t.Fatalf("expected 1 chatTextCall, got %d", len(mock.chatTextCalls))
+	}
+	if mock.chatTextCalls[0].value != "normal message" {
+		t.Errorf("text = %q, want %q", mock.chatTextCalls[0].value, "normal message")
+	}
+}
+
+func TestSendTelegramCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) {
+	// When bot has no session key (not yet attached), don't add header.
+	mock := &mockTelegramSender{sessionKey: ""}
+	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+
+	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": "hello",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(mock.textCalls) != 1 {
+		t.Fatalf("expected 1 textCall, got %d", len(mock.textCalls))
+	}
+	if mock.textCalls[0] != "hello" {
+		t.Errorf("text = %q, want %q", mock.textCalls[0], "hello")
 	}
 }
 
