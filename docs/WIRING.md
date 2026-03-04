@@ -19,10 +19,12 @@ config.Load(path)                                        ← validates values; l
   Shared resources (created once):
   → configDir = filepath.Dir(configPath)                  ← base for relative paths
   → cfg.DataPath(configDir, file)                         ← resolves DB paths via data_dir or configDir
-  → Token resolution (priority order):
+  → Anthropic token resolution (priority order):
   →   1. Setup token: anthropic.setup_token from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   2. API key: anthropic.api_key from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
+  → Gemini client (lazy): created on first agent with provider="gemini", from gemini.api_key in secrets.toml
+  → Per-agent provider resolution: agent.Provider → anthropicClient or geminiClient (provider.Client interface)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
@@ -59,7 +61,7 @@ config.Load(path)                                        ← validates values; l
   → block on signal → shutdown
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Shared resources (anthropic client, session store, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Each agent gets a `provider.Client` based on its `provider` config field (default: Anthropic). Shared resources (session store, voice providers) are passed to each agent.
 
 **Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). Reminder and scratchpad stores are always shared. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
 
@@ -107,26 +109,28 @@ main
  ├── table         (no deps)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
- ├── anthropic     (no deps)
- ├── session       → anthropic, log
+ ├── provider      (no deps — provider-neutral types and Client interface)
+ ├── anthropic     → provider
+ ├── gemini        → provider, google.golang.org/genai
+ ├── session       → provider, log
  ├── memory        → modernc.org/sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → log, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
- ├── tools         → anthropic, log, memory, secrets, voice
- ├── workspace     → anthropic
+ ├── tools         → provider, log, memory, secrets, voice
+ ├── workspace     → provider
  ├── prompts       (no deps — embedded .md files)
- ├── compaction    → anthropic, prompts, session, log
+ ├── compaction    → provider, prompts, session, log
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
  ├── command       → table, provision
  ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
- ├── agent         → anthropic, compaction, mana, warnings, session, tools, workspace, log
+ ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
  ├── keepalive     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
  └── telegram      → agent, command, log, table, voice
 ```
 
-No circular dependencies. `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `session` and `voice` depend only on `anthropic` / `log`. `keepalive` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
+No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `provider` defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic` and `gemini` both implement `provider.Client`, translating between neutral types and their wire formats. Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `keepalive` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`, `IsValidBotToken`, `IsValidUserID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`).
 
@@ -297,7 +301,7 @@ The cache miss on branch sessions was caused by a trailing newline difference.
 
 ## Session Storage
 
-**Format:** JSONL files, one JSON-encoded `anthropic.Message` per line.
+**Format:** JSONL files, one JSON-encoded `provider.Message` per line.
 
 **Key → Path mapping:**
 ```
@@ -326,9 +330,20 @@ Each becomes a `SystemBlock{type:"text", text:content}`. Missing/empty files are
 
 The **last** block gets `cache_control: {type: "ephemeral"}`. Order matters: most-stable blocks first maximizes cache prefix reuse. The environment block is highly stable (only changes on restart), making it a good cache prefix leader.
 
+## Provider Interface (`provider/`)
+
+Provider-neutral types and `Client` interface. All packages use `provider.Message`, `provider.ContentBlock`, `provider.ToolDef`, etc. — the concrete API client translates at the wire boundary.
+
+```go
+type Client interface {
+    SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error)
+    CountTokens(ctx context.Context, req *MessageRequest) (int, error)
+}
+```
+
 ## Anthropic API Client (`anthropic/`)
 
-Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
+Implements `provider.Client`. Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
 
 1. **Client** (`client.go`) — messages API + token counting
    - Sends model requests with system prompt + conversation history
@@ -345,6 +360,14 @@ Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
    - Loads credentials from disk (foci-native or Claude Code format)
    - Background refresh goroutine refreshes ~5min before expiry
    - Provides `Token()` func used by both Client and UsageClient via tokenFunc
+
+## Gemini API Client (`gemini/`)
+
+Implements `provider.Client` using `google.golang.org/genai` SDK. Translation layer converts between provider-neutral types and Gemini wire format:
+- `messagesToGenai()` — role mapping (`assistant` → `model`), content block → Part translation, `tool_use` → `FunctionCall`, `tool_result` → `FunctionResponse`
+- `toolsToGenai()` — JSON Schema → `genai.Schema`, server tools filtered out
+- `responseFromGenai()` — finish reason mapping, usage extraction, `FunctionCall` → `tool_use` ContentBlock
+- `classifyError()` — maps Gemini SDK errors to `provider.APIError` for agent loop retry logic
 
 ## Prompt Caching
 

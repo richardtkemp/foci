@@ -97,8 +97,9 @@ type AgentMemoryConfig struct {
 
 type AgentConfig struct {
 	ID                      string            `toml:"id"`
-	Name                    string            `toml:"name"`  // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji                   string            `toml:"emoji"` // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Name                    string            `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji                   string            `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Provider                string            `toml:"provider"` // "anthropic" (default) or "gemini"
 	Model                   string            `toml:"model"`
 	Workspace               string            `toml:"workspace"`
 	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
@@ -160,6 +161,10 @@ type AgentConfig struct {
 	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // per-agent memory formation override
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
+}
+
+type GeminiConfig struct {
+	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
 }
 
 type AnthropicConfig struct {
@@ -362,6 +367,7 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
+	Provider            string           `toml:"provider"`              // default provider: "anthropic" (default) or "gemini"
 	Model               string           `toml:"model"`                 // default model (default: claude-haiku-4-5)
 	DuplicateMessages              bool             `toml:"duplicate_messages"`                // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages  bool             `toml:"batch_partial_assistant_messages"`   // default batch_partial_assistant_messages (default: false)
@@ -428,6 +434,7 @@ type Config struct {
 	Agent              AgentConfig           `toml:"agent"`    // legacy: single agent
 	Agents             []AgentConfig         `toml:"agents"`   // multi-agent: array of agents
 	Anthropic          AnthropicConfig       `toml:"anthropic"`
+	Gemini             GeminiConfig          `toml:"gemini"`
 	Telegram           TelegramConfig        `toml:"telegram"`
 	Sessions           SessionsConfig        `toml:"sessions"`
 	Memory             MemoryConfig          `toml:"memory"`
@@ -565,6 +572,7 @@ func validate(cfg *Config) error {
 		{"anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout},
 		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
 		{"anthropic", "cc_credentials_poll_interval", cfg.Anthropic.CCCredentialsPollInterval},
+		{"gemini", "http_timeout", cfg.Gemini.HTTPTimeout},
 		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
 		{"tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout},
 		{"tools", "web_search_timeout", cfg.Tools.WebSearchTimeout},
@@ -797,6 +805,8 @@ func Load(path string) (*Config, error) {
 			"opus":   "claude-opus-4-6",
 			"sonnet": "claude-sonnet-4-6",
 			"haiku":  "claude-haiku-4-5",
+			"flash":  "gemini-2.5-flash",
+			"pro":    "gemini-2.5-pro",
 		}
 	}
 
@@ -870,6 +880,9 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
 	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
+
+	// Gemini defaults
+	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)
