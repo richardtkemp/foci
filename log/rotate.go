@@ -153,6 +153,9 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	if err := scanner.Err(); err != nil {
 		_ = gzw.Close()
 		_ = os.Remove(tmpArchivePath)
+		if err == bufio.ErrTooLong {
+			Errorf("rotate", "%s: line exceeds rotation_max_line_size (%d bytes) — file will not be rotated; increase the limit in config", path, maxLineSize)
+		}
 		return fmt.Errorf("scan: %w", err)
 	}
 

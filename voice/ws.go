@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"foci/log"
+	"foci/session"
 
 	"github.com/gorilla/websocket"
 )
@@ -246,7 +247,10 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 		c.sessionKey = sel.SessionKey
 		log.Infof("voice-ws", "agent selected: %s (reused session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	} else {
-		c.sessionKey = fmt.Sprintf("agent:%s:voice:%s", sel.AgentID, connID)
+		// Voice sessions use chat IDs (treat voice chat ID as regular chat)
+	// Use a generated ID based on connection for voice-only sessions
+	voiceChatID := int64(time.Now().Unix())
+	c.sessionKey = session.ChatSessionKey(sel.AgentID, voiceChatID)
 		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	}
 
