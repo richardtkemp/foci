@@ -1226,6 +1226,24 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			}
 		}
 
+		// If this is the last allowed iteration, don't execute tools —
+		// instead inject descriptive error results so the session JSONL
+		// ends with a proper tool_use / tool_result pair.
+		if i+1 >= maxLoops {
+			var toolResults []anthropic.ContentBlock
+			errMsg := fmt.Sprintf("Tool call not executed: max tool loop depth reached (limit: %d)", maxLoops)
+			for _, block := range resp.Content {
+				if block.Type != "tool_use" {
+					continue
+				}
+				toolResults = append(toolResults, anthropic.ToolResultBlock(block.ID, errMsg, true))
+			}
+			toolMsg := anthropic.Message{Role: "user", Content: toolResults}
+			messages = append(messages, toolMsg)
+			newMessages = append(newMessages, toolMsg)
+			break
+		}
+
 		// Build tool execution context: inject session key
 		// so tools can route async results without importing agent.
 		toolCtx := tools.WithSessionKey(ctx, sessionKey)
@@ -1312,7 +1330,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 
 	// Max loops reached — save what we have and return last text
-	a.logger().Warnf("max tool call depth reached for session %s", sessionKey)
+	sessionFile := sessionKey
+	if p, err := a.Sessions.SessionPath(sessionKey); err == nil {
+		sessionFile = p
+	}
+	a.logger().Warnf("max tool call depth reached for session %s", sessionFile)
 	if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
 		return "", fmt.Errorf("save session: %w", err)
 	}
