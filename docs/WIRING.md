@@ -114,7 +114,7 @@ main
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
- ├── anthropic     → provider
+ ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
  ├── session       → provider, log
@@ -345,7 +345,13 @@ type Client interface {
     SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error)
     CountTokens(ctx context.Context, req *MessageRequest) (int, error)
 }
+
+type StreamingClient interface {
+    StreamMessage(ctx context.Context, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error)
+}
 ```
+
+`StreamingClient` is opt-in — the agent loop type-asserts `provider.StreamingClient` when `Streaming = true`. Currently only the Anthropic client implements it. `StreamHandler` has `OnTextDelta` and `OnThinkingDelta` callbacks for incremental delivery.
 
 ### Dynamic Provider Switching
 
@@ -364,12 +370,21 @@ Agents can switch providers at runtime via `/model provider:alias` (e.g. `/model
 
 ## Anthropic API Client (`anthropic/`)
 
-Implements `provider.Client`. Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
+Implements `provider.Client` and `provider.StreamingClient`. Uses the official `github.com/anthropics/anthropic-sdk-go` SDK by default (`use_sdk = true`), with a raw HTTP fallback (`use_sdk = false`).
 
-1. **Client** (`client.go`) — messages API + token counting
+**Transport:** `sendOnce()` dispatches between `sendOnceSDK()` (SDK) and `sendOnceRaw()` (hand-rolled HTTP). Same pattern for `CountTokens` and `ListModels`. The transport is wrapped by two-phase retry logic: Phase 1 (3 retries with exponential backoff on 500/502/503/529) and Phase 2 (extended overload recovery with cross-goroutine signaling on 529). The SDK client is initialized lazily (`sync.Once`) and configured with `WithMaxRetries(0)` since retry logic is handled externally.
+
+**Translation layer** (`translate.go`): converts between provider-neutral types and SDK types at the boundary. `buildSDKParams()` translates `MessageRequest` → `MessageNewParams`. `responseFromSDK()` translates back. `classifySDKError()` maps SDK errors → `provider.APIError`. Custom tools use typed SDK fields; server tools and documents use raw JSON passthrough via `param.Override`.
+
+**Streaming** (`stream.go`): `StreamMessage()` wraps `streamOnce()` with the same two-phase retry logic. Pre-stream errors (before any deltas) are retried; mid-stream errors are not (deltas already emitted). `streamOnce()` calls `Messages.NewStreaming()`, iterates events, fires `StreamHandler.OnTextDelta` / `OnThinkingDelta` callbacks, uses `Message.Accumulate()` for response assembly. Enabled per-agent via `streaming = true` (requires `use_sdk = true`).
+
+Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
+
+1. **Client** (`client.go`) — messages API + token counting + streaming
    - Sends model requests with system prompt + conversation history
    - Also handles `/v1/messages/count_tokens` for `/context` command
    - Supports static token (`NewClientWithTimeout`) or dynamic token func (`NewClientWithTokenFunc`)
+   - Per-request auth via `option.WithAuthToken(token)` (SDK path) or manual header (raw path)
    - Sets `anthropic-beta: oauth-2025-04-20` header for OAuth token auth
 
 2. **UsageClient** (`usage.go`) — mana/usage API

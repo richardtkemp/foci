@@ -1,0 +1,338 @@
+package anthropic
+
+// Translation layer between provider.* types and Anthropic SDK types.
+// Pattern matches openai/translate.go — translates at the boundary,
+// keeping provider-neutral types as canonical throughout foci.
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	sdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
+)
+
+// buildSDKParams translates a provider.MessageRequest into SDK MessageNewParams.
+func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
+	params := sdk.MessageNewParams{
+		Model:     sdk.Model(req.Model),
+		MaxTokens: int64(req.MaxTokens),
+		Messages:  messagesToSDK(req.Messages),
+	}
+
+	if len(req.System) > 0 {
+		params.System = systemToSDK(req.System)
+	}
+
+	if len(req.Tools) > 0 {
+		params.Tools = toolsToSDK(req.Tools)
+	}
+
+	if req.Output != nil && req.Output.Effort != "" {
+		params.OutputConfig = sdk.OutputConfigParam{
+			Effort: sdk.OutputConfigEffort(req.Output.Effort),
+		}
+	}
+
+	if req.Thinking != nil {
+		switch req.Thinking.Type {
+		case "adaptive":
+			params.Thinking = sdk.ThinkingConfigParamUnion{
+				OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{},
+			}
+		case "enabled":
+			params.Thinking = sdk.ThinkingConfigParamUnion{
+				OfEnabled: &sdk.ThinkingConfigEnabledParam{
+					BudgetTokens: int64(req.Thinking.BudgetTokens),
+				},
+			}
+		}
+	}
+
+	if req.CacheControl != nil {
+		params.CacheControl = sdk.NewCacheControlEphemeralParam()
+	}
+
+	return params
+}
+
+// buildSDKCountParams translates a provider.MessageRequest into SDK MessageCountTokensParams.
+func buildSDKCountParams(req *MessageRequest) sdk.MessageCountTokensParams {
+	params := sdk.MessageCountTokensParams{
+		Model:    sdk.Model(req.Model),
+		Messages: messagesToSDK(req.Messages),
+	}
+
+	if len(req.System) > 0 {
+		params.System = sdk.MessageCountTokensParamsSystemUnion{
+			OfTextBlockArray: systemToSDK(req.System),
+		}
+	}
+
+	if len(req.Tools) > 0 {
+		params.Tools = countToolsToSDK(req.Tools)
+	}
+
+	if req.Thinking != nil {
+		switch req.Thinking.Type {
+		case "adaptive":
+			params.Thinking = sdk.ThinkingConfigParamUnion{
+				OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{},
+			}
+		}
+	}
+
+	return params
+}
+
+// responseFromSDK translates an SDK Message into a provider.MessageResponse.
+func responseFromSDK(msg *sdk.Message) *MessageResponse {
+	resp := &MessageResponse{
+		ID:         msg.ID,
+		Type:       "message",
+		Role:       string(msg.Role),
+		Model:      string(msg.Model),
+		StopReason: string(msg.StopReason),
+		Usage: Usage{
+			InputTokens:              int(msg.Usage.InputTokens),
+			OutputTokens:             int(msg.Usage.OutputTokens),
+			CacheCreationInputTokens: int(msg.Usage.CacheCreationInputTokens),
+			CacheReadInputTokens:     int(msg.Usage.CacheReadInputTokens),
+		},
+	}
+
+	for _, block := range msg.Content {
+		resp.Content = append(resp.Content, contentBlockFromSDK(block))
+	}
+
+	return resp
+}
+
+// contentBlockFromSDK translates an SDK ContentBlockUnion into a provider.ContentBlock.
+func contentBlockFromSDK(block sdk.ContentBlockUnion) ContentBlock {
+	switch v := block.AsAny().(type) {
+	case sdk.TextBlock:
+		return ContentBlock{
+			Type: "text",
+			Text: v.Text,
+		}
+	case sdk.ThinkingBlock:
+		return ContentBlock{
+			Type:      "thinking",
+			Thinking:  v.Thinking,
+			Signature: v.Signature,
+		}
+	case sdk.RedactedThinkingBlock:
+		return ContentBlock{
+			Type: "redacted_thinking",
+			Data: v.Data,
+		}
+	case sdk.ToolUseBlock:
+		return ContentBlock{
+			Type:  "tool_use",
+			ID:    v.ID,
+			Name:  v.Name,
+			Input: json.RawMessage(v.Input),
+		}
+	case sdk.ServerToolUseBlock:
+		// Server tool blocks: reconstruct raw JSON for passthrough.
+		raw, _ := json.Marshal(block)
+		inputRaw, _ := json.Marshal(v.Input)
+		return ContentBlock{
+			Type:  block.Type,
+			ID:    v.ID,
+			Name:  string(v.Name),
+			Input: inputRaw,
+			Raw:   raw,
+		}
+	default:
+		// Unknown block types: preserve as raw JSON for passthrough.
+		raw, _ := json.Marshal(block)
+		cb := ContentBlock{
+			Type: block.Type,
+			Raw:  raw,
+		}
+		// Extract common fields from the union.
+		cb.ID = block.ID
+		cb.Name = block.Name
+		cb.Input = json.RawMessage(block.Input)
+		return cb
+	}
+}
+
+// classifySDKError maps an SDK error into a provider.APIError.
+func classifySDKError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var sdkErr *sdk.Error
+	if errors.As(err, &sdkErr) {
+		return &APIError{
+			StatusCode: sdkErr.StatusCode,
+			Body:       sdkErr.RawJSON(),
+		}
+	}
+
+	return err
+}
+
+// messagesToSDK translates provider messages to SDK message params.
+func messagesToSDK(msgs []Message) []sdk.MessageParam {
+	result := make([]sdk.MessageParam, 0, len(msgs))
+	for _, msg := range msgs {
+		result = append(result, sdk.MessageParam{
+			Role:    sdk.MessageParamRole(msg.Role),
+			Content: contentBlocksToSDK(msg.Content),
+		})
+	}
+	return result
+}
+
+// contentBlocksToSDK translates provider content blocks to SDK content block params.
+func contentBlocksToSDK(blocks []ContentBlock) []sdk.ContentBlockParamUnion {
+	result := make([]sdk.ContentBlockParamUnion, 0, len(blocks))
+	for _, b := range blocks {
+		result = append(result, contentBlockToSDK(b))
+	}
+	return result
+}
+
+// contentBlockToSDK translates a single provider content block to SDK param.
+func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
+	switch b.Type {
+	case "text":
+		block := sdk.NewTextBlock(b.Text)
+		if b.CacheControl != nil {
+			block.OfText.CacheControl = sdk.NewCacheControlEphemeralParam()
+		}
+		return block
+
+	case "image":
+		if b.Source != nil {
+			block := sdk.NewImageBlockBase64(b.Source.MediaType, b.Source.Data)
+			if b.CacheControl != nil {
+				block.OfImage.CacheControl = sdk.NewCacheControlEphemeralParam()
+			}
+			return block
+		}
+
+	case "document":
+		if b.Source != nil {
+			// Documents can have various media types beyond PDF. Use raw JSON
+			// passthrough to match the wire format exactly.
+			docJSON, _ := json.Marshal(b)
+			return rawToSDKContentBlock(docJSON)
+		}
+
+	case "tool_use":
+		return sdk.NewToolUseBlock(b.ID, json.RawMessage(b.Input), b.Name)
+
+	case "tool_result":
+		block := sdk.NewToolResultBlock(b.ToolUseID, b.Content, b.IsError)
+		if b.CacheControl != nil {
+			block.OfToolResult.CacheControl = sdk.NewCacheControlEphemeralParam()
+		}
+		return block
+
+	case "thinking":
+		return sdk.NewThinkingBlock(b.Signature, b.Thinking)
+
+	case "redacted_thinking":
+		return sdk.NewRedactedThinkingBlock(b.Data)
+
+	default:
+		// Server tool result blocks and other unknown types: use raw JSON passthrough.
+		if len(b.Raw) > 0 {
+			return rawToSDKContentBlock(b.Raw)
+		}
+	}
+
+	// Fallback for unhandled types without raw data.
+	return sdk.NewTextBlock(fmt.Sprintf("[unsupported block type: %s]", b.Type))
+}
+
+// rawToSDKContentBlock wraps raw JSON as an SDK content block param via Override.
+func rawToSDKContentBlock(raw json.RawMessage) sdk.ContentBlockParamUnion {
+	return param.Override[sdk.ContentBlockParamUnion](string(raw))
+}
+
+// systemToSDK translates provider system blocks to SDK text block params.
+func systemToSDK(blocks []SystemBlock) []sdk.TextBlockParam {
+	result := make([]sdk.TextBlockParam, 0, len(blocks))
+	for _, b := range blocks {
+		tb := sdk.TextBlockParam{Text: b.Text}
+		if b.CacheControl != nil {
+			tb.CacheControl = sdk.NewCacheControlEphemeralParam()
+		}
+		result = append(result, tb)
+	}
+	return result
+}
+
+// toolsToSDK translates provider tool definitions to SDK tool union params.
+func toolsToSDK(tools []ToolDef) []sdk.ToolUnionParam {
+	result := make([]sdk.ToolUnionParam, 0, len(tools))
+	for _, t := range tools {
+		result = append(result, toolToSDK(t))
+	}
+	return result
+}
+
+// toolToSDK translates a single provider ToolDef to an SDK ToolUnionParam.
+// Custom tools get typed fields; server tools use raw JSON passthrough.
+func toolToSDK(t ToolDef) sdk.ToolUnionParam {
+	raw := t.Raw()
+
+	// Peek at the type field to distinguish custom vs server tools.
+	var peek struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(raw, &peek)
+
+	// Server tools (web_search, web_fetch, etc.): passthrough raw JSON.
+	if peek.Type != "" && peek.Type != "custom" {
+		return param.Override[sdk.ToolUnionParam](string(raw))
+	}
+
+	// Custom tools: extract fields into typed struct.
+	var def struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		InputSchema json.RawMessage `json:"input_schema"`
+	}
+	_ = json.Unmarshal(raw, &def)
+
+	var schema sdk.ToolInputSchemaParam
+	_ = json.Unmarshal(def.InputSchema, &schema)
+
+	return sdk.ToolUnionParam{
+		OfTool: &sdk.ToolParam{
+			Name:        def.Name,
+			Description: param.NewOpt(def.Description),
+			InputSchema: schema,
+		},
+	}
+}
+
+// countToolsToSDK translates provider tool definitions to SDK count token tool params.
+func countToolsToSDK(tools []ToolDef) []sdk.MessageCountTokensToolUnionParam {
+	result := make([]sdk.MessageCountTokensToolUnionParam, 0, len(tools))
+	for _, t := range tools {
+		raw := t.Raw()
+		// Use raw JSON passthrough for all tool types in token counting.
+		result = append(result, param.Override[sdk.MessageCountTokensToolUnionParam](string(raw)))
+	}
+	return result
+}
+
+// sdkRequestOptions builds per-request SDK options for auth and beta headers.
+func sdkRequestOptions(token string) []option.RequestOption {
+	opts := []option.RequestOption{
+		option.WithAuthToken(token),
+		option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
+	}
+	return opts
+}

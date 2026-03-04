@@ -125,6 +125,7 @@ type Agent struct {
 	TurnLockWarnThreshold       time.Duration                   // warn if turn lock wait exceeds this (default 3m)
 	Effort                      string                          // effort level for API requests (empty = omit from request)
 	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
+	Streaming                   bool                            // use streaming API when provider supports it
 	ManaInvestInterval          time.Duration                   // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                 []provider.ToolDef              // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey           func() string                   // returns the main/default session key; reminders only inject into this session
@@ -1095,8 +1096,31 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			sessionKey, turnModel, len(reqMessages), len(toolDefs), len(system))
 
 		start := time.Now()
-		a.logger().Debugf("api_call_start session=%s model=%s", sessionKey, turnModel)
-		resp, err := turnClient.SendMessage(ctx, req)
+		a.logger().Debugf("api_call_start session=%s model=%s streaming=%v", sessionKey, turnModel, a.Streaming)
+
+		var resp *anthropic.MessageResponse
+		var err error
+
+		// Use streaming if enabled and the client supports it.
+		if a.Streaming {
+			if sc, ok := turnClient.(provider.StreamingClient); ok {
+				handler := &provider.StreamHandler{
+					OnTextDelta: func(delta string) {
+						notifyTextDeltaCtx(ctx, delta)
+						signalActivityCtx(ctx) // keep typing indicator alive
+					},
+					OnThinkingDelta: func(delta string) {
+						notifyThinkingDeltaCtx(ctx, delta)
+					},
+				}
+				resp, err = sc.StreamMessage(ctx, req, handler)
+			} else {
+				resp, err = turnClient.SendMessage(ctx, req)
+			}
+		} else {
+			resp, err = turnClient.SendMessage(ctx, req)
+		}
+
 		duration := time.Since(start)
 		a.logger().Debugf("api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
 

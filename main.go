@@ -342,7 +342,8 @@ func main() {
 	defer cancel()
 
 	anthropicClient, usageClient, credHolder := resolveCredentials(cfg, store, ctx)
-	log.Debugf("main", "anthropic client ready")
+	anthropicClient.SetUseSDK(cfg.Anthropic.UseSDK)
+	log.Debugf("main", "anthropic client ready (use_sdk=%v, streaming=%v)", cfg.Anthropic.UseSDK, cfg.Anthropic.Streaming)
 
 	// Gemini client (created lazily only if any agent uses it)
 	var geminiClient provider.Client
@@ -1466,6 +1467,7 @@ func setupAgent(p setupParams) *agentInstance {
 		TurnLockWarnThreshold:       parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
+		Streaming:                   resolveStreamingConfig(acfg, p.cfg),
 		ManaInvestInterval: func() time.Duration {
 			d, err := time.ParseDuration(acfg.Background.InvestInterval)
 			if err != nil {
