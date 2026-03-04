@@ -1253,7 +1253,7 @@ func TestCompactStreaming(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "anthropic/claude-haiku-4-5", 0.8)
 	summary, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact (streaming): %v", err)
