@@ -340,7 +340,15 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	if c.effort != "" {
 		req.Output = &provider.OutputConfig{Effort: c.effort}
 	}
-	resp, err := client.SendMessage(ctx, req)
+
+	// Prefer streaming for the summarization call — some providers require it
+	// for operations that may exceed timeout thresholds (e.g. 10 minutes).
+	var resp *provider.MessageResponse
+	if sc, ok := client.(provider.StreamingClient); ok {
+		resp, err = sc.StreamMessage(ctx, req, &provider.StreamHandler{})
+	} else {
+		resp, err = client.SendMessage(ctx, req)
+	}
 	if err != nil {
 		return "", fmt.Errorf("summarize for compaction: %w", err)
 	}
