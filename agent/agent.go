@@ -1171,7 +1171,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				toolResults = append(toolResults, anthropic.ToolResultBlock(block.ID, errMsg, true))
 			}
 			toolMsg := anthropic.Message{Role: "user", Content: toolResults}
-			messages = append(messages, toolMsg)
 			newMessages = append(newMessages, toolMsg)
 			break
 		}
