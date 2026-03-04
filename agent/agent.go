@@ -54,6 +54,7 @@ type sessionMeta struct {
 	modelEndpoint   string          // per-session endpoint override (empty = use agent default)
 	client          provider.Client // per-session client override (nil = use a.Client)
 	noCompact       bool            // per-session no_compact flag (sticky across async operations)
+	systemBlocks    []anthropic.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -164,6 +165,18 @@ func (a *Agent) logger() *log.ComponentLogger {
 	}
 	a.Log = log.NewComponentLogger("agent")
 	return a.Log
+}
+
+// InvalidateSystemCaches clears per-session system prompt caches so the
+// next turn on every session rebuilds from the bootstrap. Call after
+// explicit user actions that change the system prompt (e.g. /reload,
+// session reset) where a global cache bust is expected.
+func (a *Agent) InvalidateSystemCaches() {
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	for _, sm := range a.meta {
+		sm.systemBlocks = nil
+	}
 }
 
 // TurnDetail describes one in-flight turn for shutdown diagnostics.
@@ -1082,7 +1095,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 	}()
 
-	system := a.buildSystemBlocks()
+	system := a.buildSystemBlocks(sessionKey)
 	useAutoCache := a.CacheStrategy == "auto"
 	toolDefs := a.Tools.ToolDefs()
 	if len(a.ServerTools) > 0 {
@@ -1453,12 +1466,21 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 
 // buildSystemBlocks assembles the system prompt blocks from bootstrap,
 // environment, and extra blocks, applying the appropriate cache strategy.
-func (a *Agent) buildSystemBlocks() []anthropic.SystemBlock {
+// Results are cached per-session so that a compaction on one session
+// (which calls Bootstrap.Reload) does not bust the cache for other sessions.
+func (a *Agent) buildSystemBlocks(sessionKey string) []anthropic.SystemBlock {
+	sm := a.getSessionMeta(sessionKey)
+	if sm.systemBlocks != nil {
+		return sm.systemBlocks
+	}
+
 	system := a.Bootstrap.SystemBlocks()
 	if a.EnvironmentBlock != "" {
 		envBlock := anthropic.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
 		system = append([]anthropic.SystemBlock{envBlock}, system...)
 	}
+
+	var result []anthropic.SystemBlock
 
 	if a.CacheStrategy == "auto" {
 		// Auto caching: strip intermediate cache_control, keep an explicit
@@ -1475,20 +1497,21 @@ func (a *Agent) buildSystemBlocks() []anthropic.SystemBlock {
 		if len(clean) > 0 {
 			clean[len(clean)-1].CacheControl = anthropic.Ephemeral()
 		}
-		return clean
-	}
-
-	if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
+		result = clean
+	} else if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
 		// Explicit caching: insert extra blocks before the last block
 		// (which has cache_control).
 		combined := make([]anthropic.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
 		combined = append(combined, system[:len(system)-1]...)
 		combined = append(combined, a.ExtraSystemBlocks...)
 		combined = append(combined, system[len(system)-1])
-		return combined
+		result = combined
+	} else {
+		result = system
 	}
 
-	return system
+	sm.systemBlocks = result
+	return result
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.
@@ -1522,8 +1545,11 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 			a.CompactionDebugFunc(sessionKey, summary)
 		}
 	}
-	// Reload system prompt — compaction may have changed memory files
+	// Reload system prompt — compaction may have changed memory files.
+	// Only invalidate THIS session's cached system blocks so other sessions
+	// keep their byte-identical prompts and don't suffer cache busts.
 	a.Bootstrap.Reload()
+	sm.systemBlocks = nil
 	// Reset cache baseline — next request will have a different prefix
 	sm.prevCacheRead = 0
 }
