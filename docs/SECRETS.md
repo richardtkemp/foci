@@ -6,7 +6,24 @@ Foci stores credentials in `secrets.toml` (alongside `foci.toml`). Secrets are n
 
 ## Managing Secrets
 
-### Slash commands
+### CLI
+
+Manage secrets from the command line without a running gateway:
+
+```bash
+foci secrets list                          # list secret names (no values)
+foci secrets get <section.key>             # print value to stdout
+foci secrets set <section.key> <value>     # add or update
+foci secrets delete <section.key>          # remove
+```
+
+Use `--config <path>` to specify a custom `foci.toml` location (secrets.toml is resolved alongside it). Default: `~/config/secrets.toml`.
+
+The `get` subcommand prints the raw value with no decoration, so it's pipe-friendly: `foci secrets get anthropic.token | pbcopy`.
+
+See [CLI.md](CLI.md#secrets--manage-secrets) for full details.
+
+### Slash commands (inside agent sessions)
 
 - `/secrets list` — show all secret names (values are never displayed)
 - `/secrets set section.key value` — add or update a secret
