@@ -117,9 +117,9 @@ func gzipFile(src string) error {
 	return os.Remove(src)
 }
 
-// gzipArchiveFiles finds and gzips numbered archive files for the same session.
-// For example, if basePath is "chat/123.jsonl", this gzips "chat/123.1.jsonl",
-// "chat/123.2.jsonl", etc.
+// gzipArchiveFiles finds and gzips archive files for the same session.
+// For example, if basePath is "chat/123.jsonl", this gzips "chat/123.2026-03-04T02-30-00Z.jsonl",
+// "chat/123.1.jsonl", etc.
 func gzipArchiveFiles(basePath string) {
 	ext := filepath.Ext(basePath)
 	stem := strings.TrimSuffix(basePath, ext)
@@ -136,7 +136,7 @@ func gzipArchiveFiles(basePath string) {
 		}
 		name := e.Name()
 		full := filepath.Join(dir, name)
-		// Match files like "123.1.jsonl", "123.2.jsonl" etc.
+		// Match archive files like "123.2026-03-04T02-30-00Z.jsonl", "123.1.jsonl" etc.
 		if !strings.HasSuffix(name, ext) || full == basePath {
 			continue
 		}

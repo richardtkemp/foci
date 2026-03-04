@@ -713,10 +713,21 @@ func TestReplaceRotatesFile(t *testing.T) {
 		t.Errorf("current msgs[0] = %q", provider.TextOf(msgs[0].Content))
 	}
 
-	// Archive file should exist with old messages
-	archivePath := filepath.Join(dir, "agent", "test", "chat", "999.1.jsonl")
-	if _, err := os.Stat(archivePath); err != nil {
-		t.Fatalf("archive file not found: %v", err)
+	// Archive file should exist with old messages - check for timestamp pattern
+	chatDir := filepath.Join(dir, "agent", "test", "chat")
+	entries, err := os.ReadDir(chatDir)
+	if err != nil {
+		t.Fatalf("read chat dir: %v", err)
+	}
+	var archivePath string
+	for _, e := range entries {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "999.") {
+			archivePath = filepath.Join(chatDir, e.Name())
+			break
+		}
+	}
+	if archivePath == "" {
+		t.Fatal("archive file not found")
 	}
 
 	// Read archive to verify old messages are preserved
@@ -745,13 +756,20 @@ func TestReplaceMultipleRotations(t *testing.T) {
 		}
 	}
 
-	// Should have archives .1, .2, .3
+	// Should have 3 archive files with timestamp suffixes
 	chatDir := filepath.Join(dir, "agent", "test", "chat")
-	for n := 1; n <= 3; n++ {
-		archive := filepath.Join(chatDir, fmt.Sprintf("888.%d.jsonl", n))
-		if _, err := os.Stat(archive); err != nil {
-			t.Errorf("archive .%d not found: %v", n, err)
+	entries, err := os.ReadDir(chatDir)
+	if err != nil {
+		t.Fatalf("read chat dir: %v", err)
+	}
+	var archiveCount int
+	for _, e := range entries {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "888.") {
+			archiveCount++
 		}
+	}
+	if archiveCount != 3 {
+		t.Errorf("expected 3 archives, found %d", archiveCount)
 	}
 
 	// Current file should have latest compacted messages
@@ -784,10 +802,21 @@ func TestReplaceBranchRotation(t *testing.T) {
 		t.Fatalf("Replace branch: %v", err)
 	}
 
-	// Archive should exist
-	archivePath := filepath.Join(dir, "agent", "test", "cron", "wake-111.1.jsonl")
-	if _, err := os.Stat(archivePath); err != nil {
-		t.Fatalf("branch archive not found: %v", err)
+	// Archive should exist - check for timestamp pattern
+	cronDir := filepath.Join(dir, "agent", "test", "cron")
+	entries, err := os.ReadDir(cronDir)
+	if err != nil {
+		t.Fatalf("read cron dir: %v", err)
+	}
+	var archivePath string
+	for _, e := range entries {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "wake-111.") {
+			archivePath = filepath.Join(cronDir, e.Name())
+			break
+		}
+	}
+	if archivePath == "" {
+		t.Fatal("branch archive not found")
 	}
 
 	// Archive should have branch_meta as first line
@@ -822,8 +851,9 @@ func TestListChatSessionsSkipsArchives(t *testing.T) {
 	key := "agent:test:chat:555"
 	s.Append(key, msg("user", "hello"))
 
-	// Simulate an archive file by creating it directly
-	archivePath := filepath.Join(dir, "agent", "test", "chat", "555.1.jsonl")
+	// Simulate an archive file by creating it directly (using timestamp pattern)
+	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+	archivePath := filepath.Join(dir, "agent", "test", "chat", fmt.Sprintf("555.%s.jsonl", timestamp))
 	os.WriteFile(archivePath, []byte(`{"role":"user","content":[{"type":"text","text":"old"}]}`+"\n"), 0644)
 
 	sessions, err := s.ListChatSessions("test")
@@ -853,11 +883,12 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 		},
 	})
 
-	// Create an archive file with the same orphaned pattern
+	// Create an archive file with the same orphaned pattern (using timestamp pattern)
 	archiveDir := filepath.Join(dir, "agent", "test", "chat")
+	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
 	archiveData := `{"role":"user","content":[{"type":"text","text":"old"}]}` + "\n" +
 		`{"role":"assistant","content":[{"type":"tool_use","id":"tool_2","name":"shell","input":{}}]}` + "\n"
-	os.WriteFile(filepath.Join(archiveDir, "444.1.jsonl"), []byte(archiveData), 0644)
+	os.WriteFile(filepath.Join(archiveDir, fmt.Sprintf("444.%s.jsonl", timestamp)), []byte(archiveData), 0644)
 
 	repaired, err := s.RepairOrphans()
 	if err != nil {
@@ -894,12 +925,21 @@ func TestIsArchiveFile(t *testing.T) {
 		want bool
 	}{
 		{"5970082313.jsonl", false},
-		{"5970082313.1.jsonl", true},
-		{"5970082313.2.jsonl", true},
-		{"5970082313.10.jsonl", true},
+		{"5970082313.1.jsonl", true},                                    // old numbered pattern
+		{"5970082313.2.jsonl", true},                                    // old numbered pattern
+		{"5970082313.10.jsonl", true},                                   // old numbered pattern
+		{"5970082313.2026-03-04T02-30-00Z.jsonl", true},                 // new timestamp pattern
+		{"5970082313.2026-03-04T02-30-00Z.2.jsonl", true},               // new timestamp pattern with counter
+		{"5970082313.2026-03-04T02-30-00Z.10.jsonl", true},              // new timestamp pattern with counter
+		{"wake-111.2026-12-25T14-35-22Z.jsonl", true},                   // new timestamp pattern
+		{"wake-111.2026-12-25T14-35-22Z.3.jsonl", true},                 // new timestamp pattern with counter
 		{"main.jsonl", false},
 		{"wake-111.jsonl", false},
-		{"wake-111.1.jsonl", true},
+		{"wake-111.1.jsonl", true},                                      // old numbered pattern
+		{"invalid.2026-03-04.jsonl", false},                             // invalid timestamp (missing time)
+		{"invalid.2026-03-04T02-30-00.jsonl", false},                    // invalid timestamp (missing Z)
+		{"invalid.abc.jsonl", false},                                    // invalid suffix
+		{"invalid.2026-03-04T02-30-00Z.abc.jsonl", false},               // timestamp with invalid counter
 	}
 	for _, tt := range tests {
 		if got := isArchiveFile(tt.name); got != tt.want {
