@@ -18,6 +18,7 @@ import (
 	"foci/log"
 	"foci/prompts"
 	"foci/state"
+	"foci/table"
 )
 
 var tmuxCounter uint64
@@ -860,7 +861,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 	}
 	inst.mu.Unlock()
 
-	var lines []string
+	var rows [][]string
 	var ownedStillExist bool
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
@@ -899,10 +900,10 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 			}
 		}
 
-		lines = append(lines, fmt.Sprintf("%-20s %sw  %6s  %-8s %s", name, windows, age, status, watchInfo))
+		rows = append(rows, []string{name, windows, age, status, watchInfo})
 	}
 
-	if len(lines) == 0 {
+	if len(rows) == 0 {
 		return TextResult("No tmux sessions."), nil
 	}
 
@@ -919,8 +920,14 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		inst.mu.Unlock()
 	}
 
-	header := fmt.Sprintf("%-20s %s  %6s  %-8s %s", "SESSION", "W", "AGE", "STATUS", "WATCH")
-	return TextResult(header + "\n" + strings.Join(lines, "\n")), nil
+	cols := []table.Column{
+		{Header: "SESSION"},
+		{Header: "W", Align: table.AlignRight},
+		{Header: "AGE", Align: table.AlignRight},
+		{Header: "STATUS"},
+		{Header: "WATCH"},
+	}
+	return TextResult(table.Format(cols, rows)), nil
 }
 
 // formatTmuxAge converts a Unix timestamp to a human-readable age string.

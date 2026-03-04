@@ -1751,6 +1751,7 @@ func setupAgent(p setupParams) *agentInstance {
 			return err
 		}
 		bootstrap.Reload()
+		ag.InvalidateSystemCaches()
 		return nil
 	}))
 
@@ -2075,6 +2076,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// /reload command
 	cmds.Register(command.NewReloadCommand(func() (string, error) {
 		bootstrap.Reload()
+		ag.InvalidateSystemCaches()
 		checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 		newSkillRegistry := skills.Load(skillsDirs)
 		var newExtraSystemBlocks []anthropic.SystemBlock
@@ -2232,6 +2234,7 @@ func setupAgent(p setupParams) *agentInstance {
 				ag.CompactionDebugFunc(sk, summary)
 			}
 			bootstrap.Reload()
+			ag.InvalidateSystemCaches()
 			// Reset cache baseline — compaction changed the prefix
 			ag.ResetCacheBaseline(sk)
 		}
