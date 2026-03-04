@@ -1361,6 +1361,30 @@ func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
 	}
 }
 
+func TestFormatToolCall_UnescapesUnicodeSequences(t *testing.T) {
+	b := &Bot{}
+	// Simulate a tool call where the JSON contains unicode escape sequences
+	// This happens when the API returns escaped unicode sequences like \u003e for >
+	params := json.RawMessage(`{"command":"echo \u003e test \u0026\u0026 more"}`)
+	text := b.formatToolCall("shell", params)
+
+	// After unescaping unicode sequences, the characters should be displayed properly
+	// (not as literal \u003e escape sequences). They will be HTML-escaped for Telegram safety.
+	if strings.Contains(text, `\u003e`) {
+		t.Errorf("unicode escape \\u003e should be unescaped (not literal), got: %q", text)
+	}
+	if strings.Contains(text, `\u0026`) {
+		t.Errorf("unicode escape \\u0026 should be unescaped (not literal), got: %q", text)
+	}
+	// The unescaped characters will be HTML-escaped for Telegram safety
+	if !strings.Contains(text, "&gt;") {
+		t.Errorf("expected > to be unescaped then HTML-escaped to &gt;, got: %q", text)
+	}
+	if !strings.Contains(text, "&amp;&amp;") {
+		t.Errorf("expected && to be unescaped then HTML-escaped to &amp;&amp;, got: %q", text)
+	}
+}
+
 // --- Compact tool call formatting ---
 
 func TestFormatToolCallCompact(t *testing.T) {
