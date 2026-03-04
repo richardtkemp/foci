@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,10 +141,21 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 		Status:         SessionStatusActive,
 	})
 
-	// Verify archive file exists before sweep
-	archivePath := filepath.Join(filepath.Dir(path), "100.1.jsonl")
-	if _, err := os.Stat(archivePath); err != nil {
-		t.Fatalf("expected archive file %s to exist before sweep: %v", archivePath, err)
+	// Verify archive file exists before sweep - find the timestamp archive
+	sessionDir := filepath.Dir(path)
+	entries, err2 := os.ReadDir(sessionDir)
+	if err2 != nil {
+		t.Fatalf("read dir: %v", err2)
+	}
+	var archivePath string
+	for _, e := range entries {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "100.") {
+			archivePath = filepath.Join(sessionDir, e.Name())
+			break
+		}
+	}
+	if archivePath == "" {
+		t.Fatal("expected archive file to exist before sweep")
 	}
 
 	archived, err := ArchiveSweep(store, idx, 24*time.Hour)

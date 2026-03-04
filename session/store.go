@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -258,22 +259,70 @@ func (s *Store) Clear(key string) error {
 }
 
 // nextArchivePath returns the next available archive path for a session file.
-// E.g. for "5970082313.jsonl" it returns "5970082313.1.jsonl", or ".2.jsonl" if .1 exists, etc.
+// E.g. for "5970082313.jsonl" it returns "5970082313.2026-03-04T02-30-00Z.jsonl".
+// If that timestamp already exists, it adds a counter: "5970082313.2026-03-04T02-30-00Z.2.jsonl".
 func nextArchivePath(basePath string) string {
 	ext := filepath.Ext(basePath)
 	stem := strings.TrimSuffix(basePath, ext)
-	for n := 1; ; n++ {
-		candidate := fmt.Sprintf("%s.%d%s", stem, n, ext)
+	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+
+	// First try the basic timestamp pattern
+	candidate := fmt.Sprintf("%s.%s%s", stem, timestamp, ext)
+	if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		return candidate
+	}
+
+	// If timestamp already exists, add a counter
+	for n := 2; ; n++ {
+		candidate = fmt.Sprintf("%s.%s.%d%s", stem, timestamp, n, ext)
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
 			return candidate
 		}
 	}
 }
 
-// isArchiveFile returns true if a filename is a numbered archive (e.g. "5970082313.1.jsonl").
+// isArchiveFile returns true if a filename is an archive (e.g. "5970082313.2026-03-04T02-30-00Z.jsonl", "5970082313.2026-03-04T02-30-00Z.2.jsonl", or "5970082313.1.jsonl").
 func isArchiveFile(name string) bool {
+	if !strings.HasSuffix(name, ".jsonl") {
+		return false
+	}
 	base := strings.TrimSuffix(name, ".jsonl")
-	return strings.Contains(base, ".")
+	if !strings.Contains(base, ".") {
+		return false
+	}
+
+	// Split on dots to examine the suffix parts
+	parts := strings.Split(base, ".")
+	if len(parts) < 2 {
+		return false
+	}
+
+	// For old numbered pattern: just digits after last dot
+	lastPart := parts[len(parts)-1]
+	if matched, _ := regexp.MatchString(`^\d+$`, lastPart); matched {
+		return true
+	}
+
+	// For timestamp pattern: look for YYYY-MM-DDTHH-MM-SSZ
+	timestampPattern := `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$`
+
+	// Check if last part is a timestamp
+	if matched, _ := regexp.MatchString(timestampPattern, lastPart); matched {
+		return true
+	}
+
+	// Check if second-to-last part is a timestamp (for counter suffix cases like "file.2026-03-04T02-30-00Z.2.jsonl")
+	if len(parts) >= 3 {
+		secondToLastPart := parts[len(parts)-2]
+		if matched, _ := regexp.MatchString(timestampPattern, secondToLastPart); matched {
+			// And last part should be a number
+			if matched, _ := regexp.MatchString(`^\d+$`, lastPart); matched {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // Replace overwrites a session with the given messages, rotating the old file
@@ -786,12 +835,54 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 }
 
 // archiveParentKey derives the parent session key from an archive key.
-// "agent:main:chat:123.1" → "agent:main:chat:123"
+// "agent:main:chat:123.2026-03-04T02-30-00Z" → "agent:main:chat:123"
+// "agent:main:chat:123.2026-03-04T02-30-00Z.2" → "agent:main:chat:123"
+// "agent:main:chat:123.1" → "agent:main:chat:123" (backward compatibility)
 func archiveParentKey(archiveKey string) string {
-	// The archive suffix is ".N" appended to the last segment of the key
-	lastDot := strings.LastIndex(archiveKey, ".")
-	if lastDot < 0 {
+	// Find the last segment that contains the archive suffix
+	keyParts := strings.Split(archiveKey, ":")
+	if len(keyParts) == 0 {
 		return archiveKey
 	}
-	return archiveKey[:lastDot]
+
+	lastSegment := keyParts[len(keyParts)-1]
+	segmentParts := strings.Split(lastSegment, ".")
+
+	// Need at least 2 parts to have an archive suffix
+	if len(segmentParts) < 2 {
+		return archiveKey
+	}
+
+	// Find the base name by removing archive suffixes
+	var baseParts []string
+
+	// Identify where the archive suffix starts
+	for i := 0; i < len(segmentParts); i++ {
+		part := segmentParts[i]
+
+		// Check if this part is a timestamp pattern
+		timestampPattern := `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$`
+		if matched, _ := regexp.MatchString(timestampPattern, part); matched {
+			// Found timestamp, everything before this is the base
+			baseParts = segmentParts[:i]
+			break
+		}
+
+		// Check if this part is just digits (old numbered pattern)
+		if matched, _ := regexp.MatchString(`^\d+$`, part); matched {
+			// Found numbered suffix, everything before this is the base
+			baseParts = segmentParts[:i]
+			break
+		}
+	}
+
+	// If no archive pattern found, return original
+	if len(baseParts) == 0 {
+		return archiveKey
+	}
+
+	// Rebuild the key with cleaned last segment
+	cleanedLastSegment := strings.Join(baseParts, ".")
+	keyParts[len(keyParts)-1] = cleanedLastSegment
+	return strings.Join(keyParts, ":")
 }

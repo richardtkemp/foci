@@ -61,7 +61,7 @@ Default orientation text is embedded in `prompts/branch-orientation-headless.md`
 - Scratchpad preserved through compaction (appended to handoff)
 - Last N messages preserved verbatim after the summary (configurable, default 25) — gives the agent access to the actual recent conversation, not just a summary of it
 - Branch sessions preserve `branch_meta` through compaction (branch_point set to 0 since compacted messages are self-contained)
-- Session file rotation: on compaction, the pre-compaction file is renamed to a numbered archive (e.g. `5970082313.1.jsonl`, `.2.jsonl`) before writing the new compacted session. Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
+- Session file rotation: on compaction, the pre-compaction file is renamed to a timestamp-based archive (e.g. `5970082313.2026-03-04T02-30-00Z.jsonl`) before writing the new compacted session. If multiple compactions occur within the same second, a counter is added (e.g. `.2026-03-04T02-30-00Z.2.jsonl`). Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
 - Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone, auto-backgrounded shell/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
 
 **Configuration:**

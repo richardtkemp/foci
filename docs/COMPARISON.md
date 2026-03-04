@@ -70,7 +70,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Preserved messages | ✅ configurable count | ✅ configurable token count | ❌ |
 | Scratchpad preservation | ✅ survives compaction | ❌ | ❌ |
-| Compaction archives | ✅ numbered rotation | ✅ stored in transcript | ❌ |
+| Compaction archives | ✅ timestamp-based rotation | ✅ stored in transcript | ❌ |
 | Async-pending guard | ✅ defers if results pending | ❌ | ❌ |
 | Context breakdown | ✅ | ✅ | ❌ |
 
