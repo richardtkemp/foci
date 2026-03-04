@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"foci/provider"
 	"foci/tools"
 
+	"github.com/BurntSushi/toml"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -26,6 +29,49 @@ type ServerConfig struct {
 	Args    []string `toml:"args"`
 	Env     []string `toml:"env"`
 	URL     string   `toml:"url"`
+	Agents  []string `toml:"agents"` // if non-empty, only these agent IDs use this server
+}
+
+// MCPConfig is the top-level structure of mcp.toml.
+type MCPConfig struct {
+	Servers []ServerConfig `toml:"servers"`
+}
+
+// LoadConfig reads mcp.toml from the given directory.
+// Returns empty config (no error) if the file doesn't exist.
+func LoadConfig(dir string) (MCPConfig, error) {
+	path := filepath.Join(dir, "mcp.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return MCPConfig{}, nil
+		}
+		return MCPConfig{}, fmt.Errorf("read mcp.toml: %w", err)
+	}
+	var cfg MCPConfig
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return MCPConfig{}, fmt.Errorf("parse mcp.toml: %w", err)
+	}
+	return cfg, nil
+}
+
+// ServersForAgent returns the subset of servers available to the given agent ID.
+// Servers with an empty Agents list are available to all agents.
+func (c MCPConfig) ServersForAgent(agentID string) []ServerConfig {
+	var result []ServerConfig
+	for _, s := range c.Servers {
+		if len(s.Agents) == 0 {
+			result = append(result, s)
+			continue
+		}
+		for _, a := range s.Agents {
+			if a == agentID {
+				result = append(result, s)
+				break
+			}
+		}
+	}
+	return result
 }
 
 // serverConn is one connected MCP server with its cached tool list.
@@ -36,15 +82,30 @@ type serverConn struct {
 }
 
 // Manager manages connections to MCP servers and builds a foci tool
-// that dispatches calls to them.
+// that dispatches calls to them. When configDir and agentID are set,
+// the manager re-reads mcp.toml on every tool call and reconnects
+// if the server list has changed.
 type Manager struct {
-	mu      sync.Mutex
-	servers []serverConn
+	mu        sync.Mutex
+	servers   []serverConn
+	configDir string   // directory containing mcp.toml
+	agentID   string   // agent ID for server filtering
+	current   []ServerConfig // last-applied server configs (for change detection)
+	tf        transportFactory // nil in production, set for testing
 }
 
 // NewManager creates an empty MCP manager with no connections.
 func NewManager() *Manager {
 	return &Manager{}
+}
+
+// NewManagerForAgent creates an MCP manager that dynamically re-reads
+// mcp.toml from configDir on every tool call, filtering servers for agentID.
+func NewManagerForAgent(configDir, agentID string) *Manager {
+	return &Manager{
+		configDir: configDir,
+		agentID:   agentID,
+	}
 }
 
 // Connect connects to all configured MCP servers. Servers that fail to
@@ -154,16 +215,23 @@ func (m *Manager) ToolCount() int {
 }
 
 // Tool returns a foci tool that dispatches to MCP servers, or nil if
-// no servers are connected.
+// no servers are connected and no config dir is set for dynamic loading.
 func (m *Manager) Tool() *tools.Tool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	hasDynamic := m.configDir != ""
+	hasServers := len(m.servers) > 0
+	m.mu.Unlock()
 
-	if len(m.servers) == 0 {
+	if !hasServers && !hasDynamic {
 		return nil
 	}
 
-	desc := m.buildDescription()
+	desc := "Call a tool on a connected MCP server. Re-reads mcp.toml on each call."
+	if hasServers {
+		m.mu.Lock()
+		desc = m.buildDescription()
+		m.mu.Unlock()
+	}
 
 	return &tools.Tool{
 		Name:        "mcp",
@@ -173,6 +241,76 @@ func (m *Manager) Tool() *tools.Tool {
 			return m.execute(ctx, params)
 		},
 	}
+}
+
+// refreshServers re-reads mcp.toml and reconnects if the server list changed.
+// Caller must NOT hold m.mu.
+func (m *Manager) refreshServers(ctx context.Context) {
+	if m.configDir == "" {
+		return
+	}
+
+	cfg, err := LoadConfig(m.configDir)
+	if err != nil {
+		log.Warnf("mcp", "reload mcp.toml: %v", err)
+		return
+	}
+
+	servers := cfg.ServersForAgent(m.agentID)
+
+	m.mu.Lock()
+	changed := !serverConfigsEqual(m.current, servers)
+	m.mu.Unlock()
+
+	if !changed {
+		return
+	}
+
+	log.Infof("mcp", "agent %s: mcp.toml changed, reconnecting", m.agentID)
+
+	// Close existing connections.
+	m.Close()
+
+	if len(servers) == 0 {
+		m.mu.Lock()
+		m.current = nil
+		m.mu.Unlock()
+		return
+	}
+
+	// Connect with new config.
+	m.connectWith(ctx, servers, m.tf)
+
+	m.mu.Lock()
+	m.current = servers
+	m.mu.Unlock()
+}
+
+// serverConfigsEqual compares two server config slices for equality.
+func serverConfigsEqual(a, b []ServerConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Command != b[i].Command ||
+			a[i].URL != b[i].URL || !stringsEqual(a[i].Args, b[i].Args) ||
+			!stringsEqual(a[i].Env, b[i].Env) || !stringsEqual(a[i].Agents, b[i].Agents) {
+			return false
+		}
+	}
+	return true
+}
+
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // mcpToolSchema is the JSON Schema for the mcp tool parameters.
@@ -234,7 +372,10 @@ type mcpParams struct {
 }
 
 // execute dispatches a tool call to the appropriate MCP server.
+// Re-reads mcp.toml before each call if configDir is set.
 func (m *Manager) execute(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+	m.refreshServers(ctx)
+
 	var p mcpParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return tools.ToolResult{}, fmt.Errorf("invalid mcp tool params: %w", err)
