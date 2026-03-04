@@ -139,6 +139,13 @@ func main() {
 		}
 		return
 	}
+	if os.Args[1] == "secrets" {
+		if err := cmdSecrets(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "secrets: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Parse --addr and --api-key from global args (before command)
 	allArgs := os.Args[1:]
@@ -202,6 +209,7 @@ func usage() {
 Commands:
   setup                First-run setup wizard (config, auth, character files)
   auth                 Authenticate with Anthropic (setup token from Claude Code)
+  secrets              Manage secrets (list, get, set, delete)
   send <text>          Send a message to the agent (main session)
   branch [text]        Trigger a branch session
                          --no-compact      Skip compaction if context limit reached
@@ -798,6 +806,135 @@ func notifyGatewayReload(addr, apiKey string) {
 	} else {
 		body, _ := io.ReadAll(resp.Body)
 		fmt.Fprintf(os.Stderr, "Gateway reload returned HTTP %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+}
+
+func secretsUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: foci secrets <subcommand> [args...]
+
+Manage secrets in secrets.toml without a running gateway.
+
+Subcommands:
+  list                          List secret names (no values)
+  get <section.key>             Print secret value to stdout
+  set <section.key> <value>     Add or update a secret
+  delete <section.key>          Remove a secret
+
+Flags:
+  --config <path>       Path to foci.toml (secrets.toml is resolved alongside it)
+                        Default secrets path: ~/config/secrets.toml
+`)
+}
+
+func cmdSecrets(args []string) error {
+	if wantsHelp(args) || len(args) == 0 {
+		secretsUsage()
+		return nil
+	}
+
+	// Parse --config flag
+	configPath := ""
+	var filtered []string
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--config" && i+1 < len(args):
+			configPath = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--config="):
+			configPath = args[i][len("--config="):]
+		default:
+			filtered = append(filtered, args[i])
+		}
+	}
+
+	// Resolve secrets path (same pattern as cmdAuth)
+	var secretsPath string
+	if configPath != "" {
+		secretsPath = filepath.Join(filepath.Dir(configPath), "secrets.toml")
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		secretsPath = filepath.Join(home, "config", "secrets.toml")
+	}
+
+	if len(filtered) == 0 {
+		secretsUsage()
+		return nil
+	}
+
+	sub := filtered[0]
+	subArgs := filtered[1:]
+
+	switch sub {
+	case "list":
+		store, err := secrets.Load(secretsPath)
+		if err != nil {
+			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
+		}
+		names := store.Names()
+		if len(names) == 0 {
+			fmt.Fprintf(os.Stderr, "no secrets in %s\n", secretsPath)
+			return nil
+		}
+		for _, n := range names {
+			fmt.Println(n)
+		}
+		return nil
+
+	case "get":
+		if len(subArgs) != 1 {
+			return fmt.Errorf("usage: foci secrets get <section.key>")
+		}
+		store, err := secrets.Load(secretsPath)
+		if err != nil {
+			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
+		}
+		val, ok := store.Get(subArgs[0])
+		if !ok {
+			return fmt.Errorf("secret %q not found", subArgs[0])
+		}
+		fmt.Print(val)
+		return nil
+
+	case "set":
+		if len(subArgs) != 2 {
+			return fmt.Errorf("usage: foci secrets set <section.key> <value>")
+		}
+		if !strings.Contains(subArgs[0], ".") {
+			return fmt.Errorf("key must be in section.key format (e.g. custom.github_token)")
+		}
+		store, err := secrets.Load(secretsPath)
+		if err != nil {
+			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
+		}
+		store.Set(subArgs[0], subArgs[1])
+		if err := store.Save(); err != nil {
+			return fmt.Errorf("save secrets: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "set %s in %s\n", subArgs[0], secretsPath)
+		return nil
+
+	case "delete":
+		if len(subArgs) != 1 {
+			return fmt.Errorf("usage: foci secrets delete <section.key>")
+		}
+		store, err := secrets.Load(secretsPath)
+		if err != nil {
+			return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
+		}
+		if !store.Remove(subArgs[0]) {
+			return fmt.Errorf("secret %q not found", subArgs[0])
+		}
+		if err := store.Save(); err != nil {
+			return fmt.Errorf("save secrets: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "deleted %s from %s\n", subArgs[0], secretsPath)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown subcommand: %s\nRun 'foci secrets --help' for usage", sub)
 	}
 }
 

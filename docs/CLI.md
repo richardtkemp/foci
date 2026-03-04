@@ -212,6 +212,47 @@ foci command /cost today
 
 ---
 
+### `secrets` — Manage secrets
+
+Manage secrets in `secrets.toml` without a running gateway. Useful for initial setup, scripting, and CI.
+
+**Usage:**
+```
+foci secrets <subcommand> [--config <path>] [args...]
+```
+
+**Subcommands:**
+
+| Subcommand | Description |
+|-----------|-------------|
+| `list` | List all secret names (no values printed) |
+| `get <section.key>` | Print secret value to stdout (pipe-friendly, no decoration) |
+| `set <section.key> <value>` | Add or update a secret |
+| `delete <section.key>` | Remove a secret |
+
+**Flags:**
+- `--config` — path to `foci.toml` (secrets.toml is resolved alongside it). Default: `~/config/secrets.toml`.
+
+**Examples:**
+```bash
+# List all secret names
+foci secrets list
+
+# Set a secret
+foci secrets set custom.github_token ghp_abc123
+
+# Read a secret (pipe-friendly)
+foci secrets get custom.github_token | pbcopy
+
+# Delete a secret
+foci secrets delete custom.github_token
+
+# Use a custom config directory
+foci secrets --config /etc/foci/foci.toml list
+```
+
+---
+
 ### `auth` — Authenticate with Anthropic
 
 Save a setup token to `secrets.toml`. If a gateway is running, the new credentials are hot-reloaded immediately.
