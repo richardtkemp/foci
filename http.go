@@ -319,7 +319,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 
 		wakeCtx := agent.WithTrigger(d.ctx, "wake")
 		if req.NoCompact {
-			wakeCtx = agent.WithNoCompact(wakeCtx)
+			inst.ag.SetSessionNoCompact(branchKey, true)
 		}
 
 		if req.Async {

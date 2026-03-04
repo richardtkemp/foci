@@ -1030,7 +1030,7 @@ func main() {
 				return
 			}
 			restartCtx := agent.WithTrigger(ctx, "restart")
-			restartCtx = agent.WithNoCompact(restartCtx)
+			inst.ag.SetSessionNoCompact(sk, true)
 			msg := prompts.FormatInjectedMessage("SYSTEM UPDATE", time.Now(), content)
 			if _, err := inst.ag.HandleMessage(restartCtx, sk, msg); err != nil {
 				log.Errorf("main", "restart turn failed: %v", err)
@@ -1064,7 +1064,6 @@ func main() {
 					return
 				}
 				firstRunCtx := agent.WithTrigger(ctx, "first_run")
-				firstRunCtx = agent.WithNoCompact(firstRunCtx)
 				if _, err := inst.ag.HandleMessage(firstRunCtx, sk, msg); err != nil {
 					log.Errorf("main", "first-run turn for %s failed: %v", agentID, err)
 					return
@@ -3370,7 +3369,7 @@ func buildBranchFunc(
 
 		turnCtx := agent.WithTrigger(ctx, branchType)
 		if noCompact {
-			turnCtx = agent.WithNoCompact(turnCtx)
+			ag.SetSessionNoCompact(branchKey, true)
 		}
 
 		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
@@ -3490,7 +3489,7 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
 		defer cancel()
 		hookCtx = agent.WithTrigger(hookCtx, "session_end_memory")
-		hookCtx = agent.WithNoCompact(hookCtx)
+		ag.SetSessionNoCompact(branchKey, true)
 		if _, err := ag.HandleMessage(hookCtx, branchKey, prompt); err != nil {
 			log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
 		}
