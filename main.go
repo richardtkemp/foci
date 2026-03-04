@@ -1627,7 +1627,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.cfg.Models.Aliases))
+	registry.Register(tools.NewSummaryTool(p.client, acfg.Model, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
@@ -1876,6 +1876,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Sessions:        &sessionBranchAdapter{store: p.sessions},
 		AgentID:         acfg.ID,
 		Model:           acfg.Model,
+		ModelAliases:    p.cfg.Models.Aliases,
 		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
 		MaxToolLoops:    acfg.MaxToolLoops,
 		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),

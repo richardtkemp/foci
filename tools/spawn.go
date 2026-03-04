@@ -87,6 +87,7 @@ type SpawnDeps struct {
 	Sessions           SessionBrancher
 	AgentID            string
 	Model              string                                   // parent's default model
+	ModelAliases       map[string]string                        // model aliases (e.g. "haiku" → "claude-haiku-4-5")
 	MaxInherit         int                                      // semaphore size (from config)
 	MaxToolLoops       int                                      // max tool loops for raw/character spawns
 	ExploreMaxDepth    int                                      // max tool loops for explore spawns
@@ -148,10 +149,17 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				p.Timeout = 120
 			}
 
-			// Resolve model short name
+			// Resolve model short name via config aliases, then hardcoded fallbacks
 			model := p.Model
-			if full, ok := knownModels[model]; ok {
-				model = full
+			if model != "" {
+				if deps.ModelAliases != nil {
+					if full, ok := deps.ModelAliases[model]; ok {
+						model = full
+					}
+				}
+				if full, ok := knownModels[model]; ok {
+					model = full
+				}
 			}
 			if model == "" {
 				model = deps.Model
@@ -189,10 +197,21 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return TextResult(result), nil
 
 			case "explore":
-				// Always use haiku for exploration — cheap and fast.
+				// Always use the cheapest model for exploration.
+				exploreAlias := "haiku"
+				if strings.HasPrefix(deps.Model, "gemini-") {
+					exploreAlias = "flash"
+				}
 				exploreModel := model
-				if full, ok := knownModels["haiku"]; ok {
-					exploreModel = full
+				if deps.ModelAliases != nil {
+					if full, ok := deps.ModelAliases[exploreAlias]; ok {
+						exploreModel = full
+					}
+				}
+				if exploreModel == model {
+					if full, ok := knownModels[exploreAlias]; ok {
+						exploreModel = full
+					}
 				}
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
