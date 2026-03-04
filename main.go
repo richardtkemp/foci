@@ -376,49 +376,135 @@ Subcommands:
 	anthropicClient.SetUseSDK(cfg.Anthropic.UseSDK)
 	log.Debugf("main", "anthropic client ready (use_sdk=%v, streaming=%v)", cfg.Anthropic.UseSDK, cfg.Anthropic.Streaming)
 
-	// Gemini client (created lazily only if any agent uses it)
-	var geminiClient provider.Client
-	geminiClientOnce := sync.OnceFunc(func() {
-		apiKey, _ := store.Get("gemini.api_key")
-		if apiKey == "" {
-			log.Errorf("main", "gemini.api_key not found in secrets — gemini provider unavailable")
-			return
-		}
-		httpTimeout, err := time.ParseDuration(cfg.Gemini.HTTPTimeout)
-		if err != nil {
-			httpTimeout = 120 * time.Second
-		}
-		opts := []gemini.Option{gemini.WithHTTPTimeout(httpTimeout)}
-		if cfg.Gemini.CacheTTL != "0" {
-			if cacheTTL, err := time.ParseDuration(cfg.Gemini.CacheTTL); err == nil && cacheTTL > 0 {
-				opts = append(opts, gemini.WithCacheTTL(cacheTTL))
-			}
-		}
-		gc, err := gemini.NewClient(ctx, apiKey, opts...)
-		if err != nil {
-			log.Errorf("main", "create gemini client: %v", err)
-			return
-		}
-		geminiClient = gc
-		log.Infof("main", "gemini client ready (cache_ttl=%s)", cfg.Gemini.CacheTTL)
-	})
+	// Lazy client registry — creates provider clients on first use per endpoint:format pair.
+	type clientEntry struct {
+		client provider.Client
+		once   sync.Once
+	}
+	clientRegistry := map[string]*clientEntry{}
+	var clientRegistryMu sync.Mutex
 
-	// OpenAI client (created lazily only if any agent uses it)
-	var openaiClient provider.Client
-	openaiClientOnce := sync.OnceFunc(func() {
-		apiKey, _ := store.Get("openai.api_key")
-		if apiKey == "" {
-			log.Errorf("main", "openai.api_key not found in secrets — openai provider unavailable")
-			return
+	getClient := func(endpointName, format string) provider.Client {
+		key := endpointName + ":" + format
+		clientRegistryMu.Lock()
+		entry, ok := clientRegistry[key]
+		if !ok {
+			entry = &clientEntry{}
+			clientRegistry[key] = entry
 		}
-		httpTimeout := parseDurationDefault(cfg.OpenAI.HTTPTimeout, 120*time.Second)
-		opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
-		if cfg.OpenAI.BaseURL != "" {
-			opts = append(opts, oai.WithBaseURL(cfg.OpenAI.BaseURL))
+		clientRegistryMu.Unlock()
+
+		entry.once.Do(func() {
+			epCfg, exists := cfg.Endpoints[endpointName]
+			if !exists {
+				log.Errorf("main", "endpoint %q not found in config", endpointName)
+				return
+			}
+
+			// Resolve API key from secrets store
+			apiKeyName := epCfg.APIKey
+			if apiKeyName == "" {
+				apiKeyName = endpointName + ".api_key"
+			}
+
+			switch format {
+			case "anthropic":
+				// Built-in anthropic endpoint uses resolveCredentials (setup-token, API key, CC creds).
+				// Other endpoints using anthropic format use simple API key auth.
+				if endpointName == "anthropic" {
+					entry.client = anthropicClient
+					return
+				}
+				apiKey, _ := store.Get(apiKeyName)
+				if apiKey == "" {
+					log.Errorf("main", "%s not found in secrets — endpoint %q (anthropic format) unavailable", apiKeyName, endpointName)
+					return
+				}
+				httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(cfg.Anthropic.HTTPTimeout, 600*time.Second))
+				holder := &tokenHolder{token: apiKey}
+				c := anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout)
+				url := epCfg.URLForFormat("anthropic")
+				if url != "" {
+					c.SetBaseURL(url)
+				}
+				c.SetUseSDK(cfg.Anthropic.UseSDK)
+				entry.client = c
+				log.Infof("main", "anthropic client ready for endpoint %q (url=%s)", endpointName, url)
+
+			case "gemini":
+				if endpointName == "gemini" {
+					// Built-in gemini endpoint
+					apiKey, _ := store.Get("gemini.api_key")
+					if apiKey == "" {
+						log.Errorf("main", "gemini.api_key not found in secrets — gemini endpoint unavailable")
+						return
+					}
+					httpTimeout, err := time.ParseDuration(cfg.Gemini.HTTPTimeout)
+					if err != nil {
+						httpTimeout = 120 * time.Second
+					}
+					opts := []gemini.Option{gemini.WithHTTPTimeout(httpTimeout)}
+					if cfg.Gemini.CacheTTL != "0" {
+						if cacheTTL, err := time.ParseDuration(cfg.Gemini.CacheTTL); err == nil && cacheTTL > 0 {
+							opts = append(opts, gemini.WithCacheTTL(cacheTTL))
+						}
+					}
+					gc, err := gemini.NewClient(ctx, apiKey, opts...)
+					if err != nil {
+						log.Errorf("main", "create gemini client: %v", err)
+						return
+					}
+					entry.client = gc
+					log.Infof("main", "gemini client ready (cache_ttl=%s)", cfg.Gemini.CacheTTL)
+				} else {
+					log.Errorf("main", "gemini format on non-gemini endpoint %q not supported", endpointName)
+				}
+
+			case "openai":
+				apiKey, _ := store.Get(apiKeyName)
+				if apiKey == "" {
+					log.Errorf("main", "%s not found in secrets — endpoint %q (openai format) unavailable", apiKeyName, endpointName)
+					return
+				}
+				httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(cfg.OpenAI.HTTPTimeout, 120*time.Second))
+				opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
+				url := epCfg.URLForFormat("openai")
+				if url == "" && endpointName == "openai" {
+					url = cfg.OpenAI.BaseURL
+				}
+				if url != "" {
+					opts = append(opts, oai.WithBaseURL(url))
+				}
+				entry.client = oai.NewClient(apiKey, opts...)
+				log.Infof("main", "openai client ready for endpoint %q (url=%s)", endpointName, url)
+			}
+		})
+
+		return entry.client
+	}
+
+	// peekClient returns the client for an endpoint:format pair without initializing it.
+	peekClient := func(endpointName, format string) provider.Client {
+		key := endpointName + ":" + format
+		clientRegistryMu.Lock()
+		entry, ok := clientRegistry[key]
+		clientRegistryMu.Unlock()
+		if !ok || entry == nil {
+			return nil
 		}
-		openaiClient = oai.NewClient(apiKey, opts...)
-		log.Infof("main", "openai client ready (base_url=%s)", cfg.OpenAI.BaseURL)
-	})
+		return entry.client
+	}
+
+	// resolveEndpointClient resolves the client for an endpoint+modelID pair.
+	// Infers wire format from model name, falls back to openai if endpoint doesn't support it.
+	resolveEndpointClient := func(endpointName, modelID string) provider.Client {
+		format := config.InferFormat(modelID)
+		epCfg, ok := cfg.Endpoints[endpointName]
+		if ok && !epCfg.SupportsFormat(format) {
+			format = "openai" // universal fallback
+		}
+		return getClient(endpointName, format)
+	}
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
@@ -591,22 +677,6 @@ Subcommands:
 		return infos
 	}
 
-	// Init Gemini and OpenAI clients unconditionally — any agent may switch via /model.
-	// Safe: only creates the client if the API key exists.
-	geminiClientOnce()
-	openaiClientOnce()
-
-	// Build provider clients map for cross-provider model switching.
-	allClients := map[string]provider.Client{
-		"anthropic": anthropicClient,
-	}
-	if geminiClient != nil {
-		allClients["gemini"] = geminiClient
-	}
-	if openaiClient != nil {
-		allClients["openai"] = openaiClient
-	}
-
 	for _, acfg := range cfg.Agents {
 		// Resolve memory backends: per-agent (if configured) or shared
 		var agentBackends map[string]memory.Searcher
@@ -616,23 +686,12 @@ Subcommands:
 			agentBackends = mem.sharedBackends
 		}
 
-		// Resolve per-agent provider client
-		var agentClient provider.Client
-		switch acfg.Provider {
-		case "gemini":
-			if geminiClient == nil {
-				log.Errorf("main", "agent %q: gemini provider requested but client unavailable", acfg.ID)
-				continue
-			}
-			agentClient = geminiClient
-		case "openai":
-			if openaiClient == nil {
-				log.Errorf("main", "agent %q: openai provider requested but client unavailable", acfg.ID)
-				continue
-			}
-			agentClient = openaiClient
-		default:
-			agentClient = anthropicClient
+		// Resolve per-agent provider client from endpoint:model
+		endpoint, modelID := config.ParseModel(acfg.Model)
+		agentClient := resolveEndpointClient(endpoint, modelID)
+		if agentClient == nil {
+			log.Errorf("main", "agent %q: endpoint %q unavailable for model %q", acfg.ID, endpoint, modelID)
+			continue
 		}
 
 		inst := setupAgent(setupParams{
@@ -640,7 +699,9 @@ Subcommands:
 			cfg:             cfg,
 			configPath:      configPath,
 			client:          agentClient,
-			allClients:      allClients,
+			getClient:       getClient,
+			peekClient:      peekClient,
+			resolveEndpointClient: resolveEndpointClient,
 			sessions:        sessions,
 			store:           store,
 			bwStore:         bwStore,
@@ -667,7 +728,7 @@ Subcommands:
 		// Keepalive & background work runner (per-agent config, falls back to global).
 		// Non-Anthropic agents skip keepalive (Anthropic ephemeral cache warming) — Gemini's
 		// CacheManager handles its own TTL extension, OpenAI has no cache. Background/memory/warnings still run.
-		kaEnabled := acfg.Keepalive.Enabled && acfg.Provider != "gemini" && acfg.Provider != "openai"
+		kaEnabled := acfg.Keepalive.Enabled && endpoint == "anthropic"
 		if kaEnabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) || acfg.InjectAgentWarnings {
 			kaOrientPrompt := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			branchFn := buildBranchFunc(
@@ -1153,8 +1214,10 @@ Subcommands:
 	}
 
 	// Clean up Gemini cache (delete server-side cached content)
-	if gc, ok := geminiClient.(*gemini.Client); ok && gc != nil {
-		gc.Close(ctx)
+	if gc := peekClient("gemini", "gemini"); gc != nil {
+		if gcTyped, ok := gc.(*gemini.Client); ok {
+			gcTyped.Close(ctx)
+		}
 	}
 
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
@@ -1170,7 +1233,9 @@ type setupParams struct {
 	cfg             *config.Config
 	configPath      string
 	client          provider.Client
-	allClients      map[string]provider.Client // all provider clients for cross-provider switching
+	getClient       func(endpoint, format string) provider.Client
+	peekClient      func(endpoint, format string) provider.Client
+	resolveEndpointClient func(endpoint, modelID string) provider.Client
 	sessions        *session.Store
 	store           *secrets.Store
 	bwStore         *bitwarden.Store
@@ -1298,7 +1363,14 @@ func setupAgent(p setupParams) *agentInstance {
 		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
 			tmuxWatchThresholdSec = int(d.Seconds())
 		}
-		tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec)
+		tmuxSessionTTLStr := resolveString(acfg.TmuxSessionTTL, p.cfg.Tools.TmuxSessionTTL)
+		var tmuxSessionTTL time.Duration
+		if tmuxSessionTTLStr != "0" {
+			if d, err := time.ParseDuration(tmuxSessionTTLStr); err == nil {
+				tmuxSessionTTL = d
+			}
+		}
+		tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
 		registry.Register(tmuxTool)
 	}
 	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
@@ -1308,7 +1380,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.allClients, acfg.Model, p.cfg.Models.Aliases))
+	registry.Register(tools.NewSummaryTool(p.client, p.getClient, p.peekClient, acfg.Model, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
@@ -1374,7 +1446,8 @@ func setupAgent(p setupParams) *agentInstance {
 
 	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
 	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
-	compactor := compaction.NewCompactor(p.sessions, acfg.Model, compactionThreshold)
+	_, bareModelID := config.ParseModel(acfg.Model)
+	compactor := compaction.NewCompactor(p.sessions, bareModelID, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
@@ -1457,7 +1530,8 @@ func setupAgent(p setupParams) *agentInstance {
 	ag = &agent.Agent{
 		Log:                         log.NewComponentLogger("agent:" + acfg.ID),
 		Client:                      p.client,
-		Clients:                     p.allClients,
+		GetClient:                   p.getClient,
+		PeekClient:                  p.peekClient,
 		Sessions:                    p.sessions,
 		Tools:                       registry,
 		ServerTools:                 serverTools,
@@ -1468,7 +1542,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Reminders:                   p.reminderStore,
 		DefaultSessionKey:           defaultSessionKey,
 		AgentID:                     acfg.ID,
-		Model:                       acfg.Model,
+		Model:                       bareModelID,
 		ExtraSystemBlocks:           extraSystemBlocks,
 		CacheStrategy:               p.cfg.Cache.Strategy,
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
@@ -1554,7 +1628,8 @@ func setupAgent(p setupParams) *agentInstance {
 	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
-		Clients:         p.allClients,
+		GetClient:       p.getClient,
+		PeekClient:      p.peekClient,
 		Bootstrap:       bootstrap,
 		Registry:        registry,
 		Sessions:        &sessionBranchAdapter{store: p.sessions},
@@ -1680,7 +1755,8 @@ func setupAgent(p setupParams) *agentInstance {
 	}))
 
 	// Model resolution using config aliases.
-	// resolveAliasFn resolves a short alias to a full model ID (no provider prefix handling).
+	// resolveAliasFn resolves a short alias to its full endpoint:model_id form.
+	// Aliases now include endpoint prefixes (e.g. "opus" → "anthropic:claude-opus-4-6").
 	aliases := p.cfg.Models.Aliases
 	resolveAliasFn := func(input string) string {
 		key := strings.ToLower(strings.TrimSpace(input))
@@ -1697,27 +1773,40 @@ func setupAgent(p setupParams) *agentInstance {
 		return input
 	}
 
-	// resolveModelFn handles "provider:alias" syntax (e.g. "gemini:flash", "anthropic:haiku").
-	// Returns (provider, fullModelID). Empty provider means use current session's provider.
+	// resolveModelFn resolves user input to (endpoint, fullModelID).
+	// Handles both "endpoint:alias_or_model" and bare "alias_or_model".
+	// Returns endpoint="" when the caller should keep the current endpoint.
 	resolveModelFn := func(input string) (string, string) {
 		input = strings.TrimSpace(input)
-		if i := strings.IndexByte(input, ':'); i > 0 {
-			return input[:i], resolveAliasFn(input[i+1:])
+		// First try resolving the whole input as an alias (aliases include endpoint prefix).
+		resolved := resolveAliasFn(input)
+		if resolved != input {
+			// Alias resolved — split endpoint:model
+			return config.ParseModel(resolved)
 		}
-		return "", resolveAliasFn(input)
+		// Not an alias. If it contains ":", treat as endpoint:model_or_alias.
+		if i := strings.IndexByte(input, ':'); i > 0 {
+			ep := input[:i]
+			rest := resolveAliasFn(input[i+1:])
+			// If the alias resolved rest includes an endpoint prefix, extract just the modelID
+			if strings.Contains(rest, ":") {
+				_, rest = config.ParseModel(rest)
+			}
+			return ep, rest
+		}
+		// Bare model name, no alias match — infer endpoint from name
+		ep := config.InferFormat(input)
+		return ep, input
 	}
-
-	// clientsMap is populated by main() with all available provider clients.
-	clientsMap := ag.Clients
 
 	cmds.Register(command.NewModelCommand(
 		func(ctx context.Context) string { return ag.SessionModel(sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, prov string, m string) {
+		func(ctx context.Context, endpoint string, m string) {
 			var client provider.Client
-			if prov != "" {
-				client = clientsMap[prov]
+			if endpoint != "" {
+				client = p.resolveEndpointClient(endpoint, m)
 			}
-			ag.SetSessionModel(sessionKeyFromCtx(ctx), m, client)
+			ag.SetSessionModel(sessionKeyFromCtx(ctx), m, endpoint, client)
 		},
 		resolveModelFn,
 		p.cfg.Models.Aliases,
@@ -1908,13 +1997,13 @@ func setupAgent(p setupParams) *agentInstance {
 				cheapModel = full
 			}
 			// Resolve the right client for the cheap model
-			diffClient := p.client
-			if clientsMap != nil {
-				if strings.HasPrefix(cheapModel, "gemini-") {
-					if gc := clientsMap["gemini"]; gc != nil {
-						diffClient = gc
-					}
-				}
+			// cheapModel may now have endpoint prefix from aliases
+			var diffClient provider.Client
+			if ep, mid := config.ParseModel(cheapModel); ep != "" {
+				diffClient = p.resolveEndpointClient(ep, mid)
+			}
+			if diffClient == nil {
+				diffClient = p.client
 			}
 			prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
 			resp, err := diffClient.SendMessage(callCtx, &provider.MessageRequest{

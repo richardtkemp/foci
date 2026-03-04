@@ -95,6 +95,11 @@ func (c *Client) SetUseSDK(useSDK bool) {
 	c.useSDK = useSDK
 }
 
+// SetBaseURL overrides the API base URL. Must be called before any API requests.
+func (c *Client) SetBaseURL(url string) {
+	c.baseURL = url
+}
+
 // ensureSDKClient lazily initializes the SDK client.
 func (c *Client) ensureSDKClient() *sdk.Client {
 	c.sdkOnce.Do(func() {

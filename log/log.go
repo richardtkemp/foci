@@ -505,10 +505,24 @@ func Errorf(component string, format string, args ...interface{}) {
 
 func API(entry APIEntry) {
 	// Auto-infer provider from model name when not explicitly set.
-	if entry.Provider == "" && strings.HasPrefix(entry.Model, "gemini-") {
-		entry.Provider = "gemini"
+	if entry.Provider == "" {
+		if strings.HasPrefix(entry.Model, "gemini-") {
+			entry.Provider = "gemini"
+		} else if isOpenAIModel(entry.Model) {
+			entry.Provider = "openai"
+		}
 	}
 	std.api(entry)
+}
+
+// isOpenAIModel returns true if the model name looks like an OpenAI model.
+func isOpenAIModel(model string) bool {
+	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
+		if strings.HasPrefix(model, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func Payload(entry PayloadEntry) {
@@ -568,6 +582,9 @@ func CalculateCost(model string, input, output, cacheRead, cacheWrite int) float
 	if !ok {
 		if strings.HasPrefix(model, "gemini-") {
 			p = prices["gemini-2.5-flash"]
+		} else if isOpenAIModel(model) {
+			// OpenAI models: use approximate pricing
+			p = pricing{5.00, 15.00, 0, 0}
 		} else {
 			p = prices["claude-haiku-4-5"]
 		}

@@ -15,12 +15,13 @@ import (
 // NewSummaryTool creates a tool that summarizes/extracts information from a file
 // via a fast, cheap model call without loading the full content into the agent's context.
 // defaultClient is the agent's default provider client.
-// clients maps provider names ("anthropic", "gemini") to clients for cross-provider resolution.
-// agentModel is the agent's configured model, used to pick the right lightweight model
-// for the summary call (e.g. haiku for Anthropic, flash for Gemini).
-// modelAliases maps short names (e.g. "haiku") to full model IDs; used to
-// resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(defaultClient provider.Client, clients map[string]provider.Client, agentModel string, modelAliases map[string]string) *Tool {
+// getClient lazily initializes and returns a client for an endpoint:format pair.
+// peekClient checks for an existing client without initializing.
+// agentModel is the agent's configured model (endpoint:model_id format), used to pick
+// the right lightweight model for the summary call (e.g. haiku for Anthropic, flash for Gemini).
+// modelAliases maps short names (e.g. "haiku") to full model IDs (with endpoint prefix);
+// used to resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
+func NewSummaryTool(defaultClient provider.Client, getClient func(endpoint, format string) provider.Client, peekClient func(endpoint, format string) provider.Client, agentModel string, modelAliases map[string]string) *Tool {
 	resolveModel := func(alias string) string {
 		if modelAliases != nil {
 			if full, ok := modelAliases[strings.ToLower(alias)]; ok {
@@ -30,25 +31,33 @@ func NewSummaryTool(defaultClient provider.Client, clients map[string]provider.C
 		return alias
 	}
 
+	// Parse the agent's model to get the bare model ID
+	_, agentModelID := parseEndpointModel(agentModel)
+
 	// Pick the cheapest model for the agent's provider.
 	summaryAlias := "haiku"
-	if strings.HasPrefix(agentModel, "gemini-") {
+	if strings.HasPrefix(agentModelID, "gemini-") {
 		summaryAlias = "flash"
-	} else if isOpenAIModel(agentModel) {
+	} else if isOpenAIModel(agentModelID) {
 		summaryAlias = "gpt4o"
 	}
 
 	// Resolve which client to use based on the summary model.
 	resolveClient := func() provider.Client {
 		model := resolveModel(summaryAlias)
-		if strings.HasPrefix(model, "gemini-") {
-			if gc := clients["gemini"]; gc != nil {
-				return gc
+		// Model may now include endpoint prefix from aliases
+		ep, modelID := parseEndpointModel(model)
+		if ep != "" && getClient != nil {
+			format := inferFormat(modelID)
+			if c := getClient(ep, format); c != nil {
+				return c
 			}
 		}
-		if isOpenAIModel(model) {
-			if oc := clients["openai"]; oc != nil {
-				return oc
+		// Bare model name — infer from model name
+		if getClient != nil {
+			format := inferFormat(model)
+			if c := getClient(format, format); c != nil {
+				return c
 			}
 		}
 		return defaultClient
@@ -114,7 +123,9 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		}
 	}
 
-	model := resolveModel(summaryAlias)
+	resolved := resolveModel(summaryAlias)
+	// Strip endpoint prefix if present (API needs bare model ID)
+	_, model := parseEndpointModel(resolved)
 	start := time.Now()
 
 	req := &provider.MessageRequest{
