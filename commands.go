@@ -684,8 +684,8 @@ func buildSessionsDeps(p cmdRegParams) command.SessionsDeps {
 				return nil, fmt.Errorf("session index not available")
 			}
 			qopts := session.QueryOptions{
-				SessionType: session.SessionType(opts.TypeFilter),
-				Status:      session.SessionStatus(opts.StatusFilter),
+				SessionType: opts.TypeFilter,
+				Status:      opts.StatusFilter,
 				MaxAge:      opts.MaxAge,
 				Limit:       50,
 			}

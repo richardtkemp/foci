@@ -25,8 +25,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 
 	// Find active sessions older than maxAge
 	candidates, err := index.Query(QueryOptions{
-		Status: SessionStatusActive,
-		MaxAge: 0, // no limit — we filter by "older than" below
+		Status: string(SessionStatusActive),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("query active sessions: %w", err)
@@ -72,7 +71,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 		gzipArchiveFiles(entry.FilePath)
 
 		// Update index status
-		index.SetStatus(entry.SessionKey, SessionStatusArchived)
+		index.UpdateStatus(entry.SessionKey, SessionStatusArchived)
 		archived++
 		log.Infof("session", "archived session %s (last active %s)", entry.SessionKey, lastActivity.Format(time.RFC3339))
 	}
