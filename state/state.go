@@ -96,3 +96,16 @@ func (s *Store) saveLocked() error {
 	}
 	return nil
 }
+
+// AllKeys returns all keys in the state store.
+// Used for migration from state.json to database.
+func (s *Store) AllKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keys := make([]string, 0, len(s.data))
+	for k := range s.data {
+		keys = append(keys, k)
+	}
+	return keys
+}

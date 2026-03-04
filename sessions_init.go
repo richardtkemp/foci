@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,9 +44,9 @@ func initSessions(cfg *config.Config) sessionInfra {
 		log.Infof("main", "injected restart markers into %d active session(s)", n)
 	}
 
-	// Session index (SQLite-backed metadata index of all session files)
-	sessionIndexPath := cfg.DataPath("session_index.db")
-	sessionIndex, err := session.NewSessionIndex(sessionIndexPath)
+	// State database (SQLite-backed state for sessions, agents, chats, and system)
+	stateDBPath := cfg.DataPath("state.db")
+	sessionIndex, err := session.NewSessionIndex(stateDBPath)
 	if err != nil {
 		log.Errorf("main", "create session index: %v (session index disabled)", err)
 	} else {
@@ -131,6 +133,18 @@ func initSessions(cfg *config.Config) sessionInfra {
 		log.Errorf("main", "load state: %v", err)
 	}
 
+	// ============================================================================
+	// TODO REMOVE ME: One-time migration from state.json to session_index.db
+	// Migrates agent/chat metadata from JSON state file to database tables.
+	// This can be removed after all deployments have migrated (post 2026-03-04).
+	// ============================================================================
+	if sessionIndex != nil {
+		migrateStateToDatabase(stateStore, sessionIndex)
+	}
+	// ============================================================================
+	// END TODO REMOVE ME
+	// ============================================================================
+
 	return sessionInfra{
 		sessions:     sessions,
 		sessionIndex: sessionIndex,
@@ -142,3 +156,142 @@ func initSessions(cfg *config.Config) sessionInfra {
 		},
 	}
 }
+
+// ============================================================================
+// TODO REMOVE ME: One-time migration from state.json to state.db
+// This function can be deleted after all deployments have migrated (post 2026-03-04).
+// ============================================================================
+func migrateStateToDatabase(stateStore *state.Store, sessionIndex *session.SessionIndex) {
+	// Check if migration already done
+	marker, _ := sessionIndex.GetSystemState("_migration_state_to_db_done")
+	if marker == "true" {
+		return
+	}
+
+	log.Infof("main", "migrating state.json to state.db...")
+
+	allKeys := stateStore.AllKeys()
+	migrated := 0
+
+	for _, oldKey := range allKeys {
+		var err error
+		var value interface{}
+		if !stateStore.Get(oldKey, &value) {
+			continue
+		}
+		valueStr := fmt.Sprintf("%v", value)
+
+		// Parse and route to appropriate table
+		parts := strings.Split(oldKey, ":")
+
+		// Pattern: agent:AGENTID:chat:CHATID:KEY → chat_metadata
+		if len(parts) == 5 && parts[0] == "agent" && parts[2] == "chat" {
+			agentID := parts[1]
+			chatID, parseErr := strconv.ParseInt(parts[3], 10, 64)
+			if parseErr != nil {
+				log.Warnf("main", "skip invalid chat key %q: %v", oldKey, parseErr)
+				continue
+			}
+			key := parts[4]
+			err = sessionIndex.SetChatMetadata(agentID, chatID, key, valueStr)
+		} else if len(parts) == 3 && parts[0] == "agent" {
+			// Pattern: agent:AGENTID:KEY → agent_metadata
+			agentID := parts[1]
+			key := parts[2]
+			err = sessionIndex.SetAgentMetadata(agentID, key, valueStr)
+		} else if len(parts) == 3 && parts[0] == "bot" {
+			// Pattern: bot:AGENTID:KEY → agent_metadata (bot: is same as agent:)
+			agentID := parts[1]
+			key := parts[2]
+			err = sessionIndex.SetAgentMetadata(agentID, "bot_"+key, valueStr)
+		} else if len(parts) == 2 && parts[0] == "consolidation_last" {
+			// Pattern: consolidation_last:AGENTID → agent_metadata
+			agentID := parts[1]
+			err = sessionIndex.SetAgentMetadata(agentID, "consolidation_last", valueStr)
+		} else if strings.HasPrefix(oldKey, "no_compact:") {
+			// Pattern: no_compact:SESSION_KEY → session_metadata
+			sessionKey := strings.TrimPrefix(oldKey, "no_compact:")
+			err = sessionIndex.SetSessionMetadata(sessionKey, "no_compact", valueStr)
+		} else if strings.HasPrefix(oldKey, "effort:agent:") {
+			// Pattern: effort:agent:AGENTID:chat:CHATID → chat_metadata
+			suffix := strings.TrimPrefix(oldKey, "effort:agent:")
+			suffixParts := strings.Split(suffix, ":")
+			if len(suffixParts) == 3 && suffixParts[1] == "chat" {
+				agentID := suffixParts[0]
+				chatID, parseErr := strconv.ParseInt(suffixParts[2], 10, 64)
+				if parseErr == nil {
+					err = sessionIndex.SetChatMetadata(agentID, chatID, "effort", valueStr)
+				}
+			}
+		} else if strings.HasPrefix(oldKey, "model:agent:") {
+			// Pattern: model:agent:AGENTID:chat:CHATID → chat_metadata
+			suffix := strings.TrimPrefix(oldKey, "model:agent:")
+			suffixParts := strings.Split(suffix, ":")
+			if len(suffixParts) == 3 && suffixParts[1] == "chat" {
+				agentID := suffixParts[0]
+				chatID, parseErr := strconv.ParseInt(suffixParts[2], 10, 64)
+				if parseErr == nil {
+					err = sessionIndex.SetChatMetadata(agentID, chatID, "model", valueStr)
+				}
+			}
+		} else if strings.HasPrefix(oldKey, "thinking:agent:") {
+			// Pattern: thinking:agent:AGENTID:chat:CHATID → chat_metadata
+			suffix := strings.TrimPrefix(oldKey, "thinking:agent:")
+			suffixParts := strings.Split(suffix, ":")
+			if len(suffixParts) == 3 && suffixParts[1] == "chat" {
+				agentID := suffixParts[0]
+				chatID, parseErr := strconv.ParseInt(suffixParts[2], 10, 64)
+				if parseErr == nil {
+					err = sessionIndex.SetChatMetadata(agentID, chatID, "thinking", valueStr)
+				}
+			}
+		} else if strings.HasPrefix(oldKey, "voice:agent:") {
+			// Pattern: voice:agent:AGENTID:chat:CHATID → chat_metadata
+			// Pattern: voice:agent:AGENTID:KEY → agent_metadata
+			suffix := strings.TrimPrefix(oldKey, "voice:agent:")
+			suffixParts := strings.Split(suffix, ":")
+			if len(suffixParts) == 3 && suffixParts[1] == "chat" {
+				agentID := suffixParts[0]
+				chatID, parseErr := strconv.ParseInt(suffixParts[2], 10, 64)
+				if parseErr == nil {
+					err = sessionIndex.SetChatMetadata(agentID, chatID, "voice", valueStr)
+				}
+			} else if len(suffixParts) == 2 {
+				agentID := suffixParts[0]
+				key := suffixParts[1]
+				err = sessionIndex.SetAgentMetadata(agentID, "voice_"+key, valueStr)
+			}
+		} else if strings.HasPrefix(oldKey, "tmux:") {
+			// Pattern: tmux:AGENTID → agent_metadata, tmux:AGENTID:watches → agent_metadata
+			suffix := strings.TrimPrefix(oldKey, "tmux:")
+			suffixParts := strings.Split(suffix, ":")
+			if len(suffixParts) == 1 {
+				agentID := suffixParts[0]
+				err = sessionIndex.SetAgentMetadata(agentID, "tmux_state", valueStr)
+			} else if len(suffixParts) == 2 {
+				agentID := suffixParts[0]
+				key := suffixParts[1]
+				err = sessionIndex.SetAgentMetadata(agentID, "tmux_"+key, valueStr)
+			}
+		} else {
+			// Everything else → system_state
+			err = sessionIndex.SetSystemState(oldKey, valueStr)
+		}
+
+		if err == nil {
+			migrated++
+		} else {
+			log.Warnf("main", "migrate state key %q: %v", oldKey, err)
+		}
+	}
+
+	// Mark migration as done
+	_ = sessionIndex.SetSystemState("_migration_state_to_db_done", "true")
+
+	if migrated > 0 {
+		log.Infof("main", "migrated %d state keys to database", migrated)
+	}
+}
+// ============================================================================
+// END TODO REMOVE ME
+// ============================================================================
