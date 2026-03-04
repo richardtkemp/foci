@@ -290,6 +290,16 @@ func (idx *SessionIndex) Delete(sessionKey string) {
 	}
 }
 
+// Count returns the total number of sessions in the index.
+func (idx *SessionIndex) Count() (int, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var count int
+	err := idx.db.QueryRow(`SELECT COUNT(*) FROM session_index`).Scan(&count)
+	return count, err
+}
+
 // UpdateStatus updates the status field for a session.
 func (idx *SessionIndex) UpdateStatus(sessionKey string, status SessionStatus) {
 	idx.mu.Lock()

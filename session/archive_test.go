@@ -64,7 +64,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	}
 
 	// Verify index status
-	entries, _ := idx.Query(QueryOptions{Status: SessionStatusArchived})
+	entries, _ := idx.Query(QueryOptions{Status: string(SessionStatusArchived)})
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 archived entries, got %d", len(entries))
 	}
