@@ -213,7 +213,7 @@ make build        # gateway only
 make cli          # CLI only
 make test         # run all tests
 make vet          # go vet
-make lint         # vet + errcheck (production only) + gocyclo/gocognit (>100 threshold)
+make lint         # vet + errcheck (production only) + gocyclo/gocognit (>75/100 threshold)
 make check        # test + lint
 make clean        # remove built binaries
 ```

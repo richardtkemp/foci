@@ -33,14 +33,14 @@ vet:
 lint: vet
 	@echo "=== errcheck (production only) ==="
 	@$(GOBIN)/errcheck ./... 2>&1 | grep -v _test.go | tee /dev/stderr | { ! grep -q .; }
-	@echo "=== gocyclo (>100) ==="
-	@$(GOBIN)/gocyclo -over 100 . || true
+	@echo "=== gocyclo (>75) ==="
+	@$(GOBIN)/gocyclo -over 75 .
 	@echo "=== gocognit (>100) ==="
-	@$(GOBIN)/gocognit -over 100 . || true
+	@$(GOBIN)/gocognit -over 100 .
 
 complex: vet
-	@echo "=== gocyclo (>100) ==="
-	@$(GOBIN)/gocyclo -over 100 . || true
+	@echo "=== gocyclo (>75) ==="
+	@$(GOBIN)/gocyclo -over 75 . || true
 	@echo "=== gocognit (>100) ==="
 	@$(GOBIN)/gocognit -over 100 . || true
 
