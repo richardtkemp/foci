@@ -34,6 +34,8 @@ func NewSummaryTool(defaultClient provider.Client, clients map[string]provider.C
 	summaryAlias := "haiku"
 	if strings.HasPrefix(agentModel, "gemini-") {
 		summaryAlias = "flash"
+	} else if isOpenAIModel(agentModel) {
+		summaryAlias = "gpt4o"
 	}
 
 	// Resolve which client to use based on the summary model.
@@ -42,6 +44,11 @@ func NewSummaryTool(defaultClient provider.Client, clients map[string]provider.C
 		if strings.HasPrefix(model, "gemini-") {
 			if gc := clients["gemini"]; gc != nil {
 				return gc
+			}
+		}
+		if isOpenAIModel(model) {
+			if oc := clients["openai"]; oc != nil {
+				return oc
 			}
 		}
 		return defaultClient

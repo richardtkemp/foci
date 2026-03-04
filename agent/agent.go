@@ -631,6 +631,8 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	summaryAlias := "haiku"
 	if a.isGeminiClient(client) {
 		summaryAlias = "flash"
+	} else if a.isOpenAIClient(client) {
+		summaryAlias = "gpt4o"
 	}
 	model := summaryAlias
 	if full, ok := a.ModelAliases[summaryAlias]; ok {
@@ -1540,6 +1542,14 @@ func summarizeServerToolResult(block anthropic.ContentBlock) string {
 func (a *Agent) isGeminiClient(c provider.Client) bool {
 	if gc, ok := a.Clients["gemini"]; ok && gc != nil {
 		return c == gc
+	}
+	return false
+}
+
+// isOpenAIClient returns true if the given client is the openai client from the Clients map.
+func (a *Agent) isOpenAIClient(c provider.Client) bool {
+	if oc, ok := a.Clients["openai"]; ok && oc != nil {
+		return c == oc
 	}
 	return false
 }

@@ -24,8 +24,9 @@ config.Load(path)                                        ← validates values; l
   →   2. API key: anthropic.api_key from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
   → Gemini client (unconditional): created on startup from gemini.api_key in secrets.toml (safe if key absent)
-  → allClients map: {"anthropic": anthropicClient, "gemini": geminiClient} — enables dynamic provider switching
-  → Per-agent provider resolution: agent.Provider → anthropicClient or geminiClient (provider.Client interface)
+  → OpenAI client (unconditional): created on startup from openai.api_key in secrets.toml (safe if key absent)
+  → allClients map: {"anthropic": ..., "gemini": ..., "openai": ...} — enables dynamic provider switching
+  → Per-agent provider resolution: agent.Provider → anthropicClient, geminiClient, or openaiClient (provider.Client interface)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
@@ -115,6 +116,7 @@ main
  ├── provider      (no deps — provider-neutral types and Client interface)
  ├── anthropic     → provider
  ├── gemini        → provider, google.golang.org/genai
+ ├── openai        → provider, github.com/openai/openai-go/v3
  ├── session       → provider, log
  ├── memory        → modernc.org/sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → log, gorilla/websocket
@@ -347,18 +349,18 @@ type Client interface {
 
 ### Dynamic Provider Switching
 
-Agents can switch providers at runtime via `/model provider:alias` (e.g. `/model gemini:flash`, `/model anthropic:haiku`). Without a prefix, the model stays on the session's current provider.
+Agents can switch providers at runtime via `/model provider:alias` (e.g. `/model gemini:flash`, `/model anthropic:haiku`, `/model openai:gpt4o`). Without a prefix, the model stays on the session's current provider.
 
 **Resolution chain:**
 1. `/model gemini:flash` → parse prefix `gemini`, resolve alias `flash` → full model ID via `[models.aliases]`
 2. Look up `agent.Clients["gemini"]` → per-session client override stored in `sessionMeta.client`
 3. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
 
-**Wiring:** `agent.Clients` map (`map[string]provider.Client`) is populated at startup with all available clients (`"anthropic"` and `"gemini"` if key exists). This map is shared with `tools.SpawnDeps.Clients` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
+**Wiring:** `agent.Clients` map (`map[string]provider.Client`) is populated at startup with all available clients (`"anthropic"`, `"gemini"` if key exists, `"openai"` if key exists). This map is shared with `tools.SpawnDeps.Clients` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
 
 **Compaction:** `Compactor.Compact()` receives the client as a parameter (not stored on the struct), so compaction uses the session's active provider client.
 
-**Keepalive:** Skipped for Gemini agents — Anthropic ephemeral cache warming is unnecessary since Gemini's `CacheManager` handles its own TTL extension.
+**Keepalive:** Skipped for non-Anthropic agents — Anthropic ephemeral cache warming is unnecessary since Gemini's `CacheManager` handles its own TTL extension, and OpenAI has no ephemeral cache.
 
 ## Anthropic API Client (`anthropic/`)
 
@@ -388,6 +390,16 @@ Implements `provider.Client` using `google.golang.org/genai` SDK. Translation la
 - `responseFromGenai()` — finish reason mapping, usage extraction, `FunctionCall` → `tool_use` ContentBlock
 - `classifyError()` — maps Gemini SDK errors to `provider.APIError` for agent loop retry logic
 - `CacheManager` — explicit server-side cache for system prompt + tools (see below)
+
+## OpenAI API Client (`openai/`)
+
+Implements `provider.Client` using `github.com/openai/openai-go/v3` SDK. Translation layer converts between provider-neutral types and OpenAI wire format:
+- `messagesToOpenAI()` — system blocks → `DeveloperMessage`, tool results → `ToolMessage`, images → `image_url` parts
+- `toolsToOpenAI()` — `ToolDef` → `ChatCompletionFunctionTool`, server tools filtered out
+- `responseFromOpenAI()` — finish reason mapping (`"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`), usage extraction, `ToolCalls` → `tool_use` ContentBlock
+- `classifyError()` — maps SDK `*openai.Error` to `provider.APIError`
+- `CountTokens()` — returns error (no free token counting endpoint); compaction handles gracefully
+- Configurable base URL (`[openai] base_url`) enables OpenRouter, Together, Groq, local LLMs
 
 ## Prompt Caching
 

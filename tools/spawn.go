@@ -239,8 +239,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 }
 
 // resolveSpawnClient returns the appropriate client for a model.
-// If the model is a Gemini model and a gemini client is available, use it;
-// otherwise fall back to the default client.
+// Routes to the appropriate provider based on model prefix.
 func resolveSpawnClient(model string, defaultClient provider.Client, clients map[string]provider.Client) provider.Client {
 	if strings.HasPrefix(model, "gemini-") {
 		if gc := clients["gemini"]; gc != nil {
@@ -252,7 +251,22 @@ func resolveSpawnClient(model string, defaultClient provider.Client, clients map
 			return ac
 		}
 	}
+	if isOpenAIModel(model) {
+		if oc := clients["openai"]; oc != nil {
+			return oc
+		}
+	}
 	return defaultClient
+}
+
+// isOpenAIModel returns true if the model name looks like an OpenAI model.
+func isOpenAIModel(model string) bool {
+	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
+		if strings.HasPrefix(model, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // spawnToolSet builds API tool definitions and a name→Tool map from the

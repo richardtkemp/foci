@@ -62,6 +62,17 @@ Google Gemini API configuration.
 
 Requires `gemini.api_key` in `secrets.toml`. Set `provider = "gemini"` in `[defaults]` or per-agent to use.
 
+### `[openai]`
+
+OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRouter, Together, Groq, etc.) via `base_url`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
+| `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
+
+Requires `openai.api_key` in `secrets.toml`. Set `provider = "openai"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
+
 ### `[telegram]`
 
 Telegram bot configuration. Fields `allowed_users`, `received_files_dir`, and `enable_startup_notify` can be overridden per-agent — see [Global-or-Agent: Telegram](#telegram-overrides).
@@ -338,6 +349,9 @@ Default aliases (used when `[models]` section is not configured):
 - `haiku` → `claude-haiku-4-5`
 - `flash` → `gemini-2.5-flash`
 - `pro` → `gemini-2.5-pro`
+- `gpt4o` → `gpt-4o`
+- `o3` → `o3`
+- `o4mini` → `o4-mini`
 
 Example with custom model aliases:
 ```toml
@@ -494,7 +508,7 @@ Set in `[defaults]`, overridable per-agent.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | string | `"anthropic"` | API provider: `"anthropic"` or `"gemini"`. |
+| `provider` | string | `"anthropic"` | API provider: `"anthropic"`, `"gemini"`, or `"openai"`. |
 | `model` | string | `"claude-haiku-4-5"` | Model ID for API calls. Provider-specific (e.g. `"gemini-2.5-flash"` for Gemini). |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
@@ -861,6 +875,9 @@ secondary = "789012:DEF..."
 
 [brave]
 api_key = "BSA..."
+
+[openai]
+api_key = "sk-..."
 
 [groq]
 api_key = "gsk_..."

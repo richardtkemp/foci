@@ -159,6 +159,13 @@ system_files = [
 # http_timeout = "120s"                   # HTTP timeout for API calls
 # cache_ttl = "1h"                        # context cache TTL ("0" disables)
 
+# ─── OpenAI ────────────────────────────────────────────────────────────
+# API keys go in secrets.toml as openai.api_key.
+# Also works with OpenAI-compatible endpoints (OpenRouter, Together, Groq, etc.)
+[openai]
+# base_url = ""                           # API base URL (empty = sdk default; override for OpenRouter etc.)
+# http_timeout = "120s"                   # HTTP timeout for API calls
+
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
