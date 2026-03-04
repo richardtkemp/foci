@@ -593,32 +593,8 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	exec.Command("tmux", "kill-session", "-t", name).Run()
 	time.Sleep(100 * time.Millisecond)
 
-	// Wait for the monitor to detect the dead session (poll interval is 2s)
-	deadline := time.After(10 * time.Second)
-	for {
-		mu.Lock()
-		got := len(msgs)
-		mu.Unlock()
-		if got > 0 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("no notification received for dead session within timeout")
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-
-	mu.Lock()
-	msg := msgs[0]
-	mu.Unlock()
-
-	if !strings.Contains(msg, "no longer exists") {
-		t.Errorf("message = %q, want to contain 'no longer exists'", msg)
-	}
-	if !strings.Contains(msg, name) {
-		t.Errorf("message = %q, want to contain session name %q", msg, name)
-	}
+	// Give the monitor time to detect the dead session (poll interval is 2s)
+	time.Sleep(3 * time.Second)
 
 	// The watch entry should have been cleaned up — unwatching should fail
 	params, _ = json.Marshal(map[string]interface{}{
@@ -629,6 +605,20 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	if err == nil {
 		t.Error("expected error unwatching already-cleaned-up session")
 	}
+	if !strings.Contains(err.Error(), "not being watched") {
+		t.Errorf("error = %q, want 'not being watched'", err.Error())
+	}
+
+	// Verify that no "no longer exists" notification was sent
+	mu.Lock()
+	for _, msg := range msgs {
+		if strings.Contains(msg, "no longer exists") {
+			mu.Unlock()
+			t.Errorf("unexpected notification: %q", msg)
+			return
+		}
+	}
+	mu.Unlock()
 }
 
 func TestTmuxWatchMissingName(t *testing.T) {

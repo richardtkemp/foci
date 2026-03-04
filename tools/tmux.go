@@ -1476,12 +1476,8 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 			out, err := runTmux(context.Background(), "capture-pane", "-t",
 				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
 			if err != nil {
-				// Session exited — notify the agent then clean up the watch
+				// Session exited — clean up the watch (debug log is sufficient)
 				log.Debugf("tmux", "watch: session %s exited, cleaning up watch", ws.session)
-				msg := prompts.FormatInjectedMessage("TMUX WATCH",
-					time.Now(),
-					fmt.Sprintf("Session %s no longer exists", ws.session))
-				ws.notifier.Notify(ws.agentSessionKey, msg)
 				inst.mu.Lock()
 				delete(inst.watched, key)
 				inst.persistWatches()
