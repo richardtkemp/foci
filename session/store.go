@@ -475,7 +475,7 @@ func (s *Store) RepairOrphans() (int, error) {
 			return nil
 		}
 		rel = strings.TrimSuffix(rel, ".jsonl")
-		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+		key := pathToKey(rel)
 
 		msgs, err := s.loadUnlocked(key)
 		if err != nil || len(msgs) == 0 {
@@ -553,7 +553,7 @@ func (s *Store) InjectRestartMarkers(maxAge time.Duration) (int, error) {
 			return nil
 		}
 		rel = strings.TrimSuffix(rel, ".jsonl")
-		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+		key := pathToKey(rel)
 
 		marker := provider.Message{
 			Role:    "user",
