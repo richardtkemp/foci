@@ -144,7 +144,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		},
 	}
 
-	resp, err := client.SendMessage(ctx, req)
+	resp, err := provider.Send(ctx, client, req, nil)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("summary API call: %w", err)
 	}
