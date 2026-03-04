@@ -115,6 +115,8 @@ func TestCacheCommand(t *testing.T) {
 	path := writeAPILog(t, entries)
 
 	cmd := NewCacheCommand(path)
+
+	// Test default (no args) - should show last 5
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -136,6 +138,33 @@ func TestCacheCommand(t *testing.T) {
 	}
 	if !strings.Contains(result, "─") {
 		t.Errorf("missing separator line in:\n%s", result)
+	}
+
+	// Test with argument - should show last 3
+	result, err = cmd.Execute(context.Background(), "3")
+	if err != nil {
+		t.Fatalf("Execute with arg: %v", err)
+	}
+	if !strings.Contains(result, "Cache — last 3 calls") {
+		t.Errorf("missing summary header with arg in:\n%s", result)
+	}
+
+	// Test with argument larger than available entries - should show all 7
+	result, err = cmd.Execute(context.Background(), "10")
+	if err != nil {
+		t.Fatalf("Execute with large arg: %v", err)
+	}
+	if !strings.Contains(result, "Cache — last 7 calls") {
+		t.Errorf("missing summary header with large arg in:\n%s", result)
+	}
+
+	// Test with invalid argument - should use default of 5
+	result, err = cmd.Execute(context.Background(), "invalid")
+	if err != nil {
+		t.Fatalf("Execute with invalid arg: %v", err)
+	}
+	if !strings.Contains(result, "Cache — last 5 calls") {
+		t.Errorf("invalid arg should use default in:\n%s", result)
 	}
 }
 
