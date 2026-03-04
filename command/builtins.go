@@ -254,18 +254,24 @@ func formatCommas(n int) string {
 func NewCacheCommand(apiLogPath string) *Command {
 	return &Command{
 		Name:        "cache",
-		Description: "Last 5 API calls with cache breakdown",
+		Description: "API calls with cache breakdown (default 5)",
 		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
+			n := 5
+			if args != "" {
+				if parsed, err := strconv.Atoi(args); err == nil && parsed > 0 {
+					n = parsed
+				}
+			}
 			entries := readAPILog(apiLogPath)
 			if len(entries) == 0 {
 				return "No API calls logged yet.", nil
 			}
 
-			// Take last 5
+			// Take last n
 			start := 0
-			if len(entries) > 5 {
-				start = len(entries) - 5
+			if len(entries) > n {
+				start = len(entries) - n
 			}
 			recent := entries[start:]
 
