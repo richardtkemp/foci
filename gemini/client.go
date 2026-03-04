@@ -15,7 +15,8 @@ import (
 // Client wraps the Google genai SDK to implement provider.Client.
 type Client struct {
 	client *genai.Client
-	model  string // default model (can be overridden per request)
+	model  string        // default model (can be overridden per request)
+	cache  *CacheManager // nil if caching disabled
 }
 
 // Option configures a Client.
@@ -24,11 +25,17 @@ type Option func(*clientConfig)
 type clientConfig struct {
 	httpClient  *http.Client
 	httpTimeout time.Duration
+	cacheTTL    time.Duration // 0 = caching disabled
 }
 
 // WithHTTPTimeout sets the HTTP client timeout.
 func WithHTTPTimeout(d time.Duration) Option {
 	return func(c *clientConfig) { c.httpTimeout = d }
+}
+
+// WithCacheTTL enables context caching with the given TTL.
+func WithCacheTTL(d time.Duration) Option {
+	return func(c *clientConfig) { c.cacheTTL = d }
 }
 
 // NewClient creates a Gemini API client.
@@ -54,7 +61,13 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 		return nil, fmt.Errorf("gemini: create client: %w", err)
 	}
 
-	return &Client{client: gc}, nil
+	c := &Client{client: gc}
+
+	if cfg.cacheTTL > 0 {
+		c.cache = NewCacheManager(gc, cfg.cacheTTL)
+	}
+
+	return c, nil
 }
 
 // SendMessage sends a message to the Gemini API and returns a provider-neutral response.
@@ -62,12 +75,30 @@ func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) 
 	contents := messagesToGenai(req.Messages)
 	config := buildConfig(req)
 
+	// Try to use cached content for system+tools
+	if c.cache != nil {
+		system := systemToGenai(req.System)
+		tools := toolsToGenai(req.Tools)
+		if cacheName := c.cache.EnsureCache(ctx, req.Model, system, tools); cacheName != "" {
+			config.CachedContent = cacheName
+			config.SystemInstruction = nil
+			config.Tools = nil
+		}
+	}
+
 	resp, err := c.client.Models.GenerateContent(ctx, req.Model, contents, config)
 	if err != nil {
 		return nil, classifyError(err)
 	}
 
 	return responseFromGenai(resp, req.Model)
+}
+
+// Close releases resources held by the client, including any active caches.
+func (c *Client) Close(ctx context.Context) {
+	if c.cache != nil {
+		c.cache.Close(ctx)
+	}
 }
 
 // CountTokens returns the input token count for a request.

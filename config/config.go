@@ -165,6 +165,7 @@ type AgentConfig struct {
 
 type GeminiConfig struct {
 	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
+	CacheTTL    string `toml:"cache_ttl"`    // context cache TTL (default "1h", "0" disables)
 }
 
 type AnthropicConfig struct {
@@ -533,6 +534,13 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	// Special case: gemini cache_ttl allows "0" to disable
+	if cfg.Gemini.CacheTTL != "0" {
+		if _, err := time.ParseDuration(cfg.Gemini.CacheTTL); err != nil {
+			return fmt.Errorf("[gemini] cache_ttl = %q: %w", cfg.Gemini.CacheTTL, err)
+		}
+	}
+
 	// Special case: tmux_memory_check_interval allows "0" to disable
 	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
 		if _, err := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval); err != nil {
@@ -883,6 +891,7 @@ func Load(path string) (*Config, error) {
 
 	// Gemini defaults
 	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")
+	setStringDefault(&cfg.Gemini.CacheTTL, "1h")
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)
