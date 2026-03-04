@@ -1,6 +1,7 @@
 /foci
 /foci-gw
 /foci-call
+/migrate-sessions
 foci.toml
 sessions/
 tasks/

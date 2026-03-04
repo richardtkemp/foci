@@ -12,6 +12,7 @@ import (
 	"foci/config"
 	"foci/log"
 	"foci/provider"
+	"foci/session"
 )
 
 // SystemBlocksProvider returns the system prompt blocks (for full context mode).
@@ -526,7 +527,11 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	}
 
 	// Build unique branch key.
-	branchKey := fmt.Sprintf("agent:%s:spawn:spawn-%d", deps.AgentID, time.Now().UnixNano())
+	// spawnInherit always creates branches (clone spawns)
+	branchKey, err := session.BranchFromSession(parentSession)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("create spawn key: %w", err)
+	}
 
 	// Build orientation text for the branch.
 	var orientText string

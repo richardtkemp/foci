@@ -13,6 +13,7 @@ import (
 	"foci/agent"
 	"foci/command"
 	"foci/log"
+	"foci/session"
 	"foci/state"
 	"foci/voice"
 
@@ -288,9 +289,8 @@ func (b *Bot) SessionKey() string {
 }
 
 // SessionKeyForChat returns the session key for a specific chat ID.
-// Format: agent:<agentID>:chat:<chatID>
 func SessionKeyForChat(agentID string, chatID int64) string {
-	return fmt.Sprintf("agent:%s:chat:%d", agentID, chatID)
+	return session.ChatSessionKey(agentID, chatID)
 }
 
 // sessionKeyForMsg returns the session key for the message's chat.

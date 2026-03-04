@@ -1,0 +1,216 @@
+package session
+
+import (
+	"testing"
+)
+
+func TestSessionKeyString(t *testing.T) {
+	tests := []struct {
+		name string
+		key  SessionKey
+		want string
+	}{
+		{
+			name: "chat with branch",
+			key: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+				ChildType: 'b',
+				ChildTS:   1709596800,
+			},
+			want: "main/c123/1709590000/b1709596800",
+		},
+		{
+			name: "collision",
+			key: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+				ChildType: 'b',
+				ChildTS:   1709596800,
+				Collision: 1,
+			},
+			want: "main/c123/1709590000/b1709596800.1",
+		},
+		{
+			name: "independent root",
+			key: SessionKey{
+				AgentID:   "main",
+				Type:      'i',
+				ID:        "1709596800",
+				VersionTS: 1709596800,
+			},
+			want: "main/i1709596800/1709596800",
+		},
+		{
+			name: "chat root",
+			key: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+			},
+			want: "main/c123/1709590000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.key.String()
+			if got != tt.want {
+				t.Errorf("SessionKey.String() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSessionKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    SessionKey
+		wantErr bool
+	}{
+		{
+			name:  "chat root",
+			input: "main/c123/1709590000",
+			want: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+			},
+		},
+		{
+			name:  "independent root",
+			input: "main/i1709596800/1709596800",
+			want: SessionKey{
+				AgentID:   "main",
+				Type:      'i',
+				ID:        "1709596800",
+				VersionTS: 1709596800,
+			},
+		},
+		{
+			name:  "branch child",
+			input: "main/c123/1709590000/b1709596800",
+			want: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+				ChildType: 'b',
+				ChildTS:   1709596800,
+			},
+		},
+		{
+			name:  "independent child",
+			input: "main/c123/1709590000/i1709596801",
+			want: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+				ChildType: 'i',
+				ChildTS:   1709596801,
+			},
+		},
+		{
+			name:  "collision",
+			input: "main/c123/1709590000/b1709596800.1",
+			want: SessionKey{
+				AgentID:   "main",
+				Type:      'c',
+				ID:        "123",
+				VersionTS: 1709590000,
+				ChildType: 'b',
+				ChildTS:   1709596800,
+				Collision: 1,
+			},
+		},
+		{
+			name:    "invalid format",
+			input:   "invalid",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseSessionKey(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseSessionKey() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("ParseSessionKey() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSessionKeyBranch(t *testing.T) {
+	parent := SessionKey{
+		AgentID:   "main",
+		Type:      'c',
+		ID:        "123",
+		VersionTS: 1709590000,
+	}
+
+	child := parent.Branch()
+
+	if child.AgentID != parent.AgentID {
+		t.Errorf("Branch() AgentID = %v, want %v", child.AgentID, parent.AgentID)
+	}
+	if child.Type != parent.Type {
+		t.Errorf("Branch() Type = %v, want %v", child.Type, parent.Type)
+	}
+	if child.ID != parent.ID {
+		t.Errorf("Branch() ID = %v, want %v", child.ID, parent.ID)
+	}
+	if child.VersionTS != parent.VersionTS {
+		t.Errorf("Branch() VersionTS = %v, want %v", child.VersionTS, parent.VersionTS)
+	}
+	if child.ChildType != 'b' {
+		t.Errorf("Branch() ChildType = %v, want 'b'", child.ChildType)
+	}
+	if child.ChildTS == 0 {
+		t.Errorf("Branch() ChildTS should be set")
+	}
+}
+
+func TestChatID(t *testing.T) {
+	tests := []struct {
+		name string
+		key  SessionKey
+		want int64
+	}{
+		{
+			name: "chat session",
+			key: SessionKey{
+				Type: 'c',
+				ID:   "123456789",
+			},
+			want: 123456789,
+		},
+		{
+			name: "independent session",
+			key: SessionKey{
+				Type: 'i',
+				ID:   "1709596800",
+			},
+			want: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.key.ChatID(); got != tt.want {
+				t.Errorf("ChatID() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

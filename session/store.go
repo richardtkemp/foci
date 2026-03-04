@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,18 +39,31 @@ func NewStore(dir string) *Store {
 }
 
 // SessionPath converts a session key to a file path.
-// Key format: agent:AGENTID:TYPE[:BRANCHID]
-// Path format: {dir}/agent/AGENTID/TYPE[/BRANCHID].jsonl
+// Key format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]
+// Root path: {dir}/{key}/root.jsonl
+// Child path: {dir}/{key}.jsonl
 func (s *Store) SessionPath(key string) (string, error) {
-	parts := strings.Split(key, ":")
-	// parts[0] = "agent", parts[1] = AGENTID, parts[2] = TYPE, parts[3] = BRANCHID (optional)
+	// Split on '/' and check last segment
+	// If last segment is a pure number (version timestamp), it's a root
+	parts := strings.Split(key, "/")
 	if len(parts) < 3 {
-		return "", fmt.Errorf("invalid session key %q: need at least 3 colon-separated parts", key)
+		return "", fmt.Errorf("invalid session key %q: need at least agentID/typeID/versionTS", key)
 	}
-	if len(parts) == 4 {
-		return filepath.Join(s.dir, parts[0], parts[1], parts[2], parts[3]+".jsonl"), nil
+
+	lastSegment := parts[len(parts)-1]
+
+	// Check for collision suffix
+	if idx := strings.Index(lastSegment, "."); idx > 0 {
+		lastSegment = lastSegment[:idx]
 	}
-	return filepath.Join(s.dir, parts[0], parts[1], parts[2]+".jsonl"), nil
+
+	// If last segment is pure number, it's a root session
+	if _, err := strconv.ParseInt(lastSegment, 10, 64); err == nil {
+		return filepath.Join(s.dir, key, "root.jsonl"), nil
+	}
+
+	// Otherwise it's a child session
+	return filepath.Join(s.dir, key+".jsonl"), nil
 }
 
 // Load reads all messages from a session file.
@@ -696,34 +710,20 @@ func (s *Store) fireEvent(e SessionEvent) {
 }
 
 // ClassifySessionKey determines the SessionType from a session key.
+// With the new format, type information is not encoded in the key itself,
+// so this function returns SessionTypeUnknown and type must be retrieved
+// from session_index or file metadata.
 func ClassifySessionKey(key string) SessionType {
-	parts := splitKeyParts(key)
-	if len(parts) < 3 {
+	// In the new format, structural type (chat vs independent) is in the key,
+	// but semantic type (spawn, multiball, cron, branch) is stored as metadata
+	k, err := ParseSessionKey(key)
+	if err != nil {
 		return SessionTypeUnknown
 	}
-	// Check for ":branch:" segment (session-end memory branches like agent:X:multiball:Y:branch:Z)
-	for i := 2; i < len(parts)-1; i++ {
-		if parts[i] == "branch" {
-			return SessionTypeBranch
-		}
-	}
-	switch parts[2] {
-	case "chat":
+	if k.Type == 'c' {
 		return SessionTypeChat
-	case "multiball":
-		return SessionTypeMultiball
-	case "spawn":
-		return SessionTypeSpawn
-	case "cron":
-		return SessionTypeCron
-	default:
-		return SessionTypeUnknown
 	}
-}
-
-// splitKeyParts splits a session key on colons.
-func splitKeyParts(key string) []string {
-	return strings.Split(key, ":")
+	return SessionTypeUnknown
 }
 
 // ScanAllSessions walks all session files and returns index entries.
@@ -752,7 +752,7 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 				return nil
 			}
 			rel = strings.TrimSuffix(rel, ".jsonl.gz")
-			key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+			key := pathToKey(rel)
 			stype := ClassifySessionKey(key)
 			entries = append(entries, SessionIndexEntry{
 				SessionKey:  key,
@@ -775,8 +775,8 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 				return nil
 			}
 			rel = strings.TrimSuffix(rel, ".jsonl")
-			key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
-			// Derive parent key: remove the ".N" suffix to get the base session key
+			key := pathToKey(rel)
+			// Derive parent key: remove the archive suffix
 			parentKey := archiveParentKey(key)
 			stype := ClassifySessionKey(parentKey)
 			entries = append(entries, SessionIndexEntry{
@@ -796,7 +796,7 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 			return nil
 		}
 		rel = strings.TrimSuffix(rel, ".jsonl")
-		key := strings.ReplaceAll(rel, string(filepath.Separator), ":")
+		key := pathToKey(rel)
 
 		stype := ClassifySessionKey(key)
 
@@ -834,13 +834,27 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 	return entries, nil
 }
 
+// pathToKey converts a relative file path back to a session key.
+// New format: path is the key, except root sessions have /root suffix.
+// Example: main/c123/1709590000/root → main/c123/1709590000
+// Example: main/c123/1709590000/b1709596800 → main/c123/1709590000/b1709596800
+func pathToKey(relPath string) string {
+	// If path ends with /root, strip it (it's a root session)
+	if strings.HasSuffix(relPath, "/root") {
+		return strings.TrimSuffix(relPath, "/root")
+	}
+	// Otherwise the path IS the key
+	return relPath
+}
+
 // archiveParentKey derives the parent session key from an archive key.
-// "agent:main:chat:123.2026-03-04T02-30-00Z" → "agent:main:chat:123"
-// "agent:main:chat:123.2026-03-04T02-30-00Z.2" → "agent:main:chat:123"
-// "agent:main:chat:123.1" → "agent:main:chat:123" (backward compatibility)
+// New format examples:
+// "main/c123/1709590000.2026-03-04T02-30-00Z" → "main/c123/1709590000"
+// "main/c123/1709590000.2026-03-04T02-30-00Z.2" → "main/c123/1709590000"
+// "main/c123/1709590000.1" → "main/c123/1709590000" (numbered suffix)
 func archiveParentKey(archiveKey string) string {
-	// Find the last segment that contains the archive suffix
-	keyParts := strings.Split(archiveKey, ":")
+	// Find the last segment
+	keyParts := strings.Split(archiveKey, "/")
 	if len(keyParts) == 0 {
 		return archiveKey
 	}
@@ -868,7 +882,7 @@ func archiveParentKey(archiveKey string) string {
 			break
 		}
 
-		// Check if this part is just digits (old numbered pattern)
+		// Check if this part is just digits (numbered pattern)
 		if matched, _ := regexp.MatchString(`^\d+$`, part); matched {
 			// Found numbered suffix, everything before this is the base
 			baseParts = segmentParts[:i]
@@ -884,5 +898,5 @@ func archiveParentKey(archiveKey string) string {
 	// Rebuild the key with cleaned last segment
 	cleanedLastSegment := strings.Join(baseParts, ".")
 	keyParts[len(keyParts)-1] = cleanedLastSegment
-	return strings.Join(keyParts, ":")
+	return strings.Join(keyParts, "/")
 }
