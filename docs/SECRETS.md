@@ -47,7 +47,7 @@ Keys use `section.key` format. The `[anthropic]`, `[telegram]`, and `[http]` sec
 
 ### `http.api_key` — HTTP API authentication
 
-All HTTP endpoints (except `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.
+All HTTP endpoints (including `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.
 
 **CLI usage:** The `foci` CLI reads the key from `--api-key` flag or `FOCI_API_KEY` env var and sends it as `Authorization: Bearer <key>` on every request.
 

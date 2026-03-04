@@ -520,7 +520,6 @@ func main() {
 	groqKey, _ := store.Get("groq.api_key")
 	openrouterKey, _ := store.Get("openrouter.api_key")
 	braveKey, _ := store.Get("brave.api_key")
-	voiceAPIKey, _ := store.Get("voice.api_key")
 	sttProvider, ttsProvider := initVoice(cfg, groqKey, openrouterKey)
 
 	startTime := time.Now()
@@ -981,7 +980,6 @@ func main() {
 		botMgr:            botMgr,
 		cfg:               cfg,
 		ctx:               ctx,
-		voiceAPIKey:       voiceAPIKey,
 		sttProvider:       sttProvider,
 		ttsProvider:       ttsProvider,
 		reloadCredentials: reloadCreds,

@@ -237,9 +237,9 @@ Voice support (speech-to-text and text-to-speech). The `tts_rate` field can be o
 | `tts_endpoint` | string | `""` | API endpoint for OpenAI TTS provider. |
 | `tts_model` | string | `""` | Model name for OpenAI TTS (e.g. `"tts-1-mini"`). |
 | `tts_voice` | string | `""` | Voice name (provider-specific). `""` defaults to `"alloy"` for OpenAI provider. |
-| `ws_enabled` | bool | `false` | Enable the `/voice` WebSocket endpoint for real-time two-way voice conversation (FOCI app). Requires `voice.api_key` in `secrets.toml` and a configured STT provider. |
+| `ws_enabled` | bool | `false` | Enable the `/voice` WebSocket endpoint for real-time two-way voice conversation (FOCI app). Requires a configured STT provider. Authenticated via `http.api_key` (same as other endpoints). |
 
-STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`). The `/voice` WebSocket endpoint requires an additional `voice.api_key` in `secrets.toml`.
+STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`).
 
 ### `[bitwarden]`
 
