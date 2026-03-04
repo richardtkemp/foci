@@ -760,13 +760,19 @@ func main() {
 		if err != nil {
 			httpTimeout = 120 * time.Second
 		}
-		gc, err := gemini.NewClient(ctx, apiKey, gemini.WithHTTPTimeout(httpTimeout))
+		opts := []gemini.Option{gemini.WithHTTPTimeout(httpTimeout)}
+		if cfg.Gemini.CacheTTL != "0" {
+			if cacheTTL, err := time.ParseDuration(cfg.Gemini.CacheTTL); err == nil && cacheTTL > 0 {
+				opts = append(opts, gemini.WithCacheTTL(cacheTTL))
+			}
+		}
+		gc, err := gemini.NewClient(ctx, apiKey, opts...)
 		if err != nil {
 			log.Errorf("main", "create gemini client: %v", err)
 			return
 		}
 		geminiClient = gc
-		log.Infof("main", "gemini client ready")
+		log.Infof("main", "gemini client ready (cache_ttl=%s)", cfg.Gemini.CacheTTL)
 	})
 
 	// Shared: Session store
@@ -1475,6 +1481,11 @@ func main() {
 		if inst.mcpManager != nil {
 			_ = inst.mcpManager.Close()
 		}
+	}
+
+	// Clean up Gemini cache (delete server-side cached content)
+	if gc, ok := geminiClient.(*gemini.Client); ok && gc != nil {
+		gc.Close(ctx)
 	}
 
 	// Now cancel the context — stops Telegram bots and cleans up goroutines
@@ -2197,11 +2208,20 @@ func setupAgent(p setupParams) *agentInstance {
 		DiffSummaryFn: func(ctx context.Context, customText, defaultText, name string) (string, error) {
 			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
+			// Pick cheap model based on agent provider
+			cheapAlias := "haiku"
+			if strings.HasPrefix(acfg.Model, "gemini-") {
+				cheapAlias = "flash"
+			}
+			cheapModel := cheapAlias
+			if full, ok := p.cfg.Models.Aliases[cheapAlias]; ok {
+				cheapModel = full
+			}
 			prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
 			resp, err := p.client.SendMessage(callCtx, &provider.MessageRequest{
-				Model:    "claude-haiku-4-5-20251001",
+				Model:     cheapModel,
 				MaxTokens: 1024,
-				Messages: []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
+				Messages:  []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
 			})
 			if err != nil {
 				return "", err

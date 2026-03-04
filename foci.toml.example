@@ -153,6 +153,12 @@ system_files = [
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
 # cc_credentials_poll_interval = "30s"  # how often to re-read CC credentials file
 
+# ─── Gemini ────────────────────────────────────────────────────────────
+# API keys go in secrets.toml as gemini.api_key.
+[gemini]
+# http_timeout = "120s"                   # HTTP timeout for API calls
+# cache_ttl = "1h"                        # context cache TTL ("0" disables)
+
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]

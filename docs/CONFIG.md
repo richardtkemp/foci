@@ -58,6 +58,7 @@ Google Gemini API configuration.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `http_timeout` | string | `"120s"` | HTTP timeout for Gemini API calls. Go duration format. |
+| `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
 
 Requires `gemini.api_key` in `secrets.toml`. Set `provider = "gemini"` in `[defaults]` or per-agent to use.
 
