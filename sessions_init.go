@@ -1,0 +1,144 @@
+package main
+
+import (
+	"path/filepath"
+	"strings"
+	"time"
+
+	"foci/config"
+	"foci/log"
+	"foci/session"
+	"foci/state"
+)
+
+type sessionInfra struct {
+	sessions     *session.Store
+	sessionIndex *session.SessionIndex
+	stateStore   *state.Store
+	cleanup      func()
+}
+
+// initSessions creates the session store, session index (SQLite), and state store.
+// Repairs orphaned tool calls, injects restart markers, rebuilds the session index,
+// and starts the archive sweep goroutine.
+func initSessions(cfg *config.Config) sessionInfra {
+	var cleanups []func()
+
+	// Session store
+	sessions := session.NewStore(cfg.Sessions.Dir)
+	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
+
+	// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts)
+	if n, err := sessions.RepairOrphans(); err != nil {
+		log.Warnf("main", "session repair: %v", err)
+	} else if n > 0 {
+		log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
+	}
+
+	// Inject restart markers into recently active sessions
+	if n, err := sessions.InjectRestartMarkers(session.RestartMarkerMaxAge); err != nil {
+		log.Warnf("main", "restart markers: %v", err)
+	} else if n > 0 {
+		log.Infof("main", "injected restart markers into %d active session(s)", n)
+	}
+
+	// Session index (SQLite-backed metadata index of all session files)
+	sessionIndexPath := cfg.DataPath("session_index.db")
+	sessionIndex, err := session.NewSessionIndex(sessionIndexPath)
+	if err != nil {
+		log.Errorf("main", "create session index: %v (session index disabled)", err)
+	} else {
+		cleanups = append(cleanups, func() { _ = sessionIndex.Close() })
+
+		// Rebuild index from disk on startup
+		if n, err := sessionIndex.Rebuild(sessions); err != nil {
+			log.Warnf("main", "rebuild session index: %v", err)
+		} else {
+			log.Infof("main", "session index: %d sessions indexed", n)
+		}
+
+		// Wire lifecycle events from session store to index
+		sessions.OnSessionEvent(func(e session.SessionEvent) {
+			switch e.Status {
+			case session.SessionStatusActive:
+				sessionIndex.Upsert(session.SessionIndexEntry{
+					SessionKey:       e.Key,
+					FilePath:         e.FilePath,
+					CreatedAt:        e.CreatedAt,
+					ParentSessionKey: e.ParentKey,
+					SessionType:      e.Type,
+					Status:           session.SessionStatusActive,
+				})
+			case session.SessionStatusCompacted:
+				if e.ArchivePath != "" {
+					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
+					if err == nil {
+						archiveKey := strings.TrimSuffix(rel, ".jsonl")
+						archiveKey = strings.ReplaceAll(archiveKey, string(filepath.Separator), ":")
+						sessionIndex.Upsert(session.SessionIndexEntry{
+							SessionKey:       archiveKey,
+							FilePath:         e.ArchivePath,
+							CreatedAt:        time.Now().UTC(),
+							ParentSessionKey: e.Key,
+							SessionType:      e.Type,
+							Status:           session.SessionStatusCompacted,
+						})
+					}
+				}
+			case session.SessionStatusCleared:
+				sessionIndex.SetStatus(e.Key, session.SessionStatusCleared)
+			}
+		})
+
+		// Start archive sweep goroutine
+		archiveAfter, err := time.ParseDuration(cfg.Sessions.ArchiveAfter)
+		if err != nil {
+			log.Warnf("main", "invalid sessions.archive_after %q: %v (archive sweep disabled)", cfg.Sessions.ArchiveAfter, err)
+		} else {
+			archiveStop := make(chan struct{})
+			archiveTicker := time.NewTicker(6 * time.Hour)
+			go func() {
+				// Run immediately on startup
+				if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
+					log.Warnf("main", "archive sweep: %v", err)
+				} else if n > 0 {
+					log.Infof("main", "archive sweep: archived %d idle session(s)", n)
+				}
+				for {
+					select {
+					case <-archiveTicker.C:
+						if n, err := session.ArchiveSweep(sessions, sessionIndex, archiveAfter); err != nil {
+							log.Warnf("main", "archive sweep: %v", err)
+						} else if n > 0 {
+							log.Infof("main", "archive sweep: archived %d idle session(s)", n)
+						}
+					case <-archiveStop:
+						return
+					}
+				}
+			}()
+			cleanups = append(cleanups, func() {
+				archiveTicker.Stop()
+				close(archiveStop)
+			})
+		}
+	}
+
+	// State persistence (JSON file in data dir)
+	statePath := cfg.DataPath("state.json")
+	stateStore := state.New(statePath)
+	if err := stateStore.Load(); err != nil {
+		log.Errorf("main", "load state: %v", err)
+	}
+
+	return sessionInfra{
+		sessions:     sessions,
+		sessionIndex: sessionIndex,
+		stateStore:   stateStore,
+		cleanup: func() {
+			for i := len(cleanups) - 1; i >= 0; i-- {
+				cleanups[i]()
+			}
+		},
+	}
+}

@@ -38,4 +38,10 @@ lint: vet
 	@echo "=== gocognit (>100) ==="
 	@$(GOBIN)/gocognit -over 100 . || true
 
+complex: vet
+	@echo "=== gocyclo (>100) ==="
+	@$(GOBIN)/gocyclo -over 100 . || true
+	@echo "=== gocognit (>100) ==="
+	@$(GOBIN)/gocognit -over 100 . || true
+
 check: test lint
