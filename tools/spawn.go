@@ -466,7 +466,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model string, sys
 		}
 
 		start := time.Now()
-		resp, err := client.SendMessage(callCtx, req)
+		resp, err := provider.Send(callCtx, client, req, nil)
 		if err != nil {
 			return "", fmt.Errorf("spawn %s: %w", model, err)
 		}
