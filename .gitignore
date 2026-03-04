@@ -1,5 +1,6 @@
 /foci
 /foci-gw
+/foci-call
 foci.toml
 sessions/
 tasks/
@@ -17,6 +18,3 @@ conversation.db-shm
 .claude/
 coverage.out
 update.sh
-foci
-foci-gw
-foci-call
