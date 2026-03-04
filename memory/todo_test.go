@@ -20,7 +20,7 @@ func TestTodoAddAndList(t *testing.T) {
 		t.Errorf("expected id 1, got %d", id)
 	}
 
-	items, err := store.List("agent1", "", "")
+	items, err := store.List("agent1", "", "", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestTodoDefaultPriority(t *testing.T) {
 
 	store.Add("agent1", "Task with default priority", "", "")
 
-	items, err := store.List("agent1", "", "")
+	items, err := store.List("agent1", "", "", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestTodoComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	items, err := store.List("agent1", "done", "")
+	items, err := store.List("agent1", "done", "", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestTodoRemove(t *testing.T) {
 		t.Fatalf("Remove: %v", err)
 	}
 
-	items, err := store.List("agent1", "", "")
+	items, err := store.List("agent1", "", "", "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -116,8 +116,8 @@ func TestTodoAgentIsolation(t *testing.T) {
 	store.Add("agent1", "Agent 1 task", "high", "")
 	store.Add("agent2", "Agent 2 task", "low", "")
 
-	items1, _ := store.List("agent1", "", "")
-	items2, _ := store.List("agent2", "", "")
+	items1, _ := store.List("agent1", "", "", "")
+	items2, _ := store.List("agent2", "", "", "")
 
 	if len(items1) != 1 || items1[0].Text != "Agent 1 task" {
 		t.Errorf("agent1 items = %v, want 1 item", items1)
@@ -201,7 +201,7 @@ func TestTodoMigrationFromAutoincrement(t *testing.T) {
 	defer store.Close()
 
 	// Existing IDs should be preserved.
-	items1, _ := store.List("agent1", "", "")
+	items1, _ := store.List("agent1", "", "", "")
 	if len(items1) != 2 {
 		t.Fatalf("agent1: expected 2 items, got %d", len(items1))
 	}
@@ -210,7 +210,7 @@ func TestTodoMigrationFromAutoincrement(t *testing.T) {
 		t.Errorf("agent1 IDs = (%d, %d), want (1, 3)", items1[0].ID, items1[1].ID)
 	}
 
-	items2, _ := store.List("agent2", "", "")
+	items2, _ := store.List("agent2", "", "", "")
 	if len(items2) != 1 {
 		t.Fatalf("agent2: expected 1 item, got %d", len(items2))
 	}
@@ -237,9 +237,9 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	_ = id1
 	store.Complete("agent1", id2, "finished")
 
-	open, _ := store.List("agent1", "open", "")
-	done, _ := store.List("agent1", "done", "")
-	all, _ := store.List("agent1", "", "")
+	open, _ := store.List("agent1", "open", "", "")
+	done, _ := store.List("agent1", "done", "", "")
+	all, _ := store.List("agent1", "", "", "")
 
 	if len(open) != 1 {
 		t.Errorf("expected 1 open, got %d", len(open))
@@ -252,6 +252,48 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	}
 }
 
+func TestTodoListFilterByPriority(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "High task 1", "high", "")
+	store.Add("agent1", "Medium task", "medium", "")
+	store.Add("agent1", "High task 2", "high", "")
+	store.Add("agent1", "Low task", "low", "")
+
+	// Filter by priority
+	items, err := store.List("agent1", "", "", "high")
+	if err != nil {
+		t.Fatalf("List with priority: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 high items, got %d", len(items))
+	}
+	for _, item := range items {
+		if item.Priority != "high" {
+			t.Errorf("item %d priority = %q, want high", item.ID, item.Priority)
+		}
+	}
+
+	// Filter by priority + status
+	store.Complete("agent1", items[0].ID, "done")
+	open, err := store.List("agent1", "open", "", "high")
+	if err != nil {
+		t.Fatalf("List with priority+status: %v", err)
+	}
+	if len(open) != 1 {
+		t.Errorf("expected 1 open high item, got %d", len(open))
+	}
+
+	// No priority filter shows all
+	all, err := store.List("agent1", "", "", "")
+	if err != nil {
+		t.Fatalf("List all: %v", err)
+	}
+	if len(all) != 4 {
+		t.Errorf("expected 4 total items, got %d", len(all))
+	}
+}
+
 func TestTodoPriorityOrdering(t *testing.T) {
 	store := newTestTodoStore(t)
 
@@ -259,7 +301,7 @@ func TestTodoPriorityOrdering(t *testing.T) {
 	store.Add("agent1", "High task", "high", "")
 	store.Add("agent1", "Medium task", "medium", "")
 
-	items, _ := store.List("agent1", "open", "")
+	items, _ := store.List("agent1", "open", "", "")
 	if len(items) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(items))
 	}
@@ -342,7 +384,7 @@ func TestTodoTags(t *testing.T) {
 	store.Add("agent1", "Regular task", "low", "")
 
 	// Filter by tag
-	items, err := store.List("agent1", "", "background")
+	items, err := store.List("agent1", "", "background", "")
 	if err != nil {
 		t.Fatalf("List with tag: %v", err)
 	}
@@ -351,7 +393,7 @@ func TestTodoTags(t *testing.T) {
 	}
 
 	// Filter by tag + status
-	items, err = store.List("agent1", "open", "daily")
+	items, err = store.List("agent1", "open", "daily", "")
 	if err != nil {
 		t.Fatalf("List with tag+status: %v", err)
 	}
@@ -360,7 +402,7 @@ func TestTodoTags(t *testing.T) {
 	}
 
 	// No tag filter shows all
-	items, err = store.List("agent1", "", "")
+	items, err = store.List("agent1", "", "", "")
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
@@ -534,7 +576,7 @@ func TestTodoUpdatedAtOnAdd(t *testing.T) {
 	id, _ := store.Add("agent1", "Task", "medium", "")
 	after := time.Now().UTC().Truncate(time.Second).Add(time.Second)
 
-	items, _ := store.List("agent1", "", "")
+	items, _ := store.List("agent1", "", "", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -560,7 +602,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original", "medium", "")
-	items, _ := store.List("agent1", "", "")
+	items, _ := store.List("agent1", "", "", "")
 	originalUpdatedAt := items[0].UpdatedAt
 
 	time.Sleep(1100 * time.Millisecond)
@@ -570,7 +612,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 		t.Fatalf("Edit: %v", err)
 	}
 
-	items, _ = store.List("agent1", "", "")
+	items, _ = store.List("agent1", "", "", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -586,7 +628,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Task", "medium", "")
-	items, _ := store.List("agent1", "", "")
+	items, _ := store.List("agent1", "", "", "")
 	originalUpdatedAt := items[0].UpdatedAt
 
 	time.Sleep(1100 * time.Millisecond)
@@ -596,7 +638,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	items, _ = store.List("agent1", "done", "")
+	items, _ = store.List("agent1", "done", "", "")
 	if len(items) != 1 {
 		t.Fatalf("expected 1 done item, got %d", len(items))
 	}

@@ -412,6 +412,7 @@ func generateShellFunc(t *Tool) string {
       local params='{"action":"list"}'
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
       [ -n "$status" ] && params="$(echo "$params" | jq --arg s "$status" '. + {status: $s}')"
+      [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     search)
