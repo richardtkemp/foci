@@ -19,7 +19,7 @@ func TestLoadFullConfig(t *testing.T) {
 	toml := `
 [agent]
 id = "main"
-model = "claude-haiku-4-5"
+model = "anthropic/claude-haiku-4-5"
 workspace = "/tmp/workspace"
 
 
@@ -49,8 +49,8 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Agent.ID != "main" {
 		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
 	}
-	if cfg.Agent.Model != "anthropic:claude-haiku-4-5" {
-		t.Errorf("Agent.Model = %q, want %q", cfg.Agent.Model, "anthropic:claude-haiku-4-5")
+	if cfg.Agent.Model != "anthropic/claude-haiku-4-5" {
+		t.Errorf("Agent.Model = %q, want %q", cfg.Agent.Model, "anthropic/claude-haiku-4-5")
 	}
 	if cfg.Agent.Workspace != "/tmp/workspace" {
 		t.Errorf("Agent.Workspace = %q", cfg.Agent.Workspace)
@@ -100,8 +100,8 @@ token = "test-token"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.Model != "anthropic:claude-haiku-4-5" {
-		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "anthropic:claude-haiku-4-5")
+	if cfg.Agent.Model != "anthropic/claude-haiku-4-5" {
+		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "anthropic/claude-haiku-4-5")
 	}
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
@@ -205,7 +205,7 @@ func TestLoadSingleAgentBackwardCompat(t *testing.T) {
 	toml := `
 [agent]
 id = "main"
-model = "claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/tmp/workspace"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -222,8 +222,8 @@ workspace = "/tmp/workspace"
 	if cfg.Agents[0].ID != "main" {
 		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
 	}
-	if cfg.Agents[0].Model != "anthropic:claude-sonnet-4-6" {
-		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic:claude-sonnet-4-6")
+	if cfg.Agents[0].Model != "anthropic/claude-sonnet-4-6" {
+		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-sonnet-4-6")
 	}
 
 	// cfg.Agent should mirror first agent
@@ -238,7 +238,7 @@ func TestLoadMultiAgent(t *testing.T) {
 	toml := `
 [[agents]]
 id = "clutch"
-model = "claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
 
 telegram_bot = "primary"
@@ -268,7 +268,7 @@ allowed_users = ["111"]
 	if cfg.Agents[0].ID != "clutch" {
 		t.Errorf("Agents[0].ID = %q", cfg.Agents[0].ID)
 	}
-	if cfg.Agents[0].Model != "anthropic:claude-sonnet-4-6" {
+	if cfg.Agents[0].Model != "anthropic/claude-sonnet-4-6" {
 		t.Errorf("Agents[0].Model = %q", cfg.Agents[0].Model)
 	}
 	if cfg.Agents[0].TelegramBot != "primary" {
@@ -282,7 +282,7 @@ allowed_users = ["111"]
 	if cfg.Agents[1].ID != "scout" {
 		t.Errorf("Agents[1].ID = %q", cfg.Agents[1].ID)
 	}
-	if cfg.Agents[1].Model != "anthropic:claude-haiku-4-5" {
+	if cfg.Agents[1].Model != "anthropic/claude-haiku-4-5" {
 		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
 	}
 	if cfg.Agents[1].TelegramBot != "scout" {
@@ -424,7 +424,7 @@ func TestMultiAgentSessionKeys(t *testing.T) {
 	toml := `
 [[agents]]
 id = "clutch"
-model = "claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/tmp/ws1"
 telegram_bot = "primary"
 multiball_bots = ["secondary"]
@@ -2138,7 +2138,7 @@ func TestApplyDefaultsReflect(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-model = "claude-opus-4-6"
+model = "anthropic/claude-opus-4-6"
 max_tool_loops = 50
 max_output_tokens = 16384
 braindead_threshold = 20
@@ -2155,7 +2155,7 @@ id = "bare"
 
 [[agents]]
 id = "override"
-model = "claude-haiku-4-5"
+model = "anthropic/claude-haiku-4-5"
 effort = "low"
 `), 0644)
 
@@ -2165,7 +2165,7 @@ effort = "low"
 	}
 
 	bare := cfg.Agents[0]
-	if bare.Model != "anthropic:claude-opus-4-6" {
+	if bare.Model != "anthropic/claude-opus-4-6" {
 		t.Errorf("bare Model = %q", bare.Model)
 	}
 	if bare.MaxToolLoops != 50 {
@@ -2201,8 +2201,8 @@ effort = "low"
 
 	// Override agent keeps its own values
 	override := cfg.Agents[1]
-	if override.Model != "anthropic:claude-haiku-4-5" {
-		t.Errorf("override Model = %q, want anthropic:claude-haiku-4-5", override.Model)
+	if override.Model != "anthropic/claude-haiku-4-5" {
+		t.Errorf("override Model = %q, want anthropic/claude-haiku-4-5", override.Model)
 	}
 	if override.Effort != "low" {
 		t.Errorf("override Effort = %q, want low", override.Effort)
@@ -2481,29 +2481,27 @@ workspace = "/ws/clutch"
 	})
 }
 
-func TestParseModel(t *testing.T) {
+func TestSplitDeveloperModelLegacy(t *testing.T) {
 	tests := []struct {
-		input      string
-		wantEP     string
-		wantModel  string
+		input         string
+		wantDeveloper string
+		wantModel     string
 	}{
-		{"anthropic:claude-haiku-4-5", "anthropic", "claude-haiku-4-5"},
-		{"gemini:gemini-2.5-flash", "gemini", "gemini-2.5-flash"},
-		{"openrouter:claude-opus-4-6", "openrouter", "claude-opus-4-6"},
-		{"openai:gpt-4o", "openai", "gpt-4o"},
-		{"local:my-model", "local", "my-model"},
-		// Bare model name defaults to anthropic
-		{"claude-haiku-4-5", "anthropic", "claude-haiku-4-5"},
+		{"anthropic/claude-haiku-4-5", "anthropic", "claude-haiku-4-5"},
+		{"google/gemini-2.5-flash", "google", "gemini-2.5-flash"},
+		{"openai/gpt-4o", "openai", "gpt-4o"},
+		// Bare model name returns empty developer
+		{"claude-haiku-4-5", "", "claude-haiku-4-5"},
 		// Whitespace trimming
-		{"  anthropic:claude-haiku-4-5  ", "anthropic", "claude-haiku-4-5"},
+		{"  anthropic/claude-haiku-4-5  ", "anthropic", "claude-haiku-4-5"},
 		// Empty input
-		{"", "anthropic", ""},
+		{"", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			ep, model := ParseModel(tt.input)
-			if ep != tt.wantEP {
-				t.Errorf("endpoint = %q, want %q", ep, tt.wantEP)
+			dev, model := SplitDeveloperModel(tt.input)
+			if dev != tt.wantDeveloper {
+				t.Errorf("developer = %q, want %q", dev, tt.wantDeveloper)
 			}
 			if model != tt.wantModel {
 				t.Errorf("model = %q, want %q", model, tt.wantModel)
@@ -2681,7 +2679,7 @@ func TestModelMigrationAddsEndpointPrefix(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-model = "claude-opus-4-6"
+model = "anthropic/claude-opus-4-6"
 [anthropic]
 token = "test-token"
 `
@@ -2692,18 +2690,18 @@ token = "test-token"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.Model != "anthropic:claude-opus-4-6" {
-		t.Errorf("Agent.Model = %q, want %q (should be migrated)", cfg.Agent.Model, "anthropic:claude-opus-4-6")
+	if cfg.Agent.Model != "anthropic/claude-opus-4-6" {
+		t.Errorf("Agent.Model = %q, want %q (should be migrated)", cfg.Agent.Model, "anthropic/claude-opus-4-6")
 	}
 }
 
-func TestModelValidationRejectsUnknownEndpoint(t *testing.T) {
+func TestModelValidationRejectsColonFormat(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [agent]
 id = "test"
-model = "nonexistent:some-model"
+model = "anthropic:claude-haiku-4-5"
 [anthropic]
 token = "test-token"
 `
@@ -2711,10 +2709,14 @@ token = "test-token"
 
 	_, err := Load(path)
 	if err == nil {
-		t.Fatal("expected error for unknown endpoint, got nil")
+		t.Fatal("expected error for colon format, got nil")
 	}
-	if !strings.Contains(err.Error(), "unknown endpoint") {
-		t.Errorf("error = %q, want to contain 'unknown endpoint'", err.Error())
+	if !strings.Contains(err.Error(), "developer/model_id") {
+		t.Errorf("error = %q, want to contain 'developer/model_id'", err.Error())
+	}
+	// Should suggest the corrected format
+	if !strings.Contains(err.Error(), "anthropic/claude-haiku-4-5") {
+		t.Errorf("error = %q, want to contain suggested format 'anthropic/claude-haiku-4-5'", err.Error())
 	}
 }
 
@@ -2762,11 +2764,11 @@ token = "test-token"
 		alias string
 		want  string
 	}{
-		{"opus", "anthropic:claude-opus-4-6"},
-		{"sonnet", "anthropic:claude-sonnet-4-6"},
-		{"haiku", "anthropic:claude-haiku-4-5"},
-		{"flash", "gemini:gemini-2.5-flash"},
-		{"pro", "gemini:gemini-2.5-pro"},
+		{"opus", "anthropic/claude-opus-4-6"},
+		{"sonnet", "anthropic/claude-sonnet-4-6"},
+		{"haiku", "anthropic/claude-haiku-4-5"},
+		{"flash", "google/gemini-2.5-flash"},
+		{"pro", "google/gemini-2.5-pro"},
 	}
 	for _, tt := range tests {
 		got := cfg.Models.Aliases[tt.alias]

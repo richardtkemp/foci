@@ -17,6 +17,16 @@ import (
 	"foci/provider"
 )
 
+// testModelAliases returns standard model aliases for tests
+func testModelAliases() map[string]string {
+	return map[string]string{
+		"opus":   "anthropic/claude-opus-4-6",
+		"sonnet": "anthropic/claude-sonnet-4-6",
+		"haiku":  "anthropic/claude-haiku-4-5",
+		"flash":  "google/gemini-2.5-flash",
+	}
+}
+
 // mockBootstrap implements SystemBlocksProvider for tests.
 type mockBootstrap struct {
 	blocks []provider.SystemBlock
@@ -99,7 +109,8 @@ func TestSpawnContextRaw(t *testing.T) {
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am a character file."},
 		}},
-		Model:        "claude-haiku-4-5",
+		Model:        "anthropic/claude-haiku-4-5",
+		ModelAliases: testModelAliases(),
 		MaxToolLoops: 10,
 	}
 	tool := NewSpawnTool(deps, nil)
@@ -152,7 +163,8 @@ func TestSpawnContextCharacter(t *testing.T) {
 			{Type: "text", Text: "I am the identity file."},
 			{Type: "text", Text: "I am the soul file."},
 		}},
-		Model:        "claude-haiku-4-5",
+		Model:        "anthropic/claude-haiku-4-5",
+		ModelAliases: testModelAliases(),
 		MaxToolLoops: 10,
 	}
 	tool := NewSpawnTool(deps, nil)
@@ -196,7 +208,7 @@ func TestSpawnContextClone(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 		Notifier:   notifier,
 	}
@@ -262,7 +274,7 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
@@ -293,10 +305,10 @@ func TestSpawnModelShortNames(t *testing.T) {
 		short string
 		full  string
 	}{
-		{"haiku", "claude-haiku-4-5"},
+		{"haiku", "anthropic/claude-haiku-4-5"},
 		{"sonnet", "claude-sonnet-4-5"},
 		{"opus", "claude-opus-4-6"},
-		{"claude-haiku-4-5", "claude-haiku-4-5"},
+		{"anthropic/claude-haiku-4-5", "anthropic/claude-haiku-4-5"},
 	}
 
 	for _, tt := range tests {
@@ -311,7 +323,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 		})
 
 		client := anthropic.NewClientWithBase(server.URL, "test-token")
-		deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+		deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
 		params, _ := json.Marshal(map[string]string{
@@ -330,8 +342,11 @@ func TestSpawnModelShortNames(t *testing.T) {
 
 func TestSpawnModelDefault(t *testing.T) {
 	var receivedModel string
+	var receivedReq *provider.MessageRequest
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		receivedReq = req
 		receivedModel = req.Model
+		t.Logf("Received request: Model=%q, MaxTokens=%d, Messages=%d", req.Model, req.MaxTokens, len(req.Messages))
 		return &provider.MessageResponse{
 			ID: "msg_test", Type: "message", Role: "assistant",
 			Content: provider.TextContent("ok"), StopReason: "end_turn",
@@ -341,7 +356,7 @@ func TestSpawnModelDefault(t *testing.T) {
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-sonnet-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Model: "anthropic/claude-sonnet-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	// No model specified — should use parent's default
@@ -349,10 +364,16 @@ func TestSpawnModelDefault(t *testing.T) {
 		"prompt":  "test",
 		"context": "raw",
 	})
-	tool.Execute(context.Background(), params)
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
 
 	if receivedModel != "claude-sonnet-4-5" {
 		t.Errorf("model = %q, want claude-sonnet-4-5 (parent default)", receivedModel)
+		if receivedReq != nil {
+			t.Logf("Full request: %+v", receivedReq)
+		}
 	}
 }
 
@@ -364,7 +385,7 @@ func TestSpawnTimeout(t *testing.T) {
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -392,7 +413,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:     mockSessions,
 		AgentID:      "test",
-		Model:        "claude-haiku-4-5",
+		Model:        "anthropic/claude-haiku-4-5",
 		MaxInherit:   3,
 		MaxToolLoops: 10,
 	}
@@ -465,7 +486,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 2, // only allow 2 concurrent
 		Notifier:   notifier,
 	}
@@ -560,7 +581,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 		Notifier:   notifier,
 	}
@@ -615,7 +636,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 		Notifier:   notifier,
 	}
@@ -659,7 +680,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 		// Notifier intentionally nil
 	}
@@ -688,7 +709,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 }
 
 func TestSpawnEmptyPrompt(t *testing.T) {
-	deps := SpawnDeps{Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -710,7 +731,7 @@ func TestSpawnInvalidContext(t *testing.T) {
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5"}
+	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -734,7 +755,7 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
@@ -762,7 +783,7 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	deps := SpawnDeps{
 		Sessions:   mockSessions,
 		AgentID:    "test",
-		Model:      "claude-haiku-4-5",
+		Model:      "anthropic/claude-haiku-4-5",
 		MaxInherit: 3,
 		OrientationBuilder: func(branchKey, parentKey string) string {
 			builderBranch = branchKey
@@ -840,7 +861,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	})
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -995,7 +1016,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	}
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1054,7 +1075,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 	defer server.Close()
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1100,7 +1121,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1161,7 +1182,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1205,7 +1226,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1259,7 +1280,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 	reg.Register(NewWriteTool(nil, nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "claude-haiku-4-5", MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -1458,7 +1479,8 @@ func TestSpawnExploreMode(t *testing.T) {
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,
-		Model:           "claude-opus-4-6", // parent uses opus
+		Model:           "anthropic/claude-opus-4-6", // parent uses opus
+		ModelAliases:    testModelAliases(),
 		ExploreMaxDepth: 10,
 	}
 	tool := NewSpawnTool(deps, nil)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/config"
 	"foci/log"
 	"foci/provider"
 )
@@ -18,12 +19,6 @@ type SystemBlocksProvider interface {
 	SystemBlocks() []provider.SystemBlock
 }
 
-// knownModels maps short names to full model IDs.
-var knownModels = map[string]string{
-	"haiku":  "claude-haiku-4-5",
-	"sonnet": "claude-sonnet-4-5",
-	"opus":   "claude-opus-4-6",
-}
 
 // BranchOptions configures optional behavior for a new branch session (tools-side mirror).
 type BranchOptions struct {
@@ -151,27 +146,32 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				p.Timeout = 120
 			}
 
-			// Resolve model short name via config aliases, then hardcoded fallbacks
-			model := p.Model
-			if model != "" {
-				if deps.ModelAliases != nil {
-					if full, ok := deps.ModelAliases[model]; ok {
-						model = full
-					}
+			// Resolve model using config.ResolveModel
+			var resolved *config.ResolvedModel
+			var err error
+			if p.Model != "" {
+				resolved, err = config.ResolveModel(p.Model, "", deps.ModelAliases)
+				if err != nil {
+					return ToolResult{}, fmt.Errorf("invalid model %q: %w", p.Model, err)
 				}
-				if full, ok := knownModels[model]; ok {
-					model = full
+			} else {
+				// Use parent's model
+				resolved, err = config.ResolveModel(deps.Model, "", deps.ModelAliases)
+				if err != nil {
+					return ToolResult{}, fmt.Errorf("invalid parent model %q: %w", deps.Model, err)
 				}
 			}
-			if model == "" {
-				model = deps.Model
+
+			// Resolve client based on endpoint and format
+			client := deps.Client
+			if deps.GetClient != nil {
+				if c := deps.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+					client = c
+				}
 			}
 
-			// Resolve client based on endpoint:model
-			client := resolveSpawnClient(model, deps.Client, deps.GetClient)
-
-			// Strip endpoint prefix for API calls (req.Model needs bare model ID)
-			_, model = parseEndpointModel(model)
+			// Use bare model ID for API calls
+			model := resolved.ModelID
 
 			timeout := time.Duration(p.Timeout) * time.Second
 
@@ -206,31 +206,27 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			case "explore":
 				// Always use the cheapest model for exploration.
-				// Infer format from the parent's default model (which has endpoint:model format).
-				_, parentModelID := parseEndpointModel(deps.Model)
+				// Infer format from the parent's default model (which has developer/model_id format).
+				_, parentModelID := config.SplitDeveloperModel(deps.Model)
 				exploreAlias := "haiku"
 				if strings.HasPrefix(parentModelID, "gemini-") {
 					exploreAlias = "flash"
 				}
-				exploreModel := model
-				if deps.ModelAliases != nil {
-					if full, ok := deps.ModelAliases[exploreAlias]; ok {
-						exploreModel = full
+				exploreResolved, err := config.ResolveModel(exploreAlias, "", deps.ModelAliases)
+				if err != nil {
+					return ToolResult{}, fmt.Errorf("resolve explore model: %w", err)
+				}
+				exploreClient := deps.Client
+				if deps.GetClient != nil {
+					if c := deps.GetClient(exploreResolved.Endpoint, exploreResolved.Format); c != nil {
+						exploreClient = c
 					}
 				}
-				if exploreModel == model {
-					if full, ok := knownModels[exploreAlias]; ok {
-						exploreModel = full
-					}
-				}
-				exploreClient := resolveSpawnClient(exploreModel, deps.Client, deps.GetClient)
-				// Strip endpoint prefix for API call
-				_, exploreModelBare := parseEndpointModel(exploreModel)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, exploreClient, exploreModelBare, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
+				result, err := spawnOneShot(ctx, exploreClient, exploreResolved.ModelID, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -246,50 +242,8 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	}
 }
 
-// parseEndpointModel splits "endpoint:model_id". If no ":", returns ("", model).
-func parseEndpointModel(model string) (endpoint, modelID string) {
-	if i := strings.IndexByte(model, ':'); i > 0 {
-		return model[:i], model[i+1:]
-	}
-	return "", model
-}
-
-// inferFormat returns the wire format for a model ID based on naming conventions.
-func inferFormat(modelID string) string {
-	if strings.HasPrefix(modelID, "claude-") {
-		return "anthropic"
-	}
-	if strings.HasPrefix(modelID, "gemini-") {
-		return "gemini"
-	}
-	if isOpenAIModel(modelID) {
-		return "openai"
-	}
-	return "openai"
-}
-
-// resolveSpawnClient returns the appropriate client for a model.
-// Model may be in "endpoint:model_id" or bare "model_id" format.
-func resolveSpawnClient(model string, defaultClient provider.Client, getClient func(endpoint, format string) provider.Client) provider.Client {
-	if getClient == nil {
-		return defaultClient
-	}
-	endpoint, modelID := parseEndpointModel(model)
-	if endpoint != "" {
-		format := inferFormat(modelID)
-		if c := getClient(endpoint, format); c != nil {
-			return c
-		}
-	}
-	// Bare model name — infer endpoint from model name
-	format := inferFormat(model)
-	if c := getClient(format, format); c != nil {
-		return c
-	}
-	return defaultClient
-}
-
 // isOpenAIModel returns true if the model name looks like an OpenAI model.
+// Kept for use in summary.go.
 func isOpenAIModel(model string) bool {
 	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
 		if strings.HasPrefix(model, p) {

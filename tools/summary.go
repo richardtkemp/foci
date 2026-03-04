@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/config"
 	"foci/log"
 	"foci/provider"
 )
@@ -22,19 +23,11 @@ import (
 // modelAliases maps short names (e.g. "haiku") to full model IDs (with endpoint prefix);
 // used to resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
 func NewSummaryTool(defaultClient provider.Client, getClient func(endpoint, format string) provider.Client, peekClient func(endpoint, format string) provider.Client, agentModel string, modelAliases map[string]string) *Tool {
-	resolveModel := func(alias string) string {
-		if modelAliases != nil {
-			if full, ok := modelAliases[strings.ToLower(alias)]; ok {
-				return full
-			}
-		}
-		return alias
-	}
-
 	// Parse the agent's model to get the bare model ID
-	_, agentModelID := parseEndpointModel(agentModel)
+	// agentModel is now in developer/model_id format
+	_, agentModelID := splitDeveloperModel(agentModel)
 
-	// Pick the cheapest model for the agent's provider.
+	// Pick the cheapest model alias for the agent's provider.
 	summaryAlias := "haiku"
 	if strings.HasPrefix(agentModelID, "gemini-") {
 		summaryAlias = "flash"
@@ -44,21 +37,14 @@ func NewSummaryTool(defaultClient provider.Client, getClient func(endpoint, form
 
 	// Resolve which client to use based on the summary model.
 	resolveClient := func() provider.Client {
-		model := resolveModel(summaryAlias)
-		// Model may now include endpoint prefix from aliases
-		ep, modelID := parseEndpointModel(model)
-		if ep != "" && getClient != nil {
-			format := inferFormat(modelID)
-			if c := getClient(ep, format); c != nil {
-				return c
-			}
+		// Use config.ResolveModel to handle the summary alias
+		// Import config package at the top of the file
+		resolved, err := resolveModelForSummary(summaryAlias, modelAliases)
+		if err != nil || getClient == nil {
+			return defaultClient
 		}
-		// Bare model name — infer from model name
-		if getClient != nil {
-			format := inferFormat(model)
-			if c := getClient(format, format); c != nil {
-				return c
-			}
+		if c := getClient(resolved.Endpoint, resolved.Format); c != nil {
+			return c
 		}
 		return defaultClient
 	}
@@ -82,12 +68,26 @@ func NewSummaryTool(defaultClient provider.Client, getClient func(endpoint, form
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, resolveClient(), resolveModel, summaryAlias)
+			return summaryExecute(ctx, params, resolveClient(), summaryAlias, modelAliases)
 		},
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, resolveModel func(string) string, summaryAlias string) (ToolResult, error) {
+// resolveModelForSummary is a helper to resolve a model alias for summary tool.
+func resolveModelForSummary(alias string, aliases map[string]string) (*config.ResolvedModel, error) {
+	// Use empty endpoint to get auto-selection
+	return config.ResolveModel(alias, "", aliases)
+}
+
+// splitDeveloperModel splits "developer/model_id" into parts.
+func splitDeveloperModel(model string) (developer, modelID string) {
+	if i := strings.IndexByte(model, '/'); i > 0 {
+		return model[:i], model[i+1:]
+	}
+	return "", model
+}
+
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, summaryAlias string, modelAliases map[string]string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -123,9 +123,12 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		}
 	}
 
-	resolved := resolveModel(summaryAlias)
-	// Strip endpoint prefix if present (API needs bare model ID)
-	_, model := parseEndpointModel(resolved)
+	// Use config.ResolveModel to get the model ID
+	resolved, err := config.ResolveModel(summaryAlias, "", modelAliases)
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("resolve model: %w", err)
+	}
+	model := resolved.ModelID
 	start := time.Now()
 
 	req := &provider.MessageRequest{

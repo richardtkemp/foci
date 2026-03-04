@@ -99,7 +99,8 @@ type AgentConfig struct {
 	ID                      string            `toml:"id"`
 	Name                    string            `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
 	Emoji                   string            `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Model                   string            `toml:"model"`    // "endpoint:model_id" format (e.g. "anthropic:claude-haiku-4-5")
+	Model                   string            `toml:"model"`    // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "flash")
+	Endpoint                string            `toml:"endpoint"` // optional: which endpoint config to use (auto-selected from developer if empty)
 	Workspace               string            `toml:"workspace"`
 	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages              bool              `toml:"duplicate_messages"`                // send user text twice per API call (improves instruction following)
@@ -377,7 +378,7 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Model               string           `toml:"model"`                 // default model: "endpoint:model_id" (default: "anthropic:claude-haiku-4-5")
+	Model               string           `toml:"model"`                 // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5")
 	DuplicateMessages              bool             `toml:"duplicate_messages"`                // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages  bool             `toml:"batch_partial_assistant_messages"`   // default batch_partial_assistant_messages (default: false)
 	BatchPartialJoiner             string           `toml:"batch_partial_joiner"`               // default separator between batched partial messages (default: "")
@@ -457,20 +458,14 @@ func (e EndpointConfig) URLForFormat(f string) string {
 	return e.URL
 }
 
-// ParseModel splits "endpoint:model_id" into its parts.
-// If the input contains no colon, endpoint defaults to "anthropic".
-func ParseModel(input string) (endpoint, modelID string) {
-	input = strings.TrimSpace(input)
-	if i := strings.IndexByte(input, ':'); i > 0 {
-		return input[:i], input[i+1:]
-	}
-	return "anthropic", input
-}
-
 // InferFormat returns the wire format for a model ID based on naming conventions.
 // "claude-*" → "anthropic", "gemini-*" → "gemini", "gpt-*"/"o3*"/"o4*" → "openai".
+// Also recognizes common model nicknames: "flash" → "gemini", "opus"/"sonnet"/"haiku" → "anthropic".
 // Returns "openai" as the universal fallback.
 func InferFormat(modelID string) string {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+
+	// Full model names with prefixes
 	if strings.HasPrefix(modelID, "claude-") {
 		return "anthropic"
 	}
@@ -482,6 +477,15 @@ func InferFormat(modelID string) string {
 			return "openai"
 		}
 	}
+
+	// Common model nicknames
+	switch modelID {
+	case "flash":
+		return "gemini"
+	case "opus", "sonnet", "haiku":
+		return "anthropic"
+	}
+
 	return "openai" // universal fallback
 }
 
@@ -551,16 +555,28 @@ type Config struct {
 // validate checks semantic validity of config values after parsing and defaults.
 // Returns an error describing the first invalid value found.
 func validate(cfg *Config) error {
-	// Validate agent model format (must contain endpoint prefix)
+	// Validate agent model format (must use slash syntax, not colon)
 	for _, a := range cfg.Agents {
-		if a.Model != "" && !strings.Contains(a.Model, ":") {
-			return fmt.Errorf("agent %q model = %q: must use endpoint:model format (e.g. \"anthropic:claude-haiku-4-5\")", a.ID, a.Model)
+		if a.Model == "" {
+			continue
 		}
-		if a.Model != "" {
-			ep, _ := ParseModel(a.Model)
-			if _, ok := cfg.Endpoints[ep]; !ok {
-				return fmt.Errorf("agent %q model = %q: unknown endpoint %q (define [endpoints.%s] in config)", a.ID, a.Model, ep, ep)
-			}
+		// Check for legacy colon format
+		if strings.Contains(a.Model, ":") {
+			return fmt.Errorf(`agent %q: invalid model format %q
+  The model format has changed from "endpoint:model" to "developer/model_id"
+
+  Update your config:
+  - Old: model = %q
+  - New: model = %q
+
+  Or use an alias:
+  - model = "haiku"  (expands to "anthropic/claude-haiku-4-5")`,
+				a.ID, a.Model, a.Model, strings.ReplaceAll(a.Model, ":", "/"))
+		}
+		// Validate slash format (will be checked by ResolveModel at load time)
+		if !strings.Contains(a.Model, "/") {
+			// Could be an alias - this is checked during Load()
+			continue
 		}
 	}
 
@@ -884,13 +900,8 @@ func Load(path string) (*Config, error) {
 		cfg.DefinedKeys[strings.Join(key, ".")] = true
 	}
 
-	// Migrate bare model name in defaults to endpoint:model format.
-	if cfg.Defaults.Model != "" && !strings.Contains(cfg.Defaults.Model, ":") {
-		ep := InferFormat(cfg.Defaults.Model)
-		cfg.Defaults.Model = ep + ":" + cfg.Defaults.Model
-	}
 	// Populate [defaults] section with hardcoded fallbacks
-	setStringDefault(&cfg.Defaults.Model, "anthropic:claude-haiku-4-5")
+	setStringDefault(&cfg.Defaults.Model, "anthropic/claude-haiku-4-5")
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
@@ -925,13 +936,6 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].BranchOrientationHeadlessPrompt != "" {
 			cfg.Agents[i].BranchOrientationHeadlessPrompt = ResolvePath(cfg.Agents[i].BranchOrientationHeadlessPrompt)
 		}
-
-		// Migrate bare model names to endpoint:model format.
-		// If model doesn't contain ":", infer endpoint from model name.
-		if cfg.Agents[i].Model != "" && !strings.Contains(cfg.Agents[i].Model, ":") {
-			ep := InferFormat(cfg.Agents[i].Model)
-			cfg.Agents[i].Model = ep + ":" + cfg.Agents[i].Model
-		}
 	}
 
 	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
@@ -940,19 +944,20 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Legacy agent defaults (in case nothing is configured at all)
-	setStringDefault(&cfg.Agent.Model, "anthropic:claude-haiku-4-5")
+	setStringDefault(&cfg.Agent.Model, "anthropic/claude-haiku-4-5")
 
-	// Model aliases defaults (if not configured) — include endpoint prefix
+	// Model aliases defaults (if not configured) — use developer/model_id format
 	if len(cfg.Models.Aliases) == 0 {
 		cfg.Models.Aliases = map[string]string{
-			"opus":    "anthropic:claude-opus-4-6",
-			"sonnet":  "anthropic:claude-sonnet-4-6",
-			"haiku":   "anthropic:claude-haiku-4-5",
-			"flash":   "gemini:gemini-2.5-flash",
-			"pro":     "gemini:gemini-2.5-pro",
-			"gpt4o":   "openai:gpt-4o",
-			"o3":      "openai:o3",
-			"o4mini":  "openai:o4-mini",
+			"opus":     "anthropic/claude-opus-4-6",
+			"sonnet":   "anthropic/claude-sonnet-4-6",
+			"haiku":    "anthropic/claude-haiku-4-5",
+			"flash":    "google/gemini-2.5-flash",
+			"pro":      "google/gemini-2.5-pro",
+			"gpt4o":    "openai/gpt-4o",
+			"o3":       "openai/o3",
+			"o4mini":   "openai/o4-mini",
+			"deepseek": "deepseek/deepseek-chat",
 		}
 	}
 
