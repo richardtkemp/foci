@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -162,7 +163,20 @@ func contentBlockFromSDK(block sdk.ContentBlockUnion) ContentBlock {
 	}
 }
 
+// streamingErrorTypes maps Anthropic SSE error type strings to HTTP status codes.
+// The SDK's streaming code uses fmt.Errorf (not *sdk.Error) for SSE "error" events,
+// so classifySDKError must parse the embedded JSON to extract the error type.
+var streamingErrorTypes = map[string]int{
+	"overloaded_error":          529,
+	"rate_limit_error":          429,
+	"api_error":                 500,
+	"internal_server_error":     500,
+	"service_unavailable_error": 503,
+}
+
 // classifySDKError maps an SDK error into a provider.APIError.
+// Handles both *sdk.Error (non-streaming) and plain errors with embedded
+// JSON from SSE "error" events (streaming).
 func classifySDKError(err error) error {
 	if err == nil {
 		return nil
@@ -173,6 +187,27 @@ func classifySDKError(err error) error {
 		return &APIError{
 			StatusCode: sdkErr.StatusCode,
 			Body:       sdkErr.RawJSON(),
+		}
+	}
+
+	// SDK streaming errors are plain fmt.Errorf with embedded JSON:
+	//   "received error while streaming: {json}"
+	// Parse the JSON to extract the error type and map to a status code.
+	msg := err.Error()
+	if idx := strings.Index(msg, "{"); idx >= 0 {
+		jsonBody := msg[idx:]
+		var envelope struct {
+			Error struct {
+				Type string `json:"type"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(jsonBody), &envelope) == nil && envelope.Error.Type != "" {
+			if status, ok := streamingErrorTypes[envelope.Error.Type]; ok {
+				return &APIError{
+					StatusCode: status,
+					Body:       jsonBody,
+				}
+			}
 		}
 	}
 

@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -244,6 +245,50 @@ func TestClassifySDKErrorNonAPI(t *testing.T) {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		t.Error("expected non-APIError for non-SDK error")
+	}
+}
+
+func TestClassifySDKErrorStreamingOverloaded(t *testing.T) {
+	// SDK streaming uses fmt.Errorf (not *sdk.Error) for SSE "error" events.
+	sseErr := fmt.Errorf(`received error while streaming: {"type":"error","error":{"details":null,"type":"overloaded_error","message":"Overloaded"},"request_id":"req_abc123"}`)
+	err := classifySDKError(sseErr)
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 529 {
+		t.Errorf("StatusCode = %d, want 529", apiErr.StatusCode)
+	}
+	if !apiErr.IsOverloaded() {
+		t.Error("expected IsOverloaded() = true")
+	}
+	if !apiErr.IsRetryable() {
+		t.Error("expected IsRetryable() = true")
+	}
+}
+
+func TestClassifySDKErrorStreamingRateLimit(t *testing.T) {
+	sseErr := fmt.Errorf(`received error while streaming: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}`)
+	err := classifySDKError(sseErr)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T: %v", err, err)
+	}
+	if apiErr.StatusCode != 429 {
+		t.Errorf("StatusCode = %d, want 429", apiErr.StatusCode)
+	}
+}
+
+func TestClassifySDKErrorStreamingUnknownType(t *testing.T) {
+	// Unknown error types should pass through unchanged.
+	sseErr := fmt.Errorf(`received error while streaming: {"type":"error","error":{"type":"unknown_error","message":"wat"}}`)
+	err := classifySDKError(sseErr)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		t.Error("expected non-APIError for unknown streaming error type")
 	}
 }
 
