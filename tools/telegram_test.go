@@ -473,6 +473,11 @@ func TestChatIDFromSessionKey(t *testing.T) {
 		{"", 0},
 		{"agent:test:chat:notanumber", 0},
 		{"agent:test:notanumber", 0}, // non-numeric third segment is not a chat ID
+		{"fotini/c99887766/1000000000", 99887766},                   // new format
+		{"test/c12345/1000000000", 12345},                           // new format
+		{"test/c-1001234567890/1000000000", -1001234567890},         // new format — group chat
+		{"test/imain/1000000000", 0},                                // new format — independent session, not chat
+		{"test/imain/1000000000/b1000000001", 0},                    // new format — branch, not chat
 	}
 	for _, tt := range tests {
 		got := ChatIDFromSessionKey(tt.key)

@@ -144,7 +144,7 @@ func TestHandleMessageEndTurn(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hi there")
+	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hi there")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestHandleMessageEndTurn(t *testing.T) {
 	}
 
 	// Verify messages were saved to session
-	msgs, _ := store.Load("agent:test:main")
+	msgs, _ := store.Load("test/imain/1000000000")
 	if len(msgs) != 2 {
 		t.Fatalf("saved %d messages, want 2", len(msgs))
 	}
@@ -229,7 +229,7 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "agent:test:main", "Run echo")
+	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Run echo")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 	}
 
 	// Should have saved: user msg, assistant (tool_use), user (tool_result), assistant (final)
-	msgs, _ := store.Load("agent:test:main")
+	msgs, _ := store.Load("test/imain/1000000000")
 	if len(msgs) != 4 {
 		t.Fatalf("saved %d messages, want 4", len(msgs))
 	}
@@ -295,7 +295,7 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "agent:test:main", "Use a fake tool")
+	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Use a fake tool")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -334,13 +334,13 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 	}
 
 	// First message
-	resp, _ := ag.HandleMessage(context.Background(), "agent:test:main", "First")
+	resp, _ := ag.HandleMessage(context.Background(), "test/imain/1000000000", "First")
 	if resp != "Received 1 messages" {
 		t.Errorf("first response = %q", resp)
 	}
 
 	// Second message — should include history
-	resp, _ = ag.HandleMessage(context.Background(), "agent:test:main", "Second")
+	resp, _ = ag.HandleMessage(context.Background(), "test/imain/1000000000", "Second")
 	if resp != "Received 3 messages" {
 		t.Errorf("second response = %q, want 'Received 3 messages' (2 history + 1 new)", resp)
 	}
@@ -450,10 +450,10 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 	}
 
 	// First message — no breakpoint (only 1 message)
-	ag.HandleMessage(context.Background(), "agent:test:cache", "First")
+	ag.HandleMessage(context.Background(), "test/icache/1000000000", "First")
 
 	// Second message — should have breakpoint on the previous assistant turn
-	ag.HandleMessage(context.Background(), "agent:test:cache", "Second")
+	ag.HandleMessage(context.Background(), "test/icache/1000000000", "Second")
 
 	if receivedReq == nil {
 		t.Fatal("no request received")
@@ -470,7 +470,7 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 	}
 
 	// Saved session should NOT have cache_control
-	saved, _ := store.Load("agent:test:cache")
+	saved, _ := store.Load("test/icache/1000000000")
 	for i, msg := range saved {
 		for j, block := range msg.Content {
 			if block.CacheControl != nil {
@@ -536,7 +536,7 @@ func TestHandleMessageCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := ag.HandleMessage(ctx, "agent:test:cancel", "Do something slow")
+	_, err := ag.HandleMessage(ctx, "test/icancel/1000000000", "Do something slow")
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -573,7 +573,7 @@ func TestIsProcessing(t *testing.T) {
 		t.Error("should not be processing before HandleMessage")
 	}
 
-	ag.HandleMessage(context.Background(), "agent:test:proc", "Hi")
+	ag.HandleMessage(context.Background(), "test/iproc/1000000000", "Hi")
 
 	if ag.IsProcessing() {
 		t.Error("should not be processing after HandleMessage returns")
@@ -625,7 +625,7 @@ func TestProcessingDetails(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		ctx := WithTrigger(context.Background(), "keepalive")
-		ag.HandleMessage(ctx, "agent:test:detail", "check")
+		ag.HandleMessage(ctx, "test/idetail/1000000000", "check")
 		close(done)
 	}()
 
@@ -637,7 +637,7 @@ func TestProcessingDetails(t *testing.T) {
 		t.Fatalf("expected 1 detail during turn, got %d", len(details))
 	}
 	d := details[0]
-	if d.SessionKey != "agent:test:detail" {
+	if d.SessionKey != "test/idetail/1000000000" {
 		t.Errorf("session key = %q", d.SessionKey)
 	}
 	if d.Trigger != "keepalive" {
@@ -728,7 +728,7 @@ func TestDeferredReply(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "agent:test:deferred", "Complex question")
+	finalResp, err := ag.HandleMessage(ctx, "test/ideferred/1000000000", "Complex question")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -786,7 +786,7 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 	images := []Attachment{
 		{MediaType: "image/jpeg", Data: []byte("fake-jpeg-data")},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:img", "What is this?", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimg/1000000000", "What is this?", images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -857,7 +857,7 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 	attachments := []Attachment{
 		{MediaType: "application/pdf", Data: []byte("%PDF-1.4 fake")},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:pdf", "Read this PDF", attachments)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdf/1000000000", "Read this PDF", attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -917,7 +917,7 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 	attachments := []Attachment{
 		{MediaType: "application/pdf", Data: []byte("%PDF-1.4"), SavedPath: "/tmp/docs/report.pdf"},
 	}
-	_, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:pdfsaved", "Check this", attachments)
+	_, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdfsaved/1000000000", "Check this", attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -958,7 +958,7 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 		{MediaType: "image/png", Data: []byte("fake-png-data")},
 	}
 	// Empty text — image only
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:imgonly", "", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimgonly/1000000000", "", images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -995,7 +995,7 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	ag.HandleMessage(context.Background(), "agent:test:delegate", "Hello")
+	ag.HandleMessage(context.Background(), "test/idelegate/1000000000", "Hello")
 
 	// Text-only message should have exactly 1 content block (text)
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -1037,7 +1037,7 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 	images := []Attachment{
 		{MediaType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "agent:test:savedpath", "What is this?", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/isavepath/1000000000", "What is this?", images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -1086,7 +1086,7 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	images := []Attachment{
 		{MediaType: "image/jpeg", Data: []byte("fake")},
 	}
-	ag.HandleMessageWithAttachments(context.Background(), "agent:test:nosaved", "Look", images)
+	ag.HandleMessageWithAttachments(context.Background(), "test/inosaved/1000000000", "Look", images)
 
 	// Text block should NOT contain [Image saved to:] when SavedPath is empty
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -1184,7 +1184,7 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	ag.HandleMessage(context.Background(), "agent:test:meta", "Hello")
+	ag.HandleMessage(context.Background(), "test/imeta/1000000000", "Hello")
 
 	if receivedReq == nil {
 		t.Fatal("no request received")
@@ -1478,7 +1478,7 @@ func TestDuplicateMessages(t *testing.T) {
 		DuplicateMessages: true,
 	}
 
-	ag.HandleMessage(context.Background(), "agent:test:dup", "Do the thing")
+	ag.HandleMessage(context.Background(), "test/idup/1000000000", "Do the thing")
 
 	// The user message text should contain the instruction twice
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -1493,7 +1493,7 @@ func TestDuplicateMessages(t *testing.T) {
 	}
 
 	// Saved session should also have the duplicated text (for cache coherence)
-	saved, _ := store.Load("agent:test:dup")
+	saved, _ := store.Load("test/idup/1000000000")
 	savedText := provider.TextOf(saved[0].Content)
 	if count := strings.Count(savedText, "Do the thing"); count != 2 {
 		t.Errorf("saved session should have duplicated text, got %d occurrences", count)
@@ -1528,7 +1528,7 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 		DuplicateMessages: false,
 	}
 
-	ag.HandleMessage(context.Background(), "agent:test:nodup", "Do the thing")
+	ag.HandleMessage(context.Background(), "test/inodup/1000000000", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
 	text := provider.TextOf(lastMsg.Content)
@@ -1567,7 +1567,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Wake trigger should NOT duplicate
 	wakeCtx := WithTrigger(context.Background(), "wake")
-	ag.HandleMessage(wakeCtx, "agent:test:wake", "Do the thing")
+	ag.HandleMessage(wakeCtx, "test/iwake/1000000000", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
 	text := provider.TextOf(lastMsg.Content)
@@ -1577,7 +1577,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Keepalive trigger should NOT duplicate
 	kaCtx := WithTrigger(context.Background(), "keepalive")
-	ag.HandleMessage(kaCtx, "agent:test:ka", "Check stuff")
+	ag.HandleMessage(kaCtx, "test/ika/1000000000", "Check stuff")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -1587,7 +1587,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// User trigger SHOULD duplicate
 	userCtx := WithTrigger(context.Background(), "user")
-	ag.HandleMessage(userCtx, "agent:test:user", "Do the thing")
+	ag.HandleMessage(userCtx, "test/iuser/1000000000", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -1597,7 +1597,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Telegram trigger SHOULD duplicate (human-typed messages)
 	tgCtx := WithTrigger(context.Background(), "telegram")
-	ag.HandleMessage(tgCtx, "agent:test:tg", "Say something")
+	ag.HandleMessage(tgCtx, "test/itg/1000000000", "Say something")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -1607,7 +1607,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 
 	// Voice trigger SHOULD duplicate (human-spoken messages)
 	voiceCtx := WithTrigger(context.Background(), "voice")
-	ag.HandleMessage(voiceCtx, "agent:test:voice", "Tell me")
+	ag.HandleMessage(voiceCtx, "test/ivoice/1000000000", "Tell me")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 	text = provider.TextOf(lastMsg.Content)
@@ -1618,7 +1618,7 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	// System triggers should NOT duplicate
 	for _, sysT := range []string{"proactive_warning", "async_notify", "session_notify", "scheduled_wake", "restart", "first_run"} {
 		sysCtx := WithTrigger(context.Background(), sysT)
-		ag.HandleMessage(sysCtx, "agent:test:sys:"+sysT, "System msg")
+		ag.HandleMessage(sysCtx, "test/isys"+sysT+"/1000000000", "System msg")
 
 		lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
 		text = provider.TextOf(lastMsg.Content)
@@ -1733,7 +1733,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
 	// Pre-populate session with an interrupted tool call
-	sessionKey := "agent:test:repair"
+	sessionKey := "test/irepair/1000000000"
 	store.Append(sessionKey, provider.Message{
 		Role: "user", Content: provider.TextContent("do something"),
 	})
@@ -1818,7 +1818,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	t.Run("basic", func(t *testing.T) {
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
-		sessionKey := "agent:test:compact"
+		sessionKey := "test/icompact/1000000000"
 
 		// Phase 1: 4 turns with low tokens — no compaction
 		env.runTurns(t, sessionKey, 1, 4)
@@ -1881,7 +1881,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env.compactor.Scratchpad = scratchpad
 		env.compactor.AgentID = "test"
 
-		sessionKey := "agent:test:compactsp"
+		sessionKey := "test/icompactsp/1000000000"
 
 		// Build up 4 turns then trigger compaction on turn 5
 		env.runTurns(t, sessionKey, 1, 5)
@@ -1915,7 +1915,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env := newCompactionTestEnv(t, &turnCount, 5)
 		env.compactor.WithConfig(4096, 4, 4) // preserve last 4 messages
 
-		sessionKey := "agent:test:preserve"
+		sessionKey := "test/ipreserve/1000000000"
 
 		// Phase 1: 4 turns with low tokens — no compaction
 		env.runTurns(t, sessionKey, 1, 4)
@@ -1996,7 +1996,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			notified = append(notified, msg)
 		}
 
-		sessionKey := "agent:test:compactnotify"
+		sessionKey := "test/icompactnotify/1000000000"
 
 		// 4 turns, then turn 5 triggers compaction
 		env.runTurns(t, sessionKey, 1, 5)
@@ -2023,7 +2023,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			notified = append(notified, msg)
 		}
 
-		sessionKey := "agent:test:nocompact"
+		sessionKey := "test/inocompact/1000000000"
 
 		// 4 normal turns
 		env.runTurns(t, sessionKey, 1, 4)
@@ -2073,7 +2073,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			notified = append(notified, msg)
 		}
 
-		sessionKey := "agent:test:asyncpending"
+		sessionKey := "test/iasyncpending/1000000000"
 
 		// 4 normal turns
 		env.runTurns(t, sessionKey, 1, 4)
@@ -2195,7 +2195,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	_, err := ag.HandleMessage(ctx, "agent:test:order", "Check something")
+	_, err := ag.HandleMessage(ctx, "test/iorder/1000000000", "Check something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -2261,7 +2261,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	sessionKey := "agent:test:concurrent"
+	sessionKey := "test/iconcurrent/1000000000"
 
 	// Launch two concurrent turns on the same session
 	var wg sync.WaitGroup
@@ -2386,12 +2386,12 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), "agent:test:sessionA", "Hello A")
+		ag.HandleMessage(context.Background(), "test/isessionA/1000000000", "Hello A")
 	}()
 
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), "agent:test:sessionB", "Hello B")
+		ag.HandleMessage(context.Background(), "test/isessionB/1000000000", "Hello B")
 	}()
 
 	wg.Wait()
@@ -2431,7 +2431,7 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	sessionKey := "agent:test:cancel-queue"
+	sessionKey := "test/icancelq/1000000000"
 
 	// Start a slow turn
 	var wg sync.WaitGroup
@@ -2524,7 +2524,7 @@ func TestSeedSessionMeta(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
 
-	sessionKey := "agent:test:seed"
+	sessionKey := "test/iseed/1000000000"
 
 	// Seed with empty session — should not panic
 	ag.SeedSessionMeta(sessionKey)
@@ -2591,7 +2591,7 @@ func TestMaxTokensWarning(t *testing.T) {
 		},
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "agent:test:maxtkn", "Write a very long essay")
+	resp, err := ag.HandleMessage(context.Background(), "test/imaxtkn/1000000000", "Write a very long essay")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -2608,7 +2608,7 @@ func TestMaxTokensWarning(t *testing.T) {
 	if !strings.Contains(warnings[0], "max_tokens") {
 		t.Errorf("warning = %q, want contains 'max_tokens'", warnings[0])
 	}
-	if !strings.Contains(warnings[0], "agent:test:maxtkn") {
+	if !strings.Contains(warnings[0], "test/imaxtkn/1000000000") {
 		t.Errorf("warning = %q, want contains session key", warnings[0])
 	}
 }
@@ -2642,7 +2642,7 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 		},
 	}
 
-	ag.HandleMessage(context.Background(), "agent:test:nomax", "Hello")
+	ag.HandleMessage(context.Background(), "test/inomax/1000000000", "Hello")
 
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings for end_turn, got %d: %v", len(warnings), warnings)
@@ -2699,13 +2699,13 @@ func TestToolResultRedaction(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:redact", "Leak the secret")
+	_, err := ag.HandleMessage(context.Background(), "test/iredact/1000000000", "Leak the secret")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
 	// Verify the saved session has redacted tool result
-	msgs, _ := store.Load("agent:test:redact")
+	msgs, _ := store.Load("test/iredact/1000000000")
 	for _, msg := range msgs {
 		for _, block := range msg.Content {
 			if block.Type == "tool_result" {
@@ -2770,13 +2770,13 @@ func TestToolErrorRedaction(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:redacterr", "Try the tool")
+	_, err := ag.HandleMessage(context.Background(), "test/iredacterr/1000000000", "Try the tool")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
 	// Verify the saved session has redacted error message
-	msgs, _ := store.Load("agent:test:redacterr")
+	msgs, _ := store.Load("test/iredacterr/1000000000")
 	for _, msg := range msgs {
 		for _, block := range msg.Content {
 			if block.Type == "tool_result" && block.IsError {
@@ -2795,7 +2795,7 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
 
-	sessionKey := "agent:test:seedskip"
+	sessionKey := "test/iseedskip/1000000000"
 
 	// First message has meta, second user message is a restart marker (no meta)
 	store.Append(sessionKey, provider.Message{
@@ -2849,7 +2849,7 @@ func TestHandleMessageRateLimit(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error for rate limit")
 	}
@@ -2891,7 +2891,7 @@ func TestHandleMessageOverloaded(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error for overloaded")
 	}
@@ -2929,7 +2929,7 @@ func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 		// RateLimitFunc intentionally nil
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -2967,7 +2967,7 @@ func TestHandleMessageServerError(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error for server error")
 	}
@@ -3006,7 +3006,7 @@ func TestHandleMessageServerErrorNoCallback(t *testing.T) {
 		// RateLimitFunc intentionally nil
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Hello")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -3056,14 +3056,14 @@ func TestCacheBustDetection(t *testing.T) {
 	}
 
 	// First request — establishes baseline (prevCacheRead=15000)
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
 	// Second request — cache_read drops to 0, recent session → should alert
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 1 {
 		t.Fatalf("expected 1 alert, got %d: %v", len(alerts), alerts)
 	}
-	if alerts[0] != "agent:test:main:15000→0" {
+	if alerts[0] != "test/imain/1000000000:15000→0" {
 		t.Errorf("alert = %q", alerts[0])
 	}
 }
@@ -3108,11 +3108,11 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 	}
 
 	// First request — establishes baseline
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
 	// Wait longer than the idle threshold
 	time.Sleep(5 * time.Millisecond)
 	// Second request — cache_read drops to 0, but session was idle → should NOT alert
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 0 {
 		t.Fatalf("expected 0 alerts (idle session), got %d: %v", len(alerts), alerts)
@@ -3212,9 +3212,9 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 	}
 
 	// First turn — establishes baseline (prevCacheRead=15000)
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
 	// Second turn — 3 API calls (2 tool_use + 1 end_turn), all with cache_read=0
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 1 {
 		t.Fatalf("expected exactly 1 cache bust alert for the turn, got %d: %v", len(alerts), alerts)
@@ -3263,13 +3263,13 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 	}
 
 	// First request — establishes baseline (prevCacheRead=15000)
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg1")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
 
 	// Simulate manual /compact: reset the cache baseline
-	ag.ResetCacheBaseline("agent:test:main")
+	ag.ResetCacheBaseline("test/imain/1000000000")
 
 	// Second request — cache_read=0, but baseline was reset → no alert
-	ag.HandleMessage(context.Background(), "agent:test:main", "msg2")
+	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 0 {
 		t.Fatalf("expected 0 alerts after cache baseline reset, got %d: %v", len(alerts), alerts)
@@ -3305,7 +3305,7 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 		Thinking:  "adaptive",
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "Think about this")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Think about this")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -3347,7 +3347,7 @@ func TestThinkingOffOmitsField(t *testing.T) {
 		// Thinking not set (empty string)
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "No thinking")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "No thinking")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -3387,7 +3387,7 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 		Thinking:  "adaptive",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "agent:test:main", "Think and answer")
+	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Think and answer")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -3398,7 +3398,7 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 	}
 
 	// Session should preserve both thinking and text blocks
-	msgs, _ := sessionStore.Load("agent:test:main")
+	msgs, _ := sessionStore.Load("test/imain/1000000000")
 	if len(msgs) != 2 {
 		t.Fatalf("saved %d messages, want 2", len(msgs))
 	}
@@ -3461,12 +3461,12 @@ func TestBraindeadWarningInjected(t *testing.T) {
 		BraindeadWarningEnable:    true,
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	msgs, _ := store.Load("agent:test:main")
+	msgs, _ := store.Load("test/imain/1000000000")
 	// Find the braindead warning folded into a tool_result message
 	found := 0
 	for _, m := range msgs {
@@ -3531,12 +3531,12 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 		BraindeadWarningEnable:    true,
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	msgs, _ := store.Load("agent:test:main")
+	msgs, _ := store.Load("test/imain/1000000000")
 	count := 0
 	for _, m := range msgs {
 		if m.Role != "user" {
@@ -3598,12 +3598,12 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 		BraindeadWarningEnable:    true,
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:main", "go")
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	msgs, _ := store.Load("agent:test:main")
+	msgs, _ := store.Load("test/imain/1000000000")
 	for _, m := range msgs {
 		if m.Role != "user" {
 			continue
@@ -3676,7 +3676,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "agent:test:batch-false", "Do something")
+	finalResp, err := ag.HandleMessage(ctx, "test/ibatchfalse/1000000000", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -3750,7 +3750,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "agent:test:batch-true", "Do something")
+	finalResp, err := ag.HandleMessage(ctx, "test/ibatchtrue/1000000000", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -3830,7 +3830,7 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 	}
 
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
-	finalResp, err := ag.HandleMessage(ctx, "agent:test:batch-multi", "Do multiple things")
+	finalResp, err := ag.HandleMessage(ctx, "test/ibatchmulti/1000000000", "Do multiple things")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

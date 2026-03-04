@@ -156,8 +156,8 @@ func TestSelectAgent_SessionReady(t *testing.T) {
 	if ready.AgentID != "agent1" {
 		t.Errorf("agent_id = %q, want %q", ready.AgentID, "agent1")
 	}
-	if !strings.HasPrefix(ready.SessionKey, "agent:agent1:voice:") {
-		t.Errorf("session_key = %q, want prefix %q", ready.SessionKey, "agent:agent1:voice:")
+	if !strings.HasPrefix(ready.SessionKey, "agent1/c") {
+		t.Errorf("session_key = %q, want prefix %q", ready.SessionKey, "agent1/c")
 	}
 }
 
