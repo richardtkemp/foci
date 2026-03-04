@@ -302,7 +302,7 @@ Environment block injected as the first system prompt block, providing the agent
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Inject environment block as the first system block. `false` disables. |
-| `docs_path` | string | `""` | Path to platform docs directory. Shown in environment block when set. Relative paths resolve against `$HOME`. |
+| `docs_path` | string | `"shared/docs"` | Path to platform docs directory. Shown in environment block. Relative paths resolve against `$HOME`. |
 
 When enabled, a text block is programmatically built at startup and prepended before character files. It contains:
 
