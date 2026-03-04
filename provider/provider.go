@@ -20,14 +20,14 @@ type StreamingClient interface {
 	StreamMessage(ctx context.Context, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error)
 }
 
-// Send sends a message request, preferring streaming when the client supports it.
-// The handler is optional — pass nil when deltas are not needed.
+// Send sends a message request using streaming only when a handler is provided.
+// Pass a non-nil handler to enable streaming; pass nil to use non-streaming SendMessage.
 func Send(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
-	if sc, ok := client.(StreamingClient); ok {
-		if handler == nil {
-			handler = &StreamHandler{}
+	// Only use streaming if handler is explicitly provided
+	if handler != nil {
+		if sc, ok := client.(StreamingClient); ok {
+			return sc.StreamMessage(ctx, req, handler)
 		}
-		return sc.StreamMessage(ctx, req, handler)
 	}
 	return client.SendMessage(ctx, req)
 }

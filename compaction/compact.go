@@ -341,7 +341,9 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		req.Output = &provider.OutputConfig{Effort: c.effort}
 	}
 
-	resp, err := provider.Send(ctx, client, req, nil)
+	// Use streaming for compaction (required for large sessions)
+	handler := &provider.StreamHandler{}
+	resp, err := provider.Send(ctx, client, req, handler)
 	if err != nil {
 		return "", fmt.Errorf("summarize for compaction: %w", err)
 	}

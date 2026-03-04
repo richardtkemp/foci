@@ -305,10 +305,10 @@ func TestSpawnModelShortNames(t *testing.T) {
 		short string
 		full  string
 	}{
-		{"haiku", "anthropic/claude-haiku-4-5"},
-		{"sonnet", "claude-sonnet-4-5"},
+		{"haiku", "claude-haiku-4-5"},
+		{"sonnet", "claude-sonnet-4-6"},
 		{"opus", "claude-opus-4-6"},
-		{"anthropic/claude-haiku-4-5", "anthropic/claude-haiku-4-5"},
+		{"anthropic/claude-haiku-4-5", "claude-haiku-4-5"},
 	}
 
 	for _, tt := range tests {
