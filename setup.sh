@@ -301,6 +301,11 @@ if $IS_SELF && ! $DRY_RUN; then
         info "  Config written by foci setup"
     fi
 
+    # Copy docs to shared directory
+    mkdir -p "$FOCI_HOME/shared/docs"
+    cp -r "$SCRIPT_DIR/docs/"* "$FOCI_HOME/shared/docs/"
+    info "  Docs copied to $FOCI_HOME/shared/docs/"
+
     # Commit file + changelog
     mkdir -p "$(dirname "$COMMIT_FILE")"
     echo "$NEW_COMMIT" > "$COMMIT_FILE"
@@ -318,7 +323,7 @@ if $IS_SELF && ! $DRY_RUN; then
         fi
     fi
 elif $IS_SELF && $DRY_RUN; then
-    info "  (dry-run) Would create directories, run config wizard, write commit file (self-mode)"
+    info "  (dry-run) Would create directories, copy docs, run config wizard, write commit file (self-mode)"
     # Assume wizard will create secrets.toml needing hardening
     if ! $HAS_CONFIG; then
         NEED_SECRETS_HARDEN=true
@@ -383,6 +388,14 @@ if $NEED_SECRETS_HARDEN; then
     emit_comment "Harden secrets.toml — root-owned, group-readable so gateway can access but agent subprocesses cannot"
     emit "chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\""
     emit "chmod 0660 \"$SECRETS_FILE\""
+fi
+
+# --- Copy docs to shared directory ---
+emit_comment "Copy docs to shared directory"
+emit "mkdir -p \"$FOCI_HOME/shared/docs\""
+emit "cp -r \"$SCRIPT_DIR/docs/\"* \"$FOCI_HOME/shared/docs/\""
+if ! $IS_SELF; then
+    emit "chown -R \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/shared/docs\""
 fi
 
 # --- Commit file + changelog (only if not self-mode) ---
