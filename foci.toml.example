@@ -282,7 +282,7 @@ bind = "127.0.0.1"
 # ─── Environment ─────────────────────────────────────────────────────
 # [environment]
 # enabled = true
-# docs_path = ""
+# docs_path = "shared/docs"             # path to platform docs (default: ~/shared/docs)
 
 # ─── Tools ────────────────────────────────────────────────────────────
 # [tools]

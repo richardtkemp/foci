@@ -941,6 +941,7 @@ func Load(path string) (*Config, error) {
 
 	// Bool defaults: default to true unless explicitly set to false in config.
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
+	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
 	// Default display settings in [defaults] when not set.
