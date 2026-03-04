@@ -1,0 +1,63 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    # Bug finders
+    - errcheck       # unchecked errors
+    - govet          # suspicious constructs
+    - staticcheck    # bugs, performance, unused code
+    - ineffassign    # ineffectual assignments
+    - unused         # unused constants, variables, functions, types
+    - gosec          # security issues
+    - unparam        # unused function parameters
+
+    # Code quality
+    - dupl           # duplicate code detection
+
+linters-settings:
+  dupl:
+    threshold: 100   # minimum tokens for duplication (lower = stricter)
+
+  errcheck:
+    exclude-functions:
+      # Common cases where error checking is often skipped intentionally
+      - (io.Closer).Close
+      - (*os.File).Close
+
+  gosec:
+    excludes:
+      - G204  # subprocess with variable - common in shell tools
+      - G304  # file path from variable - common in file tools
+      - G101  # hardcoded credentials - false positives on constants
+      - G301  # directory permissions - 0755 needed for shared workspaces
+      - G306  # file permissions - need group write (0644/0664)
+
+  staticcheck:
+    checks: ["all"]
+
+  unparam:
+    check-exported: false
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Exclude some linters from test files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - dupl
+        - unparam
+        - ineffassign
+
+    # Ignore unused ctx in tool functions - keep signature consistent
+    - path: tools/
+      text: "ctx.*is unused"
+      linters:
+        - unparam
