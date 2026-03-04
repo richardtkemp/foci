@@ -882,26 +882,11 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `handoffMessage` — message after compaction completes. If empty, uses `DefaultHandoffMessage` (embedded from `prompts/compaction-handoff.md`).
 - `dryRun` — when true, runs the full pipeline (API call, summary generation) but skips `sessions.Replace()`. The session is left unchanged. `/compact dry-run` sends the resulting summary as a Telegram document (via `CompactionDebugFunc` if configured, otherwise directly via `primaryBot.SendDocument`) without rewriting history. Useful for iterating on compaction prompts.
 
-## Deployment & Migrations
+## Deployment
 
 ### setup.sh
 
 `/home/rich/git/foci/setup.sh -u foci` — builds Go binaries, installs to `/usr/local/bin`, restarts service. Allowlisted in aisudo (no approval needed). Uses `--no-block` restart to avoid deadlock when run from foci's own exec.
-
-### Migrations
-
-Numbered scripts in `migrations/` (e.g. `001-homedir-restructure.sh`). Run manually during deploys that require filesystem or config changes beyond what the binary handles.
-
-**Convention:**
-- Scripts are idempotent (safe to run twice)
-- Include `--dry-run` and `-h`/`--help`
-- Must run while foci is stopped (script handles stop/start)
-- Require root (`sudo`) for service control and file ownership
-
-**Planned integration:** `setup.sh` will check for and run pending migrations between building binaries and restarting the service. A state file tracks which migrations have been applied.
-
-**Current migrations:**
-- `001-homedir-restructure.sh` — Moves flat home dir into `config/`, `data/`, `logs/`, `shared/` layout. Updates foci.toml paths, systemd unit, and crontab.
 
 ## Testing
 

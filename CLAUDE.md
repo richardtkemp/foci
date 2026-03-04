@@ -4,7 +4,7 @@
 
 Read `docs/WIRING.md` for the full architecture and wiring diagram. It explains how all packages connect, the agent loop, session branching, and the startup flow.
 
-Read `SPEC.md` for the design intent and philosophy.
+Read `docs/SPEC.md` for the design intent and philosophy.
 
 ## When You Make Changes
 
