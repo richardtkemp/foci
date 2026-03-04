@@ -19,3 +19,15 @@ type StreamHandler struct {
 type StreamingClient interface {
 	StreamMessage(ctx context.Context, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error)
 }
+
+// Send sends a message request, preferring streaming when the client supports it.
+// The handler is optional — pass nil when deltas are not needed.
+func Send(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
+	if sc, ok := client.(StreamingClient); ok {
+		if handler == nil {
+			handler = &StreamHandler{}
+		}
+		return sc.StreamMessage(ctx, req, handler)
+	}
+	return client.SendMessage(ctx, req)
+}

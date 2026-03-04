@@ -23,10 +23,11 @@ config.Load(path)                                        ← validates values; l
   →   1. Setup token: anthropic.setup_token from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   2. API key: anthropic.api_key from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
-  → Gemini client (unconditional): created on startup from gemini.api_key in secrets.toml (safe if key absent)
-  → OpenAI client (unconditional): created on startup from openai.api_key in secrets.toml (safe if key absent)
-  → allClients map: {"anthropic": ..., "gemini": ..., "openai": ...} — enables dynamic provider switching
-  → Per-agent provider resolution: agent.Provider → anthropicClient, geminiClient, or openaiClient (provider.Client interface)
+  → Lazy client registry: clients created on first use per endpoint:format pair (sync.Once)
+  →   getClient(endpoint, format) — lazy-init, returns provider.Client
+  →   peekClient(endpoint, format) — no-init check, returns nil if not yet created
+  →   resolveEndpointClient(endpoint, modelID) — infers format from model name, calls getClient
+  → Per-agent model resolution: config.ParseModel(agent.Model) → (endpoint, modelID) → resolveEndpointClient
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
@@ -64,7 +65,7 @@ config.Load(path)                                        ← validates values; l
   → block on signal → shutdown
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Each agent gets a `provider.Client` based on its `provider` config field (default: Anthropic). Shared resources (session store, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
 **Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). Reminder and scratchpad stores are always shared. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
 
@@ -355,18 +356,30 @@ type StreamingClient interface {
 
 ### Dynamic Provider Switching
 
-Agents can switch providers at runtime via `/model provider:alias` (e.g. `/model gemini:flash`, `/model anthropic:haiku`, `/model openai:gpt4o`). Without a prefix, the model stays on the session's current provider.
+Agents can switch endpoints at runtime via `/model endpoint:alias` (e.g. `/model gemini:flash`, `/model anthropic:haiku`, `/model openrouter:opus`). The model field always uses `endpoint:model_id` format.
+
+**Three independent concepts:**
+
+| Concept | Example | Determines |
+|---------|---------|------------|
+| **Endpoint** | `openrouter` | Base URL, API key |
+| **Wire format** | `anthropic`, `openai`, `gemini` | Which Go client serializes the request |
+| **Model ID** | `claude-opus-4-6` | String passed in the API call |
+
+**Format inference:** `config.InferFormat(modelID)` — `claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai. Unknown → openai (universal fallback). Multi-format endpoints (like openrouter with both `anthropic_url` and `openai_url`) auto-select the right URL based on the inferred format.
 
 **Resolution chain:**
-1. `/model gemini:flash` → parse prefix `gemini`, resolve alias `flash` → full model ID via `[models.aliases]`
-2. Look up `agent.Clients["gemini"]` → per-session client override stored in `sessionMeta.client`
-3. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
+1. `/model openrouter:opus` → resolve alias `opus` → `anthropic:claude-opus-4-6` → parse endpoint `anthropic`, but user specified `openrouter` → use `openrouter:claude-opus-4-6`
+2. `config.InferFormat("claude-opus-4-6")` → `"anthropic"`
+3. `getClient("openrouter", "anthropic")` → lazy-init anthropic client for openrouter endpoint
+4. Per-session client override stored in `sessionMeta.client`, endpoint in `sessionMeta.modelEndpoint`
+5. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
 
-**Wiring:** `agent.Clients` map (`map[string]provider.Client`) is populated at startup with all available clients (`"anthropic"`, `"gemini"` if key exists, `"openai"` if key exists). This map is shared with `tools.SpawnDeps.Clients` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
+**Wiring:** `agent.GetClient` and `agent.PeekClient` are function fields (not a map) that delegate to the lazy client registry in `main.go`. These are shared with `tools.SpawnDeps` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
 
 **Compaction:** `Compactor.Compact()` receives the client as a parameter (not stored on the struct), so compaction uses the session's active provider client.
 
-**Keepalive:** Skipped for non-Anthropic agents — Anthropic ephemeral cache warming is unnecessary since Gemini's `CacheManager` handles its own TTL extension, and OpenAI has no ephemeral cache.
+**Keepalive:** Skipped for non-Anthropic endpoints — Anthropic ephemeral cache warming is unnecessary since Gemini's `CacheManager` handles its own TTL extension, and OpenAI has no ephemeral cache.
 
 ## Anthropic API Client (`anthropic/`)
 
@@ -553,7 +566,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
-**`/model` provider switching:** Accepts `provider:alias` syntax (e.g. `/model gemini:flash`, `/model anthropic:haiku`). Without a prefix, the alias resolves using the session's current provider. The `resolveModel` callback in `main.go` parses the prefix and returns `(provider, model)`. The `setModel` callback looks up the provider's client from the agent's `Clients` map and calls `ag.SetSessionModel(sessionKey, model, client)` to store both the model and the per-session client override.
+**`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The `resolveModel` callback in `main.go` parses the endpoint prefix, resolves aliases (which now include endpoint prefixes, e.g. `opus` → `anthropic:claude-opus-4-6`), and returns `(endpoint, model)`. The `setModel` callback calls `resolveEndpointClient(endpoint, model)` to lazy-init the correct client and calls `ag.SetSessionModel(sessionKey, model, endpoint, client)` to store the model, endpoint, and per-session client override. Both endpoint and model are persisted to state store for restoration across restarts.
 
 Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
 
@@ -735,7 +748,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 **Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<telegram_username>`. Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `main.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetAgentAndCommands` and gets the primary bot's chat ID for notifications.
 
-**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort:<sessionKey>`, `thinking:<sessionKey>`, `model:<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all three. The `/voice` mode follows the same pattern under `voice:<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
+**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort:<sessionKey>`, `thinking:<sessionKey>`, `model:<sessionKey>`, `model_endpoint:<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all four — for model overrides, it reads the endpoint and calls `GetClient(endpoint, InferFormat(model))` to restore the correct client. The `/voice` mode follows the same pattern under `voice:<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
 
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool

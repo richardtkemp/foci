@@ -2006,11 +2006,11 @@ func setupAgent(p setupParams) *agentInstance {
 				diffClient = p.client
 			}
 			prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
-			resp, err := diffClient.SendMessage(callCtx, &provider.MessageRequest{
+			resp, err := provider.Send(callCtx, diffClient, &provider.MessageRequest{
 				Model:     cheapModel,
 				MaxTokens: 1024,
 				Messages:  []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
-			})
+			}, nil)
 			if err != nil {
 				return "", err
 			}
