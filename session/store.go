@@ -737,15 +737,19 @@ func (s *Store) fireEvent(e SessionEvent) {
 }
 
 // ClassifySessionKey determines the SessionType from a session key.
-// With the new format, type information is not encoded in the key itself,
-// so this function returns SessionTypeUnknown and type must be retrieved
-// from session_index or file metadata.
+// With the new format, chat vs independent is structural, and branch is
+// identifiable by child type. Semantic subtypes (spawn, multiball, cron)
+// are metadata and cannot be distinguished from the key alone.
 func ClassifySessionKey(key string) SessionType {
-	// In the new format, structural type (chat vs independent) is in the key,
-	// but semantic type (spawn, multiball, cron, branch) is stored as metadata
 	k, err := ParseSessionKey(key)
 	if err != nil {
 		return SessionTypeUnknown
+	}
+	if k.ChildType == 'b' {
+		return SessionTypeBranch
+	}
+	if k.ChildType != 0 {
+		return SessionTypeUnknown // independent spawn — can't distinguish subtypes
 	}
 	if k.Type == 'c' {
 		return SessionTypeChat
