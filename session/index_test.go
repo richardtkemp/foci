@@ -39,8 +39,10 @@ func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 		Status:           SessionStatusActive,
 	})
 
-	if idx.Count() != 2 {
-		t.Fatalf("expected 2 entries, got %d", idx.Count())
+count, _ := idx.Count()
+	if count != 2 {
+count, _ := idx.Count()
+		t.Fatalf("expected 2 entries, got %d", count)
 	}
 
 	// Query all
@@ -73,7 +75,7 @@ func TestSessionIndex_QueryByType(t *testing.T) {
 		SessionType: SessionTypeSpawn, Status: SessionStatusActive,
 	})
 
-	entries, err := idx.Query(QueryOptions{SessionType: SessionTypeChat})
+	entries, err := idx.Query(QueryOptions{SessionType: string(SessionTypeChat)})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestSessionIndex_QueryByStatus(t *testing.T) {
 		SessionType: SessionTypeChat, Status: SessionStatusCompacted,
 	})
 
-	entries, err := idx.Query(QueryOptions{Status: SessionStatusActive})
+	entries, err := idx.Query(QueryOptions{Status: string(SessionStatusActive)})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
@@ -184,8 +186,10 @@ func TestSessionIndex_Delete(t *testing.T) {
 
 	idx.Delete("agent:bot:chat:1")
 
-	if idx.Count() != 0 {
-		t.Fatalf("expected 0 after delete, got %d", idx.Count())
+count, _ := idx.Count()
+	if count != 0 {
+count, _ := idx.Count()
+		t.Fatalf("expected 0 after delete, got %d", count)
 	}
 }
 
@@ -204,8 +208,10 @@ func TestSessionIndex_Upsert_Replaces(t *testing.T) {
 		Status: SessionStatusCompacted,
 	})
 
-	if idx.Count() != 1 {
-		t.Fatalf("upsert should replace, got %d entries", idx.Count())
+count, _ := idx.Count()
+	if count != 1 {
+count, _ := idx.Count()
+		t.Fatalf("upsert should replace, got %d entries", count)
 	}
 	entries, _ := idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCompacted {
@@ -253,16 +259,18 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	if n != 3 {
 		t.Fatalf("expected 3 sessions from rebuild, got %d", n)
 	}
-	if idx.Count() != 3 {
-		t.Fatalf("expected 3 in index, got %d", idx.Count())
+count, _ := idx.Count()
+	if count != 3 {
+count, _ := idx.Count()
+		t.Fatalf("expected 3 in index, got %d", count)
 	}
 
 	// Verify types
-	entries, _ := idx.Query(QueryOptions{SessionType: SessionTypeChat})
+	entries, _ := idx.Query(QueryOptions{SessionType: string(SessionTypeChat)})
 	if len(entries) != 2 {
 		t.Errorf("expected 2 chat sessions, got %d", len(entries))
 	}
-	entries, _ = idx.Query(QueryOptions{SessionType: SessionTypeMultiball})
+	entries, _ = idx.Query(QueryOptions{SessionType: string(SessionTypeMultiball)})
 	if len(entries) != 1 {
 		t.Errorf("expected 1 multiball session, got %d", len(entries))
 	}
@@ -299,8 +307,10 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 
 	// Create a session via Append (new file triggers event)
 	store.Append("agent:bot:chat:100", msg("user", "hello"))
-	if idx.Count() != 1 {
-		t.Fatalf("expected 1 after create, got %d", idx.Count())
+count, _ := idx.Count()
+	if count != 1 {
+count, _ := idx.Count()
+		t.Fatalf("expected 1 after create, got %d", count)
 	}
 
 	entries, _ := idx.Query(QueryOptions{})
@@ -313,8 +323,9 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 
 	// Append again should NOT fire another create event
 	store.Append("agent:bot:chat:100", msg("assistant", "hi"))
-	if idx.Count() != 1 {
-		t.Fatalf("expected still 1 after second append, got %d", idx.Count())
+	if count != 1 {
+count, _ := idx.Count()
+		t.Fatalf("expected still 1 after second append, got %d", count)
 	}
 
 	// Replace should fire compacted event
@@ -355,11 +366,13 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 
 	// Create branch
 	store.CreateBranchWithOptions("agent:bot:chat:100", "agent:bot:multiball:mb-1", BranchOptions{})
-	if idx.Count() != 2 {
-		t.Fatalf("expected 2 after branch create, got %d", idx.Count())
+count, _ := idx.Count()
+	if count != 2 {
+count, _ := idx.Count()
+		t.Fatalf("expected 2 after branch create, got %d", count)
 	}
 
-	entries, _ := idx.Query(QueryOptions{SessionType: SessionTypeMultiball})
+	entries, _ := idx.Query(QueryOptions{SessionType: string(SessionTypeMultiball)})
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 multiball, got %d", len(entries))
 	}
@@ -389,7 +402,8 @@ func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
 	}
 	defer idx2.Close()
 
-	if idx2.Count() != 1 {
-		t.Fatalf("expected 1 after reopen, got %d", idx2.Count())
+	count2, _ := idx2.Count()
+	if count2 != 1 {
+		t.Fatalf("expected 1 after reopen, got %d", count2)
 	}
 }
