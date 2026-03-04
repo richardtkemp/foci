@@ -27,7 +27,6 @@ type httpHandlerDeps struct {
 	botMgr             *telegram.BotManager
 	cfg                *config.Config
 	ctx                context.Context
-	voiceAPIKey        string
 	sttProvider        voice.STT
 	ttsProvider        voice.TTS
 	reloadCredentials  func() error // hot-reload credentials from secrets.toml (nil if not supported)
@@ -67,17 +66,11 @@ func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive stri
 }
 
 // authMiddleware returns an HTTP middleware that requires a valid API key on
-// all endpoints except /voice (which has its own auth via voice.api_key).
+// all endpoints including /voice.
 // Checks Authorization: Bearer header first, then falls back to api_key query
 // param (for WebSocket compat). Uses constant-time comparison.
 func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /voice has its own auth via voice.api_key
-		if r.URL.Path == "/voice" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		// Check Authorization: Bearer header
 		token := ""
 		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
@@ -342,9 +335,8 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 
 	// WebSocket voice endpoint
 	endpointList := "/send, /status, /command, /wake"
-	if d.cfg.Voice.WSEnabled && d.voiceAPIKey != "" && d.sttProvider != nil {
+	if d.cfg.Voice.WSEnabled && d.sttProvider != nil {
 		voiceCfg := voice.HandlerConfig{
-			APIKey: d.voiceAPIKey,
 			ListAgents: func() []voice.AgentInfo {
 				var infos []voice.AgentInfo
 				for _, id := range d.agentOrder {

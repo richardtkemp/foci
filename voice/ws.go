@@ -37,9 +37,6 @@ type AgentInfo struct {
 // HandlerConfig holds all dependencies for the WebSocket handler.
 // Callbacks avoid importing agent/session packages.
 type HandlerConfig struct {
-	// APIKey for authentication (from secrets.toml voice.api_key).
-	APIKey string
-
 	// ListAgents returns the available agents in display order.
 	ListAgents func() []AgentInfo
 
@@ -82,17 +79,7 @@ type conn struct {
 // Handler returns an http.HandlerFunc that handles /voice WebSocket connections.
 func Handler(cfg HandlerConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Authenticate via query parameter.
-		apiKey := r.URL.Query().Get("api_key")
-		if apiKey == "" {
-			http.Error(w, "missing api_key", http.StatusUnauthorized)
-			return
-		}
-		if apiKey != cfg.APIKey {
-			http.Error(w, "invalid api_key", http.StatusForbidden)
-			return
-		}
-
+		// Auth is handled by the HTTP auth middleware (http.api_key).
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Errorf("voice-ws", "upgrade: %v", err)

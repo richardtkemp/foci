@@ -141,13 +141,13 @@ Voice mode is session state, not config — it resets on session reset.
 
 A WebSocket endpoint for real-time two-way voice conversation with an agent. Used by the FOCI Android app.
 
-**Connection:** `GET /voice?api_key=KEY` → upgrade to WebSocket. Server sends a `connected` message with the available agent list. Client sends `select_agent` to pick an agent, server responds with `session_ready` and an ephemeral session key (`agent:ID:voice:CONN_ID`).
+**Connection:** `GET /voice?api_key=KEY` → auth middleware → upgrade to WebSocket. Server sends a `connected` message with the available agent list. Client sends `select_agent` to pick an agent, server responds with `session_ready` and an ephemeral session key (`agent:ID:voice:CONN_ID`).
 
 **Audio flow:** Client sends `audio_start` → binary Opus frames → `audio_end`. Server transcribes via STT, sends `transcription`, processes with agent, sends `response_start` → `response_text` (final=true) → `audio_start` + binary MP3 chunks (4KB) + `audio_end` → `response_end`. Text input (`text` message) skips STT, same pipeline from agent call onward.
 
 **Concurrency:** Three mutexes per connection — `writeMu` (all WebSocket writes), `turnMu` (serializes agent turns), `audioMu` (recording state). TTS failures are non-fatal (text response still delivered).
 
-**Auth:** API key from `secrets.toml` as `voice.api_key`. Enabled when `[voice] ws_enabled = true` AND API key AND STT provider are all present.
+**Auth:** Uses `http.api_key` (same as all other endpoints). Enabled when `[voice] ws_enabled = true` AND STT provider is configured.
 
 ### Media Persistence
 

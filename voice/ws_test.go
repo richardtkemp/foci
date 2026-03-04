@@ -37,7 +37,6 @@ func (m *mockTTS) Synthesize(_ context.Context, _ string) ([]byte, error) {
 
 func testConfig(overrides ...func(*HandlerConfig)) HandlerConfig {
 	cfg := HandlerConfig{
-		APIKey: "test-key",
 		ListAgents: func() []AgentInfo {
 			return []AgentInfo{
 				{ID: "agent1", Name: "Agent One", Emoji: "🤖"},
@@ -98,39 +97,11 @@ func readRawMessage(t *testing.T, ws *websocket.Conn) (int, []byte) {
 
 // --- Tests ---
 
-func TestAuth_MissingKey(t *testing.T) {
+func TestConnect(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
 	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
-	_, resp, err := websocket.DefaultDialer.Dial(url, nil)
-	if err == nil {
-		t.Fatal("expected connection failure without api_key")
-	}
-	if resp != nil && resp.StatusCode != 401 {
-		t.Errorf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
-func TestAuth_WrongKey(t *testing.T) {
-	srv := httptest.NewServer(Handler(testConfig()))
-	defer srv.Close()
-
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=wrong"
-	_, resp, err := websocket.DefaultDialer.Dial(url, nil)
-	if err == nil {
-		t.Fatal("expected connection failure with wrong key")
-	}
-	if resp != nil && resp.StatusCode != 403 {
-		t.Errorf("status = %d, want 403", resp.StatusCode)
-	}
-}
-
-func TestAuth_ValidKey(t *testing.T) {
-	srv := httptest.NewServer(Handler(testConfig()))
-	defer srv.Close()
-
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -145,7 +116,7 @@ func TestConnected_AgentList(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -166,7 +137,7 @@ func TestSelectAgent_SessionReady(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -194,7 +165,7 @@ func TestSelectAgent_UnknownAgent(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -217,7 +188,7 @@ func TestPingPong(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -237,7 +208,7 @@ func TestTextInput_FullPipeline(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -308,7 +279,7 @@ func TestAudioFlow_FullPipeline(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -366,7 +337,7 @@ func TestNoAgentSelected_Error(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -388,7 +359,7 @@ func TestEmptyAudio_Error(t *testing.T) {
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -417,7 +388,7 @@ func TestSTTError(t *testing.T) {
 	srv := httptest.NewServer(Handler(cfg))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -446,7 +417,7 @@ func TestTTSError_NonFatal(t *testing.T) {
 	srv := httptest.NewServer(Handler(cfg))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -487,7 +458,7 @@ func TestAudioChunking(t *testing.T) {
 	srv := httptest.NewServer(Handler(cfg))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
@@ -563,7 +534,7 @@ func TestNilTTS_NoAudio(t *testing.T) {
 	srv := httptest.NewServer(Handler(cfg))
 	defer srv.Close()
 
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice?api_key=test-key"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
 	ws := dialWS(t, url)
 	defer ws.Close()
 
