@@ -27,6 +27,7 @@ import (
 	"foci/config"
 	"foci/gemini"
 	"foci/keepalive"
+	oai "foci/openai"
 	"foci/log"
 	"foci/mana"
 	mcpkg "foci/mcp"
@@ -370,6 +371,23 @@ func main() {
 		log.Infof("main", "gemini client ready (cache_ttl=%s)", cfg.Gemini.CacheTTL)
 	})
 
+	// OpenAI client (created lazily only if any agent uses it)
+	var openaiClient provider.Client
+	openaiClientOnce := sync.OnceFunc(func() {
+		apiKey, _ := store.Get("openai.api_key")
+		if apiKey == "" {
+			log.Errorf("main", "openai.api_key not found in secrets — openai provider unavailable")
+			return
+		}
+		httpTimeout := parseDurationDefault(cfg.OpenAI.HTTPTimeout, 120*time.Second)
+		opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
+		if cfg.OpenAI.BaseURL != "" {
+			opts = append(opts, oai.WithBaseURL(cfg.OpenAI.BaseURL))
+		}
+		openaiClient = oai.NewClient(apiKey, opts...)
+		log.Infof("main", "openai client ready (base_url=%s)", cfg.OpenAI.BaseURL)
+	})
+
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
 	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
@@ -542,9 +560,10 @@ func main() {
 		return infos
 	}
 
-	// Init Gemini client unconditionally — any agent may switch to Gemini via /model.
+	// Init Gemini and OpenAI clients unconditionally — any agent may switch via /model.
 	// Safe: only creates the client if the API key exists.
 	geminiClientOnce()
+	openaiClientOnce()
 
 	// Build provider clients map for cross-provider model switching.
 	allClients := map[string]provider.Client{
@@ -552,6 +571,9 @@ func main() {
 	}
 	if geminiClient != nil {
 		allClients["gemini"] = geminiClient
+	}
+	if openaiClient != nil {
+		allClients["openai"] = openaiClient
 	}
 
 	for _, acfg := range cfg.Agents {
@@ -572,6 +594,12 @@ func main() {
 				continue
 			}
 			agentClient = geminiClient
+		case "openai":
+			if openaiClient == nil {
+				log.Errorf("main", "agent %q: openai provider requested but client unavailable", acfg.ID)
+				continue
+			}
+			agentClient = openaiClient
 		default:
 			agentClient = anthropicClient
 		}
@@ -606,9 +634,9 @@ func main() {
 		agentOrder = append(agentOrder, acfg.ID)
 
 		// Keepalive & background work runner (per-agent config, falls back to global).
-		// Gemini agents skip keepalive (Anthropic ephemeral cache warming) — Gemini's
-		// CacheManager handles its own TTL extension. Background/memory/warnings still run.
-		kaEnabled := acfg.Keepalive.Enabled && acfg.Provider != "gemini"
+		// Non-Anthropic agents skip keepalive (Anthropic ephemeral cache warming) — Gemini's
+		// CacheManager handles its own TTL extension, OpenAI has no cache. Background/memory/warnings still run.
+		kaEnabled := acfg.Keepalive.Enabled && acfg.Provider != "gemini" && acfg.Provider != "openai"
 		if kaEnabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) || acfg.InjectAgentWarnings {
 			kaOrientPrompt := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			branchFn := buildBranchFunc(

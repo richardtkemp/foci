@@ -99,7 +99,7 @@ type AgentConfig struct {
 	ID                      string            `toml:"id"`
 	Name                    string            `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
 	Emoji                   string            `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Provider                string            `toml:"provider"` // "anthropic" (default) or "gemini"
+	Provider                string            `toml:"provider"` // "anthropic" (default), "gemini", or "openai"
 	Model                   string            `toml:"model"`
 	Workspace               string            `toml:"workspace"`
 	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
@@ -166,6 +166,11 @@ type AgentConfig struct {
 type GeminiConfig struct {
 	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
 	CacheTTL    string `toml:"cache_ttl"`    // context cache TTL (default "1h", "0" disables)
+}
+
+type OpenAIConfig struct {
+	BaseURL     string `toml:"base_url"`     // API base URL (default: "https://api.openai.com", override for OpenRouter/Together/etc.)
+	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
 }
 
 type AnthropicConfig struct {
@@ -368,7 +373,7 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Provider            string           `toml:"provider"`              // default provider: "anthropic" (default) or "gemini"
+	Provider            string           `toml:"provider"`              // default provider: "anthropic" (default), "gemini", or "openai"
 	Model               string           `toml:"model"`                 // default model (default: claude-haiku-4-5)
 	DuplicateMessages              bool             `toml:"duplicate_messages"`                // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages  bool             `toml:"batch_partial_assistant_messages"`   // default batch_partial_assistant_messages (default: false)
@@ -436,6 +441,7 @@ type Config struct {
 	Agents             []AgentConfig         `toml:"agents"`   // multi-agent: array of agents
 	Anthropic          AnthropicConfig       `toml:"anthropic"`
 	Gemini             GeminiConfig          `toml:"gemini"`
+	OpenAI             OpenAIConfig          `toml:"openai"`
 	Telegram           TelegramConfig        `toml:"telegram"`
 	Sessions           SessionsConfig        `toml:"sessions"`
 	Memory             MemoryConfig          `toml:"memory"`
@@ -581,6 +587,7 @@ func validate(cfg *Config) error {
 		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
 		{"anthropic", "cc_credentials_poll_interval", cfg.Anthropic.CCCredentialsPollInterval},
 		{"gemini", "http_timeout", cfg.Gemini.HTTPTimeout},
+		{"openai", "http_timeout", cfg.OpenAI.HTTPTimeout},
 		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
 		{"tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout},
 		{"tools", "web_search_timeout", cfg.Tools.WebSearchTimeout},
@@ -810,11 +817,14 @@ func Load(path string) (*Config, error) {
 	// Model aliases defaults (if not configured)
 	if len(cfg.Models.Aliases) == 0 {
 		cfg.Models.Aliases = map[string]string{
-			"opus":   "claude-opus-4-6",
-			"sonnet": "claude-sonnet-4-6",
-			"haiku":  "claude-haiku-4-5",
-			"flash":  "gemini-2.5-flash",
-			"pro":    "gemini-2.5-pro",
+			"opus":    "claude-opus-4-6",
+			"sonnet":  "claude-sonnet-4-6",
+			"haiku":   "claude-haiku-4-5",
+			"flash":   "gemini-2.5-flash",
+			"pro":     "gemini-2.5-pro",
+			"gpt4o":   "gpt-4o",
+			"o3":      "o3",
+			"o4mini":  "o4-mini",
 		}
 	}
 
@@ -892,6 +902,9 @@ func Load(path string) (*Config, error) {
 	// Gemini defaults
 	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")
 	setStringDefault(&cfg.Gemini.CacheTTL, "1h")
+
+	// OpenAI defaults
+	setStringDefault(&cfg.OpenAI.HTTPTimeout, "120s")
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)
