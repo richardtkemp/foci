@@ -82,6 +82,7 @@ var spawnExploreAllowed = map[string]bool{
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
 	Client             provider.Client
+	Clients            map[string]provider.Client               // "anthropic" → ..., "gemini" → ...; for cross-provider resolution
 	Bootstrap          SystemBlocksProvider
 	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
@@ -165,6 +166,9 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				model = deps.Model
 			}
 
+			// Resolve client based on model provider
+			client := resolveSpawnClient(model, deps.Client, deps.Clients)
+
 			timeout := time.Duration(p.Timeout) * time.Second
 
 			switch p.Context {
@@ -174,7 +178,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, deps.Client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -190,7 +194,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				result, err := spawnOneShot(ctx, deps.Client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -213,11 +217,12 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 						exploreModel = full
 					}
 				}
+				exploreClient := resolveSpawnClient(exploreModel, deps.Client, deps.Clients)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, deps.Client, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
+				result, err := spawnOneShot(ctx, exploreClient, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -231,6 +236,23 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			}
 		},
 	}
+}
+
+// resolveSpawnClient returns the appropriate client for a model.
+// If the model is a Gemini model and a gemini client is available, use it;
+// otherwise fall back to the default client.
+func resolveSpawnClient(model string, defaultClient provider.Client, clients map[string]provider.Client) provider.Client {
+	if strings.HasPrefix(model, "gemini-") {
+		if gc := clients["gemini"]; gc != nil {
+			return gc
+		}
+	}
+	if strings.HasPrefix(model, "claude-") {
+		if ac := clients["anthropic"]; ac != nil {
+			return ac
+		}
+	}
+	return defaultClient
 }
 
 // spawnToolSet builds API tool definitions and a name→Tool map from the

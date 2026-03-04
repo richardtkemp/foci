@@ -947,6 +947,18 @@ func main() {
 		return infos
 	}
 
+	// Init Gemini client unconditionally — any agent may switch to Gemini via /model.
+	// Safe: only creates the client if the API key exists.
+	geminiClientOnce()
+
+	// Build provider clients map for cross-provider model switching.
+	allClients := map[string]provider.Client{
+		"anthropic": anthropicClient,
+	}
+	if geminiClient != nil {
+		allClients["gemini"] = geminiClient
+	}
+
 	for _, acfg := range cfg.Agents {
 		// Resolve memory backends: per-agent (if configured) or shared
 		var agentBackends map[string]memory.Searcher
@@ -960,7 +972,6 @@ func main() {
 		var agentClient provider.Client
 		switch acfg.Provider {
 		case "gemini":
-			geminiClientOnce()
 			if geminiClient == nil {
 				log.Errorf("main", "agent %q: gemini provider requested but client unavailable", acfg.ID)
 				continue
@@ -975,6 +986,7 @@ func main() {
 			cfg:             cfg,
 			configPath:      configPath,
 			client:          agentClient,
+			allClients:      allClients,
 			sessions:        sessions,
 			store:           store,
 			bwStore:         bwStore,
@@ -998,8 +1010,11 @@ func main() {
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
 
-		// Keepalive & background work runner (per-agent config, falls back to global)
-		if acfg.Keepalive.Enabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) || acfg.InjectAgentWarnings {
+		// Keepalive & background work runner (per-agent config, falls back to global).
+		// Gemini agents skip keepalive (Anthropic ephemeral cache warming) — Gemini's
+		// CacheManager handles its own TTL extension. Background/memory/warnings still run.
+		kaEnabled := acfg.Keepalive.Enabled && acfg.Provider != "gemini"
+		if kaEnabled || acfg.Background.Enabled || hasMemoryFormation(acfg.MemoryFormation) || acfg.InjectAgentWarnings {
 			kaOrientPrompt := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 			branchFn := buildBranchFunc(
 				acfg.ID, inst.ag, sessions, inst.defaultSessionKey,
@@ -1063,9 +1078,11 @@ func main() {
 				})
 			}
 
+			kaCfg := acfg.Keepalive
+			kaCfg.Enabled = kaEnabled
 			inst.kaRunner = keepalive.New(keepalive.RunnerConfig{
 				AgentID:           acfg.ID,
-				Keepalive:         acfg.Keepalive,
+				Keepalive:         kaCfg,
 				Background:        acfg.Background,
 				MemoryFormation:   acfg.MemoryFormation,
 				PromptSearchDirs:  inst.promptSearchDirs,
@@ -1501,6 +1518,7 @@ type setupParams struct {
 	cfg             *config.Config
 	configPath      string
 	client          provider.Client
+	allClients      map[string]provider.Client // all provider clients for cross-provider switching
 	sessions        *session.Store
 	store           *secrets.Store
 	bwStore         *bitwarden.Store
@@ -1638,7 +1656,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, acfg.Model, p.cfg.Models.Aliases))
+	registry.Register(tools.NewSummaryTool(p.client, p.allClients, acfg.Model, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
@@ -1704,7 +1722,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
 	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
-	compactor := compaction.NewCompactor(p.client, p.sessions, acfg.Model, compactionThreshold)
+	compactor := compaction.NewCompactor(p.sessions, acfg.Model, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
@@ -1787,6 +1805,7 @@ func setupAgent(p setupParams) *agentInstance {
 	ag = &agent.Agent{
 		Log:                         log.NewComponentLogger("agent:" + acfg.ID),
 		Client:                      p.client,
+		Clients:                     p.allClients,
 		Sessions:                    p.sessions,
 		Tools:                       registry,
 		ServerTools:                 serverTools,
@@ -1882,6 +1901,7 @@ func setupAgent(p setupParams) *agentInstance {
 	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
+		Clients:         p.allClients,
 		Bootstrap:       bootstrap,
 		Registry:        registry,
 		Sessions:        &sessionBranchAdapter{store: p.sessions},
@@ -2006,29 +2026,46 @@ func setupAgent(p setupParams) *agentInstance {
 		return nil
 	}))
 
-	// Model resolution using config aliases
-	var resolveModelFn func(string) string
-	if len(p.cfg.Models.Aliases) > 0 {
-		aliases := p.cfg.Models.Aliases
-		resolveModelFn = func(input string) string {
-			key := strings.ToLower(strings.TrimSpace(input))
+	// Model resolution using config aliases.
+	// resolveAliasFn resolves a short alias to a full model ID (no provider prefix handling).
+	aliases := p.cfg.Models.Aliases
+	resolveAliasFn := func(input string) string {
+		key := strings.ToLower(strings.TrimSpace(input))
+		if len(aliases) > 0 {
 			if resolved, ok := aliases[key]; ok {
 				return resolved
 			}
-			if input == "" {
-				if resolved, ok := aliases["sonnet"]; ok {
-					return resolved
-				}
-			}
-			return input
 		}
-	} else {
-		resolveModelFn = func(input string) string { return input }
+		if input == "" {
+			if resolved, ok := aliases["sonnet"]; ok {
+				return resolved
+			}
+		}
+		return input
 	}
+
+	// resolveModelFn handles "provider:alias" syntax (e.g. "gemini:flash", "anthropic:haiku").
+	// Returns (provider, fullModelID). Empty provider means use current session's provider.
+	resolveModelFn := func(input string) (string, string) {
+		input = strings.TrimSpace(input)
+		if i := strings.IndexByte(input, ':'); i > 0 {
+			return input[:i], resolveAliasFn(input[i+1:])
+		}
+		return "", resolveAliasFn(input)
+	}
+
+	// clientsMap is populated by main() with all available provider clients.
+	clientsMap := ag.Clients
 
 	cmds.Register(command.NewModelCommand(
 		func(ctx context.Context) string { return ag.SessionModel(sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, m string) { ag.SetSessionModel(sessionKeyFromCtx(ctx), m) },
+		func(ctx context.Context, prov string, m string) {
+			var client provider.Client
+			if prov != "" {
+				client = clientsMap[prov]
+			}
+			ag.SetSessionModel(sessionKeyFromCtx(ctx), m, client)
+		},
 		resolveModelFn,
 		p.cfg.Models.Aliases,
 	))
@@ -2217,8 +2254,17 @@ func setupAgent(p setupParams) *agentInstance {
 			if full, ok := p.cfg.Models.Aliases[cheapAlias]; ok {
 				cheapModel = full
 			}
+			// Resolve the right client for the cheap model
+			diffClient := p.client
+			if clientsMap != nil {
+				if strings.HasPrefix(cheapModel, "gemini-") {
+					if gc := clientsMap["gemini"]; gc != nil {
+						diffClient = gc
+					}
+				}
+			}
 			prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
-			resp, err := p.client.SendMessage(callCtx, &provider.MessageRequest{
+			resp, err := diffClient.SendMessage(callCtx, &provider.MessageRequest{
 				Model:     cheapModel,
 				MaxTokens: 1024,
 				Messages:  []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
@@ -2380,7 +2426,7 @@ func setupAgent(p setupParams) *agentInstance {
 		HomeDir:     filepath.Dir(acfg.Workspace),
 		ListFn:      p.agentListFn,
 		SecretNames: func() []string { return agentStore.Names() },
-		ResolveModel: resolveModelFn,
+		ResolveModel: resolveAliasFn,
 	}
 	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
 	cmds.Register(command.NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
@@ -2408,7 +2454,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if handoffMsg == "" {
 			handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), promptSearchDirs...)
 		}
-		summary, err := ag.Compactor.Compact(ctx, sk, system, summaryPrompt, handoffMsg, dryRun)
+		summary, err := ag.Compactor.Compact(ctx, ag.SessionClient(sk), sk, system, summaryPrompt, handoffMsg, dryRun)
 		if err != nil {
 			return 0, fmt.Errorf("compaction failed: %w", err)
 		}

@@ -16,7 +16,6 @@ import (
 // Compactor handles session compaction when context gets too large.
 type Compactor struct {
 	log              *log.ComponentLogger
-	client           provider.Client
 	sessions         *session.Store
 	model            string
 	threshold        float64 // fraction of context window (e.g. 0.8)
@@ -29,10 +28,9 @@ type Compactor struct {
 }
 
 // NewCompactor creates a new Compactor with defaults.
-func NewCompactor(client provider.Client, sessions *session.Store, model string, threshold float64) *Compactor {
+func NewCompactor(sessions *session.Store, model string, threshold float64) *Compactor {
 	return &Compactor{
 		log:         log.NewComponentLogger("compaction"),
-		client:      client,
 		sessions:    sessions,
 		model:       model,
 		threshold:   threshold,
@@ -254,7 +252,7 @@ var DefaultHandoffMessage = prompts.CompactionHandoff()
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
 // When dryRun is true, the full pipeline runs (API call, summary generation)
 // but sessions.Replace() is skipped — the session is left unchanged.
-func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, error) {
+func (c *Compactor) Compact(ctx context.Context, client provider.Client, sessionKey string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, error) {
 	if summaryPrompt == "" {
 		summaryPrompt = prompts.CompactionSummary()
 	}
@@ -342,7 +340,7 @@ func (c *Compactor) Compact(ctx context.Context, sessionKey string, system []pro
 	if c.effort != "" {
 		req.Output = &provider.OutputConfig{Effort: c.effort}
 	}
-	resp, err := c.client.SendMessage(ctx, req)
+	resp, err := client.SendMessage(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("summarize for compaction: %w", err)
 	}

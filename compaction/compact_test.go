@@ -74,7 +74,7 @@ func TestContextLimitExported(t *testing.T) {
 }
 
 func TestShouldCompactWithUsage(t *testing.T) {
-	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 
 	// Under threshold (160k = 200k * 0.8)
 	usage := &provider.Usage{InputTokens: 100_000}
@@ -99,7 +99,7 @@ func TestShouldCompactWithUsage(t *testing.T) {
 }
 
 func TestShouldCompactWithEstimate(t *testing.T) {
-	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 
 	// Small conversation — should not compact
 	small := []provider.Message{
@@ -112,7 +112,7 @@ func TestShouldCompactWithEstimate(t *testing.T) {
 }
 
 func TestShouldCompactExactThreshold(t *testing.T) {
-	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 
 	// Exactly at threshold (200k * 0.8 = 160k)
 	usage := &provider.Usage{InputTokens: 160_000}
@@ -156,8 +156,8 @@ func TestCompactBasic(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	summary, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -210,8 +210,8 @@ func TestCompactDryRun(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "", true)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	summary, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", true)
 	if err != nil {
 		t.Fatalf("Compact dry-run: %v", err)
 	}
@@ -242,8 +242,8 @@ func TestCompactTooFewMessages(t *testing.T) {
 	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hi")})
 	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
 
-	c := NewCompactor(nil, store, "claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	summary, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -283,11 +283,11 @@ func TestCompactWithScratchpad(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, err = c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err = c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -331,11 +331,11 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, err = c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err = c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -364,8 +364,8 @@ func TestCompactAPIError(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -381,7 +381,7 @@ func TestCompactAPIError(t *testing.T) {
 }
 
 func TestWithConfigOverrides(t *testing.T) {
-	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	c.WithConfig(2048, 8, 10)
 
 	// Model stays as initialized (always uses agent's model)
@@ -400,7 +400,7 @@ func TestWithConfigOverrides(t *testing.T) {
 }
 
 func TestWithConfigEmptyValues(t *testing.T) {
-	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	original := *c
 	c.WithConfig(0, 0, 0)
 
@@ -441,8 +441,8 @@ func TestCompactCustomPrompts(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
-	_, err := c.Compact(context.Background(), sessionKey, nil, "custom summary prompt", "custom handoff msg", false)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "custom summary prompt", "custom handoff msg", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -488,9 +488,9 @@ func TestCompactDefaultPrompts(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	// Empty strings should fall back to defaults
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -522,10 +522,10 @@ func TestCompactPreserveMessages(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("assistant reply %d", i))})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 4) // preserve last 4 messages
 
-	summary, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	summary, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -594,10 +594,10 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 0) // preserve=0 → same as current behaviour
 
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -628,10 +628,10 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 100) // preserve=100 but only 10 messages
 
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -660,10 +660,10 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
-		c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 		c.WithConfig(4096, 4, 4) // preserve 4 → [u3,a3,u4,a4] → starts user
 
-		if _, err := c.Compact(context.Background(), key, nil, "", "", false); err != nil {
+		if _, err := c.Compact(context.Background(), client, key, nil, "", "", false); err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
 
@@ -693,10 +693,10 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
-		c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 		c.WithConfig(4096, 4, 3) // preserve 3 → [a3,u4,a4] → starts assistant
 
-		if _, err := c.Compact(context.Background(), key, nil, "", "", false); err != nil {
+		if _, err := c.Compact(context.Background(), client, key, nil, "", "", false); err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
 
@@ -979,10 +979,10 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 
 	// preserve=3 would split between tool_use[11] and tool_result[12].
 	// safeSplitPoint should adjust to 11, making preserve=3.
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 3)
 
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -1036,11 +1036,11 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u2")})
 	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a2")})
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 0) // no preservation — all messages summarized
 
 	// This should not fail — repairOrphanedToolUse should inject synthetic results.
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with orphaned tool_use: %v", err)
 	}
@@ -1068,12 +1068,12 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 3)
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, err = c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err = c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -1124,9 +1124,9 @@ func TestCompactWithEffortOverride(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithEffort("high")
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -1165,9 +1165,9 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	// Not setting effort — should omit from request
-	_, err := c.Compact(context.Background(), sessionKey, nil, "", "", false)
+	_, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -1182,7 +1182,7 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 }
 
 func TestWithEffort(t *testing.T) {
-	c := NewCompactor(nil, nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	if c.effort != "" {
 		t.Errorf("initial effort = %q, want empty", c.effort)
 	}

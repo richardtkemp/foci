@@ -16,7 +16,7 @@ import (
 func TestGuardToolResult_UnderLimit(t *testing.T) {
 	a := &Agent{MaxResultChars: 100}
 	result := "short result"
-	got := a.guardToolResult(context.Background(), "test", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", result, nil)
 	if got != result {
 		t.Errorf("expected original result, got %q", got)
 	}
@@ -25,7 +25,7 @@ func TestGuardToolResult_UnderLimit(t *testing.T) {
 func TestGuardToolResult_Disabled(t *testing.T) {
 	a := &Agent{MaxResultChars: 0}
 	result := "any length result"
-	got := a.guardToolResult(context.Background(), "test", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", result, nil)
 	if got != result {
 		t.Errorf("expected original result when disabled, got %q", got)
 	}
@@ -34,7 +34,7 @@ func TestGuardToolResult_Disabled(t *testing.T) {
 func TestGuardToolResult_ExactlyAtLimit(t *testing.T) {
 	a := &Agent{MaxResultChars: 10}
 	result := "0123456789" // exactly 10 chars
-	got := a.guardToolResult(context.Background(), "test", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", result, nil)
 	if got != result {
 		t.Errorf("expected original result at exact limit, got %q", got)
 	}
@@ -44,7 +44,7 @@ func TestGuardToolResult_OverLimit_JSONHint(t *testing.T) {
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
 	result := `{"key": "value", "data": [1, 2, 3, 4, 5, 6]}`
-	got := a.guardToolResult(context.Background(), "test", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", result, nil)
 
 	if strings.Contains(got, `"value"`) {
 		t.Error("guard message should not contain original JSON values")
@@ -64,7 +64,7 @@ func TestGuardToolResult_OverLimit_MarkdownHint(t *testing.T) {
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
 	result := "# Heading\n\nLots of markdown content that exceeds the limit"
-	got := a.guardToolResult(context.Background(), "test", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", result, nil)
 
 	if strings.Contains(got, "Heading") {
 		t.Error("guard message should not contain partial content")
@@ -78,7 +78,7 @@ func TestGuardToolResult_OverLimit_PlainTextHint(t *testing.T) {
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
 	result := "some plain text output that is longer than the limit allows"
-	got := a.guardToolResult(context.Background(), "test", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", result, nil)
 
 	if strings.Contains(got, "plain text") {
 		t.Error("guard message should not contain partial content")
@@ -92,7 +92,7 @@ func TestGuardToolResult_WritesFullContent(t *testing.T) {
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
 	result := "this content is definitely longer than the 10 char limit"
-	a.guardToolResult(context.Background(), "mytest", result, nil)
+	a.guardToolResult(context.Background(), nil, "mytest", result, nil)
 
 	// Find the written file
 	entries, err := os.ReadDir(tmpDir)
@@ -116,7 +116,7 @@ func TestGuardToolResult_MessageFormat(t *testing.T) {
 	tmpDir := t.TempDir()
 	a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
 	result := "0123456789extra" // 15 chars, limit 10
-	got := a.guardToolResult(context.Background(), "shell", result, nil)
+	got := a.guardToolResult(context.Background(), nil, "shell", result, nil)
 
 	if !strings.Contains(got, "(15 chars, limit 10)") {
 		t.Errorf("missing size info in %q", got)
@@ -253,7 +253,7 @@ func TestGuardToolResult_FileExtension(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			a := &Agent{MaxResultChars: 10, ToolResultTempDir: tmpDir}
-			a.guardToolResult(context.Background(), "test", tt.content, nil)
+			a.guardToolResult(context.Background(), nil, "test", tt.content, nil)
 
 			entries, err := os.ReadDir(tmpDir)
 			if err != nil {
@@ -306,7 +306,7 @@ func TestGuardToolResult_AutoSummary(t *testing.T) {
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
-	got := a.guardToolResult(context.Background(), "test", bigResult, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", bigResult, nil)
 	if !strings.Contains(got, "Result too large") {
 		t.Error("expected fallback guard message when ModelAliases is nil")
 	}
@@ -329,7 +329,7 @@ func TestGuardToolResult_SkipsSummaryAboveMaxSummaryChars(t *testing.T) {
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
-	got := a.guardToolResult(context.Background(), "test", bigResult, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", bigResult, nil)
 	if !strings.Contains(got, "Result too large") {
 		t.Error("expected fallback guard message when result exceeds MaxSummaryChars")
 	}
@@ -348,7 +348,7 @@ func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
-	got := a.guardToolResult(context.Background(), "test", bigResult, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", bigResult, nil)
 	if !strings.Contains(got, "Result too large") {
 		t.Error("expected fallback guard message when Client is nil")
 	}
@@ -490,7 +490,7 @@ func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
-	got := a.guardToolResult(context.Background(), "test", bigResult, nil)
+	got := a.guardToolResult(context.Background(), nil, "test", bigResult, nil)
 	if !strings.Contains(got, "Result too large") {
 		t.Error("expected fallback guard message when AutoSummarise is false")
 	}

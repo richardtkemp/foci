@@ -1224,7 +1224,7 @@ func TestSessionModel(t *testing.T) {
 	}
 
 	// Set per-session override
-	ag.SetSessionModel("s1", "claude-sonnet-4-5")
+	ag.SetSessionModel("s1", "claude-sonnet-4-5", nil)
 	if got := ag.SessionModel("s1"); got != "claude-sonnet-4-5" {
 		t.Errorf("SessionModel after set = %q, want %q", got, "claude-sonnet-4-5")
 	}
@@ -1235,7 +1235,7 @@ func TestSessionModel(t *testing.T) {
 	}
 
 	// Clear override
-	ag.SetSessionModel("s1", "")
+	ag.SetSessionModel("s1", "", nil)
 	if got := ag.SessionModel("s1"); got != "claude-haiku-4-5" {
 		t.Errorf("SessionModel after clear = %q, want %q", got, "claude-haiku-4-5")
 	}
@@ -1258,7 +1258,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	// Persist values via setters
 	ag.SetSessionEffort("s1", "high")
 	ag.SetSessionThinking("s1", "adaptive")
-	ag.SetSessionModel("s1", "claude-opus-4-6")
+	ag.SetSessionModel("s1", "claude-opus-4-6", nil)
 
 	// Create a fresh agent (simulating restart) with the same state store
 	ag2 := &Agent{
@@ -1760,7 +1760,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		client := newTestClientWithBase(server.URL, "test-token")
 		store := session.NewStore(t.TempDir())
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
 
 		ag := &Agent{
 			Client:    client,
@@ -1841,7 +1841,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		client := newTestClientWithBase(server.URL, "test-token")
 		store := session.NewStore(t.TempDir())
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
 
 		// Set up scratchpad with entries
 		scratchpad, err := memory.NewScratchpad(filepath.Join(t.TempDir(), "scratchpad.db"))
@@ -1910,7 +1910,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		client := newTestClientWithBase(server.URL, "test-token")
 		store := session.NewStore(t.TempDir())
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
 		compactor.WithConfig(4096, 4, 4) // preserve last 4 messages
 
 		ag := &Agent{
@@ -2022,7 +2022,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		client := newTestClientWithBase(server.URL, "test-token")
 		store := session.NewStore(t.TempDir())
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
 
 		var notified []string
 		ag := &Agent{
@@ -2065,7 +2065,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		client := newTestClientWithBase(server.URL, "test-token")
 		store := session.NewStore(t.TempDir())
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
 
 		var notified []string
 		warnQ := warnings.NewQueue(0, 0)
@@ -2133,7 +2133,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		client := newTestClientWithBase(server.URL, "test-token")
 		store := session.NewStore(t.TempDir())
 		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(client, store, "claude-haiku-4-5", 0.8)
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
 
 		notifier := tools.NewAsyncNotifier(func(sk, msg string) {})
 		var notified []string

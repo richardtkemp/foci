@@ -23,7 +23,8 @@ config.Load(path)                                        ← validates values; l
   →   1. Setup token: anthropic.setup_token from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   2. API key: anthropic.api_key from secrets.toml → tokenHolder + NewClientWithTokenFunc (hot-reloadable)
   →   3. Claude Code fallback: NewOAuthManager(~/.claude/.credentials.json) → read-only, auto-refresh
-  → Gemini client (lazy): created on first agent with provider="gemini", from gemini.api_key in secrets.toml
+  → Gemini client (unconditional): created on startup from gemini.api_key in secrets.toml (safe if key absent)
+  → allClients map: {"anthropic": anthropicClient, "gemini": geminiClient} — enables dynamic provider switching
   → Per-agent provider resolution: agent.Provider → anthropicClient or geminiClient (provider.Client interface)
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
@@ -44,7 +45,7 @@ config.Load(path)                                        ← validates values; l
     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
     → skills.Load(cfg.Skills.Dirs)
-    → compaction.NewCompactor(client, sessions, model, threshold)
+    → compaction.NewCompactor(sessions, model, threshold)
     → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
     → command.NewRegistry() + register built-ins + custom scripts + skill commands
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
@@ -344,6 +345,21 @@ type Client interface {
 }
 ```
 
+### Dynamic Provider Switching
+
+Agents can switch providers at runtime via `/model provider:alias` (e.g. `/model gemini:flash`, `/model anthropic:haiku`). Without a prefix, the model stays on the session's current provider.
+
+**Resolution chain:**
+1. `/model gemini:flash` → parse prefix `gemini`, resolve alias `flash` → full model ID via `[models.aliases]`
+2. Look up `agent.Clients["gemini"]` → per-session client override stored in `sessionMeta.client`
+3. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
+
+**Wiring:** `agent.Clients` map (`map[string]provider.Client`) is populated at startup with all available clients (`"anthropic"` and `"gemini"` if key exists). This map is shared with `tools.SpawnDeps.Clients` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
+
+**Compaction:** `Compactor.Compact()` receives the client as a parameter (not stored on the struct), so compaction uses the session's active provider client.
+
+**Keepalive:** Skipped for Gemini agents — Anthropic ephemeral cache warming is unnecessary since Gemini's `CacheManager` handles its own TTL extension.
+
 ## Anthropic API Client (`anthropic/`)
 
 Implements `provider.Client`. Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
@@ -496,7 +512,7 @@ Wired in `main.go` after tmux memory monitor. Warning callback iterates `agents`
 
 ### Tool Result Guard
 
-If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. Before returning a guard message, the agent makes a side-call to Haiku to auto-summarise the oversized content, including recent conversation context (configurable via `summary_context_turns` and `summary_context_chars`). The agent receives the summary plus a reference to the saved file for deeper inspection. If the Haiku call fails (API error, context cancelled), falls back to the original guard message with file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown). This prevents large results from bloating session history while giving the agent useful visibility into the content.
+If a tool result exceeds `agent.MaxResultChars` (from config, default 5,000), the result is written to `agent.ToolResultTempDir` instead of injected directly. Before returning a guard message, the agent makes a side-call to a cheap model to auto-summarise the oversized content, including recent conversation context (configurable via `summary_context_turns` and `summary_context_chars`). The model is provider-aware: Haiku for Anthropic sessions, Flash for Gemini sessions (resolved via the session's `client`). The agent receives the summary plus a reference to the saved file for deeper inspection. If the cheap-model call fails (API error, context cancelled), falls back to the original guard message with file path and contextual tool hints (e.g. `jq` for JSON, `mdq` for markdown). This prevents large results from bloating session history while giving the agent useful visibility into the content.
 
 ## Slash Commands (`command/`)
 
@@ -509,6 +525,8 @@ Messages starting with `/` are intercepted at the Telegram router level before r
    - `/mana` — check quota remaining (`/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
+
+**`/model` provider switching:** Accepts `provider:alias` syntax (e.g. `/model gemini:flash`, `/model anthropic:haiku`). Without a prefix, the alias resolves using the session's current provider. The `resolveModel` callback in `main.go` parses the prefix and returns `(provider, model)`. The `setModel` callback looks up the provider's client from the agent's `Clients` map and calls `ag.SetSessionModel(sessionKey, model, client)` to store both the model and the per-session client override.
 
 Commands use callbacks (closures) to access internal state, avoiding package dependencies on `session`, `agent`, etc.
 

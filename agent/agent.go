@@ -47,9 +47,10 @@ type sessionMeta struct {
 	prevCacheRead   int
 	prevCacheWrite  int
 	voiceMode       bool
-	effort          string // per-session effort override (empty = use agent default)
-	thinking        string // per-session thinking override (empty = use agent default)
-	model           string // per-session model override (empty = use agent default)
+	effort          string          // per-session effort override (empty = use agent default)
+	thinking        string          // per-session thinking override (empty = use agent default)
+	model           string          // per-session model override (empty = use agent default)
+	client          provider.Client // per-session client override (nil = use a.Client)
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -73,6 +74,7 @@ type CacheBustFunc func(session string, prevRead, curRead int)
 // Agent is the core agent loop.
 type Agent struct {
 	Client        provider.Client
+	Clients       map[string]provider.Client // "anthropic" → ..., "gemini" → ...; for cross-provider switching
 	Sessions      *session.Store
 	Tools         *tools.Registry
 	Bootstrap     *workspace.Bootstrap
@@ -315,11 +317,13 @@ func (a *Agent) SessionModel(sessionKey string) string {
 	return a.Model
 }
 
-// SetSessionModel sets the per-session model override and persists it.
-func (a *Agent) SetSessionModel(sessionKey, value string) {
+// SetSessionModel sets the per-session model and client override and persists it.
+// client may be nil to fall back to the agent's default client.
+func (a *Agent) SetSessionModel(sessionKey, value string, client provider.Client) {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	sm.model = value
+	sm.client = client
 	a.metaMu.Unlock()
 
 	if a.StateStore != nil {
@@ -329,6 +333,18 @@ func (a *Agent) SetSessionModel(sessionKey, value string) {
 			a.logger().Errorf("persist model: %v", err)
 		}
 	}
+}
+
+// SessionClient returns the effective client for the session.
+// Returns the per-session client override if set, otherwise the agent-wide default.
+func (a *Agent) SessionClient(sessionKey string) provider.Client {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	if sm.client != nil {
+		return sm.client
+	}
+	return a.Client
 }
 
 // RestoreSessionOverrides loads per-session effort/thinking/model from state store.
@@ -571,7 +587,7 @@ func detectContentExtension(content string) string {
 	return ".txt"
 }
 
-func (a *Agent) guardToolResult(ctx context.Context, toolName string, result string, messages []anthropic.Message) string {
+func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, toolName string, result string, messages []anthropic.Message) string {
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
 	}
@@ -598,8 +614,8 @@ func (a *Agent) guardToolResult(ctx context.Context, toolName string, result str
 	a.logger().Debugf("tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
-	if a.AutoSummarise && a.Client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || len(result) <= a.MaxSummaryChars) {
-		if summary := a.summariseToolResult(ctx, toolName, result, messages, fpath); summary != "" {
+	if a.AutoSummarise && client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || len(result) <= a.MaxSummaryChars) {
+		if summary := a.summariseToolResult(ctx, client, toolName, result, messages, fpath); summary != "" {
 			return summary
 		}
 	}
@@ -608,11 +624,16 @@ func (a *Agent) guardToolResult(ctx context.Context, toolName string, result str
 	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", len(result), a.MaxResultChars, fpath, hint)
 }
 
-// summariseToolResult calls Haiku to produce a summary of an oversized tool result.
+// summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
 // Returns the formatted summary string, or empty string on failure (caller falls back).
-func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string, messages []anthropic.Message, savedPath string) string {
-	model := "claude-haiku-4-5"
-	if full, ok := a.ModelAliases["haiku"]; ok {
+func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, toolName, result string, messages []anthropic.Message, savedPath string) string {
+	// Pick cheap model based on which provider the client is.
+	summaryAlias := "haiku"
+	if a.isGeminiClient(client) {
+		summaryAlias = "flash"
+	}
+	model := summaryAlias
+	if full, ok := a.ModelAliases[summaryAlias]; ok {
 		model = full
 	}
 
@@ -639,7 +660,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, toolName, result string
 	}
 
 	start := time.Now()
-	resp, err := a.Client.SendMessage(ctx, req)
+	resp, err := client.SendMessage(ctx, req)
 	if err != nil {
 		a.logger().Warnf("auto-summary failed for %s: %v", toolName, err)
 		return ""
@@ -905,6 +926,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 
 	turnModel := a.SessionModel(sessionKey)
+	turnClient := a.SessionClient(sessionKey)
 	turnEffort := a.SessionEffort(sessionKey)
 	turnThinking := a.SessionThinking(sessionKey)
 
@@ -1037,7 +1059,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 		start := time.Now()
 		a.logger().Debugf("api_call_start session=%s model=%s", sessionKey, turnModel)
-		resp, err := a.Client.SendMessage(ctx, req)
+		resp, err := turnClient.SendMessage(ctx, req)
 		duration := time.Since(start)
 		a.logger().Debugf("api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
 
@@ -1118,7 +1140,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			sm.prevOutput = resp.Usage.OutputTokens
 			sm.prevCacheWrite = resp.Usage.CacheCreationInputTokens
 
-			a.maybeCompact(ctx, sessionKey, messages, system, &resp.Usage, sm)
+			a.maybeCompact(ctx, turnClient, sessionKey, messages, system, &resp.Usage, sm)
 
 			finalText := anthropic.TextOf(resp.Content)
 			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
@@ -1193,7 +1215,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			}
 
 			// Guard against oversized tool results
-			guardedResult := a.guardToolResult(ctx, block.Name, result.Text, messages)
+			guardedResult := a.guardToolResult(ctx, turnClient, block.Name, result.Text, messages)
 			// Redact secrets from tool output
 			if a.Redact != nil {
 				guardedResult = a.Redact(guardedResult)
@@ -1356,7 +1378,7 @@ func (a *Agent) buildSystemBlocks() []anthropic.SystemBlock {
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.
-func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []anthropic.Message, system []anthropic.SystemBlock, usage *anthropic.Usage, sm *sessionMeta) {
+func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessionKey string, messages []anthropic.Message, system []anthropic.SystemBlock, usage *anthropic.Usage, sm *sessionMeta) {
 	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) || !a.Compactor.ShouldCompact(messages, usage) {
 		return
 	}
@@ -1376,7 +1398,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	if handoffMsg == "" {
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
-	if summary, err := a.Compactor.Compact(ctx, sessionKey, system, summaryPrompt, handoffMsg, false); err != nil {
+	if summary, err := a.Compactor.Compact(ctx, client, sessionKey, system, summaryPrompt, handoffMsg, false); err != nil {
 		a.logger().Errorf("compaction failed: %v", err)
 	} else {
 		if a.CompactionNotifyFunc != nil {
@@ -1512,6 +1534,14 @@ func summarizeServerToolResult(block anthropic.ContentBlock) string {
 		}
 	}
 	return block.Type
+}
+
+// isGeminiClient returns true if the given client is the gemini client from the Clients map.
+func (a *Agent) isGeminiClient(c provider.Client) bool {
+	if gc, ok := a.Clients["gemini"]; ok && gc != nil {
+		return c == gc
+	}
+	return false
 }
 
 // TurnResult holds the result of a single agent turn.
