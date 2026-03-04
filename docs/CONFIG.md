@@ -62,7 +62,7 @@ Google Gemini API configuration.
 | `http_timeout` | string | `"120s"` | HTTP timeout for Gemini API calls. Go duration format. |
 | `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
 
-Requires `gemini.api_key` in `secrets.toml`. Set `provider = "gemini"` in `[defaults]` or per-agent to use.
+Requires `gemini.api_key` in `secrets.toml`. Use `model = "gemini:gemini-2.5-flash"` in `[defaults]` or per-agent to use.
 
 ### `[openai]`
 
@@ -73,7 +73,7 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 | `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
 | `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
 
-Requires `openai.api_key` in `secrets.toml`. Set `provider = "openai"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
+Requires `openai.api_key` in `secrets.toml`. Use `model = "openai:gpt-4o"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
 ### `[telegram]`
 
@@ -339,30 +339,71 @@ SQLite database settings.
 
 Model aliases and related configuration.
 
-The `aliases` map allows shorthand names to be resolved to full model IDs in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
+The `aliases` map allows shorthand names to be resolved to full `endpoint:model` identifiers in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `aliases` | map | see below | Shorthand → full model ID mapping. |
+| `aliases` | map | see below | Shorthand → `endpoint:model_id` mapping. |
 
 Default aliases (used when `[models]` section is not configured):
-- `opus` → `claude-opus-4-6`
-- `sonnet` → `claude-sonnet-4-6`
-- `haiku` → `claude-haiku-4-5`
-- `flash` → `gemini-2.5-flash`
-- `pro` → `gemini-2.5-pro`
-- `gpt4o` → `gpt-4o`
-- `o3` → `o3`
-- `o4mini` → `o4-mini`
+- `opus` → `anthropic:claude-opus-4-6`
+- `sonnet` → `anthropic:claude-sonnet-4-6`
+- `haiku` → `anthropic:claude-haiku-4-5`
+- `flash` → `gemini:gemini-2.5-flash`
+- `pro` → `gemini:gemini-2.5-pro`
+- `gpt4o` → `openai:gpt-4o`
+- `o3` → `openai:o3`
+- `o4mini` → `openai:o4-mini`
 
 Example with custom model aliases:
 ```toml
 [models.aliases]
-opus = "claude-opus-5-0"
-sonnet = "claude-sonnet-5-0"
-haiku = "claude-haiku-5-0"
-custom = "claude-custom-model"
+opus = "anthropic:claude-opus-5-0"
+sonnet = "anthropic:claude-sonnet-5-0"
+local = "local:my-fine-tuned-model"
 ```
+
+### `[endpoints]`
+
+Named API endpoints. Built-in defaults (anthropic, gemini, openai, openrouter) are populated automatically if not present. Users can override built-ins or add custom endpoints.
+
+Three independent concepts drive model routing:
+
+| Concept | Example | Determines |
+|---------|---------|------------|
+| **Endpoint** | `openrouter` | Base URL, API key |
+| **Wire format** | `anthropic`, `openai`, `gemini` | Which client serializes the request |
+| **Model ID** | `claude-opus-4-6` | String passed in the API call |
+
+Format is auto-inferred from model name: `claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai. Unknown models fall back to openai.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `format` | string | `""` | Wire format for single-format endpoints: `"anthropic"`, `"openai"`, or `"gemini"`. |
+| `url` | string | `""` | Base URL. Empty uses SDK default. |
+| `anthropic_url` | string | `""` | Anthropic-format URL for multi-format endpoints. |
+| `openai_url` | string | `""` | OpenAI-format URL for multi-format endpoints. |
+| `gemini_url` | string | `""` | Gemini-format URL for multi-format endpoints. |
+| `api_key` | string | `""` | Secret name in secrets store (e.g. `"openrouter.api_key"`). |
+| `http_timeout` | string | `""` | HTTP timeout. Go duration format. Empty uses format-specific default. |
+
+Built-in endpoint defaults:
+- `anthropic` — `format = "anthropic"`, `api_key = "anthropic.api_key"`
+- `gemini` — `format = "gemini"`, `api_key = "gemini.api_key"`
+- `openai` — `format = "openai"`, `api_key = "openai.api_key"`
+- `openrouter` — multi-format (`anthropic_url` + `openai_url` both set to `https://openrouter.ai/api/v1`), `api_key = "openrouter.api_key"`
+
+Example custom endpoint:
+```toml
+[endpoints.local]
+format = "openai"
+url = "http://localhost:8080/v1"
+api_key = "local.api_key"
+```
+
+Then use it: `model = "local:my-fine-tuned-model"`.
+
+Clients are lazy-initialized on first use — endpoints that are never referenced don't create connections.
 
 ### `[tools]`
 
@@ -489,7 +530,7 @@ Fields that can be set globally and overridden per-agent in `[[agents]]`. Each f
 Set global defaults in `[defaults]`:
 ```toml
 [defaults]
-model = "claude-sonnet-4-5"
+model = "anthropic:claude-sonnet-4-6"
 max_tool_loops = 50
 effort = "low"
 thinking = "adaptive"
@@ -500,7 +541,7 @@ Override per-agent in `[[agents]]`:
 ```toml
 [[agents]]
 id = "research"
-model = "claude-haiku-4-5"
+model = "gemini:gemini-2.5-flash"
 max_tool_loops = 25
 effort = "high"
 ```
@@ -511,8 +552,7 @@ Set in `[defaults]`, overridable per-agent.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `provider` | string | `"anthropic"` | API provider: `"anthropic"`, `"gemini"`, or `"openai"`. |
-| `model` | string | `"claude-haiku-4-5"` | Model ID for API calls. Provider-specific (e.g. `"gemini-2.5-flash"` for Gemini). |
+| `model` | string | `"anthropic:claude-haiku-4-5"` | Model in `endpoint:model_id` format. The endpoint prefix selects which API endpoint to use (e.g. `"gemini:gemini-2.5-flash"`, `"openrouter:claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `:` are auto-migrated with an inferred endpoint. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. `""` omits (uses API default). Overridable at runtime via `/effort`. Per-session overrides persist across restarts via state store and reset when a new session starts. |
@@ -740,7 +780,7 @@ multiball_bots = ["spare1"]
 
 [[agents]]
 id = "main"
-model = "claude-sonnet-4-5"
+model = "anthropic:claude-sonnet-4-6"
 workspace = "/home/foci/character"
 telegram_bot = "primary"
 multiball_bots = ["mainling"]  # per-agent multiball pool
@@ -752,7 +792,7 @@ weight = 1.0    # effective weight: 2.0 (1.0 + 1.0 boost)
 
 [[agents]]
 id = "research"
-model = "claude-haiku-4-5"
+model = "gemini:gemini-2.5-flash"
 workspace = "/home/foci/character"
 telegram_bot = "secondary"
 # no multiball_bots — uses shared pool only
@@ -962,7 +1002,7 @@ Per-agent scoping applies to: exec `{{secret:NAME}}` templates, `http_request` s
 ```toml
 [agent]
 id = "main"
-model = "claude-haiku-4-5"
+model = "anthropic:claude-haiku-4-5"
 workspace = "/home/foci/character"
 
 [telegram]
@@ -994,7 +1034,7 @@ bot_token = "123456:ABC..."
 ```toml
 [agent]
 id = "main"
-model = "claude-sonnet-4-5"
+model = "anthropic:claude-sonnet-4-6"
 workspace = "/home/foci/character"
 system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "KEEPALIVE.md"]
 

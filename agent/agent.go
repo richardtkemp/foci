@@ -733,7 +733,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	}
 
 	start := time.Now()
-	resp, err := client.SendMessage(ctx, req)
+	resp, err := provider.Send(ctx, client, req, nil)
 	if err != nil {
 		a.logger().Warnf("auto-summary failed for %s: %v", toolName, err)
 		return ""
@@ -1136,25 +1136,21 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		var resp *anthropic.MessageResponse
 		var err error
 
-		// Use streaming if enabled and the client supports it.
+		// Use streaming if enabled; provider.Send auto-selects streaming
+		// when the client supports it, falling back to SendMessage otherwise.
+		var handler *provider.StreamHandler
 		if a.Streaming {
-			if sc, ok := turnClient.(provider.StreamingClient); ok {
-				handler := &provider.StreamHandler{
-					OnTextDelta: func(delta string) {
-						notifyTextDeltaCtx(ctx, delta)
-						signalActivityCtx(ctx) // keep typing indicator alive
-					},
-					OnThinkingDelta: func(delta string) {
-						notifyThinkingDeltaCtx(ctx, delta)
-					},
-				}
-				resp, err = sc.StreamMessage(ctx, req, handler)
-			} else {
-				resp, err = turnClient.SendMessage(ctx, req)
+			handler = &provider.StreamHandler{
+				OnTextDelta: func(delta string) {
+					notifyTextDeltaCtx(ctx, delta)
+					signalActivityCtx(ctx) // keep typing indicator alive
+				},
+				OnThinkingDelta: func(delta string) {
+					notifyThinkingDeltaCtx(ctx, delta)
+				},
 			}
-		} else {
-			resp, err = turnClient.SendMessage(ctx, req)
 		}
+		resp, err = provider.Send(ctx, turnClient, req, handler)
 
 		duration := time.Since(start)
 		a.logger().Debugf("api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
