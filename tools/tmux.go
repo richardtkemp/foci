@@ -1040,6 +1040,7 @@ func detectTUIAgent(content string) string {
 var (
 	// Common patterns
 	reConsecutiveBlankLines = regexp.MustCompile(`\n{3,}`)
+	reHorizontalSeparator   = regexp.MustCompile(`^[\s─╌═━╍]+$`)
 
 	// Claude Code patterns
 	reCCBoxDrawing    = regexp.MustCompile(`^[─╌━═╰╯╭╮▀▁─]+$`)
@@ -1070,6 +1071,7 @@ func cleanTUIOutput(content, agentType string) string {
 
 	for _, line := range lines {
 		trimmed := strings.TrimRight(line, " \t")
+
 		switch agentType {
 		case "cc":
 			if shouldStripCC(trimmed) {
@@ -1083,6 +1085,13 @@ func cleanTUIOutput(content, agentType string) string {
 				continue
 			}
 		}
+
+		// Truncate long horizontal separator lines to save tokens
+		// (only for lines that weren't stripped by agent-specific logic)
+		if reHorizontalSeparator.MatchString(trimmed) && len(trimmed) > 10 {
+			trimmed = trimmed[:10]
+		}
+
 		cleaned = append(cleaned, trimmed)
 	}
 
