@@ -677,8 +677,9 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 				continue
 			}
 
-			// Version should be a number
-			if _, err := strconv.ParseInt(ve.Name(), 10, 64); err != nil {
+			// Version should be a number (the timestamp)
+			versionTS, err := strconv.ParseInt(ve.Name(), 10, 64)
+			if err != nil {
 				continue
 			}
 
@@ -689,8 +690,8 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 				continue
 			}
 
-			// Construct session key using helper function
-			key := ChatSessionKey(agentID, chatID)
+			// Reconstruct the actual session key from the directory structure
+			key := fmt.Sprintf("%s/c%d/%d", agentID, chatID, versionTS)
 			mc, _ := s.MessageCount(key)
 
 			info, err := os.Stat(rootPath)
