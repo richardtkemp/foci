@@ -26,9 +26,9 @@ func TestKeyToPath(t *testing.T) {
 		key  string
 		want string
 	}{
-		{"agent:main:main", "/data/sessions/agent/main/main.jsonl"},
-		{"agent:main:cron:morning", "/data/sessions/agent/main/cron/morning.jsonl"},
-		{"agent:test:subagent:research", "/data/sessions/agent/test/subagent/research.jsonl"},
+		{"main/imain/1000000000", "/data/sessions/main/imain/1000000000/root.jsonl"},
+		{"main/imorning/1000000000", "/data/sessions/main/imorning/1000000000/root.jsonl"},
+		{"test/iresearch/1000000000", "/data/sessions/test/iresearch/1000000000/root.jsonl"},
 	}
 
 	for _, tt := range tests {
@@ -43,7 +43,7 @@ func TestKeyToPath(t *testing.T) {
 	}
 
 	// Empty/malformed keys should return error, not panic
-	for _, bad := range []string{"", "agent", "agent:main"} {
+	for _, bad := range []string{"", "agent", "main/c"} {
 		_, err := s.SessionPath(bad)
 		if err == nil {
 			t.Errorf("keyToPath(%q) should return error for malformed key", bad)
@@ -54,7 +54,7 @@ func TestKeyToPath(t *testing.T) {
 func TestLoadEmpty(t *testing.T) {
 	s := NewStore(t.TempDir())
 
-	msgs, err := s.Load("agent:test:main")
+	msgs, err := s.Load("test/imain/1000000000")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestLoadEmpty(t *testing.T) {
 
 func TestAppendAndLoad(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	if err := s.Append(key, msg("user", "hello")); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -92,7 +92,7 @@ func TestAppendAndLoad(t *testing.T) {
 
 func TestAppendAll(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	batch := []provider.Message{
 		msg("user", "one"),
@@ -114,7 +114,7 @@ func TestAppendAll(t *testing.T) {
 
 func TestClear(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 
@@ -133,14 +133,14 @@ func TestClear(t *testing.T) {
 
 func TestClearNonexistent(t *testing.T) {
 	s := NewStore(t.TempDir())
-	if err := s.Clear("agent:ghost:main"); err != nil {
+	if err := s.Clear("ghost/imain/1000000000"); err != nil {
 		t.Fatalf("Clear nonexistent: %v", err)
 	}
 }
 
 func TestReplace(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	// Write initial messages
 	s.Append(key, msg("user", "old1"))
@@ -170,7 +170,7 @@ func TestReplace(t *testing.T) {
 
 func TestMessageCount(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	n, _ := s.MessageCount(key)
 	if n != 0 {
@@ -188,7 +188,7 @@ func TestMessageCount(t *testing.T) {
 
 func TestLoadFullRegularSession(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 	s.Append(key, msg("assistant", "world"))
@@ -206,7 +206,7 @@ func TestAppendCreatesDirectories(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 	// Deep key that requires nested directories
-	key := "agent:mybot:cron:daily"
+	key := "mybot/idaily/1000000000"
 	if err := s.Append(key, msg("user", "wake up")); err != nil {
 		t.Fatalf("Append deep key: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestAppendCreatesDirectories(t *testing.T) {
 
 func TestCreatedAtNewSession(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	createdAt := s.CreatedAt(key)
 	if createdAt != "n/a" {
@@ -241,7 +241,7 @@ func TestCreatedAtNewSession(t *testing.T) {
 
 func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	// Create session
 	s.Append(key, msg("user", "hello"))
@@ -267,7 +267,7 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 
@@ -296,7 +296,7 @@ func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
 
 func TestCreatedAtPreservedAfterRestart(t *testing.T) {
 	dir := t.TempDir()
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	// Create session with first store instance
 	s1 := NewStore(dir)
@@ -316,7 +316,7 @@ func TestCreatedAtPreservedAfterRestart(t *testing.T) {
 
 func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
 	dir := t.TempDir()
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s := NewStore(dir)
 	s.Append(key, msg("user", "hello"))
@@ -356,7 +356,7 @@ func toolUseMsg(ids ...string) provider.Message {
 
 func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 	s.Append(key, toolUseMsg("toolu_123"))
@@ -401,7 +401,7 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 
 func TestRepairOrphansNoOpWhenClean(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 	s.Append(key, msg("assistant", "hi"))
@@ -425,12 +425,12 @@ func TestRepairOrphansMultipleSessions(t *testing.T) {
 	s := NewStore(t.TempDir())
 
 	// Broken session
-	broken := "agent:test:main"
+	broken := "test/imain/1000000000"
 	s.Append(broken, msg("user", "hello"))
 	s.Append(broken, toolUseMsg("toolu_aaa"))
 
 	// Clean session
-	clean := "agent:test:cron:daily"
+	clean := "test/idaily/1000000000"
 	s.Append(clean, msg("user", "wake"))
 	s.Append(clean, msg("assistant", "done"))
 
@@ -457,7 +457,7 @@ func TestRepairOrphansMultipleSessions(t *testing.T) {
 
 func TestRepairOrphansMultipleToolUse(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "do things"))
 	s.Append(key, toolUseMsg("toolu_one", "toolu_two"))
@@ -503,7 +503,7 @@ func TestRepairOrphansEmptyDir(t *testing.T) {
 
 func TestInjectRestartMarkersRecentFile(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	// Create a session (file will have recent mtime)
 	s.Append(key, msg("user", "hello"))
@@ -537,7 +537,7 @@ func TestInjectRestartMarkersRecentFile(t *testing.T) {
 
 func TestInjectRestartMarkersOldFile(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:main"
+	key := "test/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 
@@ -578,11 +578,11 @@ func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
 	s := NewStore(t.TempDir())
 
 	// Recent session
-	recent := "agent:test:main"
+	recent := "test/imain/1000000000"
 	s.Append(recent, msg("user", "hello"))
 
 	// Old session
-	old := "agent:test:cron:daily"
+	old := "test/idaily/1000000000"
 	s.Append(old, msg("user", "wake"))
 	oldPath, _ := s.SessionPath(old)
 	oldTime := time.Now().Add(-2 * time.Hour)
@@ -611,8 +611,8 @@ func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
 
 func TestReplaceBranchPreservesMeta(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:test:chat:123"
-	branchKey := "agent:test:cron:wake-999"
+	parentKey := "test/c123/1000000000"
+	branchKey := "test/iwake-999/1000000000"
 
 	// Build parent with 4 messages
 	s.Append(parentKey, msg("user", "parent1"))
@@ -688,7 +688,7 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 func TestReplaceRotatesFile(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	key := "agent:test:chat:999"
+	key := "test/c999/1000000000"
 
 	// Write initial messages
 	s.Append(key, msg("user", "old1"))
@@ -714,14 +714,14 @@ func TestReplaceRotatesFile(t *testing.T) {
 	}
 
 	// Archive file should exist with old messages - check for timestamp pattern
-	chatDir := filepath.Join(dir, "agent", "test", "chat")
+	chatDir := filepath.Join(dir, "test", "c999", "1000000000")
 	entries, err := os.ReadDir(chatDir)
 	if err != nil {
 		t.Fatalf("read chat dir: %v", err)
 	}
 	var archivePath string
 	for _, e := range entries {
-		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "999.") {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "root.") {
 			archivePath = filepath.Join(chatDir, e.Name())
 			break
 		}
@@ -742,7 +742,7 @@ func TestReplaceRotatesFile(t *testing.T) {
 func TestReplaceMultipleRotations(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	key := "agent:test:chat:888"
+	key := "test/c888/1000000000"
 
 	for round := 1; round <= 3; round++ {
 		s.Append(key, msg("user", fmt.Sprintf("round %d", round)))
@@ -757,14 +757,14 @@ func TestReplaceMultipleRotations(t *testing.T) {
 	}
 
 	// Should have 3 archive files with timestamp suffixes
-	chatDir := filepath.Join(dir, "agent", "test", "chat")
+	chatDir := filepath.Join(dir, "test", "c888", "1000000000")
 	entries, err := os.ReadDir(chatDir)
 	if err != nil {
 		t.Fatalf("read chat dir: %v", err)
 	}
 	var archiveCount int
 	for _, e := range entries {
-		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "888.") {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "root.") {
 			archiveCount++
 		}
 	}
@@ -785,8 +785,8 @@ func TestReplaceMultipleRotations(t *testing.T) {
 func TestReplaceBranchRotation(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	parentKey := "agent:test:chat:777"
-	branchKey := "agent:test:cron:wake-111"
+	parentKey := "test/c777/1000000000"
+	branchKey := "test/iwake-111/1000000000"
 
 	s.Append(parentKey, msg("user", "parent"))
 	s.Append(parentKey, msg("assistant", "reply"))
@@ -803,14 +803,14 @@ func TestReplaceBranchRotation(t *testing.T) {
 	}
 
 	// Archive should exist - check for timestamp pattern
-	cronDir := filepath.Join(dir, "agent", "test", "cron")
+	cronDir := filepath.Join(dir, "test", "iwake-111", "1000000000")
 	entries, err := os.ReadDir(cronDir)
 	if err != nil {
 		t.Fatalf("read cron dir: %v", err)
 	}
 	var archivePath string
 	for _, e := range entries {
-		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "wake-111.") {
+		if isArchiveFile(e.Name()) && strings.HasPrefix(e.Name(), "root.") {
 			archivePath = filepath.Join(cronDir, e.Name())
 			break
 		}
@@ -848,12 +848,14 @@ func TestListChatSessionsSkipsArchives(t *testing.T) {
 	s := NewStore(dir)
 
 	// Create a real chat session
-	key := "agent:test:chat:555"
+	key := "test/c555/1000000000"
 	s.Append(key, msg("user", "hello"))
 
 	// Simulate an archive file by creating it directly (using timestamp pattern)
 	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
-	archivePath := filepath.Join(dir, "agent", "test", "chat", fmt.Sprintf("555.%s.jsonl", timestamp))
+	archiveDir := filepath.Join(dir, "test", "c555", "1000000000")
+	os.MkdirAll(archiveDir, 0755)
+	archivePath := filepath.Join(archiveDir, fmt.Sprintf("root.%s.jsonl", timestamp))
 	os.WriteFile(archivePath, []byte(`{"role":"user","content":[{"type":"text","text":"old"}]}`+"\n"), 0644)
 
 	sessions, err := s.ListChatSessions("test")
@@ -874,7 +876,7 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 	s := NewStore(dir)
 
 	// Create a session with an orphaned tool_use
-	key := "agent:test:chat:444"
+	key := "test/c444/1000000000"
 	s.Append(key, msg("user", "hello"))
 	s.Append(key, provider.Message{
 		Role: "assistant",
@@ -884,11 +886,12 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 	})
 
 	// Create an archive file with the same orphaned pattern (using timestamp pattern)
-	archiveDir := filepath.Join(dir, "agent", "test", "chat")
+	archiveDir := filepath.Join(dir, "test", "c444", "1000000000")
+	os.MkdirAll(archiveDir, 0755)
 	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
 	archiveData := `{"role":"user","content":[{"type":"text","text":"old"}]}` + "\n" +
 		`{"role":"assistant","content":[{"type":"tool_use","id":"tool_2","name":"shell","input":{}}]}` + "\n"
-	os.WriteFile(filepath.Join(archiveDir, fmt.Sprintf("444.%s.jsonl", timestamp)), []byte(archiveData), 0644)
+	os.WriteFile(filepath.Join(archiveDir, fmt.Sprintf("root.%s.jsonl", timestamp)), []byte(archiveData), 0644)
 
 	repaired, err := s.RepairOrphans()
 	if err != nil {
@@ -903,7 +906,7 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 
 func TestReplaceNonexistentFile(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:test:chat:333"
+	key := "test/c333/1000000000"
 
 	// Replace on a key with no existing file should work (no rotation needed)
 	compacted := []provider.Message{

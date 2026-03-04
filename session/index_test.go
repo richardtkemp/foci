@@ -19,22 +19,39 @@ func tempIndex(t *testing.T) *SessionIndex {
 	return idx
 }
 
+// Test helper: create new-format session keys
+// chatKey("bot", 123) → "bot/c123/1000000000"
+func chatKey(agentID string, chatID int64) string {
+	return ChatSessionKey(agentID, chatID)
+}
+
+// branchKey("bot/c123/1000000000") → "bot/c123/1000000000/b1000000001"
+func branchKey(parent string) string {
+	k, _ := ParseSessionKey(parent)
+	return k.Branch().String()
+}
+
+// independentKey("bot") → "bot/i1000000000/1000000000"
+func independentKey(agentID string) string {
+	return IndependentSessionKey(agentID)
+}
+
 func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 	idx := tempIndex(t)
 
 	now := time.Now().UTC().Truncate(time.Second)
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:  "agent:bot:chat:123",
-		FilePath:    "/data/sessions/agent/bot/chat/123.jsonl",
+		SessionKey:  "bot/c123/1000000000",
+		FilePath:    "/data/sessions/bot/bot/c123/1000000000.jsonl",
 		CreatedAt:   now,
 		SessionType: SessionTypeChat,
 		Status:      SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:       "agent:bot:spawn:spawn-456",
-		FilePath:         "/data/sessions/agent/bot/spawn/spawn-456.jsonl",
+		SessionKey:       "bot/i456/456",
+		FilePath:         "/data/sessions/bot/bot/i456/456.jsonl",
 		CreatedAt:        now.Add(-time.Hour),
-		ParentSessionKey: "agent:bot:chat:123",
+		ParentSessionKey: "bot/c123/1000000000",
 		SessionType:      SessionTypeSpawn,
 		Status:           SessionStatusActive,
 	})
@@ -54,10 +71,10 @@ count, _ := idx.Count()
 		t.Fatalf("expected 2 entries, got %d", len(entries))
 	}
 	// Should be ordered by created_at desc — chat first (newer)
-	if entries[0].SessionKey != "agent:bot:chat:123" {
+	if entries[0].SessionKey != "bot/c123/1000000000" {
 		t.Errorf("expected chat first, got %s", entries[0].SessionKey)
 	}
-	if entries[1].ParentSessionKey != "agent:bot:chat:123" {
+	if entries[1].ParentSessionKey != "bot/c123/1000000000" {
 		t.Errorf("expected parent key on spawn, got %q", entries[1].ParentSessionKey)
 	}
 }
@@ -67,11 +84,11 @@ func TestSessionIndex_QueryByType(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a", CreatedAt: now,
+		SessionKey: "bot/c1/1000000000", FilePath: "a", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:spawn:2", FilePath: "b", CreatedAt: now,
+		SessionKey: "bot/i2/2", FilePath: "b", CreatedAt: now,
 		SessionType: SessionTypeSpawn, Status: SessionStatusActive,
 	})
 
@@ -82,7 +99,7 @@ func TestSessionIndex_QueryByType(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 chat entry, got %d", len(entries))
 	}
-	if entries[0].SessionKey != "agent:bot:chat:1" {
+	if entries[0].SessionKey != "bot/c1/1000000000" {
 		t.Errorf("wrong entry: %s", entries[0].SessionKey)
 	}
 }
@@ -92,11 +109,11 @@ func TestSessionIndex_QueryByStatus(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a", CreatedAt: now,
+		SessionKey: "bot/c1/1000000000", FilePath: "a", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:2", FilePath: "b", CreatedAt: now,
+		SessionKey: "bot/c2/1000000000", FilePath: "b", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusCompacted,
 	})
 
@@ -114,11 +131,11 @@ func TestSessionIndex_QueryByAgent(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:alpha:chat:1", FilePath: "a", CreatedAt: now,
+		SessionKey: "alpha/c1/1000000000", FilePath: "a", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:beta:chat:2", FilePath: "b", CreatedAt: now,
+		SessionKey: "beta/c2/1000000000", FilePath: "b", CreatedAt: now,
 		SessionType: SessionTypeChat, Status: SessionStatusActive,
 	})
 
@@ -129,7 +146,7 @@ func TestSessionIndex_QueryByAgent(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry for alpha, got %d", len(entries))
 	}
-	if entries[0].SessionKey != "agent:alpha:chat:1" {
+	if entries[0].SessionKey != "alpha/c1/1000000000" {
 		t.Errorf("wrong entry: %s", entries[0].SessionKey)
 	}
 }
@@ -159,12 +176,12 @@ func TestSessionIndex_SetStatus(t *testing.T) {
 	idx := tempIndex(t)
 
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a",
+		SessionKey: "bot/c1/1000000000", FilePath: "a",
 		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
 
-	idx.SetStatus("agent:bot:chat:1", SessionStatusCompacted)
+	idx.SetStatus("bot/c1/1000000000", SessionStatusCompacted)
 
 	entries, err := idx.Query(QueryOptions{})
 	if err != nil {
@@ -179,12 +196,12 @@ func TestSessionIndex_Delete(t *testing.T) {
 	idx := tempIndex(t)
 
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a",
+		SessionKey: "bot/c1/1000000000", FilePath: "a",
 		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
 
-	idx.Delete("agent:bot:chat:1")
+	idx.Delete("bot/c1/1000000000")
 
 count, _ := idx.Count()
 	if count != 0 {
@@ -198,12 +215,12 @@ func TestSessionIndex_Upsert_Replaces(t *testing.T) {
 
 	now := time.Now().UTC()
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a",
+		SessionKey: "bot/c1/1000000000", FilePath: "a",
 		CreatedAt: now, SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})
 	idx.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a",
+		SessionKey: "bot/c1/1000000000", FilePath: "a",
 		CreatedAt: now, SessionType: SessionTypeChat,
 		Status: SessionStatusCompacted,
 	})
@@ -224,12 +241,12 @@ func TestClassifySessionKey(t *testing.T) {
 		key  string
 		want SessionType
 	}{
-		{"agent:bot:chat:123", SessionTypeChat},
-		{"agent:bot:multiball:mb-123", SessionTypeMultiball},
-		{"agent:bot:spawn:spawn-123", SessionTypeSpawn},
-		{"agent:bot:cron:keepalive-123", SessionTypeCron},
-		{"agent:bot:multiball:mb-123:branch:session-end-456", SessionTypeBranch},
-		{"agent:bot:chat:123:branch:session-end-456", SessionTypeBranch},
+		{"bot/c123/1000000000", SessionTypeChat},
+		{"bot/i123/123", SessionTypeMultiball},
+		{"bot/i123/123", SessionTypeSpawn},
+		{"bot/i123/123", SessionTypeCron},
+		{"bot/c123/1000000000/b456", SessionTypeBranch},
+		{"bot/c123/1000000000/b456", SessionTypeBranch},
 		{"agent:bot:unknown:thing", SessionTypeUnknown},
 		{"bad", SessionTypeUnknown},
 	}
@@ -246,9 +263,9 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a few sessions
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
-	store.Append("agent:bot:chat:200", msg("user", "world"))
-	store.CreateBranchWithOptions("agent:bot:chat:100", "agent:bot:multiball:mb-1", BranchOptions{})
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.Append("bot/c200/1000000000", msg("user", "world"))
+	store.CreateBranchWithOptions("bot/c100/1000000000", "bot/i1/1", BranchOptions{})
 
 	// Create index and rebuild
 	idx := tempIndex(t)
@@ -276,7 +293,7 @@ count, _ := idx.Count()
 	}
 
 	// Verify parent key on multiball
-	if entries[0].ParentSessionKey != "agent:bot:chat:100" {
+	if entries[0].ParentSessionKey != "bot/c100/1000000000" {
 		t.Errorf("expected parent key agent:bot:chat:100, got %q", entries[0].ParentSessionKey)
 	}
 }
@@ -306,7 +323,7 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 	})
 
 	// Create a session via Append (new file triggers event)
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
 count, _ := idx.Count()
 	if count != 1 {
 count, _ := idx.Count()
@@ -322,21 +339,21 @@ count, _ := idx.Count()
 	}
 
 	// Append again should NOT fire another create event
-	store.Append("agent:bot:chat:100", msg("assistant", "hi"))
+	store.Append("bot/c100/1000000000", msg("assistant", "hi"))
 	if count != 1 {
 count, _ := idx.Count()
 		t.Fatalf("expected still 1 after second append, got %d", count)
 	}
 
 	// Replace should fire compacted event
-	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "compacted")})
+	store.Replace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCompacted {
 		t.Errorf("expected compacted after Replace, got %s", entries[0].Status)
 	}
 
 	// Clear should fire cleared event
-	store.Clear("agent:bot:chat:100")
+	store.Clear("bot/c100/1000000000")
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCleared {
 		t.Errorf("expected cleared after Clear, got %s", entries[0].Status)
@@ -362,10 +379,10 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 	})
 
 	// Create parent
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
 
 	// Create branch
-	store.CreateBranchWithOptions("agent:bot:chat:100", "agent:bot:multiball:mb-1", BranchOptions{})
+	store.CreateBranchWithOptions("bot/c100/1000000000", "bot/i1/1", BranchOptions{})
 count, _ := idx.Count()
 	if count != 2 {
 count, _ := idx.Count()
@@ -376,7 +393,7 @@ count, _ := idx.Count()
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 multiball, got %d", len(entries))
 	}
-	if entries[0].ParentSessionKey != "agent:bot:chat:100" {
+	if entries[0].ParentSessionKey != "bot/c100/1000000000" {
 		t.Errorf("expected parent key, got %q", entries[0].ParentSessionKey)
 	}
 }
@@ -390,7 +407,7 @@ func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("first open: %v", err)
 	}
 	idx1.Upsert(SessionIndexEntry{
-		SessionKey: "agent:bot:chat:1", FilePath: "a",
+		SessionKey: "bot/c1/1000000000", FilePath: "a",
 		CreatedAt: time.Now().UTC(), SessionType: SessionTypeChat,
 		Status: SessionStatusActive,
 	})

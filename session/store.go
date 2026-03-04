@@ -639,48 +639,74 @@ type ChatSessionInfo struct {
 }
 
 // ListChatSessions returns all chat sessions for an agent.
-// It scans for files matching the pattern agent/<agentID>/chat/<chatID>.jsonl.
+// It scans for directories matching the pattern <agentID>/c<chatID>/<versionTS>/root.jsonl.
 func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
-	chatDir := filepath.Join(s.dir, "agent", agentID, "chat")
-	entries, err := os.ReadDir(chatDir)
+	agentDir := filepath.Join(s.dir, agentID)
+	entries, err := os.ReadDir(agentDir)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read chat dir: %w", err)
+		return nil, fmt.Errorf("read agent dir: %w", err)
 	}
 
 	var sessions []ChatSessionInfo
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+		// Look for directories starting with 'c' (chat sessions)
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "c") {
 			continue
 		}
-		if isArchiveFile(e.Name()) {
-			continue
-		}
-		name := strings.TrimSuffix(e.Name(), ".jsonl")
 
-		// Parse chat ID from filename
+		// Parse chat ID from directory name (e.g., "c123" -> 123)
+		chatIDStr := strings.TrimPrefix(e.Name(), "c")
 		var chatID int64
-		if _, err := fmt.Sscanf(name, "%d", &chatID); err != nil {
+		if _, err := fmt.Sscanf(chatIDStr, "%d", &chatID); err != nil {
 			continue
 		}
 
-		key := fmt.Sprintf("agent:%s:chat:%d", agentID, chatID)
-		mc, _ := s.MessageCount(key)
-
-		info, err := e.Info()
-		var lastActivity time.Time
-		if err == nil {
-			lastActivity = info.ModTime()
+		// Look for version timestamp directories inside the chat directory
+		chatDir := filepath.Join(agentDir, e.Name())
+		versionEntries, err := os.ReadDir(chatDir)
+		if err != nil {
+			continue
 		}
 
-		sessions = append(sessions, ChatSessionInfo{
-			ChatID:       chatID,
-			SessionKey:   key,
-			MessageCount: mc,
-			LastActivity: lastActivity,
-		})
+		// Find version directories (numeric names)
+		for _, ve := range versionEntries {
+			if !ve.IsDir() {
+				continue
+			}
+
+			// Version should be a number
+			if _, err := strconv.ParseInt(ve.Name(), 10, 64); err != nil {
+				continue
+			}
+
+			// Check for root.jsonl in the version directory
+			versionDir := filepath.Join(chatDir, ve.Name())
+			rootPath := filepath.Join(versionDir, "root.jsonl")
+			if _, err := os.Stat(rootPath); os.IsNotExist(err) {
+				continue
+			}
+
+			// Construct session key using helper function
+			key := ChatSessionKey(agentID, chatID)
+			mc, _ := s.MessageCount(key)
+
+			info, err := os.Stat(rootPath)
+			var lastActivity time.Time
+			if err == nil {
+				lastActivity = info.ModTime()
+			}
+
+			sessions = append(sessions, ChatSessionInfo{
+				ChatID:       chatID,
+				SessionKey:   key,
+				MessageCount: mc,
+				LastActivity: lastActivity,
+			})
+			break // Only take the first version found
+		}
 	}
 
 	return sessions, nil

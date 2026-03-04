@@ -17,8 +17,8 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create two sessions
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
-	store.Append("agent:bot:chat:200", msg("user", "world"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.Append("bot/c200/1000000000", msg("user", "world"))
 
 	// Rebuild index
 	n, err := idx.Rebuild(store)
@@ -32,7 +32,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	// Set last activity to the past so both qualify for archival.
 	// LastActivityAt must differ from CreatedAt to trigger the Upsert update path.
 	past := time.Now().UTC().Add(-48 * time.Hour)
-	for _, key := range []string{"agent:bot:chat:100", "agent:bot:chat:200"} {
+	for _, key := range []string{"bot/c100/1000000000", "bot/c200/1000000000"} {
 		idx.Upsert(SessionIndexEntry{
 			SessionKey:     key,
 			FilePath:       mustSessionPath(t, store, key),
@@ -53,7 +53,7 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	}
 
 	// Verify .jsonl files are gone and .jsonl.gz files exist
-	for _, key := range []string{"agent:bot:chat:100", "agent:bot:chat:200"} {
+	for _, key := range []string{"bot/c100/1000000000", "bot/c200/1000000000"} {
 		path := mustSessionPath(t, store, key)
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Errorf("expected %s to be removed, but it exists", path)
@@ -75,7 +75,7 @@ func TestArchiveSweep_SkipsRecentSessions(t *testing.T) {
 	store := NewStore(dir)
 	idx := tempIndex(t)
 
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
 	idx.Rebuild(store)
 
 	// Last activity is now (recent), so it should not be archived
@@ -94,15 +94,15 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create parent and branch
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
-	store.CreateBranchWithOptions("agent:bot:chat:100", "agent:bot:multiball:mb-1", BranchOptions{})
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.CreateBranchWithOptions("bot/c100/1000000000", "bot/imb-1/1000000000", BranchOptions{})
 	idx.Rebuild(store)
 
 	// Set parent to old, but branch is active
 	past := time.Now().UTC().Add(-48 * time.Hour)
 	parentPath := mustSessionPath(t, store, "agent:bot:chat:100")
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent:bot:chat:100",
+		SessionKey:     "bot/c100/1000000000",
 		FilePath:       parentPath,
 		CreatedAt:      past.Add(-time.Hour),
 		LastActivityAt: past,
@@ -125,7 +125,7 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create a session and compact it (creates .1.jsonl archive)
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
 	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "compacted")})
 	idx.Rebuild(store)
 
@@ -133,7 +133,7 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	past := time.Now().UTC().Add(-48 * time.Hour)
 	path := mustSessionPath(t, store, "agent:bot:chat:100")
 	idx.Upsert(SessionIndexEntry{
-		SessionKey:     "agent:bot:chat:100",
+		SessionKey:     "bot/c100/1000000000",
 		FilePath:       path,
 		CreatedAt:      past.Add(-time.Hour),
 		LastActivityAt: past,
@@ -186,7 +186,7 @@ func TestDecompressIfGzipped(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session, then manually gzip it
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
 	path := mustSessionPath(t, store, "agent:bot:chat:100")
 
 	// Read original content
@@ -238,7 +238,7 @@ func TestScanAllSessions_IncludesArchivesAndGzipped(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session with an archive
-	store.Append("agent:bot:chat:100", msg("user", "hello"))
+	store.Append("bot/c100/1000000000", msg("user", "hello"))
 	store.Replace("agent:bot:chat:100", []provider.Message{msg("user", "compacted")})
 
 	entries, err := store.ScanAllSessions()
