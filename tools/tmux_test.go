@@ -31,7 +31,7 @@ func tmuxCleanup(t *testing.T, name string) {
 
 func TestTmuxStartAndList(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-start"
 	defer tmuxCleanup(t, name)
@@ -73,7 +73,7 @@ func TestTmuxStartAndList(t *testing.T) {
 
 func TestTmuxSendAndRead(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-sendread"
@@ -119,7 +119,7 @@ func TestTmuxSendAndRead(t *testing.T) {
 
 func TestTmuxReadDefault(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-readdefault"
@@ -148,7 +148,7 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-kill"
@@ -191,7 +191,7 @@ func TestTmuxKill(t *testing.T) {
 }
 
 func TestTmuxInvalidOperation(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -208,7 +208,7 @@ func TestTmuxInvalidOperation(t *testing.T) {
 
 func TestTmuxStartNoName(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -230,7 +230,7 @@ func TestTmuxStartNoName(t *testing.T) {
 
 func TestTmuxSendNoEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-noenter"
@@ -264,7 +264,7 @@ func TestTmuxSendNoEnter(t *testing.T) {
 
 func TestTmuxSendBareEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-bareenter"
 	defer tmuxCleanup(t, name)
@@ -306,7 +306,7 @@ func TestTmuxSendBareEnter(t *testing.T) {
 }
 
 func TestTmuxMissingName(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	for _, op := range []string{"send", "read", "kill"} {
@@ -322,7 +322,7 @@ func TestTmuxMissingName(t *testing.T) {
 
 func TestTmuxStartWithWorkdir(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-workdir"
@@ -376,7 +376,7 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 
 func TestTmuxWatchUnwatch(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-watch"
@@ -424,7 +424,7 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-watch-dup"
@@ -468,7 +468,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 }
 
 func TestTmuxUnwatchNotWatched(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -495,7 +495,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		wakeMsg = msg
 	})
 
-	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
 
 	name := "foci-test-wake"
 	defer tmuxCleanup(t, name)
@@ -562,7 +562,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
 
 	name := "foci-test-dead"
 	defer tmuxCleanup(t, name)
@@ -632,7 +632,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 }
 
 func TestTmuxWatchMissingName(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -655,8 +655,8 @@ func TestTmuxWatchMissingName(t *testing.T) {
 func TestTmuxInstanceIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
-	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	nameA := "foci-test-iso-a"
 	nameB := "foci-test-iso-b"
@@ -768,10 +768,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	var wakeA, wakeB atomic.Int32
 	toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeA.Add(1)
-	}), nil, "", false, 30)
+	}), nil, "", false, 30, 0)
 	toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeB.Add(1)
-	}), nil, "", false, 30)
+	}), nil, "", false, 30, 0)
 
 	nameA := "foci-test-wakeroute-a"
 	nameB := "foci-test-wakeroute-b"
@@ -859,9 +859,9 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 func TestTmuxWatchIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
-	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-watchiso"
@@ -1283,7 +1283,7 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 
 func TestTmuxReadRaw(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-readraw"
@@ -1354,7 +1354,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist"
 	defer tmuxCleanup(t, name)
@@ -1369,13 +1369,16 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Verify state was persisted
-	var owned []string
+	// Verify state was persisted (new format: map[string]string)
+	var owned map[string]string
 	if !store.Get("tmux:test-agent", &owned) {
 		t.Fatal("owned sessions not persisted")
 	}
-	if len(owned) != 1 || owned[0] != name {
-		t.Errorf("persisted sessions = %v, want [%s]", owned, name)
+	if len(owned) != 1 {
+		t.Errorf("persisted sessions = %v, want 1 entry", owned)
+	}
+	if _, ok := owned[name]; !ok {
+		t.Errorf("persisted sessions = %v, want key %s", owned, name)
 	}
 }
 
@@ -1400,7 +1403,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with state store - should restore owned sessions
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1422,7 +1425,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persistkill"
 	defer tmuxCleanup(t, name)
@@ -1438,7 +1441,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	}
 
 	// Verify persisted
-	var owned []string
+	var owned map[string]string
 	if !store.Get("tmux:test-agent", &owned) {
 		t.Fatal("owned sessions not persisted after start")
 	}
@@ -1456,11 +1459,12 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	}
 
 	// Verify removed from persisted state
-	if !store.Get("tmux:test-agent", &owned) {
+	var ownedAfter map[string]string
+	if !store.Get("tmux:test-agent", &ownedAfter) {
 		t.Fatal("owned sessions key should still exist")
 	}
-	if len(owned) != 0 {
-		t.Errorf("persisted sessions after kill = %v, want empty", owned)
+	if len(ownedAfter) != 0 {
+		t.Errorf("persisted sessions after kill = %v, want empty", ownedAfter)
 	}
 }
 
@@ -1479,7 +1483,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	// List should detect stale sessions and clear persisted state
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1493,7 +1497,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	// (the main check is that persisted state is cleared, below)
 
 	// Verify persisted state was cleared
-	var owned []string
+	var owned map[string]string
 	if !store.Get("tmux:test-agent", &owned) {
 		t.Fatal("owned sessions key should still exist")
 	}
@@ -1506,7 +1510,7 @@ func TestTmuxNoStateStore(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Create tool without state store (nil)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-nostate"
@@ -1546,7 +1550,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state1: %v", err)
 	}
 
-	tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30)
+	tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-roundtrip"
 	defer tmuxCleanup(t, name)
@@ -1578,7 +1582,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state2: %v", err)
 	}
 
-	tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30)
+	tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30, 0)
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -1601,7 +1605,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist-watch"
 	defer tmuxCleanup(t, name)
@@ -1678,7 +1682,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
+	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -1715,7 +1719,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
+	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Stale watch should have been cleaned from state
 	var watches []persistedWatch
@@ -1737,7 +1741,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-unwatch-persist"
 	defer tmuxCleanup(t, name)
@@ -1797,7 +1801,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
+	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-clearall-watch"
 	defer tmuxCleanup(t, name)
@@ -1851,7 +1855,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30)
+	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
@@ -1901,7 +1905,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("reload state: %v", err)
 	}
 
-	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30)
+	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30, 0)
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch
@@ -1931,7 +1935,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch", false, 30, 0)
 
 	name := "foci-test-autowatch"
 	defer tmuxCleanup(t, name)
@@ -1986,7 +1990,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch", false, 30, 0)
 
 	name := "foci-test-nowatch"
 	defer tmuxCleanup(t, name)
@@ -2020,7 +2024,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	tmuxAvailable(t)
 
 	// No notifier — auto-watch should be silently skipped
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-autowatch-nonotif"
 	defer tmuxCleanup(t, name)
@@ -2062,7 +2066,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2, 0)
 
 	name := "foci-test-ap-unwatch"
 	tmuxCleanup(t, name) // clean up stale sessions from prior crashed runs
@@ -2117,7 +2121,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	}
 
 	// autopilot=true
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30, 0)
 
 	name := "foci-test-ap-send"
 	defer tmuxCleanup(t, name)
@@ -2183,7 +2187,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	}
 
 	// autopilot=false
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30)
+	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30, 0)
 
 	name := "foci-test-no-ap"
 	defer tmuxCleanup(t, name)
@@ -2219,7 +2223,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-killproc"
 	defer tmuxCleanup(t, name)
@@ -2428,7 +2432,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 		}
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 	name := "foci-test-killserver"
 	defer tmuxCleanup(t, name)
 
@@ -2496,7 +2500,7 @@ func TestTmuxSessionPIDs(t *testing.T) {
 
 func TestTmuxSendRateLimit(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30)
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-ratelimit"
 	defer tmuxCleanup(t, name)
@@ -2543,5 +2547,181 @@ func TestTmuxSendRateLimit(t *testing.T) {
 	}
 	if d2 < 1500*time.Millisecond {
 		t.Errorf("second send took %v, expected >= 1.5s (rate limited)", d2)
+	}
+}
+
+func TestTmuxSessionKeyIsolation(t *testing.T) {
+	tmuxAvailable(t)
+
+	// Single tool instance, two different session keys
+	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+
+	nameA := "foci-test-skiso-a"
+	nameB := "foci-test-skiso-b"
+	defer tmuxCleanup(t, nameA)
+	defer tmuxCleanup(t, nameB)
+
+	ctxA := WithSessionKey(context.Background(), "agent:test:chat:111")
+	ctxB := WithSessionKey(context.Background(), "agent:test:chat:222")
+
+	// Session A starts
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      nameA,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(ctxA, params); err != nil {
+		t.Fatalf("session A start: %v", err)
+	}
+
+	// Session B starts
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      nameB,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(ctxB, params); err != nil {
+		t.Fatalf("session B start: %v", err)
+	}
+
+	// Session B cannot read session A's tmux session
+	readParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "read",
+		"name":      nameA,
+	})
+	_, err := tool.Execute(ctxB, readParams)
+	if err == nil {
+		t.Fatal("session B should not be able to read session A's tmux session")
+	}
+	if !strings.Contains(err.Error(), "not owned") {
+		t.Errorf("error = %q, want 'not owned'", err.Error())
+	}
+
+	// Session A can read its own tmux session
+	_, err = tool.Execute(ctxA, readParams)
+	if err != nil {
+		t.Fatalf("session A should be able to read its own session: %v", err)
+	}
+
+	// Session B cannot send to session A's tmux session
+	sendParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      nameA,
+		"keys":      "hello",
+	})
+	_, err = tool.Execute(ctxB, sendParams)
+	if err == nil {
+		t.Fatal("session B should not be able to send to session A's session")
+	}
+
+	// Session B cannot kill session A's tmux session
+	killParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "kill",
+		"name":      nameA,
+	})
+	_, err = tool.Execute(ctxB, killParams)
+	if err == nil {
+		t.Fatal("session B should not be able to kill session A's session")
+	}
+
+	// List from session A: should see its session as "owned" and B's as "other"
+	listParams, _ := json.Marshal(map[string]interface{}{
+		"operation": "list",
+	})
+	result, err := tool.Execute(ctxA, listParams)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, line := range strings.Split(result.Text, "\n") {
+		if strings.Contains(line, nameA) && !strings.Contains(line, "owned") {
+			t.Errorf("session A should show %q as owned: %q", nameA, line)
+		}
+		if strings.Contains(line, nameB) && strings.Contains(line, "owned") {
+			t.Errorf("session A should not show %q as owned: %q", nameB, line)
+		}
+	}
+}
+
+// TestTmuxReapExpiredSessions tests the reaper logic directly.
+func TestTmuxReapExpiredSessions(t *testing.T) {
+	tmuxAvailable(t)
+
+	name := "foci-test-reap"
+	defer tmuxCleanup(t, name)
+
+	inst := &tmuxInstance{
+		watched:           make(map[string]*watchedSession),
+		owned:             make(map[string]string),
+		lastSend:          make(map[string]time.Time),
+		lastAccess:        make(map[string]time.Time),
+		sessionTTL:        100 * time.Millisecond,
+	}
+
+	// Create a real tmux session
+	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep", "60")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Register it as owned with an old lastAccess time
+	inst.owned[name] = ""
+	inst.lastAccess[name] = time.Now().Add(-1 * time.Second) // well past TTL
+
+	// Reap
+	inst.reapExpiredSessions()
+
+	// Verify session was removed from owned
+	if _, ok := inst.owned[name]; ok {
+		t.Error("session should have been removed from owned map")
+	}
+	if _, ok := inst.lastAccess[name]; ok {
+		t.Error("session should have been removed from lastAccess map")
+	}
+
+	// Verify tmux session was killed
+	_, err = runTmux(context.Background(), "has-session", "-t", name)
+	if err == nil {
+		t.Error("tmux session should have been killed by reaper")
+	}
+}
+
+// TestTmuxReapPreservesActiveSession verifies the reaper doesn't kill
+// sessions that have been accessed recently.
+func TestTmuxReapPreservesActiveSession(t *testing.T) {
+	tmuxAvailable(t)
+
+	name := "foci-test-reap-active"
+	defer tmuxCleanup(t, name)
+
+	inst := &tmuxInstance{
+		watched:           make(map[string]*watchedSession),
+		owned:             make(map[string]string),
+		lastSend:          make(map[string]time.Time),
+		lastAccess:        make(map[string]time.Time),
+		sessionTTL:        1 * time.Hour,
+	}
+
+	// Create a real tmux session
+	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep", "60")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Register with recent access
+	inst.owned[name] = ""
+	inst.lastAccess[name] = time.Now()
+
+	// Reap — should not kill
+	inst.reapExpiredSessions()
+
+	// Verify session is still owned
+	if _, ok := inst.owned[name]; !ok {
+		t.Error("active session should not have been reaped")
+	}
+
+	// Verify tmux session still exists
+	_, err = runTmux(context.Background(), "has-session", "-t", name)
+	if err != nil {
+		t.Error("active tmux session should still exist after reap")
 	}
 }

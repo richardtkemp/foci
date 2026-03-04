@@ -99,8 +99,7 @@ type AgentConfig struct {
 	ID                      string            `toml:"id"`
 	Name                    string            `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
 	Emoji                   string            `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Provider                string            `toml:"provider"` // "anthropic" (default), "gemini", or "openai"
-	Model                   string            `toml:"model"`
+	Model                   string            `toml:"model"`    // "endpoint:model_id" format (e.g. "anthropic:claude-haiku-4-5")
 	Workspace               string            `toml:"workspace"`
 	SystemFiles             []string          `toml:"system_files"`              // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages              bool              `toml:"duplicate_messages"`                // send user text twice per API call (improves instruction following)
@@ -149,6 +148,7 @@ type AgentConfig struct {
 	MaxUploadFileSize   int64  `toml:"max_upload_file_size"`  // max file size for multipart uploads in bytes
 	TmuxAutopilot       *bool  `toml:"tmux_autopilot"`        // per-agent tmux autopilot override (nil = use global)
 	TmuxWatchThreshold  string `toml:"tmux_watch_threshold"`  // per-agent watch threshold (empty = use global)
+	TmuxSessionTTL      string `toml:"tmux_session_ttl"`      // per-agent session TTL override (empty = use global)
 	MaxResultChars      int    `toml:"max_result_chars"`      // max chars before writing to file (0 = use global)
 	MaxSummaryChars     int    `toml:"max_summary_chars"`     // max chars to auto-summarise (0 = use global)
 	AutoSummarise       *bool  `toml:"auto_summarise"`        // auto-summarise oversized results (nil = use global)
@@ -343,6 +343,7 @@ type ToolsConfig struct {
 	TmuxMemoryKill          string `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
 	TmuxAutopilot           bool   `toml:"tmux_autopilot"`             // auto-unwatch on inactivity, auto-watch on send (default true)
 	TmuxWatchThreshold      string `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
+	TmuxSessionTTL          string `toml:"tmux_session_ttl"`           // auto-kill idle tmux sessions after this duration (default "24h", "0" disables)
 	MaxUploadFileSize       int64  `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 	SummaryContextTurns        int      `toml:"summary_context_turns"`         // recent turns for auto-summary context (default 5)
 	SummaryContextChars        int      `toml:"summary_context_chars"`         // max chars of context for auto-summary (default 6000)
@@ -376,8 +377,7 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Provider            string           `toml:"provider"`              // default provider: "anthropic" (default), "gemini", or "openai"
-	Model               string           `toml:"model"`                 // default model (default: claude-haiku-4-5)
+	Model               string           `toml:"model"`                 // default model: "endpoint:model_id" (default: "anthropic:claude-haiku-4-5")
 	DuplicateMessages              bool             `toml:"duplicate_messages"`                // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages  bool             `toml:"batch_partial_assistant_messages"`   // default batch_partial_assistant_messages (default: false)
 	BatchPartialJoiner             string           `toml:"batch_partial_joiner"`               // default separator between batched partial messages (default: "")
@@ -406,7 +406,83 @@ type DefaultsConfig struct {
 
 // ModelsConfig holds model-related configuration.
 type ModelsConfig struct {
-	Aliases map[string]string `toml:"aliases"` // shorthand → full model ID (e.g., "opus" → "claude-opus-4-6")
+	Aliases map[string]string `toml:"aliases"` // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
+}
+
+// EndpointConfig describes a model API endpoint.
+type EndpointConfig struct {
+	// Single-format endpoints:
+	Format string `toml:"format"` // "anthropic", "openai", or "gemini"
+	URL    string `toml:"url"`    // base URL (empty = SDK/library default)
+
+	// Multi-format endpoints (overrides Format+URL when set):
+	AnthropicURL string `toml:"anthropic_url"`
+	OpenAIURL    string `toml:"openai_url"`
+	GeminiURL    string `toml:"gemini_url"`
+
+	// Shared:
+	APIKey      string `toml:"api_key"`      // secret name in secrets store (e.g. "openrouter.api_key")
+	HTTPTimeout string `toml:"http_timeout"` // Go duration (default "120s")
+}
+
+// SupportsFormat reports whether this endpoint supports the given wire format.
+func (e EndpointConfig) SupportsFormat(f string) bool {
+	switch f {
+	case "anthropic":
+		return e.AnthropicURL != "" || e.Format == "anthropic"
+	case "openai":
+		return e.OpenAIURL != "" || e.Format == "openai"
+	case "gemini":
+		return e.GeminiURL != "" || e.Format == "gemini"
+	}
+	return false
+}
+
+// URLForFormat returns the base URL for the given wire format, or empty for SDK default.
+func (e EndpointConfig) URLForFormat(f string) string {
+	switch f {
+	case "anthropic":
+		if e.AnthropicURL != "" {
+			return e.AnthropicURL
+		}
+	case "openai":
+		if e.OpenAIURL != "" {
+			return e.OpenAIURL
+		}
+	case "gemini":
+		if e.GeminiURL != "" {
+			return e.GeminiURL
+		}
+	}
+	return e.URL
+}
+
+// ParseModel splits "endpoint:model_id" into its parts.
+// If the input contains no colon, endpoint defaults to "anthropic".
+func ParseModel(input string) (endpoint, modelID string) {
+	input = strings.TrimSpace(input)
+	if i := strings.IndexByte(input, ':'); i > 0 {
+		return input[:i], input[i+1:]
+	}
+	return "anthropic", input
+}
+
+// InferFormat returns the wire format for a model ID based on naming conventions.
+// "claude-*" → "anthropic", "gemini-*" → "gemini", "gpt-*"/"o3*"/"o4*" → "openai".
+// Returns "openai" as the universal fallback.
+func InferFormat(modelID string) string {
+	if strings.HasPrefix(modelID, "claude-") {
+		return "anthropic"
+	}
+	if strings.HasPrefix(modelID, "gemini-") {
+		return "gemini"
+	}
+	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
+		if strings.HasPrefix(modelID, p) {
+			return "openai"
+		}
+	}
+	return "openai" // universal fallback
 }
 
 // KeepaliveConfig controls the cache keepalive timer.
@@ -438,14 +514,15 @@ type BackgroundConfig struct {
 }
 
 type Config struct {
-	DataDir            string                `toml:"data_dir"` // directory for databases, sessions, state (default: $HOME/data)
-	Defaults           DefaultsConfig        `toml:"defaults"` // global defaults for agent-specific fields
-	Models             ModelsConfig          `toml:"models"`   // model aliases and related config
-	Agent              AgentConfig           `toml:"agent"`    // legacy: single agent
-	Agents             []AgentConfig         `toml:"agents"`   // multi-agent: array of agents
-	Anthropic          AnthropicConfig       `toml:"anthropic"`
-	Gemini             GeminiConfig          `toml:"gemini"`
-	OpenAI             OpenAIConfig          `toml:"openai"`
+	DataDir            string                        `toml:"data_dir"`   // directory for databases, sessions, state (default: $HOME/data)
+	Defaults           DefaultsConfig                `toml:"defaults"`   // global defaults for agent-specific fields
+	Models             ModelsConfig                  `toml:"models"`     // model aliases and related config
+	Endpoints          map[string]EndpointConfig     `toml:"endpoints"`  // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
+	Agent              AgentConfig                   `toml:"agent"`      // legacy: single agent
+	Agents             []AgentConfig                 `toml:"agents"`     // multi-agent: array of agents
+	Anthropic          AnthropicConfig               `toml:"anthropic"`
+	Gemini             GeminiConfig                  `toml:"gemini"`
+	OpenAI             OpenAIConfig                  `toml:"openai"`
 	Telegram           TelegramConfig        `toml:"telegram"`
 	Sessions           SessionsConfig        `toml:"sessions"`
 	Memory             MemoryConfig          `toml:"memory"`
@@ -474,6 +551,27 @@ type Config struct {
 // validate checks semantic validity of config values after parsing and defaults.
 // Returns an error describing the first invalid value found.
 func validate(cfg *Config) error {
+	// Validate agent model format (must contain endpoint prefix)
+	for _, a := range cfg.Agents {
+		if a.Model != "" && !strings.Contains(a.Model, ":") {
+			return fmt.Errorf("agent %q model = %q: must use endpoint:model format (e.g. \"anthropic:claude-haiku-4-5\")", a.ID, a.Model)
+		}
+		if a.Model != "" {
+			ep, _ := ParseModel(a.Model)
+			if _, ok := cfg.Endpoints[ep]; !ok {
+				return fmt.Errorf("agent %q model = %q: unknown endpoint %q (define [endpoints.%s] in config)", a.ID, a.Model, ep, ep)
+			}
+		}
+	}
+
+	// Validate endpoint configs
+	validFormats := map[string]bool{"anthropic": true, "openai": true, "gemini": true, "": true}
+	for name, ep := range cfg.Endpoints {
+		if !validFormats[ep.Format] {
+			return fmt.Errorf("[endpoints.%s] format = %q: must be \"anthropic\", \"openai\", or \"gemini\"", name, ep.Format)
+		}
+	}
+
 	// Sessions
 	if cfg.Sessions.CompactionThreshold < 0 || cfg.Sessions.CompactionThreshold > 1.0 {
 		return fmt.Errorf("[sessions] compaction_threshold = %g: must be between 0.0 and 1.0", cfg.Sessions.CompactionThreshold)
@@ -551,6 +649,13 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	// Special case: tmux_session_ttl allows "0" to disable
+	if cfg.Tools.TmuxSessionTTL != "0" {
+		if _, err := time.ParseDuration(cfg.Tools.TmuxSessionTTL); err != nil {
+			return fmt.Errorf("[tools] tmux_session_ttl = %q: %w", cfg.Tools.TmuxSessionTTL, err)
+		}
+	}
+
 	// Special case: tmux_memory_check_interval allows "0" to disable
 	if cfg.Tools.TmuxMemoryCheckInterval != "0" {
 		if _, err := time.ParseDuration(cfg.Tools.TmuxMemoryCheckInterval); err != nil {
@@ -607,6 +712,11 @@ func validate(cfg *Config) error {
 			durationEntry{"bitwarden", "secret_ttl", cfg.Bitwarden.SecretTTL},
 			durationEntry{"bitwarden", "cleanup_interval", cfg.Bitwarden.CleanupInterval},
 		)
+	}
+	for name, ep := range cfg.Endpoints {
+		if ep.HTTPTimeout != "" {
+			durations = append(durations, durationEntry{"endpoints." + name, "http_timeout", ep.HTTPTimeout})
+		}
 	}
 	if err := validateDurations(durations); err != nil {
 		return err
@@ -774,8 +884,13 @@ func Load(path string) (*Config, error) {
 		cfg.DefinedKeys[strings.Join(key, ".")] = true
 	}
 
+	// Migrate bare model name in defaults to endpoint:model format.
+	if cfg.Defaults.Model != "" && !strings.Contains(cfg.Defaults.Model, ":") {
+		ep := InferFormat(cfg.Defaults.Model)
+		cfg.Defaults.Model = ep + ":" + cfg.Defaults.Model
+	}
 	// Populate [defaults] section with hardcoded fallbacks
-	setStringDefault(&cfg.Defaults.Model, "claude-haiku-4-5")
+	setStringDefault(&cfg.Defaults.Model, "anthropic:claude-haiku-4-5")
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
@@ -810,6 +925,13 @@ func Load(path string) (*Config, error) {
 		if cfg.Agents[i].BranchOrientationHeadlessPrompt != "" {
 			cfg.Agents[i].BranchOrientationHeadlessPrompt = ResolvePath(cfg.Agents[i].BranchOrientationHeadlessPrompt)
 		}
+
+		// Migrate bare model names to endpoint:model format.
+		// If model doesn't contain ":", infer endpoint from model name.
+		if cfg.Agents[i].Model != "" && !strings.Contains(cfg.Agents[i].Model, ":") {
+			ep := InferFormat(cfg.Agents[i].Model)
+			cfg.Agents[i].Model = ep + ":" + cfg.Agents[i].Model
+		}
 	}
 
 	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
@@ -818,19 +940,40 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Legacy agent defaults (in case nothing is configured at all)
-	setStringDefault(&cfg.Agent.Model, "claude-haiku-4-5")
+	setStringDefault(&cfg.Agent.Model, "anthropic:claude-haiku-4-5")
 
-	// Model aliases defaults (if not configured)
+	// Model aliases defaults (if not configured) — include endpoint prefix
 	if len(cfg.Models.Aliases) == 0 {
 		cfg.Models.Aliases = map[string]string{
-			"opus":    "claude-opus-4-6",
-			"sonnet":  "claude-sonnet-4-6",
-			"haiku":   "claude-haiku-4-5",
-			"flash":   "gemini-2.5-flash",
-			"pro":     "gemini-2.5-pro",
-			"gpt4o":   "gpt-4o",
-			"o3":      "o3",
-			"o4mini":  "o4-mini",
+			"opus":    "anthropic:claude-opus-4-6",
+			"sonnet":  "anthropic:claude-sonnet-4-6",
+			"haiku":   "anthropic:claude-haiku-4-5",
+			"flash":   "gemini:gemini-2.5-flash",
+			"pro":     "gemini:gemini-2.5-pro",
+			"gpt4o":   "openai:gpt-4o",
+			"o3":      "openai:o3",
+			"o4mini":  "openai:o4-mini",
+		}
+	}
+
+	// Endpoint defaults (built-in endpoints populated if not present)
+	if cfg.Endpoints == nil {
+		cfg.Endpoints = make(map[string]EndpointConfig)
+	}
+	if _, ok := cfg.Endpoints["anthropic"]; !ok {
+		cfg.Endpoints["anthropic"] = EndpointConfig{Format: "anthropic", APIKey: "anthropic.api_key"}
+	}
+	if _, ok := cfg.Endpoints["gemini"]; !ok {
+		cfg.Endpoints["gemini"] = EndpointConfig{Format: "gemini", APIKey: "gemini.api_key"}
+	}
+	if _, ok := cfg.Endpoints["openai"]; !ok {
+		cfg.Endpoints["openai"] = EndpointConfig{Format: "openai", APIKey: "openai.api_key"}
+	}
+	if _, ok := cfg.Endpoints["openrouter"]; !ok {
+		cfg.Endpoints["openrouter"] = EndpointConfig{
+			AnthropicURL: "https://openrouter.ai/api/v1",
+			OpenAIURL:    "https://openrouter.ai/api/v1",
+			APIKey:       "openrouter.api_key",
 		}
 	}
 
@@ -884,6 +1027,7 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Tools.AutoSummarise, true, md.IsDefined("tools", "auto_summarise"))
 	setBoolDefaultDefined(&cfg.Tools.TmuxAutopilot, true, md.IsDefined("tools", "tmux_autopilot"))
 	setStringDefault(&cfg.Tools.TmuxWatchThreshold, "30s")
+	setStringDefault(&cfg.Tools.TmuxSessionTTL, "24h")
 	setStringDefault(&cfg.Tools.SearchProvider, "brave")
 	setStringDefault(&cfg.Tools.FetchProvider, "builtin")
 	if len(cfg.Telegram.StopAliases) == 0 {

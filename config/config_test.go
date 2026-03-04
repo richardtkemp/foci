@@ -49,8 +49,8 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Agent.ID != "main" {
 		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
 	}
-	if cfg.Agent.Model != "claude-haiku-4-5" {
-		t.Errorf("Agent.Model = %q, want %q", cfg.Agent.Model, "claude-haiku-4-5")
+	if cfg.Agent.Model != "anthropic:claude-haiku-4-5" {
+		t.Errorf("Agent.Model = %q, want %q", cfg.Agent.Model, "anthropic:claude-haiku-4-5")
 	}
 	if cfg.Agent.Workspace != "/tmp/workspace" {
 		t.Errorf("Agent.Workspace = %q", cfg.Agent.Workspace)
@@ -100,8 +100,8 @@ token = "test-token"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.Model != "claude-haiku-4-5" {
-		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "claude-haiku-4-5")
+	if cfg.Agent.Model != "anthropic:claude-haiku-4-5" {
+		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "anthropic:claude-haiku-4-5")
 	}
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
@@ -222,8 +222,8 @@ workspace = "/tmp/workspace"
 	if cfg.Agents[0].ID != "main" {
 		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
 	}
-	if cfg.Agents[0].Model != "claude-sonnet-4-6" {
-		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "claude-sonnet-4-6")
+	if cfg.Agents[0].Model != "anthropic:claude-sonnet-4-6" {
+		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic:claude-sonnet-4-6")
 	}
 
 	// cfg.Agent should mirror first agent
@@ -268,7 +268,7 @@ allowed_users = ["111"]
 	if cfg.Agents[0].ID != "clutch" {
 		t.Errorf("Agents[0].ID = %q", cfg.Agents[0].ID)
 	}
-	if cfg.Agents[0].Model != "claude-sonnet-4-6" {
+	if cfg.Agents[0].Model != "anthropic:claude-sonnet-4-6" {
 		t.Errorf("Agents[0].Model = %q", cfg.Agents[0].Model)
 	}
 	if cfg.Agents[0].TelegramBot != "primary" {
@@ -282,7 +282,7 @@ allowed_users = ["111"]
 	if cfg.Agents[1].ID != "scout" {
 		t.Errorf("Agents[1].ID = %q", cfg.Agents[1].ID)
 	}
-	if cfg.Agents[1].Model != "claude-haiku-4-5" {
+	if cfg.Agents[1].Model != "anthropic:claude-haiku-4-5" {
 		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
 	}
 	if cfg.Agents[1].TelegramBot != "scout" {
@@ -2165,7 +2165,7 @@ effort = "low"
 	}
 
 	bare := cfg.Agents[0]
-	if bare.Model != "claude-opus-4-6" {
+	if bare.Model != "anthropic:claude-opus-4-6" {
 		t.Errorf("bare Model = %q", bare.Model)
 	}
 	if bare.MaxToolLoops != 50 {
@@ -2201,8 +2201,8 @@ effort = "low"
 
 	// Override agent keeps its own values
 	override := cfg.Agents[1]
-	if override.Model != "claude-haiku-4-5" {
-		t.Errorf("override Model = %q, want claude-haiku-4-5", override.Model)
+	if override.Model != "anthropic:claude-haiku-4-5" {
+		t.Errorf("override Model = %q, want anthropic:claude-haiku-4-5", override.Model)
 	}
 	if override.Effort != "low" {
 		t.Errorf("override Effort = %q, want low", override.Effort)

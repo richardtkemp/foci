@@ -17,6 +17,7 @@ import (
 
 	"foci/anthropic"
 	"foci/compaction"
+	"foci/config"
 	"foci/log"
 	"foci/mana"
 	"foci/memory"
@@ -50,6 +51,7 @@ type sessionMeta struct {
 	effort          string          // per-session effort override (empty = use agent default)
 	thinking        string          // per-session thinking override (empty = use agent default)
 	model           string          // per-session model override (empty = use agent default)
+	modelEndpoint   string          // per-session endpoint override (empty = use agent default)
 	client          provider.Client // per-session client override (nil = use a.Client)
 	noCompact       bool            // per-session no_compact flag (sticky across async operations)
 }
@@ -75,7 +77,8 @@ type CacheBustFunc func(session string, prevRead, curRead int)
 // Agent is the core agent loop.
 type Agent struct {
 	Client        provider.Client
-	Clients       map[string]provider.Client // "anthropic" → ..., "gemini" → ...; for cross-provider switching
+	GetClient     func(endpoint, format string) provider.Client  // lazy-init client for endpoint:format
+	PeekClient    func(endpoint, format string) provider.Client  // no-init check for client existence
 	Sessions      *session.Store
 	Tools         *tools.Registry
 	Bootstrap     *workspace.Bootstrap
@@ -319,20 +322,29 @@ func (a *Agent) SessionModel(sessionKey string) string {
 	return a.Model
 }
 
-// SetSessionModel sets the per-session model and client override and persists it.
+// SetSessionModel sets the per-session model, endpoint, and client override and persists it.
 // client may be nil to fall back to the agent's default client.
-func (a *Agent) SetSessionModel(sessionKey, value string, client provider.Client) {
+func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provider.Client) {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	sm.model = value
+	sm.modelEndpoint = endpoint
 	sm.client = client
 	a.metaMu.Unlock()
 
 	if a.StateStore != nil {
 		if value == "" {
 			_ = a.StateStore.Delete("model:" + sessionKey)
-		} else if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
-			a.logger().Errorf("persist model: %v", err)
+			_ = a.StateStore.Delete("model_endpoint:" + sessionKey)
+		} else {
+			if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
+				a.logger().Errorf("persist model: %v", err)
+			}
+			if endpoint != "" {
+				if err := a.StateStore.Set("model_endpoint:"+sessionKey, endpoint); err != nil {
+					a.logger().Errorf("persist model_endpoint: %v", err)
+				}
+			}
 		}
 	}
 }
@@ -403,6 +415,25 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 		sm.model = val
 		a.metaMu.Unlock()
 		restored = append(restored, "model="+val)
+
+		// Restore endpoint and resolve the matching client
+		var ep string
+		if a.StateStore.Get("model_endpoint:"+sessionKey, &ep) && ep != "" {
+			sm2 := a.getSessionMeta(sessionKey)
+			a.metaMu.Lock()
+			sm2.modelEndpoint = ep
+			a.metaMu.Unlock()
+			restored = append(restored, "endpoint="+ep)
+
+			if a.GetClient != nil {
+				format := config.InferFormat(val)
+				if c := a.GetClient(ep, format); c != nil {
+					a.metaMu.Lock()
+					sm2.client = c
+					a.metaMu.Unlock()
+				}
+			}
+		}
 	}
 	if a.StateStore.Get("no_compact:"+sessionKey, &val) && val != "" {
 		sm := a.getSessionMeta(sessionKey)
@@ -673,6 +704,10 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	model := summaryAlias
 	if full, ok := a.ModelAliases[summaryAlias]; ok {
 		model = full
+	}
+	// Strip endpoint prefix — aliases now include endpoint (e.g. "anthropic:claude-haiku-4-5")
+	if i := strings.IndexByte(model, ':'); i > 0 {
+		model = model[i+1:]
 	}
 
 	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
@@ -1619,18 +1654,24 @@ func summarizeServerToolResult(block anthropic.ContentBlock) string {
 	return block.Type
 }
 
-// isGeminiClient returns true if the given client is the gemini client from the Clients map.
+// isGeminiClient returns true if the given client is a gemini client from the registry.
 func (a *Agent) isGeminiClient(c provider.Client) bool {
-	if gc, ok := a.Clients["gemini"]; ok && gc != nil {
-		return c == gc
+	if a.PeekClient == nil {
+		return false
+	}
+	if gc := a.PeekClient("gemini", "gemini"); gc != nil && c == gc {
+		return true
 	}
 	return false
 }
 
-// isOpenAIClient returns true if the given client is the openai client from the Clients map.
+// isOpenAIClient returns true if the given client is an openai client from the registry.
 func (a *Agent) isOpenAIClient(c provider.Client) bool {
-	if oc, ok := a.Clients["openai"]; ok && oc != nil {
-		return c == oc
+	if a.PeekClient == nil {
+		return false
+	}
+	if oc := a.PeekClient("openai", "openai"); oc != nil && c == oc {
+		return true
 	}
 	return false
 }

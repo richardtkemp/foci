@@ -52,7 +52,7 @@ const sendMinGap = 2 * time.Second
 type tmuxInstance struct {
 	mu                sync.Mutex
 	watched           map[string]*watchedSession // key: "session:window"
-	owned             map[string]struct{}        // sessions created by this instance
+	owned             map[string]string          // tmux session name → owning agent session key
 	notifier          *AsyncNotifier
 	cols              int
 	rows              int
@@ -63,6 +63,9 @@ type tmuxInstance struct {
 	watchStateKey     string       // key for persisted watches (stateKey + ":watches")
 	sendMu            sync.Mutex
 	lastSend          map[string]time.Time // session name → last send timestamp
+	lastAccess        map[string]time.Time // tmux session name → last interaction time
+	sessionTTL        time.Duration        // auto-kill idle tmux sessions (0 = disabled)
+	reaperCancel      context.CancelFunc   // cancels the TTL reaper goroutine
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
@@ -72,15 +75,16 @@ type tmuxInstance struct {
 // stateStore and stateKey enable persistence of owned sessions across restarts.
 // autopilot enables auto-unwatch on inactivity and auto-watch on send.
 // watchThresholdSec sets the default watch threshold in seconds.
+// sessionTTL sets the auto-kill TTL for idle tmux sessions (0 disables).
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int) (*Tool, func()) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (*Tool, func()) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
 	}
 	inst := &tmuxInstance{
 		watched:           make(map[string]*watchedSession),
-		owned:             make(map[string]struct{}),
+		owned:             make(map[string]string),
 		notifier:          notifier,
 		cols:              cols,
 		rows:              rows,
@@ -90,17 +94,33 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		stateKey:          stateKey,
 		watchStateKey:     stateKey + ":watches",
 		lastSend:          make(map[string]time.Time),
+		lastAccess:        make(map[string]time.Time),
+		sessionTTL:        sessionTTL,
 	}
 
 	// Restore owned sessions from persistent state
 	if stateStore != nil {
-		var owned []string
-		if stateStore.Get(stateKey, &owned) {
-			for _, name := range owned {
-				inst.owned[name] = struct{}{}
+		// Try new format (map[string]string) first, fall back to old format ([]string)
+		var ownedMap map[string]string
+		if stateStore.Get(stateKey, &ownedMap) {
+			for name, sk := range ownedMap {
+				inst.owned[name] = sk
+				inst.lastAccess[name] = time.Now() // conservative: full TTL window after restart
 			}
-			if len(owned) > 0 {
-				log.Debugf("tmux", "restored %d owned session(s) from state", len(owned))
+			if len(ownedMap) > 0 {
+				log.Debugf("tmux", "restored %d owned session(s) from state", len(ownedMap))
+			}
+		} else {
+			// Fall back to old format for backwards compat
+			var owned []string
+			if stateStore.Get(stateKey, &owned) {
+				for _, name := range owned {
+					inst.owned[name] = "" // empty session key for old format
+					inst.lastAccess[name] = time.Now()
+				}
+				if len(owned) > 0 {
+					log.Debugf("tmux", "restored %d owned session(s) from state (legacy format)", len(owned))
+				}
 			}
 		}
 
@@ -150,6 +170,13 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 				log.Debugf("tmux", "restored %d watch(es) from state", restored)
 			}
 		}
+	}
+
+	// Start TTL reaper goroutine if sessionTTL > 0
+	if sessionTTL > 0 {
+		reaperCtx, reaperCancel := context.WithCancel(context.Background())
+		inst.reaperCancel = reaperCancel
+		go inst.ttlReaper(reaperCtx)
 	}
 
 	return &Tool{
@@ -271,11 +298,18 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 	}
 }
 
-func (inst *tmuxInstance) owns(name string) bool {
+func (inst *tmuxInstance) owns(name, sessionKey string) bool {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
-	_, ok := inst.owned[name]
-	return ok
+	storedKey, ok := inst.owned[name]
+	if !ok {
+		return false
+	}
+	// Both empty = backwards compat (context.Background() in tests)
+	if storedKey == "" && sessionKey == "" {
+		return true
+	}
+	return storedKey == sessionKey
 }
 
 // persistOwned saves the owned sessions map to the state store.
@@ -284,9 +318,9 @@ func (inst *tmuxInstance) persistOwned() {
 	if inst.stateStore == nil {
 		return
 	}
-	owned := make([]string, 0, len(inst.owned))
-	for name := range inst.owned {
-		owned = append(owned, name)
+	owned := make(map[string]string, len(inst.owned))
+	for name, sk := range inst.owned {
+		owned[name] = sk
 	}
 	if err := inst.stateStore.Set(inst.stateKey, owned); err != nil {
 		log.Warnf("tmux", "persist owned sessions: %v", err)
@@ -313,9 +347,14 @@ func (inst *tmuxInstance) persistWatches() {
 	}
 }
 
-// ClearAll stops all watches and clears the owned sessions map. Called by the
-// tmux memory monitor after kill-server to reset tool instance state.
+// ClearAll stops all watches, clears the owned sessions map, and stops the
+// TTL reaper. Called by the tmux memory monitor after kill-server to reset
+// tool instance state.
 func (inst *tmuxInstance) ClearAll() {
+	if inst.reaperCancel != nil {
+		inst.reaperCancel()
+	}
+
 	inst.mu.Lock()
 	// Cancel all watches
 	for key, ws := range inst.watched {
@@ -324,7 +363,8 @@ func (inst *tmuxInstance) ClearAll() {
 	}
 	inst.persistWatches()
 	// Clear owned set
-	inst.owned = make(map[string]struct{})
+	inst.owned = make(map[string]string)
+	inst.lastAccess = make(map[string]time.Time)
 	inst.persistOwned()
 	inst.mu.Unlock()
 
@@ -333,6 +373,93 @@ func (inst *tmuxInstance) ClearAll() {
 	inst.sendMu.Unlock()
 
 	log.Debugf("tmux", "ClearAll: cleared all watches and owned sessions")
+}
+
+// ttlReaper periodically checks for idle tmux sessions and kills them.
+func (inst *tmuxInstance) ttlReaper(ctx context.Context) {
+	// Tick at sessionTTL/4, minimum 1 minute
+	interval := inst.sessionTTL / 4
+	if interval < time.Minute {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			inst.reapExpiredSessions()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// reapExpiredSessions kills tmux sessions that haven't been accessed within the TTL.
+func (inst *tmuxInstance) reapExpiredSessions() {
+	inst.mu.Lock()
+	var expired []string
+	now := time.Now()
+	for name, lastAccess := range inst.lastAccess {
+		if now.Sub(lastAccess) > inst.sessionTTL {
+			expired = append(expired, name)
+		}
+	}
+	if len(expired) == 0 {
+		inst.mu.Unlock()
+		return
+	}
+
+	// Collect watches to cancel for expired sessions
+	var watchesToCancel []*watchedSession
+	for _, name := range expired {
+		prefix := name + ":"
+		for key, ws := range inst.watched {
+			if strings.HasPrefix(key, prefix) {
+				watchesToCancel = append(watchesToCancel, ws)
+				delete(inst.watched, key)
+			}
+		}
+		delete(inst.owned, name)
+		delete(inst.lastAccess, name)
+	}
+	if len(watchesToCancel) > 0 {
+		inst.persistWatches()
+	}
+	inst.persistOwned()
+	inst.mu.Unlock()
+
+	// Cancel watches outside the lock
+	for _, ws := range watchesToCancel {
+		ws.cancel()
+	}
+
+	// Kill the tmux sessions
+	for _, name := range expired {
+		pids := tmuxSessionPIDs(name)
+		children := collectDescendants(pids)
+		allPIDs := append(pids, children...)
+
+		out, err := runTmux(context.Background(), "kill-session", "-t", name)
+		if err != nil {
+			log.Debugf("tmux", "ttl reaper: kill-session %s: %s %v", name, strings.TrimSpace(out), err)
+			continue
+		}
+
+		killed := terminateProcesses(allPIDs)
+		log.Infof("tmux", "ttl reaper: killed idle session %s (TTL %v exceeded)", name, inst.sessionTTL)
+		if killed > 0 {
+			log.Debugf("tmux", "ttl reaper: terminated %d child process(es) for %s", killed, name)
+		}
+	}
+
+	inst.sendMu.Lock()
+	for _, name := range expired {
+		delete(inst.lastSend, name)
+	}
+	inst.sendMu.Unlock()
+
+	maybeKillTmuxServer(context.Background())
 }
 
 func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, keys string, watch bool) (ToolResult, error) {
@@ -389,8 +516,10 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 		}
 	}
 
+	sessionKey := SessionKeyFromContext(ctx)
 	inst.mu.Lock()
-	inst.owned[name] = struct{}{}
+	inst.owned[name] = sessionKey
+	inst.lastAccess[name] = time.Now()
 	inst.persistOwned()
 	inst.mu.Unlock()
 
@@ -540,9 +669,14 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if keys == "" && !enter {
 		return ToolResult{}, fmt.Errorf("keys is required for send (or set enter=true to send just Enter)")
 	}
-	if !inst.owns(name) {
-		return ToolResult{}, fmt.Errorf("session %q not owned by this agent", name)
+	sessionKey := SessionKeyFromContext(ctx)
+	if !inst.owns(name, sessionKey) {
+		return ToolResult{}, fmt.Errorf("session %q not owned by this session", name)
 	}
+
+	inst.mu.Lock()
+	inst.lastAccess[name] = time.Now()
+	inst.mu.Unlock()
 
 	log.Debugf("tmux", "send: name=%s keys=%q enter=%v", name, keys, enter)
 
@@ -615,10 +749,31 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	return TextResult(result), nil
 }
 
+// lettersOnly strips everything except ASCII and Unicode letters from s.
+func lettersOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // verifyKeysInPane checks if the sent keys appear in the pane output within a timeout.
 // Returns true if keys were found, false if not found within the timeout.
 func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys string) bool {
-	log.Debugf("tmux", "verifyKeysInPane: name=%s keys=%q", name, keys)
+	// Strip to letters only and truncate to 100 chars so matching is resilient
+	// to TUI chrome, special characters, and formatting differences.
+	needle := lettersOnly(keys)
+	if len(needle) > 100 {
+		needle = needle[:100]
+	}
+	if needle == "" {
+		return true // nothing meaningful to verify
+	}
+
+	log.Debugf("tmux", "verifyKeysInPane: name=%s needle=%q", name, needle)
 
 	// Poll every 200ms for up to 2 seconds
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -635,9 +790,8 @@ func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys strin
 				return false
 			}
 
-			// Check if the sent keys appear in the output
-			// We check the raw output to catch the keys before they're processed
-			if strings.Contains(out, keys) {
+			haystack := lettersOnly(out)
+			if strings.Contains(haystack, needle) {
 				log.Debugf("tmux", "verifyKeysInPane: keys confirmed in pane output")
 				return true
 			}
@@ -655,9 +809,14 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 	if name == "" {
 		return ToolResult{}, fmt.Errorf("name is required for read")
 	}
-	if !inst.owns(name) {
-		return ToolResult{}, fmt.Errorf("session %q not owned by this agent", name)
+	sessionKey := SessionKeyFromContext(ctx)
+	if !inst.owns(name, sessionKey) {
+		return ToolResult{}, fmt.Errorf("session %q not owned by this session", name)
 	}
+
+	inst.mu.Lock()
+	inst.lastAccess[name] = time.Now()
+	inst.mu.Unlock()
 
 	log.Debugf("tmux", "read: name=%s lines=%d raw=%v", name, lines, raw)
 
@@ -687,8 +846,10 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		return ToolResult{}, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
 	}
 
+	sessionKey := SessionKeyFromContext(ctx)
+
 	inst.mu.Lock()
-	ownedNames := make(map[string]struct{}, len(inst.owned))
+	ownedNames := make(map[string]string, len(inst.owned))
 	for k, v := range inst.owned {
 		ownedNames[k] = v
 	}
@@ -713,15 +874,19 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		createdUnix, _ := strconv.ParseInt(parts[2], 10, 64)
 		age := formatTmuxAge(createdUnix)
 
-		_, isOwned := ownedNames[name]
+		storedKey, isOwned := ownedNames[name]
+		// Check if this session belongs to the current session key
+		isOwnedByMe := isOwned && (storedKey == sessionKey || (storedKey == "" && sessionKey == ""))
 		if isOwned {
 			ownedStillExist = true
 		}
 
 		// Status: owned / watched / idle
 		status := "idle"
-		if isOwned {
+		if isOwnedByMe {
 			status = "owned"
+		} else if isOwned {
+			status = "other"
 		}
 
 		watchInfo := "-"
@@ -743,7 +908,12 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 	// Clean up stale owned entries if none still exist in tmux
 	if len(ownedNames) > 0 && !ownedStillExist {
 		inst.mu.Lock()
-		inst.owned = make(map[string]struct{})
+		inst.owned = make(map[string]string)
+		for name := range inst.lastAccess {
+			if _, exists := inst.owned[name]; !exists {
+				delete(inst.lastAccess, name)
+			}
+		}
 		inst.persistOwned()
 		inst.mu.Unlock()
 	}
@@ -775,8 +945,9 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 	if name == "" {
 		return ToolResult{}, fmt.Errorf("name is required for kill")
 	}
-	if !inst.owns(name) {
-		return ToolResult{}, fmt.Errorf("session %q not owned by this agent", name)
+	sessionKey := SessionKeyFromContext(ctx)
+	if !inst.owns(name, sessionKey) {
+		return ToolResult{}, fmt.Errorf("session %q not owned by this session", name)
 	}
 
 	log.Debugf("tmux", "kill: name=%s", name)
@@ -821,6 +992,7 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 
 	inst.mu.Lock()
 	delete(inst.owned, name)
+	delete(inst.lastAccess, name)
 	inst.persistOwned()
 	inst.mu.Unlock()
 
@@ -990,6 +1162,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	log.Debugf("tmux", "watch: name=%s window=%d threshold=%ds", name, window, thresholdSeconds)
 
 	inst.mu.Lock()
+	inst.lastAccess[name] = time.Now()
 	key := fmt.Sprintf("%s:%d", name, window)
 	if _, exists := inst.watched[key]; exists {
 		inst.mu.Unlock()
@@ -1035,14 +1208,19 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (ToolResult,
 
 	log.Debugf("tmux", "unwatch: name=%s", name)
 
+	sessionKey := SessionKeyFromContext(ctx)
+
 	inst.mu.Lock()
-	// Collect all watches matching this session name (any window)
+	// Collect watches matching this session name and session key
 	prefix := name + ":"
 	var toCancel []*watchedSession
 	for key, ws := range inst.watched {
 		if strings.HasPrefix(key, prefix) {
-			toCancel = append(toCancel, ws)
-			delete(inst.watched, key)
+			// Only unwatch if session keys match (both empty = backwards compat)
+			if ws.agentSessionKey == sessionKey || (ws.agentSessionKey == "" && sessionKey == "") {
+				toCancel = append(toCancel, ws)
+				delete(inst.watched, key)
+			}
 		}
 	}
 	if len(toCancel) == 0 {

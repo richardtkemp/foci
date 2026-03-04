@@ -584,22 +584,26 @@ func NewResetCommand(resetFn func() error) *Command {
 }
 
 // NewModelCommand returns a /model command to show or switch the model.
-// getModel returns current model; setModel switches it with provider and model;
-// resolveModel resolves input (possibly "provider:alias") to (provider, model).
+// getModel returns current model; setModel switches it with endpoint and model;
+// resolveModel resolves input to (endpoint, model).
 // modelAliases provides the alias map for keyboard options (may be nil).
 // Callbacks receive the command's context so callers can resolve per-session state.
 func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string), resolveModel func(string) (string, string), modelAliases map[string]string) *Command {
 	return &Command{
 		Name:        "model",
-		Description: "Show or switch model (supports provider:alias syntax, e.g. gemini:flash)",
+		Description: "Show or switch model (supports endpoint:alias syntax, e.g. gemini:flash)",
 		Category:    "operations",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			if args == "" {
 				return fmt.Sprintf("Current model: %s", getModel(ctx)), nil
 			}
-			prov, resolved := resolveModel(args)
-			setModel(ctx, prov, resolved)
-			return fmt.Sprintf("Model switched to: %s", resolved), nil
+			endpoint, resolved := resolveModel(args)
+			setModel(ctx, endpoint, resolved)
+			display := resolved
+			if endpoint != "" {
+				display = endpoint + ":" + resolved
+			}
+			return fmt.Sprintf("Model switched to: %s", display), nil
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
 			current := getModel(ctx)
@@ -613,7 +617,10 @@ func NewModelCommand(getModel func(context.Context) string, setModel func(contex
 				var opts []KeyboardOption
 				for _, alias := range names {
 					label := alias
-					if modelAliases[alias] == current {
+					// Match against the alias value (which includes endpoint prefix)
+					// Current model is just the model ID, so check if alias value ends with it
+					aliasVal := modelAliases[alias]
+					if aliasVal == current || (strings.Contains(aliasVal, ":") && strings.HasSuffix(aliasVal, ":"+current)) {
 						label += " ✓"
 					}
 					opts = append(opts, KeyboardOption{Label: label, Data: alias})

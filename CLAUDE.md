@@ -10,6 +10,7 @@ Read `SPEC.md` for the design intent and philosophy.
 
 - If you modify how packages connect, add new packages, change the startup flow, add tools, or alter the agent loop, **update `docs/WIRING.md`** to reflect the change.
 - If you add a new feature, **check if it's appropriate to update `docs/COMPARISON.md`**, searching for additional info if required.
+- No backward compatibility is required, the project has not been released yet. Breaking changes and major refactors are fine!!
 
 ## Key Constraints
 

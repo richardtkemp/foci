@@ -82,13 +82,14 @@ var spawnExploreAllowed = map[string]bool{
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
 	Client             provider.Client
-	Clients            map[string]provider.Client               // "anthropic" → ..., "gemini" → ...; for cross-provider resolution
+	GetClient          func(endpoint, format string) provider.Client  // lazy-init client for endpoint:format
+	PeekClient         func(endpoint, format string) provider.Client  // no-init check for client existence
 	Bootstrap          SystemBlocksProvider
 	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
-	Model              string                                   // parent's default model
-	ModelAliases       map[string]string                        // model aliases (e.g. "haiku" → "claude-haiku-4-5")
+	Model              string                                   // parent's default model (endpoint:model format)
+	ModelAliases       map[string]string                        // model aliases (e.g. "haiku" → "anthropic:claude-haiku-4-5")
 	MaxInherit         int                                      // semaphore size (from config)
 	MaxToolLoops       int                                      // max tool loops for raw/character spawns
 	ExploreMaxDepth    int                                      // max tool loops for explore spawns
@@ -166,8 +167,11 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				model = deps.Model
 			}
 
-			// Resolve client based on model provider
-			client := resolveSpawnClient(model, deps.Client, deps.Clients)
+			// Resolve client based on endpoint:model
+			client := resolveSpawnClient(model, deps.Client, deps.GetClient)
+
+			// Strip endpoint prefix for API calls (req.Model needs bare model ID)
+			_, model = parseEndpointModel(model)
 
 			timeout := time.Duration(p.Timeout) * time.Second
 
@@ -202,8 +206,10 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			case "explore":
 				// Always use the cheapest model for exploration.
+				// Infer format from the parent's default model (which has endpoint:model format).
+				_, parentModelID := parseEndpointModel(deps.Model)
 				exploreAlias := "haiku"
-				if strings.HasPrefix(deps.Model, "gemini-") {
+				if strings.HasPrefix(parentModelID, "gemini-") {
 					exploreAlias = "flash"
 				}
 				exploreModel := model
@@ -217,12 +223,14 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 						exploreModel = full
 					}
 				}
-				exploreClient := resolveSpawnClient(exploreModel, deps.Client, deps.Clients)
+				exploreClient := resolveSpawnClient(exploreModel, deps.Client, deps.GetClient)
+				// Strip endpoint prefix for API call
+				_, exploreModelBare := parseEndpointModel(exploreModel)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, exploreClient, exploreModel, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
+				result, err := spawnOneShot(ctx, exploreClient, exploreModelBare, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -238,23 +246,45 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	}
 }
 
+// parseEndpointModel splits "endpoint:model_id". If no ":", returns ("", model).
+func parseEndpointModel(model string) (endpoint, modelID string) {
+	if i := strings.IndexByte(model, ':'); i > 0 {
+		return model[:i], model[i+1:]
+	}
+	return "", model
+}
+
+// inferFormat returns the wire format for a model ID based on naming conventions.
+func inferFormat(modelID string) string {
+	if strings.HasPrefix(modelID, "claude-") {
+		return "anthropic"
+	}
+	if strings.HasPrefix(modelID, "gemini-") {
+		return "gemini"
+	}
+	if isOpenAIModel(modelID) {
+		return "openai"
+	}
+	return "openai"
+}
+
 // resolveSpawnClient returns the appropriate client for a model.
-// Routes to the appropriate provider based on model prefix.
-func resolveSpawnClient(model string, defaultClient provider.Client, clients map[string]provider.Client) provider.Client {
-	if strings.HasPrefix(model, "gemini-") {
-		if gc := clients["gemini"]; gc != nil {
-			return gc
+// Model may be in "endpoint:model_id" or bare "model_id" format.
+func resolveSpawnClient(model string, defaultClient provider.Client, getClient func(endpoint, format string) provider.Client) provider.Client {
+	if getClient == nil {
+		return defaultClient
+	}
+	endpoint, modelID := parseEndpointModel(model)
+	if endpoint != "" {
+		format := inferFormat(modelID)
+		if c := getClient(endpoint, format); c != nil {
+			return c
 		}
 	}
-	if strings.HasPrefix(model, "claude-") {
-		if ac := clients["anthropic"]; ac != nil {
-			return ac
-		}
-	}
-	if isOpenAIModel(model) {
-		if oc := clients["openai"]; oc != nil {
-			return oc
-		}
+	// Bare model name — infer endpoint from model name
+	format := inferFormat(model)
+	if c := getClient(format, format); c != nil {
+		return c
 	}
 	return defaultClient
 }
