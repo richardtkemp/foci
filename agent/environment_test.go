@@ -42,7 +42,7 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 		EnvironmentBlock: envText,
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:env", "Hi")
+	_, err := ag.HandleMessage(context.Background(), "test/ienv/1000000000", "Hi")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestEnvironmentBlockOmittedWhenEmpty(t *testing.T) {
 		EnvironmentBlock: "", // disabled — simulates environment.enabled = false
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "agent:test:noenv", "Hi")
+	_, err := ag.HandleMessage(context.Background(), "test/inoenv/1000000000", "Hi")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

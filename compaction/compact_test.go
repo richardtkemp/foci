@@ -156,7 +156,7 @@ func TestCompactBasic(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
@@ -210,7 +210,7 @@ func TestCompactDryRun(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
@@ -244,7 +244,7 @@ func TestCompactDryRun(t *testing.T) {
 
 func TestCompactTooFewMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Add only 2 messages (below default minMessages=4)
 	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hi")})
@@ -272,7 +272,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Create scratchpad with entries
 	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
@@ -324,7 +324,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Create empty scratchpad
 	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
@@ -365,7 +365,7 @@ func TestCompactAPIError(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -442,7 +442,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -489,7 +489,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -522,7 +522,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Add 10 messages (5 user + 5 assistant)
 	for i := 0; i < 5; i++ {
@@ -595,7 +595,7 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -628,7 +628,7 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// 10 messages, minMessages=4, preserve=100
 	for i := 0; i < 5; i++ {
@@ -662,7 +662,7 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 	t.Run("preserved_starts_user", func(t *testing.T) {
 		// Even preserve count from even total → preserved[0] is user
 		store := session.NewStore(t.TempDir())
-		key := "agent:test:main"
+		key := "test/imain/1000000000"
 		for i := 0; i < 5; i++ {
 			store.Append(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
 			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
@@ -695,7 +695,7 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 	t.Run("preserved_starts_assistant", func(t *testing.T) {
 		// Odd preserve count from even total → preserved[0] is assistant
 		store := session.NewStore(t.TempDir())
-		key := "agent:test:main"
+		key := "test/imain/1000000000"
 		for i := 0; i < 5; i++ {
 			store.Append(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
 			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
@@ -973,7 +973,7 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Build session: 5 text pairs + 1 tool pair + 1 text pair = 14 messages
 	for i := 0; i < 5; i++ {
@@ -1033,7 +1033,7 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Build session with an orphaned tool_use deep in history.
 	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
@@ -1060,7 +1060,7 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	// Create scratchpad
 	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
@@ -1125,7 +1125,7 @@ func TestCompactWithEffortOverride(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -1166,7 +1166,7 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
@@ -1246,7 +1246,7 @@ func TestCompactStreaming(t *testing.T) {
 	client.SetUseSDK(true)
 
 	store := session.NewStore(t.TempDir())
-	sessionKey := "agent:test:main"
+	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
 		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})

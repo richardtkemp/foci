@@ -214,7 +214,7 @@ func TestSpawnContextClone(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do the research task",
@@ -230,15 +230,15 @@ func TestSpawnContextClone(t *testing.T) {
 	if !strings.Contains(result.Text, "Spawn started in background") {
 		t.Errorf("expected async ack, got %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "Branch: agent:test:spawn:spawn-") {
+	if !strings.Contains(result.Text, "Branch: test/imain/1000000000/b") {
 		t.Errorf("expected branch key in ack, got %q", result.Text)
 	}
 
 	// Should have created a branch
-	if mockSessions.parentKey != "agent:test:main" {
+	if mockSessions.parentKey != "test/imain/1000000000" {
 		t.Errorf("parent = %q, want agent:test:main", mockSessions.parentKey)
 	}
-	if !strings.HasPrefix(mockSessions.branchKey, "agent:test:spawn:spawn-") {
+	if !strings.HasPrefix(mockSessions.branchKey, "test/imain/1000000000/b") {
 		t.Errorf("branch = %q, want prefix agent:test:spawn:spawn-", mockSessions.branchKey)
 	}
 	if !mockSessions.opts.NoResetHook {
@@ -279,7 +279,7 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 	params, _ := json.Marshal(map[string]string{
 		"prompt": "Do something",
 	})
@@ -420,7 +420,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
 	// Mark context as already inside a spawn inherit
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 	ctx = WithSpawnInherit(ctx)
 
 	// Inherit should be rejected
@@ -499,7 +499,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 		}
 	})
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 
 	// Launch 4 concurrent inherit calls (all return immediately with ack)
 	for i := 0; i < 4; i++ {
@@ -587,7 +587,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do research",
 		"context": "clone",
@@ -603,7 +603,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 
 	select {
 	case d := <-delivered:
-		if d.sk != "agent:test:main" {
+		if d.sk != "test/imain/1000000000" {
 			t.Errorf("notified session = %q, want agent:test:main", d.sk)
 		}
 		if !strings.Contains(d.msg, "[SPAWN RESULT]") {
@@ -642,7 +642,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
 		"context": "clone",
@@ -686,7 +686,7 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do task",
 		"context": "clone",
@@ -793,7 +793,7 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/imain/1000000000")
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Do something",
 		"context": "clone",
@@ -805,10 +805,10 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	}
 
 	// OrientationBuilder should have been called with correct keys
-	if builderParent != "agent:test:main" {
+	if builderParent != "test/imain/1000000000" {
 		t.Errorf("builder parentKey = %q, want agent:test:main", builderParent)
 	}
-	if !strings.HasPrefix(builderBranch, "agent:test:spawn:spawn-") {
+	if !strings.HasPrefix(builderBranch, "test/imain/1000000000/b") {
 		t.Errorf("builder branchKey = %q, want prefix agent:test:spawn:spawn-", builderBranch)
 	}
 

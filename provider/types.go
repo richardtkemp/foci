@@ -71,6 +71,24 @@ func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
 	type alias contentBlockAlias
 	var a alias
 	if err := json.Unmarshal(data, &a); err != nil {
+		// tool_result: the SDK serializes "content" as an array of text blocks
+		// (e.g. [{"type":"text","text":"..."}]) while our struct expects a string.
+		// Handle both formats.
+		if peek.Type == "tool_result" {
+			var tr struct {
+				Type      string          `json:"type"`
+				ToolUseID string          `json:"tool_use_id"`
+				IsError   bool            `json:"is_error"`
+				Content   json.RawMessage `json:"content"`
+			}
+			if err2 := json.Unmarshal(data, &tr); err2 == nil {
+				cb.Type = tr.Type
+				cb.ToolUseID = tr.ToolUseID
+				cb.IsError = tr.IsError
+				cb.Content = extractToolResultContent(tr.Content)
+				return nil
+			}
+		}
 		if knownBlockTypes[peek.Type] {
 			return err // fail hard for known types
 		}
@@ -92,6 +110,28 @@ func (cb *ContentBlock) UnmarshalJSON(data []byte) error {
 	*cb = ContentBlock(a)
 	cb.Raw = append(json.RawMessage(nil), data...)
 	return nil
+}
+
+// extractToolResultContent handles both string and array formats for tool_result content.
+// The Anthropic API accepts content as either a plain string or an array of text blocks
+// [{"type":"text","text":"..."}]. The SDK uses the array format.
+func extractToolResultContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try string first
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// Try array of text blocks
+	var blocks []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) == nil && len(blocks) > 0 {
+		return blocks[0].Text
+	}
+	return string(raw)
 }
 
 // MarshalJSON uses Raw for unknown block types (preserves encrypted_content etc.),

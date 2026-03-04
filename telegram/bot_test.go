@@ -1659,8 +1659,8 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 
 func TestSessionKeyForChat(t *testing.T) {
 	key := SessionKeyForChat("fotini", 123456789)
-	if key != "agent:fotini:chat:123456789" {
-		t.Errorf("got %q, want %q", key, "agent:fotini:chat:123456789")
+	if !strings.HasPrefix(key, "fotini/c123456789/") {
+		t.Errorf("got %q, want prefix %q", key, "fotini/c123456789/")
 	}
 }
 
@@ -1718,8 +1718,8 @@ func TestDefaultSessionKey(t *testing.T) {
 
 	// Set default chat
 	b.setDefaultChat(12345)
-	if sk := b.DefaultSessionKey(); sk != "agent:test-agent:chat:12345" {
-		t.Errorf("expected agent:test-agent:chat:12345, got %q", sk)
+	if sk := b.DefaultSessionKey(); !strings.HasPrefix(sk, "test-agent/c12345/") {
+		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
 	}
 }
 
@@ -1732,8 +1732,8 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	b.setDefaultChat(12345)
 
 	// SessionKey() should return the default chat session
-	if sk := b.SessionKey(); sk != "agent:test-agent:chat:12345" {
-		t.Errorf("expected default session key, got %q", sk)
+	if sk := b.SessionKey(); !strings.HasPrefix(sk, "test-agent/c12345/") {
+		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
 	}
 }
 

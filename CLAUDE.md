@@ -23,13 +23,17 @@ Read `docs/SPEC.md` for the design intent and philosophy.
 
 ```
 go build -o foci . && ./foci -config foci.toml
-go test ./...
-go vet ./...
+make test
+make lint
 ```
 
 ## Testing
 
-All tests are self-contained except `anthropic/cache_test.go` which needs `ANTHROPIC_API_KEY`. Run `go test ./...` — should pass in ~1s.
+All tests are self-contained. Run `make test` — should pass in ~1s.
+
+`anthropic/cache_test.go` requires `ANTHROPIC_API_KEY` to run (skipped if not set). This is the critical integration test validating cache sharing across branched sessions.
+
+**Always use `make test` instead of `go test`** — it runs with proper parallelization and consistent flags.
 
 ## Standards
 

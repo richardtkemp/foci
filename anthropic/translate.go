@@ -184,10 +184,14 @@ func classifySDKError(err error) error {
 
 	var sdkErr *sdk.Error
 	if errors.As(err, &sdkErr) {
-		return &APIError{
+		apiErr := &APIError{
 			StatusCode: sdkErr.StatusCode,
 			Body:       sdkErr.RawJSON(),
 		}
+		if sdkErr.Response != nil {
+			apiErr.RetryAfter = sdkErr.Response.Header.Get("Retry-After")
+		}
+		return apiErr
 	}
 
 	// SDK streaming errors are plain fmt.Errorf with embedded JSON:
@@ -291,7 +295,7 @@ func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
 
 // rawToSDKContentBlock wraps raw JSON as an SDK content block param via Override.
 func rawToSDKContentBlock(raw json.RawMessage) sdk.ContentBlockParamUnion {
-	return param.Override[sdk.ContentBlockParamUnion](string(raw))
+	return param.Override[sdk.ContentBlockParamUnion](json.RawMessage(raw))
 }
 
 // systemToSDK translates provider system blocks to SDK text block params.
