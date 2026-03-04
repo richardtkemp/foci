@@ -794,8 +794,14 @@ func TestAuthMiddleware(t *testing.T) {
 			wantStatus: http.StatusUnauthorized,
 		},
 		{
-			name:       "voice endpoint bypasses auth",
+			name:       "voice endpoint requires auth",
 			path:       "/voice",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "voice endpoint with bearer",
+			path:       "/voice",
+			bearer:     apiKey,
 			wantStatus: http.StatusOK,
 		},
 		{
