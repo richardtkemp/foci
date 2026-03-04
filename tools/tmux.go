@@ -646,7 +646,8 @@ waitForStable:
 
 sendKeys:
 	// Step h: Send the keys string to the pane
-	_, err = runTmux(ctx, "send-keys", "-t", name, keys)
+	// Use -l flag to send keys as literal string (prevents tmux from interpreting special characters)
+	_, err = runTmux(ctx, "send-keys", "-t", name, "-l", keys)
 	if err != nil {
 		return fmt.Errorf("send keys: %w", err)
 	}
