@@ -580,6 +580,14 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 
 	result := "Keys sent."
 
+	// Best-effort verification: check if sent keys appeared in pane output
+	if keys != "" {
+		verified := inst.verifyKeysInPane(ctx, name, keys)
+		if !verified {
+			result += " Keys sent but not confirmed in pane output."
+		}
+	}
+
 	// Autopilot: auto-watch after send if not already watched
 	if inst.autopilot && inst.notifier != nil {
 		inst.mu.Lock()
@@ -605,6 +613,42 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	}
 
 	return TextResult(result), nil
+}
+
+// verifyKeysInPane checks if the sent keys appear in the pane output within a timeout.
+// Returns true if keys were found, false if not found within the timeout.
+func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys string) bool {
+	log.Debugf("tmux", "verifyKeysInPane: name=%s keys=%q", name, keys)
+
+	// Poll every 200ms for up to 2 seconds
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(2 * time.Second)
+
+	for {
+		select {
+		case <-ticker.C:
+			// Capture pane content
+			out, err := runTmux(ctx, "capture-pane", "-t", name, "-p")
+			if err != nil {
+				log.Debugf("tmux", "verifyKeysInPane: capture failed: %v", err)
+				return false
+			}
+
+			// Check if the sent keys appear in the output
+			// We check the raw output to catch the keys before they're processed
+			if strings.Contains(out, keys) {
+				log.Debugf("tmux", "verifyKeysInPane: keys confirmed in pane output")
+				return true
+			}
+
+		case <-timeout:
+			log.Debugf("tmux", "verifyKeysInPane: timeout, keys not found in pane output")
+			return false
+		case <-ctx.Done():
+			return false
+		}
+	}
 }
 
 func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw bool) (ToolResult, error) {
