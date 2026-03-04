@@ -322,6 +322,26 @@ func TestCalculateCostOpus(t *testing.T) {
 	}
 }
 
+func TestCalculateCostGemini(t *testing.T) {
+	// 1M input on gemini-2.5-flash = $0.15
+	cost := CalculateCost("gemini-2.5-flash", 1_000_000, 0, 0, 0)
+	if cost != 0.15 {
+		t.Errorf("1M input flash = %f, want 0.15", cost)
+	}
+
+	// 1M output on gemini-2.5-pro = $10.00
+	cost = CalculateCost("gemini-2.5-pro", 0, 1_000_000, 0, 0)
+	if cost != 10.0 {
+		t.Errorf("1M output pro = %f, want 10.0", cost)
+	}
+
+	// Unknown gemini model uses flash pricing
+	cost = CalculateCost("gemini-3.0-ultra", 1_000_000, 0, 0, 0)
+	if cost != 0.15 {
+		t.Errorf("unknown gemini = %f, want 0.15 (flash fallback)", cost)
+	}
+}
+
 func TestMultipleAPIEntries(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.jsonl")

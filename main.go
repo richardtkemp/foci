@@ -26,11 +26,13 @@ import (
 	"foci/command"
 	"foci/compaction"
 	"foci/config"
+	"foci/gemini"
 	"foci/keepalive"
 	"foci/log"
 	"foci/mana"
 	"foci/memory"
 	"foci/prompts"
+	"foci/provider"
 	"foci/resources"
 	"foci/secrets"
 	"foci/secrets/bitwarden"
@@ -741,8 +743,29 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	client, usageClient, credHolder := resolveCredentials(cfg, store, ctx)
+	anthropicClient, usageClient, credHolder := resolveCredentials(cfg, store, ctx)
 	log.Debugf("main", "anthropic client ready")
+
+	// Gemini client (created lazily only if any agent uses it)
+	var geminiClient provider.Client
+	geminiClientOnce := sync.OnceFunc(func() {
+		apiKey, _ := store.Get("gemini.api_key")
+		if apiKey == "" {
+			log.Errorf("main", "gemini.api_key not found in secrets — gemini provider unavailable")
+			return
+		}
+		httpTimeout, err := time.ParseDuration(cfg.Gemini.HTTPTimeout)
+		if err != nil {
+			httpTimeout = 120 * time.Second
+		}
+		gc, err := gemini.NewClient(ctx, apiKey, gemini.WithHTTPTimeout(httpTimeout))
+		if err != nil {
+			log.Errorf("main", "create gemini client: %v", err)
+			return
+		}
+		geminiClient = gc
+		log.Infof("main", "gemini client ready")
+	})
 
 	// Shared: Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
@@ -925,11 +948,25 @@ func main() {
 			agentBackends = mem.sharedBackends
 		}
 
+		// Resolve per-agent provider client
+		var agentClient provider.Client
+		switch acfg.Provider {
+		case "gemini":
+			geminiClientOnce()
+			if geminiClient == nil {
+				log.Errorf("main", "agent %q: gemini provider requested but client unavailable", acfg.ID)
+				continue
+			}
+			agentClient = geminiClient
+		default:
+			agentClient = anthropicClient
+		}
+
 		inst := setupAgent(setupParams{
 			acfg:            acfg,
 			cfg:             cfg,
 			configPath:      configPath,
-			client:          client,
+			client:          agentClient,
 			sessions:        sessions,
 			store:           store,
 			bwStore:         bwStore,
@@ -1443,7 +1480,7 @@ type setupParams struct {
 	acfg            config.AgentConfig
 	cfg             *config.Config
 	configPath      string
-	client          *anthropic.Client
+	client          provider.Client
 	sessions        *session.Store
 	store           *secrets.Store
 	bwStore         *bitwarden.Store
@@ -2145,15 +2182,15 @@ func setupAgent(p setupParams) *agentInstance {
 			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)
-			resp, err := p.client.SendMessage(callCtx, &anthropic.MessageRequest{
+			resp, err := p.client.SendMessage(callCtx, &provider.MessageRequest{
 				Model:    "claude-haiku-4-5-20251001",
 				MaxTokens: 1024,
-				Messages: []anthropic.Message{{Role: "user", Content: anthropic.TextContent(prompt)}},
+				Messages: []provider.Message{{Role: "user", Content: provider.TextContent(prompt)}},
 			})
 			if err != nil {
 				return "", err
 			}
-			return anthropic.TextOf(resp.Content), nil
+			return provider.TextOf(resp.Content), nil
 		},
 	}))
 	cmds.Register(command.NewLogCommand(p.cfg.Logging.EventFile))
@@ -2690,7 +2727,7 @@ func buildContextInfoFn(
 	bootstrap *workspace.Bootstrap,
 	registry *tools.Registry,
 	acfg config.AgentConfig,
-	client *anthropic.Client,
+	client provider.Client,
 	sessions *session.Store,
 	defaultSessionKey func() string,
 	compactionThreshold float64,

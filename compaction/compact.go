@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"foci/log"
@@ -76,13 +77,18 @@ func (c *Compactor) checkConfig() {
 
 // contextLimit returns the approximate context window for a model.
 func contextLimit(model string) int {
-	switch model {
-	case "claude-haiku-4-5":
+	switch {
+	case strings.HasPrefix(model, "claude-"):
 		return 200_000
-	case "claude-sonnet-4-5":
-		return 200_000
-	case "claude-opus-4-6":
-		return 200_000
+	case strings.Contains(model, "gemini-2.5-pro"),
+		strings.Contains(model, "gemini-2.5-flash"):
+		return 1_000_000
+	case strings.Contains(model, "gemini-2.0"):
+		return 1_000_000
+	case strings.Contains(model, "gemini-1.5"):
+		return 2_000_000
+	case strings.Contains(model, "gemini-"):
+		return 1_000_000
 	default:
 		return 200_000
 	}

@@ -37,21 +37,38 @@ func TestEstimateTokensEmpty(t *testing.T) {
 }
 
 func TestContextLimit(t *testing.T) {
-	models := []string{"claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-6", "unknown-model"}
-	for _, model := range models {
-		limit := contextLimit(model)
-		if limit != 200_000 {
-			t.Errorf("contextLimit(%q) = %d, want 200000", model, limit)
+	tests := []struct {
+		model string
+		want  int
+	}{
+		{"claude-haiku-4-5", 200_000},
+		{"claude-sonnet-4-5", 200_000},
+		{"claude-opus-4-6", 200_000},
+		{"gemini-2.5-pro", 1_000_000},
+		{"gemini-2.5-flash", 1_000_000},
+		{"gemini-2.0-flash", 1_000_000},
+		{"gemini-1.5-pro", 2_000_000},
+		{"unknown-model", 200_000},
+	}
+	for _, tt := range tests {
+		if got := contextLimit(tt.model); got != tt.want {
+			t.Errorf("contextLimit(%q) = %d, want %d", tt.model, got, tt.want)
 		}
 	}
 }
 
 func TestContextLimitExported(t *testing.T) {
-	models := []string{"claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-6", "unknown-model"}
-	for _, model := range models {
-		limit := ContextLimit(model)
-		if limit != 200_000 {
-			t.Errorf("ContextLimit(%q) = %d, want 200000", model, limit)
+	tests := []struct {
+		model string
+		want  int
+	}{
+		{"claude-haiku-4-5", 200_000},
+		{"gemini-2.5-flash", 1_000_000},
+		{"unknown-model", 200_000},
+	}
+	for _, tt := range tests {
+		if got := ContextLimit(tt.model); got != tt.want {
+			t.Errorf("ContextLimit(%q) = %d, want %d", tt.model, got, tt.want)
 		}
 	}
 }

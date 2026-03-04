@@ -55,9 +55,10 @@ func ParseLevel(s string) Level {
 	}
 }
 
-// APIEntry is a structured record for one Anthropic API request.
+// APIEntry is a structured record for one API request.
 type APIEntry struct {
 	Timestamp   time.Time `json:"ts"`
+	Provider    string    `json:"provider,omitempty"` // "anthropic" or "gemini" (empty = anthropic for backwards compat)
 	Session     string    `json:"session"`
 	Model       string    `json:"model"`
 	Input       int       `json:"input"`
@@ -226,6 +227,9 @@ func InitAPIDB(path string) error {
 		return fmt.Errorf("create api_calls table: %w", err)
 	}
 
+	// Add provider column if it doesn't exist (migration for existing DBs).
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN provider TEXT DEFAULT ''`)
+
 	// Indexes for common queries
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`); err != nil {
 		std.event(WARN, "api_db", "create ts index: %v", err)
@@ -235,9 +239,9 @@ func InitAPIDB(path string) error {
 	}
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
-		(ts, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
 		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -425,7 +429,7 @@ func (a *apiDB) insert(entry APIEntry) {
 	defer a.mu.Unlock()
 
 	_, err := a.stmt.Exec(
-		ts, entry.Session, entry.Model,
+		ts, entry.Provider, entry.Session, entry.Model,
 		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
 		entry.CostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
@@ -500,6 +504,10 @@ func Errorf(component string, format string, args ...interface{}) {
 }
 
 func API(entry APIEntry) {
+	// Auto-infer provider from model name when not explicitly set.
+	if entry.Provider == "" && strings.HasPrefix(entry.Model, "gemini-") {
+		entry.Provider = "gemini"
+	}
 	std.api(entry)
 }
 
@@ -551,11 +559,18 @@ func CalculateCost(model string, input, output, cacheRead, cacheWrite int) float
 		"claude-haiku-4-5":  {1.00, 5.00, 0.10, 1.25},
 		"claude-sonnet-4-5": {3.00, 15.00, 0.30, 3.75},
 		"claude-opus-4-6":   {15.00, 75.00, 1.50, 18.75},
+		"gemini-2.5-pro":    {1.25, 10.00, 0.315, 0},
+		"gemini-2.5-flash":  {0.15, 0.60, 0.0375, 0},
+		"gemini-2.0-flash":  {0.10, 0.40, 0.025, 0},
 	}
 
 	p, ok := prices[model]
 	if !ok {
-		p = prices["claude-haiku-4-5"]
+		if strings.HasPrefix(model, "gemini-") {
+			p = prices["gemini-2.5-flash"]
+		} else {
+			p = prices["claude-haiku-4-5"]
+		}
 	}
 
 	mtok := 1_000_000.0

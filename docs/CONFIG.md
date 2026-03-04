@@ -51,6 +51,16 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
+### `[gemini]`
+
+Google Gemini API configuration.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `http_timeout` | string | `"120s"` | HTTP timeout for Gemini API calls. Go duration format. |
+
+Requires `gemini.api_key` in `secrets.toml`. Set `provider = "gemini"` in `[defaults]` or per-agent to use.
+
 ### `[telegram]`
 
 Telegram bot configuration. Fields `allowed_users`, `received_files_dir`, and `enable_startup_notify` can be overridden per-agent — see [Global-or-Agent: Telegram](#telegram-overrides).
@@ -300,6 +310,8 @@ Default aliases (used when `[models]` section is not configured):
 - `opus` → `claude-opus-4-6`
 - `sonnet` → `claude-sonnet-4-6`
 - `haiku` → `claude-haiku-4-5`
+- `flash` → `gemini-2.5-flash`
+- `pro` → `gemini-2.5-pro`
 
 Example with custom model aliases:
 ```toml
@@ -456,7 +468,8 @@ Set in `[defaults]`, overridable per-agent.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `model` | string | `"claude-haiku-4-5"` | Anthropic model ID for API calls. |
+| `provider` | string | `"anthropic"` | API provider: `"anthropic"` or `"gemini"`. |
+| `model` | string | `"claude-haiku-4-5"` | Model ID for API calls. Provider-specific (e.g. `"gemini-2.5-flash"` for Gemini). |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. `""` omits (uses API default). Overridable at runtime via `/effort`. Per-session overrides persist across restarts via state store and reset when a new session starts. |
