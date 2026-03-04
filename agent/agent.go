@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -952,24 +951,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	lockStart := time.Now()
 	sessionLock.Lock()
 	lockDur := time.Since(lockStart)
-	warnThreshold := a.TurnLockWarnThreshold
-	if warnThreshold <= 0 {
-		warnThreshold = 3 * time.Minute
-	}
-	if lockDur > warnThreshold && waiterTrigger != "proactive_warning" {
-		// Find the holder's details from in-flight turns
-		holder := ""
-		for _, td := range a.ProcessingDetails() {
-			if td.SessionKey == sessionKey {
-				holder = fmt.Sprintf(" holder_trigger=%s holder_tool=%s holder_elapsed=%s",
-					td.Trigger, td.ToolName, time.Since(td.StartTime).Truncate(time.Millisecond))
-				break
-			}
-		}
-		a.logger().Warnf("turn_lock_held session=%s waited=%s waiter_trigger=%s%s", sessionKey, lockDur, waiterTrigger, holder)
-	} else {
-		a.logger().Debugf("turn_lock_acquired session=%s waited=%s", sessionKey, lockDur)
-	}
+	a.logTurnLockWait(sessionKey, lockDur, waiterTrigger)
 	defer sessionLock.Unlock()
 
 	atomic.AddInt32(&a.processing, 1)
@@ -1016,68 +998,10 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	turnEffort := a.SessionEffort(sessionKey)
 	turnThinking := a.SessionThinking(sessionKey)
 
-	// Build metadata prefix and prepend to user message
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	mana, manaReset, manaGood := a.manaAndReset()
 
-	// Check mana thresholds and notify user for active conversations only
-	// (not keepalives or scheduled wakes)
-	var manaRestoreNote string
-	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
-		a.ManaWatcher.CheckAndWarn(mana, manaReset, func(warn string) {
-			if a.ManaWarnFunc != nil {
-				a.ManaWarnFunc(warn)
-			}
-		})
-		if msg := a.ManaWatcher.CheckRestore(mana); msg != "" {
-			manaRestoreNote = "[" + msg + "]\n"
-			log.Infof("mana", "restore: %s", msg)
-		}
-	}
-
-	// Annotate with saved attachment paths so the agent knows where files are
-	var imagePaths string
-	for _, img := range images {
-		if img.SavedPath != "" {
-			label := "Image"
-			if img.MediaType == "application/pdf" {
-				label = "PDF"
-			}
-			imagePaths += "[" + label + " saved to: " + img.SavedPath + "]\n"
-		}
-	}
-
-	metaPrefix := buildMetaPrefix(now, turnModel, mana, manaGood, sm)
-	reminderBlock := a.collectReminders(sessionKey)
-	msgBody := manaRestoreNote + imagePaths + userMessage
-	trigger := TriggerFromContext(ctx)
-	if a.DuplicateMessages && isUserTrigger(trigger) {
-		msgBody = userMessage + "\n\n" + userMessage
-	}
-	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
-
-	// Build content blocks: attachments first, then text
-	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
-	var contentBlocks []anthropic.ContentBlock
-	for _, img := range images {
-		encoded := base64.StdEncoding.EncodeToString(img.Data)
-		if img.MediaType == "application/pdf" {
-			if len(img.Data) > maxPDFSize {
-				continue // over-size PDFs already have save-to-disk annotation
-			}
-			contentBlocks = append(contentBlocks, anthropic.DocumentBlock(img.MediaType, encoded))
-		} else {
-			contentBlocks = append(contentBlocks, anthropic.ImageBlock(img.MediaType, encoded))
-		}
-	}
-	contentBlocks = append(contentBlocks, anthropic.ContentBlock{Type: "text", Text: annotatedMessage})
-
-	// Append user message with metadata
-	userMsg := anthropic.Message{
-		Role:    "user",
-		Content: contentBlocks,
-	}
+	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, images)
 	messages = append(messages, userMsg)
 
 	// Track new messages to save. The defer flushes unsaved messages on
@@ -1178,32 +1102,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		cost := a.logAPIResponse(sessionKey, turnModel, start, duration, req, resp, len(reqMessages))
-
-		// Cache bust detection: cache_read dropped significantly vs previous request.
-		// Skip first request (no baseline) — prevCacheRead will be 0.
-		// Skip if session was idle longer than threshold (cache naturally expired).
-		if a.CacheBustDetect && a.CacheBustAlert != nil && sm.prevCacheRead > 0 {
-			idleThresh := a.CacheBustIdleThreshold
-			if idleThresh == 0 {
-				idleThresh = 10 * time.Minute
-			}
-			idle := !sm.lastMessageTime.IsZero() && now.Sub(sm.lastMessageTime) > idleThresh
-			if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead {
-				a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
-			}
-		}
-		// Update cache baseline after every API call so subsequent iterations
-		// within the same tool_use turn don't re-fire the detection.
-		sm.prevCacheRead = resp.Usage.CacheReadInputTokens
-
-		// Warn on max_tokens — response was truncated mid-thought
-		if resp.StopReason == "max_tokens" {
-			warn := fmt.Sprintf("stop_reason=max_tokens on %s (output=%d, limit=%d)", sessionKey, resp.Usage.OutputTokens, maxOutput)
-			a.logger().Warnf("%s", warn)
-			if a.MaxTokensWarnFunc != nil {
-				a.MaxTokensWarnFunc(warn)
-			}
-		}
+		a.processAPIResponse(sessionKey, sm, resp, cost, now, maxOutput)
 
 		// Build assistant message from response
 		assistantMsg := anthropic.Message{
@@ -1213,18 +1112,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		messages = append(messages, assistantMsg)
 		newMessages = append(newMessages, assistantMsg)
 
-		// Emit thinking blocks and server tool call/result notifications to observer (if any)
-		for _, block := range resp.Content {
-			if block.Type == "thinking" {
-				notifyThinkingCtx(ctx, block.Thinking)
-			}
-			if block.Type == "server_tool_use" {
-				notifyToolCallCtx(ctx, block.Name, block.Input)
-			}
-			if block.Type == "web_search_tool_result" || block.Type == "web_fetch_tool_result" {
-				notifyToolResultCtx(ctx, block.Type, summarizeServerToolResult(block), false)
-			}
-		}
+		notifyResponseBlocks(ctx, resp.Content)
 
 		// pause_turn: server paused a long-running turn — continue without client-side tool execution
 		if resp.StopReason == "pause_turn" {
@@ -1288,68 +1176,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			break
 		}
 
-		// Build tool execution context: inject session key
-		// so tools can route async results without importing agent.
-		toolCtx := tools.WithSessionKey(ctx, sessionKey)
-
-		// Execute tool calls. server_tool_use blocks are skipped by the type check
-		// below — they are already executed by Anthropic's servers.
-		var toolResults []anthropic.ContentBlock
-		for _, block := range resp.Content {
-			if block.Type != "tool_use" {
-				continue
-			}
-
-			// Check for cancellation between tool calls
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-
-			tool := a.Tools.Get(block.Name)
-			if tool == nil {
-				a.logger().Warnf("session=%s unknown tool: %s", sessionKey, block.Name)
-				toolResults = append(toolResults, anthropic.ToolResultBlock(
-					block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
-				))
-				signalActivityCtx(ctx)
-				continue
-			}
-
-			a.logger().Debugf("tool_use: %s (%d bytes)", block.Name, len(block.Input))
-			notifyToolCallCtx(ctx, block.Name, block.Input)
-			td.ToolName = block.Name
-			result, err := tool.Execute(toolCtx, block.Input)
-			td.ToolName = ""
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			if err != nil {
-				a.logger().Debugf("tool %s error: %v", block.Name, err)
-				errMsg := fmt.Sprintf("Error: %s", err)
-				if a.Redact != nil {
-					errMsg = a.Redact(errMsg)
-				}
-				toolResults = append(toolResults, anthropic.ToolResultBlock(
-					block.ID, errMsg, true,
-				))
-				notifyToolResultCtx(ctx, block.Name, errMsg, true)
-				signalActivityCtx(ctx)
-				continue
-			}
-
-			// Guard against oversized tool results
-			guardedResult := a.guardToolResult(ctx, turnClient, sessionKey, block.Name, result.Text, messages)
-			// Redact secrets from tool output
-			if a.Redact != nil {
-				guardedResult = a.Redact(guardedResult)
-			}
-			toolResults = append(toolResults, anthropic.ToolResultBlock(
-				block.ID, guardedResult, false,
-			))
-			// Append extra content blocks (e.g. document blocks from PDF reads)
-			toolResults = append(toolResults, result.ExtraBlocks...)
-			notifyToolResultCtx(ctx, block.Name, guardedResult, false)
-			signalActivityCtx(ctx)
+		// Execute tool calls. server_tool_use blocks are skipped — already
+		// executed by Anthropic's servers.
+		toolResults, err := a.executeToolCalls(ctx, td, turnClient, sessionKey, resp.Content, messages)
+		if err != nil {
+			return "", err
 		}
 
 		// Braindead warning detection: fold warning into tool results to avoid
