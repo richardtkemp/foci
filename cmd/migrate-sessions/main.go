@@ -134,9 +134,9 @@ func main() {
 	fmt.Printf("Sessions directory: %s\n", *sessionDir)
 	fmt.Printf("Database: %s\n", *dbPath)
 	if *dryRun {
-		fmt.Println("DRY RUN - no changes will be made\n")
+		fmt.Println("DRY RUN - no changes will be made")
 	} else {
-		fmt.Println("WARNING: This will modify files and database. Backup recommended!\n")
+		fmt.Println("WARNING: This will modify files and database. Backup recommended!")
 	}
 
 	// Migrate files
