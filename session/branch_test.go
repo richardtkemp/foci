@@ -8,8 +8,8 @@ import (
 
 func TestCreateBranchAndLoadFull(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:morning"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/imorning/1000000000"
 
 	// Build parent session with 4 messages
 	s.Append(parentKey, msg("user", "hello"))
@@ -54,8 +54,8 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 
 func TestBranchParentContinuesGrowing(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:test"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/itest/1000000000"
 
 	s.Append(parentKey, msg("user", "one"))
 	s.Append(parentKey, msg("assistant", "two"))
@@ -89,8 +89,8 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 
 func TestBranchFromEmptyParent(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:empty"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/iempty/1000000000"
 
 	// Don't add any messages to parent — branch from empty
 	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
@@ -110,7 +110,7 @@ func TestBranchFromEmptyParent(t *testing.T) {
 
 func TestLoadFullNonBranch(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:main:main"
+	key := "main/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 
@@ -126,7 +126,7 @@ func TestLoadFullNonBranch(t *testing.T) {
 
 func TestLoadFullNonexistent(t *testing.T) {
 	s := NewStore(t.TempDir())
-	msgs, err := s.LoadFull("agent:ghost:main")
+	msgs, err := s.LoadFull("ghost/imain/1000000000")
 	if err != nil {
 		t.Fatalf("LoadFull nonexistent: %v", err)
 	}
@@ -137,8 +137,8 @@ func TestLoadFullNonexistent(t *testing.T) {
 
 func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:opts"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/iopts/1000000000"
 
 	s.Append(parentKey, msg("user", "hello"))
 
@@ -164,8 +164,8 @@ func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 
 func TestCreateBranchWithOptionsDefault(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:default"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/idefault/1000000000"
 
 	s.Append(parentKey, msg("user", "hello"))
 
@@ -185,7 +185,7 @@ func TestCreateBranchWithOptionsDefault(t *testing.T) {
 
 func TestGetBranchMetaRegularSession(t *testing.T) {
 	s := NewStore(t.TempDir())
-	key := "agent:main:main"
+	key := "main/imain/1000000000"
 
 	s.Append(key, msg("user", "hello"))
 
@@ -201,7 +201,7 @@ func TestGetBranchMetaRegularSession(t *testing.T) {
 func TestGetBranchMetaNonexistent(t *testing.T) {
 	s := NewStore(t.TempDir())
 
-	meta, err := s.GetBranchMeta("agent:ghost:main")
+	meta, err := s.GetBranchMeta("ghost/imain/1000000000")
 	if err != nil {
 		t.Fatalf("GetBranchMeta: %v", err)
 	}
@@ -212,8 +212,8 @@ func TestGetBranchMetaNonexistent(t *testing.T) {
 
 func TestBranchMetaBackwardCompat(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:old"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/iold/1000000000"
 
 	s.Append(parentKey, msg("user", "hello"))
 
@@ -236,8 +236,8 @@ func TestBranchMetaBackwardCompat(t *testing.T) {
 
 func TestBranchDoesNotContaminateParent(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:test"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/itest/1000000000"
 
 	s.Append(parentKey, msg("user", "parent msg"))
 	s.Append(parentKey, msg("assistant", "parent reply"))
@@ -256,8 +256,8 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 
 func TestCreateBranchWithOrientationMessage(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:orient"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/iorient/1000000000"
 
 	s.Append(parentKey, msg("user", "hello"))
 	s.Append(parentKey, msg("assistant", "hi"))
@@ -292,8 +292,8 @@ func TestCreateBranchWithOrientationMessage(t *testing.T) {
 
 func TestCreateBranchWithoutOrientationMessage(t *testing.T) {
 	s := NewStore(t.TempDir())
-	parentKey := "agent:main:main"
-	branchKey := "agent:main:cron:noorient"
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/inoorient/1000000000"
 
 	s.Append(parentKey, msg("user", "hello"))
 
