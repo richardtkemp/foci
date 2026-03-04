@@ -1022,7 +1022,6 @@ When binaries already exist: rebuild/re-download, restart service. When config a
 
 ```
 foci/
-├── SPEC.md
 ├── foci.toml
 ├── go.mod
 ├── go.sum

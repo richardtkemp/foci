@@ -112,7 +112,7 @@ See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next step
 
 ## Documentation
 
-- [SPEC.md](SPEC.md) — Full specification (source of truth)
+- [docs/SPEC.md](docs/SPEC.md) — Full specification (source of truth)
 - [docs/INSTALL.md](docs/INSTALL.md) — End-to-end installation guide
 - [docs/CONFIG.md](docs/CONFIG.md) — Configuration reference
 - [docs/AUTH.md](docs/AUTH.md) — Authentication and OAuth setup

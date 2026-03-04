@@ -452,3 +452,41 @@
 [27.715] send: rate-limiting: gap=209.706679ms, sleeping=1.790293321s
 [29.507] send: send-keys: 6 bytes
 [29.715] send: EXIT: success
+[0.000] send: ENTRY name=foci-test-sendread keys_len=10 enter=true
+[0.000] send: send-keys: 10 bytes
+[0.205] send: send-keys Enter (after 200ms pause)
+[0.416] send: EXIT: success
+[1.185] send: ENTRY name=foci-test-noenter keys_len=7 enter=false
+[1.185] send: send-keys: 7 bytes
+[1.397] send: EXIT: success
+[1.554] send: ENTRY name=foci-test-bareenter keys_len=0 enter=true
+[1.754] send: send-keys Enter (after 200ms pause)
+[1.760] send: EXIT: success
+[2.022] send: ENTRY name=foci-test-workdir keys_len=3 enter=true
+[2.022] send: send-keys: 3 bytes
+[2.240] send: send-keys Enter (after 200ms pause)
+[2.456] send: EXIT: success
+[15.506] send: ENTRY name=foci-test-readraw keys_len=21 enter=true
+[15.506] send: send-keys: 21 bytes
+[15.711] send: send-keys Enter (after 200ms pause)
+[15.927] send: EXIT: success
+[23.879] send: ENTRY name=foci-test-ap-send keys_len=5 enter=true
+[23.879] send: send-keys: 5 bytes
+[24.087] send: send-keys Enter (after 200ms pause)
+[24.299] send: EXIT: success
+[24.299] send: ENTRY name=foci-test-ap-send keys_len=5 enter=true
+[24.299] send: rate-limiting: gap=419.913972ms, sleeping=1.580086028s
+[25.882] send: send-keys: 5 bytes
+[26.089] send: send-keys Enter (after 200ms pause)
+[26.303] send: EXIT: success
+[26.543] send: ENTRY name=foci-test-no-ap keys_len=5 enter=true
+[26.543] send: send-keys: 5 bytes
+[26.748] send: send-keys Enter (after 200ms pause)
+[26.972] send: EXIT: success
+[30.611] send: ENTRY name=foci-test-ratelimit keys_len=5 enter=false
+[30.611] send: send-keys: 5 bytes
+[30.822] send: EXIT: success
+[30.822] send: ENTRY name=foci-test-ratelimit keys_len=6 enter=false
+[30.822] send: rate-limiting: gap=211.625836ms, sleeping=1.788374164s
+[32.612] send: send-keys: 6 bytes
+[32.823] send: EXIT: success
