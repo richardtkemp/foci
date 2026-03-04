@@ -228,7 +228,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
 func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string) (ToolResult, error) {
-	// Use a separate context for the command (not tied to agent turn)
+	// Use a separate context for tracking (not for killing the process)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
 	// Create exec bridge for tool piping.
@@ -245,7 +245,9 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		}
 	}
 
-	proc := exec.CommandContext(cmdCtx, execShell(), "-c", cmd)
+	// Use exec.Command (not CommandContext) so timeout doesn't kill the process.
+	// Auto-backgrounded commands should run to completion regardless of timeout.
+	proc := exec.Command(execShell(), "-c", cmd)
 	proc.Dir = workDir
 
 	// Inject FOCI_SOCK for exec bridge
@@ -253,9 +255,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		proc.Env = append(os.Environ(), "FOCI_SOCK="+bridge.SockPath())
 	}
 	proc.SysProcAttr = ChildSysProcAttr()
-	proc.Cancel = func() error {
-		return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
-	}
+	// Don't set proc.Cancel — let the command run to completion
 
 	// Use pipes with LimitReader to cap memory usage (Bug #115)
 	stdout, err := proc.StdoutPipe()
