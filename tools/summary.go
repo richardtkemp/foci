@@ -13,10 +13,12 @@ import (
 )
 
 // NewSummaryTool creates a tool that summarizes/extracts information from a file
-// via a Haiku call without loading the full content into the agent's context.
+// via a fast, cheap model call without loading the full content into the agent's context.
+// agentModel is the agent's configured model, used to pick the right lightweight model
+// for the summary call (e.g. haiku for Anthropic, flash for Gemini).
 // modelAliases maps short names (e.g. "haiku") to full model IDs; used to
 // resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(client provider.Client, modelAliases map[string]string) *Tool {
+func NewSummaryTool(client provider.Client, agentModel string, modelAliases map[string]string) *Tool {
 	resolveModel := func(alias string) string {
 		if modelAliases != nil {
 			if full, ok := modelAliases[strings.ToLower(alias)]; ok {
@@ -26,9 +28,15 @@ func NewSummaryTool(client provider.Client, modelAliases map[string]string) *Too
 		return alias
 	}
 
+	// Pick the cheapest model for the agent's provider.
+	summaryAlias := "haiku"
+	if strings.HasPrefix(agentModel, "gemini-") {
+		summaryAlias = "flash"
+	}
+
 	return &Tool{
 		Name:        "summary",
-		Description: "Summarize or extract specific information from a file using a fast Haiku call. Use this instead of read for large files when you only need specific information, not the full content.",
+		Description: "Summarize or extract specific information from a file using a fast, cheap model call. Use this instead of read for large files when you only need specific information, not the full content.",
 		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -45,12 +53,12 @@ func NewSummaryTool(client provider.Client, modelAliases map[string]string) *Too
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, client, resolveModel)
+			return summaryExecute(ctx, params, client, resolveModel, summaryAlias)
 		},
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, resolveModel func(string) string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, resolveModel func(string) string, summaryAlias string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -86,7 +94,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		}
 	}
 
-	model := resolveModel("haiku")
+	model := resolveModel(summaryAlias)
 	start := time.Now()
 
 	req := &provider.MessageRequest{
