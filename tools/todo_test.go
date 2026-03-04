@@ -10,7 +10,7 @@ import (
 	"foci/memory"
 )
 
-func TestTodoToolBatchComplete(t *testing.T) {
+func TestTodoToolBatchTransitionDone(t *testing.T) {
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -19,13 +19,14 @@ func TestTodoToolBatchComplete(t *testing.T) {
 	id3, _ := store.Add("agent1", "Task 3", "low", "")
 
 	params := map[string]interface{}{
-		"action": "complete",
+		"action": "transition",
+		"state":  "done",
 		"ids":    []int64{id1, id2, id3},
 		"reason": "batch completed",
 	}
 	result, err := executeTodoTool(tool, params)
 	if err != nil {
-		t.Fatalf("batch complete: %v", err)
+		t.Fatalf("batch transition: %v", err)
 	}
 	if result == "" {
 		t.Error("expected non-empty result")
@@ -99,7 +100,8 @@ func TestTodoToolBatchBothIdAndIds(t *testing.T) {
 	id1, _ := store.Add("agent1", "Task 1", "high", "")
 
 	params := map[string]interface{}{
-		"action": "complete",
+		"action": "transition",
+		"state":  "done",
 		"id":     id1,
 		"ids":    []int64{id1},
 		"reason": "should fail",
@@ -119,13 +121,14 @@ func TestTodoToolBatchPartialFailure(t *testing.T) {
 	id2, _ := store.Add("agent1", "Task 2", "medium", "")
 
 	params := map[string]interface{}{
-		"action": "complete",
+		"action": "transition",
+		"state":  "done",
 		"ids":    []int64{id1, invalidID, id2},
 		"reason": "partial test",
 	}
 	result, err := executeTodoTool(tool, params)
 	if err != nil {
-		t.Fatalf("batch complete should not return error on partial failure: %v", err)
+		t.Fatalf("batch transition should not return error on partial failure: %v", err)
 	}
 
 	if result == "" {
@@ -145,13 +148,14 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 	id, _ := store.Add("agent1", "Single task", "high", "")
 
 	params := map[string]interface{}{
-		"action": "complete",
+		"action": "transition",
+		"state":  "done",
 		"id":     id,
-		"reason": "done",
+		"reason": "finished",
 	}
 	result, err := executeTodoTool(tool, params)
 	if err != nil {
-		t.Fatalf("single complete: %v", err)
+		t.Fatalf("single transition: %v", err)
 	}
 	if result == "" {
 		t.Error("expected non-empty result")
@@ -254,6 +258,127 @@ func TestTodoToolGetWrongAgent(t *testing.T) {
 	_, err := executeTodoTool(tool, params)
 	if err == nil {
 		t.Error("expected error when getting todo from different agent")
+	}
+}
+
+func TestTodoToolTransitionDropped(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Will drop", "medium", "")
+
+	params := map[string]interface{}{
+		"action": "transition",
+		"state":  "dropped",
+		"id":     id,
+		"reason": "no longer relevant",
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("transition to dropped: %v", err)
+	}
+	if !strings.Contains(result, "dropped") {
+		t.Errorf("expected 'dropped' in result, got: %s", result)
+	}
+
+	items, _ := store.List("agent1", "dropped", "", "")
+	if len(items) != 1 {
+		t.Errorf("expected 1 dropped item, got %d", len(items))
+	}
+}
+
+func TestTodoToolTransitionReopen(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Reopen me", "high", "")
+	store.Complete("agent1", id, "done prematurely")
+
+	params := map[string]interface{}{
+		"action": "transition",
+		"state":  "open",
+		"id":     id,
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("transition to open: %v", err)
+	}
+	if !strings.Contains(result, "open") {
+		t.Errorf("expected 'open' in result, got: %s", result)
+	}
+
+	item, _ := store.Get("agent1", id)
+	if item.Status != "open" {
+		t.Errorf("status = %q, want open", item.Status)
+	}
+	if item.CompletedAt != nil {
+		t.Error("completed_at should be nil after reopen")
+	}
+	if item.CloseReason != "" {
+		t.Errorf("close_reason should be empty after reopen, got %q", item.CloseReason)
+	}
+}
+
+func TestTodoToolTransitionAliases(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	for _, alias := range []string{"cancelled", "canceled"} {
+		id, _ := store.Add("agent1", "Task for "+alias, "medium", "")
+		params := map[string]interface{}{
+			"action": "transition",
+			"state":  alias,
+			"id":     id,
+			"reason": "testing alias",
+		}
+		_, err := executeTodoTool(tool, params)
+		if err != nil {
+			t.Errorf("alias %q failed: %v", alias, err)
+			continue
+		}
+		item, _ := store.Get("agent1", id)
+		if item.Status != "dropped" {
+			t.Errorf("alias %q: status = %q, want dropped", alias, item.Status)
+		}
+	}
+}
+
+func TestTodoToolTransitionMissingReason(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "No reason", "medium", "")
+
+	params := map[string]interface{}{
+		"action": "transition",
+		"state":  "done",
+		"id":     id,
+	}
+	_, err := executeTodoTool(tool, params)
+	if err == nil {
+		t.Error("expected error when reason is missing for done transition")
+	}
+}
+
+func TestTodoToolCompleteBackCompat(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Old style", "medium", "")
+
+	params := map[string]interface{}{
+		"action": "complete",
+		"id":     id,
+		"reason": "back compat",
+	}
+	_, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("complete back-compat: %v", err)
+	}
+
+	item, _ := store.Get("agent1", id)
+	if item.Status != "done" {
+		t.Errorf("status = %q, want done", item.Status)
 	}
 }
 

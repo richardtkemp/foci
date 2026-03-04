@@ -230,11 +230,29 @@ func (s *TodoStore) CountOpenByTag(agentID, tag string) (int, error) {
 
 // Complete marks a todo item as done with the given reason.
 func (s *TodoStore) Complete(agentID string, id int64, reason string) error {
+	return s.Transition(agentID, id, "done", reason)
+}
+
+// Transition changes a todo item's status. For "done" and "dropped", sets
+// completed_at and close_reason. For "open", clears them.
+func (s *TodoStore) Transition(agentID string, id int64, status, reason string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.Exec(
-		`UPDATE todos SET status = 'done', completed_at = ?, updated_at = ?, close_reason = ? WHERE id = ? AND agent_id = ?`,
-		now, now, reason, id, agentID,
-	)
+	var res sql.Result
+	var err error
+	switch status {
+	case "open":
+		res, err = s.db.Exec(
+			`UPDATE todos SET status = 'open', completed_at = NULL, updated_at = ?, close_reason = '' WHERE id = ? AND agent_id = ?`,
+			now, id, agentID,
+		)
+	case "done", "dropped":
+		res, err = s.db.Exec(
+			`UPDATE todos SET status = ?, completed_at = ?, updated_at = ?, close_reason = ? WHERE id = ? AND agent_id = ?`,
+			status, now, now, reason, id, agentID,
+		)
+	default:
+		return fmt.Errorf("invalid status: %s", status)
+	}
 	if err != nil {
 		return err
 	}
