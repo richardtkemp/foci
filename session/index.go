@@ -137,6 +137,12 @@ func (idx *SessionIndex) Upsert(e SessionIndexEntry) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
+	idx.upsertLocked(e)
+}
+
+// upsertLocked performs the upsert without acquiring the mutex.
+// Caller must hold idx.mu.
+func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	activityAt := e.LastActivityAt
 	if activityAt.IsZero() {
 		activityAt = e.CreatedAt
@@ -336,7 +342,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 
 	count := 0
 	for _, e := range entries {
-		idx.Upsert(e)
+		idx.upsertLocked(e)
 		count++
 	}
 	return count, nil
