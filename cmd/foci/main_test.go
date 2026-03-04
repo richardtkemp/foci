@@ -905,6 +905,87 @@ func TestSubcommandHelp(t *testing.T) {
 			}
 		})
 	}
+
+	// Standalone commands (no base URL needed)
+	standaloneHelp := []struct {
+		name string
+		fn   func([]string) error
+	}{
+		{"auth", cmdAuth},
+		{"setup", cmdSetup},
+		{"secrets", cmdSecrets},
+	}
+
+	for _, cmd := range standaloneHelp {
+		for _, flag := range []string{"-h", "--help"} {
+			t.Run(cmd.name+"/"+flag, func(t *testing.T) {
+				err := cmd.fn([]string{flag})
+				if err != nil {
+					t.Errorf("%s %s returned error: %v", cmd.name, flag, err)
+				}
+			})
+		}
+	}
+
+	// Secrets subcommands
+	for _, sub := range []string{"list", "get", "set", "delete"} {
+		for _, flag := range []string{"-h", "--help"} {
+			t.Run("secrets_"+sub+"/"+flag, func(t *testing.T) {
+				err := cmdSecrets([]string{sub, flag})
+				if err != nil {
+					t.Errorf("secrets %s %s returned error: %v", sub, flag, err)
+				}
+			})
+		}
+	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	// Build the CLI binary
+	binPath := t.TempDir() + "/foci"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %s\n%s", err, out)
+	}
+
+	for _, arg := range []string{"version", "--version", "-v"} {
+		t.Run(arg, func(t *testing.T) {
+			cmd := exec.Command(binPath, arg)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", arg, err, out)
+			}
+			output := string(out)
+			if !strings.HasPrefix(output, "foci ") {
+				t.Errorf("output %q does not start with 'foci '", output)
+			}
+		})
+	}
+}
+
+func TestHelpCommand(t *testing.T) {
+	// Build the CLI binary
+	binPath := t.TempDir() + "/foci"
+	build := exec.Command("go", "build", "-o", binPath, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %s\n%s", err, out)
+	}
+
+	for _, arg := range []string{"help", "--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			cmd := exec.Command(binPath, arg)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", arg, err, out)
+			}
+			output := string(out)
+			if !strings.Contains(output, "Usage:") {
+				t.Errorf("output %q does not contain 'Usage:'", output)
+			}
+		})
+	}
 }
 
 func TestWantsHelp(t *testing.T) {

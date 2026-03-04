@@ -19,7 +19,7 @@ cli:
 	go build -ldflags "$(LDFLAGS)" -o foci ./cmd/foci
 
 foci-call:
-	go build -o foci-call ./cmd/foci-call
+	go build -ldflags "$(LDFLAGS)" -o foci-call ./cmd/foci-call
 
 test:
 	go test ./...

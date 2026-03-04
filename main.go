@@ -176,7 +176,38 @@ func configureMultiballBot(bot *telegram.Bot, mc multiballBotConfig) {
 
 
 
+func printVersion() {
+	fmt.Printf("foci-gw %s (commit %s, built %s, %s)\n", version, gitCommit, buildTime, goVersion)
+}
+
 func main() {
+	// Handle --version / -v / version before any flag parsing.
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			printVersion()
+			os.Exit(0)
+		}
+	}
+
+	// Custom usage for -h / --help.
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, `foci-gw — Foci gateway server
+
+Usage: foci-gw [flags]
+       foci-gw auth [-config <path>]
+       foci-gw version
+
+Flags:
+`)
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, `
+Subcommands:
+  auth      Authenticate with Anthropic (setup token from Claude Code)
+  version   Print version information
+`)
+	}
+
 	// Handle "foci auth" subcommand before normal flag parsing
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
 		authFlags := flag.NewFlagSet("auth", flag.ExitOnError)
