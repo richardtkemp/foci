@@ -1,3 +1,104 @@
+// Session Key Migration Tool
+//
+// This tool migrates session files and database entries from the old colon-separated
+// session key format to the new hierarchical slash-separated format with version directories.
+//
+// Commit: 5452cd497ca1cb4c65ec47460d6594bb253aeb8c
+// Date:   2026-03-04 21:18:42 +0000
+//
+// ## What Changed
+//
+// Old format (colon-separated):
+//   agent:main:chat:123                              → chat session
+//   agent:main:spawn:spawn-1234567890                → independent session
+//   agent:main:chat:123:branch:session-end-987       → branch from chat
+//   agent:main:chat:123.2026-03-04T13-33-44Z         → rotated archive
+//
+// New format (slash-separated with version directories):
+//   main/c123/1709590000                             → chat session (version timestamp)
+//   main/i1234567890/1234567890                      → independent session
+//   main/c123/1709590000/b987                        → branch child
+//   main/c123/1709600000/root.2026-03-04T13-33-44Z   → archive in version directory
+//
+// ## Key Design Changes
+//
+// 1. **Hierarchical structure**: Uses slash separators matching directory structure
+// 2. **Version directories**: Each compaction creates a new version directory with timestamp
+// 3. **Stable chat IDs**: Chat ID remains constant across compactions (c123)
+// 4. **Single-letter type codes**: c=chat, i=independent, b=branch, i=independent spawn
+// 5. **Unix seconds**: All timestamps are epoch seconds
+// 6. **Path mapping**: Root sessions use /root.jsonl suffix, children are direct paths
+//
+// ## What This Migration Does
+//
+// ### File Migration
+//
+// 1. Walks all session files in the sessions directory
+// 2. Extracts archive suffixes (numbered like .1, .10 or timestamped like .2026-03-04T13-33-44Z)
+// 3. Strips archive suffixes from old key to get base session identifier
+// 4. For numbered archives (.1, .10, etc.):
+//    - Uses file modification time as version timestamp
+//    - Creates separate version directory for each archive
+//    - Example: agent/main/chat/123.1.jsonl → main/c123/{mtime1}/root.jsonl
+//              agent/main/chat/123.jsonl   → main/c123/{mtime2}/root.jsonl
+// 5. For timestamp archives (.2026-03-04T13-33-44Z):
+//    - Uses file modification time as version timestamp
+//    - Preserves timestamp suffix in filename within version directory
+//    - Example: agent/main/chat/123.2026-03-04T13-33-44Z.jsonl → main/c123/{mtime}/root.2026-03-04T13-33-44Z.jsonl
+// 6. Moves files to new paths, creating directories as needed
+//
+// ### Database Migration
+//
+// 1. Reads parent relationships from session_index.parent_session_key
+// 2. Falls back to reading branch_meta from session files for missing relationships
+// 3. Converts all session_key and parent_session_key values to new format
+// 4. Uses file modification times for version timestamps (same as file migration)
+// 5. Handles collisions: if multiple old keys map to same new key, adds .1, .2 suffixes
+// 6. Updates all rows in-place within a transaction
+//
+// ### Parent Relationship Handling
+//
+// The old system used parent relationships to track:
+// - Branch spawns (child of parent session)
+// - Archive version history (newer archive's parent was older archive)
+//
+// The new system handles these differently:
+// - Branches: Still use parent-child via directory structure (main/c123/1709590000/b456)
+// - Archives: Become sibling version directories, no parent relationship needed
+//
+// For numbered archives that form parent chains in the old database:
+// - The migration ignores these parent relationships
+// - Each archive gets its own version directory based on file mtime
+// - Circular references are detected and broken (archives treated as roots)
+//
+// ## Usage
+//
+// IMPORTANT: Backup your sessions directory and database before running!
+//
+// Dry run (recommended first):
+//   ./migrate-sessions -sessions ./sessions -db ./data/session_index.db -dry-run
+//
+// Actual migration:
+//   ./migrate-sessions -sessions ./sessions -db ./data/session_index.db
+//
+// The tool will:
+// 1. Show all file moves it will perform
+// 2. Show all database key updates
+// 3. Warn about any circular parent references (usually in corrupted archive chains)
+// 4. Exit with error if any operation fails
+//
+// After migration, verify:
+// - Files are in new directory structure
+// - Database session_key values use new format
+// - Application can load sessions correctly
+//
+// ## Known Issues
+//
+// - Circular parent warnings for archive files indicate corrupted data in session_index
+//   (archive files shouldn't have parent relationships, but some do in old data)
+// - These are handled safely by treating archives as root sessions with mtime-based versions
+// - Collision detection adds .1, .2 suffixes when multiple sessions have identical timestamps
+//
 package main
 
 import (
