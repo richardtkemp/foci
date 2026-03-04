@@ -974,6 +974,10 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			}
 			thinkingBuf.WriteString(thinking)
 		},
+		// Streaming delta callbacks: refresh typing indicator to keep it alive.
+		TextDeltaObserver: func(delta string) {
+			_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+		},
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")

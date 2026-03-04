@@ -11,6 +11,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	sdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 )
 
 // CountTokensResponse is the response from the /v1/messages/count_tokens endpoint.
@@ -25,9 +29,14 @@ type Client struct {
 	httpClient     *http.Client
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for server error retries; 0 = default 2s
+	useSDK         bool          // use SDK transport (true) or raw HTTP (false)
 
 	overloadMu      sync.Mutex
 	overloadRecover chan struct{} // closed to signal recovery from 529; nil when not overloaded
+
+	// Lazy SDK client — initialized once on first SDK call.
+	sdkOnce   sync.Once
+	sdkClient *sdk.Client
 }
 
 // resolveToken returns the token to use for API requests.
@@ -45,6 +54,7 @@ func NewClient(apiKey string) *Client {
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 		baseURL:    "https://api.anthropic.com",
+		useSDK:     true,
 	}
 }
 
@@ -54,6 +64,7 @@ func NewClientWithTimeout(apiKey string, timeout time.Duration) *Client {
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: timeout},
 		baseURL:    "https://api.anthropic.com",
+		useSDK:     true,
 	}
 }
 
@@ -64,6 +75,7 @@ func NewClientWithTokenFunc(tokenFunc func() (string, error), timeout time.Durat
 		tokenFunc:  tokenFunc,
 		httpClient: &http.Client{Timeout: timeout},
 		baseURL:    "https://api.anthropic.com",
+		useSDK:     true,
 	}
 }
 
@@ -74,7 +86,27 @@ func NewClientWithBase(baseURL, apiKey string) *Client {
 		httpClient:     &http.Client{Timeout: 120 * time.Second},
 		baseURL:        baseURL,
 		retryBaseDelay: time.Millisecond, // fast retries for tests
+		useSDK:         false,            // tests use mock HTTP server
 	}
+}
+
+// SetUseSDK configures whether the client uses the SDK transport (true) or raw HTTP (false).
+func (c *Client) SetUseSDK(useSDK bool) {
+	c.useSDK = useSDK
+}
+
+// ensureSDKClient lazily initializes the SDK client.
+func (c *Client) ensureSDKClient() *sdk.Client {
+	c.sdkOnce.Do(func() {
+		sc := sdk.NewClient(
+			option.WithBaseURL(c.baseURL),
+			option.WithHTTPClient(c.httpClient),
+			option.WithMaxRetries(0), // we handle retries ourselves
+			option.WithAuthToken("placeholder"), // overridden per-request
+		)
+		c.sdkClient = &sc
+	})
+	return c.sdkClient
 }
 
 // enterOverload lazily creates the overload recovery channel and returns it.
@@ -118,9 +150,42 @@ func (c *Client) overloadMaxDuration() time.Duration {
 	return 2 * time.Hour
 }
 
-// sendOnce performs a single HTTP request to the messages API and returns the
-// parsed response, or an error. Extracted from SendMessage to support retry.
-func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, error) {
+// sendOnce dispatches to SDK or raw HTTP transport based on c.useSDK.
+func (c *Client) sendOnce(ctx context.Context, body []byte, req *MessageRequest) (*MessageResponse, error) {
+	if c.useSDK {
+		return c.sendOnceSDK(ctx, req)
+	}
+	return c.sendOnceRaw(ctx, body)
+}
+
+// sendOnceSDK sends a message using the official Anthropic SDK.
+func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+	token, err := c.resolveToken()
+	if err != nil {
+		return nil, fmt.Errorf("resolve token: %w", err)
+	}
+
+	params := buildSDKParams(req)
+	sc := c.ensureSDKClient()
+
+	slog.Debug("anthropic: sdk_call_start", "model", req.Model)
+	callStart := time.Now()
+
+	msg, err := sc.Messages.New(ctx, params, sdkRequestOptions(token)...)
+
+	callDur := time.Since(callStart)
+	if err != nil {
+		slog.Debug("anthropic: sdk_call_error", "duration", callDur, "error", err)
+		return nil, classifySDKError(err)
+	}
+	slog.Debug("anthropic: sdk_call_done", "duration", callDur, "stop_reason", msg.StopReason)
+
+	return responseFromSDK(msg), nil
+}
+
+// sendOnceRaw performs a single HTTP request to the messages API and returns the
+// parsed response, or an error. The original hand-rolled transport.
+func (c *Client) sendOnceRaw(ctx context.Context, body []byte) (*MessageResponse, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, fmt.Errorf("resolve token: %w", err)
@@ -182,9 +247,14 @@ func (c *Client) sendOnce(ctx context.Context, body []byte) (*MessageResponse, e
 // backoff doubling without cap. A cross-goroutine recovery signal wakes
 // sleeping retriers early when any SendMessage on the same Client succeeds.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+	// For raw transport, pre-marshal the body once. SDK transport uses req directly.
+	var body []byte
+	if !c.useSDK {
+		var err error
+		body, err = json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
 	}
 
 	// Phase 1: standard retries for all retryable errors.
@@ -209,7 +279,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 
 		slog.Debug("anthropic: send_attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
 		attemptStart := time.Now()
-		resp, err := c.sendOnce(ctx, body)
+		resp, err := c.sendOnce(ctx, body, req)
 		attemptDur := time.Since(attemptStart)
 		if err == nil {
 			slog.Debug("anthropic: send_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
@@ -254,7 +324,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 			recoverCh = c.enterOverload() // re-acquire for next iteration
 		}
 
-		resp, err := c.sendOnce(ctx, body)
+		resp, err := c.sendOnce(ctx, body, req)
 		if err == nil {
 			slog.Info("anthropic: recovered from overload", "elapsed", time.Since(overloadStart).String())
 			c.signalRecovery()
@@ -277,6 +347,31 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 // CountTokens calls the /v1/messages/count_tokens endpoint to get exact
 // input token counts for a request. The endpoint is free (no tokens billed).
 func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, error) {
+	if c.useSDK {
+		return c.countTokensSDK(ctx, req)
+	}
+	return c.countTokensRaw(ctx, req)
+}
+
+// countTokensSDK counts tokens using the SDK.
+func (c *Client) countTokensSDK(ctx context.Context, req *MessageRequest) (int, error) {
+	token, err := c.resolveToken()
+	if err != nil {
+		return 0, fmt.Errorf("resolve token: %w", err)
+	}
+
+	params := buildSDKCountParams(req)
+	sc := c.ensureSDKClient()
+
+	result, err := sc.Messages.CountTokens(ctx, params, sdkRequestOptions(token)...)
+	if err != nil {
+		return 0, classifySDKError(err)
+	}
+	return int(result.InputTokens), nil
+}
+
+// countTokensRaw counts tokens using raw HTTP.
+func (c *Client) countTokensRaw(ctx context.Context, req *MessageRequest) (int, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return 0, fmt.Errorf("resolve token: %w", err)
@@ -333,6 +428,40 @@ type ModelInfo struct {
 
 // ListModels calls the /v1/models endpoint to list available models.
 func (c *Client) ListModels() ([]ModelInfo, error) {
+	if c.useSDK {
+		return c.listModelsSDK()
+	}
+	return c.listModelsRaw()
+}
+
+// listModelsSDK lists models using the SDK.
+func (c *Client) listModelsSDK() ([]ModelInfo, error) {
+	token, err := c.resolveToken()
+	if err != nil {
+		return nil, fmt.Errorf("resolve token: %w", err)
+	}
+
+	sc := c.ensureSDKClient()
+	page, err := sc.Models.List(context.Background(), sdk.ModelListParams{
+		Limit: param.NewOpt(int64(100)),
+	}, sdkRequestOptions(token)...)
+	if err != nil {
+		return nil, classifySDKError(err)
+	}
+
+	var models []ModelInfo
+	for _, m := range page.Data {
+		models = append(models, ModelInfo{
+			ID:          m.ID,
+			DisplayName: m.DisplayName,
+			CreatedAt:   m.CreatedAt,
+		})
+	}
+	return models, nil
+}
+
+// listModelsRaw lists models using raw HTTP.
+func (c *Client) listModelsRaw() ([]ModelInfo, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, fmt.Errorf("resolve token: %w", err)

@@ -48,6 +48,8 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 | `cc_credentials_poll_interval` | string | `"30s"` | How often to re-read Claude Code credentials from `~/.claude/.credentials.json`. |
+| `use_sdk` | bool | `true` | Use official Anthropic SDK for API transport. When `false`, falls back to hand-rolled HTTP (legacy). SDK transport is required for streaming. |
+| `streaming` | bool | `false` | Use streaming API for Anthropic requests (global default). Requires `use_sdk = true`. When enabled, text and thinking deltas are delivered incrementally. Per-agent override available in `[defaults]` and `[[agents]]`. |
 
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
@@ -514,6 +516,7 @@ Set in `[defaults]`, overridable per-agent.
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. `""` omits (uses API default). Overridable at runtime via `/effort`. Per-session overrides persist across restarts via state store and reset when a new session starts. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` enables adaptive extended thinking (Opus 4.6). `""` or `"off"` = disabled. Overridable at runtime via `/thinking`. Per-session overrides persist across restarts via state store. Thinking tokens count toward mana. |
+| `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 
 Default `system_files` order (most-stable first for cache efficiency):

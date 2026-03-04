@@ -14,6 +14,7 @@
 model = "claude-sonnet-4-20250514"
 effort = "low"                            # low (default), medium, high
 thinking = "adaptive"                     # adaptive (default), off
+# streaming = false                        # use streaming API (per-agent override)
 # max_tool_loops = 25
 # max_output_tokens = 8192
 # braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
@@ -51,6 +52,7 @@ id = "myagent"
 # model = "claude-sonnet-4-20250514"      # override default model
 # effort = "low"
 # thinking = "off"
+# streaming = false                        # per-agent streaming override
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # max_tool_loops = 25
 # max_output_tokens = 16384
@@ -152,6 +154,8 @@ system_files = [
 # http_timeout = "600s"                   # HTTP timeout for API calls
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
 # cc_credentials_poll_interval = "30s"  # how often to re-read CC credentials file
+# use_sdk = true                         # use SDK transport (false = raw HTTP fallback)
+# streaming = false                      # use streaming API (requires use_sdk)
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.

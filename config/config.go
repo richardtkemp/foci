@@ -120,6 +120,7 @@ type AgentConfig struct {
 	TurnLockWarnThreshold   string            `toml:"turn_lock_warn_threshold"`  // warn if turn lock wait exceeds this duration (Go duration, default "3m")
 	Effort                  string            `toml:"effort"`                    // effort level: "low" (default), "medium", "high"
 	Thinking                string            `toml:"thinking"`                  // thinking mode: "adaptive" (default) or "off"
+	Streaming               *bool             `toml:"streaming"`                 // per-agent streaming override (nil = use global anthropic.streaming)
 	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use [voice] tts_rate)
 	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
@@ -177,6 +178,8 @@ type AnthropicConfig struct {
 	HTTPTimeout              string `toml:"http_timeout"`                // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout          string `toml:"usage_api_timeout"`           // HTTP timeout for usage API calls (default "10s")
 	CCCredentialsPollInterval string `toml:"cc_credentials_poll_interval"` // how often to re-read CC credentials file (default "30s")
+	UseSDK                   bool   `toml:"use_sdk"`                     // use SDK transport (default true; false = raw HTTP)
+	Streaming                bool   `toml:"streaming"`                   // use streaming API (default false; requires use_sdk)
 }
 
 type TelegramConfig struct {
@@ -386,6 +389,7 @@ type DefaultsConfig struct {
 	TurnLockWarnThreshold string           `toml:"turn_lock_warn_threshold"`  // default turn lock warn threshold (default: "3m")
 	Effort              string           `toml:"effort"`                // default effort level: "low" (default), "medium", "high"
 	Thinking            string           `toml:"thinking"`              // default thinking mode: "adaptive" (default) or "off"
+	Streaming           *bool            `toml:"streaming"`             // default streaming (nil = use global anthropic.streaming)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (default: "off")
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (default: "off")
 	DisplayWidth        *int             `toml:"display_width"`         // default display_width (default: 44)
@@ -634,6 +638,8 @@ var boolKeys = map[string]bool{
 	"ws_enabled":            true,
 	"enabled":               true,
 	"skip_security_checks":  true,
+	"use_sdk":               true,
+	"streaming":             true,
 	"interval_enabled":      true,
 	"consolidation_enabled": true,
 	"session_end_enabled":   true,
@@ -898,6 +904,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
 	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
+	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
 
 	// Gemini defaults
 	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")

@@ -37,12 +37,14 @@ func isUserTrigger(trigger string) bool {
 // TurnCallbacks holds per-turn callbacks scoped to a context.
 // Using context avoids cross-turn races from mutable Agent fields.
 type TurnCallbacks struct {
-	ReplyFunc          ReplyFunc
-	VoiceReplyFunc     VoiceReplyFunc
-	ToolCallObserver   ToolCallObserver
-	ToolResultObserver ToolResultObserver
-	ThinkingObserver   func(thinking string)
-	ActivityFunc       func()
+	ReplyFunc            ReplyFunc
+	VoiceReplyFunc       VoiceReplyFunc
+	ToolCallObserver     ToolCallObserver
+	ToolResultObserver   ToolResultObserver
+	ThinkingObserver     func(thinking string)
+	ActivityFunc         func()
+	TextDeltaObserver    func(delta string)
+	ThinkingDeltaObserver func(delta string)
 }
 
 // WithTurnCallbacks attaches TurnCallbacks to a context.
@@ -95,6 +97,20 @@ func notifyThinkingCtx(ctx context.Context, thinking string) {
 func sendVoiceCtx(ctx context.Context, data []byte) {
 	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.VoiceReplyFunc != nil && len(data) > 0 {
 		cb.VoiceReplyFunc(data)
+	}
+}
+
+// notifyTextDeltaCtx calls the text delta observer via context.
+func notifyTextDeltaCtx(ctx context.Context, delta string) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.TextDeltaObserver != nil && delta != "" {
+		cb.TextDeltaObserver(delta)
+	}
+}
+
+// notifyThinkingDeltaCtx calls the thinking delta observer via context.
+func notifyThinkingDeltaCtx(ctx context.Context, delta string) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ThinkingDeltaObserver != nil && delta != "" {
+		cb.ThinkingDeltaObserver(delta)
 	}
 }
 

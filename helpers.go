@@ -2,6 +2,8 @@ package main
 
 import (
 	"time"
+
+	"foci/config"
 )
 
 // resolveInt returns the per-agent value if non-zero, otherwise global.
@@ -74,4 +76,17 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// resolveStreamingConfig resolves the streaming setting for an agent.
+// Per-agent *bool overrides defaults *bool which overrides global anthropic.streaming.
+// Streaming is forced off when use_sdk is false.
+func resolveStreamingConfig(acfg config.AgentConfig, cfg *config.Config) bool {
+	if !cfg.Anthropic.UseSDK {
+		return false // streaming requires SDK
+	}
+	if acfg.Streaming != nil {
+		return *acfg.Streaming
+	}
+	return cfg.Anthropic.Streaming
 }
