@@ -226,9 +226,7 @@ func TestCompactDryRun(t *testing.T) {
 	if summary == "" {
 		t.Error("expected non-empty summary from dry-run")
 	}
-	if !strings.Contains(summary, "Dry-run") {
-		// Summary comes from the mock server, just verify it's returned
-	}
+	// Summary comes from the mock server - we just verify it's non-empty above
 
 	// Session messages should be UNCHANGED (no Replace)
 	msgs, _ := store.Load(sessionKey)

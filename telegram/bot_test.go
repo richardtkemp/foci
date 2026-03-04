@@ -1335,9 +1335,7 @@ func TestFormatToolCall_LongParams(t *testing.T) {
 	b := &Bot{}
 	longVal := strings.Repeat("x", 500)
 	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
-	if len(text) > 500 {
-		// Should be truncated
-	}
+	// Long params should be truncated and contain "..."
 	if !strings.Contains(text, "...") {
 		t.Errorf("long params should be truncated: %q", text)
 	}
