@@ -593,17 +593,6 @@ func TestTriggerContext(t *testing.T) {
 	}
 }
 
-func TestNoCompactContext(t *testing.T) {
-	ctx := context.Background()
-	if NoCompactFromContext(ctx) {
-		t.Error("expected false for empty context")
-	}
-
-	ctx = WithNoCompact(ctx)
-	if !NoCompactFromContext(ctx) {
-		t.Error("expected true after WithNoCompact")
-	}
-}
 
 func TestDeferredReply(t *testing.T) {
 	// Verify that text in tool_use responses is sent via ReplyFunc
@@ -1189,6 +1178,32 @@ func TestSessionEffort(t *testing.T) {
 	}
 }
 
+func TestSessionNoCompact(t *testing.T) {
+	ag := &Agent{Model: "test"}
+
+	// Default: should return false (allow compaction)
+	if got := ag.SessionNoCompact("s1"); got != false {
+		t.Errorf("SessionNoCompact default = %v, want %v", got, false)
+	}
+
+	// Set per-session no_compact
+	ag.SetSessionNoCompact("s1", true)
+	if got := ag.SessionNoCompact("s1"); got != true {
+		t.Errorf("SessionNoCompact after set = %v, want %v", got, true)
+	}
+
+	// Other session unaffected
+	if got := ag.SessionNoCompact("s2"); got != false {
+		t.Errorf("SessionNoCompact other session = %v, want %v", got, false)
+	}
+
+	// Clear override
+	ag.SetSessionNoCompact("s1", false)
+	if got := ag.SessionNoCompact("s1"); got != false {
+		t.Errorf("SessionNoCompact after clear = %v, want %v", got, false)
+	}
+}
+
 func TestSessionThinking(t *testing.T) {
 	ag := &Agent{Model: "test", Thinking: "off"}
 
@@ -1259,6 +1274,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	ag.SetSessionEffort("s1", "high")
 	ag.SetSessionThinking("s1", "adaptive")
 	ag.SetSessionModel("s1", "claude-opus-4-6", nil)
+	ag.SetSessionNoCompact("s1", true)
 
 	// Create a fresh agent (simulating restart) with the same state store
 	ag2 := &Agent{
@@ -1285,6 +1301,9 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	}
 	if got := ag2.SessionModel("s1"); got != "claude-opus-4-6" {
 		t.Errorf("after restore model = %q, want %q", got, "claude-opus-4-6")
+	}
+	if got := ag2.SessionNoCompact("s1"); got != true {
+		t.Errorf("after restore no_compact = %v, want %v", got, true)
 	}
 
 	// Unrelated session should still use defaults
@@ -2092,8 +2111,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 
 		// Turn 5 triggers compaction threshold — but with NoCompact set
-		ctx := WithNoCompact(context.Background())
-		resp, err := ag.HandleMessage(ctx, sessionKey, "Turn 5")
+		ag.SetSessionNoCompact(sessionKey, true)
+		resp, err := ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
 		if err != nil {
 			t.Fatalf("Turn 5: %v", err)
 		}

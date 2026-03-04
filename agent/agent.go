@@ -51,6 +51,7 @@ type sessionMeta struct {
 	thinking        string          // per-session thinking override (empty = use agent default)
 	model           string          // per-session model override (empty = use agent default)
 	client          provider.Client // per-session client override (nil = use a.Client)
+	noCompact       bool            // per-session no_compact flag (sticky across async operations)
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -347,7 +348,34 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 	return a.Client
 }
 
-// RestoreSessionOverrides loads per-session effort/thinking/model from state store.
+// SessionNoCompact returns the effective no_compact setting for the session.
+func (a *Agent) SessionNoCompact(sessionKey string) bool {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.noCompact
+}
+
+// SetSessionNoCompact sets the per-session no_compact override and persists it.
+func (a *Agent) SetSessionNoCompact(sessionKey string, value bool) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	sm.noCompact = value
+	a.metaMu.Unlock()
+
+	if a.StateStore != nil {
+		key := "no_compact:" + sessionKey
+		val := ""
+		if value {
+			val = "true"
+		}
+		if err := a.StateStore.Set(key, val); err != nil {
+			a.logger().Errorf("persist no_compact: %v", err)
+		}
+	}
+}
+
+// RestoreSessionOverrides loads per-session effort/thinking/model/no_compact from state store.
 func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	if a.StateStore == nil {
 		return
@@ -374,6 +402,13 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 		sm.model = val
 		a.metaMu.Unlock()
 		restored = append(restored, "model="+val)
+	}
+	if a.StateStore.Get("no_compact:"+sessionKey, &val) && val != "" {
+		sm := a.getSessionMeta(sessionKey)
+		a.metaMu.Lock()
+		sm.noCompact = (val == "true")
+		a.metaMu.Unlock()
+		restored = append(restored, "no_compact")
 	}
 	if len(restored) > 0 {
 		a.logger().Infof("restored session overrides for %s: %s", sessionKey, strings.Join(restored, ", "))
@@ -1384,7 +1419,7 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) || !a.Compactor.ShouldCompact(messages, usage) {
 		return
 	}
-	if NoCompactFromContext(ctx) {
+	if a.SessionNoCompact(sessionKey) {
 		totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 		limit := compaction.ContextLimit(a.Model)
 		percent := int(float64(totalTokens) / float64(limit) * 100)
