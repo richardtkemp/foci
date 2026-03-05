@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestGetUsageSuccess(t *testing.T) {
@@ -35,6 +37,7 @@ func TestGetUsageSuccess(t *testing.T) {
 		oauthToken: "test-oauth-token",
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
+		cacheTTL:   defaultCacheTTL,
 	}
 
 	resp, err := client.GetUsage(context.Background())
@@ -54,6 +57,7 @@ func TestGetUsageEmptyToken(t *testing.T) {
 		oauthToken: "",
 		httpClient: http.DefaultClient,
 		baseURL:    "http://localhost",
+		cacheTTL:   defaultCacheTTL,
 	}
 
 	_, err := client.GetUsage(context.Background())
@@ -76,6 +80,7 @@ func TestGetUsageAPIError(t *testing.T) {
 		oauthToken: "bad-token",
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
+		cacheTTL:   defaultCacheTTL,
 	}
 
 	_, err := client.GetUsage(context.Background())
@@ -84,5 +89,140 @@ func TestGetUsageAPIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "API error (status 401)") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestGetUsageCacheHit(t *testing.T) {
+	var calls atomic.Int32
+	util := 55.0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(UsageResponse{
+			FiveHour: &UsageWindow{Utilization: &util},
+		})
+	}))
+	defer server.Close()
+
+	client := &UsageClient{
+		oauthToken: "tok",
+		httpClient: http.DefaultClient,
+		baseURL:    server.URL,
+		cacheTTL:   5 * time.Minute,
+	}
+
+	// First call — hits server
+	resp, err := client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if *resp.FiveHour.Utilization != 55.0 {
+		t.Fatalf("first call util = %f", *resp.FiveHour.Utilization)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("first call: server hit count = %d, want 1", calls.Load())
+	}
+
+	// Second call — cache hit, no server request
+	resp2, err := client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if resp2 != resp {
+		t.Error("second call returned different pointer (expected cache hit)")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("second call: server hit count = %d, want 1", calls.Load())
+	}
+}
+
+func TestGetUsageCacheExpiry(t *testing.T) {
+	var calls atomic.Int32
+	util := 55.0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(UsageResponse{
+			FiveHour: &UsageWindow{Utilization: &util},
+		})
+	}))
+	defer server.Close()
+
+	client := &UsageClient{
+		oauthToken: "tok",
+		httpClient: http.DefaultClient,
+		baseURL:    server.URL,
+		cacheTTL:   1 * time.Millisecond,
+	}
+
+	// First call
+	_, err := client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("first call: server hit count = %d, want 1", calls.Load())
+	}
+
+	// Wait for cache to expire
+	time.Sleep(5 * time.Millisecond)
+
+	// Second call — cache expired, hits server again
+	_, err = client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("after expiry: server hit count = %d, want 2", calls.Load())
+	}
+}
+
+func TestInvalidateForcesFetch(t *testing.T) {
+	var calls atomic.Int32
+	util := 55.0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(UsageResponse{
+			FiveHour: &UsageWindow{Utilization: &util},
+		})
+	}))
+	defer server.Close()
+
+	client := &UsageClient{
+		oauthToken: "tok",
+		httpClient: http.DefaultClient,
+		baseURL:    server.URL,
+		cacheTTL:   5 * time.Minute,
+	}
+
+	// First call — hits server
+	_, err := client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Invalidate and call again — should hit server
+	client.Invalidate()
+	_, err = client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("after invalidate: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("after invalidate: server hit count = %d, want 2", calls.Load())
+	}
+}
+
+func TestSetCacheTTL(t *testing.T) {
+	client := NewUsageClient("tok")
+	if client.cacheTTL != defaultCacheTTL {
+		t.Fatalf("default cacheTTL = %v, want %v", client.cacheTTL, defaultCacheTTL)
+	}
+	client.SetCacheTTL(10 * time.Second)
+	client.mu.Lock()
+	ttl := client.cacheTTL
+	client.mu.Unlock()
+	if ttl != 10*time.Second {
+		t.Fatalf("after SetCacheTTL: cacheTTL = %v, want 10s", ttl)
 	}
 }

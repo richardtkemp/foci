@@ -1,13 +1,13 @@
 // Package mana provides mana budget logic for background work throttling.
 //
-// Pure math + cached poller. No coupling beyond foci/anthropic and foci/log.
+// Pure math + usage formatting. Caching is handled by UsageClient.
+// No coupling beyond foci/anthropic and foci/log.
 package mana
 
 import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"foci/internal/anthropic"
@@ -17,9 +17,6 @@ import (
 const (
 	// Window is the 5-hour mana budget window used by the Anthropic API.
 	Window = 5 * time.Hour
-
-	// PollInterval is the minimum interval between usage API calls.
-	PollInterval = 60 * time.Second
 )
 
 // FromUtilization converts a provider utilization percentage (0-100) to mana
@@ -154,76 +151,80 @@ func IsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration
 	return actualMana > expectedMana
 }
 
-// Monitor wraps a UsageClient with cached polling for mana state.
+// Monitor wraps a UsageClient for mana state checks.
+// Caching is handled by UsageClient; Monitor just calls GetUsage and evaluates.
 type Monitor struct {
-	log              *log.ComponentLogger
-	usageClient      *anthropic.UsageClient
-	stalenessTimeout time.Duration
-
-	mu            sync.Mutex
-	lastUsagePoll time.Time
-	cachedMana    float64   // 0-100 (100 = fully available)
-	cachedReset   time.Time
+	log         *log.ComponentLogger
+	usageClient *anthropic.UsageClient
 }
 
 // NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor always returns true.
-func NewMonitor(usageClient *anthropic.UsageClient, stalenessTimeout time.Duration) *Monitor {
+func NewMonitor(usageClient *anthropic.UsageClient) *Monitor {
 	return &Monitor{
-		log:              log.NewComponentLogger("mana"),
-		usageClient:      usageClient,
-		stalenessTimeout: stalenessTimeout,
+		log:         log.NewComponentLogger("mana"),
+		usageClient: usageClient,
 	}
-}
-
-// needsPoll returns true if a polling interval has elapsed since last poll.
-func (m *Monitor) needsPoll() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return time.Since(m.lastUsagePoll) >= PollInterval
-}
-
-// updateCachedUsage updates cached mana and reset time from usage response.
-func (m *Monitor) updateCachedUsage(usage *anthropic.UsageResponse) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.lastUsagePoll = time.Now()
-	if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
-		m.cachedMana = FromUtilization(*usage.FiveHour.Utilization)
-	}
-	if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
-		m.cachedReset, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
-	}
-}
-
-// getCachedState returns the cached mana, reset time, poll age, and whether it has been polled.
-func (m *Monitor) getCachedState() (mana float64, resetsAt time.Time, pollAge time.Duration, isZero bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.cachedMana, m.cachedReset, time.Since(m.lastUsagePoll), m.lastUsagePoll.IsZero()
 }
 
 // IsGoodFor checks whether we can afford to run background work with the given invest interval.
+// Calls GetUsage (which is cached by UsageClient) and evaluates via IsGood.
 func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) bool {
 	if m.usageClient == nil {
 		return true // no usage client = no rate limiting
 	}
 
-	if m.needsPoll() {
-		usage, err := m.usageClient.GetUsage(ctx)
-		if err != nil {
-			m.log.Warnf("usage API: %v", err)
-			return false // err on the side of caution
-		}
-		m.updateCachedUsage(usage)
-	}
-
-	// Staleness guard: if the last successful poll is too old, deny spending.
-	manaVal, resetsAt, pollAge, isZero := m.getCachedState()
-
-	if isZero || pollAge > m.stalenessTimeout {
-		m.log.Debugf("mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), m.stalenessTimeout)
+	usage, err := m.usageClient.GetUsage(ctx)
+	if err != nil {
+		m.log.Warnf("usage API: %v", err)
 		return false
 	}
 
+	manaVal, resetsAt := extractManaAndReset(usage)
+	return IsGood(manaVal, resetsAt, investInterval, time.Now())
+}
+
+// ManaAndReset returns mana percentage, reset time strings, and whether
+// mana is "good" (above invest threshold). Returns empty strings and false if
+// UsageClient is nil or on error.
+func ManaAndReset(usageClient *anthropic.UsageClient, investInterval time.Duration) (pct, reset string, good bool) {
+	if usageClient == nil {
+		return "", "", false
+	}
+
+	usage, err := usageClient.GetUsage(context.Background())
+	if err != nil {
+		return "", "", false
+	}
+
+	pct = FormatPercent(usage)
+	reset = FormatReset(usage)
+	good = computeManaGood(usage, investInterval)
+	return pct, reset, good
+}
+
+// extractManaAndReset extracts mana value and reset time from a usage response.
+func extractManaAndReset(usage *anthropic.UsageResponse) (float64, time.Time) {
+	var manaVal float64
+	var resetsAt time.Time
+	if usage != nil && usage.FiveHour != nil {
+		if usage.FiveHour.Utilization != nil {
+			manaVal = FromUtilization(*usage.FiveHour.Utilization)
+		}
+		if usage.FiveHour.ResetsAt != nil {
+			resetsAt, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
+		}
+	}
+	return manaVal, resetsAt
+}
+
+// computeManaGood evaluates whether current mana is above the invest threshold.
+func computeManaGood(usage *anthropic.UsageResponse, investInterval time.Duration) bool {
+	if investInterval == 0 {
+		return false
+	}
+	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
+		return false
+	}
+	manaVal, resetsAt := extractManaAndReset(usage)
 	return IsGood(manaVal, resetsAt, investInterval, time.Now())
 }

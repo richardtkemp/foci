@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -35,12 +36,20 @@ type UsageResponse struct {
 	ExtraUsage        *ExtraUsage  `json:"extra_usage"`
 }
 
+// defaultCacheTTL is the default cache duration for usage API responses.
+const defaultCacheTTL = 5 * time.Minute
+
 // UsageClient is a client for the Anthropic usage API (requires OAuth token)
 type UsageClient struct {
 	oauthToken string
 	tokenFunc  func() (string, error) // dynamic token source (overrides oauthToken)
 	httpClient *http.Client
 	baseURL    string
+
+	mu       sync.Mutex
+	cached   *UsageResponse
+	cachedAt time.Time
+	cacheTTL time.Duration
 }
 
 // NewUsageClient creates a new usage API client with a static OAuth token.
@@ -49,6 +58,7 @@ func NewUsageClient(oauthToken string) *UsageClient {
 		oauthToken: oauthToken,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		baseURL:    "https://api.anthropic.com",
+		cacheTTL:   defaultCacheTTL,
 	}
 }
 
@@ -58,7 +68,29 @@ func NewUsageClientWithFunc(tokenFunc func() (string, error)) *UsageClient {
 		tokenFunc:  tokenFunc,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		baseURL:    "https://api.anthropic.com",
+		cacheTTL:   defaultCacheTTL,
 	}
+}
+
+// SetBaseURLForTest overrides the base URL. Test-only.
+func (c *UsageClient) SetBaseURLForTest(url string) {
+	c.baseURL = url
+}
+
+// SetCacheTTL sets the cache TTL for usage API responses.
+func (c *UsageClient) SetCacheTTL(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cacheTTL = d
+}
+
+// Invalidate clears the cached usage response, forcing the next GetUsage call
+// to fetch from the API. Useful for /mana force-refresh or tests.
+func (c *UsageClient) Invalidate() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cached = nil
+	c.cachedAt = time.Time{}
 }
 
 // resolveToken returns the token to use for usage API requests.
@@ -72,8 +104,32 @@ func (c *UsageClient) resolveToken() (string, error) {
 	return c.oauthToken, nil
 }
 
-// GetUsage retrieves the current usage from the Anthropic API
+// GetUsage retrieves the current usage from the Anthropic API.
+// Results are cached for cacheTTL; concurrent callers share the same cached value.
 func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
+	c.mu.Lock()
+	if c.cached != nil && time.Since(c.cachedAt) < c.cacheTTL {
+		resp := c.cached
+		c.mu.Unlock()
+		return resp, nil
+	}
+	c.mu.Unlock()
+
+	resp, err := c.fetchUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	c.cached = resp
+	c.cachedAt = time.Now()
+	c.mu.Unlock()
+
+	return resp, nil
+}
+
+// fetchUsage performs the actual HTTP request to the usage API.
+func (c *UsageClient) fetchUsage(ctx context.Context) (*UsageResponse, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, err
@@ -109,5 +165,3 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 
 	return &resp, nil
 }
-
-

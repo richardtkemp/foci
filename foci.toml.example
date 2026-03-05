@@ -128,7 +128,6 @@ system_files = [
 # interval = "5m"                         # time since last interaction before firing
 # prompt = "Check your todo list."
 # invest_interval = "30m"                 # quiet period after mana reset
-# mana_staleness_timeout = "10m"          # max age of mana reading before blocking
 
 # Per-agent keepalive (cache warming):
 # [agents.keepalive]
@@ -154,6 +153,7 @@ effort = "low"                            # low (default), medium, high — Anth
 thinking = "adaptive"                     # adaptive (default), off — Anthropic+Gemini
 # http_timeout = "600s"                   # HTTP timeout for API calls
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
+# usage_cache_ttl = "5m"                 # cache TTL for usage API responses
 # cc_credentials_poll_interval = "30s"  # how often to re-read CC credentials file
 # use_sdk = true                         # use SDK transport (false = raw HTTP fallback)
 # streaming = false                      # use streaming API (requires use_sdk)
@@ -336,7 +336,6 @@ bind = "127.0.0.1"
 # interval = "5m"
 # prompt = ""
 # invest_interval = "30m"
-# mana_staleness_timeout = "10m"
 
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]

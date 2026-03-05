@@ -488,6 +488,7 @@ func manaCheck(p cmdRegParams, manaName string, ctx context.Context) (string, er
 	emoji := emojis[rand.IntN(len(emojis))] // #nosec G404 - non-security use (emoji selection)
 	displayName := strings.ToUpper(manaName[:1]) + manaName[1:]
 
+	p.usageClient.Invalidate() // force fresh fetch for explicit user query
 	usage, err := p.usageClient.GetUsage(ctx)
 	if err != nil {
 		return fmt.Sprintf("%s Error fetching %s: %v", emoji, displayName, err), nil

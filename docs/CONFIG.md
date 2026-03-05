@@ -47,6 +47,7 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
+| `usage_cache_ttl` | string | `"5m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. |
 | `cc_credentials_poll_interval` | string | `"30s"` | How often to re-read Claude Code credentials from `~/.claude/.credentials.json`. |
 | `use_sdk` | bool | `true` | Use official Anthropic SDK for API transport. When `false`, falls back to hand-rolled HTTP (legacy). SDK transport is required for streaming. |
 | `streaming` | bool | `false` | Use streaming API for Anthropic requests (global default). Requires `use_sdk = true`. When enabled, text and thinking deltas are delivered incrementally. Per-agent override available in `[defaults]` and `[[agents]]`. |
@@ -676,12 +677,6 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 | `interval` | string | `"5m"` | Time since last interaction before firing. |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 | `invest_interval` | string | `"30m"` | Quiet period after mana reset to let cache invest before spending. |
-
-The following field is **global-only** (not overridable per-agent):
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `mana_staleness_timeout` | string | `"10m"` | Max age of mana usage reading before considering it stale. Stale readings block background spending. |
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.

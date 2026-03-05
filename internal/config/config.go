@@ -179,6 +179,7 @@ type OpenAIConfig struct {
 type AnthropicConfig struct {
 	HTTPTimeout              string `toml:"http_timeout"`                // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout          string `toml:"usage_api_timeout"`           // HTTP timeout for usage API calls (default "10s")
+	UsageCacheTTL            string `toml:"usage_cache_ttl"`             // cache TTL for usage API responses (default "5m")
 	CCCredentialsPollInterval string `toml:"cc_credentials_poll_interval"` // how often to re-read CC credentials file (default "30s")
 	UseSDK                   bool   `toml:"use_sdk"`                     // use SDK transport (default true; false = raw HTTP)
 	Streaming                bool   `toml:"streaming"`                   // use streaming API (default false; requires use_sdk)
@@ -515,7 +516,6 @@ type BackgroundConfig struct {
 	Interval             string `toml:"interval"`               // time since last interaction before firing (default: "15m")
 	Prompt               string `toml:"prompt"`                 // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
 	InvestInterval       string `toml:"invest_interval"`        // quiet period after mana reset to let cache invest (default: "30m")
-	ManaStalenessTimeout string `toml:"mana_staleness_timeout"` // max age of mana reading before considering it stale (default: "10m")
 }
 
 type Config struct {
@@ -735,6 +735,7 @@ func validate(cfg *Config) error {
 		{"database", "busy_timeout", cfg.Database.BusyTimeout},
 		{"anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout},
 		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
+		{"anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL},
 		{"anthropic", "cc_credentials_poll_interval", cfg.Anthropic.CCCredentialsPollInterval},
 		{"gemini", "http_timeout", cfg.Gemini.HTTPTimeout},
 		{"openai", "http_timeout", cfg.OpenAI.HTTPTimeout},
@@ -1094,6 +1095,7 @@ func Load(path string) (*Config, error) {
 	// Anthropic defaults
 	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
+	setStringDefault(&cfg.Anthropic.UsageCacheTTL, "5m")
 	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
 	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
 	setStringDefault(&cfg.Anthropic.Effort, "low")
@@ -1158,7 +1160,6 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Background.Interval, "15m")
 	// Background.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
 	setStringDefault(&cfg.Background.InvestInterval, "30m")
-	setStringDefault(&cfg.Background.ManaStalenessTimeout, "10m")
 
 	// Memory formation defaults
 	setStringDefault(&cfg.MemoryFormation.Interval, "1h")

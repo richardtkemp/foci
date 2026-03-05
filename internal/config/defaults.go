@@ -98,7 +98,6 @@ func (bg *BackgroundConfig) MergeDefaults(global BackgroundConfig) {
 	setStringDefault(&bg.Interval, global.Interval)
 	setStringDefault(&bg.Prompt, global.Prompt)
 	setStringDefault(&bg.InvestInterval, global.InvestInterval)
-	setStringDefault(&bg.ManaStalenessTimeout, global.ManaStalenessTimeout)
 }
 
 // MergeDefaults fills zero-value fields from the global config.
