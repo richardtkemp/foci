@@ -718,8 +718,9 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	if full, ok := a.ModelAliases[summaryAlias]; ok {
 		model = full
 	}
-	// Strip endpoint prefix — aliases now include endpoint (e.g. "anthropic:claude-haiku-4-5")
-	if i := strings.IndexByte(model, ':'); i > 0 {
+	// Strip developer prefix — aliases now include developer (e.g. "anthropic/claude-haiku-4-5")
+	// Note: The API client will strip this too, but we strip here for logging and consistency.
+	if i := strings.IndexByte(model, '/'); i > 0 {
 		model = model[i+1:]
 	}
 

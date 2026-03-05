@@ -557,3 +557,24 @@ func TestUserMessage_WithImage(t *testing.T) {
 		t.Fatal("expected user message")
 	}
 }
+
+func TestStripDeveloperPrefix(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"openai/gpt-4o", "gpt-4o"},
+		{"openai/o3", "o3"},
+		{"gpt-4o", "gpt-4o"}, // no prefix
+		{"", ""},               // empty
+		{"no-slash-here", "no-slash-here"},
+		{"foo/bar/baz", "bar/baz"},
+	}
+
+	for _, tt := range tests {
+		got := stripDeveloperPrefix(tt.input)
+		if got != tt.expected {
+			t.Errorf("stripDeveloperPrefix(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}

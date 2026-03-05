@@ -408,5 +408,26 @@ func TestContextLimit(t *testing.T) {
 	}
 }
 
+func TestStripDeveloperPrefix(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"google/gemini-2.5-flash", "gemini-2.5-flash"},
+		{"google/gemini-2.5-pro", "gemini-2.5-pro"},
+		{"gemini-2.5-flash", "gemini-2.5-flash"}, // no prefix
+		{"", ""},                                   // empty
+		{"no-slash-here", "no-slash-here"},
+		{"foo/bar/baz", "bar/baz"},
+	}
+
+	for _, tt := range tests {
+		got := stripDeveloperPrefix(tt.input)
+		if got != tt.expected {
+			t.Errorf("stripDeveloperPrefix(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 // Compile-time check: *Client implements provider.Client.
 var _ provider.Client = (*Client)(nil)

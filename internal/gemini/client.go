@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"foci/internal/provider"
@@ -72,6 +73,9 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 
 // SendMessage sends a message to the Gemini API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
+	modelID := stripDeveloperPrefix(req.Model)
+
 	contents := messagesToGenai(req.Messages)
 	config := buildConfig(req)
 
@@ -79,19 +83,19 @@ func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) 
 	if c.cache != nil {
 		system := systemToGenai(req.System)
 		tools := toolsToGenai(req.Tools)
-		if cacheName := c.cache.EnsureCache(ctx, req.Model, system, tools); cacheName != "" {
+		if cacheName := c.cache.EnsureCache(ctx, modelID, system, tools); cacheName != "" {
 			config.CachedContent = cacheName
 			config.SystemInstruction = nil
 			config.Tools = nil
 		}
 	}
 
-	resp, err := c.client.Models.GenerateContent(ctx, req.Model, contents, config)
+	resp, err := c.client.Models.GenerateContent(ctx, modelID, contents, config)
 	if err != nil {
 		return nil, classifyError(err)
 	}
 
-	return responseFromGenai(resp, req.Model)
+	return responseFromGenai(resp, modelID)
 }
 
 // Close releases resources held by the client, including any active caches.
@@ -103,6 +107,9 @@ func (c *Client) Close(ctx context.Context) {
 
 // CountTokens returns the input token count for a request.
 func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) (int, error) {
+	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
+	modelID := stripDeveloperPrefix(req.Model)
+
 	contents := messagesToGenai(req.Messages)
 
 	countConfig := &genai.CountTokensConfig{}
@@ -113,7 +120,7 @@ func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) 
 		countConfig.Tools = tools
 	}
 
-	resp, err := c.client.Models.CountTokens(ctx, req.Model, contents, countConfig)
+	resp, err := c.client.Models.CountTokens(ctx, modelID, contents, countConfig)
 	if err != nil {
 		return 0, fmt.Errorf("gemini: count tokens: %w", err)
 	}
@@ -143,4 +150,13 @@ func buildConfig(req *provider.MessageRequest) *genai.GenerateContentConfig {
 	}
 
 	return config
+}
+
+// stripDeveloperPrefix removes the developer prefix from a model ID.
+// Converts "developer/model_id" to "model_id", or returns the input unchanged if no slash.
+func stripDeveloperPrefix(model string) string {
+	if i := strings.IndexByte(model, '/'); i > 0 {
+		return model[i+1:]
+	}
+	return model
 }
