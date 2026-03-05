@@ -13,7 +13,7 @@ import (
 type TodoItem struct {
 	ID          int64
 	Text        string
-	Status      string // "open" or "done"
+	Status      string // "open", "in_progress", "done", "dropped"
 	Priority    string // "high", "medium", "low"
 	Tags        string // comma-separated tags (e.g. "background,daily")
 	CloseReason string // reason for completion (set when status="done")
@@ -207,7 +207,7 @@ func (s *TodoStore) List(agentID, status, tag, priority string) ([]TodoItem, err
 	if status != "" {
 		query += ` ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
 	} else {
-		query += ` ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+		query += ` ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
 	}
 
 	rows, err := s.db.Query(query, args...)
@@ -240,10 +240,10 @@ func (s *TodoStore) Transition(agentID string, id int64, status, reason string) 
 	var res sql.Result
 	var err error
 	switch status {
-	case "open":
+	case "open", "in_progress":
 		res, err = s.db.Exec(
-			`UPDATE todos SET status = 'open', completed_at = NULL, updated_at = ?, close_reason = '' WHERE id = ? AND agent_id = ?`,
-			now, id, agentID,
+			`UPDATE todos SET status = ?, completed_at = NULL, updated_at = ?, close_reason = '' WHERE id = ? AND agent_id = ?`,
+			status, now, id, agentID,
 		)
 	case "done", "dropped":
 		res, err = s.db.Exec(
@@ -370,7 +370,7 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 // Search returns todo items matching a case-insensitive substring query.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY status ASC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
+		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
 		agentID, query,
 	)
 	if err != nil {

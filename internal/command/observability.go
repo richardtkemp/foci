@@ -527,7 +527,7 @@ type TodoItem struct {
 func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(query string) ([]TodoItem, error)) *Command {
 	return &Command{
 		Name:        "todo",
-		Description: "List open todo items",
+		Description: "List active todo items",
 		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			args = strings.TrimSpace(args)
@@ -549,7 +549,7 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 				}
 				var lines []string
 				for _, item := range items {
-					if item.Status != "open" {
+					if item.Status != "open" && item.Status != "in_progress" {
 						continue
 					}
 					lines = append(lines, formatTodoLine(item))

@@ -48,11 +48,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"status": {
 					"type": "string",
-					"description": "Filter by status (used with 'list', default: all). Values: 'open', 'done', 'dropped'"
+					"description": "Filter by status (used with 'list', default: all). Values: 'open', 'in_progress', 'done', 'dropped'"
 				},
 				"state": {
 					"type": "string",
-					"description": "Target state for 'transition': 'open', 'done', or 'dropped'"
+					"description": "Target state for 'transition': 'open', 'in_progress', 'done', or 'dropped'"
 				},
 				"query": {
 					"type": "string",
@@ -112,6 +112,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 func formatTodoLine(item memory.TodoItem) string {
 	marker := "[ ]"
 	switch item.Status {
+	case "in_progress":
+		marker = "[>]"
 	case "done":
 		marker = "[x]"
 	case "dropped":
@@ -195,6 +197,8 @@ func normalizeStatusFilter(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "open", "reopen", "reopened":
 		return "open"
+	case "in_progress", "in-progress", "wip", "started", "working":
+		return "in_progress"
 	case "done", "complete", "completed":
 		return "done"
 	case "dropped", "drop", "cancelled", "canceled":
@@ -210,14 +214,16 @@ func normalizeState(s string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "open", "reopen", "reopened":
 		return "open", nil
+	case "in_progress", "in-progress", "wip", "started", "working":
+		return "in_progress", nil
 	case "done", "complete", "completed":
 		return "done", nil
 	case "dropped", "drop", "cancelled", "canceled":
 		return "dropped", nil
 	case "":
-		return "", fmt.Errorf("state is required for transition (use 'open', 'done', or 'dropped')")
+		return "", fmt.Errorf("state is required for transition (use 'open', 'in_progress', 'done', or 'dropped')")
 	default:
-		return "", fmt.Errorf("unknown state %q (use 'open', 'done', or 'dropped')", s)
+		return "", fmt.Errorf("unknown state %q (use 'open', 'in_progress', 'done', or 'dropped')", s)
 	}
 }
 
