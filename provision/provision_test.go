@@ -73,7 +73,7 @@ func TestResolveModelAlias(t *testing.T) {
 	}{
 		{"opus", "claude-opus-4-6"},
 		{"sonnet", "claude-sonnet-4-6"},
-		{"haiku", "claude-haiku-4-5"},
+		{"haiku", "claude-haiku-4-5-20251001"},
 		{"", "claude-sonnet-4-6"},
 		{"claude-custom-model", "claude-custom-model"},
 		{"OPUS", "claude-opus-4-6"},
@@ -129,7 +129,7 @@ func TestGenerateAgentBlock(t *testing.T) {
 func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
 	spec := AgentSpec{
 		ID:          "scout",
-		Model:       "claude-haiku-4-5",
+		Model:       "claude-haiku-4-5-20251001",
 		HomeDir:     "/home/foci",
 		SystemFiles: []string{"character/SOUL.md", "character/CRAFT.md"},
 	}
@@ -390,7 +390,7 @@ func TestProvisionBlank(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "blank-agent",
-		Model:       "claude-haiku-4-5",
+		Model:       "claude-haiku-4-5-20251001",
 		HomeDir:     homeDir,
 		DefaultsDir: filepath.Join(tmpDir, "nonexistent"),
 		CharMode:    "blank",

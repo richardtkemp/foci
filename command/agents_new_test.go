@@ -169,7 +169,7 @@ func TestAgentWizardModelResolution(t *testing.T) {
 	}{
 		{"opus", "claude-opus-4-6"},
 		{"sonnet", "claude-sonnet-4-6"},
-		{"haiku", "claude-haiku-4-5"},
+		{"haiku", "claude-haiku-4-5-20251001"},
 		{"", "claude-sonnet-4-6"},
 		{"claude-custom-model", "claude-custom-model"},
 		{"OPUS", "claude-opus-4-6"},
@@ -403,7 +403,7 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 		deps:     deps,
 		id:       "blank-agent",
 		display:  "Blank",
-		model:    "claude-haiku-4-5",
+		model:    "claude-haiku-4-5-20251001",
 		charMode: "blank",
 	}
 

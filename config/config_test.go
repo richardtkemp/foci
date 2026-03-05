@@ -100,8 +100,8 @@ token = "test-token"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.Model != "anthropic/claude-haiku-4-5" {
-		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "anthropic/claude-haiku-4-5")
+	if cfg.Agent.Model != "anthropic/claude-haiku-4-5-20251001" {
+		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "anthropic/claude-haiku-4-5-20251001")
 	}
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
@@ -282,7 +282,7 @@ allowed_users = ["111"]
 	if cfg.Agents[1].ID != "scout" {
 		t.Errorf("Agents[1].ID = %q", cfg.Agents[1].ID)
 	}
-	if cfg.Agents[1].Model != "anthropic/claude-haiku-4-5" {
+	if cfg.Agents[1].Model != "anthropic/claude-haiku-4-5-20251001" {
 		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
 	}
 	if cfg.Agents[1].TelegramBot != "scout" {
@@ -2766,7 +2766,7 @@ token = "test-token"
 	}{
 		{"opus", "anthropic/claude-opus-4-6"},
 		{"sonnet", "anthropic/claude-sonnet-4-6"},
-		{"haiku", "anthropic/claude-haiku-4-5"},
+		{"haiku", "anthropic/claude-haiku-4-5-20251001"},
 		{"flash", "google/gemini-2.5-flash"},
 		{"pro", "google/gemini-2.5-pro"},
 	}

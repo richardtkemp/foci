@@ -11,7 +11,7 @@ func ResolveModelAlias(input string) string {
 	case "sonnet", "":
 		return "claude-sonnet-4-6"
 	case "haiku":
-		return "claude-haiku-4-5"
+		return "claude-haiku-4-5-20251001"
 	default:
 		return input
 	}
