@@ -378,7 +378,7 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Model               string           `toml:"model"`                 // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5")
+	Model               string           `toml:"model"`                 // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
 	DuplicateMessages              bool             `toml:"duplicate_messages"`                // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages  bool             `toml:"batch_partial_assistant_messages"`   // default batch_partial_assistant_messages (default: false)
 	BatchPartialJoiner             string           `toml:"batch_partial_joiner"`               // default separator between batched partial messages (default: "")
@@ -570,7 +570,7 @@ func validate(cfg *Config) error {
   - New: model = %q
 
   Or use an alias:
-  - model = "haiku"  (expands to "anthropic/claude-haiku-4-5")`,
+  - model = "haiku"  (expands to "anthropic/claude-haiku-4-5-20251001")`,
 				a.ID, a.Model, a.Model, strings.ReplaceAll(a.Model, ":", "/"))
 		}
 		// Validate slash format (will be checked by ResolveModel at load time)
@@ -901,7 +901,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Populate [defaults] section with hardcoded fallbacks
-	setStringDefault(&cfg.Defaults.Model, "anthropic/claude-haiku-4-5")
+	setStringDefault(&cfg.Defaults.Model, "anthropic/claude-haiku-4-5-20251001")
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
@@ -944,14 +944,14 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Legacy agent defaults (in case nothing is configured at all)
-	setStringDefault(&cfg.Agent.Model, "anthropic/claude-haiku-4-5")
+	setStringDefault(&cfg.Agent.Model, "anthropic/claude-haiku-4-5-20251001")
 
 	// Model aliases defaults (if not configured) — use developer/model_id format
 	if len(cfg.Models.Aliases) == 0 {
 		cfg.Models.Aliases = map[string]string{
 			"opus":     "anthropic/claude-opus-4-6",
 			"sonnet":   "anthropic/claude-sonnet-4-6",
-			"haiku":    "anthropic/claude-haiku-4-5",
+			"haiku":    "anthropic/claude-haiku-4-5-20251001",
 			"flash":    "google/gemini-2.5-flash",
 			"pro":      "google/gemini-2.5-pro",
 			"gpt4o":    "openai/gpt-4o",

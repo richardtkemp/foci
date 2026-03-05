@@ -77,6 +77,31 @@ func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) 
 	return 0, fmt.Errorf("openai: token counting not supported")
 }
 
+// ModelInfo holds metadata about an available OpenAI model.
+type ModelInfo struct {
+	ID      string
+	Created int64 // unix timestamp
+	OwnedBy string
+}
+
+// ListModels calls the OpenAI Models.List endpoint and returns available models.
+func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	page, err := c.client.Models.List(ctx)
+	if err != nil {
+		return nil, classifyError(err)
+	}
+
+	var models []ModelInfo
+	for _, m := range page.Data {
+		models = append(models, ModelInfo{
+			ID:      m.ID,
+			Created: m.Created,
+			OwnedBy: m.OwnedBy,
+		})
+	}
+	return models, nil
+}
+
 // classifyError maps OpenAI SDK errors to provider.APIError for
 // consistent error handling in the agent loop.
 func classifyError(err error) error {

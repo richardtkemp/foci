@@ -19,6 +19,7 @@ import (
 	"foci/config"
 	"foci/log"
 	"foci/memory"
+	oai "foci/openai"
 	"foci/secrets"
 	"foci/telegram"
 )
@@ -113,6 +114,16 @@ Subcommands:
 	log.Debugf("main", "anthropic client ready (use_sdk=%v, streaming=%v)", cfg.Anthropic.UseSDK, cfg.Anthropic.Streaming)
 
 	clients := newClientRegistry(cfg, sec.store, anthropicClient, ctx)
+
+	// ========== Dynamic model alias resolution ==========
+	resolveAnthropicAliases(anthropicClient, cfg.Models.Aliases)
+	if openaiKey, _ := sec.store.Get("openai.api_key"); openaiKey != "" {
+		var openaiOpts []oai.Option
+		if cfg.OpenAI.BaseURL != "" {
+			openaiOpts = append(openaiOpts, oai.WithBaseURL(cfg.OpenAI.BaseURL))
+		}
+		resolveOpenAIAliases(ctx, oai.NewClient(openaiKey, openaiOpts...), cfg.Models.Aliases)
+	}
 
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)

@@ -10,6 +10,74 @@ import (
 	"foci/provider"
 )
 
+func TestListModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/models" {
+			t.Errorf("path = %q, want /models", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "gpt-4o-2025-08-01", "object": "model", "created": 1722470400, "owned_by": "openai"},
+				{"id": "o3-2025-07-15", "object": "model", "created": 1720000000, "owned_by": "openai"},
+				{"id": "o4-mini-2025-09-01", "object": "model", "created": 1725148800, "owned_by": "openai"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient("test-key", WithBaseURL(srv.URL))
+	models, err := c.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+
+	if len(models) != 3 {
+		t.Fatalf("models = %d, want 3", len(models))
+	}
+	if models[0].ID != "gpt-4o-2025-08-01" {
+		t.Errorf("models[0].ID = %q, want gpt-4o-2025-08-01", models[0].ID)
+	}
+	if models[0].Created != 1722470400 {
+		t.Errorf("models[0].Created = %d, want 1722470400", models[0].Created)
+	}
+	if models[0].OwnedBy != "openai" {
+		t.Errorf("models[0].OwnedBy = %q, want openai", models[0].OwnedBy)
+	}
+	if models[1].ID != "o3-2025-07-15" {
+		t.Errorf("models[1].ID = %q, want o3-2025-07-15", models[1].ID)
+	}
+	if models[2].ID != "o4-mini-2025-09-01" {
+		t.Errorf("models[2].ID = %q, want o4-mini-2025-09-01", models[2].ID)
+	}
+}
+
+func TestListModels_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"message": "Invalid API key",
+				"type":    "invalid_request_error",
+				"code":    "invalid_api_key",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient("bad-key", WithBaseURL(srv.URL))
+	_, err := c.ListModels(context.Background())
+	if err == nil {
+		t.Fatal("expected error from ListModels with bad key")
+	}
+}
+
 func TestCountTokens(t *testing.T) {
 	c := NewClient("test-key")
 	_, err := c.CountTokens(context.Background(), &provider.MessageRequest{})
