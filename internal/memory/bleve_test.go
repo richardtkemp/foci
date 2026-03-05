@@ -471,4 +471,16 @@ func TestBleveSearchDateRangeFilter(t *testing.T) {
 			t.Error("new.md should be excluded by date_to filter")
 		}
 	}
+
+	// With both date_from and date_to - should exclude both if range is narrow
+	middleFrom := time.Now().Add(-5 * 24 * time.Hour)
+	middleTo := time.Now().Add(-4 * 24 * time.Hour)
+	results, err = idx.Search("project", "", &SearchOptions{DateFrom: &middleFrom, DateTo: &middleTo})
+	if err != nil {
+		t.Fatalf("Search with both filters: %v", err)
+	}
+	// Should find nothing (both files are outside the 1-day window)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results with narrow date range, got %d", len(results))
+	}
 }
