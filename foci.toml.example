@@ -25,6 +25,7 @@ model = "claude-sonnet-4-20250514"
 # show_tool_calls = "off"                 # off, preview, full
 # show_thinking = "off"                   # off, compact, true
 # display_width = 44                      # divider width in Telegram
+# injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
 # system_files = ["character/SOUL.md"]    # default system file list
 # max_result_chars = 15000               # max chars before writing to file
 # max_summary_chars = 300000             # max chars to auto-summarise

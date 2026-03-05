@@ -16,7 +16,7 @@ type TelegramSender interface {
 	SessionKey() string
 
 	// Default-chat methods (send to bot's last known chat).
-	SendText(text string) error
+	SendInjected(text string) error
 	SendDocument(filePath string) error
 	SendVoice(filePath string) error
 	SendVideo(filePath string) error
@@ -26,7 +26,7 @@ type TelegramSender interface {
 	SendVoiceData(audioData []byte) error
 
 	// Chat-targeted methods (send to a specific chat ID).
-	SendTextToChat(chatID int64, text string) error
+	SendInjectedToChat(chatID int64, text string) error
 	SendDocumentToChat(chatID int64, filePath string) error
 	SendVoiceToChat(chatID int64, filePath string) error
 	SendVideoToChat(chatID int64, filePath string) error
@@ -125,9 +125,9 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 			if p.Text != "" {
 				var err error
 				if chatID != 0 {
-					err = bot.SendTextToChat(chatID, p.Text)
+					err = bot.SendInjectedToChat(chatID, p.Text)
 				} else {
-					err = bot.SendText(p.Text)
+					err = bot.SendInjected(p.Text)
 				}
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("send text: %w", err)

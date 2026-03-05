@@ -591,6 +591,7 @@ Set in `[defaults]`, overridable per-agent.
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Accepts bool (`true` → `"true"`, `false` → `"off"`). |
 | `display_width` | int | `44` | Character width for divider lines in thinking display. |
+| `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages (keepalive, async notifier, HTTP API, proactive warnings) so users can distinguish them from agent replies. Empty string disables the header. |
 
 ### Message Handling
 

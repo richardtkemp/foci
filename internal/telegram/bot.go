@@ -94,6 +94,7 @@ type Bot struct {
 	displayWidth         int          // character width for dividers (default 44)
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	receivedFilesDir     string       // if non-empty, save received files to this directory
+	injectedMessageHeader string              // prepended to injected (system) messages; empty disables
 	toolResults          sync.Map            // message ID (int64) → toolResultEntry; for inline keyboard expansion
 	thinkingStore        sync.Map            // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 	toolDetailStore      *ToolDetailStore    // nil = no persistence; write-through to SQLite
@@ -203,6 +204,12 @@ func (b *Bot) SetReceivedFilesDir(dir string) {
 	b.receivedFilesDir = dir
 }
 
+// SetInjectedMessageHeader sets the header prepended to injected (system) messages.
+// Empty string disables the header.
+func (b *Bot) SetInjectedMessageHeader(s string) {
+	b.injectedMessageHeader = s
+}
+
 // SetToolDetailStore sets the persistent store for tool call details.
 // On startup, loads entries <48h old into the in-memory map.
 func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
@@ -224,8 +231,8 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 }
 
 // DisplaySettings returns the current display settings for inspection/testing.
-func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string) {
-	return b.showToolCalls, b.showThinking, b.displayWidth, b.messagesInLog, b.receivedFilesDir
+func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string, injectedMessageHeader string) {
+	return b.showToolCalls, b.showThinking, b.displayWidth, b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
 }
 
 // NewBotForTest creates a Bot without connecting to the Telegram API.
@@ -1095,22 +1102,47 @@ func (b *Bot) cancelTurn() {
 	}
 }
 
+// sendHTMLChunks sends pre-converted HTML to a chat, splitting into chunks,
+// falling back to plain text if HTML parsing fails, and logging each chunk.
+func (b *Bot) sendHTMLChunks(chatID int64, html, userID, username string) {
+	for _, chunk := range splitMessage(html, 4096) {
+		parseMode := "HTML"
+		sendErr := ""
+		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
+			parseMode = ""
+			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
+				b.logger().Errorf("send error: %s", b.sanitizeError(err))
+				sendErr = err.Error()
+			}
+		}
+
+		log.Conversation(log.ConversationEntry{
+			Direction: "sent",
+			UserID:    userID,
+			Username:  username,
+			ChatID:    chatID,
+			Text:      chunk,
+			ParseMode: parseMode,
+			Session:   b.SessionKey(),
+			Error:     sendErr,
+		})
+	}
+}
+
 // sendReply sends a response back to the user, splitting long messages and
 // falling back to plain text if HTML formatting fails.
 // Logs each chunk to the conversation log.
 func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
-	// Split multi-message responses (separated by \x00) into individual messages,
-	// each converted and chunked independently so code blocks stay intact.
-	if !strings.Contains(response, "\x00") {
-		b.sendReplyPart(msg, userID, response)
-		return
+	parts := []string{response}
+	if strings.Contains(response, "\x00") {
+		parts = strings.Split(response, "\x00")
 	}
-	for _, part := range strings.Split(response, "\x00") {
+	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		b.sendReplyPart(msg, userID, part)
+		b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(part), userID, msg.From.Username)
 	}
 }
 
@@ -1120,21 +1152,7 @@ func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, res
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
 	responseHTML := ConvertToTelegramHTML(response)
 	divider := "\n" + strings.Repeat("—", b.displayWidth) + "\n\n"
-	fullHTML := thinkingHTML + divider + responseHTML
-
-	chunks := splitMessage(fullHTML, 4096)
-	for _, chunk := range chunks {
-		_, _ = b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
-	}
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		UserID:    userID,
-		Username:  msg.From.Username,
-		ChatID:    msg.Chat.Id,
-		Text:      fullHTML,
-		ParseMode: "HTML",
-		Session:   b.SessionKey(),
-	})
+	b.sendHTMLChunks(msg.Chat.Id, thinkingHTML+divider+responseHTML, userID, msg.From.Username)
 }
 
 // sendReplyWithThinking sends a response with a "Show thinking" inline keyboard button.
@@ -1157,10 +1175,8 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 	chunks := splitMessage(responseHTML, 4096)
 	for i, chunk := range chunks {
 		if i < len(chunks)-1 {
-			// Plain chunk without button
-			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-				b.logger().Debugf("send thinking chunk: %v", err)
-			}
+			// Non-last chunks: use sendHTMLChunks for fallback + logging
+			b.sendHTMLChunks(msg.Chat.Id, chunk, userID, msg.From.Username)
 			continue
 		}
 		// Last chunk — send with button
@@ -1196,34 +1212,6 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 	}
 }
 
-func (b *Bot) sendReplyPart(msg *gotgbot.Message, userID string, response string) {
-	// Convert standard markdown to Telegram HTML
-	response = ConvertToTelegramHTML(response)
-
-	for _, chunk := range splitMessage(response, 4096) {
-		parseMode := "HTML"
-		sendErr := ""
-		if _, err := b.client.SendMessage(msg.Chat.Id, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-			// Retry without markdown if parsing fails
-			parseMode = ""
-			if _, err := b.client.SendMessage(msg.Chat.Id, chunk, nil); err != nil {
-				b.logger().Errorf("send error: %s", b.sanitizeError(err))
-				sendErr = err.Error()
-			}
-		}
-
-		log.Conversation(log.ConversationEntry{
-			Direction: "sent",
-			UserID:    userID,
-			Username:  msg.From.Username,
-			ChatID:    msg.Chat.Id,
-			Text:      chunk,
-			ParseMode: parseMode,
-			Session:   b.SessionKey(),
-			Error:     sendErr,
-		})
-	}
-}
 
 // SendNotification sends a plain text notification to the last known chat.
 // Used for system alerts (cache bust, etc.) — not an agent turn, no tokens spent.
@@ -1289,16 +1277,18 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	}
 }
 
-// SendText sends a text message to the last known chat with HTML support.
-// Returns an error if no chat ID is available.
-// Silently skips empty or whitespace-only messages.
-func (b *Bot) SendText(text string) error {
+// SendInjected sends a system/injected text message to the last known chat.
+// Prepends the configured InjectedMessageHeader (if non-empty) so users can
+// distinguish system messages from agent replies. Returns an error if no chat
+// ID is available. Silently skips empty or whitespace-only messages.
+func (b *Bot) SendInjected(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 
-	// Convert standard markdown to Telegram HTML
-	text = ConvertToTelegramHTML(text)
+	if b.injectedMessageHeader != "" {
+		text = b.injectedMessageHeader + "\n" + text
+	}
 
 	b.chatMu.Lock()
 	chatID := b.chatID
@@ -1308,20 +1298,7 @@ func (b *Bot) SendText(text string) error {
 		return fmt.Errorf("no chat ID — no messages received yet")
 	}
 
-	for _, chunk := range splitMessage(text, 4096) {
-		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
-				return fmt.Errorf("send: %w", err)
-			}
-		}
-	}
-
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		ChatID:    chatID,
-		Text:      text,
-		Session:   b.SessionKey(),
-	})
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text), "", "")
 	return nil
 }
 

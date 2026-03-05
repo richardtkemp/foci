@@ -26,7 +26,7 @@ type mockClient struct {
 	setCmds        []gotgbot.BotCommand // last SetMyCommands call
 	setCmdsErr     error                // error to return from SetMyCommands
 	lastSendOpts   *gotgbot.SendMessageOpts  // last SendMessage opts
-	lastSendText   string                    // last SendMessage text
+	lastSendInjected   string                    // last SendMessage text
 	lastEditOpts   *gotgbot.EditMessageTextOpts // last EditMessageText opts
 	lastEditText   string                    // last EditMessageText text
 	answerCBCalls  int                       // counts AnswerCallbackQuery calls
@@ -38,7 +38,7 @@ func (m *mockClient) SendMessage(chatId int64, text string, opts *gotgbot.SendMe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sends++
-	m.lastSendText = text
+	m.lastSendInjected = text
 	m.lastSendOpts = opts
 	return &gotgbot.Message{MessageId: int64(m.sends)}, nil
 }
@@ -724,8 +724,8 @@ func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 error reply for voice without transcriber, got %d", mock.sentCount())
 	}
-	if !strings.Contains(mock.lastSendText, "Voice notes require") {
-		t.Errorf("reply text = %q, want it to mention 'Voice notes require'", mock.lastSendText)
+	if !strings.Contains(mock.lastSendInjected, "Voice notes require") {
+		t.Errorf("reply text = %q, want it to mention 'Voice notes require'", mock.lastSendInjected)
 	}
 }
 
@@ -995,47 +995,47 @@ func TestSanitizeError_NoToken(t *testing.T) {
 	}
 }
 
-// --- SendText ---
+// --- SendInjected ---
 
-func TestSendText_SkipsEmptyMessage(t *testing.T) {
+func TestSendInjected_SkipsEmptyMessage(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set a chat ID so the bot can send
 	b.SetChatID(12345)
 
 	// Empty string should be silently skipped
-	if err := b.SendText(""); err != nil {
-		t.Errorf("SendText(\"\") error = %v, want nil", err)
+	if err := b.SendInjected(""); err != nil {
+		t.Errorf("SendInjected(\"\") error = %v, want nil", err)
 	}
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0 for empty string", mock.sentCount())
 	}
 }
 
-func TestSendText_SkipsWhitespaceOnlyMessage(t *testing.T) {
+func TestSendInjected_SkipsWhitespaceOnlyMessage(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set a chat ID so the bot can send
 	b.SetChatID(12345)
 
 	// Whitespace-only should be silently skipped
-	if err := b.SendText("   "); err != nil {
-		t.Errorf("SendText(\"   \") error = %v, want nil", err)
+	if err := b.SendInjected("   "); err != nil {
+		t.Errorf("SendInjected(\"   \") error = %v, want nil", err)
 	}
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0 for whitespace-only", mock.sentCount())
 	}
 }
 
-func TestSendText_SendsNonEmptyMessage(t *testing.T) {
+func TestSendInjected_SendsNonEmptyMessage(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set a chat ID so the bot can send
 	b.SetChatID(12345)
 
 	// Non-empty message should be sent
-	if err := b.SendText("hello"); err != nil {
-		t.Errorf("SendText(\"hello\") error = %v, want nil", err)
+	if err := b.SendInjected("hello"); err != nil {
+		t.Errorf("SendInjected(\"hello\") error = %v, want nil", err)
 	}
 	if mock.sentCount() != 1 {
 		t.Errorf("sentCount = %d, want 1 for non-empty message", mock.sentCount())
@@ -1044,12 +1044,12 @@ func TestSendText_SendsNonEmptyMessage(t *testing.T) {
 
 // --- Async notifier delivery ---
 // These tests verify the contract that async-notifier turns (tmux watch,
-// exec auto-background) deliver responses via SendText, matching the
+// exec auto-background) deliver responses via SendInjected, matching the
 // wiring in main.go's notifier closure.
 
-func TestAsyncNotifierDeliveryViaSendText(t *testing.T) {
+func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {
 	// Simulates the async notifier delivery path in main.go:
-	// notifier calls HandleMessage → gets response → calls bot.SendText()
+	// notifier calls HandleMessage → gets response → calls bot.SendInjected()
 	mgr := NewBotManager()
 	bot, mock := testBot([]string{"111"}, command.NewRegistry())
 	bot.SetChatID(12345)
@@ -1058,13 +1058,13 @@ func TestAsyncNotifierDeliveryViaSendText(t *testing.T) {
 	// Simulate: notifier got a response from HandleMessage
 	resp := "Four undeployed commits now. Both queues empty."
 
-	// Deliver via primary bot's SendText (same as main.go closure)
+	// Deliver via primary bot's SendInjected (same as main.go closure)
 	primary := mgr.PrimaryBot("test-agent")
 	if primary == nil {
 		t.Fatal("PrimaryBot returned nil")
 	}
-	if err := primary.SendText(resp); err != nil {
-		t.Fatalf("SendText error: %v", err)
+	if err := primary.SendInjected(resp); err != nil {
+		t.Fatalf("SendInjected error: %v", err)
 	}
 	if mock.sentCount() != 1 {
 		t.Errorf("sentCount = %d, want 1", mock.sentCount())
@@ -1072,14 +1072,14 @@ func TestAsyncNotifierDeliveryViaSendText(t *testing.T) {
 }
 
 func TestAsyncNotifierSkipsEmptyResponse(t *testing.T) {
-	// When HandleMessage returns empty string, notifier should not call SendText.
-	// This is checked in the main.go closure before calling SendText.
+	// When HandleMessage returns empty string, notifier should not call SendInjected.
+	// This is checked in the main.go closure before calling SendInjected.
 	bot, mock := testBot([]string{"111"}, command.NewRegistry())
 	bot.SetChatID(12345)
 
-	// Empty response should be silently skipped by SendText
-	if err := bot.SendText(""); err != nil {
-		t.Fatalf("SendText(\"\") error: %v", err)
+	// Empty response should be silently skipped by SendInjected
+	if err := bot.SendInjected(""); err != nil {
+		t.Fatalf("SendInjected(\"\") error: %v", err)
 	}
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0 for empty response", mock.sentCount())
@@ -1283,8 +1283,8 @@ func TestShowToolCalls_Full(t *testing.T) {
 	if mock.sentCount() != 1 {
 		t.Errorf("sends=%d, want 1", mock.sentCount())
 	}
-	if !strings.Contains(mock.lastSendText, "shell") {
-		t.Errorf("sent text should contain tool name, got: %s", mock.lastSendText)
+	if !strings.Contains(mock.lastSendInjected, "shell") {
+		t.Errorf("sent text should contain tool name, got: %s", mock.lastSendInjected)
 	}
 
 	// Second tool call: also a new message (not an edit).
@@ -1526,17 +1526,14 @@ func TestRegisterCommands_APIError(t *testing.T) {
 
 // --- sendReply with empty text ---
 
-func TestSendReply_EmptyTextStillSends(t *testing.T) {
-	// sendReply does NOT guard against empty text — that's the caller's
-	// responsibility. This test proves the guard in processAgentMessage is
-	// needed: without it, empty agent responses would reach sendReply and
-	// hit the Telegram API with "message text is empty".
+func TestSendReply_SkipsEmptyText(t *testing.T) {
+	// sendReply trims parts and skips empty text — callers don't need to guard.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	msg := makeMsg(111, "owner", "hello")
 
 	b.sendReply(msg, "111", "")
-	if mock.sentCount() != 1 {
-		t.Errorf("sends = %d, want 1 (sendReply does not guard empty text)", mock.sentCount())
+	if mock.sentCount() != 0 {
+		t.Errorf("sends = %d, want 0 (sendReply skips empty text)", mock.sentCount())
 	}
 }
 
@@ -2382,8 +2379,8 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 		t.Errorf("callback data = %q, want %q", btn.CallbackData, "tc:show:1")
 	}
 	// Sent text should be compact (no <pre> block)
-	if strings.Contains(mock.lastSendText, "<pre>") {
-		t.Errorf("compact summary should not contain <pre> block, got: %s", mock.lastSendText)
+	if strings.Contains(mock.lastSendInjected, "<pre>") {
+		t.Errorf("compact summary should not contain <pre> block, got: %s", mock.lastSendInjected)
 	}
 }
 

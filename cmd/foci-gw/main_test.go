@@ -486,7 +486,7 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 
 	applyAgentDisplaySettings(bot, acfg, cfg)
 
-	stc, st, dw, mil, rfd := bot.DisplaySettings()
+	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "full" {
 		t.Errorf("ShowToolCalls = %q, want %q", stc, "full")
 	}
@@ -523,7 +523,7 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 
 	applyAgentDisplaySettings(bot, acfg, cfg)
 
-	stc, st, dw, mil, rfd := bot.DisplaySettings()
+	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "preview" {
 		t.Errorf("ShowToolCalls = %q, want %q (defaults fallback)", stc, "preview")
 	}
@@ -553,7 +553,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 
 	applyAgentDisplaySettings(bot, acfg, cfg)
 
-	_, _, _, _, rfd := bot.DisplaySettings()
+	_, _, _, _, rfd, _ := bot.DisplaySettings()
 	if rfd != "/pre-existing" {
 		t.Errorf("ReceivedFilesDir = %q, want %q (should not be overwritten when both empty)", rfd, "/pre-existing")
 	}
@@ -578,7 +578,7 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 
 	applyAgentDisplaySettings(bot, acfg, cfg)
 
-	stc, st, dw, mil, _ := bot.DisplaySettings()
+	stc, st, dw, mil, _, _ := bot.DisplaySettings()
 	if stc != "full" {
 		t.Errorf("ShowToolCalls = %q, want %q (agent override)", stc, "full")
 	}

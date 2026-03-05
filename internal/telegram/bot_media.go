@@ -93,27 +93,16 @@ func (b *Bot) lastChatID() (int64, error) {
 	return chatID, nil
 }
 
-// SendTextToChat sends a text message to a specific chat ID with HTML support.
-func (b *Bot) SendTextToChat(chatID int64, text string) error {
+// SendInjectedToChat sends an injected/system text message to a specific chat ID.
+// Prepends the configured InjectedMessageHeader (if non-empty).
+func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	text = ConvertToTelegramHTML(text)
-
-	for _, chunk := range splitMessage(text, 4096) {
-		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
-				return fmt.Errorf("send: %w", err)
-			}
-		}
+	if b.injectedMessageHeader != "" {
+		text = b.injectedMessageHeader + "\n" + text
 	}
-
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		ChatID:    chatID,
-		Text:      text,
-		Session:   b.SessionKey(),
-	})
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text), "", "")
 	return nil
 }
 
@@ -376,7 +365,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachm
 	if err != nil {
 		b.logger().Errorf("download image: %s", b.sanitizeError(err))
 		if b.agent == nil || b.agent.Warnings == nil {
-			_ = b.SendTextToChat(chatID, "Could not download image — please try again.")
+			b.sendHTMLChunks(chatID, "Could not download image — please try again.", "", "")
 		}
 		return attachment{}, false
 	}
@@ -403,7 +392,7 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 		}
 		b.logger().Errorf("download %s: %s", mediaType, b.sanitizeError(err))
 		if b.agent == nil || b.agent.Warnings == nil {
-			_ = b.SendTextToChat(chatID, fmt.Sprintf("Could not download %s — please try again.", label))
+			b.sendHTMLChunks(chatID, fmt.Sprintf("Could not download %s — please try again.", label), "", "")
 		}
 		return text
 	}
