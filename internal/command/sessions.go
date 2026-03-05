@@ -231,7 +231,7 @@ func sessionsListCmd(deps SessionsDeps, currentChatID int64) (string, error) {
 		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.flags}
 	}
 	return fmt.Sprintf("Sessions — %s (%d)\n\n%s\n◉ = current  ★ = default (keepalive, cron)",
-		deps.AgentID, len(sessions), display.Format(cols, tableRows)), nil
+		deps.AgentID, len(sessions), display.MarkdownTable(cols, tableRows)), nil
 }
 
 func sessionsDefaultCmd(deps SessionsDeps, chatID int64) (string, error) {
@@ -355,7 +355,7 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 	}
 
 	return fmt.Sprintf("Session Index — %d sessions%s\n\n%s",
-		len(entries), filterDesc, display.Format(cols, tableRows)), nil
+		len(entries), filterDesc, display.MarkdownTable(cols, tableRows)), nil
 }
 
 // shortenSessionKey abbreviates a session key for table display.

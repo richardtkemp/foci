@@ -1,6 +1,9 @@
 package telegram
 
-import "testing"
+import (
+	"foci/internal/display"
+	"testing"
+)
 
 func TestHTMLEscape(t *testing.T) {
 	tests := []struct {
@@ -190,37 +193,37 @@ func TestConvertToTelegramHTML(t *testing.T) {
 		{
 			name: "table simple",
 			in:   "| Col1 | Col2 |\n|------|------|\n| a    | b    |",
-			want: "<pre>| Col1 | Col2 |\n| ---- | ---- |\n| a    | b    |</pre>",
+			want: "<pre>Col1  Col2\n──────────\na     b   </pre>",
 		},
 		{
 			name: "table with HTML chars",
 			in:   "| Key | Value |\n|-----|-------|\n| a<b | c&d   |",
-			want: "<pre>| Key | Value |\n| --- | ----- |\n| a&lt;b | c&amp;d   |</pre>",
+			want: "<pre>Key  Value\n──────────\na&lt;b  c&amp;d  </pre>",
 		},
 		{
 			name: "table surrounded by text",
 			in:   "Results:\n| Name | Score |\n|------|-------|\n| Bob  | 42    |\nDone.",
-			want: "Results:\n<pre>| Name | Score |\n| ---- | ----- |\n| Bob  | 42    |</pre>\nDone.",
+			want: "Results:\n<pre>Name  Score\n───────────\nBob   42   </pre>\nDone.",
 		},
 		{
 			name: "table uneven columns padded",
 			in:   "| A | BB | CCC |\n|---|-------|---|\n| x | y | z |",
-			want: "<pre>| A   | BB  | CCC |\n| --- | --- | --- |\n| x   | y   | z   |</pre>",
+			want: "<pre>A    BB   CCC\n─────────────\nx    y    z  </pre>",
 		},
 		{
 			name: "table with Chinese characters",
 			in:   "| 名称 | 值 |\n|------|------|\n| 测试 | 123 |",
-			want: "<pre>| 名称 | 值  |\n| ---- | --- |\n| 测试 | 123 |</pre>",
+			want: "<pre>名称  值 \n─────────\n测试  123</pre>",
 		},
 		{
 			name: "table with mixed width characters",
 			in:   "| Name | 数量 |\n|------|------|\n| apple | 苹果 |\n| banana | 香蕉 |",
-			want: "<pre>| Name   | 数量 |\n| ------ | ---- |\n| apple  | 苹果 |\n| banana | 香蕉 |</pre>",
+			want: "<pre>Name    数量\n────────────\napple   苹果\nbanana  香蕉</pre>",
 		},
 		{
 			name: "table with emoji",
 			in:   "| Status | Count |\n|--------|-------|\n| ✅ | 5 |\n| ❌ | 2 |",
-			want: "<pre>| Status | Count |\n| ------ | ----- |\n| ✅     | 5     |\n| ❌     | 2     |</pre>",
+			want: "<pre>Status  Count\n─────────────\n✅      5    \n❌      2    </pre>",
 		},
 		// Snake case protection
 		{
@@ -336,38 +339,44 @@ func TestConvertToTelegramHTMLTableWrapping(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
-		opts TableOpts
+		opts display.RenderOpts
 		want string
 	}{
 		{
-			name: "table constrained and wrapped",
+			name: "table constrained and wrapped (markdown)",
 			in:   "| Tool | Description |\n|------|-------------|\n| exec | Execute shell commands in a sandbox |",
-			opts: TableOpts{MaxWidth: 30, WrapLines: 5},
+			opts: display.RenderOpts{MaxWidth: 30, WrapLines: 5, Style: "markdown"},
 			want: "<pre>| Tool | Description         |\n| ---- | ------------------- |\n| exec | Execute shell       |\n|      | commands in a       |\n|      | sandbox             |</pre>",
 		},
 		{
-			name: "wrap lines cap with truncation",
+			name: "wrap lines cap with truncation (markdown)",
 			in:   "| Col |\n|-----|\n| one two three four five six seven eight |",
-			opts: TableOpts{MaxWidth: 15, WrapLines: 2},
+			opts: display.RenderOpts{MaxWidth: 15, WrapLines: 2, Style: "markdown"},
 			want: "<pre>| Col         |\n| ----------- |\n| one two     |\n| three four… |</pre>",
 		},
 		{
-			name: "separator row stays single line",
+			name: "separator row stays single line (markdown)",
 			in:   "| A | B |\n|---|---|\n| x | y |",
-			opts: TableOpts{MaxWidth: 40, WrapLines: 5},
+			opts: display.RenderOpts{MaxWidth: 40, WrapLines: 5, Style: "markdown"},
 			want: "<pre>| A   | B   |\n| --- | --- |\n| x   | y   |</pre>",
 		},
 		{
-			name: "no opts unchanged",
+			name: "no opts pretty default",
 			in:   "| Col1 | Col2 |\n|------|------|\n| a    | b    |",
-			opts: TableOpts{},
-			want: "<pre>| Col1 | Col2 |\n| ---- | ---- |\n| a    | b    |</pre>",
+			opts: display.RenderOpts{},
+			want: "<pre>Col1  Col2\n──────────\na     b   </pre>",
 		},
 		{
-			name: "wrap disabled truncates",
+			name: "wrap disabled truncates (markdown)",
 			in:   "| Name |\n|------|\n| a very long name here |",
-			opts: TableOpts{MaxWidth: 15, WrapLines: 0},
+			opts: display.RenderOpts{MaxWidth: 15, WrapLines: 0, Style: "markdown"},
 			want: "<pre>| Name        |\n| ----------- |\n| a very lon… |</pre>",
+		},
+		{
+			name: "pretty style with wrapping",
+			in:   "| Tool | Description |\n|------|-------------|\n| exec | Execute shell commands in a sandbox |",
+			opts: display.RenderOpts{MaxWidth: 28, WrapLines: 5},
+			want: "<pre>Tool  Description           \n────────────────────────────\nexec  Execute shell commands\n      in a sandbox          </pre>",
 		},
 	}
 

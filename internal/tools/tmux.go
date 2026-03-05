@@ -808,7 +808,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		{Header: "OWNER"},
 		{Header: "WATCH"},
 	}
-	return TextResult(display.Format(cols, rows)), nil
+	return TextResult(display.MarkdownTable(cols, rows)), nil
 }
 
 // extractOwner returns the agent ID from a session key, or "self" if unknown.

@@ -51,12 +51,6 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	if cfg.Defaults.ShowThinking != nil {
 		add("defaults", "show_thinking", string(*cfg.Defaults.ShowThinking))
 	}
-	if cfg.Defaults.DisplayWidth != nil {
-		add("defaults", "display_width", *cfg.Defaults.DisplayWidth)
-	}
-	if cfg.Defaults.TableWrapLines != nil {
-		add("defaults", "table_wrap_lines", *cfg.Defaults.TableWrapLines)
-	}
 	if cfg.Defaults.InjectedMessageHeader != "" {
 		add("defaults", "injected_message_header", cfg.Defaults.InjectedMessageHeader)
 	}
@@ -81,6 +75,15 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
 	if cfg.Telegram.ReceivedFilesDir != "" {
 		add("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
+	}
+	if cfg.Telegram.DisplayWidth != nil {
+		add("telegram", "display_width", *cfg.Telegram.DisplayWidth)
+	}
+	if cfg.Telegram.TableWrapLines != nil {
+		add("telegram", "table_wrap_lines", *cfg.Telegram.TableWrapLines)
+	}
+	if cfg.Telegram.TableStyle != nil {
+		add("telegram", "table_style", *cfg.Telegram.TableStyle)
 	}
 
 	// sessions
@@ -157,6 +160,8 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("tools", "exec_auto_background", cfg.Tools.ExecAutoBackground)
 	add("tools", "exec_default_timeout", cfg.Tools.ExecDefaultTimeout)
 	add("tools", "max_summary_chars", cfg.Tools.MaxSummaryChars)
+	add("tools", "max_summary_input_chars", cfg.Tools.MaxSummaryInputChars)
+	add("tools", "max_image_pixels", cfg.Tools.MaxImagePixels)
 	add("tools", "auto_summarise", cfg.Tools.AutoSummarise)
 	add("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
 	add("tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
@@ -304,6 +309,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.TableWrapLines != nil {
 		add("table_wrap_lines", *agent.TableWrapLines)
 	}
+	if agent.TableStyle != nil {
+		add("table_style", *agent.TableStyle)
+	}
 	if agent.MessagesInLog != nil {
 		add("messages_in_log", *agent.MessagesInLog)
 	}
@@ -423,12 +431,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if cfg.Defaults.ShowThinking != nil {
 		addDefault("show_thinking", string(*cfg.Defaults.ShowThinking), false)
 	}
-	if cfg.Defaults.DisplayWidth != nil {
-		addDefault("display_width", *cfg.Defaults.DisplayWidth, false)
-	}
-	if cfg.Defaults.TableWrapLines != nil {
-		addDefault("table_wrap_lines", *cfg.Defaults.TableWrapLines, false)
-	}
 	if cfg.Defaults.InjectedMessageHeader != "" {
 		addDefault("injected_message_header", cfg.Defaults.InjectedMessageHeader, false)
 	}
@@ -469,6 +471,15 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
 	if cfg.Telegram.ReceivedFilesDir != "" {
 		addGlobal("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
+	}
+	if cfg.Telegram.DisplayWidth != nil {
+		addGlobal("telegram", "display_width", *cfg.Telegram.DisplayWidth)
+	}
+	if cfg.Telegram.TableWrapLines != nil {
+		addGlobal("telegram", "table_wrap_lines", *cfg.Telegram.TableWrapLines)
+	}
+	if cfg.Telegram.TableStyle != nil {
+		addGlobal("telegram", "table_style", *cfg.Telegram.TableStyle)
 	}
 	addGlobal("sessions", "dir", cfg.Sessions.Dir)
 	addGlobal("sessions", "compaction_threshold", cfg.Sessions.CompactionThreshold)
@@ -535,6 +546,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("tools", "exec_auto_background", cfg.Tools.ExecAutoBackground)
 	addGlobal("tools", "exec_default_timeout", cfg.Tools.ExecDefaultTimeout)
 	addGlobal("tools", "max_summary_chars", cfg.Tools.MaxSummaryChars)
+	addGlobal("tools", "max_summary_input_chars", cfg.Tools.MaxSummaryInputChars)
+	addGlobal("tools", "max_image_pixels", cfg.Tools.MaxImagePixels)
 	addGlobal("tools", "auto_summarise", cfg.Tools.AutoSummarise)
 	addGlobal("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
 	addGlobal("tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
@@ -637,7 +650,7 @@ func formatTableBySection(rows []configRow) string {
 		for i, r := range sRows {
 			tableRows[i] = []string{r.Key, r.Value}
 		}
-		parts = append(parts, "["+sec+"]\n"+display.Format(cols, tableRows))
+		parts = append(parts, "["+sec+"]\n"+display.MarkdownTable(cols, tableRows))
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -692,6 +705,9 @@ type displayTelegram struct {
 	MessageQueueSize    int      `toml:"message_queue_size"`
 	LongPollTimeout     string   `toml:"long_poll_timeout"`
 	ReceivedFilesDir    string   `toml:"received_files_dir,omitempty"`
+	DisplayWidth        *int     `toml:"display_width,omitempty"`
+	TableWrapLines      *int     `toml:"table_wrap_lines,omitempty"`
+	TableStyle          *string  `toml:"table_style,omitempty"`
 }
 
 type displayAnthropic struct {
@@ -715,6 +731,9 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
 			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
 			ReceivedFilesDir:    cfg.Telegram.ReceivedFilesDir,
+			DisplayWidth:        cfg.Telegram.DisplayWidth,
+			TableWrapLines:      cfg.Telegram.TableWrapLines,
+			TableStyle:          cfg.Telegram.TableStyle,
 		},
 		Sessions:      cfg.Sessions,
 		Memory:        cfg.Memory,
@@ -787,17 +806,24 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	if agent.DisplayWidth == nil {
 		dw := 44
-		if cfg.Defaults.DisplayWidth != nil {
-			dw = *cfg.Defaults.DisplayWidth
+		if cfg.Telegram.DisplayWidth != nil {
+			dw = *cfg.Telegram.DisplayWidth
 		}
-		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use defaults)"})
+		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use telegram)"})
 	}
 	if agent.TableWrapLines == nil {
 		twl := 5
-		if cfg.Defaults.TableWrapLines != nil {
-			twl = *cfg.Defaults.TableWrapLines
+		if cfg.Telegram.TableWrapLines != nil {
+			twl = *cfg.Telegram.TableWrapLines
 		}
-		opts = append(opts, availableOption{"agent", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use defaults)"})
+		opts = append(opts, availableOption{"agent", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use telegram)"})
+	}
+	if agent.TableStyle == nil {
+		ts := "pretty"
+		if cfg.Telegram.TableStyle != nil {
+			ts = *cfg.Telegram.TableStyle
+		}
+		opts = append(opts, availableOption{"agent", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown (nil = use telegram)"})
 	}
 	if agent.Effort == "" && cfg.Anthropic.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
@@ -934,7 +960,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		for i, o := range sOpts {
 			tableRows[i] = []string{o.Key, o.Default, o.Description}
 		}
-		parts = append(parts, "["+sec+"]\n"+display.Format(cols, tableRows))
+		parts = append(parts, "["+sec+"]\n"+display.MarkdownTable(cols, tableRows))
 	}
 	return "Unset/default config options:\n\n" + strings.Join(parts, "\n\n")
 }

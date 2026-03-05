@@ -69,14 +69,20 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 	switch {
 	case acfg.DisplayWidth != nil:
 		bot.SetDisplayWidth(*acfg.DisplayWidth)
-	case cfg.Defaults.DisplayWidth != nil:
-		bot.SetDisplayWidth(*cfg.Defaults.DisplayWidth)
+	case cfg.Telegram.DisplayWidth != nil:
+		bot.SetDisplayWidth(*cfg.Telegram.DisplayWidth)
 	}
 	switch {
 	case acfg.TableWrapLines != nil:
 		bot.SetTableWrapLines(*acfg.TableWrapLines)
-	case cfg.Defaults.TableWrapLines != nil:
-		bot.SetTableWrapLines(*cfg.Defaults.TableWrapLines)
+	case cfg.Telegram.TableWrapLines != nil:
+		bot.SetTableWrapLines(*cfg.Telegram.TableWrapLines)
+	}
+	switch {
+	case acfg.TableStyle != nil:
+		bot.SetTableStyle(*acfg.TableStyle)
+	case cfg.Telegram.TableStyle != nil:
+		bot.SetTableStyle(*cfg.Telegram.TableStyle)
 	}
 	if acfg.MessagesInLog != nil {
 		bot.SetMessagesInLog(*acfg.MessagesInLog)
@@ -225,7 +231,8 @@ func setupAgent(p setupParams) *agentInstance {
 
 	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
 	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
-	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry))
+	spillThreshold := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir))
 
 	// Only register tmux tool if tmux is available in PATH
 	var tmuxTool *tools.Tool
@@ -390,6 +397,8 @@ func setupAgent(p setupParams) *agentInstance {
 		SummaryContextTurns:         resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
 		SummaryContextChars:         resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
 		MaxSummaryChars:             resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
+		MaxSummaryInputChars:        resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
+		MaxImagePixels:              resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
 		AutoSummarise:               resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
 		StateStore:                  p.stateStore,
 		UsageClient:                 p.usageClient,

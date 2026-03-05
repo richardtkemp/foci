@@ -55,7 +55,7 @@ func TestPadRight(t *testing.T) {
 	}
 }
 
-func TestFormat(t *testing.T) {
+func TestMarkdownTable(t *testing.T) {
 	cols := []Column{
 		{Header: "Name"},
 		{Header: "Score", Align: AlignRight},
@@ -67,7 +67,7 @@ func TestFormat(t *testing.T) {
 		{"Charlie", "82", "fail"},
 	}
 
-	got := Format(cols, rows)
+	got := MarkdownTable(cols, rows)
 	lines := strings.Split(got, "\n")
 
 	if len(lines) != 5 { // header + sep + 3 rows
@@ -97,13 +97,13 @@ func TestFormat(t *testing.T) {
 	}
 }
 
-func TestFormatEmptyRows(t *testing.T) {
+func TestMarkdownTableEmptyRows(t *testing.T) {
 	cols := []Column{
 		{Header: "A"},
 		{Header: "B"},
 	}
 
-	got := Format(cols, nil)
+	got := MarkdownTable(cols, nil)
 	lines := strings.Split(got, "\n")
 
 	if len(lines) != 2 { // header + sep only
@@ -111,18 +111,18 @@ func TestFormatEmptyRows(t *testing.T) {
 	}
 }
 
-func TestFormatNoCols(t *testing.T) {
-	got := Format(nil, [][]string{{"a", "b"}})
+func TestMarkdownTableNoCols(t *testing.T) {
+	got := MarkdownTable(nil, [][]string{{"a", "b"}})
 	if got != "" {
 		t.Errorf("expected empty string for no columns, got: %q", got)
 	}
 }
 
-func TestFormatSingleColumn(t *testing.T) {
+func TestMarkdownTableSingleColumn(t *testing.T) {
 	cols := []Column{{Header: "Item"}}
 	rows := [][]string{{"alpha"}, {"beta"}}
 
-	got := Format(cols, rows)
+	got := MarkdownTable(cols, rows)
 	lines := strings.Split(got, "\n")
 	if len(lines) != 4 { // header + sep + 2 rows
 		t.Fatalf("expected 4 lines, got %d:\n%s", len(lines), got)
@@ -132,12 +132,12 @@ func TestFormatSingleColumn(t *testing.T) {
 	}
 }
 
-func TestFormatMismatchedRowLengths(t *testing.T) {
+func TestMarkdownTableMismatchedRowLengths(t *testing.T) {
 	cols := []Column{{Header: "A"}, {Header: "B"}, {Header: "C"}}
 
 	// Row shorter than columns — missing cells should render as empty
 	rows := [][]string{{"x"}}
-	got := Format(cols, rows)
+	got := MarkdownTable(cols, rows)
 	lines := strings.Split(got, "\n")
 	if len(lines) != 3 { // header + sep + 1 row
 		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
@@ -461,5 +461,120 @@ func TestRelativeTime(t *testing.T) {
 				t.Errorf("RelativeTime() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDetectTables verifies table detection in mixed markdown content.
+func TestDetectTables(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		blocks int
+		starts []int
+	}{
+		{
+			name:   "single table",
+			input:  "| A | B |\n|---|---|\n| 1 | 2 |",
+			blocks: 1,
+			starts: []int{0},
+		},
+		{
+			name:   "table with surrounding text",
+			input:  "hello\n| A | B |\n|---|---|\n| x | y |\nworld",
+			blocks: 1,
+			starts: []int{1},
+		},
+		{
+			name:   "no table without separator",
+			input:  "| A | B |\n| 1 | 2 |",
+			blocks: 0,
+		},
+		{
+			name:   "two tables",
+			input:  "| A |\n|---|\n| 1 |\n\ntext\n\n| B |\n|---|\n| 2 |",
+			blocks: 2,
+			starts: []int{0, 6},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectTables(tt.input)
+			if len(got) != tt.blocks {
+				t.Fatalf("DetectTables: got %d blocks, want %d", len(got), tt.blocks)
+			}
+			for i, b := range got {
+				if i < len(tt.starts) && b.StartLine != tt.starts[i] {
+					t.Errorf("block %d: StartLine = %d, want %d", i, b.StartLine, tt.starts[i])
+				}
+			}
+		})
+	}
+}
+
+// TestRenderTable verifies both pretty and markdown rendering styles.
+func TestRenderTable(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		opts  RenderOpts
+		want  string
+	}{
+		{
+			name:  "pretty style default",
+			lines: []string{"| A | B |", "|---|---|", "| x | y |"},
+			opts:  RenderOpts{},
+			want:  "A    B  \n────────\nx    y  ",
+		},
+		{
+			name:  "markdown style",
+			lines: []string{"| A | B |", "|---|---|", "| x | y |"},
+			opts:  RenderOpts{Style: "markdown"},
+			want:  "| A   | B   |\n| --- | --- |\n| x   | y   |",
+		},
+		{
+			name:  "pretty with max width",
+			lines: []string{"| Name | Description |", "|------|-------------|", "| test | a long description here |"},
+			opts:  RenderOpts{MaxWidth: 20, WrapLines: 3},
+			want:  "Name  Description   \n────────────────────\ntest  a long        \n      description   \n      here          ",
+		},
+		{
+			name:  "markdown truncation",
+			lines: []string{"| Col |", "|-----|", "| abcdefghij |"},
+			opts:  RenderOpts{MaxWidth: 10, WrapLines: 0, Style: "markdown"},
+			want:  "| Col    |\n| ------ |\n| abcde… |",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RenderTable(tt.lines, tt.opts)
+			if got != tt.want {
+				t.Errorf("RenderTable\n  got  = %q\n  want = %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseCells verifies pipe-table cell parsing.
+func TestParseCells(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"| a | b |", []string{"a", "b"}},
+		{"| a | b ", []string{"a", "b"}},
+		{" a | b |", []string{"a", "b"}},
+		{"| one |", []string{"one"}},
+	}
+	for _, tt := range tests {
+		got := ParseCells(tt.in)
+		if len(got) != len(tt.want) {
+			t.Errorf("ParseCells(%q): got %d cells, want %d", tt.in, len(got), len(tt.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("ParseCells(%q)[%d] = %q, want %q", tt.in, i, got[i], tt.want[i])
+			}
+		}
 	}
 }

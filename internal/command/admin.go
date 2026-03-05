@@ -57,7 +57,7 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 			for i, t := range tools {
 				tableRows[i] = []string{t.Name, t.Description}
 			}
-			return display.Format(cols, tableRows), nil
+			return display.MarkdownTable(cols, tableRows), nil
 		},
 	}
 }
@@ -238,7 +238,7 @@ func promptsDisplay(_ context.Context, data PromptsData) string {
 		rows = append(rows, []string{emoji, p.Label, location})
 	}
 
-	sb.WriteString(display.Format(cols, rows))
+	sb.WriteString(display.MarkdownTable(cols, rows))
 
 	// Part 2 — Unrecognised files
 	var unrecognised []PromptFile
@@ -257,7 +257,7 @@ func promptsDisplay(_ context.Context, data PromptsData) string {
 		for _, f := range unrecognised {
 			fileRows = append(fileRows, []string{relPath(f.Dir) + "/", f.Name})
 		}
-		sb.WriteString(display.Format(fileCols, fileRows))
+		sb.WriteString(display.MarkdownTable(fileCols, fileRows))
 	}
 
 	return sb.String()
@@ -724,7 +724,7 @@ func NewSecretsCommand(store SecretsStore) *Command {
 					}
 				}
 				return fmt.Sprintf("Secrets (%d keys)\n\n%s",
-					len(names), display.Format(cols, tableRows)), nil
+					len(names), display.MarkdownTable(cols, tableRows)), nil
 
 			case "hosts":
 				return secretsHostsSubcmd(store, parts[1:])

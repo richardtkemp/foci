@@ -73,7 +73,7 @@ func costToday(entries []apiEntry, _ context.Context) (string, error) {
 		}
 		tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total), display.FormatCommas(count)})
 		b.WriteByte('\n')
-		b.WriteString(display.Format(cols, tableRows))
+		b.WriteString(display.MarkdownTable(cols, tableRows))
 	}
 	return b.String(), nil
 }
@@ -102,7 +102,7 @@ func cost24h(entries []apiEntry, _ context.Context) (string, error) {
 	}
 	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
 	b.WriteByte('\n')
-	b.WriteString(display.Format(cols, tableRows))
+	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String(), nil
 }
 
@@ -139,7 +139,7 @@ func costWeek(entries []apiEntry, _ context.Context) (string, error) {
 	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
 	tableRows = append(tableRows, []string{"Mean/day", fmt.Sprintf("$%.2f", mean)})
 	b.WriteByte('\n')
-	b.WriteString(display.Format(cols, tableRows))
+	b.WriteString(display.MarkdownTable(cols, tableRows))
 	return b.String(), nil
 }
 

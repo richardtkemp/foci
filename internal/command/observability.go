@@ -215,7 +215,7 @@ func NewCacheCommand(apiLogPath string) *Command {
 				tableRows[i] = []string{r.time, r.input, r.cRead, r.cWrite, r.cost, r.hitPct}
 			}
 			return fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n%s",
-				len(recent), avgHit, display.Format(cols, tableRows)), nil
+				len(recent), avgHit, display.MarkdownTable(cols, tableRows)), nil
 		},
 	}
 }
