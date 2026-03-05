@@ -2853,3 +2853,276 @@ token = "test-token"
 		}
 	}
 }
+
+// TestHasBackend tests MemoryConfig.HasBackend method
+func TestHasBackend(t *testing.T) {
+	tests := []struct {
+		name     string
+		backends []string
+		search   string
+		want     bool
+	}{
+		{"found", []string{"milvus", "sqlite"}, "milvus", true},
+		{"not found", []string{"milvus", "sqlite"}, "pgvector", false},
+		{"empty list", []string{}, "milvus", false},
+		{"case sensitive", []string{"Milvus"}, "milvus", false},
+		{"multiple matches", []string{"a", "b", "c"}, "b", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := MemoryConfig{SearchBackends: tt.backends}
+			got := cfg.HasBackend(tt.search)
+			if got != tt.want {
+				t.Errorf("HasBackend(%q) = %v, want %v", tt.search, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateMemoryThreshold tests ValidateMemoryThreshold function
+func TestValidateMemoryThreshold(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		errMsg  string
+	}{
+		// Valid percentage
+		{"valid percent 50", "50%", false, ""},
+		{"valid percent 1", "1%", false, ""},
+		{"valid percent 100", "100%", false, ""},
+		{"valid percent decimal", "50.5%", false, ""},
+		{"valid percent with spaces", "  50%  ", false, ""},
+		// Valid MB
+		{"valid mb", "512mb", false, ""},
+		{"valid mb decimal", "512.5mb", false, ""},
+		{"valid mb uppercase", "512MB", false, ""},
+		// Valid GB
+		{"valid gb", "2gb", false, ""},
+		{"valid gb decimal", "2.5gb", false, ""},
+		{"valid gb uppercase", "2GB", false, ""},
+		// Invalid
+		{"empty string", "", true, "empty"},
+		{"invalid percent 0", "0%", true, "between 0 and 100"},
+		{"invalid percent 101", "101%", true, "between 0 and 100"},
+		{"invalid percent negative", "-50%", true, "between 0 and 100"},
+		{"invalid percent not number", "abc%", true, "invalid percentage"},
+		{"invalid mb 0", "0mb", true, "must be positive"},
+		{"invalid mb negative", "-512mb", true, "must be positive"},
+		{"invalid mb not number", "abcmb", true, "invalid megabytes"},
+		{"invalid gb 0", "0gb", true, "must be positive"},
+		{"invalid gb negative", "-2gb", true, "must be positive"},
+		{"invalid gb not number", "abcgb", true, "invalid gigabytes"},
+		{"invalid format kb", "512kb", true, "unknown format"},
+		{"invalid format plain number", "512", true, "unknown format"},
+		{"invalid format no unit", "512", true, "unknown format"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateMemoryThreshold(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateMemoryThreshold(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if err != nil && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("ValidateMemoryThreshold(%q) error = %q, want to contain %q", tt.input, err.Error(), tt.errMsg)
+			}
+		})
+	}
+}
+
+
+// TestURLForFormat tests EndpointConfig.URLForFormat method
+func TestURLForFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint EndpointConfig
+		format   string
+		want     string
+	}{
+		{
+			name: "anthropic url set",
+			endpoint: EndpointConfig{
+				URL:           "https://default.com",
+				AnthropicURL:  "https://anthropic.com",
+				OpenAIURL:     "https://openai.com",
+			},
+			format: "anthropic",
+			want:   "https://anthropic.com",
+		},
+		{
+			name: "anthropic no specific url fallback",
+			endpoint: EndpointConfig{
+				URL: "https://default.com",
+			},
+			format: "anthropic",
+			want:   "https://default.com",
+		},
+		{
+			name: "openai url set",
+			endpoint: EndpointConfig{
+				URL:       "https://default.com",
+				OpenAIURL: "https://openai.com",
+			},
+			format: "openai",
+			want:   "https://openai.com",
+		},
+		{
+			name: "gemini url set",
+			endpoint: EndpointConfig{
+				URL:       "https://default.com",
+				GeminiURL: "https://gemini.com",
+			},
+			format: "gemini",
+			want:   "https://gemini.com",
+		},
+		{
+			name: "unknown format returns default",
+			endpoint: EndpointConfig{
+				URL: "https://default.com",
+			},
+			format: "unknown",
+			want:   "https://default.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.endpoint.URLForFormat(tt.format)
+			if got != tt.want {
+				t.Errorf("URLForFormat(%q) = %q, want %q", tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestSupportsFormat tests EndpointConfig.SupportsFormat method
+func TestSupportsFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint EndpointConfig
+		format   string
+		want     bool
+	}{
+		{
+			name: "anthropic via explicit url",
+			endpoint: EndpointConfig{
+				AnthropicURL: "https://anthropic.com",
+			},
+			format: "anthropic",
+			want:   true,
+		},
+		{
+			name: "anthropic via format field",
+			endpoint: EndpointConfig{
+				Format: "anthropic",
+			},
+			format: "anthropic",
+			want:   true,
+		},
+		{
+			name: "openai via explicit url",
+			endpoint: EndpointConfig{
+				OpenAIURL: "https://openai.com",
+			},
+			format: "openai",
+			want:   true,
+		},
+		{
+			name: "openai via format field",
+			endpoint: EndpointConfig{
+				Format: "openai",
+			},
+			format: "openai",
+			want:   true,
+		},
+		{
+			name: "gemini via explicit url",
+			endpoint: EndpointConfig{
+				GeminiURL: "https://gemini.com",
+			},
+			format: "gemini",
+			want:   true,
+		},
+		{
+			name: "gemini via format field",
+			endpoint: EndpointConfig{
+				Format: "gemini",
+			},
+			format: "gemini",
+			want:   true,
+		},
+		{
+			name: "format not supported",
+			endpoint: EndpointConfig{
+				Format: "anthropic",
+			},
+			format: "openai",
+			want:   false,
+		},
+		{
+			name: "unknown format",
+			endpoint: EndpointConfig{
+				Format: "anthropic",
+			},
+			format: "unknown",
+			want:   false,
+		},
+		{
+			name: "empty endpoint",
+			endpoint: EndpointConfig{},
+			format:   "anthropic",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.endpoint.SupportsFormat(tt.format)
+			if got != tt.want {
+				t.Errorf("SupportsFormat(%q) = %v, want %v", tt.format, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseByteSize tests ParseByteSize function
+func TestParseByteSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    int
+		wantErr bool
+	}{
+		{"plain number", "100", 100, false},
+		{"kilobytes", "1KB", 1024, false},
+		{"kilobytes lowercase", "1kb", 1024, false},
+		{"megabytes", "1MB", 1024 * 1024, false},
+		{"megabytes lowercase", "1mb", 1024 * 1024, false},
+		{"gigabytes", "1GB", 1024 * 1024 * 1024, false},
+		{"gigabytes lowercase", "1gb", 1024 * 1024 * 1024, false},
+		{"with spaces", "  100  ", 100, false},
+		{"64MB example", "64MB", 64 * 1024 * 1024, false},
+		{"empty string", "", 0, true},
+		{"invalid format", "abc", 0, true},
+		{"zero bytes", "0", 0, true},
+		{"negative bytes", "-10", 0, true},
+		{"decimal kb not supported", "1.5KB", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseByteSize(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseByteSize(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if err == nil && got != tt.want {
+				t.Errorf("ParseByteSize(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
