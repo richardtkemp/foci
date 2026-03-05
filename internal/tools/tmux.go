@@ -345,6 +345,44 @@ func (inst *tmuxInstance) persistWatches() {
 	}
 }
 
+// cancelWatchesForSession cancels and removes all watches whose key starts with
+// "name:". Acquires inst.mu internally, persists state if anything changed,
+// and waits for each monitor goroutine to exit.
+func (inst *tmuxInstance) cancelWatchesForSession(name string) {
+	inst.mu.Lock()
+	prefix := name + ":"
+	var toCancel []*watchedSession
+	for key, ws := range inst.watched {
+		if strings.HasPrefix(key, prefix) {
+			toCancel = append(toCancel, ws)
+			delete(inst.watched, key)
+		}
+	}
+	if len(toCancel) > 0 {
+		inst.persistWatches()
+	}
+	inst.mu.Unlock()
+
+	for _, ws := range toCancel {
+		ws.cancel()
+	}
+}
+
+// killSessionWithChildren kills a tmux session and terminates any child
+// processes that survive SIGHUP. Returns the number of child processes killed.
+func killSessionWithChildren(ctx context.Context, name string) (childrenKilled int, err error) {
+	pids := tmuxSessionPIDs(name)
+	children := collectDescendants(pids)
+	allPIDs := append(pids, children...)
+
+	out, err := runTmux(ctx, "kill-session", "-t", name)
+	if err != nil {
+		return 0, fmt.Errorf("tmux kill-session: %s %w", strings.TrimSpace(out), err)
+	}
+
+	return terminateProcesses(allPIDs), nil
+}
+
 // ClearAll stops all watches, clears the owned sessions map, and stops the
 // TTL reaper. Called by the tmux memory monitor after kill-server to reset
 // tool instance state.
@@ -407,44 +445,21 @@ func (inst *tmuxInstance) reapExpiredSessions() {
 		inst.mu.Unlock()
 		return
 	}
-
-	// Collect watches to cancel for expired sessions
-	var watchesToCancel []*watchedSession
 	for _, name := range expired {
-		prefix := name + ":"
-		for key, ws := range inst.watched {
-			if strings.HasPrefix(key, prefix) {
-				watchesToCancel = append(watchesToCancel, ws)
-				delete(inst.watched, key)
-			}
-		}
 		delete(inst.owned, name)
 		delete(inst.lastAccess, name)
-	}
-	if len(watchesToCancel) > 0 {
-		inst.persistWatches()
 	}
 	inst.persistOwned()
 	inst.mu.Unlock()
 
-	// Cancel watches outside the lock
-	for _, ws := range watchesToCancel {
-		ws.cancel()
-	}
-
-	// Kill the tmux sessions
 	for _, name := range expired {
-		pids := tmuxSessionPIDs(name)
-		children := collectDescendants(pids)
-		allPIDs := append(pids, children...)
+		inst.cancelWatchesForSession(name)
 
-		out, err := runTmux(context.Background(), "kill-session", "-t", name)
+		killed, err := killSessionWithChildren(context.Background(), name)
 		if err != nil {
-			log.Debugf("tmux", "ttl reaper: kill-session %s: %s %v", name, strings.TrimSpace(out), err)
+			log.Debugf("tmux", "ttl reaper: %s: %v", name, err)
 			continue
 		}
-
-		killed := terminateProcesses(allPIDs)
 		log.Infof("tmux", "ttl reaper: killed idle session %s (TTL %v exceeded)", name, inst.sessionTTL)
 		if killed > 0 {
 			log.Debugf("tmux", "ttl reaper: terminated %d child process(es) for %s", killed, name)
@@ -470,23 +485,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 
 	// Cancel any stale watches for this session name (e.g. from a prior
 	// session that exited naturally before the monitor noticed).
-	inst.mu.Lock()
-	prefix := name + ":"
-	var staleWatches []*watchedSession
-	for key, ws := range inst.watched {
-		if strings.HasPrefix(key, prefix) {
-			staleWatches = append(staleWatches, ws)
-			delete(inst.watched, key)
-		}
-	}
-	if len(staleWatches) > 0 {
-		inst.persistWatches()
-	}
-	inst.mu.Unlock()
-	for _, ws := range staleWatches {
-		ws.cancel()
-		log.Debugf("tmux", "start: cancelled stale watch for %s", name)
-	}
+	inst.cancelWatchesForSession(name)
 
 	// Create the tmux session
 	args := []string{"new-session", "-d", "-s", name}
@@ -844,38 +843,13 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 	log.Debugf("tmux", "kill: name=%s", name)
 
 	// Stop any watches first so the monitor goroutine doesn't fire during cleanup
-	inst.mu.Lock()
-	prefix := name + ":"
-	var toCancel []*watchedSession
-	for key, ws := range inst.watched {
-		if strings.HasPrefix(key, prefix) {
-			toCancel = append(toCancel, ws)
-			delete(inst.watched, key)
-		}
-	}
-	if len(toCancel) > 0 {
-		inst.persistWatches()
-	}
-	inst.mu.Unlock()
-	for _, ws := range toCancel {
-		ws.cancel()
-	}
+	inst.cancelWatchesForSession(name)
 
-	// Collect child process trees before killing the session.
-	// tmux kill-session sends SIGHUP, but many processes (e.g. OpenCode)
-	// ignore it and get reparented to PID 1, running forever.
-	pids := tmuxSessionPIDs(name)
-	children := collectDescendants(pids)
-	allPIDs := append(pids, children...)
-
-	// Kill the tmux session
-	out, err := runTmux(ctx, "kill-session", "-t", name)
+	// Kill the tmux session and clean up child processes that survived SIGHUP
+	killed, err := killSessionWithChildren(ctx, name)
 	if err != nil {
-		return ToolResult{}, fmt.Errorf("tmux kill-session: %s %w", strings.TrimSpace(out), err)
+		return ToolResult{}, err
 	}
-
-	// Clean up child processes that survived SIGHUP
-	killed := terminateProcesses(allPIDs)
 
 	// If no sessions remain, kill the server to avoid an orphaned tmux
 	// server process. This is safe: we only kill when the server is empty.
