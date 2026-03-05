@@ -14,7 +14,7 @@ fi
 NEW_COMMIT="$(git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "Building..."
-sudo -u foci bash -c "cd '$SCRIPT_DIR' && go build -o foci-gw . && go build -o foci ./cmd/foci && go build -o foci-call ./cmd/foci-call"
+sudo -u foci bash -c "cd '$SCRIPT_DIR' && go build -o foci-gw ./cmd/foci-gw && go build -o foci ./cmd/foci && go build -o foci-call ./cmd/foci-call"
 
 echo "Installing..."
 install -m 755 "$SCRIPT_DIR/foci-gw" "$INSTALL_DIR/foci-gw"
