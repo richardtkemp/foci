@@ -901,20 +901,23 @@ func archiveParentKey(archiveKey string) string {
 	// Find the base name by removing archive suffixes
 	var baseParts []string
 
+	// Compile regexes once before loop
+	timestampRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$`)
+	digitsRe := regexp.MustCompile(`^\d+$`)
+
 	// Identify where the archive suffix starts
 	for i := 0; i < len(segmentParts); i++ {
 		part := segmentParts[i]
 
 		// Check if this part is a timestamp pattern
-		timestampPattern := `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$`
-		if matched, _ := regexp.MatchString(timestampPattern, part); matched {
+		if timestampRe.MatchString(part) {
 			// Found timestamp, everything before this is the base
 			baseParts = segmentParts[:i]
 			break
 		}
 
 		// Check if this part is just digits (numbered pattern)
-		if matched, _ := regexp.MatchString(`^\d+$`, part); matched {
+		if digitsRe.MatchString(part) {
 			// Found numbered suffix, everything before this is the base
 			baseParts = segmentParts[:i]
 			break
