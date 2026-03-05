@@ -24,6 +24,12 @@ func NewBitwardenCommand(storeInfo BitwardenStoreInfo, enabled bool) *Command {
 		Name:        "bitwarden",
 		Description: "Bitwarden integration (setup/status)",
 		Category:    "operations",
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "status", Data: "status"},
+				{Label: "setup", Data: "setup"},
+			}
+		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			parts := strings.Fields(args)
 			if len(parts) == 0 {

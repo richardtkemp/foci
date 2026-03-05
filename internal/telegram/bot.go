@@ -1224,12 +1224,8 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 
 	// Send with placeholder button (msgID unknown until sent)
 	sendOpts := &gotgbot.SendMessageOpts{
-		ParseMode: "HTML",
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-				{Text: "Show thinking", CallbackData: "th:show:0"},
-			}},
-		},
+		ParseMode:   "HTML",
+		ReplyMarkup: singleButtonKeyboard("Show thinking", "th:show:0"),
 	}
 
 	// If response is too long to fit with a button, chunk it — send all but last
@@ -1248,15 +1244,12 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 			return
 		}
 		// Update button with real message ID and store thinking data
+		kb := singleButtonKeyboard("Show thinking", fmt.Sprintf("th:show:%d", sent.MessageId))
 		_, _, _ = b.client.EditMessageText(chunk, &gotgbot.EditMessageTextOpts{
 			ChatId:    msg.Chat.Id,
 			MessageId: sent.MessageId,
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show thinking", CallbackData: fmt.Sprintf("th:show:%d", sent.MessageId)},
-				}},
-			},
+			ReplyMarkup: kb,
 		})
 		b.thinkingStore.Store(sent.MessageId, thinkingEntry{
 			responseHTML: chunk,
