@@ -47,16 +47,17 @@ func WithRate(t TTS, rate float64) TTS {
 
 // NewTTS creates a TTS provider from config values.
 // Rate is NOT baked in — apply at resolution time via WithRate.
-func NewTTS(format, endpoint, apiKey, model, voiceName, command string) (TTS, error) {
+func NewTTS(format, endpoint, apiKey, model, voiceName, command, responseFormat string) (TTS, error) {
 	switch format {
 	case "edge-tts":
 		return &EdgeTTS{Command: command, Voice: voiceName}, nil
 	case "openai":
 		return &OpenAITTS{
-			Endpoint: endpoint,
-			APIKey:   apiKey,
-			Model:    model,
-			Voice:    voiceName,
+			Endpoint:       endpoint,
+			APIKey:         apiKey,
+			Model:          model,
+			Voice:          voiceName,
+			ResponseFormat: responseFormat,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", format)
@@ -197,11 +198,12 @@ func rateToEdgeTTS(rate float64) string {
 
 // OpenAITTS uses an OpenAI-compatible TTS API (OpenRouter, Groq, OpenAI).
 type OpenAITTS struct {
-	Endpoint string  // e.g. "https://openrouter.ai/api/v1/audio/speech"
-	APIKey   string  // Bearer token
-	Model    string  // e.g. "openai/tts-1-mini"
-	Voice    string  // e.g. "alloy"
-	Speed    float64 // 0.25–4.0 (default 1.0, 0 means omit)
+	Endpoint       string  // e.g. "https://openrouter.ai/api/v1/audio/speech"
+	APIKey         string  // Bearer token
+	Model          string  // e.g. "openai/tts-1-mini"
+	Voice          string  // e.g. "alloy"
+	Speed          float64 // 0.25–4.0 (default 1.0, 0 means omit)
+	ResponseFormat string  // e.g. "mp3", "wav" (default: "wav")
 }
 
 func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
@@ -210,12 +212,16 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 	if voice == "" {
 		voice = "alloy"
 	}
+	responseFormat := o.ResponseFormat
+	if responseFormat == "" {
+		responseFormat = "wav"
+	}
 
 	var payload string
 	if o.Speed > 0 {
-		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q,"speed":%.2f}`, o.Model, text, voice, o.Speed)
+		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q,"speed":%.2f,"response_format":%q}`, o.Model, text, voice, o.Speed, responseFormat)
 	} else {
-		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q}`, o.Model, text, voice)
+		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q,"response_format":%q}`, o.Model, text, voice, responseFormat)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", o.Endpoint, strings.NewReader(payload))

@@ -289,7 +289,7 @@ func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
 // TestNewTTS_OpenAI verifies that NewTTS("openai", ...) returns an *OpenAITTS
 // with all fields wired correctly.
 func TestNewTTS_OpenAI(t *testing.T) {
-	tts, err := NewTTS("openai", "https://api.example.com/tts", "key123", "tts-1", "alloy", "")
+	tts, err := NewTTS("openai", "https://api.example.com/tts", "key123", "tts-1", "alloy", "", "mp3")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -312,12 +312,15 @@ func TestNewTTS_OpenAI(t *testing.T) {
 	if oai.Speed != 0 {
 		t.Errorf("speed should be 0 (rate applied later), got %v", oai.Speed)
 	}
+	if oai.ResponseFormat != "mp3" {
+		t.Errorf("responseFormat = %q, want mp3", oai.ResponseFormat)
+	}
 }
 
 // TestNewTTS_EdgeTTS verifies that NewTTS("edge-tts", ...) returns an *EdgeTTS
 // with voice and command fields set.
 func TestNewTTS_EdgeTTS(t *testing.T) {
-	tts, err := NewTTS("edge-tts", "", "", "", "en-US-AndrewNeural", "/usr/bin/edge-tts")
+	tts, err := NewTTS("edge-tts", "", "", "", "en-US-AndrewNeural", "/usr/bin/edge-tts", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -335,7 +338,7 @@ func TestNewTTS_EdgeTTS(t *testing.T) {
 
 // TestNewTTS_UnknownFormat verifies that NewTTS rejects unknown format strings.
 func TestNewTTS_UnknownFormat(t *testing.T) {
-	_, err := NewTTS("whisper", "", "", "", "", "")
+	_, err := NewTTS("whisper", "", "", "", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for unknown format")
 	}
