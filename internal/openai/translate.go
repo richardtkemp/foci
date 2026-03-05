@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 
 	"github.com/openai/openai-go/v3"
@@ -15,7 +16,7 @@ import (
 // buildParams translates a provider.MessageRequest into OpenAI ChatCompletionNewParams.
 func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
 	// Strip developer prefix (e.g., "openai/gpt-4o" → "gpt-4o")
-	modelID := stripDeveloperPrefix(req.Model)
+	modelID := config.StripDeveloperPrefix(req.Model)
 
 	params := openai.ChatCompletionNewParams{
 		Model:    modelID,
@@ -287,13 +288,4 @@ func hasToolUse(blocks []provider.ContentBlock) bool {
 		}
 	}
 	return false
-}
-
-// stripDeveloperPrefix removes the developer prefix from a model ID.
-// Converts "developer/model_id" to "model_id", or returns the input unchanged if no slash.
-func stripDeveloperPrefix(model string) string {
-	if i := strings.IndexByte(model, '/'); i > 0 {
-		return model[i+1:]
-	}
-	return model
 }

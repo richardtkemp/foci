@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 
 	"google.golang.org/genai"
@@ -74,7 +74,7 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 // SendMessage sends a message to the Gemini API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
-	modelID := stripDeveloperPrefix(req.Model)
+	modelID := config.StripDeveloperPrefix(req.Model)
 
 	contents := messagesToGenai(req.Messages)
 	config := buildConfig(req)
@@ -108,7 +108,7 @@ func (c *Client) Close(ctx context.Context) {
 // CountTokens returns the input token count for a request.
 func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) (int, error) {
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
-	modelID := stripDeveloperPrefix(req.Model)
+	modelID := config.StripDeveloperPrefix(req.Model)
 
 	contents := messagesToGenai(req.Messages)
 
@@ -150,13 +150,4 @@ func buildConfig(req *provider.MessageRequest) *genai.GenerateContentConfig {
 	}
 
 	return config
-}
-
-// stripDeveloperPrefix removes the developer prefix from a model ID.
-// Converts "developer/model_id" to "model_id", or returns the input unchanged if no slash.
-func stripDeveloperPrefix(model string) string {
-	if i := strings.IndexByte(model, '/'); i > 0 {
-		return model[i+1:]
-	}
-	return model
 }
