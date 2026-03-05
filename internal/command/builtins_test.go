@@ -709,6 +709,9 @@ func TestConfigCommand(t *testing.T) {
 }
 
 func TestPromptsCommand(t *testing.T) {
+	// Verifies /prompts list renders the full prompts table with all status
+	// indicators (custom, default, inline, not-found, disabled) and the
+	// unrecognised files section.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -733,7 +736,7 @@ func TestPromptsCommand(t *testing.T) {
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -776,6 +779,8 @@ func TestPromptsCommand(t *testing.T) {
 }
 
 func TestPromptsCommandEmpty(t *testing.T) {
+	// Verifies /prompts list with a single default prompt renders correctly
+	// and omits the unrecognised files section when there are no files.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -788,7 +793,7 @@ func TestPromptsCommandEmpty(t *testing.T) {
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -808,6 +813,8 @@ func TestPromptsCommandEmpty(t *testing.T) {
 }
 
 func TestPromptsCommandNoFiles(t *testing.T) {
+	// Verifies /prompts list omits unrecognised section when there are no
+	// files on disk.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -820,7 +827,7 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -831,6 +838,9 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 }
 
 func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
+	// Verifies that known filenames (keepalive.md, first-run.md) are excluded
+	// from the unrecognised files section while unknown files (custom-cron.md)
+	// still appear.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -850,7 +860,7 @@ func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -871,6 +881,95 @@ func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
 		if strings.Contains(unrecSection, "first-run.md") {
 			t.Errorf("first-run.md should not appear in unrecognised section:\n%s", result)
 		}
+	}
+}
+
+func TestPromptsCommandBareReturnsUsage(t *testing.T) {
+	// Verifies that /prompts with no args returns a usage string instead of
+	// the table, since the inline keyboard handles bare invocations.
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{AgentID: "test"}
+		},
+	})
+
+	result, err := cmd.Execute(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result, "Usage:") {
+		t.Errorf("bare /prompts should return usage, got: %s", result)
+	}
+	if !strings.Contains(result, "list") {
+		t.Errorf("usage should mention 'list', got: %s", result)
+	}
+}
+
+func TestPromptsCommandKeyboard(t *testing.T) {
+	// Verifies that the keyboard options include list, reinstall, and diff
+	// buttons for the bare /prompts command.
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData { return PromptsData{} },
+	})
+
+	if cmd.KeyboardOptions == nil {
+		t.Fatal("KeyboardOptions should not be nil")
+	}
+	opts := cmd.KeyboardOptions(context.Background())
+	if len(opts) != 3 {
+		t.Fatalf("expected 3 keyboard options, got %d", len(opts))
+	}
+	labels := make([]string, len(opts))
+	for i, o := range opts {
+		labels[i] = o.Label
+	}
+	want := []string{"list", "reinstall", "diff"}
+	for i, w := range want {
+		if labels[i] != w {
+			t.Errorf("option %d: got %q, want %q", i, labels[i], w)
+		}
+	}
+}
+
+func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
+	// Verifies that selecting "diff" from the keyboard chains to a second
+	// keyboard listing prompt labels that have resolved texts.
+	cmd := NewPromptsCommand(PromptsCmdDeps{
+		DataFn: func() PromptsData {
+			return PromptsData{
+				Prompts: []PromptInfo{
+					{Label: "keepalive"},
+					{Label: "background"},
+					{Label: "compaction_summary"},
+				},
+				ResolvedTexts: map[string]string{
+					"keepalive":          "text",
+					"compaction_summary": "text",
+				},
+			}
+		},
+	})
+
+	if cmd.ChainKeyboard == nil {
+		t.Fatal("ChainKeyboard should not be nil")
+	}
+
+	// "diff" should produce options for prompts with resolved texts
+	opts := cmd.ChainKeyboard(context.Background(), "diff")
+	if len(opts) != 2 {
+		t.Fatalf("expected 2 chain options, got %d", len(opts))
+	}
+	got := []string{opts[0].Label, opts[1].Label}
+	if got[0] != "keepalive" || got[1] != "compaction_summary" {
+		t.Errorf("unexpected chain labels: %v", got)
+	}
+
+	// Non-diff subcommands should not chain
+	if opts := cmd.ChainKeyboard(context.Background(), "list"); opts != nil {
+		t.Errorf("expected nil chain for 'list', got %v", opts)
+	}
+	if opts := cmd.ChainKeyboard(context.Background(), "reinstall"); opts != nil {
+		t.Errorf("expected nil chain for 'reinstall', got %v", opts)
 	}
 }
 
