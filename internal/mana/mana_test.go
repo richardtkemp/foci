@@ -1,6 +1,7 @@
 package mana
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -397,3 +398,71 @@ func TestFormatUsageAllFields(t *testing.T) {
 		t.Errorf("result missing overage: %q", result)
 	}
 }
+
+func TestNewMonitor(t *testing.T) {
+	// Monitor with nil client
+	m := NewMonitor(nil, 5*time.Minute)
+	if m == nil {
+		t.Fatal("NewMonitor returned nil")
+	}
+	if m.usageClient != nil {
+		t.Error("usageClient should be nil")
+	}
+	if m.stalenessTimeout != 5*time.Minute {
+		t.Errorf("stalenessTimeout = %v, want 5m", m.stalenessTimeout)
+	}
+}
+
+func TestIsGoodFor_NoClient(t *testing.T) {
+	m := NewMonitor(nil, 5*time.Minute)
+	// With no client, should always return true
+	if !m.IsGoodFor(context.Background(), 30*time.Minute) {
+		t.Error("IsGoodFor should return true with no client")
+	}
+}
+
+func TestParseResetTime_ManyHours(t *testing.T) {
+	future := time.Now().Add(5*time.Hour + 30*time.Minute).UTC().Format(time.RFC3339Nano)
+	result := ParseResetTime(future)
+	if !strings.Contains(result, "5h") && !strings.Contains(result, "4h") {
+		t.Errorf("ParseResetTime(5h30m) = %q, should contain hours", result)
+	}
+	if !strings.HasPrefix(result, "in") {
+		t.Errorf("ParseResetTime(5h30m) = %q, should start with 'in'", result)
+	}
+}
+
+func TestParseResetTime_ExactHours(t *testing.T) {
+	future := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339Nano)
+	result := ParseResetTime(future)
+	// Should have "in" and "h" (flexible about exact hour due to timing)
+	if !strings.HasPrefix(result, "in ") || !strings.Contains(result, "h") {
+		t.Errorf("ParseResetTime(3h) = %q, want format 'in Xh...'", result)
+	}
+}
+
+func TestIsGood_NegativeInvestInterval(t *testing.T) {
+	now := time.Now()
+	resetsAt := now.Add(2 * time.Hour)
+	// Negative invest interval should be treated as 0
+	if !IsGood(50, resetsAt, -30*time.Minute, now) {
+		t.Error("IsGood should handle negative invest interval")
+	}
+}
+
+func TestIsGood_LargeMana(t *testing.T) {
+	now := time.Now()
+	resetsAt := now.Add(2 * time.Hour)
+	if !IsGood(100, resetsAt, 30*time.Minute, now) {
+		t.Error("IsGood should return true with 100% mana")
+	}
+}
+
+func TestIsGood_ZeroMana(t *testing.T) {
+	now := time.Now()
+	resetsAt := now.Add(2 * time.Hour)
+	if IsGood(0, resetsAt, 30*time.Minute, now) {
+		t.Error("IsGood should return false with 0% mana in middle of window")
+	}
+}
+
