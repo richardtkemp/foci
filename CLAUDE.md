@@ -13,6 +13,7 @@ Read `docs/SPEC.md` for the design intent and philosophy.
 - If you modify how packages connect, add new packages, change the startup flow, add tools, or alter the agent loop, **update `docs/WIRING.md`** to reflect the change.
 - If you add a new feature, **check if it's appropriate to update `docs/COMPARISON.md`**, searching for additional info if required.
 - No backward compatibility is required, the project has not been released yet. Breaking changes and major refactors are fine!! Don't leave ANYTHING hanging around as 'deprecated'
+- If you are on a git worktree, then commit your changes when complete, before presenting your final summary
 
 ## Key Constraints
 
@@ -20,6 +21,7 @@ Read `docs/SPEC.md` for the design intent and philosophy.
 - **Cache sharing depends on byte-identical system prompts.** Don't modify workspace bootstrap behavior without understanding this.
 - **Sessions are append-only JSONL.** Branch files have a `branch_meta` first line.
 - **Secrets stay out of agent context.** Credentials are in Go structs, never in messages.
+- **Never** refer to API-related things as providers, it's confusing. We have models (haiku), developers (anthropic), endpoints (api.anthropic.com), and formats (anthropic). However we cannot always know one by knowing the others! Need to be explicit about the differences.
 
 ## Running
 
