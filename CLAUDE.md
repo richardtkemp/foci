@@ -8,6 +8,7 @@ Read `docs/SPEC.md` for the design intent and philosophy.
 
 ## When You Make Changes
 
+- **DON'T REPEAT YOURSELF!!** Any time you want to create a new function, or just add functionality, check if the the logic already exists somewhere. fzf is available, might be helpful. Don't duplicate logic. Feel free to extract or refactor in order to make your changes DRY.
 - If you modify how packages connect, add new packages, change the startup flow, add tools, or alter the agent loop, **update `docs/WIRING.md`** to reflect the change.
 - If you add a new feature, **check if it's appropriate to update `docs/COMPARISON.md`**, searching for additional info if required.
 - No backward compatibility is required, the project has not been released yet. Breaking changes and major refactors are fine!! Don't leave ANYTHING hanging around as 'deprecated'
