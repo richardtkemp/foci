@@ -245,6 +245,73 @@ func NewGrepTool(binary, name string) *Tool {
 	}
 }
 
+// gitAllowedSubcommands are the read-only git subcommands allowed in explore mode.
+var gitAllowedSubcommands = map[string]bool{
+	"log":      true,
+	"show":     true,
+	"diff":     true,
+	"status":   true,
+	"blame":    true,
+	"branch":   true,
+	"tag":      true,
+	"shortlog": true,
+	"rev-parse": true,
+	"ls-files": true,
+	"ls-tree":  true,
+}
+
+// NewGitTool creates a read-only git exploration tool.
+// Only a safe subset of git subcommands is allowed.
+func NewGitTool() *Tool {
+	return &Tool{
+		Name:        "git",
+		Description: "Run read-only git commands. Allowed subcommands: log, show, diff, status, blame, branch, tag, shortlog, rev-parse, ls-files, ls-tree.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"command": {
+					"type": "string",
+					"description": "Git subcommand and arguments (e.g. 'log --oneline -20', 'show HEAD', 'diff --stat HEAD~3', 'blame src/main.go')."
+				}
+			},
+			"required": ["command"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Command string `json:"command"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}
+			if p.Command == "" {
+				return ToolResult{}, fmt.Errorf("command is required")
+			}
+
+			args, err := splitShellArgs(p.Command)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("parse command: %w", err)
+			}
+			if len(args) == 0 {
+				return ToolResult{}, fmt.Errorf("command is required")
+			}
+
+			subcmd := args[0]
+			if !gitAllowedSubcommands[subcmd] {
+				return ToolResult{}, fmt.Errorf("git subcommand %q is not allowed in explore mode (allowed: log, show, diff, status, blame, branch, tag, shortlog, rev-parse, ls-files, ls-tree)", subcmd)
+			}
+
+			out, err := runCmd(ctx, "git", args...)
+			if err != nil {
+				if out != "" {
+					return TextResult(out + "\nError: " + err.Error()), nil
+				}
+				return ToolResult{}, err
+			}
+			return TextResult(out), nil
+		},
+	}
+}
+
 // checkFindBlocked checks if any blocked predicates appear in the params string.
 // Returns the first blocked predicate found, or empty string if none.
 func checkFindBlocked(params string) string {

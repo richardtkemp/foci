@@ -334,6 +334,60 @@ func TestTranslateGrepFlags(t *testing.T) {
 	}
 }
 
+func TestGitAllowedSubcommands(t *testing.T) {
+	tool := NewGitTool()
+
+	// Allowed subcommands should not error on parse (they may fail if not in a git repo,
+	// but the subcommand itself should be accepted).
+	for subcmd := range gitAllowedSubcommands {
+		params, _ := json.Marshal(map[string]string{"command": subcmd + " --help"})
+		_, err := tool.Execute(context.Background(), params)
+		// We only check that it didn't return a "not allowed" error.
+		if err != nil && strings.Contains(err.Error(), "not allowed") {
+			t.Errorf("subcommand %q should be allowed but got: %v", subcmd, err)
+		}
+	}
+}
+
+func TestGitBlockedSubcommands(t *testing.T) {
+	tool := NewGitTool()
+
+	blocked := []string{"push", "pull", "commit", "checkout", "reset", "rebase", "merge", "clean", "rm", "mv", "init", "clone", "fetch", "stash"}
+	for _, subcmd := range blocked {
+		params, _ := json.Marshal(map[string]string{"command": subcmd})
+		_, err := tool.Execute(context.Background(), params)
+		if err == nil {
+			t.Errorf("subcommand %q should be blocked", subcmd)
+			continue
+		}
+		if !strings.Contains(err.Error(), "not allowed") {
+			t.Errorf("subcommand %q error = %q, want 'not allowed'", subcmd, err.Error())
+		}
+	}
+}
+
+func TestGitEmptyCommand(t *testing.T) {
+	tool := NewGitTool()
+	params, _ := json.Marshal(map[string]string{"command": ""})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for empty command")
+	}
+}
+
+func TestGitLogInRepo(t *testing.T) {
+	// This test runs in the foci repo itself, so git log should work.
+	tool := NewGitTool()
+	params, _ := json.Marshal(map[string]string{"command": "log --oneline -3"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Text == "" {
+		t.Error("expected non-empty git log output")
+	}
+}
+
 func TestSplitShellArgs(t *testing.T) {
 	tests := []struct {
 		input string

@@ -55,7 +55,7 @@ var spawnRawBlacklist = map[string]bool{
 // exploreSystemPrompt is the system prompt for explore spawn mode.
 const exploreSystemPrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
 
-Use ack for searching file contents. Use find for locating files. Use read/summary for examining files.
+Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame.
 
 Match your response to the question type:
 - "Where is X defined?" → file paths and line numbers only
@@ -320,8 +320,9 @@ func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
 	findTool := NewFindTool()
 	grepBin, grepName := resolveGrepBinary()
 	grepTool := NewGrepTool(grepBin, grepName)
+	gitTool := NewGitTool()
 
-	for _, t := range []*Tool{lsTool, findTool, grepTool} {
+	for _, t := range []*Tool{lsTool, findTool, grepTool, gitTool} {
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 		tools[t.Name] = t
 	}
