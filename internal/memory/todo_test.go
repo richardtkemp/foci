@@ -650,6 +650,79 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	}
 }
 
+func TestTodoTransitionInProgress(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Working on it", "high", "")
+
+	// Transition to in_progress
+	if err := store.Transition("agent1", id, "in_progress", ""); err != nil {
+		t.Fatalf("Transition to in_progress: %v", err)
+	}
+
+	item, err := store.Get("agent1", id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if item.Status != "in_progress" {
+		t.Errorf("status = %q, want in_progress", item.Status)
+	}
+	if item.CompletedAt != nil {
+		t.Error("completed_at should be nil for in_progress")
+	}
+	if item.CloseReason != "" {
+		t.Errorf("close_reason should be empty for in_progress, got %q", item.CloseReason)
+	}
+
+	// Transition from in_progress to done
+	if err := store.Transition("agent1", id, "done", "finished"); err != nil {
+		t.Fatalf("Transition to done: %v", err)
+	}
+	item, _ = store.Get("agent1", id)
+	if item.Status != "done" {
+		t.Errorf("status = %q, want done", item.Status)
+	}
+	if item.CompletedAt == nil {
+		t.Error("completed_at should be set after done")
+	}
+
+	// Transition from done back to in_progress
+	if err := store.Transition("agent1", id, "in_progress", ""); err != nil {
+		t.Fatalf("Transition back to in_progress: %v", err)
+	}
+	item, _ = store.Get("agent1", id)
+	if item.Status != "in_progress" {
+		t.Errorf("status = %q, want in_progress", item.Status)
+	}
+	if item.CompletedAt != nil {
+		t.Error("completed_at should be nil after reverting to in_progress")
+	}
+}
+
+func TestTodoSortOrderInProgress(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Open task", "high", "")
+	id2, _ := store.Add("agent1", "In progress task", "high", "")
+	store.Add("agent1", "Another open task", "high", "")
+
+	store.Transition("agent1", id2, "in_progress", "")
+
+	items, err := store.List("agent1", "", "", "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+	if items[0].Status != "in_progress" {
+		t.Errorf("first item status = %q, want in_progress", items[0].Status)
+	}
+	if items[1].Status != "open" || items[2].Status != "open" {
+		t.Errorf("remaining items should be open, got %q and %q", items[1].Status, items[2].Status)
+	}
+}
+
 func newTestTodoStore(t *testing.T) *TodoStore {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "todo_test.db")

@@ -382,6 +382,94 @@ func TestTodoToolCompleteBackCompat(t *testing.T) {
 	}
 }
 
+func TestTodoToolInProgressAliases(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	for _, alias := range []string{"in_progress", "in-progress", "wip", "started", "working"} {
+		id, _ := store.Add("agent1", "Task for "+alias, "medium", "")
+		params := map[string]interface{}{
+			"action": "transition",
+			"state":  alias,
+			"id":     id,
+		}
+		_, err := executeTodoTool(tool, params)
+		if err != nil {
+			t.Errorf("alias %q failed: %v", alias, err)
+			continue
+		}
+		item, _ := store.Get("agent1", id)
+		if item.Status != "in_progress" {
+			t.Errorf("alias %q: status = %q, want in_progress", alias, item.Status)
+		}
+	}
+}
+
+func TestTodoToolInProgressMarker(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Active task", "high", "")
+	store.Transition("agent1", id, "in_progress", "")
+
+	params := map[string]interface{}{
+		"action": "get",
+		"id":     id,
+	}
+	result, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !strings.Contains(result, "[>]") {
+		t.Errorf("in_progress item should show [>], got: %s", result)
+	}
+}
+
+func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id, _ := store.Add("agent1", "Start working", "medium", "")
+
+	params := map[string]interface{}{
+		"action": "transition",
+		"state":  "in_progress",
+		"id":     id,
+	}
+	_, err := executeTodoTool(tool, params)
+	if err != nil {
+		t.Errorf("in_progress should not require reason, got: %v", err)
+	}
+}
+
+func TestTodoToolStatusFilterInProgress(t *testing.T) {
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id1, _ := store.Add("agent1", "Open task", "medium", "")
+	id2, _ := store.Add("agent1", "WIP task", "medium", "")
+	_ = id1
+	store.Transition("agent1", id2, "in_progress", "")
+
+	for _, alias := range []string{"in_progress", "wip", "in-progress"} {
+		params := map[string]interface{}{
+			"action": "list",
+			"status": alias,
+		}
+		result, err := executeTodoTool(tool, params)
+		if err != nil {
+			t.Errorf("list with status %q: %v", alias, err)
+			continue
+		}
+		if !strings.Contains(result, "WIP task") {
+			t.Errorf("list with status %q should show WIP task, got: %s", alias, result)
+		}
+		if strings.Contains(result, "Open task") {
+			t.Errorf("list with status %q should not show Open task, got: %s", alias, result)
+		}
+	}
+}
+
 func executeTodoTool(tool *Tool, params map[string]interface{}) (string, error) {
 	raw, _ := json.Marshal(params)
 	result, err := tool.Execute(context.Background(), raw)
