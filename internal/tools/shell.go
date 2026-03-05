@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,7 +18,11 @@ import (
 	"foci/internal/secrets/bitwarden"
 )
 
-const execMaxOutputBytes = 100 * 1024 * 1024 // 100MB backstop on stdout/stderr; guardToolResult handles char truncation
+// defaultSpillThreshold is the default byte count kept in memory before
+// overflowing shell output to a temp file. Matches the default MaxResultChars
+// (15K chars ≈ 15KB). Commands producing more output spill to disk
+// automatically, avoiding 100MB+ allocations in RAM.
+const defaultSpillThreshold = 15000
 
 // sleepRegexp matches commands that start with "sleep" (case-insensitive).
 // This blocks bare sleep commands which block for up to 10s then silently
@@ -65,7 +68,13 @@ func execPreamble() string {
 // workDir sets the default working directory for commands (empty = process cwd).
 // registry enables the exec bridge (tool piping) — if non-nil, exported tools
 // are available as shell functions inside exec commands.
-func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) *Tool {
+// spillThreshold is the byte count kept in memory before overflowing to disk
+// (0 = use default 15000). spillTempDir is the directory for overflow files.
+func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry, spillThreshold int, spillTempDir string) *Tool {
+	st := int64(spillThreshold)
+	if st <= 0 {
+		st = defaultSpillThreshold
+	}
 	return &Tool{
 		Name:        "shell",
 		Description: "Run a shell command and return its output. pipefail, nounset, and failglob are set. Use timeout to set a generous limit on execution time, or set background=true for persistent processes (tmux, daemons) that should survive after the call. {{secret:}} templates may be used but only inside foci_http_request arguments. Most tools are available as foci_$toolname shell functions. You will find foci_send_telegram and foci_summarize especially useful.",
@@ -93,12 +102,12 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry)
+			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry, st, spillTempDir)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry) (ToolResult, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry, spillThreshold int64, spillTempDir string) (ToolResult, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -150,21 +159,21 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	// For explicit background mode, use the original direct approach (no bridge)
 	if p.Background {
-		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil, p.OutputMode)
+		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil, p.OutputMode, spillThreshold, spillTempDir)
 	}
 
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
 		sk := SessionKeyFromContext(ctx)
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry, p.OutputMode)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry, p.OutputMode, spillThreshold, spillTempDir)
 	}
 
-	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry, p.OutputMode)
+	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry, p.OutputMode, spillThreshold, spillTempDir)
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string) (ToolResult, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string, spillThreshold int64, spillTempDir string) (ToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -215,19 +224,23 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 	// Read stdout and stderr concurrently — all reads must complete before
 	// proc.Wait is called (Wait closes pipe read-ends, racing in-progress reads).
-	stdoutBuf, stderrBuf, combined, doneRead := startPipeReaders(stdout, stderr, outputMode)
+	stdoutSpill, stderrSpill, combinedSpill, doneRead := startPipeReaders(stdout, stderr, outputMode, spillThreshold, spillTempDir)
 	<-doneRead
 	err = proc.Wait()
 
 	if outputMode == "separated" {
-		return TextResult(formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)), nil
+		result := TextResult(formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore))
+		applySpillResult(&result, stdoutSpill, stderrSpill, nil)
+		return result, nil
 	}
-	return TextResult(formatResult(combined.String(), err, ctx, timeout, displayCmd, store, bwStore)), nil
+	result := TextResult(formatResult(combinedSpill.String(), err, ctx, timeout, displayCmd, store, bwStore))
+	applySpillResult(&result, nil, nil, combinedSpill)
+	return result, nil
 }
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string) (ToolResult, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string, spillThreshold int64, spillTempDir string) (ToolResult, error) {
 	// Use a separate context for tracking (not for killing the process)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -276,7 +289,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 
 	// Read stdout and stderr concurrently — all reads must complete before
 	// proc.Wait is called (Wait closes pipe read-ends, racing in-progress reads).
-	stdoutBuf, stderrBuf, combined, doneRead := startPipeReaders(stdout, stderr, outputMode)
+	stdoutSpill, stderrSpill, combinedSpill, doneRead := startPipeReaders(stdout, stderr, outputMode, spillThreshold, spillTempDir)
 
 	// done goroutine waits for all reads before calling proc.Wait so that
 	// pipe read-ends are not closed while reads are still in progress.
@@ -295,15 +308,19 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			bridge.Close()
 		}
 		if outputMode == "separated" {
-			return TextResult(formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)), nil
+			result := TextResult(formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore))
+			applySpillResult(&result, stdoutSpill, stderrSpill, nil)
+			return result, nil
 		}
-		return TextResult(formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)), nil
+		result := TextResult(formatResult(combinedSpill.String(), err, cmdCtx, timeout, displayCmd, store, bwStore))
+		applySpillResult(&result, nil, nil, combinedSpill)
+		return result, nil
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
 		log.Infof("exec", "auto-backgrounding after %v: %s", threshold, truncateCmd(displayCmd, 100))
 		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
-			stdoutBuf, stderrBuf, combined, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
+			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 
 		return TextResult(fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd)), nil
 
@@ -315,43 +332,29 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		// would require plumbing a workspace path here; left as future work.
 		log.Infof("exec", "turn cancelled, backgrounding: %s", truncateCmd(displayCmd, 100))
 		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
-			stdoutBuf, stderrBuf, combined, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
+			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 		return ToolResult{}, ctx.Err()
 	}
 }
-
-// lockedWriter wraps a bytes.Buffer with a mutex so concurrent goroutines can
-// write without interleaving mid-write. Each Write call is atomic with respect
-// to other writes, producing approximately chronological interleaving of
-// stdout and stderr chunks.
-type lockedWriter struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (w *lockedWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.buf.Write(p)
-}
-
-func (w *lockedWriter) String() string { return w.buf.String() }
 
 // startPipeReaders launches goroutines to read stdout and stderr concurrently.
 // All reads must complete before proc.Wait is called (Go 1.22+ closes pipe
 // read-ends in Wait, racing in-progress reads).
 //
-// For "separated" mode, stdout and stderr are captured into independent buffers.
-// For combined mode, both streams write through a mutex-protected buffer so
-// output appears in roughly chronological order (not all-stdout-then-all-stderr).
+// For "separated" mode, stdout and stderr are captured into independent spillWriters.
+// For combined mode, both streams write through a single spillWriter (mutex-protected)
+// so output appears in roughly chronological order (not all-stdout-then-all-stderr).
 //
-// Returns (stdoutBuf, stderrBuf, combined, doneRead). Use stdoutBuf/stderrBuf
+// spillThreshold controls how many bytes are kept in memory before overflowing to
+// a temp file. spillTempDir is the directory for overflow files.
+//
+// Returns (stdoutSpill, stderrSpill, combinedSpill, doneRead). Use stdout/stderr
 // for separated mode; use combined for combined mode. doneRead is closed when
 // all reads are finished.
-func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string) (stdoutBuf, stderrBuf *bytes.Buffer, combined *lockedWriter, doneRead chan struct{}) {
-	stdoutBuf = &bytes.Buffer{}
-	stderrBuf = &bytes.Buffer{}
-	combined = &lockedWriter{}
+func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string, spillThreshold int64, spillTempDir string) (stdoutSpill, stderrSpill, combinedSpill *spillWriter, doneRead chan struct{}) {
+	stdoutSpill = newSpillWriter(spillThreshold, spillTempDir)
+	stderrSpill = newSpillWriter(spillThreshold, spillTempDir)
+	combinedSpill = newSpillWriter(spillThreshold, spillTempDir)
 	doneRead = make(chan struct{})
 
 	go func() {
@@ -359,22 +362,41 @@ func startPipeReaders(stdout, stderr io.ReadCloser, outputMode string) (stdoutBu
 		var wg sync.WaitGroup
 		wg.Add(2)
 		if outputMode == "separated" {
-			go func() { defer wg.Done(); _, _ = io.Copy(stdoutBuf, io.LimitReader(stdout, execMaxOutputBytes)) }()
-			go func() { defer wg.Done(); _, _ = io.Copy(stderrBuf, io.LimitReader(stderr, execMaxOutputBytes)) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(stdoutSpill, stdout) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(stderrSpill, stderr) }()
 		} else {
-			go func() { defer wg.Done(); _, _ = io.Copy(combined, io.LimitReader(stdout, execMaxOutputBytes)) }()
-			go func() { defer wg.Done(); _, _ = io.Copy(combined, io.LimitReader(stderr, execMaxOutputBytes)) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(combinedSpill, stdout) }()
+			go func() { defer wg.Done(); _, _ = io.Copy(combinedSpill, stderr) }()
 		}
 		wg.Wait()
 	}()
 	return
 }
 
+// applySpillResult sets ResultFile and ResultSize on the ToolResult if any
+// spillWriter overflowed to disk. For separated mode, pass stdoutSpill and
+// stderrSpill (the combined one is ignored); for combined mode, pass combinedSpill.
+func applySpillResult(result *ToolResult, stdoutSpill, stderrSpill, combinedSpill *spillWriter) {
+	if combinedSpill != nil && combinedSpill.Spilled() {
+		result.ResultFile = combinedSpill.FilePath()
+		result.ResultSize = combinedSpill.Total()
+		return
+	}
+	// For separated mode, report the larger spill
+	if stdoutSpill != nil && stdoutSpill.Spilled() {
+		result.ResultFile = stdoutSpill.FilePath()
+		result.ResultSize = stdoutSpill.Total()
+	} else if stderrSpill != nil && stderrSpill.Spilled() {
+		result.ResultFile = stderrSpill.FilePath()
+		result.ResultSize = stderrSpill.Total()
+	}
+}
+
 // bgDeliverResult waits for a backgrounded command to complete and delivers
 // its results via the notifier. Used by both the threshold-exceeded and
 // ctx.Done() paths in execWithAutoBackground.
 func bgDeliverResult(notifier *AsyncNotifier, sessionKey string, done <-chan error, cmdCancel context.CancelFunc, bridge *ExecBridge,
-	stdoutBuf, stderrBuf *bytes.Buffer, combined *lockedWriter, outputMode string, cmdCtx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) {
+	stdoutSpill, stderrSpill, combinedSpill *spillWriter, outputMode string, cmdCtx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) {
 	notifier.MarkPending(sessionKey)
 	go func() {
 		defer cmdCancel()
@@ -382,12 +404,18 @@ func bgDeliverResult(notifier *AsyncNotifier, sessionKey string, done <-chan err
 		if bridge != nil {
 			defer bridge.Close()
 		}
+		// Clean up spill temp files after delivering results
+		defer func() {
+			stdoutSpill.Cleanup()
+			stderrSpill.Cleanup()
+			combinedSpill.Cleanup()
+		}()
 		err := <-done // reads already complete (done goroutine waited)
 		var result string
 		if outputMode == "separated" {
-			result = formatSeparatedResult(stdoutBuf.String(), stderrBuf.String(), err, store, bwStore)
+			result = formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore)
 		} else {
-			result = formatResult(combined.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
+			result = formatResult(combinedSpill.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
 		}
 		msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
 		notifier.Notify(sessionKey, msg)

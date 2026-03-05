@@ -120,7 +120,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			continue
 		}
 
-		guardedResult := a.guardToolResult(ctx, turnClient, sessionKey, block.Name, result.Text, messages)
+		guardedResult := a.guardToolResult(ctx, turnClient, sessionKey, block.Name, result, messages)
 		if a.Redact != nil {
 			guardedResult = a.Redact(guardedResult)
 		}
