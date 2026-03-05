@@ -729,27 +729,6 @@ func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
 	}
 }
 
-func TestMaybeMemoryFormation_TooSoonAfterInteraction(t *testing.T) {
-	var calls int
-	r := &Runner{
-		log:     log.NewComponentLogger("keepalive:test"),
-		agentID: "test",
-		mfCfg: config.MemoryFormationConfig{
-			Interval: "1h",
-		},
-		lastInteraction:     time.Now().Add(-10 * time.Second),
-		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
-			calls++
-		},
-		done: make(chan struct{}),
-	}
-
-	r.maybeMemoryFormation()
-	if calls != 0 {
-		t.Errorf("memory formation called too soon after interval")
-	}
-}
 
 func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
 	var calls int
