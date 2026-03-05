@@ -28,6 +28,13 @@ type TodoStore struct {
 	db *sql.DB
 }
 
+// closeOnErr closes the database and returns a wrapped error.
+// Used in error paths during initialization.
+func closeOnErr(db *sql.DB, message string, err error) error {
+	_ = db.Close()
+	return fmt.Errorf("%s: %w", message, err)
+}
+
 // NewTodoStore creates or opens the todo database.
 func NewTodoStore(dbPath string) (*TodoStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
@@ -36,20 +43,17 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
+		return nil, closeOnErr(db, "set WAL mode", err)
 	}
 	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
+		return nil, closeOnErr(db, "set busy timeout", err)
 	}
 
 	// Check if the table already exists and what schema it has.
 	var tableDDL string
 	err = db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='todos'").Scan(&tableDDL)
 	if err != nil && err != sql.ErrNoRows {
-		_ = db.Close()
-		return nil, fmt.Errorf("check table schema: %w", err)
+		return nil, closeOnErr(db, "check table schema", err)
 	}
 
 	if err == sql.ErrNoRows {
@@ -68,28 +72,24 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 			PRIMARY KEY (agent_id, id)
 		)`)
 		if err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("create todos table: %w", err)
+			return nil, closeOnErr(db, "create todos table", err)
 		}
 	} else if strings.Contains(strings.ToUpper(tableDDL), "AUTOINCREMENT") {
 		// Old schema with AUTOINCREMENT — migrate to composite PK.
 		// Ensure updated_at exists before migration (may be missing on very old DBs).
 		if !columnExists(db, "todos", "updated_at") {
 			if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("add updated_at column: %w", err)
+				return nil, closeOnErr(db, "add updated_at column", err)
 			}
 		}
 		if err := migrateTodosCompositeKey(db); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("migrate todos to composite key: %w", err)
+			return nil, closeOnErr(db, "migrate todos to composite key", err)
 		}
 	} else {
 		// Already new schema — ensure updated_at exists (defensive).
 		if !columnExists(db, "todos", "updated_at") {
 			if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("add updated_at column: %w", err)
+				return nil, closeOnErr(db, "add updated_at column", err)
 			}
 		}
 	}
