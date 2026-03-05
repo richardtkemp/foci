@@ -176,3 +176,26 @@ func TitleCase(slug string) string {
 	}
 	return strings.Join(words, " ")
 }
+
+// ToSlug converts a display name to a lowercase hyphenated slug.
+// "Greek Tutor" → "greek-tutor"
+// Non-alphanumeric characters (except hyphens) are stripped.
+func ToSlug(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	prevDash := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		case r == ' ' || r == '-' || r == '_':
+			if b.Len() > 0 && !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	s := b.String()
+	return strings.TrimRight(s, "-")
+}
