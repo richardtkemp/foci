@@ -156,7 +156,7 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 	if err != nil {
 		return fmt.Errorf("create decompressed session %s: %w", jsonlPath, err)
 	}
-	if _, err := io.Copy(out, gr); err != nil {
+	if _, err := io.Copy(out, gr); err != nil { // #nosec G110 - legitimate session file decompression
 		_ = out.Close()
 		_ = os.Remove(jsonlPath)
 		return fmt.Errorf("decompress session %s: %w", gzPath, err)
@@ -194,7 +194,7 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 		exists = true
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - session file, needs group write access
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}

@@ -2,7 +2,7 @@ package gemini
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 - used for cache key generation, not security
 	"encoding/json"
 	"sync"
 	"time"

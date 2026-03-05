@@ -133,7 +133,7 @@ func Init(cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(cfg.EventFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.EventFile, err)
 		}
-		f, err := os.OpenFile(cfg.EventFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(cfg.EventFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - log file, world-readable for debugging
 		if err != nil {
 			return fmt.Errorf("open event log %s: %w", cfg.EventFile, err)
 		}
@@ -147,7 +147,7 @@ func Init(cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(cfg.APIFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.APIFile, err)
 		}
-		f, err := os.OpenFile(cfg.APIFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(cfg.APIFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - log file, world-readable for debugging
 		if err != nil {
 			return fmt.Errorf("open API log %s: %w", cfg.APIFile, err)
 		}
@@ -160,7 +160,7 @@ func Init(cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(cfg.PayloadFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.PayloadFile, err)
 		}
-		f, err := os.OpenFile(cfg.PayloadFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(cfg.PayloadFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - log file, world-readable for debugging
 		if err != nil {
 			return fmt.Errorf("open payload log %s: %w", cfg.PayloadFile, err)
 		}
@@ -291,7 +291,7 @@ func (l *Logger) reopen() error {
 	// Event file
 	if l.eventFile != nil {
 		_ = l.eventFile.Close()
-		f, err := os.OpenFile(l.eventPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(l.eventPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - log file, world-readable for debugging
 		if err != nil {
 			return fmt.Errorf("reopen event log %s: %w", l.eventPath, err)
 		}
@@ -302,7 +302,7 @@ func (l *Logger) reopen() error {
 	// API file
 	if l.apiFile != nil {
 		_ = l.apiFile.Close()
-		f, err := os.OpenFile(l.apiPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(l.apiPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - log file, world-readable for debugging
 		if err != nil {
 			return fmt.Errorf("reopen API log %s: %w", l.apiPath, err)
 		}
@@ -312,7 +312,7 @@ func (l *Logger) reopen() error {
 	// Payload file
 	if l.payloadFile != nil {
 		_ = l.payloadFile.Close()
-		f, err := os.OpenFile(l.payloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(l.payloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - log file, world-readable for debugging
 		if err != nil {
 			return fmt.Errorf("reopen payload log %s: %w", l.payloadPath, err)
 		}

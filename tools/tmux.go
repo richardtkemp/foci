@@ -143,7 +143,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 				var initialHash [md5.Size]byte
 				if initOut, initErr := runTmux(context.Background(), "capture-pane", "-t",
 					fmt.Sprintf("%s:%d", pw.Session, pw.Window), "-p"); initErr == nil {
-					initialHash = md5.Sum([]byte(normalizePaneContent(initOut)))
+					initialHash = md5.Sum([]byte(normalizePaneContent(initOut))) // #nosec G401
 				}
 
 				monCtx, cancel := context.WithCancel(context.Background())
@@ -1225,7 +1225,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	var initialHash [md5.Size]byte
 	if out, err := runTmux(context.Background(), "capture-pane", "-t",
 		fmt.Sprintf("%s:%d", name, window), "-p"); err == nil {
-		initialHash = md5.Sum([]byte(normalizePaneContent(out)))
+		initialHash = md5.Sum([]byte(normalizePaneContent(out))) // #nosec G401
 	}
 
 	monCtx, cancel := context.WithCancel(context.Background())
