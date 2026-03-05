@@ -102,3 +102,10 @@ func SplitDeveloperModel(input string) (developer, modelID string) {
 	}
 	return "", input
 }
+
+// StripDeveloperPrefix removes the developer prefix from a model ID.
+// Converts "developer/model_id" to "model_id", or returns the input unchanged if no slash.
+func StripDeveloperPrefix(model string) string {
+	_, modelID := SplitDeveloperModel(model)
+	return modelID
+}

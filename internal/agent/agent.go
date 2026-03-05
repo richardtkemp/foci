@@ -720,9 +720,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	}
 	// Strip developer prefix — aliases now include developer (e.g. "anthropic/claude-haiku-4-5")
 	// Note: The API client will strip this too, but we strip here for logging and consistency.
-	if i := strings.IndexByte(model, '/'); i > 0 {
-		model = model[i+1:]
-	}
+	model = config.StripDeveloperPrefix(model)
 
 	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
 

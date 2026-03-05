@@ -293,6 +293,38 @@ func TestSplitDeveloperModel(t *testing.T) {
 	}
 }
 
+func TestStripDeveloperPrefix(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"anthropic/claude-opus-4-6", "claude-opus-4-6"},
+		{"anthropic/claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"},
+		{"google/gemini-2.5-flash", "gemini-2.5-flash"},
+		{"google/gemini-2.5-pro", "gemini-2.5-pro"},
+		{"openai/gpt-4o", "gpt-4o"},
+		{"openai/o3", "o3"},
+		{"deepseek/deepseek-chat", "deepseek-chat"},
+		{"claude-opus-4-6", "claude-opus-4-6"},       // no prefix
+		{"gpt-4o", "gpt-4o"},                         // no prefix
+		{"gemini-2.5-flash", "gemini-2.5-flash"},     // no prefix
+		{"", ""},                                     // empty
+		{"no-slash-here", "no-slash-here"},           // no slash
+		{"/model", "/model"},                         // leading slash (no developer part)
+		{"foo/bar/baz", "bar/baz"},                   // slash in middle (should strip first part only)
+		{"developer/", ""},                           // trailing slash
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := StripDeveloperPrefix(tt.input)
+			if got != tt.expected {
+				t.Errorf("StripDeveloperPrefix(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || (len(s) > 0 && len(substr) > 0 && hasSubstring(s, substr)))
 }

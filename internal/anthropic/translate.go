@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 
+	"foci/internal/config"
+
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -18,7 +20,7 @@ import (
 // buildSDKParams translates a provider.MessageRequest into SDK MessageNewParams.
 func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
-	modelID := stripDeveloperPrefix(req.Model)
+	modelID := config.StripDeveloperPrefix(req.Model)
 
 	params := sdk.MessageNewParams{
 		Model:     sdk.Model(modelID),
@@ -65,7 +67,7 @@ func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 // buildSDKCountParams translates a provider.MessageRequest into SDK MessageCountTokensParams.
 func buildSDKCountParams(req *MessageRequest) sdk.MessageCountTokensParams {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
-	modelID := stripDeveloperPrefix(req.Model)
+	modelID := config.StripDeveloperPrefix(req.Model)
 
 	params := sdk.MessageCountTokensParams{
 		Model:    sdk.Model(modelID),
@@ -380,13 +382,4 @@ func sdkRequestOptions(token string) []option.RequestOption {
 		option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
 	}
 	return opts
-}
-
-// stripDeveloperPrefix removes the developer prefix from a model ID.
-// Converts "developer/model_id" to "model_id", or returns the input unchanged if no slash.
-func stripDeveloperPrefix(model string) string {
-	if i := strings.IndexByte(model, '/'); i > 0 {
-		return model[i+1:]
-	}
-	return model
 }
