@@ -732,7 +732,7 @@ func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
 // injectWelcomeFile checks for a welcome/changelog file written by setup.sh
 // on update. If found, returns the file contents and deletes the file.
 // Returns empty string if no file exists or file is empty.
-func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder []string, sessions *session.Store) string {
+func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder []string, sessions *session.Store) string { // nolint:unparam
 	if path == "" || len(agentOrder) == 0 {
 		return ""
 	}

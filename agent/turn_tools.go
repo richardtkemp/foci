@@ -12,7 +12,8 @@ import (
 
 // processAPIResponse handles post-API-call checks: cache bust detection and
 // max_tokens warning. It updates the session metadata cache baseline.
-func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *anthropic.MessageResponse, cost float64, now time.Time, maxOutput int) {
+func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *anthropic.MessageResponse, cost float64, now time.Time, maxOutput int) { // nolint:unparam
+
 	// Cache bust detection: cache_read dropped significantly vs previous request.
 	if a.CacheBustDetect && a.CacheBustAlert != nil && sm.prevCacheRead > 0 {
 		idleThresh := a.CacheBustIdleThreshold

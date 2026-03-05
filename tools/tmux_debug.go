@@ -23,7 +23,7 @@ var debugLog *tmuxDebugLog
 var debugOnce sync.Once
 
 // initDebugLog initializes the debug logger on first use.
-func initDebugLog() error {
+func initDebugLog() error { // nolint:unparam
 	var err error
 	debugOnce.Do(func() {
 		logsDir := "logs"

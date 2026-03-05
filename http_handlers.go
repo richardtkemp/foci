@@ -118,7 +118,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 }
 
 // handleStatus returns the handler for GET /status.
-func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFunc {
+func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFunc { // nolint:unparam
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -144,7 +144,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 }
 
 // handleCommand returns the handler for POST /command.
-func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFunc {
+func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFunc { // nolint:unparam
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
