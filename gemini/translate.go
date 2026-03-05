@@ -213,7 +213,7 @@ func thinkingToGenai(tc *provider.ThinkingConfig) *genai.ThinkingConfig {
 	}
 
 	if tc.BudgetTokens > 0 {
-		budget := int32(tc.BudgetTokens)
+		budget := int32(tc.BudgetTokens) // #nosec G115 - token budgets are within int32 range
 		cfg.ThinkingBudget = &budget
 	} else if tc.Type == "adaptive" {
 		// Anthropic "adaptive" → sensible default for Gemini

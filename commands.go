@@ -485,7 +485,7 @@ func buildDiffSummary(p cmdRegParams, ctx context.Context, customText, defaultTe
 // manaCheck fetches and formats the current mana/quota status.
 func manaCheck(p cmdRegParams, manaName string, ctx context.Context) (string, error) {
 	emojis := []string{"🔮", "✨", "🌙", "⚡", "🪄", "💎", "🌟", "🔥", "🧿", "🪬", "💫", "🌀", "🎇"}
-	emoji := emojis[rand.IntN(len(emojis))]
+	emoji := emojis[rand.IntN(len(emojis))] // #nosec G404 - non-security use (emoji selection)
 	displayName := strings.ToUpper(manaName[:1]) + manaName[1:]
 
 	usage, err := p.usageClient.GetUsage(ctx)

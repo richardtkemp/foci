@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 - used for agent ID hashing, not security
 	"fmt"
 	"os"
 	"os/exec"
@@ -918,7 +918,7 @@ func resolvePromptInfo(label, configPath, filename, embeddedDefault string, sear
 	}
 
 	resolved := prompts.ResolvePrompt(configPath, filename, embeddedDefault, searchDirs...)
-	isDefault := md5.Sum([]byte(resolved)) == md5.Sum([]byte(embeddedDefault))
+	isDefault := md5.Sum([]byte(resolved)) == md5.Sum([]byte(embeddedDefault)) // #nosec G401 - content comparison, not security
 
 	// Find the actual file path being used
 	path := configPath
@@ -951,7 +951,7 @@ func inlinePromptInfo(label, value, embeddedDefault string) command.PromptInfo {
 	if value == "none" {
 		return command.PromptInfo{Label: label, Disabled: true}
 	}
-	isDefault := md5.Sum([]byte(value)) == md5.Sum([]byte(embeddedDefault))
+	isDefault := md5.Sum([]byte(value)) == md5.Sum([]byte(embeddedDefault)) // #nosec G401 - content comparison, not security
 	return command.PromptInfo{Label: label, Inline: value, Default: isDefault}
 }
 
