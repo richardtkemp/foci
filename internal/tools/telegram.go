@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/voice"
 )
@@ -108,6 +109,7 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 				}
 				audioData, err := tts.Synthesize(ctx, p.Text)
 				if err != nil {
+					log.Errorf("voice", "tts synthesis failed: %v", err)
 					return ToolResult{}, fmt.Errorf("tts: %w", err)
 				}
 				if chatID != 0 {
