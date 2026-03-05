@@ -496,6 +496,30 @@ func TestTitleCase(t *testing.T) {
 	}
 }
 
+// Verifies ToSlug converts display names to valid lowercase hyphenated slugs.
+func TestToSlug(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Greek Tutor", "greek-tutor"},
+		{"My Cool Agent", "my-cool-agent"},
+		{"simple", "simple"},
+		{"  Spaces Around  ", "spaces-around"},
+		{"Under_Score", "under-score"},
+		{"Special!@#Characters", "specialcharacters"},
+		{"Multiple   Spaces", "multiple-spaces"},
+		{"trailing-", "trailing"},
+		{"123numeric", "123numeric"},
+	}
+	for _, tt := range tests {
+		got := ToSlug(tt.input)
+		if got != tt.want {
+			t.Errorf("ToSlug(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 // --- Additional edge case tests ---
 
 // TestAppendCrontab tests AppendCrontab with mocked command execution

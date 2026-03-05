@@ -359,7 +359,7 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 				}
 				w := newAgentWizard(*deps)
 				registry.SetWizard(w)
-				return "🧙 New Agent Wizard\n\nAgent ID (lowercase slug, e.g. `greek-tutor`):", nil
+				return "🧙 New Agent Wizard\n\nAgent name (e.g. `Greek Tutor`):", nil
 			}
 
 			agents := listFn()
