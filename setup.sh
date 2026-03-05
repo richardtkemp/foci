@@ -134,7 +134,7 @@ if ! $DRY_RUN; then
     cd "$SCRIPT_DIR"
 
     info "  Building foci-gw (gateway)..."
-    go build -ldflags "$LDFLAGS" -o foci-gw . || { error "Failed to build foci-gw"; exit 1; }
+    go build -ldflags "$LDFLAGS" -o foci-gw ./cmd/foci-gw || { error "Failed to build foci-gw"; exit 1; }
 
     info "  Building foci (CLI)..."
     go build -ldflags "$LDFLAGS" -o foci ./cmd/foci/ || { error "Failed to build foci"; exit 1; }
