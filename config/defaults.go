@@ -43,7 +43,7 @@ func setStringDefaultDefined(p *string, def string, defined bool) {
 // setBoolDefaultDefined sets *p to def when the key was not explicitly defined in config.
 // Use this for bool fields where the Go zero (false) is valid and we need
 // metadata to distinguish "not set" from "set to false".
-func setBoolDefaultDefined(p *bool, def bool, defined bool) {
+func setBoolDefaultDefined(p *bool, def bool, defined bool) { // nolint:unparam
 	if !defined {
 		*p = def
 	}

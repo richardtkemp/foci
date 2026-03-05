@@ -464,7 +464,7 @@ func convertKeyWithParentAndVersion(oldKey string, parentMap map[string]string, 
 	return convertKeyWithParentCached(oldKey, parentMap, cache, make(map[string]bool), versionTS, fileTimes)
 }
 
-func convertKeyWithParentCached(oldKey string, parentMap map[string]string, cache map[string]string, visiting map[string]bool, versionTS int64, fileTimes map[string]int64) string {
+func convertKeyWithParentCached(oldKey string, parentMap map[string]string, cache map[string]string, visiting map[string]bool, versionTS int64, fileTimes map[string]int64) string { // nolint:unparam
 	// Check cache first
 	if newKey, ok := cache[oldKey]; ok {
 		return newKey

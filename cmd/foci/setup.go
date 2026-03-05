@@ -421,7 +421,7 @@ func stepBotToken(reader *bufio.Reader, current string, total int) (token string
 }
 
 // stepAuth prompts for authentication method.
-func stepAuth(reader *bufio.Reader, current string, total int) (method string, back bool) {
+func stepAuth(reader *bufio.Reader, current string, total int) (method string, back bool) { // nolint:unparam
 	fmt.Println()
 	fmt.Printf("Step 2/%d: Anthropic Authentication\n", total)
 	fmt.Println("  Foci needs access to Claude. Choose one:")
@@ -752,7 +752,7 @@ func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total
 }
 
 // stepCharacterMode prompts for character file sourcing.
-func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode string, back bool) {
+func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode string, back bool) { // nolint:unparam
 	fmt.Println()
 	fmt.Printf("Step 8/%d: Character Files\n", total)
 	fmt.Println("  How should we set up the character files?")

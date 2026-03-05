@@ -162,7 +162,7 @@ func (r *Runner) run(ctx context.Context) {
 	}
 }
 
-func (r *Runner) maybeKeepalive(ctx context.Context) {
+func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	if !r.kaCfg.Enabled {
 		return
 	}

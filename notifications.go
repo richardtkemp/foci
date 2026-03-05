@@ -15,7 +15,7 @@ import (
 )
 
 // handleWelcomeAndFirstRun injects welcome file content and first-run onboarding prompts.
-func handleWelcomeAndFirstRun(
+func handleWelcomeAndFirstRun( // nolint:unparam
 	agents map[string]*agentInstance,
 	agentOrder []string,
 	sessions *session.Store,
