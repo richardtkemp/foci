@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"foci/anthropic"
-	"foci/secrets"
+	"foci/internal/anthropic"
+	"foci/internal/secrets"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."

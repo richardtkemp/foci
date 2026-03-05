@@ -9,16 +9,16 @@ import (
 	"strings"
 	"sync"
 
-	"foci/agent"
-	"foci/anthropic"
-	"foci/command"
-	"foci/compaction"
-	"foci/config"
-	"foci/log"
-	"foci/provider"
-	"foci/session"
-	"foci/tools"
-	"foci/workspace"
+	"foci/internal/agent"
+	"foci/internal/anthropic"
+	"foci/internal/command"
+	"foci/internal/compaction"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/provider"
+	"foci/internal/session"
+	"foci/internal/tools"
+	"foci/internal/workspace"
 )
 
 // checkSystemPromptSizes logs warnings if system prompt files exceed thresholds.

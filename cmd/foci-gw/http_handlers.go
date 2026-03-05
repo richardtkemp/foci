@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"foci/agent"
-	"foci/log"
-	"foci/session"
-	"foci/voice"
+	"foci/internal/agent"
+	"foci/internal/log"
+	"foci/internal/session"
+	"foci/internal/voice"
 )
 
 // agentResolver returns the agent instance for the given ID, or the first agent if empty.

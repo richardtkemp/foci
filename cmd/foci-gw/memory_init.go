@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"foci/config"
-	"foci/log"
-	"foci/memory"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/memory"
 )
 
 // AgentMemoryBoost is the weight added to agent-specific memory sources.

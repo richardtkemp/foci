@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"foci/provision"
+	"foci/internal/provision"
 )
 
 func TestParseSetupFlags(t *testing.T) {

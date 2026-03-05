@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"foci/config"
-	"foci/log"
+	"foci/internal/config"
+	"foci/internal/log"
 )
 
 // initLogging sets up event logging, log rotation, API DB, and conversation DB.

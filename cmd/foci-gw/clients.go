@@ -5,13 +5,13 @@ import (
 	"sync"
 	"time"
 
-	"foci/anthropic"
-	"foci/config"
-	"foci/gemini"
-	"foci/log"
-	oai "foci/openai"
-	"foci/provider"
-	"foci/secrets"
+	"foci/internal/anthropic"
+	"foci/internal/config"
+	"foci/internal/gemini"
+	"foci/internal/log"
+	oai "foci/internal/openai"
+	"foci/internal/provider"
+	"foci/internal/secrets"
 )
 
 // clientRegistry lazily creates provider clients on first use per endpoint:format pair.

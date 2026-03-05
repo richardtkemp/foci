@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"foci/config"
-	"foci/log"
-	"foci/session"
-	"foci/state"
-	"foci/telegram"
-	"foci/voice"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/session"
+	"foci/internal/state"
+	"foci/internal/telegram"
+	"foci/internal/voice"
 )
 
 // httpHandlerDeps holds shared state needed by HTTP endpoint handlers.

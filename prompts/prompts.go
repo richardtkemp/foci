@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/log"
+	"foci/internal/log"
 )
 
 //go:embed *.md

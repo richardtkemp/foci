@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"foci/anthropic"
-	"foci/log"
-	oai "foci/openai"
+	"foci/internal/anthropic"
+	"foci/internal/log"
+	oai "foci/internal/openai"
 )
 
 // modelLister is an interface for listing models, enabling test mocking.

@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"foci/anthropic"
-	"foci/config"
-	"foci/log"
-	"foci/secrets"
-	"foci/voice"
+	"foci/internal/anthropic"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/secrets"
+	"foci/internal/voice"
 )
 
 // tokenHolder is a thread-safe, swappable credential string.

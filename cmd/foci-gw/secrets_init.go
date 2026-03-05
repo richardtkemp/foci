@@ -5,12 +5,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"foci/command"
-	"foci/config"
-	"foci/log"
-	"foci/secrets"
-	"foci/secrets/bitwarden"
-	"foci/tools"
+	"foci/internal/command"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/secrets"
+	"foci/internal/secrets/bitwarden"
+	"foci/internal/tools"
 )
 
 type secretsResult struct {

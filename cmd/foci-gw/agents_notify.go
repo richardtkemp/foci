@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"foci/agent"
-	"foci/log"
-	"foci/memory"
+	"foci/internal/agent"
+	"foci/internal/log"
+	"foci/internal/memory"
 	"foci/prompts"
-	"foci/telegram"
-	"foci/tools"
+	"foci/internal/telegram"
+	"foci/internal/tools"
 )
 
 // newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.

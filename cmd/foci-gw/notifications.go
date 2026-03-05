@@ -5,13 +5,13 @@ import (
 	"strconv"
 	"time"
 
-	"foci/agent"
-	"foci/config"
-	"foci/log"
+	"foci/internal/agent"
+	"foci/internal/config"
+	"foci/internal/log"
 	"foci/prompts"
-	"foci/session"
-	"foci/state"
-	"foci/telegram"
+	"foci/internal/session"
+	"foci/internal/state"
+	"foci/internal/telegram"
 )
 
 // handleWelcomeAndFirstRun injects welcome file content and first-run onboarding prompts.
