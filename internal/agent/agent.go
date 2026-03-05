@@ -46,7 +46,6 @@ type sessionMeta struct {
 	prevOutput      int
 	prevCacheRead   int
 	prevCacheWrite  int
-	voiceMode       bool
 	effort          string          // per-session effort override (empty = use agent default)
 	thinking        string          // per-session thinking override (empty = use agent default)
 	model           string          // per-session model override (empty = use agent default)
@@ -220,46 +219,6 @@ func (a *Agent) unregisterTurn(id uint64) {
 // SetProcessingForTest sets the processing counter directly. Test-only.
 func (a *Agent) SetProcessingForTest(n int32) {
 	atomic.StoreInt32(&a.processing, n)
-}
-
-// VoiceReplyFunc is called to deliver voice audio during a turn.
-type VoiceReplyFunc func(oggData []byte)
-
-// VoiceMode returns whether voice mode is active for the session.
-func (a *Agent) VoiceMode(sessionKey string) bool {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.voiceMode
-}
-
-// SetVoiceMode toggles voice mode for the session.
-func (a *Agent) SetVoiceMode(sessionKey string, on bool) {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	sm.voiceMode = on
-
-	if a.StateStore != nil {
-		if err := a.StateStore.Set("voice:"+sessionKey, on); err != nil {
-			a.logger().Errorf("session=%s persist voice mode: %v", sessionKey, err)
-		}
-	}
-}
-
-// RestoreVoiceMode loads voice mode from state store if available.
-func (a *Agent) RestoreVoiceMode(sessionKey string) {
-	if a.StateStore == nil {
-		return
-	}
-	var on bool
-	if a.StateStore.Get("voice:"+sessionKey, &on) && on {
-		sm := a.getSessionMeta(sessionKey)
-		a.metaMu.Lock()
-		sm.voiceMode = on
-		a.metaMu.Unlock()
-		a.logger().Infof("restored voice mode for %s", sessionKey)
-	}
 }
 
 // sessionStringWithDefault returns a session-specific override
@@ -509,11 +468,6 @@ func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm
 		gap = display.FormatDuration(now.Sub(sm.lastMessageTime))
 	}
 
-	voiceFlag := ""
-	if sm.voiceMode {
-		voiceFlag = " voice=on"
-	}
-
 	manaFlag := ""
 	if mana != "" {
 		indicator := "🔴"
@@ -525,11 +479,11 @@ func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm
 
 	if sm.prevCost == 0 && sm.prevInput == 0 {
 		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s%s", now.UTC().Format(time.RFC3339), gap, voiceFlag, model, manaFlag)
+		return fmt.Sprintf("[meta] time=%s gap=%s model=%s%s", now.UTC().Format(time.RFC3339), gap, model, manaFlag)
 	}
 
-	return fmt.Sprintf("[meta] time=%s gap=%s%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
-		now.UTC().Format(time.RFC3339), gap, voiceFlag, model,
+	return fmt.Sprintf("[meta] time=%s gap=%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
+		now.UTC().Format(time.RFC3339), gap, model,
 		sm.prevCost,
 		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite,
 		manaFlag)
@@ -1150,6 +1104,13 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[system] " + prompt})
 			braindeadWarned = true
 			a.logger().Infof("braindead warning injected at loop %d for session %s", i+1, sessionKey)
+		}
+
+		// Steer check: catch messages that arrive after all tools in a batch
+		// finish but before the next API call. Saves one full round-trip.
+		if steer := steerCheckFromCtx(ctx); steer != "" {
+			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[user] " + steer})
+			a.logger().Infof("steer: injected user message after tool batch for session %s", sessionKey)
 		}
 
 		// Append tool results as user message

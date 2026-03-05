@@ -645,6 +645,7 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `startup_notification` | bool | `true` | `[telegram] enable_startup_notify` | Send a startup notification when the service starts. `false` for silent bots (e.g. cron-only agents). |
 | `inject_agent_warnings` | bool | `false` | `[defaults]` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
+| `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
 
 ### Telegram Overrides
 

@@ -57,17 +57,35 @@ func notifyResponseBlocks(ctx context.Context, content []anthropic.ContentBlock)
 
 // executeToolCalls iterates over response content blocks, executes client-side
 // tool_use blocks, handles errors, guards oversized results, and redacts secrets.
+// If a steer message arrives between tool calls, remaining tools are skipped
+// with synthetic error results and the steer text is appended as a [user] block.
 func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient provider.Client, sessionKey string, blocks []anthropic.ContentBlock, messages []anthropic.Message) ([]anthropic.ContentBlock, error) {
 	toolCtx := tools.WithSessionKey(ctx, sessionKey)
 
 	var toolResults []anthropic.ContentBlock
-	for _, block := range blocks {
+	for i := 0; i < len(blocks); i++ {
+		block := blocks[i]
 		if block.Type != "tool_use" {
 			continue
 		}
 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+
+		// Check for steer message before executing this tool
+		if steer := steerCheckFromCtx(ctx); steer != "" {
+			a.logger().Infof("steer: user redirected conversation, skipping remaining tools in session %s", sessionKey)
+			// Skip this and all remaining tool_use blocks with synthetic errors
+			for j := i; j < len(blocks); j++ {
+				if blocks[j].Type == "tool_use" {
+					toolResults = append(toolResults, anthropic.ToolResultBlock(
+						blocks[j].ID, "Skipped: user redirected the conversation", true,
+					))
+				}
+			}
+			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[user] " + steer})
+			return toolResults, nil
 		}
 
 		tool := a.Tools.Get(block.Name)

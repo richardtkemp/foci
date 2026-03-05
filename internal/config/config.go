@@ -121,7 +121,9 @@ type AgentConfig struct {
 	Effort                  string            `toml:"effort"`                    // effort level: "low" (default), "medium", "high"
 	Thinking                string            `toml:"thinking"`                  // thinking mode: "adaptive" (default) or "off"
 	Streaming               *bool             `toml:"streaming"`                 // per-agent streaming override (nil = use global anthropic.streaming)
-	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate override (0 = use [voice] tts_rate)
+	TTS                     string            `toml:"tts"`                       // per-agent TTS provider id (empty = default [[tts]] entry)
+	STT                     string            `toml:"stt"`                       // per-agent STT provider id (empty = default [[stt]] entry)
+	TTSRate                 float64           `toml:"tts_rate"`                  // per-agent TTS speech rate multiplier (0 = use entry rate only)
 	InjectAgentWarnings     bool              `toml:"inject_agent_warnings"`     // inject warnings/errors into agent session (default false)
 	StartupNotification     *bool             `toml:"startup_notification"`      // send startup notification (nil = use global enable_startup_notify)
 	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
@@ -165,6 +167,7 @@ type AgentConfig struct {
 	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // per-agent memory formation override
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
+	SteerMode     bool                     `toml:"steer_mode"`     // inject user messages between tool calls (default true)
 }
 
 type GeminiConfig struct {
@@ -252,6 +255,7 @@ type HTTPConfig struct {
 	Port                    int    `toml:"port"`
 	Bind                    string `toml:"bind"`
 	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout"` // time to wait for in-flight requests on shutdown (default "30s")
+	WSEnabled               bool   `toml:"ws_enabled"`                // enable /voice WebSocket endpoint (default false)
 }
 
 type LoggingConfig struct {
@@ -277,20 +281,27 @@ type LoggingConfig struct {
 	MessagesInLog         bool   `toml:"messages_in_log"`         // log user message content to event log (default false for privacy)
 }
 
-type VoiceConfig struct {
-	// STT (speech-to-text) — provider is always Whisper API (OpenAI-compatible)
-	STTEndpoint string `toml:"stt_endpoint"` // default: Groq
-	STTModel    string `toml:"stt_model"`    // default: whisper-large-v3
+// TTSConfig describes a text-to-speech provider entry.
+// Multiple entries are supported via [[tts]]; first entry is the default.
+type TTSConfig struct {
+	ID       string  `toml:"id"`       // lookup key for agent overrides
+	Format   string  `toml:"format"`   // "openai" or "edge-tts"
+	Endpoint string  `toml:"endpoint"` // API URL (ignored for edge-tts)
+	Model    string  `toml:"model"`    // model name (ignored for edge-tts)
+	Voice    string  `toml:"voice"`    // voice name (format-specific)
+	Rate     float64 `toml:"rate"`     // speed multiplier: 1.0 = normal, 0 = omit
+	APIKey   string  `toml:"api_key"`  // secret name in secrets.toml (optional, fallback: hostname)
+	Command  string  `toml:"command"`  // binary for edge-tts (default: "edge-tts")
+}
 
-	// TTS (text-to-speech) — configurable provider
-	TTSProvider string  `toml:"tts_provider"` // "edge-tts" (default) or "openai"
-	TTSEndpoint string  `toml:"tts_endpoint"` // for openai provider
-	TTSModel    string  `toml:"tts_model"`    // for openai provider, e.g. "openai/tts-1-mini"
-	TTSVoice    string  `toml:"tts_voice"`    // voice name (provider-specific)
-	TTSRate     float64 `toml:"tts_rate"`     // speech rate multiplier: 1.0 = normal, 1.3 = 30% faster, 0.8 = 20% slower
-
-	// WebSocket voice endpoint
-	WSEnabled bool `toml:"ws_enabled"` // enable /voice WebSocket endpoint (default false)
+// STTConfig describes a speech-to-text provider entry.
+// Multiple entries are supported via [[stt]]; first entry is the default.
+type STTConfig struct {
+	ID       string `toml:"id"`       // lookup key for agent overrides
+	Format   string `toml:"format"`   // "openai" (only supported format currently)
+	Endpoint string `toml:"endpoint"` // API URL
+	Model    string `toml:"model"`    // model name
+	APIKey   string `toml:"api_key"`  // secret name in secrets.toml (optional, fallback: hostname)
 }
 
 type BitwardenConfig struct {
@@ -409,6 +420,10 @@ type DefaultsConfig struct {
 	SearchProvider         string           `toml:"search_provider"`          // default search provider: "brave" (default) or "anthropic"
 	FetchProvider          string           `toml:"fetch_provider"`           // default fetch provider: "anthropic" (default) or "builtin"
 	InjectedMessageHeader  string           `toml:"injected_message_header"`  // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
+	TTS                    string           `toml:"tts"`                      // default TTS provider id
+	STT                    string           `toml:"stt"`                      // default STT provider id
+	TTSRate                float64          `toml:"tts_rate"`                 // default TTS speech rate multiplier
+	SteerMode              bool             `toml:"steer_mode"`               // default steer_mode (default: true)
 }
 
 // ModelsConfig holds model-related configuration.
@@ -538,7 +553,8 @@ type Config struct {
 	Database           DatabaseConfig        `toml:"database"`
 	HTTP               HTTPConfig            `toml:"http"`
 	Logging            LoggingConfig         `toml:"logging"`
-	Voice              VoiceConfig           `toml:"voice"`
+	TTS                []TTSConfig            `toml:"tts"`
+	STT                []STTConfig            `toml:"stt"`
 	Bitwarden          BitwardenConfig       `toml:"bitwarden"`
 	Cache              CacheConfig           `toml:"cache"`
 	ManaWarnings       ManaWarningsConfig    `toml:"usage_warnings"`
@@ -801,6 +817,7 @@ var boolKeys = map[string]bool{
 	"interval_enabled":      true,
 	"consolidation_enabled": true,
 	"session_end_enabled":   true,
+	"steer_mode":            true,
 }
 
 // normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
@@ -976,6 +993,7 @@ func Load(path string) (*Config, error) {
 		cfg.Defaults.TableWrapLines = &v
 	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
+	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {

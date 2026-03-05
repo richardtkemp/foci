@@ -22,6 +22,7 @@ model = "claude-sonnet-4-20250514"
 # batch_partial_assistant_messages = false # accumulate mid-turn text; send on turn end
 # batch_partial_joiner = ""               # separator between batched partial messages
 # inject_agent_warnings = false           # inject warnings/errors into session
+# steer_mode = true                       # inject user messages between tool calls (default true)
 # show_tool_calls = "off"                 # off, preview, full
 # show_thinking = "off"                   # off, compact, true
 # display_width = 44                      # divider width in Telegram
