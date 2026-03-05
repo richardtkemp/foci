@@ -891,6 +891,54 @@ func TestRun_ContextCancellation(t *testing.T) {
 	}
 }
 
+func TestBackgroundBlockedByActiveWork(t *testing.T) {
+	// Verify that HasActiveWorkFn returning true prevents background dispatch.
+	var mu sync.Mutex
+	calls := 0
+
+	activeWork := true
+
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		bgCfg: config.BackgroundConfig{
+			Enabled:  true,
+			Interval: "1s",
+		},
+		lastInteraction: time.Now().Add(-2 * time.Second),
+		hasActiveWorkFn: func() bool { return activeWork },
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+		done: make(chan struct{}),
+	}
+
+	// Should be blocked by active work
+	r.maybeBackgroundWork(context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("expected 0 background calls while active work, got %d", got)
+	}
+
+	// Clear active work — should now fire
+	activeWork = false
+	r.maybeBackgroundWork(context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got = calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected 1 background call after active work cleared, got %d", got)
+	}
+}
+
 func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 	// Test the code path where InvestInterval parsing fails and falls back to 30m
 	var calls int

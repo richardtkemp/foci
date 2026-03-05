@@ -23,6 +23,10 @@ import (
 
 var tmuxCounter uint64
 
+// tmuxSocketPath overrides the tmux socket (via -S). Empty = default.
+// Tests set this to isolate from the user's tmux server.
+var tmuxSocketPath string
+
 // watchedSession tracks a tmux session being monitored for inactivity
 type watchedSession struct {
 	session         string
@@ -79,7 +83,7 @@ type tmuxInstance struct {
 // sessionTTL sets the auto-kill TTL for idle tmux sessions (0 disables).
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (*Tool, func()) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (func() int, *Tool, func()) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
 	}
@@ -101,7 +105,6 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 
 	// Restore owned sessions from persistent state
 	if stateStore != nil {
-		// Try new format (map[string]string) first, fall back to old format ([]string)
 		var ownedMap map[string]string
 		if stateStore.Get(stateKey, &ownedMap) {
 			for name, sk := range ownedMap {
@@ -110,19 +113,6 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 			}
 			if len(ownedMap) > 0 {
 				log.Debugf("tmux", "restored %d owned session(s) from state", len(ownedMap))
-			}
-		} else {
-			// Fall back to old format for backwards compat
-			var owned []string
-			if stateStore.Get(stateKey, &owned) {
-				for _, name := range owned {
-					inst.owned[name] = "" // empty session key for old format
-					inst.lastAccess[name] = time.Now()
-				}
-				if len(owned) > 0 {
-					log.Debugf("tmux", "restored %d owned session(s) from state (legacy format), migrating", len(owned))
-					inst.persistOwned() // migrate to new format
-				}
 			}
 		}
 
@@ -181,7 +171,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		go inst.ttlReaper(reaperCtx)
 	}
 
-	return &Tool{
+	return inst.WatchCount, &Tool{
 		Name:        "tmux",
 		ExecExport:  true,
 		Description: "Manage tmux sessions — start, send keys, read pane output, list, kill, watch for inactivity. Sessions persist across agent turns. Sessions are automatically watched when you send to them and unwatched after inactivity is reported. Before killing: is follow-up likely? Loaded context is expensive to rebuild. Ask before killing coding agent sessions.",
@@ -240,6 +230,13 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 			return inst.execute(ctx, params)
 		},
 	}, inst.ClearAll
+}
+
+// WatchCount returns the number of actively watched tmux sessions.
+func (inst *tmuxInstance) WatchCount() int {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	return len(inst.watched)
 }
 
 // ptrBool dereferences a *bool pointer, returning the value or defaultValue if nil.
@@ -323,6 +320,19 @@ func (inst *tmuxInstance) persistOwned() {
 	if err := inst.stateStore.Set(inst.stateKey, owned); err != nil {
 		log.Warnf("tmux", "persist owned sessions: %v", err)
 	}
+}
+
+// clearStaleOwned clears all owned sessions and their lastAccess entries.
+// Used when no tmux sessions exist at all (e.g. "no server running").
+func (inst *tmuxInstance) clearStaleOwned() {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	if len(inst.owned) == 0 {
+		return
+	}
+	inst.owned = make(map[string]string)
+	inst.lastAccess = make(map[string]time.Time)
+	inst.persistOwned()
 }
 
 // persistWatches saves the watched sessions map to the state store.
@@ -725,6 +735,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
 	if err != nil {
 		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
+			inst.clearStaleOwned()
 			return TextResult("No tmux sessions."), nil
 		}
 		return ToolResult{}, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
@@ -791,15 +802,7 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 
 	// Clean up stale owned entries if none still exist in tmux
 	if len(ownedNames) > 0 && !ownedStillExist {
-		inst.mu.Lock()
-		inst.owned = make(map[string]string)
-		for name := range inst.lastAccess {
-			if _, exists := inst.owned[name]; !exists {
-				delete(inst.lastAccess, name)
-			}
-		}
-		inst.persistOwned()
-		inst.mu.Unlock()
+		inst.clearStaleOwned()
 	}
 
 	cols := []table.Column{
@@ -882,18 +885,8 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 func maybeKillTmuxServer(ctx context.Context) bool {
 	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}")
 	if err != nil {
-		// "no server running" or "no sessions" means it's already gone
-		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") {
-			return false
-		}
-		// If list-sessions failed for another reason, the server may still
-		// be alive but empty. Try kill-server defensively.
-		if _, kerr := runTmux(ctx, "kill-server"); kerr == nil {
-			return true
-		}
-		return false
+		return false // server gone or unknown error — leave it alone
 	}
-	// Sessions still exist — leave the server alone.
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if strings.TrimSpace(line) != "" {
 			return false
@@ -1251,6 +1244,9 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	if tmuxSocketPath != "" {
+		args = append([]string{"-S", tmuxSocketPath}, args...)
+	}
 	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
 	// Setsid puts the tmux process in its own session so it (and the tmux
 	// server it may spawn) won't be killed when the parent process group

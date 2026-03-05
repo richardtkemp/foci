@@ -60,6 +60,7 @@ type Runner struct {
 	branchFn          BranchFunc
 	manaMonitor       *mana.Monitor
 	warningDispatcher *warnings.Dispatcher
+	hasActiveWorkFn   func() bool // external check for async work (e.g. tmux watches)
 	drainFn           func() // called each tick to drain rate-limit queues
 
 	mu                    sync.Mutex
@@ -91,6 +92,7 @@ type RunnerConfig struct {
 	BranchFunc        BranchFunc
 	ManaMonitor       *mana.Monitor
 	WarningDispatcher *warnings.Dispatcher
+	HasActiveWorkFn   func() bool // external check for async work (e.g. tmux watches)
 	DrainFn           func() // called each tick to drain rate-limit queues; nil = skip
 }
 
@@ -109,6 +111,7 @@ func New(cfg RunnerConfig) *Runner {
 		branchFn:          cfg.BranchFunc,
 		manaMonitor:       cfg.ManaMonitor,
 		warningDispatcher: cfg.WarningDispatcher,
+		hasActiveWorkFn:   cfg.HasActiveWorkFn,
 		drainFn:           cfg.DrainFn,
 		lastCacheWarmed:   now,
 		lastInteraction:   now,
@@ -233,6 +236,10 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	r.mu.Unlock()
 
 	if running {
+		return
+	}
+
+	if r.hasActiveWorkFn != nil && r.hasActiveWorkFn() {
 		return
 	}
 

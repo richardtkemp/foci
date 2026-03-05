@@ -44,6 +44,7 @@ type agentInstance struct {
 	agentCfg          config.AgentConfig
 	promptSearchDirs  []string           // directories to search for prompt files
 	tmuxClearAll      func()             // clears tmux tool state (watches, owned sessions)
+	tmuxWatchCount    func() int         // returns number of active tmux watches
 	kaRunner          *keepalive.Runner  // keepalive & background work timer (nil if disabled)
 	mcpManager        *mcpkg.Manager     // nil if no MCP servers configured
 }
@@ -219,6 +220,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Only register tmux tool if tmux is available in PATH
 	var tmuxTool *tools.Tool
 	var tmuxClearAll func()
+	var tmuxWatchCount func() int
 	if _, err := exec.LookPath("tmux"); err == nil {
 		tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
 		tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
@@ -233,7 +235,7 @@ func setupAgent(p setupParams) *agentInstance {
 				tmuxSessionTTL = d
 			}
 		}
-		tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
+		tmuxWatchCount, tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
 		registry.Register(tmuxTool)
 	}
 	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
@@ -535,6 +537,7 @@ func setupAgent(p setupParams) *agentInstance {
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
 		tmuxClearAll:      tmuxClearAll,
+		tmuxWatchCount:    tmuxWatchCount,
 		mcpManager:        mcpMgr,
 	}
 }

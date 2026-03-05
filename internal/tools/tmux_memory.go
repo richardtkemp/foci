@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -259,11 +258,11 @@ func ParseThreshold(s string, memTotalKB int64) (int64, error) {
 // getTmuxRSS returns the RSS (in kB) of the tmux server process.
 // Finds PID via `tmux display-message -p '#{pid}'`, then reads /proc/{pid}/status.
 func getTmuxRSS() (int64, error) {
-	out, err := exec.Command("tmux", "display-message", "-p", "#{pid}").Output()
+	out, err := runTmux(context.Background(), "display-message", "-p", "#{pid}")
 	if err != nil {
 		return 0, fmt.Errorf("tmux display-message: %w", err)
 	}
-	pidStr := strings.TrimSpace(string(out))
+	pidStr := strings.TrimSpace(out)
 	if pidStr == "" {
 		return 0, fmt.Errorf("tmux returned empty PID")
 	}
@@ -318,10 +317,10 @@ func getMemTotal_() (int64, error) {
 // Returns the list of session names that were destroyed.
 func killTmuxServer() ([]string, error) {
 	// List sessions first for the notification
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
 	var sessions []string
 	if err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				sessions = append(sessions, line)
 			}
@@ -330,7 +329,7 @@ func killTmuxServer() ([]string, error) {
 	log.Infof("tmux_memory", "killing tmux server; active sessions: %v", sessions)
 
 	// Kill server
-	if err := exec.Command("tmux", "kill-server").Run(); err != nil {
+	if _, err := runTmux(context.Background(), "kill-server"); err != nil {
 		return sessions, fmt.Errorf("tmux kill-server: %w", err)
 	}
 	return sessions, nil
