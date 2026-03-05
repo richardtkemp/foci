@@ -13,13 +13,16 @@ LDFLAGS = -X main.version=$(VERSION) \
 all: build cli foci-call
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o foci-gw ./cmd/foci-gw
+	@mkdir -p bin
+	go build -ldflags "$(LDFLAGS)" -o bin/foci-gw ./cmd/foci-gw
 
 cli:
-	go build -ldflags "$(LDFLAGS)" -o foci ./cmd/foci
+	@mkdir -p bin
+	go build -ldflags "$(LDFLAGS)" -o bin/foci ./cmd/foci
 
 foci-call:
-	go build -ldflags "$(LDFLAGS)" -o foci-call ./cmd/foci-call
+	@mkdir -p bin
+	go build -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
 
 test:
 	go test -p=$(shell nproc 2>/dev/null || echo 4) ./...
@@ -58,7 +61,7 @@ coverage-check:
 	fi
 
 clean:
-	rm -f foci-gw foci foci-call
+	rm -rf bin
 
 vet:
 	go vet ./...
