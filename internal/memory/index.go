@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/sqlite"
 
 	"github.com/fsnotify/fsnotify"
-	_ "modernc.org/sqlite"
 )
 
 // Result is a single search result from the FTS5 index.
@@ -47,38 +47,20 @@ type Index struct {
 // sources maps source names to {dir, weight}. debounce is the delay before auto-reindexing
 // on file change (0s = immediate). conversationWeight is the multiplier for conversation search results.
 func NewIndex(dbPath string, sources map[string]SourceConfig, debounce time.Duration, conversationWeight float64) (*Index, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqlite.OpenInit(dbPath,
+		`CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+			content, path, source,
+			tokenize='porter unicode61'
+		)`,
+		`CREATE TABLE IF NOT EXISTS memory_meta (
+			source TEXT NOT NULL,
+			path TEXT NOT NULL,
+			mtime REAL NOT NULL,
+			PRIMARY KEY (source, path)
+		)`,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("open memory db: %w", err)
-	}
-
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-		content, path, source,
-		tokenize='porter unicode61'
-	)`)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create FTS5 table: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS memory_meta (
-		source TEXT NOT NULL,
-		path TEXT NOT NULL,
-		mtime REAL NOT NULL,
-		PRIMARY KEY (source, path)
-	)`)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create memory_meta table: %w", err)
+		return nil, err
 	}
 
 	return &Index{

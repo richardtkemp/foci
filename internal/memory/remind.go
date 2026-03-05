@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 // Reminder is a deferred thought for later.
@@ -26,21 +26,7 @@ type ReminderStore struct {
 // NewReminderStore creates or opens the reminder store.
 // Uses the same DB as the memory index if path matches.
 func NewReminderStore(dbPath string) (*ReminderStore, error) {
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open reminder db: %w", err)
-	}
-
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS reminders (
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE IF NOT EXISTS reminders (
 		id       INTEGER PRIMARY KEY AUTOINCREMENT,
 		agent_id TEXT    NOT NULL DEFAULT '',
 		text     TEXT    NOT NULL,
@@ -49,8 +35,7 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		created  TEXT    NOT NULL
 	)`)
 	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create reminders table: %w", err)
+		return nil, err
 	}
 
 	// Idempotent migration: add wake column for active wake reminders.

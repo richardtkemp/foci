@@ -10,9 +10,12 @@ workspace/*.md
 *.log
 api.jsonl
 secrets.toml
-conversation.db
-conversation.db-wal
-conversation.db-shm
+conversation-*.db
+conversation-*.db-wal
+conversation-*.db-shm
+todo-*.db
+todo-*.db-wal
+todo-*.db-shm
 .gocache/
 .gopath/
 .setup-install.sh

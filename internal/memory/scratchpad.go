@@ -2,11 +2,9 @@ package memory
 
 import (
 	"database/sql"
-	"fmt"
 	"time"
 
-
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 // ScratchpadEntry is a key-value working state entry.
@@ -31,21 +29,7 @@ type Scratchpad struct {
 
 // NewScratchpad creates or opens the scratchpad store.
 func NewScratchpad(dbPath string) (*Scratchpad, error) {
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("open scratchpad db: %w", err)
-	}
-
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS scratchpad (
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE IF NOT EXISTS scratchpad (
 		agent_id TEXT    NOT NULL DEFAULT '',
 		key      TEXT    NOT NULL,
 		content  TEXT    NOT NULL,
@@ -53,10 +37,8 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 		PRIMARY KEY (agent_id, key)
 	)`)
 	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create scratchpad table: %w", err)
+		return nil, err
 	}
-
 	return &Scratchpad{db: db}, nil
 }
 

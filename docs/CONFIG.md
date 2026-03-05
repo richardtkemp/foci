@@ -146,7 +146,7 @@ Logging and diagnostics. The `messages_in_log` field can be overridden per-agent
 | `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
 | `api_db` | string | `$data_dir/api.db` | SQLite API call log. All API calls logged with `call_type` (conversation, compaction, summary, spawn). `""` disables. |
-| `conversation_file` | string | `$data_dir/conversation.db` | Path to conversation SQLite log. Relative paths resolve against `$HOME`. |
+| `conversation_file` | string | `$data_dir/conversation.db` | Base path for per-agent conversation SQLite logs. Each agent gets its own database (`conversation-{agentID}.db`). Set to `""` to disable conversation logging. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
@@ -850,7 +850,8 @@ $HOME/
   logs/api.jsonl         ← API call log (JSONL)
   logs/api-payload.jsonl ← full payload log (if enabled)
   data/api.db            ← API call log (SQLite)
-  data/conversation.db   ← conversation SQLite log
+  data/conversation-*.db ← per-agent conversation SQLite logs
+  data/todo-*.db         ← per-agent todo SQLite databases
   data/sessions/         ← session JSONL files
   data/state.json        ← persistent state
   data/memory.db         ← memory FTS index

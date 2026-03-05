@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/sqlite"
 )
 
 // AgentMemoryBoost is the weight added to agent-specific memory sources.
@@ -46,7 +48,7 @@ type memoryResult struct {
 	agentFTS5       map[string]*memory.Index              // for conversation hook (per-agent mode)
 	reminderStore   *memory.ReminderStore
 	scratchpadStore *memory.Scratchpad
-	todoStore       *memory.TodoStore
+	todoStores      map[string]*memory.TodoStore
 	cleanup         func()
 }
 
@@ -59,6 +61,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		sharedBackends: make(map[string]memory.Searcher),
 		agentBackends:  make(map[string]map[string]memory.Searcher),
 		agentFTS5:      make(map[string]*memory.Index),
+		todoStores:     make(map[string]*memory.TodoStore),
 		cleanup:        func() {},
 	}
 
@@ -216,13 +219,31 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	}
 	closers = append(closers, result.scratchpadStore)
 
-	// Todo list (shared across agents, agent_id scoped per-agent)
-	todoDbPath := cfg.DataPath("todo.db")
-	result.todoStore, err = memory.NewTodoStore(todoDbPath)
-	if err != nil {
-		log.Fatalf("main", "create todo store: %v", err)
+	// Per-agent todo stores
+	oldTodoDB := cfg.DataPath("todo.db")
+	needTodoMigrate := fileExists(oldTodoDB)
+	for _, acfg := range cfg.Agents {
+		agentTodoPath := sqlite.AgentPath(cfg.DataPath("todo.db"), acfg.ID)
+		ts, err := memory.NewTodoStore(agentTodoPath)
+		if err != nil {
+			log.Fatalf("main", "create todo store for %s: %v", acfg.ID, err)
+		}
+		if needTodoMigrate {
+			if err := ts.MigrateFrom(oldTodoDB, acfg.ID); err != nil {
+				log.Errorf("main", "migrate todos for %s: %v", acfg.ID, err)
+			}
+		}
+		result.todoStores[acfg.ID] = ts
+		closers = append(closers, ts)
 	}
-	closers = append(closers, result.todoStore)
+	if needTodoMigrate {
+		if err := os.Rename(oldTodoDB, oldTodoDB+".migrated"); err != nil {
+			log.Errorf("main", "rename old todo.db: %v", err)
+		}
+		// Clean up WAL/SHM files from the old database
+		_ = os.Remove(oldTodoDB + "-wal")
+		_ = os.Remove(oldTodoDB + "-shm")
+	}
 
 	result.cleanup = func() {
 		for i := len(closers) - 1; i >= 0; i-- {
@@ -230,4 +251,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	}
 	return result
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

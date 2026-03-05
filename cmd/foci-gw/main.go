@@ -224,7 +224,7 @@ Subcommands:
 			memBackends:           agentBackends,
 			reminderStore:         mem.reminderStore,
 			scratchpadStore:       mem.scratchpadStore,
-			todoStore:             mem.todoStore,
+			todoStore:             mem.todoStores[acfg.ID],
 			toolDetailStore:       toolDetailStore,
 			sessionIndex:          si.sessionIndex,
 			ttsMap:                ttsMap,
@@ -246,7 +246,7 @@ Subcommands:
 			usageClient: usageClient,
 			botMgr:      botMgr,
 			stateStore:  si.stateStore,
-			todoStore:   mem.todoStore,
+			todoStore:   mem.todoStores[acfg.ID],
 			ctx:         ctx,
 		})
 

@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"foci/internal/log"
-
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 // SessionType classifies the purpose of a session.
@@ -52,77 +51,45 @@ type SessionIndex struct {
 
 // NewSessionIndex opens (or creates) the SQLite database for the session index.
 func NewSessionIndex(dbPath string) (*SessionIndex, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqlite.OpenInit(dbPath,
+		`CREATE TABLE IF NOT EXISTS session_index (
+			session_key        TEXT PRIMARY KEY,
+			file_path          TEXT NOT NULL,
+			created_at         TEXT NOT NULL,
+			parent_session_key TEXT,
+			session_type       TEXT NOT NULL,
+			status             TEXT NOT NULL DEFAULT 'active'
+		)`,
+		`CREATE TABLE IF NOT EXISTS agent_metadata (
+			agent_id TEXT NOT NULL,
+			key      TEXT NOT NULL,
+			value    TEXT,
+			PRIMARY KEY (agent_id, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS chat_metadata (
+			agent_id TEXT NOT NULL,
+			chat_id  INTEGER NOT NULL,
+			key      TEXT NOT NULL,
+			value    TEXT,
+			PRIMARY KEY (agent_id, chat_id, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS session_metadata (
+			session_key TEXT NOT NULL,
+			key         TEXT NOT NULL,
+			value       TEXT,
+			PRIMARY KEY (session_key, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS system_state (
+			key   TEXT PRIMARY KEY,
+			value TEXT
+		)`,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("open session index db: %w", err)
+		return nil, err
 	}
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS session_index (
-		session_key        TEXT PRIMARY KEY,
-		file_path          TEXT NOT NULL,
-		created_at         TEXT NOT NULL,
-		parent_session_key TEXT,
-		session_type       TEXT NOT NULL,
-		status             TEXT NOT NULL DEFAULT 'active'
-	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create session_index table: %w", err)
-	}
-
-	// Migration: add last_activity_at column if missing.
+	// Migration: add last_activity_at column if missing (idempotent).
 	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`)
-
-	// Agent metadata table (replaces state.json for agent-level keys)
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS agent_metadata (
-		agent_id TEXT NOT NULL,
-		key      TEXT NOT NULL,
-		value    TEXT,
-		PRIMARY KEY (agent_id, key)
-	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create agent_metadata table: %w", err)
-	}
-
-	// Chat metadata table (replaces state.json for chat-level keys)
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS chat_metadata (
-		agent_id TEXT NOT NULL,
-		chat_id  INTEGER NOT NULL,
-		key      TEXT NOT NULL,
-		value    TEXT,
-		PRIMARY KEY (agent_id, chat_id, key)
-	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create chat_metadata table: %w", err)
-	}
-
-	// Session metadata table (replaces state.json for session-level keys like no_compact)
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS session_metadata (
-		session_key TEXT NOT NULL,
-		key         TEXT NOT NULL,
-		value       TEXT,
-		PRIMARY KEY (session_key, key)
-	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create session_metadata table: %w", err)
-	}
-
-	// System state table (replaces state.json for system-level keys)
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS system_state (
-		key   TEXT PRIMARY KEY,
-		value TEXT
-	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create system_state table: %w", err)
-	}
 
 	return &SessionIndex{db: db}, nil
 }
