@@ -274,3 +274,121 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+// TestSetUnmarshalError tests Set when the value can't be marshaled
+func TestSetUnmarshalError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := New(path)
+
+	// Try to marshal a channel (which can't be marshaled to JSON)
+	ch := make(chan int)
+	err := s.Set("channel", ch)
+	if err == nil {
+		t.Error("Set with unmarshalable value should return error")
+	}
+}
+
+// TestLoadWriteError tests Set when file write fails
+func TestLoadWriteError(t *testing.T) {
+	// Use a read-only directory to trigger write error
+	path := filepath.Join(t.TempDir(), "readonly", "state.json")
+	os.MkdirAll(filepath.Dir(path), 0555) // read-only
+
+	s := New(path)
+	err := s.Set("key", "value")
+
+	// Should get a write error
+	if err == nil {
+		t.Error("Set to read-only directory should return error")
+	}
+
+	// Clean up
+	os.Chmod(filepath.Dir(path), 0755)
+}
+
+// TestGetWithUnmarshalError tests Get when stored data is corrupted
+func TestGetWithUnmarshalError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := New(path)
+
+	// Manually insert corrupted JSON
+	s.mu.Lock()
+	s.data["corrupted"] = []byte("not valid json for int")
+	s.mu.Unlock()
+
+	var val int
+	result := s.Get("corrupted", &val)
+
+	// Should return false and log warning
+	if result {
+		t.Error("Get with corrupted data should return false")
+	}
+}
+
+// TestLoadIntoExistingData tests Load overwrites existing data
+func TestLoadIntoExistingData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+
+	// First write
+	s1 := New(path)
+	s1.Set("key1", "value1")
+
+	// Load with new store - should have only what was written
+	s2 := New(path)
+	s2.Load()
+
+	var val string
+	if !s2.Get("key1", &val) {
+		t.Error("should load previously saved value")
+	}
+	if val != "value1" {
+		t.Errorf("value = %q, want %q", val, "value1")
+	}
+}
+
+// TestDeleteThenGet tests that deleted keys are gone
+func TestDeleteThenGet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := New(path)
+
+	// Set and delete
+	s.Set("key", "value")
+	s.Delete("key")
+
+	// Reload and check it's gone
+	s2 := New(path)
+	s2.Load()
+
+	var val string
+	if s2.Get("key", &val) {
+		t.Error("deleted key should not be found after reload")
+	}
+}
+
+// TestSetMultipleUpdatesSameKey tests overwriting a key
+func TestSetMultipleUpdatesSameKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := New(path)
+
+	s.Set("key", "value1")
+	s.Set("key", "value2")
+	s.Set("key", "value3")
+
+	var val string
+	if !s.Get("key", &val) {
+		t.Fatal("key should exist")
+	}
+	if val != "value3" {
+		t.Errorf("value = %q, want %q", val, "value3")
+	}
+
+	// Reload and check the final value
+	s2 := New(path)
+	s2.Load()
+	if !s2.Get("key", &val) {
+		t.Fatal("key should exist after reload")
+	}
+	if val != "value3" {
+		t.Errorf("reloaded value = %q, want %q", val, "value3")
+	}
+}
