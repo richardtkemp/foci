@@ -261,19 +261,7 @@ func (a *Agent) RestoreVoiceMode(sessionKey string) {
 	}
 }
 
-// SessionEffort returns the effective effort for the session.
-// Returns the per-session override if set, otherwise the agent-wide default.
-func (a *Agent) SessionEffort(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	if sm.effort != "" {
-		return sm.effort
-	}
-	return a.Effort
-}
-
-// sessionStringWithDefault is a helper that returns a session-specific override
+// sessionStringWithDefault returns a session-specific override
 // or the agent-wide default if the override is empty.
 func (a *Agent) sessionStringWithDefault(sessionKey string, getter func(*sessionMeta) string, defaultVal string) string {
 	sm := a.getSessionMeta(sessionKey)
@@ -286,44 +274,35 @@ func (a *Agent) sessionStringWithDefault(sessionKey string, getter func(*session
 	return defaultVal
 }
 
+// setSessionString sets a per-session string override and persists it.
+func (a *Agent) setSessionString(sessionKey, prefix, value string, setter func(*sessionMeta, string)) {
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) { setter(sm, value) })
+	a.persistSessionString(sessionKey, prefix, value)
+}
+
+// SessionEffort returns the effective effort for the session.
+func (a *Agent) SessionEffort(sessionKey string) string {
+	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.effort }, a.Effort)
+}
+
 // SetSessionEffort sets the per-session effort override and persists it.
 func (a *Agent) SetSessionEffort(sessionKey, value string) {
-	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
-		sm.effort = value
-	})
-	a.persistSessionString(sessionKey, "effort", value)
+	a.setSessionString(sessionKey, "effort", value, func(sm *sessionMeta, v string) { sm.effort = v })
 }
 
 // SessionThinking returns the effective thinking mode for the session.
-// Returns the per-session override if set, otherwise the agent-wide default.
 func (a *Agent) SessionThinking(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	if sm.thinking != "" {
-		return sm.thinking
-	}
-	return a.Thinking
+	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.thinking }, a.Thinking)
 }
 
 // SetSessionThinking sets the per-session thinking override and persists it.
 func (a *Agent) SetSessionThinking(sessionKey, value string) {
-	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
-		sm.thinking = value
-	})
-	a.persistSessionString(sessionKey, "thinking", value)
+	a.setSessionString(sessionKey, "thinking", value, func(sm *sessionMeta, v string) { sm.thinking = v })
 }
 
 // SessionModel returns the effective model for the session.
-// Returns the per-session override if set, otherwise the agent-wide default.
 func (a *Agent) SessionModel(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	if sm.model != "" {
-		return sm.model
-	}
-	return a.Model
+	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.model }, a.Model)
 }
 
 // SetSessionModel sets the per-session model, endpoint, and client override and persists it.
@@ -448,15 +427,6 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 		a.meta[key] = m
 	}
 	return m
-}
-
-// getMetaLocked returns the session meta value while holding metaMu.
-// Returns zero value if meta is nil. Caller must NOT hold metaMu.
-func (a *Agent) getMetaLocked(sessionKey string, getter func(*sessionMeta) interface{}) interface{} {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return getter(sm)
 }
 
 // setMetaLocked sets the session meta value while holding metaMu.
@@ -660,9 +630,9 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, result string, messages []anthropic.Message, savedPath string) string {
 	// Pick cheap model based on which provider the client is.
 	summaryAlias := "haiku"
-	if a.isGeminiClient(client) {
+	if a.isProviderClient(client, "gemini") {
 		summaryAlias = "flash"
-	} else if a.isOpenAIClient(client) {
+	} else if a.isProviderClient(client, "openai") {
 		summaryAlias = "gpt4o"
 	}
 	model := summaryAlias
@@ -1229,7 +1199,10 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return ctx.Err()
 	}
 	var apiErr *anthropic.APIError
-	if errors.As(err, &apiErr) && apiErr.IsRateLimit() {
+	if !errors.As(err, &apiErr) {
+		return fmt.Errorf("send message: %w", err)
+	}
+	if apiErr.IsRateLimit() {
 		resetTime := a.computeRateLimitReset(apiErr.RetryAfterSeconds())
 		a.rateLimitGate.Close(resetTime)
 		a.logger().Infof("rate limit gate closed until %s", resetTime.Format(time.Kitchen))
@@ -1238,10 +1211,10 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		}
 		return &RateLimitedError{Until: resetTime}
 	}
-	if errors.As(err, &apiErr) && apiErr.IsOverloaded() {
+	if apiErr.IsOverloaded() {
 		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
 	}
-	if errors.As(err, &apiErr) && apiErr.IsRetryable() {
+	if apiErr.IsRetryable() {
 		a.logger().Debugf("server error detail: %s", err)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(0)
@@ -1550,23 +1523,12 @@ func summarizeServerToolResult(block anthropic.ContentBlock) string {
 	return block.Type
 }
 
-// isGeminiClient returns true if the given client is a gemini client from the registry.
-func (a *Agent) isGeminiClient(c provider.Client) bool {
+// isProviderClient returns true if c matches the registered client for the given provider.
+func (a *Agent) isProviderClient(c provider.Client, name string) bool {
 	if a.PeekClient == nil {
 		return false
 	}
-	if gc := a.PeekClient("gemini", "gemini"); gc != nil && c == gc {
-		return true
-	}
-	return false
-}
-
-// isOpenAIClient returns true if the given client is an openai client from the registry.
-func (a *Agent) isOpenAIClient(c provider.Client) bool {
-	if a.PeekClient == nil {
-		return false
-	}
-	if oc := a.PeekClient("openai", "openai"); oc != nil && c == oc {
+	if rc := a.PeekClient(name, name); rc != nil && c == rc {
 		return true
 	}
 	return false
