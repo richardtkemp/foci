@@ -133,18 +133,12 @@ LDFLAGS="-X main.gitCommit=$NEW_COMMIT -X main.buildTime=$BUILD_TIME"
 if ! $DRY_RUN; then
     cd "$SCRIPT_DIR"
 
-    info "  Building foci-gw (gateway)..."
-    go build -ldflags "$LDFLAGS" -o foci-gw ./cmd/foci-gw || { error "Failed to build foci-gw"; exit 1; }
+    info "  Building all binaries..."
+    make all || { error "Failed to build"; exit 1; }
 
-    info "  Building foci (CLI)..."
-    go build -ldflags "$LDFLAGS" -o foci ./cmd/foci/ || { error "Failed to build foci"; exit 1; }
-
-    info "  Building foci-call (exec bridge)..."
-    go build -o foci-call ./cmd/foci-call/ || { error "Failed to build foci-call"; exit 1; }
-
-    info "  Binaries built in $SCRIPT_DIR"
+    info "  Binaries built in $SCRIPT_DIR/bin/"
 else
-    info "  (dry-run) Would build foci-gw, foci, foci-call in $SCRIPT_DIR"
+    info "  (dry-run) Would build foci-gw, foci, foci-call in $SCRIPT_DIR/bin/"
 fi
 
 # ---------- Stage changelog ----------
@@ -297,7 +291,7 @@ if $IS_SELF && ! $DRY_RUN; then
     # Config wizard
     if ! $HAS_CONFIG; then
         info "  Launching setup wizard..."
-        eval "\"$SCRIPT_DIR/foci\" setup $SETUP_WIZARD_ARGS"
+        eval "\"$SCRIPT_DIR/bin/foci\" setup $SETUP_WIZARD_ARGS"
         info "  Config written by foci setup"
     fi
 
@@ -364,9 +358,9 @@ fi
 
 # --- Install binaries ---
 emit_comment "Install binaries"
-emit "install -m 755 \"$SCRIPT_DIR/foci-gw\" \"$INSTALL_DIR/foci-gw\""
-emit "install -m 755 \"$SCRIPT_DIR/foci\" \"$INSTALL_DIR/foci\""
-emit "install -m 755 \"$SCRIPT_DIR/foci-call\" \"$INSTALL_DIR/foci-call\""
+emit "install -m 755 \"$SCRIPT_DIR/bin/foci-gw\" \"$INSTALL_DIR/foci-gw\""
+emit "install -m 755 \"$SCRIPT_DIR/bin/foci\" \"$INSTALL_DIR/foci\""
+emit "install -m 755 \"$SCRIPT_DIR/bin/foci-call\" \"$INSTALL_DIR/foci-call\""
 
 # --- Directories (only if needed and not self-mode) ---
 if $NEED_DIRS; then
@@ -504,7 +498,7 @@ if [[ "$INSTALL_LINES" -le 3 ]]; then
 elif $DRY_RUN; then
     echo ""
     info "Dry run — nothing was built or installed."
-    info "Build would produce: foci-gw, foci, foci-call in $SCRIPT_DIR"
+    info "Build would produce: foci-gw, foci, foci-call in $SCRIPT_DIR/bin/"
     echo ""
     info "The following install script would be generated and run as root:"
     echo ""
@@ -527,7 +521,7 @@ elif $DO_INSTALL; then
     info "  Now message your bot on Telegram — it will introduce itself."
 else
     echo ""
-    info "Build complete. Binaries are in $SCRIPT_DIR/"
+    info "Build complete. Binaries are in $SCRIPT_DIR/bin/"
     echo ""
     info "To install, review and run the generated script:"
     echo ""

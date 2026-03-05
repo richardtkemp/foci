@@ -22,7 +22,7 @@ Read `docs/SPEC.md` for the design intent and philosophy.
 ## Running
 
 ```
-go build -o foci-gw ./cmd/foci-gw && ./foci-gw -config foci.toml
+make build && ./bin/foci-gw -config foci.toml
 make test
 make lint
 ```
