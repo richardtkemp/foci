@@ -191,13 +191,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		bodyReader = strings.NewReader(resolved.body)
 	}
 
-	timeout := 30 * time.Second
-	if p.Timeout > 0 {
-		timeout = time.Duration(p.Timeout) * time.Second
-		if timeout > 300*time.Second {
-			timeout = 300 * time.Second
-		}
-	}
+	timeout := validateAndLimitTimeout(p.Timeout)
 
 	req, err := http.NewRequestWithContext(ctx, p.Method, reqURL, bodyReader)
 	if err != nil {
@@ -237,10 +231,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		return processHTTPResponse(resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore)
 	}
 
-	displayURL := p.URL
-	if parsed, err := url.Parse(p.URL); err == nil {
-		displayURL = p.Method + " " + parsed.Hostname() + parsed.Path
-	}
+	displayURL := formatDisplayURL(p.URL, p.Method)
 
 	// Try background execution (explicit or auto)
 	if result, err, handled := runHTTPBackground(ctx, doAndProcess, displayURL, timeout, autoBackgroundSecs, p.Background, notifier); handled {
@@ -253,14 +244,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 
 // processHTTPResponse reads and formats an HTTP response.
 func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (ToolResult, error) {
-	// Read response — 10MB when saving to file, 1MB when returning to context
-	bodyLimit := int64(1024 * 1024)
-	if saveTo != "" || isBinaryContentType(resp.Header.Get("Content-Type")) {
-		bodyLimit = 10 * 1024 * 1024
-	}
-	if maxResponseBytes > 0 {
-		bodyLimit = maxResponseBytes
-	}
+	bodyLimit := getResponseBodyLimit(resp.Header.Get("Content-Type"), saveTo, maxResponseBytes)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read response: %w", err)
@@ -343,13 +327,51 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 	return TextResult(formatHeaders() + "\n" + bodyStr), nil
 }
 
-// isBinaryContentType returns true for content types that are binary (not text).
-func isBinaryContentType(ct string) bool {
+// normalizeContentType extracts the MIME type from a Content-Type header,
+// removing parameters like charset and boundary.
+func normalizeContentType(ct string) string {
 	ct = strings.ToLower(strings.TrimSpace(ct))
-	// Extract MIME type before any parameters (charset, boundary, etc.)
 	if i := strings.IndexByte(ct, ';'); i >= 0 {
 		ct = strings.TrimSpace(ct[:i])
 	}
+	return ct
+}
+
+// validateAndLimitTimeout enforces timeout bounds (30s default, 300s max).
+func validateAndLimitTimeout(seconds int) time.Duration {
+	timeout := 30 * time.Second
+	if seconds > 0 {
+		timeout = time.Duration(seconds) * time.Second
+		if timeout > 300*time.Second {
+			timeout = 300 * time.Second
+		}
+	}
+	return timeout
+}
+
+// getResponseBodyLimit determines the max response body size based on content type and options.
+func getResponseBodyLimit(contentType, saveTo string, maxResponseBytes int64) int64 {
+	limit := int64(1024 * 1024) // 1MB default
+	if saveTo != "" || isBinaryContentType(contentType) {
+		limit = 10 * 1024 * 1024 // 10MB for files/binary
+	}
+	if maxResponseBytes > 0 {
+		limit = maxResponseBytes
+	}
+	return limit
+}
+
+// formatDisplayURL creates a concise URL representation for logging.
+func formatDisplayURL(urlStr, method string) string {
+	if parsed, err := url.Parse(urlStr); err == nil {
+		return method + " " + parsed.Hostname() + parsed.Path
+	}
+	return urlStr
+}
+
+// isBinaryContentType returns true for content types that are binary (not text).
+func isBinaryContentType(ct string) bool {
+	ct = normalizeContentType(ct)
 	if ct == "" {
 		return false
 	}
@@ -396,10 +418,7 @@ func isBinaryContentType(ct string) bool {
 
 // extensionForContentType returns a file extension for common content types.
 func extensionForContentType(ct string) string {
-	ct = strings.ToLower(strings.TrimSpace(ct))
-	if i := strings.IndexByte(ct, ';'); i >= 0 {
-		ct = strings.TrimSpace(ct[:i])
-	}
+	ct = normalizeContentType(ct)
 	switch ct {
 	case "image/png":
 		return ".png"
