@@ -719,3 +719,229 @@ func TestPreInitFilteredByLevel(t *testing.T) {
 		t.Fatalf("buffer len = %d, want 1 (DEBUG filtered by INFO level)", bufLen)
 	}
 }
+
+func TestNewComponentLogger(t *testing.T) {
+	cl := NewComponentLogger("test-component")
+	if cl == nil {
+		t.Fatal("NewComponentLogger returned nil")
+	}
+	if cl.component != "test-component" {
+		t.Errorf("component = %q, want test-component", cl.component)
+	}
+}
+
+func TestComponentLoggerDebugf(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+	SetLevel(DEBUG)
+
+	cl := NewComponentLogger("comp")
+	cl.Debugf("test message")
+
+	if !strings.Contains(buf.String(), "test message") {
+		t.Errorf("debug output missing message: %s", buf.String())
+	}
+}
+
+func TestComponentLoggerInfof(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	cl := NewComponentLogger("comp")
+	cl.Infof("info message")
+
+	if !strings.Contains(buf.String(), "info message") {
+		t.Errorf("info output missing message: %s", buf.String())
+	}
+}
+
+func TestComponentLoggerWarnf(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	cl := NewComponentLogger("comp")
+	cl.Warnf("warn message")
+
+	if !strings.Contains(buf.String(), "warn message") {
+		t.Errorf("warn output missing message: %s", buf.String())
+	}
+}
+
+func TestComponentLoggerErrorf(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	cl := NewComponentLogger("comp")
+	cl.Errorf("error message")
+
+	if !strings.Contains(buf.String(), "error message") {
+		t.Errorf("error output missing message: %s", buf.String())
+	}
+}
+
+func TestPackageLevelDebugf(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+	SetLevel(DEBUG)
+
+	Debugf("pkg", "pkg debug")
+
+	if !strings.Contains(buf.String(), "pkg debug") {
+		t.Errorf("package debug output missing message: %s", buf.String())
+	}
+}
+
+func TestPackageLevelInfof(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	Infof("pkg", "pkg info")
+
+	if !strings.Contains(buf.String(), "pkg info") {
+		t.Errorf("package info output missing message: %s", buf.String())
+	}
+}
+
+func TestPackageLevelWarnf(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	Warnf("pkg", "pkg warn")
+
+	if !strings.Contains(buf.String(), "pkg warn") {
+		t.Errorf("package warn output missing message: %s", buf.String())
+	}
+}
+
+func TestPackageLevelErrorf(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	Errorf("pkg", "pkg error")
+
+	if !strings.Contains(buf.String(), "pkg error") {
+		t.Errorf("package error output missing message: %s", buf.String())
+	}
+}
+
+func TestSetWarnHook(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	hookCalled := false
+	SetWarnHook(func(level Level, component string, msg string) {
+		if level == WARN && component == "test" && msg == "warn message" {
+			hookCalled = true
+		}
+	})
+
+	Warnf("test", "warn message")
+
+	if !hookCalled {
+		t.Error("warn hook not called with correct parameters")
+	}
+}
+
+func TestIsOpenAIModel(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"gpt-4", true},
+		{"gpt-3.5-turbo", true},
+		{"o1", true},
+		{"o3", true},
+		{"o4", true},
+		{"chatgpt-4", true},
+		{"claude-3-sonnet", false},
+		{"gemini-2-flash", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		got := isOpenAIModel(tt.model)
+		if got != tt.want {
+			t.Errorf("isOpenAIModel(%q) = %v, want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestAPIWithGemini(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// Create temp DB for API logging
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	// API call with gemini model should auto-infer provider
+	API(APIEntry{
+		Session:  "test",
+		Model:    "gemini-2-flash",
+		CallType: "conversation",
+	})
+	// No error = pass
+}
+
+func TestAPIWithOpenAI(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	// API call with OpenAI model should auto-infer provider
+	API(APIEntry{
+		Session:  "test",
+		Model:    "gpt-4",
+		CallType: "conversation",
+	})
+	// No error = pass
+}
+
+func TestPayload(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// Payload should not panic when file is nil
+	Payload(PayloadEntry{
+		Session: "test",
+		Model:   "test-model",
+	})
+	// No panic = pass
+}
