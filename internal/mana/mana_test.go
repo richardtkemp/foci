@@ -466,3 +466,124 @@ func TestIsGood_ZeroMana(t *testing.T) {
 	}
 }
 
+// TestFromUtilization_EdgeCases tests edge cases for FromUtilization
+func TestFromUtilization_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		util float64
+		want float64
+	}{
+		{"negative", -10, 110},      // 100 - (-10) = 110, not clamped (not negative)
+		{"large_negative", -100, 200}, // 100 - (-100) = 200, not clamped
+		{"exactly_100", 100, 0},
+		{"way_over", 200, -100},     // 100 - 200 = -100, clamped to 0
+		{"fractional", 33.33, 66.67},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FromUtilization(tt.util)
+			expected := tt.want
+			if expected < 0 {
+				expected = 0 // clamped by the function
+			}
+			if got != expected {
+				t.Errorf("FromUtilization(%v) = %v, want %v", tt.util, got, expected)
+			}
+		})
+	}
+}
+
+// TestIsGood_InvestIntervalBoundary tests edge case at invest interval boundary
+func TestIsGood_InvestIntervalBoundary(t *testing.T) {
+	now := time.Now()
+	// Just before invest interval ends
+	resetsAt := now.Add(4*time.Hour + 31*time.Minute)
+	// time_since_reset = 29m, which is < 30m invest interval
+	if IsGood(99, resetsAt, 30*time.Minute, now) {
+		t.Error("expected mana NOT good before invest interval ends")
+	}
+}
+
+// TestParseResetTime_EarlyMorning tests formatting of early morning times
+func TestParseResetTime_EarlyMorning(t *testing.T) {
+	// Create a time 30 hours in the future (will format as time)
+	future := time.Now().Add(30 * time.Hour).UTC()
+	isoTime := future.Format(time.RFC3339Nano)
+	result := ParseResetTime(isoTime)
+
+	// Should format as clock time (2pm) not relative
+	if strings.HasPrefix(result, "in ") {
+		t.Errorf("ParseResetTime(30h) should be absolute format, got %q", result)
+	}
+	if result == "" {
+		t.Error("ParseResetTime(30h) should not be empty")
+	}
+}
+
+// TestFormatPercent_EdgeCasesNearZero tests very small percentages
+func TestFormatPercent_EdgeCasesNearZero(t *testing.T) {
+	tests := []struct {
+		util float64
+		want string
+	}{
+		{99.9, "0.1%"},
+		{99.95, "0.0%"},
+		{99.99, "0.0%"},
+	}
+
+	for _, tt := range tests {
+		util := tt.util
+		got := FormatPercent(&anthropic.UsageResponse{
+			FiveHour: &anthropic.UsageWindow{Utilization: &util},
+		})
+		if got != tt.want {
+			t.Errorf("FormatPercent(%.2f) = %q, want %q", tt.util, got, tt.want)
+		}
+	}
+}
+
+// TestFormatUsage_ExtraUsagePresent tests formatting when extra usage is present
+func TestFormatUsage_ExtraUsagePresent(t *testing.T) {
+	result := FormatUsage(&anthropic.UsageResponse{
+		ExtraUsage: &anthropic.ExtraUsage{
+			IsEnabled:   true,
+			UsedCredits: 0.01,
+		},
+	})
+	if !strings.Contains(result, "overage $0.01") {
+		t.Errorf("FormatUsage with tiny overage = %q", result)
+	}
+}
+
+// TestIsGood_ZeroInvestInterval tests with zero invest interval
+func TestIsGood_ZeroInvestInterval(t *testing.T) {
+	now := time.Now()
+	resetsAt := now.Add(2 * time.Hour)
+	// With zero invest interval, expected = 100 * (5h - 2h) / 5h = 60%
+	// 70% > 60% → good
+	if !IsGood(70, resetsAt, 0, now) {
+		t.Error("IsGood should handle zero invest interval")
+	}
+}
+
+// TestIsGood_WindowEqualsInvestInterval tests when window == invest interval
+func TestIsGood_WindowEqualsInvestInterval(t *testing.T) {
+	now := time.Now()
+	// Window is 5 hours, set invest interval to 5 hours
+	// If resetsAt is 5h from now, we're at start of window (0 elapsed)
+	// We're in investing period since timeSinceReset < investInterval
+	resetsAt := now.Add(5 * time.Hour)
+
+	// At the very start (investing period), should return false even with mana
+	if IsGood(99, resetsAt, 5*time.Hour, now) {
+		t.Error("IsGood should return false during investing period")
+	}
+
+	// After the investing period ends (5h elapsed), denominator = 0, should return true if mana > 0
+	resetsAt = now.Add(-5 * time.Minute) // 5h past the reset
+	if !IsGood(1, resetsAt, 5*time.Hour, now) {
+		t.Error("IsGood should return true when past invest interval with mana > 0")
+	}
+}
+
