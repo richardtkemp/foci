@@ -168,6 +168,7 @@ type AgentConfig struct {
 type GeminiConfig struct {
 	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
 	CacheTTL    string `toml:"cache_ttl"`    // context cache TTL (default "1h", "0" disables)
+	Thinking    string `toml:"thinking"`     // thinking mode: "adaptive" (default) or "off"
 }
 
 type OpenAIConfig struct {
@@ -181,6 +182,8 @@ type AnthropicConfig struct {
 	CCCredentialsPollInterval string `toml:"cc_credentials_poll_interval"` // how often to re-read CC credentials file (default "30s")
 	UseSDK                   bool   `toml:"use_sdk"`                     // use SDK transport (default true; false = raw HTTP)
 	Streaming                bool   `toml:"streaming"`                   // use streaming API (default false; requires use_sdk)
+	Effort                   string `toml:"effort"`                      // effort level: "low" (default), "medium", "high"
+	Thinking                 string `toml:"thinking"`                    // thinking mode: "adaptive" (default) or "off"
 }
 
 type TelegramConfig struct {
@@ -388,8 +391,6 @@ type DefaultsConfig struct {
 	BraindeadThreshold    int              `toml:"braindead_threshold"`       // default braindead threshold (default: 10)
 	BraindeadPrompt       string           `toml:"braindead_prompt"`          // default braindead prompt
 	TurnLockWarnThreshold string           `toml:"turn_lock_warn_threshold"`  // default turn lock warn threshold (default: "3m")
-	Effort              string           `toml:"effort"`                // default effort level: "low" (default), "medium", "high"
-	Thinking            string           `toml:"thinking"`              // default thinking mode: "adaptive" (default) or "off"
 	Streaming           *bool            `toml:"streaming"`             // default streaming (nil = use global anthropic.streaming)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (default: "off")
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (default: "off")
@@ -878,6 +879,25 @@ func applyDefaultsToAgent(agent *AgentConfig, defaults *DefaultsConfig, defined 
 	}
 }
 
+// ApplyProviderDefaults fills in agent Effort/Thinking from provider-specific
+// config when the agent hasn't set them explicitly. Call after model resolution
+// so `format` is known.
+func ApplyProviderDefaults(agent *AgentConfig, format string, cfg *Config) {
+	if agent.Effort == "" {
+		if format == "anthropic" {
+			agent.Effort = cfg.Anthropic.Effort
+		}
+	}
+	if agent.Thinking == "" {
+		switch format {
+		case "anthropic":
+			agent.Thinking = cfg.Anthropic.Thinking
+		case "gemini":
+			agent.Thinking = cfg.Gemini.Thinking
+		}
+	}
+}
+
 // Load reads config from the given TOML file path.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -906,8 +926,6 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
 	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
-	setStringDefaultDefined(&cfg.Defaults.Thinking, "adaptive", md.IsDefined("defaults", "thinking"))
-	setStringDefaultDefined(&cfg.Defaults.Effort, "low", md.IsDefined("defaults", "effort"))
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
@@ -1054,10 +1072,13 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
 	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
 	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
+	setStringDefault(&cfg.Anthropic.Effort, "low")
+	setStringDefault(&cfg.Anthropic.Thinking, "adaptive")
 
 	// Gemini defaults
 	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")
 	setStringDefault(&cfg.Gemini.CacheTTL, "1h")
+	setStringDefault(&cfg.Gemini.Thinking, "adaptive")
 
 	// OpenAI defaults
 	setStringDefault(&cfg.OpenAI.HTTPTimeout, "120s")

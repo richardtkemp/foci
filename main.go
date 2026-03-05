@@ -203,6 +203,7 @@ Subcommands:
 		// Update acfg.Model to the resolved developer/model_id format so all
 		// downstream code (SplitDeveloperModel, agent.Model) uses the full ID.
 		acfg.Model = resolved.Developer + "/" + resolved.ModelID
+		config.ApplyProviderDefaults(&acfg, resolved.Format, cfg)
 
 		agentClient := clients.GetClient(resolved.Endpoint, resolved.Format)
 		if agentClient == nil {

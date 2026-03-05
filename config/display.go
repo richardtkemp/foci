@@ -40,8 +40,14 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 
 	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
 	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
-	if cfg.Defaults.Effort != "" {
-		add("defaults", "effort", cfg.Defaults.Effort)
+	if cfg.Anthropic.Effort != "" {
+		add("anthropic", "effort", cfg.Anthropic.Effort)
+	}
+	if cfg.Anthropic.Thinking != "" {
+		add("anthropic", "thinking", cfg.Anthropic.Thinking)
+	}
+	if cfg.Gemini.Thinking != "" {
+		add("gemini", "thinking", cfg.Gemini.Thinking)
 	}
 	if cfg.Defaults.DuplicateMessages {
 		add("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
@@ -382,8 +388,12 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 
 	addDefault("max_tool_loops", cfg.Defaults.MaxToolLoops, agent.MaxToolLoops != cfg.Defaults.MaxToolLoops)
 	addDefault("max_output_tokens", cfg.Defaults.MaxOutputTokens, agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens)
-	if cfg.Defaults.Effort != "" {
-		addDefault("effort", cfg.Defaults.Effort, agent.Effort != cfg.Defaults.Effort)
+	if cfg.Anthropic.Effort != "" {
+		addProvider := func(section, key string, val interface{}, overridden bool) {
+			v := annotate(formatValue(val), section+"."+key, overridden)
+			globalRows = append(globalRows, configRow{section, key, v})
+		}
+		addProvider("anthropic", "effort", cfg.Anthropic.Effort, agent.Effort != cfg.Anthropic.Effort)
 	}
 	if cfg.Defaults.DuplicateMessages {
 		addDefault("duplicate_messages", cfg.Defaults.DuplicateMessages, false)
@@ -751,7 +761,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 		}
 		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use defaults)"})
 	}
-	if agent.Effort == "" && cfg.Defaults.Effort == "" {
+	if agent.Effort == "" && cfg.Anthropic.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
 	}
 	if agent.CompactionEffort == "" {
