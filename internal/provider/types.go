@@ -261,10 +261,10 @@ func CachedTextContent(text string) []ContentBlock {
 	return []ContentBlock{{Type: "text", Text: text, CacheControl: Ephemeral()}}
 }
 
-// ImageBlock creates an image content block from base64-encoded data.
-func ImageBlock(mediaType, base64Data string) ContentBlock {
+// mediaContentBlock creates a media content block (image/document) from base64-encoded data.
+func mediaContentBlock(blockType, mediaType, base64Data string) ContentBlock {
 	return ContentBlock{
-		Type: "image",
+		Type: blockType,
 		Source: &ContentSource{
 			Type:      "base64",
 			MediaType: mediaType,
@@ -273,16 +273,14 @@ func ImageBlock(mediaType, base64Data string) ContentBlock {
 	}
 }
 
+// ImageBlock creates an image content block from base64-encoded data.
+func ImageBlock(mediaType, base64Data string) ContentBlock {
+	return mediaContentBlock("image", mediaType, base64Data)
+}
+
 // DocumentBlock creates a document content block from base64-encoded data.
 func DocumentBlock(mediaType, base64Data string) ContentBlock {
-	return ContentBlock{
-		Type: "document",
-		Source: &ContentSource{
-			Type:      "base64",
-			MediaType: mediaType,
-			Data:      base64Data,
-		},
-	}
+	return mediaContentBlock("document", mediaType, base64Data)
 }
 
 // ToolResultBlock creates a tool_result content block.
@@ -314,6 +312,9 @@ type APIError struct {
 	RetryAfter string // retry-after header value (seconds or date), empty if not present
 }
 
+// Anthropic-specific HTTP status code for overloaded service.
+const statusOverloaded = 529
+
 func (e *APIError) Error() string {
 	return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Body)
 }
@@ -325,7 +326,7 @@ func (e *APIError) IsRateLimit() bool {
 
 // IsOverloaded returns true if this is a 529 Overloaded error.
 func (e *APIError) IsOverloaded() bool {
-	return e.StatusCode == 529
+	return e.StatusCode == statusOverloaded
 }
 
 // IsRetryable returns true if the error is a server-side issue worth retrying.
@@ -336,7 +337,7 @@ func (e *APIError) IsRetryable() bool {
 	case http.StatusInternalServerError, // 500
 		http.StatusBadGateway,        // 502
 		http.StatusServiceUnavailable, // 503
-		529:                           // Overloaded (Anthropic-specific)
+		statusOverloaded:              // 529
 		return true
 	}
 	return false
