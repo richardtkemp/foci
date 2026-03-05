@@ -250,8 +250,8 @@ func ptrBool(ptr *bool, defaultValue bool) bool {
 	return defaultValue
 }
 
-// ptrInt returns the value of an int if greater than zero, otherwise defaultValue.
-func ptrInt(value, defaultValue int) int {
+// intDefault returns the value if greater than zero, otherwise defaultValue.
+func intDefault(value, defaultValue int) int {
 	if value > 0 {
 		return value
 	}
@@ -282,13 +282,13 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 	case "send":
 		return inst.send(ctx, p.Name, p.Keys, ptrBool(p.Enter, true))
 	case "read":
-		return inst.read(ctx, p.Name, ptrInt(p.Lines, 50), p.Raw)
+		return inst.read(ctx, p.Name, intDefault(p.Lines, 50), p.Raw)
 	case "list":
 		return inst.list(ctx)
 	case "kill":
 		return inst.kill(ctx, p.Name)
 	case "watch":
-		return inst.watch(ctx, p.Name, ptrInt(p.Window, 0), ptrInt(p.ThresholdSeconds, 30))
+		return inst.watch(ctx, p.Name, intDefault(p.Window, 0), intDefault(p.ThresholdSeconds, 30))
 	case "unwatch":
 		return inst.unwatch(ctx, p.Name)
 	default:
