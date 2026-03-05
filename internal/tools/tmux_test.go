@@ -17,6 +17,15 @@ import (
 	"foci/internal/state"
 )
 
+func TestMain(m *testing.M) {
+	dir, _ := os.MkdirTemp("", "foci-tmux-test-*")
+	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
+	code := m.Run()
+	exec.Command("tmux", "-S", tmuxSocketPath, "kill-server").Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 func tmuxAvailable(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -24,17 +33,25 @@ func tmuxAvailable(t *testing.T) {
 	}
 }
 
-func tmuxCleanup(t *testing.T, name string) {
+// tmuxSetup pre-cleans named sessions (from prior crashed runs) and registers
+// t.Cleanup to kill them when the test finishes. All operations use the
+// test-isolated tmux socket.
+func tmuxSetup(t *testing.T, names ...string) {
 	t.Helper()
-	exec.Command("tmux", "kill-session", "-t", name).Run()
+	for _, name := range names {
+		exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
+		t.Cleanup(func() {
+			exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
+		})
+	}
 }
 
 func TestTmuxStartAndList(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-start"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start
 	params, _ := json.Marshal(map[string]interface{}{
@@ -73,11 +90,11 @@ func TestTmuxStartAndList(t *testing.T) {
 
 func TestTmuxSendAndRead(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-sendread"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session with cat (echoes input)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -119,11 +136,11 @@ func TestTmuxSendAndRead(t *testing.T) {
 
 func TestTmuxReadDefault(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-readdefault"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -148,11 +165,11 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-kill"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start
 	params, _ := json.Marshal(map[string]interface{}{
@@ -191,7 +208,7 @@ func TestTmuxKill(t *testing.T) {
 }
 
 func TestTmuxInvalidOperation(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -208,7 +225,7 @@ func TestTmuxInvalidOperation(t *testing.T) {
 
 func TestTmuxStartNoName(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -225,16 +242,16 @@ func TestTmuxStartNoName(t *testing.T) {
 
 	// Extract name and clean up
 	name := strings.TrimPrefix(result.Text, "Session started: ")
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 }
 
 func TestTmuxSendNoEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-noenter"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -264,10 +281,10 @@ func TestTmuxSendNoEnter(t *testing.T) {
 
 func TestTmuxSendBareEnter(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-bareenter"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -306,7 +323,7 @@ func TestTmuxSendBareEnter(t *testing.T) {
 }
 
 func TestTmuxMissingName(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	for _, op := range []string{"send", "read", "kill"} {
@@ -322,11 +339,11 @@ func TestTmuxMissingName(t *testing.T) {
 
 func TestTmuxStartWithWorkdir(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-workdir"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	dir := t.TempDir()
 	params, _ := json.Marshal(map[string]interface{}{
@@ -376,11 +393,11 @@ func TestTmuxStartWithWorkdir(t *testing.T) {
 
 func TestTmuxWatchUnwatch(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-watch"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -424,11 +441,11 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-watch-dup"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -468,7 +485,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 }
 
 func TestTmuxUnwatchNotWatched(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -495,10 +512,10 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		wakeMsg = msg
 	})
 
-	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
 
 	name := "foci-test-wake"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session that does nothing (sleep) — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -562,10 +579,10 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 		mu.Unlock()
 	})
 
-	tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
 
 	name := "foci-test-dead"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -590,7 +607,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	}
 
 	// Kill the tmux session externally
-	exec.Command("tmux", "kill-session", "-t", name).Run()
+	exec.Command("tmux", "-S", tmuxSocketPath, "kill-session", "-t", name).Run()
 	time.Sleep(100 * time.Millisecond)
 
 	// Give the monitor time to detect the dead session (poll interval is 2s)
@@ -622,7 +639,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 }
 
 func TestTmuxWatchMissingName(t *testing.T) {
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -645,13 +662,12 @@ func TestTmuxWatchMissingName(t *testing.T) {
 func TestTmuxInstanceIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
-	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	nameA := "foci-test-iso-a"
 	nameB := "foci-test-iso-b"
-	defer tmuxCleanup(t, nameA)
-	defer tmuxCleanup(t, nameB)
+	tmuxSetup(t, nameA, nameB)
 
 	// Agent A starts a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -756,19 +772,16 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
-	toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
+	_, toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeA.Add(1)
 	}), nil, "", false, 30, 0)
-	toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
+	_, toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
 		wakeB.Add(1)
 	}), nil, "", false, 30, 0)
 
 	nameA := "foci-test-wakeroute-a"
 	nameB := "foci-test-wakeroute-b"
-	exec.Command("tmux", "kill-session", "-t", nameA).Run()
-	exec.Command("tmux", "kill-session", "-t", nameB).Run()
-	defer tmuxCleanup(t, nameA)
-	defer tmuxCleanup(t, nameB)
+	tmuxSetup(t, nameA, nameB)
 
 	// Agent A starts a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -849,13 +862,13 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 func TestTmuxWatchIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
-	toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
-	toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolB, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-watchiso"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Agent A starts and watches
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1273,11 +1286,11 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 
 func TestTmuxReadRaw(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-readraw"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session that echoes CC-like content
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1344,10 +1357,10 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1379,13 +1392,13 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	store := state.New(stateFile)
 
 	// Pre-populate state with an owned session
-	if err := store.Set("tmux:test-agent", []string{"foci-test-restore"}); err != nil {
+	if err := store.Set("tmux:test-agent", map[string]string{"foci-test-restore": ""}); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
 	// Create the tmux session (simulating it still exists from before restart)
-	exec.Command("tmux", "new-session", "-d", "-s", "foci-test-restore", "sleep", "60").Run()
-	defer tmuxCleanup(t, "foci-test-restore")
+	tmuxSetup(t, "foci-test-restore")
+	exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", "foci-test-restore", "sleep", "60").Run()
 
 	// Load state
 	if err := store.Load(); err != nil {
@@ -1393,7 +1406,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with state store - should restore owned sessions
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1415,10 +1428,10 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persistkill"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1465,7 +1478,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	store := state.New(stateFile)
 
 	// Pre-populate state with sessions that no longer exist
-	if err := store.Set("tmux:test-agent", []string{"foci-test-stale1", "foci-test-stale2"}); err != nil {
+	if err := store.Set("tmux:test-agent", map[string]string{"foci-test-stale1": "", "foci-test-stale2": ""}); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -1473,7 +1486,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	// List should detect stale sessions and clear persisted state
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1500,11 +1513,11 @@ func TestTmuxNoStateStore(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Create tool without state store (nil)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 
 	name := "foci-test-nostate"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start should still work
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1540,10 +1553,10 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state1: %v", err)
 	}
 
-	tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30, 0)
+	_, tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-roundtrip"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -1572,7 +1585,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state2: %v", err)
 	}
 
-	tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30, 0)
+	_, tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30, 0)
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -1595,10 +1608,10 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist-watch"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1652,13 +1665,13 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	store := state.New(stateFile)
 
 	name := "foci-test-restore-watch"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Create the tmux session (simulating it still exists from before restart)
-	exec.Command("tmux", "new-session", "-d", "-s", name, "sleep", "60").Run()
+	exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", name, "sleep", "60").Run()
 
 	// Pre-populate state with owned session and watch
-	if err := store.Set("tmux:test-agent", []string{name}); err != nil {
+	if err := store.Set("tmux:test-agent", map[string]string{name: ""}); err != nil {
 		t.Fatalf("set owned state: %v", err)
 	}
 	if err := store.Set("tmux:test-agent:watches", []persistedWatch{
@@ -1672,7 +1685,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	_, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, _, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -1731,10 +1744,10 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-unwatch-persist"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1791,10 +1804,10 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-clearall-watch"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1845,11 +1858,11 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg string) {})
-	tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start session — watch=false to control watch params below
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1895,7 +1908,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("reload state: %v", err)
 	}
 
-	tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30, 0)
+	_, tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30, 0)
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch
@@ -1925,10 +1938,10 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch", false, 30, 0)
 
 	name := "foci-test-autowatch"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start with default watch=true (omitted from params)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -1980,10 +1993,10 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch", false, 30, 0)
 
 	name := "foci-test-nowatch"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start with watch=false
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2014,10 +2027,10 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	tmuxAvailable(t)
 
 	// No notifier — auto-watch should be silently skipped
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-autowatch-nonotif"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start with default watch=true but no notifier
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2056,11 +2069,10 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2, 0)
 
 	name := "foci-test-ap-unwatch"
-	tmuxCleanup(t, name) // clean up stale sessions from prior crashed runs
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start session (auto-watches with 2s threshold due to autopilot)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2111,10 +2123,10 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	}
 
 	// autopilot=true
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30, 0)
 
 	name := "foci-test-ap-send"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start with watch=false so session is unwatched
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2177,10 +2189,10 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	}
 
 	// autopilot=false
-	tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30, 0)
 
 	name := "foci-test-no-ap"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start with watch=false
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2213,10 +2225,10 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-killproc"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session that spawns a child process
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2344,7 +2356,7 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 	tmuxAvailable(t)
 
 	name := "foci-test-maybekill"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session so the server has at least one.
 	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 300")
@@ -2370,20 +2382,9 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 	tmuxAvailable(t)
 
-	// Check if the user has existing tmux sessions — if so, skip this test
-	// because we can't test server cleanup without risking their sessions.
-	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
-	if err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if strings.TrimSpace(line) != "" {
-				t.Skip("existing tmux sessions present; skipping server-kill test to avoid interference")
-			}
-		}
-	}
-
 	// Start a session and immediately kill it so the server has no sessions.
 	name := "foci-test-maybekill-empty"
-	_, err = runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 1")
+	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 1")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2397,7 +2398,7 @@ func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 	maybeKillTmuxServer(context.Background())
 
 	// After this, the server should not be running. Verify by listing.
-	out, err = runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
 	if err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 			if strings.TrimSpace(line) != "" {
@@ -2411,20 +2412,9 @@ func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 func TestTmuxKillCleansUpServer(t *testing.T) {
 	tmuxAvailable(t)
 
-	// Skip if user has existing sessions — we can't verify server cleanup
-	// without risking interference.
-	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
-	if err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if strings.TrimSpace(line) != "" {
-				t.Skip("existing tmux sessions present; skipping server-kill test")
-			}
-		}
-	}
-
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 	name := "foci-test-killserver"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a single session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2449,7 +2439,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify no tmux server is running
-	out, err = runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
+	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
 	if err == nil {
 		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 			if strings.TrimSpace(line) != "" {
@@ -2464,7 +2454,7 @@ func TestTmuxSessionPIDs(t *testing.T) {
 	tmuxAvailable(t)
 
 	name := "foci-test-pids"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Create a session
 	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep 300")
@@ -2490,10 +2480,10 @@ func TestTmuxSessionPIDs(t *testing.T) {
 
 func TestTmuxSendRateLimit(t *testing.T) {
 	tmuxAvailable(t)
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-ratelimit"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{
@@ -2544,12 +2534,11 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Single tool instance, two different session keys
-	tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	nameA := "foci-test-skiso-a"
 	nameB := "foci-test-skiso-b"
-	defer tmuxCleanup(t, nameA)
-	defer tmuxCleanup(t, nameB)
+	tmuxSetup(t, nameA, nameB)
 
 	ctxA := WithSessionKey(context.Background(), "agent:test:chat:111")
 	ctxB := WithSessionKey(context.Background(), "agent:test:chat:222")
@@ -2637,7 +2626,7 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 	tmuxAvailable(t)
 
 	name := "foci-test-reap"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	inst := &tmuxInstance{
 		watched:           make(map[string]*watchedSession),
@@ -2681,7 +2670,7 @@ func TestTmuxReapPreservesActiveSession(t *testing.T) {
 	tmuxAvailable(t)
 
 	name := "foci-test-reap-active"
-	defer tmuxCleanup(t, name)
+	tmuxSetup(t, name)
 
 	inst := &tmuxInstance{
 		watched:           make(map[string]*watchedSession),

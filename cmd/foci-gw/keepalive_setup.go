@@ -117,6 +117,9 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 		BranchFunc:        branchFn,
 		ManaMonitor:       manaMonitor,
 		WarningDispatcher: warningDispatcher,
+		HasActiveWorkFn: func() bool {
+			return inst.tmuxWatchCount != nil && inst.tmuxWatchCount() > 0
+		},
 		DrainFn: func() {
 			inst.ag.DrainRateLimitQueue(p.ctx)
 		},
