@@ -215,10 +215,6 @@ func NewChatSessionKey(agentID string, chatID int64) string {
 	return NewChatSession(agentID, chatID).String()
 }
 
-// Deprecated: use NewChatSessionKey instead. Kept for backward compatibility.
-func ChatSessionKey(agentID string, chatID int64) string {
-	return NewChatSessionKey(agentID, chatID)
-}
 
 // IndependentSessionKey constructs an independent session key string.
 // Uses current timestamp as both ID and version. Call this for HTTP or other independent sessions.

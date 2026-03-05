@@ -535,7 +535,11 @@ func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) 
 
 	parentKey := p.defaultSessionKey()
 	if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-		parentKey = telegram.SessionKeyForChat(p.acfg.ID, chatID)
+		if bot := p.botMgr.PrimaryBot(p.acfg.ID); bot != nil {
+			parentKey = bot.SessionKeyForChat(chatID)
+		} else {
+			parentKey = telegram.NewSessionKeyForChat(p.acfg.ID, chatID)
+		}
 	}
 	if parentKey == "" {
 		secBot.SetSessionKey("")

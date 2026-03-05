@@ -54,13 +54,19 @@ func handleWelcomeAndFirstRun( // nolint:unparam
 				if sk == "" {
 					// On first run, no Telegram message has arrived yet.
 					// Construct session key from first allowed user ID.
+					// Route through the bot's cache so the key is stable
+					// when the first real message arrives from this chat.
 					users := inst.agentCfg.AllowedUsers
 					if len(users) == 0 {
 						users = cfg.Telegram.AllowedUsers
 					}
 					if len(users) > 0 {
 						if chatID, err := strconv.ParseInt(users[0], 10, 64); err == nil {
-							sk = telegram.SessionKeyForChat(agentID, chatID)
+							if bot := botMgr.PrimaryBot(agentID); bot != nil {
+								sk = bot.SessionKeyForChat(chatID)
+							} else {
+								sk = telegram.NewSessionKeyForChat(agentID, chatID)
+							}
 						}
 					}
 				}

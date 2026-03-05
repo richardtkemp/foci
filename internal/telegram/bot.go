@@ -311,9 +311,16 @@ func (b *Bot) SessionKey() string {
 	return ""
 }
 
-// SessionKeyForChat returns the session key for a specific chat ID.
-func SessionKeyForChat(agentID string, chatID int64) string {
-	return session.ChatSessionKey(agentID, chatID)
+// NewSessionKeyForChat creates a NEW session key for a specific chat ID.
+// Each call generates a unique key. Use Bot.SessionKeyForChat for stable cached keys.
+func NewSessionKeyForChat(agentID string, chatID int64) string {
+	return session.NewChatSessionKey(agentID, chatID)
+}
+
+// SessionKeyForChat returns the stable, cached session key for a specific chat ID.
+// Creates a new key on first call for a given chat, then returns the cached value.
+func (b *Bot) SessionKeyForChat(chatID int64) string {
+	return b.sessionKeyForMsg(chatID)
 }
 
 // sessionKeyForMsg returns the session key for the message's chat.
@@ -327,7 +334,7 @@ func (b *Bot) sessionKeyForMsg(chatID int64) string {
 	b.chatKeysMu.RUnlock()
 
 	// Cache miss — generate and store new key
-	key := SessionKeyForChat(b.agentID, chatID)
+	key := NewSessionKeyForChat(b.agentID, chatID)
 	b.chatKeysMu.Lock()
 	b.chatSessionKeys[chatID] = key
 	b.chatKeysMu.Unlock()

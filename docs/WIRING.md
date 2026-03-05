@@ -768,7 +768,8 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 - Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `agent:ID:chat:CHATID`
 - `SessionKey()` — returns override key (secondary bots) or default chat session (primary bots)
 - `SetSessionKey()` — thread-safe override (multiball fork/done)
-- `SessionKeyForChat(agentID, chatID)` — public helper for session key derivation
+- `Bot.SessionKeyForChat(chatID)` — stable cached session key for a chat
+- `NewSessionKeyForChat(agentID, chatID)` — creates a NEW session key (uncached)
 - Default chat: first message sets the default; persisted in state store as `agent:ID:default_chat`
 - Username recording: persisted per chat for `/sessions list` display
 - `isSecondary` flag — enables `/done` handling, idle message rejection

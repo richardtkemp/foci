@@ -22,7 +22,7 @@ func tempIndex(t *testing.T) *SessionIndex {
 // Test helper: create new-format session keys
 // chatKey("bot", 123) → "bot/c123/1000000000"
 func chatKey(agentID string, chatID int64) string {
-	return ChatSessionKey(agentID, chatID)
+	return NewChatSessionKey(agentID, chatID)
 }
 
 // branchKey("bot/c123/1000000000") → "bot/c123/1000000000/b1000000001"
