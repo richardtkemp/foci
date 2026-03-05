@@ -13,7 +13,7 @@ import (
 )
 
 func TestExecEcho(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo hello world",
@@ -31,7 +31,7 @@ func TestExecEcho(t *testing.T) {
 
 func TestExecWorkDir(t *testing.T) {
 	dir := t.TempDir()
-	tool := NewExecTool(nil, nil, 0, nil, dir, nil)
+	tool := NewExecTool(nil, nil, 0, nil, dir, nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "pwd",
@@ -51,7 +51,7 @@ func TestExecWorkDir(t *testing.T) {
 }
 
 func TestExecWithTimeout(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -68,7 +68,7 @@ func TestExecWithTimeout(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "read -t 60 < /dev/null",
@@ -86,7 +86,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecFailedCommand(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "false",
@@ -102,7 +102,7 @@ func TestExecFailedCommand(t *testing.T) {
 }
 
 func TestExecStderr(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo stderr_msg >&2",
@@ -118,7 +118,7 @@ func TestExecStderr(t *testing.T) {
 }
 
 func TestExecInvalidParams(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
 	if err == nil {
 		t.Fatal("expected error for invalid params")
@@ -126,7 +126,7 @@ func TestExecInvalidParams(t *testing.T) {
 }
 
 func TestExecMultilineOutput(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "printf 'line1\nline2\nline3'",
@@ -144,7 +144,7 @@ func TestExecMultilineOutput(t *testing.T) {
 }
 
 func TestExecBackgroundMode(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":    "echo bg",
@@ -172,7 +172,7 @@ token = "secret-value-12345"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store, nil, 0, nil, "", nil)
+	tool := NewExecTool(store, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo {{secret:custom.token}}",
@@ -189,7 +189,7 @@ token = "secret-value-12345"
 
 func TestExecSecretTemplatesBlockedNoStore(t *testing.T) {
 	// Even without a store, regular secret templates should be rejected
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "curl -H 'Authorization: {{secret:api.key}}' https://example.com",
@@ -206,7 +206,7 @@ func TestExecSecretTemplatesBlockedNoStore(t *testing.T) {
 
 func TestExecBitwardenSecretsAllowed(t *testing.T) {
 	// Bitwarden refs (bw.*) should NOT be blocked — they're approval-gated
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo '{{secret:bw.aaaa-1111}}'",
@@ -226,7 +226,7 @@ func TestExecBitwardenSecretsAllowed(t *testing.T) {
 func TestExecMixedSecretsBlocked(t *testing.T) {
 	// A mix of regular and bitwarden refs should still be blocked
 	// (because regular refs are present)
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "curl -H '{{secret:api.key}}' -H '{{secret:bw.aaaa}}' https://example.com",
@@ -253,7 +253,7 @@ key = "value"
 		t.Fatalf("Load secrets: %v", err)
 	}
 
-	tool := NewExecTool(store, nil, 0, nil, "", nil)
+	tool := NewExecTool(store, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "cat secrets.toml",
@@ -268,10 +268,13 @@ key = "value"
 	}
 }
 
-func TestExecOutputNoTruncation(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+func TestExecOutputSpill(t *testing.T) {
+	// Large output spills to a temp file; result.Text contains head portion,
+	// ResultFile points to the full output on disk.
+	tmpDir := t.TempDir()
+	threshold := 1000
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, threshold, tmpDir)
 
-	// Generate output >100k chars — exec no longer truncates (guardToolResult handles it)
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "python3 -c 'print(\"x\" * 110000)'",
 		"timeout": 10,
@@ -281,17 +284,29 @@ func TestExecOutputNoTruncation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if strings.Contains(result.Text,"truncated") {
-		t.Errorf("exec should no longer truncate output (guardToolResult handles it)")
+	if result.ResultFile == "" {
+		t.Fatal("expected ResultFile to be set for large output")
 	}
-	if len(result.Text) < 110_000 {
-		t.Errorf("result length = %d, expected full output", len(result.Text))
+	if result.ResultSize < 110000 {
+		t.Errorf("ResultSize = %d, want >= 110000", result.ResultSize)
+	}
+	// Text should contain the head portion, not the full output
+	if len(result.Text) > threshold+500 { // some slack for formatting
+		t.Errorf("result.Text length = %d, expected roughly %d (head portion)", len(result.Text), threshold)
+	}
+	// Verify the full output exists on disk
+	data, err := os.ReadFile(result.ResultFile)
+	if err != nil {
+		t.Fatalf("read spill file: %v", err)
+	}
+	if len(data) < 110000 {
+		t.Errorf("spill file size = %d, want >= 110000", len(data))
 	}
 }
 
 func TestExecNilStoreWithTemplate(t *testing.T) {
 	// Even with nil store, secret templates should be blocked
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo '{{secret:test.key}}'",
@@ -311,7 +326,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	var called bool
 	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg string) {
 		called = true
-	}), "", nil)
+	}), "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -334,7 +349,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	completeCh := make(chan string, 1)
 	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg string) {
 		completeCh <- msg
-	}), "", nil)
+	}), "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "timeout 3 tail -f /dev/null",
@@ -370,7 +385,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	ch := make(chan result, 1)
 	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg string) {
 		ch <- result{sk, msg}
-	}), "", nil)
+	}), "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "timeout 3 tail -f /dev/null",
@@ -401,7 +416,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 
 func TestExecSecretInHTTPRequestAllowed(t *testing.T) {
 	// Secret refs inside foci_http_request should be allowed (passed as literals)
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": `foci_http_request --header "Authorization: Bearer {{secret:coolify.api_token}}" "https://example.com/api" | jq '.name'`,
@@ -416,7 +431,7 @@ func TestExecSecretInHTTPRequestAllowed(t *testing.T) {
 
 func TestExecSecretInHTTPRequestMultipleArgs(t *testing.T) {
 	// Multiple secret refs, all inside foci_http_request
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": `foci_http_request --header "Authorization: {{secret:api.token}}" --header "X-Key: {{secret:api.key}}" "https://example.com"`,
@@ -430,7 +445,7 @@ func TestExecSecretInHTTPRequestMultipleArgs(t *testing.T) {
 
 func TestExecSecretOutsideHTTPRequestBlocked(t *testing.T) {
 	// Secret ref after a pipe (outside foci_http_request scope) should be blocked
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": `foci_http_request --header "Authorization: {{secret:api.token}}" "https://example.com" | echo {{secret:api.key}}`,
@@ -447,7 +462,7 @@ func TestExecSecretOutsideHTTPRequestBlocked(t *testing.T) {
 
 func TestExecSecretInHTTPRequestAndBareBlocked(t *testing.T) {
 	// One secret in foci_http_request, another in a separate command — should block
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": `foci_http_request --header "{{secret:api.token}}" url && curl -H "{{secret:api.key}}" url2`,
@@ -461,7 +476,7 @@ func TestExecSecretInHTTPRequestAndBareBlocked(t *testing.T) {
 
 func TestExecSecretInHTTPRequestWithSemicolon(t *testing.T) {
 	// Secret ref after semicolon is a new command — should block
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": `foci_http_request url; echo {{secret:leak.me}}`,
@@ -475,7 +490,7 @@ func TestExecSecretInHTTPRequestWithSemicolon(t *testing.T) {
 
 func TestExecBareSecretStillBlocked(t *testing.T) {
 	// No foci_http_request at all — secret refs should be blocked as before
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": `curl -H "Authorization: {{secret:api.token}}" https://example.com`,
@@ -556,7 +571,7 @@ func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
 }
 
 func TestExecOutputModeSeparated(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":     "echo out && echo err >&2",
@@ -584,7 +599,7 @@ func TestExecOutputModeSeparated(t *testing.T) {
 }
 
 func TestExecOutputModeSeparatedStdoutOnly(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":     "echo hello",
@@ -612,7 +627,7 @@ func TestExecOutputModeSeparatedStdoutOnly(t *testing.T) {
 }
 
 func TestExecOutputModeSeparatedStderrOnly(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":     "echo err >&2",
@@ -637,7 +652,7 @@ func TestExecOutputModeSeparatedStderrOnly(t *testing.T) {
 }
 
 func TestExecOutputModeSeparatedFailure(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":     "echo before-fail; exit 42",
@@ -663,7 +678,7 @@ func TestExecOutputModeSeparatedFailure(t *testing.T) {
 
 func TestExecOutputModeCombinedDefault(t *testing.T) {
 	// Omitting output_mode should behave exactly like the original combined mode
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo out && echo err >&2",
@@ -688,7 +703,7 @@ func TestExecOutputModeCombinedDefault(t *testing.T) {
 }
 
 func TestExecSleepBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 5",
@@ -704,7 +719,7 @@ func TestExecSleepBlocked(t *testing.T) {
 }
 
 func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 30s",
@@ -720,7 +735,7 @@ func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
 }
 
 func TestExecSleepCaseInsensitive(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "SLEEP 10",
@@ -733,7 +748,7 @@ func TestExecSleepCaseInsensitive(t *testing.T) {
 }
 
 func TestExecSleepWithLeadingWhitespaceBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "  sleep 5",
@@ -746,7 +761,7 @@ func TestExecSleepWithLeadingWhitespaceBlocked(t *testing.T) {
 }
 
 func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "sleep 5 && do_thing",
@@ -766,7 +781,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 		completeCh <- msg
 	})
 	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
-	tool := NewExecTool(nil, nil, 10, notifier, "", nil)
+	tool := NewExecTool(nil, nil, 10, notifier, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo ctx-cancel-result; timeout 3 tail -f /dev/null",
@@ -807,7 +822,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 }
 
 func TestExecSleepNotBlockedInMiddle(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil)
+	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo 'going to sleep'",

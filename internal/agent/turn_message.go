@@ -56,14 +56,17 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
 	var contentBlocks []anthropic.ContentBlock
 	for _, img := range images {
-		encoded := base64.StdEncoding.EncodeToString(img.Data)
-		if img.MediaType == "application/pdf" {
-			if len(img.Data) > maxPDFSize {
+		data, mediaType := img.Data, img.MediaType
+		if mediaType == "application/pdf" {
+			if len(data) > maxPDFSize {
 				continue // over-size PDFs already have save-to-disk annotation
 			}
-			contentBlocks = append(contentBlocks, anthropic.DocumentBlock(img.MediaType, encoded))
+			encoded := base64.StdEncoding.EncodeToString(data)
+			contentBlocks = append(contentBlocks, anthropic.DocumentBlock(mediaType, encoded))
 		} else {
-			contentBlocks = append(contentBlocks, anthropic.ImageBlock(img.MediaType, encoded))
+			data, mediaType = maybeDownscaleImage(data, mediaType, a.MaxImagePixels)
+			encoded := base64.StdEncoding.EncodeToString(data)
+			contentBlocks = append(contentBlocks, anthropic.ImageBlock(mediaType, encoded))
 		}
 	}
 	contentBlocks = append(contentBlocks, anthropic.ContentBlock{Type: "text", Text: annotatedMessage})

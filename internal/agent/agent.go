@@ -103,6 +103,8 @@ type Agent struct {
 	SummaryContextTurns         int                             // recent conversation turns for summary context
 	SummaryContextChars         int                             // max chars of context to send to Haiku
 	MaxSummaryChars             int                             // max chars to auto-summarise (skip Haiku above this)
+	MaxSummaryInputChars        int                             // max chars of tool result embedded in summary prompt (0 = no limit)
+	MaxImagePixels              int                             // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise               bool                            // enable auto-summarise of oversized tool results (default true)
 	Warnings                    *warnings.Queue                 // nil disables warning injection into session
 	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
@@ -525,41 +527,51 @@ func detectContentExtension(content string) string {
 	return ".txt"
 }
 
-func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName string, result string, messages []anthropic.Message) string {
+func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName string, tr tools.ToolResult, messages []anthropic.Message) string {
+	result := tr.Text
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
 	}
 
-	if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
-		a.logger().Warnf("session=%s create tool result temp dir: %v", sessionKey, err)
-		return result
+	// If the tool already spilled to a file, use that path instead of writing again.
+	fpath := tr.ResultFile
+	if fpath == "" {
+		if err := os.MkdirAll(a.ToolResultTempDir, 0o700); err != nil {
+			a.logger().Warnf("session=%s create tool result temp dir: %v", sessionKey, err)
+			return result
+		}
+
+		var randBytes [8]byte
+		if _, err := rand.Read(randBytes[:]); err != nil {
+			a.logger().Warnf("session=%s generate random filename: %v", sessionKey, err)
+			return result
+		}
+		ext := detectContentExtension(result)
+		filename := fmt.Sprintf("tool-result-%s-%s%s", toolName, hex.EncodeToString(randBytes[:]), ext)
+		fpath = filepath.Join(a.ToolResultTempDir, filename)
+
+		if err := os.WriteFile(fpath, []byte(result), 0o600); err != nil {
+			a.logger().Warnf("session=%s write tool result to file: %v", sessionKey, err)
+			return result
+		}
 	}
 
-	var randBytes [8]byte
-	if _, err := rand.Read(randBytes[:]); err != nil {
-		a.logger().Warnf("session=%s generate random filename: %v", sessionKey, err)
-		return result
-	}
-	ext := detectContentExtension(result)
-	filename := fmt.Sprintf("tool-result-%s-%s%s", toolName, hex.EncodeToString(randBytes[:]), ext)
-	fpath := filepath.Join(a.ToolResultTempDir, filename)
-
-	if err := os.WriteFile(fpath, []byte(result), 0o600); err != nil {
-		a.logger().Warnf("session=%s write tool result to file: %v", sessionKey, err)
-		return result
+	resultLen := len(result)
+	if tr.ResultSize > 0 {
+		resultLen = int(tr.ResultSize) // use the full size, not the truncated head
 	}
 
-	a.logger().Debugf("tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, len(result), a.MaxResultChars, fpath)
+	a.logger().Debugf("tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, resultLen, a.MaxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
-	if a.AutoSummarise && client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || len(result) <= a.MaxSummaryChars) {
+	if a.AutoSummarise && client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
 		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, result, messages, fpath); summary != "" {
 			return summary
 		}
 	}
 
 	hint := guardHint(result, fpath)
-	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", len(result), a.MaxResultChars, fpath, hint)
+	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", resultLen, a.MaxResultChars, fpath, hint)
 }
 
 // summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
@@ -582,13 +594,21 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 
 	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
 
+	// Truncate result text embedded in summary prompt to cap memory and tokens.
+	// The full result is already on disk at savedPath.
+	summaryInput := result
+	if a.MaxSummaryInputChars > 0 && len(summaryInput) > a.MaxSummaryInputChars {
+		summaryInput = summaryInput[:a.MaxSummaryInputChars] +
+			fmt.Sprintf("\n[... truncated — full output is %d chars, only first %d shown]", len(result), a.MaxSummaryInputChars)
+	}
+
 	var userText string
 	if convContext != "" {
 		userText = fmt.Sprintf("<context>\n%s\n</context>\n\n<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise this tool output. First give a general overview, then list the parts most relevant to the conversation context with exact quotes and their addresses (line numbers, section headers, JSON paths, or key names) so the reader knows exactly where to look for details.",
-			convContext, toolName, result)
+			convContext, toolName, summaryInput)
 	} else {
 		userText = fmt.Sprintf("<tool_output tool=%q>\n%s\n</tool_output>\n\nSummarise this tool output. First give a general overview, then list the key sections or data points with exact quotes and their addresses (line numbers, section headers, JSON paths, or key names) so the reader knows exactly where to look for details.",
-			toolName, result)
+			toolName, summaryInput)
 	}
 
 	req := &anthropic.MessageRequest{
