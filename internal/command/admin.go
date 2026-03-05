@@ -122,21 +122,43 @@ type PromptsCmdDeps struct {
 }
 
 // NewPromptsCommand returns a /prompts command showing prompt config and files.
-// Subcommands: reinstall, diff <name>.
+// Subcommands: list, reinstall, diff <name>.
 func NewPromptsCommand(deps PromptsCmdDeps) *Command {
 	return &Command{
 		Name:        "prompts",
-		Description: "Show configured prompts and prompt files on disk",
+		Description: "Prompt config. Subcommands: list, reinstall, diff",
 		Category:    "diagnostics",
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "list", Data: "list"},
+				{Label: "reinstall", Data: "reinstall"},
+				{Label: "diff", Data: "diff"},
+			}
+		},
+		ChainKeyboard: func(ctx context.Context, subcommand string) []KeyboardOption {
+			if subcommand != "diff" {
+				return nil
+			}
+			data := deps.DataFn()
+			var opts []KeyboardOption
+			for _, p := range data.Prompts {
+				if _, ok := data.ResolvedTexts[p.Label]; ok {
+					opts = append(opts, KeyboardOption{Label: p.Label, Data: p.Label})
+				}
+			}
+			return opts
+		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			data := deps.DataFn()
 			parts := strings.Fields(args)
 
 			if len(parts) == 0 {
-				return promptsDisplay(ctx, data), nil
+				return "Usage: /prompts list | reinstall | diff <name>", nil
 			}
 
 			switch parts[0] {
+			case "list":
+				return promptsDisplay(ctx, data), nil
 			case "reinstall":
 				return promptsReinstall(data)
 			case "diff":
@@ -145,7 +167,7 @@ func NewPromptsCommand(deps PromptsCmdDeps) *Command {
 				}
 				return promptsDiff(ctx, data, strings.Join(parts[1:], " "), deps)
 			default:
-				return "Unknown subcommand. Usage: /prompts [reinstall | diff <name>]", nil
+				return "Unknown subcommand. Usage: /prompts list | reinstall | diff <name>", nil
 			}
 		},
 	}
