@@ -36,7 +36,7 @@ func newAsyncNotifier(
 			if bot != nil {
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
-						if err := bot.SendText(text); err != nil {
+						if err := bot.SendInjected(text); err != nil {
 							log.Errorf("async_notify", "intermediate telegram delivery: %v", err)
 						}
 					},
@@ -56,7 +56,7 @@ func newAsyncNotifier(
 				log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", agentID, target)
 				return
 			}
-			if err := bot.SendText(resp); err != nil {
+			if err := bot.SendInjected(resp); err != nil {
 				log.Errorf("async_notify", "telegram delivery: %v", err)
 			}
 		}()
@@ -103,11 +103,11 @@ func newSessionNotifyFn(
 
 			chatID := tools.ChatIDFromSessionKey(targetSessionKey)
 			if chatID != 0 {
-				if err := bot.SendTextToChat(chatID, resp); err != nil {
+				if err := bot.SendInjectedToChat(chatID, resp); err != nil {
 					log.Errorf("session_notify", "telegram delivery to chat %d: %v", chatID, err)
 				}
 			} else {
-				if err := bot.SendText(resp); err != nil {
+				if err := bot.SendInjected(resp); err != nil {
 					log.Errorf("session_notify", "telegram delivery: %v", err)
 				}
 			}

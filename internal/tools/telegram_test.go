@@ -53,7 +53,7 @@ type mockChatDataCall struct {
 	data   []byte
 }
 
-func (m *mockTelegramSender) SendText(text string) error {
+func (m *mockTelegramSender) SendInjected(text string) error {
 	m.textCalls = append(m.textCalls, text)
 	return m.textErr
 }
@@ -88,7 +88,7 @@ func (m *mockTelegramSender) SendAnimation(filePath string) error {
 	return m.animationErr
 }
 
-func (m *mockTelegramSender) SendTextToChat(chatID int64, text string) error {
+func (m *mockTelegramSender) SendInjectedToChat(chatID int64, text string) error {
 	m.chatTextCalls = append(m.chatTextCalls, mockChatCall{chatID, text})
 	return m.textErr
 }
@@ -352,7 +352,7 @@ func TestSendTelegramChatRouting(t *testing.T) {
 		t.Errorf("text = %q", mock.chatTextCalls[0].value)
 	}
 	if len(mock.textCalls) != 0 {
-		t.Errorf("default SendText should not be called, got %d calls", len(mock.textCalls))
+		t.Errorf("default SendInjected should not be called, got %d calls", len(mock.textCalls))
 	}
 }
 
@@ -423,7 +423,7 @@ func TestSendTelegramFallbackNoChat(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should use default SendText, not chat-targeted
+	// Should use default SendInjected, not chat-targeted
 	if len(mock.textCalls) != 1 {
 		t.Fatalf("expected 1 default textCall, got %d", len(mock.textCalls))
 	}

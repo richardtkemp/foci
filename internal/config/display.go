@@ -64,6 +64,9 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	if cfg.Defaults.DisplayWidth != nil {
 		add("defaults", "display_width", *cfg.Defaults.DisplayWidth)
 	}
+	if cfg.Defaults.InjectedMessageHeader != "" {
+		add("defaults", "injected_message_header", cfg.Defaults.InjectedMessageHeader)
+	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		add("defaults", "system_files", cfg.Defaults.SystemFiles)
 	}
@@ -296,6 +299,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.ReceivedFilesDir != "" {
 		add("received_files_dir", agent.ReceivedFilesDir)
 	}
+	if agent.InjectedMessageHeader != "" {
+		add("injected_message_header", agent.InjectedMessageHeader)
+	}
 	if len(agent.AllowedUsers) > 0 {
 		add("allowed_users", agent.AllowedUsers)
 	}
@@ -409,6 +415,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	}
 	if cfg.Defaults.DisplayWidth != nil {
 		addDefault("display_width", *cfg.Defaults.DisplayWidth, false)
+	}
+	if cfg.Defaults.InjectedMessageHeader != "" {
+		addDefault("injected_message_header", cfg.Defaults.InjectedMessageHeader, false)
 	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		addDefault("system_files", cfg.Defaults.SystemFiles, false)

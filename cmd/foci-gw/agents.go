@@ -81,6 +81,11 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 	} else if cfg.Telegram.ReceivedFilesDir != "" {
 		bot.SetReceivedFilesDir(cfg.Telegram.ReceivedFilesDir)
 	}
+	if acfg.InjectedMessageHeader != "" {
+		bot.SetInjectedMessageHeader(acfg.InjectedMessageHeader)
+	} else {
+		bot.SetInjectedMessageHeader(cfg.Defaults.InjectedMessageHeader)
+	}
 }
 
 // checkActivityGate parses if_active/if_inactive durations, checks them against
