@@ -79,7 +79,10 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 	var usageClient *anthropic.UsageClient
 	if ccSrc != nil {
 		usageClient = anthropic.NewUsageClientWithFunc(ccSrc.Token)
-		log.Infof("main", "usage client configured (CC credentials)")
+		if ttl, err := time.ParseDuration(cfg.Anthropic.UsageCacheTTL); err == nil && ttl > 0 {
+			usageClient.SetCacheTTL(ttl)
+		}
+		log.Infof("main", "usage client configured (CC credentials, cache_ttl=%s)", cfg.Anthropic.UsageCacheTTL)
 	}
 
 	// Source 1: setup-token (from `foci auth` / `claude setup-token`)

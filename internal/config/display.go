@@ -225,6 +225,7 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	// anthropic
 	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
+	add("anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL)
 
 	// message_transforms
 	if len(cfg.MessageTransforms) > 0 {
@@ -314,7 +315,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	add("background.interval", agent.Background.Interval)
 	add("background.prompt", agent.Background.Prompt)
 	add("background.invest_interval", agent.Background.InvestInterval)
-	add("background.mana_staleness_timeout", agent.Background.ManaStalenessTimeout)
 	add("memory_formation.interval", agent.MemoryFormation.Interval)
 	if agent.MemoryFormation.IntervalEnabled != nil {
 		add("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
@@ -420,7 +420,6 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	addGlobal("background", "interval", cfg.Background.Interval)
 	addGlobal("background", "prompt", cfg.Background.Prompt)
 	addGlobal("background", "invest_interval", cfg.Background.InvestInterval)
-	addGlobal("background", "mana_staleness_timeout", cfg.Background.ManaStalenessTimeout)
 	addGlobal("memory_formation", "interval", cfg.MemoryFormation.Interval)
 	addGlobal("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
 	if cfg.MemoryFormation.IntervalEnabled != nil {
@@ -564,6 +563,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
 	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
+	addGlobal("anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL)
 	if len(cfg.MessageTransforms) > 0 {
 		addGlobal("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
 	}
@@ -668,6 +668,7 @@ type displayTelegram struct {
 type displayAnthropic struct {
 	HTTPTimeout     string `toml:"http_timeout"`
 	UsageAPITimeout string `toml:"usage_api_timeout"`
+	UsageCacheTTL   string `toml:"usage_cache_ttl"`
 }
 
 // FormatConfigTOML returns a TOML-marshalable representation of the running
@@ -700,6 +701,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Anthropic: displayAnthropic{
 			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,
 			UsageAPITimeout: cfg.Anthropic.UsageAPITimeout,
+			UsageCacheTTL:   cfg.Anthropic.UsageCacheTTL,
 		},
 	}
 

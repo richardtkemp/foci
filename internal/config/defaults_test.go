@@ -155,7 +155,7 @@ func TestKeepaliveConfigMergeDefaults(t *testing.T) {
 }
 
 func TestBackgroundConfigMergeDefaults(t *testing.T) {
-	global := BackgroundConfig{Interval: "5m", Prompt: "bg.md", InvestInterval: "30m", ManaStalenessTimeout: "10m"}
+	global := BackgroundConfig{Interval: "5m", Prompt: "bg.md", InvestInterval: "30m"}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
 		bg := BackgroundConfig{}

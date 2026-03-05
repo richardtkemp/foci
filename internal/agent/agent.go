@@ -18,7 +18,6 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/prompts"
 	"foci/internal/provider"
@@ -142,11 +141,6 @@ type Agent struct {
 	turnLocks       map[string]*sync.Mutex // per-session turn serialization
 	metaMu          sync.Mutex
 	meta            map[string]*sessionMeta // per-session metadata
-	manaCacheMu     sync.Mutex
-	manaCached      string
-	manaResetCached string
-	manaGoodCached  bool
-	manaCacheTime   time.Time
 }
 
 // TransformMessage applies compiled message transforms to the text.
@@ -440,63 +434,6 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	if len(restored) > 0 {
 		a.logger().Infof("restored session overrides for %s: %s", sessionKey, strings.Join(restored, ", "))
 	}
-}
-
-// manaString returns a cached mana percentage string (e.g. "75%").
-// Returns empty string if UsageClient is nil or on error.
-func (a *Agent) manaString() string {
-	mana, _, _ := a.manaAndReset()
-	return mana
-}
-
-// manaAndReset returns cached mana percentage, reset time strings, and whether
-// mana is "good" (above invest threshold). Returns empty strings and false if
-// UsageClient is nil or on error.
-func (a *Agent) manaAndReset() (pct, reset string, good bool) {
-	if a.UsageClient == nil {
-		return "", "", false
-	}
-
-	a.manaCacheMu.Lock()
-	defer a.manaCacheMu.Unlock()
-
-	// Cache for 5 minutes
-	if time.Since(a.manaCacheTime) < 5*time.Minute && a.manaCached != "" {
-		return a.manaCached, a.manaResetCached, a.manaGoodCached
-	}
-
-	usage, err := a.UsageClient.GetUsage(context.Background())
-	if err != nil {
-		a.logger().Debugf("mana fetch: %v", err)
-		// Return stale values only if cache is recent; otherwise return empty
-		// to avoid displaying dangerously outdated mana readings.
-		if time.Since(a.manaCacheTime) > 10*time.Minute {
-			return "", "", false
-		}
-		return a.manaCached, a.manaResetCached, a.manaGoodCached
-	}
-
-	a.manaCached = mana.FormatPercent(usage)
-	a.manaResetCached = mana.FormatReset(usage)
-	a.manaGoodCached = a.computeManaGood(usage)
-	a.manaCacheTime = time.Now()
-	return a.manaCached, a.manaResetCached, a.manaGoodCached
-}
-
-// computeManaGood evaluates whether current mana is above the invest threshold.
-func (a *Agent) computeManaGood(usage *anthropic.UsageResponse) bool {
-	if a.ManaInvestInterval == 0 {
-		return false
-	}
-	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
-		return false
-	}
-	manaVal := mana.FromUtilization(*usage.FiveHour.Utilization)
-	var resetsAt time.Time
-	if usage.FiveHour.ResetsAt != nil {
-		resetsAt, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
-	}
-	return mana.IsGood(manaVal, resetsAt, a.ManaInvestInterval, time.Now())
 }
 
 func (a *Agent) getSessionMeta(key string) *sessionMeta {

@@ -56,11 +56,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	)
 
 	// Mana monitor for background work throttling
-	manaStaleness, err := time.ParseDuration(acfg.Background.ManaStalenessTimeout)
-	if err != nil || manaStaleness <= 0 {
-		manaStaleness = 10 * time.Minute
-	}
-	manaMonitor := mana.NewMonitor(p.usageClient, manaStaleness)
+	manaMonitor := mana.NewMonitor(p.usageClient)
 
 	// Proactive warning dispatcher
 	var warningDispatcher *warnings.Dispatcher

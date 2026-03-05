@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/anthropic"
 	"foci/internal/log"
+	"foci/internal/mana"
 )
 
 // prepareUserMessage builds the annotated user message with mana warnings,
@@ -14,17 +15,17 @@ import (
 func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []Attachment) anthropic.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	mana, manaReset, manaGood := a.manaAndReset()
+	manaStr, manaReset, manaGood := mana.ManaAndReset(a.UsageClient, a.ManaInvestInterval)
 
 	// Check mana thresholds and notify user for active conversations only
 	var manaRestoreNote string
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
-		a.ManaWatcher.CheckAndWarn(mana, manaReset, func(warn string) {
+		a.ManaWatcher.CheckAndWarn(manaStr, manaReset, func(warn string) {
 			if a.ManaWarnFunc != nil {
 				a.ManaWarnFunc(warn)
 			}
 		})
-		if msg := a.ManaWatcher.CheckRestore(mana); msg != "" {
+		if msg := a.ManaWatcher.CheckRestore(manaStr); msg != "" {
 			manaRestoreNote = "[" + msg + "]\n"
 			log.Infof("mana", "restore: %s", msg)
 		}
@@ -42,7 +43,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 		}
 	}
 
-	metaPrefix := buildMetaPrefix(now, turnModel, mana, manaGood, sm)
+	metaPrefix := buildMetaPrefix(now, turnModel, manaStr, manaGood, sm)
 	reminderBlock := a.collectReminders(sessionKey)
 	msgBody := manaRestoreNote + imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
