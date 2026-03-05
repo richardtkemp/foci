@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"foci/anthropic"
-	oai "foci/openai"
+	"foci/internal/anthropic"
+	oai "foci/internal/openai"
 )
 
 type mockModelLister struct {

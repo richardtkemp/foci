@@ -3,7 +3,7 @@ package main
 import (
 	"time"
 
-	"foci/config"
+	"foci/internal/config"
 )
 
 // resolveInt returns the per-agent value if non-zero, otherwise global.

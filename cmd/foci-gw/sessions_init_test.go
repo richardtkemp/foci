@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"foci/session"
-	"foci/state"
+	"foci/internal/session"
+	"foci/internal/state"
 )
 
 // helper: create a state.Store pre-loaded with key/value pairs.

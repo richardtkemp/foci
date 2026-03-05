@@ -1,6 +1,4 @@
-/foci
-/foci-gw
-/foci-call
+/bin
 /migrate-sessions
 foci.toml
 sessions/
@@ -23,4 +21,4 @@ conversation.db-shm
 .claude/
 coverage.out
 coverage.html
-tools/logs/tmux.debug
+internal/tools/logs/tmux.debug

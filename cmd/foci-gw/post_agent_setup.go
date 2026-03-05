@@ -7,17 +7,17 @@ import (
 	"strings"
 	"time"
 
-	"foci/command"
-	"foci/config"
-	"foci/log"
-	"foci/resources"
-	"foci/secrets"
-	"foci/session"
-	"foci/startup"
-	"foci/state"
-	"foci/telegram"
-	"foci/tools"
-	"foci/voice"
+	"foci/internal/command"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/resources"
+	"foci/internal/secrets"
+	"foci/internal/session"
+	"foci/internal/startup"
+	"foci/internal/state"
+	"foci/internal/telegram"
+	"foci/internal/tools"
+	"foci/internal/voice"
 )
 
 // setupSharedMultiball creates shared multiball bots available to any agent.

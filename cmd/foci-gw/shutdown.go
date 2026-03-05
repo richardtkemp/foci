@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"foci/gemini"
-	"foci/log"
-	"foci/startup"
-	"foci/state"
-	"foci/telegram"
+	"foci/internal/gemini"
+	"foci/internal/log"
+	"foci/internal/startup"
+	"foci/internal/state"
+	"foci/internal/telegram"
 )
 
 // runShutdown performs the graceful shutdown sequence after a signal is received.

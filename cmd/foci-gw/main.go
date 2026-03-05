@@ -14,14 +14,14 @@ import (
 	"syscall"
 	"time"
 
-	"foci/anthropic"
-	"foci/command"
-	"foci/config"
-	"foci/log"
-	"foci/memory"
-	oai "foci/openai"
-	"foci/secrets"
-	"foci/telegram"
+	"foci/internal/anthropic"
+	"foci/internal/command"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/memory"
+	oai "foci/internal/openai"
+	"foci/internal/secrets"
+	"foci/internal/telegram"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."

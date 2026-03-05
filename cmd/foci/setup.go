@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"foci/anthropic"
-	"foci/config"
-	"foci/provision"
-	"foci/secrets"
+	"foci/internal/anthropic"
+	"foci/internal/config"
+	"foci/internal/provision"
+	"foci/internal/secrets"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )

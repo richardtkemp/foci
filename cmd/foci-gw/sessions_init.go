@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"foci/config"
-	"foci/log"
-	"foci/session"
-	"foci/state"
+	"foci/internal/config"
+	"foci/internal/log"
+	"foci/internal/session"
+	"foci/internal/state"
 )
 
 type sessionInfra struct {

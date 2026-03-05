@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"foci/agent"
-	"foci/config"
-	"foci/memory"
-	"foci/secrets"
-	"foci/session"
-	"foci/telegram"
+	"foci/internal/agent"
+	"foci/internal/config"
+	"foci/internal/memory"
+	"foci/internal/secrets"
+	"foci/internal/session"
+	"foci/internal/telegram"
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {
