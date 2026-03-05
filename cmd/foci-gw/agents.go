@@ -194,14 +194,17 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// sessionKeyFromCtx resolves the session key from a command/tool context.
 	// Priority: (1) tools.SessionKeyFromContext (set by agent tool execution),
-	// (2) command.ChatIDKey (set by Telegram command dispatch),
+	// (2) command.ChatIDKey via primary bot cache (stable across calls),
 	// (3) defaultSessionKey fallback.
 	sessionKeyFromCtx := func(ctx context.Context) string {
 		if sk := tools.SessionKeyFromContext(ctx); sk != "" {
 			return sk
 		}
 		if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-			return telegram.SessionKeyForChat(acfg.ID, chatID)
+			if bot := p.botMgr.PrimaryBot(acfg.ID); bot != nil {
+				return bot.SessionKeyForChat(chatID)
+			}
+			return telegram.NewSessionKeyForChat(acfg.ID, chatID)
 		}
 		return defaultSessionKey()
 	}

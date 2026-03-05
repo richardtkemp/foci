@@ -250,7 +250,7 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 		// Voice sessions use chat IDs (treat voice chat ID as regular chat)
 	// Use a generated ID based on connection for voice-only sessions
 	voiceChatID := int64(time.Now().Unix())
-	c.sessionKey = session.ChatSessionKey(sel.AgentID, voiceChatID)
+	c.sessionKey = session.NewChatSessionKey(sel.AgentID, voiceChatID)
 		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	}
 

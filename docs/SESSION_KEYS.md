@@ -162,7 +162,7 @@ For incoming messages, use the cached current version.
 
 ```go
 // Create new chat session
-key := session.ChatSessionKey("main", chatID)
+key := session.NewChatSessionKey("main", chatID)
 
 // Create new independent session
 key := session.IndependentSessionKey("main")

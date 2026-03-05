@@ -1653,16 +1653,16 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 
 // --- Per-chat session tests ---
 
-func TestSessionKeyForChat(t *testing.T) {
-	key := SessionKeyForChat("fotini", 123456789)
+func TestNewSessionKeyForChat(t *testing.T) {
+	key := NewSessionKeyForChat("fotini", 123456789)
 	if !strings.HasPrefix(key, "fotini/c123456789/") {
 		t.Errorf("got %q, want prefix %q", key, "fotini/c123456789/")
 	}
 }
 
-func TestSessionKeyForChat_DifferentChats(t *testing.T) {
-	k1 := SessionKeyForChat("fotini", 111)
-	k2 := SessionKeyForChat("fotini", 222)
+func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
+	k1 := NewSessionKeyForChat("fotini", 111)
+	k2 := NewSessionKeyForChat("fotini", 222)
 	if k1 == k2 {
 		t.Error("different chat IDs should produce different session keys")
 	}
