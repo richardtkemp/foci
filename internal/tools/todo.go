@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
+	"foci/internal/display"
 	"foci/internal/memory"
 )
 
@@ -322,39 +322,14 @@ func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) 
 
 func formatTodoTimestamp(item memory.TodoItem) string {
 	if (item.Status == "done" || item.Status == "dropped") && item.CompletedAt != nil {
-		return "(" + item.Status + " " + relativeTime(*item.CompletedAt) + ")"
+		return "(" + item.Status + " " + display.RelativeTime(*item.CompletedAt) + ")"
 	}
 	if !item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() && !item.UpdatedAt.Equal(item.CreatedAt) {
-		return "(updated " + relativeTime(item.UpdatedAt) + ")"
+		return "(updated " + display.RelativeTime(item.UpdatedAt) + ")"
 	}
-	return "(created " + relativeTime(item.CreatedAt) + ")"
+	return "(created " + display.RelativeTime(item.CreatedAt) + ")"
 }
 
-func relativeTime(t time.Time) string {
-	d := time.Since(t)
-	if d < time.Minute {
-		return "just now"
-	}
-	if d < time.Hour {
-		m := int(d.Minutes())
-		if m == 1 {
-			return "1m ago"
-		}
-		return fmt.Sprintf("%dm ago", m)
-	}
-	if d < 24*time.Hour {
-		h := int(d.Hours())
-		if h == 1 {
-			return "1h ago"
-		}
-		return fmt.Sprintf("%dh ago", h)
-	}
-	days := int(d.Hours() / 24)
-	if days == 1 {
-		return "1d ago"
-	}
-	return fmt.Sprintf("%dd ago", days)
-}
 
 func resolveIDs(id int64, ids []int64) ([]int64, error) {
 	if id != 0 && len(ids) > 0 {

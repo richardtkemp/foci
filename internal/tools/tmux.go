@@ -18,7 +18,7 @@ import (
 	"foci/internal/log"
 	"foci/prompts"
 	"foci/internal/state"
-	"foci/internal/table"
+	"foci/internal/display"
 )
 
 var tmuxCounter uint64
@@ -765,7 +765,10 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		name := parts[0]
 		windows := parts[1]
 		createdUnix, _ := strconv.ParseInt(parts[2], 10, 64)
-		age := formatTmuxAge(createdUnix)
+		age := "?"
+		if createdUnix != 0 {
+			age = display.FormatDuration(time.Since(time.Unix(createdUnix, 0)))
+		}
 
 		storedKey, isOwned := ownedNames[name]
 		if isOwned {
@@ -774,12 +777,8 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 
 		// Owner: extract agent ID from session key.
 		owner := "-"
-		if isOwned && storedKey != "" {
-			if idx := strings.Index(storedKey, "/"); idx > 0 {
-				owner = storedKey[:idx]
-			} else {
-				owner = storedKey
-			}
+		if isOwned {
+			owner = extractOwner(storedKey)
 		}
 
 		watchInfo := "-"
@@ -802,33 +801,33 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		inst.clearStaleOwned()
 	}
 
-	cols := []table.Column{
+	cols := []display.Column{
 		{Header: "SESSION"},
-		{Header: "W", Align: table.AlignRight},
-		{Header: "AGE", Align: table.AlignRight},
-		{Header: "STATUS"},
+		{Header: "W", Align: display.AlignRight},
+		{Header: "AGE", Align: display.AlignRight},
+		{Header: "OWNER"},
 		{Header: "WATCH"},
 	}
-	return TextResult(table.Format(cols, rows)), nil
+	return TextResult(display.Format(cols, rows)), nil
 }
 
-// formatTmuxAge converts a Unix timestamp to a human-readable age string.
-func formatTmuxAge(createdUnix int64) string {
-	if createdUnix == 0 {
-		return "?"
+// extractOwner returns the agent ID from a session key, or "self" if unknown.
+// Handles "agent:<id>:..." and "<id>/..." formats.
+func extractOwner(sessionKey string) string {
+	if sessionKey == "" {
+		return "self"
 	}
-	created := time.Unix(createdUnix, 0)
-	age := time.Since(created)
-	if age < time.Minute {
-		return fmt.Sprintf("%ds", int(age.Seconds()))
+	if strings.HasPrefix(sessionKey, "agent:") {
+		rest := sessionKey[len("agent:"):]
+		if idx := strings.Index(rest, ":"); idx > 0 {
+			return rest[:idx]
+		}
+		return rest
 	}
-	if age < time.Hour {
-		return fmt.Sprintf("%dm", int(age.Minutes()))
+	if idx := strings.Index(sessionKey, "/"); idx > 0 {
+		return sessionKey[:idx]
 	}
-	if age < 24*time.Hour {
-		return fmt.Sprintf("%dh %dm", int(age.Hours()), int(age.Minutes())%60)
-	}
-	return fmt.Sprintf("%dd %dh", int(age.Hours())/24, int(age.Hours())%24)
+	return sessionKey
 }
 
 func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, error) {

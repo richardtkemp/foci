@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/table"
+	"foci/internal/display"
 )
 type apiEntry struct {
 	Timestamp    time.Time `json:"ts"`
@@ -113,7 +113,7 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 
 			// Uptime
 			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s (started %s)\n",
-				formatDuration(info.Uptime),
+				display.FormatDuration(info.Uptime),
 				info.StartTime.UTC().Format("15:04:05Z"))
 
 			// Context
@@ -125,9 +125,9 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 					remaining = 0
 				}
 				fmt.Fprintf(&sb, "\n📈 Context: %.1f%% (%s / %s tokens)\n",
-					pct, formatCommas(contextTokens), formatCommas(info.ContextLimit))
+					pct, display.FormatCommas(contextTokens), display.FormatCommas(info.ContextLimit))
 				fmt.Fprintf(&sb, "   Compaction at %.0f%% (%sk tokens remaining)\n",
-					info.CompactThreshold*100, formatCommas(remaining/1000))
+					info.CompactThreshold*100, display.FormatCommas(remaining/1000))
 			}
 
 			// Cost
@@ -138,25 +138,6 @@ func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
 			return strings.TrimRight(sb.String(), "\n"), nil
 		},
 	}
-}
-
-// formatCommas formats an integer with comma separators (e.g. 32793 → "32,793").
-func formatCommas(n int) string {
-	s := strconv.Itoa(n)
-	if n < 0 {
-		return "-" + formatCommas(-n)
-	}
-	if len(s) <= 3 {
-		return s
-	}
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result.WriteByte(',')
-		}
-		result.WriteRune(c)
-	}
-	return result.String()
 }
 
 
@@ -213,28 +194,28 @@ func NewCacheCommand(apiLogPath string) *Command {
 				}
 				rows[i] = cacheRow{
 					time:   e.Timestamp.Format("15:04:05"),
-					input:  formatCommas(e.Input),
-					cRead:  formatCommas(e.CacheRead),
-					cWrite: formatCommas(e.CacheWrite),
+					input:  display.FormatCommas(e.Input),
+					cRead:  display.FormatCommas(e.CacheRead),
+					cWrite: display.FormatCommas(e.CacheWrite),
 					cost:   fmt.Sprintf("$%.3f", e.CostUSD),
 					hitPct: fmt.Sprintf("%.0f%%", hitRate),
 				}
 			}
 
-			cols := []table.Column{
+			cols := []display.Column{
 				{Header: "Time"},
-				{Header: "Input", Align: table.AlignRight},
-				{Header: "CacheRead", Align: table.AlignRight},
-				{Header: "CacheWrite", Align: table.AlignRight},
-				{Header: "Cost", Align: table.AlignRight},
-				{Header: "Hit%", Align: table.AlignRight},
+				{Header: "Input", Align: display.AlignRight},
+				{Header: "CacheRead", Align: display.AlignRight},
+				{Header: "CacheWrite", Align: display.AlignRight},
+				{Header: "Cost", Align: display.AlignRight},
+				{Header: "Hit%", Align: display.AlignRight},
 			}
 			tableRows := make([][]string, len(rows))
 			for i, r := range rows {
 				tableRows[i] = []string{r.time, r.input, r.cRead, r.cWrite, r.cost, r.hitPct}
 			}
-			return fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n```\n%s\n```",
-				len(recent), avgHit, table.FormatWidth(cols, tableRows, displayWidth(ctx))), nil
+			return fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n%s",
+				len(recent), avgHit, display.Format(cols, tableRows)), nil
 		},
 	}
 }
@@ -393,27 +374,27 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			var sb strings.Builder
 
 			// Header section
-			tokenLabel := formatCommas(headerTokens)
+			tokenLabel := display.FormatCommas(headerTokens)
 			if !useExact {
 				tokenLabel = "~" + tokenLabel
 			}
 			sb.WriteString("```\n")
 			fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
-				tokenLabel, formatCommas(info.ContextLimit), percentUsed)
+				tokenLabel, display.FormatCommas(info.ContextLimit), percentUsed)
 			fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
-				formatCommas(threshTokens), percentThresh)
+				display.FormatCommas(threshTokens), percentThresh)
 			if headerTokens >= threshTokens {
 				sb.WriteString("Status: at/above threshold\n")
 			} else {
 				remaining := threshTokens - headerTokens
-				fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", formatCommas(remaining))
+				fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", display.FormatCommas(remaining))
 			}
 			sb.WriteString("```")
 
 			// System prompt breakdown
 			sb.WriteString("\n\n```\n")
 			if useExact {
-				fmt.Fprintf(&sb, "System prompt: %s tokens\n", formatCommas(tc.System))
+				fmt.Fprintf(&sb, "System prompt: %s tokens\n", display.FormatCommas(tc.System))
 				maxNameLen := 0
 				for _, s := range tc.Sections {
 					if len(s.Name) > maxNameLen {
@@ -421,16 +402,16 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 					}
 				}
 				for _, s := range tc.Sections {
-					fmt.Fprintf(&sb, "  %-*s  %s tokens\n", maxNameLen, s.Name, formatCommas(s.Tokens))
+					fmt.Fprintf(&sb, "  %-*s  %s tokens\n", maxNameLen, s.Name, display.FormatCommas(s.Tokens))
 				}
-				fmt.Fprintf(&sb, "\nTools: %s tokens\n", formatCommas(tc.Tools))
+				fmt.Fprintf(&sb, "\nTools: %s tokens\n", display.FormatCommas(tc.Tools))
 			} else {
 				totalSystemChars := 0
 				for _, s := range info.SystemSections {
 					totalSystemChars += s.Chars
 				}
 				totalSystemChars += info.EnvironmentChars + info.SkillsChars
-				fmt.Fprintf(&sb, "System prompt: ~%s tokens\n", formatCommas(totalSystemChars/4))
+				fmt.Fprintf(&sb, "System prompt: ~%s tokens\n", display.FormatCommas(totalSystemChars/4))
 
 				maxNameLen := 0
 				if info.EnvironmentChars > 0 && len("Environment") > maxNameLen {
@@ -445,13 +426,13 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 					}
 				}
 				if info.EnvironmentChars > 0 {
-					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, "Environment", formatCommas(info.EnvironmentChars/4))
+					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, "Environment", display.FormatCommas(info.EnvironmentChars/4))
 				}
 				for _, s := range info.SystemSections {
-					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, s.Name, formatCommas(s.Chars/4))
+					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, s.Name, display.FormatCommas(s.Chars/4))
 				}
 				if info.SkillsChars > 0 {
-					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, "Skills", formatCommas(info.SkillsChars/4))
+					fmt.Fprintf(&sb, "  %-*s  ~%s tokens\n", maxNameLen, "Skills", display.FormatCommas(info.SkillsChars/4))
 				}
 			}
 			sb.WriteString("```")
@@ -461,30 +442,30 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			sb.WriteString("\n\n```\n")
 			if useExact {
 				fmt.Fprintf(&sb, "Conversation: %s tokens (%d messages)\n",
-					formatCommas(tc.Conversation), mb.UserCount+mb.AssistantCount)
+					display.FormatCommas(tc.Conversation), mb.UserCount+mb.AssistantCount)
 			} else {
 				totalConvChars := mb.UserChars + mb.AssistantChars + mb.ToolResultChars
 				fmt.Fprintf(&sb, "Conversation: ~%s tokens (%d messages)\n",
-					formatCommas(totalConvChars/4), mb.UserCount+mb.AssistantCount)
+					display.FormatCommas(totalConvChars/4), mb.UserCount+mb.AssistantCount)
 			}
 			// Per-role always estimated from chars
 			fmt.Fprintf(&sb, "  User messages     ~%s tokens (%d msgs)\n",
-				formatCommas(mb.UserChars/4), mb.UserCount)
+				display.FormatCommas(mb.UserChars/4), mb.UserCount)
 			fmt.Fprintf(&sb, "  Assistant         ~%s tokens (%d msgs)\n",
-				formatCommas(mb.AssistantChars/4), mb.AssistantCount)
+				display.FormatCommas(mb.AssistantChars/4), mb.AssistantCount)
 			if mb.ToolResultChars > 0 {
 				fmt.Fprintf(&sb, "  Tool results      ~%s tokens\n",
-					formatCommas(mb.ToolResultChars/4))
+					display.FormatCommas(mb.ToolResultChars/4))
 			}
 			sb.WriteString("```")
 
 			// Token breakdown from last API call
 			sb.WriteString("\n\n```\n")
 			fmt.Fprintf(&sb, "Last API call tokens:\n")
-			fmt.Fprintf(&sb, "  input:       %s\n", formatCommas(lastInput))
-			fmt.Fprintf(&sb, "  cache_read:  %s\n", formatCommas(lastCacheRead))
-			fmt.Fprintf(&sb, "  cache_write: %s\n", formatCommas(lastCacheWrite))
-			fmt.Fprintf(&sb, "  output:      %s\n", formatCommas(lastOutput))
+			fmt.Fprintf(&sb, "  input:       %s\n", display.FormatCommas(lastInput))
+			fmt.Fprintf(&sb, "  cache_read:  %s\n", display.FormatCommas(lastCacheRead))
+			fmt.Fprintf(&sb, "  cache_write: %s\n", display.FormatCommas(lastCacheWrite))
+			fmt.Fprintf(&sb, "  output:      %s\n", display.FormatCommas(lastOutput))
 			sb.WriteString("```")
 
 			return sb.String(), nil
@@ -668,17 +649,4 @@ func formatTodoLine(item TodoItem) string {
 	return fmt.Sprintf("%s #%d [%s] %s", emoji, item.ID, item.Priority, text)
 }
 
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	s := int(d.Seconds()) % 60
-	if h > 0 {
-		return fmt.Sprintf("%dh%dm%ds", h, m, s)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm%ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
-}
 

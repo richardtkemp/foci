@@ -1097,24 +1097,6 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	}
 }
 
-func TestFormatGap(t *testing.T) {
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{0, "0s"},
-		{38 * time.Second, "38s"},
-		{90 * time.Second, "1m30s"},
-		{3*time.Hour + 12*time.Minute, "3h12m"},
-		{49*time.Hour + 30*time.Minute, "2d1h"},
-	}
-	for _, tt := range tests {
-		got := formatGap(tt.d)
-		if got != tt.want {
-			t.Errorf("formatGap(%v) = %q, want %q", tt.d, got, tt.want)
-		}
-	}
-}
 
 func TestBuildMetaPrefix(t *testing.T) {
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)

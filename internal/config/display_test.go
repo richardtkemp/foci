@@ -96,8 +96,8 @@ func TestFormatConfig(t *testing.T) {
 		t.Error("SECTION column should not appear — sections are now headers")
 	}
 
-	// Check separator line
-	if !strings.Contains(result, "─") {
+	// Check separator line (pipe table format)
+	if !strings.Contains(result, "---") {
 		t.Error("missing table separator")
 	}
 
@@ -275,13 +275,6 @@ func TestFormatConfigGrouped(t *testing.T) {
 	// Should have 2 tables: Global + calling agent only
 	if len(tables) != 2 {
 		t.Fatalf("expected 2 tables, got %d", len(tables))
-	}
-
-	// Each table should be wrapped in code blocks
-	for i, table := range tables {
-		if !strings.HasPrefix(table, "```\n") || !strings.HasSuffix(table, "\n```") {
-			t.Errorf("table %d not wrapped in code blocks:\n%s", i, table)
-		}
 	}
 
 	// First table should be Global

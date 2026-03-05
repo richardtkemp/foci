@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -326,23 +327,11 @@ func listCreatedFiles(dir string) string {
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(&out, "  %s (%s)\n", e.Name(), formatBytes(info.Size()))
+		fmt.Fprintf(&out, "  %s (%s)\n", e.Name(), display.FormatBytes(info.Size()))
 	}
 	return out.String()
 }
 
-func formatBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for n/div >= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
-}
 
 // spawnMaxResultChars is the threshold for writing oversize tool results
 // to a temp file instead of including them inline. Applied in spawnOneShot

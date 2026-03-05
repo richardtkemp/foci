@@ -11,15 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"foci/internal/table"
+	"foci/internal/display"
 	"foci/internal/tools"
 )
-// displayWidth extracts the display width from context, returning 0 if unset.
-func displayWidth(ctx context.Context) int {
-	w, _ := ctx.Value(DisplayWidthKey{}).(int)
-	return w
-}
-
 // ChildSysProcAttr is called to get the SysProcAttr for child processes.
 // Set this from main to drop supplementary groups (foci-secrets).
 // If nil, defaults to {Setpgid: true}.
@@ -398,18 +392,18 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 				rows[i] = r
 			}
 
-			cols := []table.Column{
+			cols := []display.Column{
 				{Header: "ID"},
 				{Header: "Session"},
 				{Header: "Status"},
 				{Header: "Model"},
-				{Header: "Messages", Align: table.AlignRight},
+				{Header: "Messages", Align: display.AlignRight},
 			}
 			tableRows := make([][]string, len(rows))
 			for i, r := range rows {
 				tableRows[i] = []string{r.id, r.session, r.status, r.model, r.msgs}
 			}
-			return "Agents\n\n```\n" + table.FormatWidth(cols, tableRows, displayWidth(ctx)) + "\n```", nil
+			return "Agents\n\n" + display.Format(cols, tableRows), nil
 		},
 	}
 }

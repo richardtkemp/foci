@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/table"
+	"foci/internal/display"
 )
 
 // costUsage returns the help text for /cost subcommands.
@@ -17,7 +17,7 @@ func costUsage() string {
 }
 
 // costToday shows today's total with per-session breakdown.
-func costToday(entries []apiEntry, ctx context.Context) (string, error) {
+func costToday(entries []apiEntry, _ context.Context) (string, error) {
 	today := time.Now().UTC().Format("2006-01-02")
 	filtered := filterEntries(entries, func(e apiEntry) bool {
 		return e.Timestamp.Format("2006-01-02") == today
@@ -25,7 +25,7 @@ func costToday(entries []apiEntry, ctx context.Context) (string, error) {
 	total, count := sumCosts(filtered)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "💰 Today: $%.2f eq. (%s calls)\n", total, formatCommas(count))
+	fmt.Fprintf(&b, "💰 Today: $%.2f eq. (%s calls)\n", total, display.FormatCommas(count))
 
 	costs := make(map[string]float64)
 	counts := make(map[string]int)
@@ -55,32 +55,31 @@ func costToday(entries []apiEntry, ctx context.Context) (string, error) {
 			extra = len(sorted) - 10
 		}
 
-		cols := []table.Column{
+		cols := []display.Column{
 			{Header: "Session"},
-			{Header: "Cost", Align: table.AlignRight},
-			{Header: "Calls", Align: table.AlignRight},
+			{Header: "Cost", Align: display.AlignRight},
+			{Header: "Calls", Align: display.AlignRight},
 		}
 		tableRows := make([][]string, 0, len(shown)+1)
 		for _, sc := range shown {
 			tableRows = append(tableRows, []string{
 				sc.name,
 				fmt.Sprintf("$%.2f", sc.cost),
-				formatCommas(sc.calls),
+				display.FormatCommas(sc.calls),
 			})
 		}
 		if extra > 0 {
 			tableRows = append(tableRows, []string{fmt.Sprintf("  +%d more", extra), "", ""})
 		}
-		tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total), formatCommas(count)})
-		b.WriteString("\n```\n")
-		b.WriteString(table.FormatWidth(cols, tableRows, displayWidth(ctx)))
-		b.WriteString("\n```")
+		tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total), display.FormatCommas(count)})
+		b.WriteByte('\n')
+		b.WriteString(display.Format(cols, tableRows))
 	}
 	return b.String(), nil
 }
 
 // cost24h shows the last 24 hours with category breakdown.
-func cost24h(entries []apiEntry, ctx context.Context) (string, error) {
+func cost24h(entries []apiEntry, _ context.Context) (string, error) {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	filtered := filterEntries(entries, func(e apiEntry) bool {
 		return e.Timestamp.After(cutoff)
@@ -90,11 +89,10 @@ func cost24h(entries []apiEntry, ctx context.Context) (string, error) {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "API cost (last 24h): $%.2f eq.\n", total)
-	b.WriteString("\n```\n")
 
-	cols := []table.Column{
+	cols := []display.Column{
 		{Header: "Category"},
-		{Header: "Cost", Align: table.AlignRight},
+		{Header: "Cost", Align: display.AlignRight},
 	}
 	tableRows := [][]string{
 		{"Cache reads", fmt.Sprintf("$%.2f", cr)},
@@ -103,13 +101,13 @@ func cost24h(entries []apiEntry, ctx context.Context) (string, error) {
 		{"Output", fmt.Sprintf("$%.2f", out)},
 	}
 	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
-	b.WriteString(table.FormatWidth(cols, tableRows, displayWidth(ctx)))
-	b.WriteString("\n```")
+	b.WriteByte('\n')
+	b.WriteString(display.Format(cols, tableRows))
 	return b.String(), nil
 }
 
 // costWeek shows a 7-day summary with daily breakdown.
-func costWeek(entries []apiEntry, ctx context.Context) (string, error) {
+func costWeek(entries []apiEntry, _ context.Context) (string, error) {
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	cutoff := startOfToday.AddDate(0, 0, -6)
@@ -128,11 +126,10 @@ func costWeek(entries []apiEntry, ctx context.Context) (string, error) {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "API cost (7-day summary): $%.2f eq. (mean $%.2f/day)\n", total, mean)
-	b.WriteString("\n```\n")
 
-	cols := []table.Column{
+	cols := []display.Column{
 		{Header: "Date"},
-		{Header: "Cost", Align: table.AlignRight},
+		{Header: "Cost", Align: display.AlignRight},
 	}
 	tableRows := make([][]string, 0, 9)
 	for i := 0; i < 7; i++ {
@@ -141,8 +138,8 @@ func costWeek(entries []apiEntry, ctx context.Context) (string, error) {
 	}
 	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
 	tableRows = append(tableRows, []string{"Mean/day", fmt.Sprintf("$%.2f", mean)})
-	b.WriteString(table.FormatWidth(cols, tableRows, displayWidth(ctx)))
-	b.WriteString("\n```")
+	b.WriteByte('\n')
+	b.WriteString(display.Format(cols, tableRows))
 	return b.String(), nil
 }
 

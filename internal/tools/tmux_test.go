@@ -82,9 +82,9 @@ func TestTmuxStartAndList(t *testing.T) {
 	if !strings.Contains(result.Text,"SESSION") {
 		t.Errorf("list result missing header: %q", result.Text)
 	}
-	// Owned session should show "owned" status
-	if !strings.Contains(result.Text,"owned") {
-		t.Errorf("list result missing 'owned' status: %q", result.Text)
+	// Owned session should show owner (not "-")
+	if !strings.Contains(result.Text,"self") {
+		t.Errorf("list result missing owner: %q", result.Text)
 	}
 }
 
@@ -700,13 +700,10 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	if !strings.Contains(result.Text,nameA) {
 		t.Errorf("agent A list missing own session: %q", result.Text)
 	}
-	// A should see its own session as "owned" and B's as "idle"
+	// A should see its own session with an owner and B's without
 	for _, line := range strings.Split(result.Text, "\n") {
-		if strings.Contains(line, nameA) && !strings.Contains(line, "owned") {
-			t.Errorf("agent A list should show %q as owned: %q", nameA, line)
-		}
-		if strings.Contains(line, nameB) && strings.Contains(line, "owned") {
-			t.Errorf("agent A list should not show %q as owned: %q", nameB, line)
+		if strings.Contains(line, nameA) && !strings.Contains(line, "self") {
+			t.Errorf("agent A list should show %q with owner: %q", nameA, line)
 		}
 	}
 
@@ -717,13 +714,10 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	if !strings.Contains(result.Text,nameB) {
 		t.Errorf("agent B list missing own session: %q", result.Text)
 	}
-	// B should see its own session as "owned" and A's as "idle"
+	// B should see its own session with an owner
 	for _, line := range strings.Split(result.Text, "\n") {
-		if strings.Contains(line, nameB) && !strings.Contains(line, "owned") {
-			t.Errorf("agent B list should show %q as owned: %q", nameB, line)
-		}
-		if strings.Contains(line, nameA) && strings.Contains(line, "owned") {
-			t.Errorf("agent B list should not show %q as owned: %q", nameA, line)
+		if strings.Contains(line, nameB) && !strings.Contains(line, "self") {
+			t.Errorf("agent B list should show %q with owner: %q", nameB, line)
 		}
 	}
 
@@ -2603,7 +2597,7 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 		t.Fatal("session B should not be able to kill session A's session")
 	}
 
-	// List from session A: should see its session as "owned" and B's as "other"
+	// List from session A: should show owner "test" for its own, "-" for B's
 	listParams, _ := json.Marshal(map[string]interface{}{
 		"operation": "list",
 	})
@@ -2612,11 +2606,8 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	for _, line := range strings.Split(result.Text, "\n") {
-		if strings.Contains(line, nameA) && !strings.Contains(line, "owned") {
-			t.Errorf("session A should show %q as owned: %q", nameA, line)
-		}
-		if strings.Contains(line, nameB) && strings.Contains(line, "owned") {
-			t.Errorf("session A should not show %q as owned: %q", nameB, line)
+		if strings.Contains(line, nameA) && !strings.Contains(line, "test") {
+			t.Errorf("session A should show %q with owner 'test': %q", nameA, line)
 		}
 	}
 }

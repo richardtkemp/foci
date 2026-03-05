@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/table"
+	"foci/internal/display"
 )
 
 // SessionChatInfo holds per-chat session data for display.
@@ -70,7 +70,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			case "list":
 				chatID, _ := ctx.Value(ChatIDKey{}).(int64)
-				return sessionsListCmd(deps, chatID, displayWidth(ctx))
+				return sessionsListCmd(deps, chatID)
 
 			case "default":
 				if len(parts) < 2 {
@@ -88,7 +88,7 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 
 			case "index":
 				opts := parseIndexArgs(parts[1:])
-				return sessionsIndexCmd(deps, opts, displayWidth(ctx))
+				return sessionsIndexCmd(deps, opts)
 
 			default:
 				return "Usage: /sessions [list|default <chat_id>|info|index [filters...]]", nil
@@ -178,7 +178,7 @@ func parseFriendlyDuration(s string) (time.Duration, bool) {
 	return 0, false
 }
 
-func sessionsListCmd(deps SessionsDeps, currentChatID int64, maxWidth int) (string, error) {
+func sessionsListCmd(deps SessionsDeps, currentChatID int64) (string, error) {
 	sessions, err := deps.ListFn()
 	if err != nil {
 		return "", fmt.Errorf("list sessions: %w", err)
@@ -219,10 +219,10 @@ func sessionsListCmd(deps SessionsDeps, currentChatID int64, maxWidth int) (stri
 		rows[i] = r
 	}
 
-	cols := []table.Column{
+	cols := []display.Column{
 		{Header: "Chat ID"},
 		{Header: "User"},
-		{Header: "Msgs", Align: table.AlignRight},
+		{Header: "Msgs", Align: display.AlignRight},
 		{Header: "Active"},
 		{Header: ""},
 	}
@@ -230,8 +230,8 @@ func sessionsListCmd(deps SessionsDeps, currentChatID int64, maxWidth int) (stri
 	for i, r := range rows {
 		tableRows[i] = []string{r.chatID, r.username, r.msgs, r.active, r.flags}
 	}
-	return fmt.Sprintf("Sessions — %s (%d)\n\n```\n%s\n```\n◉ = current  ★ = default (keepalive, cron)",
-		deps.AgentID, len(sessions), table.FormatWidth(cols, tableRows, maxWidth)), nil
+	return fmt.Sprintf("Sessions — %s (%d)\n\n%s\n◉ = current  ★ = default (keepalive, cron)",
+		deps.AgentID, len(sessions), display.Format(cols, tableRows)), nil
 }
 
 func sessionsDefaultCmd(deps SessionsDeps, chatID int64) (string, error) {
@@ -294,7 +294,7 @@ func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 	return sb.String(), nil
 }
 
-func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts, maxWidth int) (string, error) {
+func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) {
 	if deps.IndexFn == nil {
 		return "Session index not available.", nil
 	}
@@ -311,7 +311,7 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts, maxWidth int) (s
 		return msg + ".", nil
 	}
 
-	cols := []table.Column{
+	cols := []display.Column{
 		{Header: "Session Key"},
 		{Header: "Type"},
 		{Header: "Status"},
@@ -354,8 +354,8 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts, maxWidth int) (s
 		filterDesc = " (" + strings.TrimSpace(filterDesc) + ")"
 	}
 
-	return fmt.Sprintf("Session Index — %d sessions%s\n\n```\n%s\n```",
-		len(entries), filterDesc, table.FormatWidth(cols, tableRows, maxWidth)), nil
+	return fmt.Sprintf("Session Index — %d sessions%s\n\n%s",
+		len(entries), filterDesc, display.Format(cols, tableRows)), nil
 }
 
 // shortenSessionKey abbreviates a session key for table display.
