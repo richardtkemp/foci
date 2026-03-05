@@ -23,6 +23,19 @@ func runCmd(ctx context.Context, binary string, args ...string) (string, error) 
 	return string(out), err
 }
 
+// handleCmdOutput formats command output with error information.
+// If output is present despite an error, returns output with error message appended.
+// Otherwise returns error directly.
+func handleCmdOutput(output string, err error) (ToolResult, error) {
+	if err != nil {
+		if output != "" {
+			return TextResult(output + "\nError: " + err.Error()), nil
+		}
+		return ToolResult{}, err
+	}
+	return TextResult(output), nil
+}
+
 // resolveGrepBinary detects the best available grep binary.
 // Preference: rg > ack > ag > grep.
 func resolveGrepBinary() (binaryPath, binaryName string) {
@@ -106,13 +119,7 @@ func NewLsTool() *Tool {
 			args = append(args, p.Path)
 
 			out, err := runCmd(ctx, "ls", args...)
-			if err != nil {
-				if out != "" {
-					return TextResult(out + "\nError: " + err.Error()), nil
-				}
-				return ToolResult{}, err
-			}
-			return TextResult(out), nil
+			return handleCmdOutput(out, err)
 		},
 	}
 }
@@ -164,13 +171,7 @@ func NewFindTool() *Tool {
 			args := append([]string{p.Path}, findArgs...)
 
 			out, err := runCmd(ctx, "find", args...)
-			if err != nil {
-				if out != "" {
-					return TextResult(out + "\nError: " + err.Error()), nil
-				}
-				return ToolResult{}, err
-			}
-			return TextResult(out), nil
+			return handleCmdOutput(out, err)
 		},
 	}
 }
@@ -235,10 +236,8 @@ func NewGrepTool(binary, name string) *Tool {
 					}
 					return TextResult(result), nil
 				}
-				if result != "" {
-					return TextResult(result + "\nError: " + err.Error()), nil
-				}
-				return ToolResult{}, err
+				// Use standard error handling for other errors
+				return handleCmdOutput(result, err)
 			}
 			return TextResult(result), nil
 		},
@@ -301,13 +300,7 @@ func NewGitTool() *Tool {
 			}
 
 			out, err := runCmd(ctx, "git", args...)
-			if err != nil {
-				if out != "" {
-					return TextResult(out + "\nError: " + err.Error()), nil
-				}
-				return ToolResult{}, err
-			}
-			return TextResult(out), nil
+			return handleCmdOutput(out, err)
 		},
 	}
 }
