@@ -667,6 +667,25 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 
 **Reset guard:** `/reset` refuses when `agent.IsProcessing()` is true — prevents clearing an active conversation mid-turn.
 
+## Streaming Output (`telegram/stream_writer.go`)
+
+When `stream_output = true` and `streaming = true`, model output is shown in Telegram in real-time as tokens arrive, rather than waiting for the full response.
+
+**Lifecycle:**
+1. `processAgentMessage` creates a `streamWriter` (no goroutines started yet)
+2. On the first `TextDeltaObserver` delta, the stream writer sends an initial plain-text message and starts a ticker goroutine
+3. Each tick, if new text has accumulated, the message is edited with the latest buffer contents
+4. When `HandleMessage` returns, `Finish()` stops the ticker and returns the message ID
+5. The final HTML-formatted response is edited into the stream message (or sent as a new message if too long/has thinking)
+
+**Key design decisions:**
+- **Plain text during streaming:** No `ParseMode` — partial markdown/HTML is often invalid (unclosed tags, broken code blocks). The final edit uses proper HTML formatting.
+- **Truncation at 3900 chars:** Buffer is truncated with `"..."` to stay within Telegram's 4096-char limit. The final response uses the normal chunking path if it exceeds 4096.
+- **Lazy start:** No goroutine or message until the first delta. If the agent returns no text (e.g. pure tool calls), the stream writer does nothing.
+- **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
+
+**Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[defaults]` or per-agent.
+
 ## Voice (`voice/`, `telegram/bot.go`)
 
 **Inbound (Whisper transcription):**
