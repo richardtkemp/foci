@@ -65,17 +65,6 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		if err != nil {
 			return closeOnErr("create todos table", err)
 		}
-	} else if strings.Contains(strings.ToUpper(tableDDL), "AUTOINCREMENT") {
-		// Old schema with AUTOINCREMENT — migrate to composite PK.
-		// Ensure updated_at exists before migration (may be missing on very old DBs).
-		if !columnExists(db, "todos", "updated_at") {
-			if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
-				return closeOnErr("add updated_at column", err)
-			}
-		}
-		if err := migrateTodosCompositeKey(db); err != nil {
-			return closeOnErr("migrate todos to composite key", err)
-		}
 	} else {
 		// Already new schema — ensure updated_at exists (defensive).
 		if !columnExists(db, "todos", "updated_at") {
@@ -108,52 +97,6 @@ func columnExists(db *sql.DB, table, column string) bool {
 		}
 	}
 	return false
-}
-
-// migrateTodosCompositeKey converts the old AUTOINCREMENT schema to composite PK (agent_id, id).
-// Existing IDs are preserved; new per-agent sequencing starts from max(id)+1 per agent.
-func migrateTodosCompositeKey(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	_, err = tx.Exec(`CREATE TABLE todos_new (
-		id           INTEGER NOT NULL,
-		text         TEXT    NOT NULL,
-		status       TEXT    NOT NULL DEFAULT 'open',
-		priority     TEXT    NOT NULL DEFAULT 'medium',
-		tags         TEXT    NOT NULL DEFAULT '',
-		close_reason TEXT    NOT NULL DEFAULT '',
-		agent_id     TEXT    NOT NULL,
-		created_at   TEXT    NOT NULL,
-		completed_at TEXT,
-		updated_at   TEXT,
-		PRIMARY KEY (agent_id, id)
-	)`)
-	if err != nil {
-		return fmt.Errorf("create new table: %w", err)
-	}
-
-	_, err = tx.Exec(`INSERT INTO todos_new (id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at, updated_at)
-		SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at, updated_at FROM todos`)
-	if err != nil {
-		return fmt.Errorf("copy data: %w", err)
-	}
-
-	if _, err = tx.Exec("DROP TABLE todos"); err != nil {
-		return fmt.Errorf("drop old table: %w", err)
-	}
-
-	if _, err = tx.Exec("ALTER TABLE todos_new RENAME TO todos"); err != nil {
-		return fmt.Errorf("rename new table: %w", err)
-	}
-
-	// Clean up orphaned sqlite_sequence entry from the old AUTOINCREMENT table.
-	_, _ = tx.Exec("DELETE FROM sqlite_sequence WHERE name = 'todos'")
-
-	return tx.Commit()
 }
 
 // Add creates a new todo item and returns its per-agent ID.
@@ -369,20 +312,6 @@ func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	}
 	defer func() { _ = rows.Close() }()
 	return scanTodos(rows)
-}
-
-// MigrateFrom copies rows for agentID from oldDBPath into this store using ATTACH.
-func (s *TodoStore) MigrateFrom(oldDBPath, agentID string) error {
-	if _, err := s.db.Exec("ATTACH DATABASE ? AS old", oldDBPath); err != nil {
-		return fmt.Errorf("attach old db: %w", err)
-	}
-	defer func() { _, _ = s.db.Exec("DETACH DATABASE old") }()
-
-	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO todos (id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at, updated_at)
-		 SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at, updated_at
-		 FROM old.todos WHERE agent_id = ?`, agentID)
-	return err
 }
 
 // Close closes the underlying database.
