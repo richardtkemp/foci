@@ -32,6 +32,16 @@ const (
 	tickInterval = 30 * time.Second
 )
 
+// parseDuration parses a duration string, returning the parsed duration or logging a warning on error.
+func (r *Runner) parseDuration(field string, s string) (time.Duration, bool) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		r.log.Warnf("bad %s %q: %v", field, s, err)
+		return 0, false
+	}
+	return d, true
+}
+
 // BranchFunc is called to dispatch a branch session. It receives the branch type
 // ("keepalive" or "background"), the prompt text, and whether to skip compaction.
 // It must handle branch creation and agent execution internally.
@@ -173,9 +183,8 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	interval, err := time.ParseDuration(r.kaCfg.Interval)
-	if err != nil {
-		r.log.Warnf("bad interval %q: %v", r.kaCfg.Interval, err)
+	interval, ok := r.parseDuration("keepalive interval", r.kaCfg.Interval)
+	if !ok {
 		return
 	}
 
@@ -212,9 +221,8 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
-	interval, err := time.ParseDuration(r.bgCfg.Interval)
-	if err != nil {
-		r.log.Warnf("bad background interval %q: %v", r.bgCfg.Interval, err)
+	interval, ok := r.parseDuration("background interval", r.bgCfg.Interval)
+	if !ok {
 		return
 	}
 
@@ -254,9 +262,9 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 
 	// Check mana
 	if r.manaMonitor != nil {
-		investInterval, err := time.ParseDuration(r.bgCfg.InvestInterval)
-		if err != nil {
-			investInterval = 30 * time.Minute
+		investInterval, _ := r.parseDuration("invest interval", r.bgCfg.InvestInterval)
+		if investInterval == 0 {
+			investInterval = 30 * time.Minute // default fallback
 		}
 		if !r.manaMonitor.IsGoodFor(ctx, investInterval) {
 			return
@@ -288,9 +296,8 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
-	interval, err := time.ParseDuration(r.mfCfg.Interval)
-	if err != nil {
-		r.log.Warnf("bad memory formation interval %q: %v", r.mfCfg.Interval, err)
+	interval, ok := r.parseDuration("memory formation interval", r.mfCfg.Interval)
+	if !ok {
 		return
 	}
 
@@ -339,9 +346,8 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	interval, err := time.ParseDuration(r.mfCfg.ConsolidationInterval)
-	if err != nil {
-		r.log.Warnf("bad consolidation interval %q: %v", r.mfCfg.ConsolidationInterval, err)
+	interval, ok := r.parseDuration("consolidation interval", r.mfCfg.ConsolidationInterval)
+	if !ok {
 		return
 	}
 
