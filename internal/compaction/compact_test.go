@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"foci/internal/anthropic"
+	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -1267,4 +1268,98 @@ func TestCompactStreaming(t *testing.T) {
 	if !strings.Contains(provider.TextOf(msgs[1].Content), "Streamed summary") {
 		t.Errorf("msgs[1] = %q, want streamed summary", provider.TextOf(msgs[1].Content))
 	}
+}
+
+// TestSetLogger tests SetLogger method
+func TestSetLogger(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	c := NewCompactor(store, "gpt-4o", 0.8)
+
+	oldLog := c.log
+	newLog := log.NewComponentLogger("test")
+
+	c.SetLogger(newLog)
+
+	if c.log != newLog {
+		t.Error("SetLogger did not set the logger")
+	}
+	if c.log == oldLog {
+		t.Error("SetLogger should have changed the logger")
+	}
+}
+
+// TestContextLimit_Claude tests contextLimit for Claude models
+func TestContextLimit_Claude(t *testing.T) {
+	tests := []struct {
+		model string
+		want  int
+	}{
+		{"claude-3-opus", 200_000},
+		{"claude-3.5-sonnet-20241022", 200_000},
+		{"anthropic/claude-haiku-4-5", 200_000},
+	}
+
+	for _, tt := range tests {
+		got := ContextLimit(tt.model)
+		if got != tt.want {
+			t.Errorf("ContextLimit(%q) = %d, want %d", tt.model, got, tt.want)
+		}
+	}
+}
+
+// TestContextLimit_Gemini tests contextLimit for Gemini models
+func TestContextLimit_Gemini(t *testing.T) {
+	tests := []struct {
+		model string
+		want  int
+	}{
+		{"gemini-2.5-pro", 1_000_000},
+		{"gemini-2.5-flash", 1_000_000},
+		{"gemini-2.0-flash", 1_000_000},
+		{"gemini-1.5-pro", 2_000_000},
+		{"gemini-1.5-flash", 2_000_000},
+	}
+
+	for _, tt := range tests {
+		got := ContextLimit(tt.model)
+		if got != tt.want {
+			t.Errorf("ContextLimit(%q) = %d, want %d", tt.model, got, tt.want)
+		}
+	}
+}
+
+// TestContextLimit_Default tests contextLimit with unknown models
+func TestContextLimit_Default(t *testing.T) {
+	tests := []string{"gpt-4", "gpt-4o", "unknown-model", ""}
+	for _, model := range tests {
+		got := ContextLimit(model)
+		if got != 200_000 {
+			t.Errorf("ContextLimit(%q) = %d, want 200_000 (default)", model, got)
+		}
+	}
+}
+
+// TestCheckConfig_Safe tests checkConfig when config is safe
+func TestCheckConfig_Safe(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	// With Claude (200k context) and 80% threshold, 160k is trigger point
+	// maxTokens=5000, so 160k + 5k < 200k → should not warn
+	c := NewCompactor(store, "claude-3-opus", 0.8)
+	c.maxTokens = 5000
+
+	// Should not warn - no assertion needed, just verify it doesn't panic
+	c.checkConfig()
+}
+
+// TestCheckConfig_Unsafe tests checkConfig when config exceeds window
+func TestCheckConfig_Unsafe(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	// With Claude (200k context) and 80% threshold, 160k is trigger point
+	// maxTokens=50000, so 160k + 50k > 200k → should warn
+	c := NewCompactor(store, "claude-3-opus", 0.8)
+	c.maxTokens = 50000
+
+	// Capture any warnings (they go to the logger)
+	// Just verify it doesn't panic when config is unsafe
+	c.checkConfig()
 }
