@@ -163,9 +163,13 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 
 	// Apply date range filter if provided
 	if opts != nil && (opts.DateFrom != nil || opts.DateTo != nil) {
-		dateQuery := bleve.NewNumericRangeQuery(
+		minInclusive := boolPtr(true)
+		maxInclusive := boolPtr(opts.DateTo == nil) // exclusive upper bound when DateTo is set
+		dateQuery := query.NewNumericRangeInclusiveQuery(
 			floatPtrFromTime(opts.DateFrom),
 			floatPtrFromTime(opts.DateTo),
+			minInclusive,
+			maxInclusive,
 		)
 		dateQuery.SetField("mtime")
 
@@ -236,6 +240,8 @@ func floatPtrFromTime(t *time.Time) *float64 {
 	f := float64(t.Unix())
 	return &f
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 // buildSnippet extracts a snippet from a bleve search hit.
 // Prefers highlighted fragments; falls back to the first ~200 chars of content.

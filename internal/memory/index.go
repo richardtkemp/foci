@@ -174,15 +174,7 @@ func (idx *Index) IndexConversation(text, session string) {
 
 // buildWeightedRankCase constructs a CASE statement for per-source weight multipliers.
 // Each source gets: rank * (1.0 + weight). Conversation gets 1.0x (no multiplier).
-// When tableAlias is provided, prefixes the source column (e.g., "f.source").
-func (idx *Index) buildWeightedRankCase(tableAlias string) string {
-	var sourceCol string
-	if tableAlias != "" {
-		sourceCol = tableAlias + ".source"
-	} else {
-		sourceCol = "source"
-	}
-
+func (idx *Index) buildWeightedRankCase() string {
 	var cases []string
 	for name, cfg := range idx.sources {
 		multiplier := 1.0 + cfg.Weight
@@ -192,7 +184,7 @@ func (idx *Index) buildWeightedRankCase(tableAlias string) string {
 	cases = append(cases, fmt.Sprintf("WHEN 'conversation' THEN rank * %.2f", idx.conversationWeight))
 	cases = append(cases, "ELSE rank")
 
-	return "CASE " + sourceCol + " " + strings.Join(cases, " ") + " END"
+	return "CASE f.source " + strings.Join(cases, " ") + " END"
 }
 
 // Search queries the FTS5 index. sort controls result ordering:
@@ -213,7 +205,7 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			args = append(args, float64(opts.DateFrom.Unix()))
 		}
 		if opts.DateTo != nil {
-			dateFilter += " AND m.mtime <= ?"
+			dateFilter += " AND m.mtime < ?"
 			args = append(args, float64(opts.DateTo.Unix()))
 		}
 	}
@@ -237,32 +229,18 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			LIMIT 20
 		`, dateFilter, order)
 	default:
-		if dateFilter != "" {
-			weightedRankCase := idx.buildWeightedRankCase("f")
-			sqlStr = fmt.Sprintf(`
-				SELECT f.path,
-				       snippet(memory_fts, 0, '>', '<', '...', 40),
-				       f.source,
-				       %s AS weighted_rank
-				FROM memory_fts f
-				LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
-				WHERE memory_fts MATCH ?%s
-				ORDER BY weighted_rank
-				LIMIT 20
-			`, weightedRankCase, dateFilter)
-		} else {
-			weightedRankCase := idx.buildWeightedRankCase("")
-			sqlStr = fmt.Sprintf(`
-				SELECT path,
-				       snippet(memory_fts, 0, '>', '<', '...', 40),
-				       source,
-				       %s AS weighted_rank
-				FROM memory_fts
-				WHERE memory_fts MATCH ?
-				ORDER BY weighted_rank
-				LIMIT 20
-			`, weightedRankCase)
-		}
+		weightedRankCase := idx.buildWeightedRankCase()
+		sqlStr = fmt.Sprintf(`
+			SELECT f.path,
+			       snippet(memory_fts, 0, '>', '<', '...', 40),
+			       f.source,
+			       %s AS weighted_rank
+			FROM memory_fts f
+			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
+			WHERE memory_fts MATCH ?%s
+			ORDER BY weighted_rank
+			LIMIT 20
+		`, weightedRankCase, dateFilter)
 	}
 
 	rows, err := idx.db.Query(sqlStr, args...)
