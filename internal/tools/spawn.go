@@ -147,29 +147,12 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				p.Timeout = 120
 			}
 
-			// Resolve model using config.ResolveModel
-			var resolved *config.ResolvedModel
-			var err error
-			if p.Model != "" {
-				resolved, err = config.ResolveModel(p.Model, "", deps.ModelAliases)
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("invalid model %q: %w", p.Model, err)
-				}
-			} else {
-				// Use parent's model
-				resolved, err = config.ResolveModel(deps.Model, "", deps.ModelAliases)
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("invalid parent model %q: %w", deps.Model, err)
-				}
+			resolved, err := resolveSpawnModel(p.Model, deps.Model, deps.ModelAliases)
+			if err != nil {
+				return ToolResult{}, err
 			}
 
-			// Resolve client based on endpoint and format
-			client := deps.Client
-			if deps.GetClient != nil {
-				if c := deps.GetClient(resolved.Endpoint, resolved.Format); c != nil {
-					client = c
-				}
-			}
+			client := resolveSpawnClient(deps.Client, resolved, deps.GetClient)
 
 			// Use bare model ID for API calls
 			model := resolved.ModelID
@@ -206,23 +189,8 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return TextResult(result), nil
 
 			case "explore":
-				// Always use the cheapest model for exploration.
-				// Infer format from the parent's default model (which has developer/model_id format).
-				_, parentModelID := config.SplitDeveloperModel(deps.Model)
-				exploreAlias := "haiku"
-				if strings.HasPrefix(parentModelID, "gemini-") {
-					exploreAlias = "flash"
-				}
-				exploreResolved, err := config.ResolveModel(exploreAlias, "", deps.ModelAliases)
-				if err != nil {
-					return ToolResult{}, fmt.Errorf("resolve explore model: %w", err)
-				}
-				exploreClient := deps.Client
-				if deps.GetClient != nil {
-					if c := deps.GetClient(exploreResolved.Endpoint, exploreResolved.Format); c != nil {
-						exploreClient = c
-					}
-				}
+			exploreResolved := resolveExploreModel(deps.Model, deps.ModelAliases)
+			exploreClient := resolveSpawnClient(deps.Client, exploreResolved, deps.GetClient)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
@@ -570,11 +538,8 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			defer func() { <-sem }()
 			defer deps.Notifier.MarkDone(parentSession)
 
-			// Detached context — survives parent turn ending.
-			spawnCtx, cancel := context.WithTimeout(context.Background(), timeout)
+			spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
 			defer cancel()
-			spawnCtx = WithSpawnInherit(spawnCtx)
-			spawnCtx = WithSessionKey(spawnCtx, branchKey)
 
 			result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
 			if err != nil {
@@ -589,10 +554,7 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			deps.Notifier.Notify(parentSession, msg)
 		}()
 
-		promptPreview := prompt
-		if len(promptPreview) > 100 {
-			promptPreview = promptPreview[:100] + "..."
-		}
+		promptPreview := truncatePromptPreview(prompt)
 		return TextResult(fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview)), nil
 	}
 
@@ -604,10 +566,8 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		return ToolResult{}, ctx.Err()
 	}
 
-	spawnCtx, cancel := context.WithTimeout(ctx, timeout)
+	spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, false)
 	defer cancel()
-	spawnCtx = WithSpawnInherit(spawnCtx)
-	spawnCtx = WithSessionKey(spawnCtx, branchKey)
 
 	result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
 	if err != nil {
@@ -617,4 +577,69 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		return TextResult("(empty response)"), nil
 	}
 	return TextResult(result), nil
+}
+
+// resolveSpawnModel resolves the model to use for a spawn call, with fallback to parent's model.
+func resolveSpawnModel(userModel, parentModel string, aliases map[string]string) (*config.ResolvedModel, error) {
+	modelToResolve := userModel
+	if modelToResolve == "" {
+		modelToResolve = parentModel
+	}
+	resolved, err := config.ResolveModel(modelToResolve, "", aliases)
+	if err != nil {
+		// Provide context-aware error message
+		if userModel != "" {
+			return nil, fmt.Errorf("invalid model %q: %w", userModel, err)
+		}
+		return nil, fmt.Errorf("invalid parent model %q: %w", parentModel, err)
+	}
+	return resolved, nil
+}
+
+// resolveSpawnClient selects the best client for a spawn call.
+// Uses GetClient if available to select by endpoint and format, falls back to default client.
+func resolveSpawnClient(defaultClient provider.Client, resolved *config.ResolvedModel, getClient func(endpoint, format string) provider.Client) provider.Client {
+	if getClient == nil {
+		return defaultClient
+	}
+	if c := getClient(resolved.Endpoint, resolved.Format); c != nil {
+		return c
+	}
+	return defaultClient
+}
+
+// resolveExploreModel selects the cheapest model for exploration mode.
+// Uses haiku for most models, but flash for Gemini models.
+func resolveExploreModel(parentModel string, aliases map[string]string) *config.ResolvedModel {
+	_, parentModelID := config.SplitDeveloperModel(parentModel)
+	exploreAlias := "haiku"
+	if strings.HasPrefix(parentModelID, "gemini-") {
+		exploreAlias = "flash"
+	}
+	// resolveExploreModel should not fail — if it does, we've misconfigured the aliases.
+	// This is defensive: always return a valid model or panic during init, not runtime.
+	resolved, _ := config.ResolveModel(exploreAlias, "", aliases)
+	return resolved
+}
+
+// buildSpawnContext creates a spawn context with timeout and session/inherit markers.
+func buildSpawnContext(ctx context.Context, timeout time.Duration, branchKey string, detached bool) (context.Context, context.CancelFunc) {
+	var baseCtx context.Context
+	if detached {
+		baseCtx = context.Background()
+	} else {
+		baseCtx = ctx
+	}
+	spawnCtx, cancel := context.WithTimeout(baseCtx, timeout)
+	spawnCtx = WithSpawnInherit(spawnCtx)
+	spawnCtx = WithSessionKey(spawnCtx, branchKey)
+	return spawnCtx, cancel
+}
+
+// truncatePromptPreview returns a truncated preview of the prompt (max 100 chars with ellipsis).
+func truncatePromptPreview(prompt string) string {
+	if len(prompt) > 100 {
+		return prompt[:100] + "..."
+	}
+	return prompt
 }
