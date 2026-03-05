@@ -676,12 +676,14 @@ func validate(cfg *Config) error {
 	}
 	for _, a := range cfg.Agents {
 		for i, t := range a.UsageWarnings.Thresholds {
-			if t < 0 || t > 100 {
-				return fmt.Errorf("agent %q [usage_warnings] thresholds[%d] = %d: must be between 0 and 100", a.ID, i, t)
+			if err := validateIntRange(t, 0, 100, fmt.Sprintf("agent %q [usage_warnings] thresholds[%d]", a.ID, i)); err != nil {
+				return err
 			}
 		}
-		if a.UsageWarnings.RestoreThreshold != nil && (*a.UsageWarnings.RestoreThreshold < 0 || *a.UsageWarnings.RestoreThreshold > 100) {
-			return fmt.Errorf("agent %q [usage_warnings] restore_threshold = %d: must be between 0 and 100", a.ID, *a.UsageWarnings.RestoreThreshold)
+		if a.UsageWarnings.RestoreThreshold != nil {
+			if err := validateIntRange(*a.UsageWarnings.RestoreThreshold, 0, 100, fmt.Sprintf("agent %q [usage_warnings] restore_threshold", a.ID)); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -716,11 +718,11 @@ func validate(cfg *Config) error {
 	}
 
 	// Resources
-	if cfg.Resources.MemoryWarnPercent < 0 || cfg.Resources.MemoryWarnPercent > 100 {
-		return fmt.Errorf("[resources] memory_warn_percent = %d: must be between 0 and 100", cfg.Resources.MemoryWarnPercent)
+	if err := validateIntRange(cfg.Resources.MemoryWarnPercent, 0, 100, "[resources] memory_warn_percent"); err != nil {
+		return err
 	}
-	if cfg.Resources.MemoryKillPercent < 0 || cfg.Resources.MemoryKillPercent > 100 {
-		return fmt.Errorf("[resources] memory_kill_percent = %d: must be between 0 and 100", cfg.Resources.MemoryKillPercent)
+	if err := validateIntRange(cfg.Resources.MemoryKillPercent, 0, 100, "[resources] memory_kill_percent"); err != nil {
+		return err
 	}
 	if cfg.Resources.MemoryPressureThreshold < 0 {
 		return fmt.Errorf("[resources] memory_pressure_threshold = %g: must not be negative", cfg.Resources.MemoryPressureThreshold)
@@ -947,12 +949,27 @@ func Load(path string) (*Config, error) {
 		cfg.DefinedKeys[strings.Join(key, ".")] = true
 	}
 
-	// Populate [defaults] section with hardcoded fallbacks
+	// Populate [defaults] section with hardcoded fallbacks.
+	// All defaults must be set BEFORE applyDefaultsToAgent so the reflection-based
+	// copier propagates them to agents automatically — no manual fallback needed.
 	setStringDefault(&cfg.Defaults.Model, "anthropic/claude-haiku-4-5-20251001")
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
 	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
+	if cfg.Defaults.ShowToolCalls == nil {
+		v := ToolCallOff
+		cfg.Defaults.ShowToolCalls = &v
+	}
+	if cfg.Defaults.ShowThinking == nil {
+		v := ShowThinkingOff
+		cfg.Defaults.ShowThinking = &v
+	}
+	if cfg.Defaults.DisplayWidth == nil {
+		v := 44
+		cfg.Defaults.DisplayWidth = &v
+	}
+	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
@@ -1142,20 +1159,6 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
-	// Default display settings in [defaults] when not set.
-	if cfg.Defaults.ShowToolCalls == nil {
-		v := ToolCallOff
-		cfg.Defaults.ShowToolCalls = &v
-	}
-	if cfg.Defaults.ShowThinking == nil {
-		v := ShowThinkingOff
-		cfg.Defaults.ShowThinking = &v
-	}
-	if cfg.Defaults.DisplayWidth == nil {
-		v := 44
-		cfg.Defaults.DisplayWidth = &v
-	}
-	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 
 	// Keepalive/background defaults
 	setStringDefault(&cfg.Keepalive.Interval, "55m")
@@ -1174,18 +1177,6 @@ func Load(path string) (*Config, error) {
 		cfg.Agents[i].Keepalive.MergeDefaults(cfg.Keepalive)
 		cfg.Agents[i].Background.MergeDefaults(cfg.Background)
 		cfg.Agents[i].MemoryFormation.MergeDefaults(cfg.MemoryFormation)
-		// ShowToolCalls: defaults.show_tool_calls → agent fallback
-		if cfg.Agents[i].ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil {
-			cfg.Agents[i].ShowToolCalls = cfg.Defaults.ShowToolCalls
-		}
-		// ShowThinking: defaults.show_thinking → agent fallback
-		if cfg.Agents[i].ShowThinking == nil && cfg.Defaults.ShowThinking != nil {
-			cfg.Agents[i].ShowThinking = cfg.Defaults.ShowThinking
-		}
-		// DisplayWidth: defaults.display_width → agent fallback
-		if cfg.Agents[i].DisplayWidth == nil && cfg.Defaults.DisplayWidth != nil {
-			cfg.Agents[i].DisplayWidth = cfg.Defaults.DisplayWidth
-		}
 	}
 
 	// Apply convention-based defaults before path resolution.
