@@ -8,7 +8,7 @@ Foci runs AI agents on Telegram. Each agent has its own identity (character file
 
 Character files are fully configurable. Use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention (AGENTS, TOOLS, SOUL, MEMORY, KEEPALIVE), or define whatever combination suits your agent. They're just markdown files in a directory — foci loads whatever you point it at.
 
-Built as a ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw) (TypeScript/Node.js). Same concept, different philosophy.
+Built as a ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw) (TypeScript/Node.js). Same concept, different philosophy. Opinionated but still highly configurable.
 
 ## Why Rewrite
 
