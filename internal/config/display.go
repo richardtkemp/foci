@@ -294,6 +294,10 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	add("inject_agent_warnings", agent.InjectAgentWarnings)
 	add("steer_mode", agent.SteerMode)
+	add("stream_output", agent.StreamOutput)
+	if agent.StreamUpdateInterval != "" {
+		add("stream_update_interval", agent.StreamUpdateInterval)
+	}
 	if agent.StartupNotification != nil {
 		add("startup_notification", *agent.StartupNotification)
 	}

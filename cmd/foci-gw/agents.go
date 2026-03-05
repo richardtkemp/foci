@@ -100,6 +100,10 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 		bot.SetInjectedMessageHeader(cfg.Defaults.InjectedMessageHeader)
 	}
 	bot.SetSteerMode(acfg.SteerMode)
+	bot.SetStreamOutput(acfg.StreamOutput)
+	if d, err := time.ParseDuration(acfg.StreamUpdateInterval); err == nil && d > 0 {
+		bot.SetStreamUpdateInterval(d)
+	}
 }
 
 // checkActivityGate parses if_active/if_inactive durations, checks them against

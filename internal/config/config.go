@@ -176,7 +176,9 @@ type AgentConfig struct {
 	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // per-agent memory formation override
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings AgentUsageWarningsConfig `toml:"usage_warnings"` // per-agent mana warning thresholds
-	SteerMode     bool                     `toml:"steer_mode"`     // inject user messages between tool calls (default true)
+	SteerMode            bool                     `toml:"steer_mode"`              // inject user messages between tool calls (default true)
+	StreamOutput         bool                     `toml:"stream_output"`           // stream model output to Telegram in real-time
+	StreamUpdateInterval string                   `toml:"stream_update_interval"`  // duration between Telegram message edits during streaming
 }
 
 type GeminiConfig struct {
@@ -450,8 +452,10 @@ type DefaultsConfig struct {
 
 	TTS       string  `toml:"tts"`        // default TTS provider id
 	STT       string  `toml:"stt"`        // default STT provider id
-	TTSRate   float64 `toml:"tts_rate"`   // default TTS speech rate multiplier
-	SteerMode bool    `toml:"steer_mode"` // default steer_mode (default: true)
+	TTSRate              float64 `toml:"tts_rate"`                // default TTS speech rate multiplier
+	SteerMode            bool    `toml:"steer_mode"`              // default steer_mode (default: true)
+	StreamOutput         bool    `toml:"stream_output"`           // default stream_output (default: false)
+	StreamUpdateInterval string  `toml:"stream_update_interval"`  // default stream_update_interval (default: "250ms")
 }
 
 // ModelsConfig holds model-related configuration.
@@ -846,6 +850,7 @@ var boolKeys = map[string]bool{
 	"consolidation_enabled": true,
 	"session_end_enabled":   true,
 	"steer_mode":            true,
+	"stream_output":         true,
 }
 
 // normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
@@ -1014,6 +1019,7 @@ func Load(path string) (*Config, error) {
 	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
+	setStringDefault(&cfg.Defaults.StreamUpdateInterval, "250ms")
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
