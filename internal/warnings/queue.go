@@ -109,9 +109,7 @@ func (q *Queue) Push(level, component, msg string) {
 	if now.Sub(b.windowStart) >= effectiveWindow {
 		// Window expired — flush any suppressed summary
 		if b.suppressedSinceDrain > 0 {
-			dur := FormatDuration(now.Sub(b.windowStart))
-			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
-				b.level, b.component, b.suppressedSinceDrain, dur)
+			summary := summaryMessage(b.level, b.component, b.suppressedSinceDrain, now.Sub(b.windowStart))
 			q.warnings = append(q.warnings, summary)
 		}
 
@@ -166,6 +164,12 @@ func (q *Queue) pushLocked(level, component, msg string) {
 	}
 }
 
+// summaryMessage creates a formatted summary of suppressed warnings.
+func summaryMessage(level, component string, suppressedCount int, elapsed time.Duration) string {
+	return fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
+		level, component, suppressedCount, FormatDuration(elapsed))
+}
+
 // Drain returns all queued warnings and clears the queue.
 // For any rate-limited keys with suppressed messages, a summary line is appended.
 // Expired buckets are pruned to prevent unbounded growth.
@@ -180,9 +184,7 @@ func (q *Queue) Drain() []string {
 			// Quiet bucket: only flush when quiet window expires
 			if now.Sub(b.windowStart) >= q.quietWindow() {
 				if b.suppressedSinceDrain > 0 {
-					dur := FormatDuration(now.Sub(b.windowStart))
-					summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
-						b.level, b.component, b.suppressedSinceDrain, dur)
+					summary := summaryMessage(b.level, b.component, b.suppressedSinceDrain, now.Sub(b.windowStart))
 					q.warnings = append(q.warnings, summary)
 				}
 				delete(q.buckets, key)
@@ -192,9 +194,7 @@ func (q *Queue) Drain() []string {
 
 		// Normal bucket
 		if b.suppressedSinceDrain > 0 {
-			dur := FormatDuration(now.Sub(b.windowStart))
-			summary := fmt.Sprintf("[%s] [%s] ... and %d more in last %s",
-				b.level, b.component, b.suppressedSinceDrain, dur)
+			summary := summaryMessage(b.level, b.component, b.suppressedSinceDrain, now.Sub(b.windowStart))
 			q.warnings = append(q.warnings, summary)
 			b.suppressedSinceDrain = 0
 		}
