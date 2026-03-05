@@ -219,7 +219,7 @@ func createAgent(w *agentWizard) (string, error) {
 
 // appendToFile appends text to a file.
 func appendToFile(path, text string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644) // #nosec G302 - appending to existing config file
 	if err != nil {
 		return err
 	}

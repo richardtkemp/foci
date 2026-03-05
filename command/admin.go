@@ -260,7 +260,7 @@ func promptsReinstall(data PromptsData) (string, error) {
 	for name, content := range data.EmbeddedPrompts {
 		path := filepath.Join(dir, name)
 		existing, err := os.ReadFile(path)
-		if err == nil && md5.Sum(existing) == md5.Sum([]byte(content)) {
+		if err == nil && md5.Sum(existing) == md5.Sum([]byte(content)) { // #nosec G401 - content comparison, not security
 			matched++
 			continue
 		}
@@ -320,11 +320,11 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, deps Prompt
 	}
 	tmpPath := tmpFile.Name()
 	if _, err := tmpFile.WriteString(content.String()); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close() // #nosec G104 - best effort cleanup
 		os.Remove(tmpPath)
 		return "", fmt.Errorf("write temp file: %w", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close() // #nosec G104 - file already written successfully
 
 	if deps.SendDocFn != nil {
 		if err := deps.SendDocFn(tmpPath); err != nil {

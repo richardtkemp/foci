@@ -264,7 +264,7 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() // nolint:errcheck
 
 	var entries []SessionIndexEntry
 	for rows.Next() {
