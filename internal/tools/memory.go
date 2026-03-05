@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"foci/internal/memory"
 )
@@ -51,6 +52,14 @@ func buildMemorySearchSchema(names []string) json.RawMessage {
 					"type": "string",
 					"enum": ["relevance", "newest", "oldest"],
 					"description": "Sort order: relevance (default, weighted by source), newest (most recently modified first), or oldest (least recently modified first)"
+				},
+				"date_from": {
+					"type": "string",
+					"description": "Filter results to entries on or after this date (YYYY-MM-DD format, e.g., '2024-01-15')"
+				},
+				"date_to": {
+					"type": "string",
+					"description": "Filter results to entries on or before this date (YYYY-MM-DD format, e.g., '2024-12-31')"
 				}
 			},
 			"required": ["query"]
@@ -80,6 +89,14 @@ func buildMemorySearchSchema(names []string) json.RawMessage {
 				"type": "string",
 				"enum": %s,
 				"description": "Search backend to query (default: %s)"
+			},
+			"date_from": {
+				"type": "string",
+				"description": "Filter results to entries on or after this date (YYYY-MM-DD format, e.g., '2024-01-15')"
+			},
+			"date_to": {
+				"type": "string",
+				"description": "Filter results to entries on or before this date (YYYY-MM-DD format, e.g., '2024-12-31')"
 			}
 		},
 		"required": ["query"]
@@ -88,9 +105,11 @@ func buildMemorySearchSchema(names []string) json.RawMessage {
 
 func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string) (ToolResult, error) {
 	var p struct {
-		Query   string `json:"query"`
-		Sort    string `json:"sort"`
-		Backend string `json:"backend"`
+		Query    string `json:"query"`
+		Sort     string `json:"sort"`
+		Backend  string `json:"backend"`
+		DateFrom string `json:"date_from"`
+		DateTo   string `json:"date_to"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
@@ -106,7 +125,28 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 		return ToolResult{}, fmt.Errorf("unknown search backend %q", backendName)
 	}
 
-	results, err := searcher.Search(p.Query, p.Sort)
+	var opts *memory.SearchOptions
+	if p.DateFrom != "" || p.DateTo != "" {
+		opts = &memory.SearchOptions{}
+		if p.DateFrom != "" {
+			t, err := time.Parse("2006-01-02", p.DateFrom)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("invalid date_from format (use YYYY-MM-DD): %w", err)
+			}
+			opts.DateFrom = &t
+		}
+		if p.DateTo != "" {
+			t, err := time.Parse("2006-01-02", p.DateTo)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("invalid date_to format (use YYYY-MM-DD): %w", err)
+			}
+			// Set to end of day to include the entire date
+			endOfDay := t.Add(24*time.Hour - time.Second)
+			opts.DateTo = &endOfDay
+		}
+	}
+
+	results, err := searcher.Search(p.Query, p.Sort, opts)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("search: %w", err)
 	}

@@ -45,7 +45,7 @@ func TestReindex(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go programming", "")
+	results, err := idx.Search("Go programming", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestReindexIdempotent(t *testing.T) {
 	idx.Reindex()
 	idx.Reindex() // second reindex should not duplicate
 
-	results, err := idx.Search("unique content", "")
+	results, err := idx.Search("unique content", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestReindexSkipsNonMarkdown(t *testing.T) {
 
 	idx.Reindex()
 
-	results, err := idx.Search("content", "")
+	results, err := idx.Search("content", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestIndexConversation(t *testing.T) {
 	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
 	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main")
 
-	results, err := idx.Search("quantum", "")
+	results, err := idx.Search("quantum", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestMemoryWeightedHigher(t *testing.T) {
 	idx.Reindex()
 	idx.IndexConversation("Random fact about neural networks", "agent:main:main")
 
-	results, err := idx.Search("neural networks", "")
+	results, err := idx.Search("neural networks", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestConversationWeightConfigurable(t *testing.T) {
 
 	idx.IndexConversation("Neural networks are interesting", "agent:main:main")
 
-	results, err := idx.Search("neural", "")
+	results, err := idx.Search("neural", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestSearchNoMatches(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("nothing relevant here"), 0644)
 	idx.Reindex()
 
-	results, err := idx.Search("xyzzy", "")
+	results, err := idx.Search("xyzzy", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestSearchNoMatches(t *testing.T) {
 func TestSearchEmptyIndex(t *testing.T) {
 	idx, _ := testIndex(t)
 
-	results, err := idx.Search("anything", "")
+	results, err := idx.Search("anything", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestSearchSubdirectories(t *testing.T) {
 
 	idx.Reindex()
 
-	results, err := idx.Search("winter", "")
+	results, err := idx.Search("winter", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestPorterStemming(t *testing.T) {
 	idx.Reindex()
 
 	// Porter stemmer should match "program" against "programmer", "programming", "programmatic"
-	results, err := idx.Search("program", "")
+	results, err := idx.Search("program", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestMultiSourceIndexing(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go interfaces", "")
+	results, err := idx.Search("Go interfaces", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestWeightedRanking(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("quick brown", "")
+	results, err := idx.Search("quick brown", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestBackwardCompatSingleDir(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("backward compatibility", "")
+	results, err := idx.Search("backward compatibility", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestSearchRecency(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go concurrency", "newest")
+	results, err := idx.Search("Go concurrency", "newest", nil)
 	if err != nil {
 		t.Fatalf("Search newest: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestSearchRecency(t *testing.T) {
 	}
 
 	// Oldest sort — old file should come first
-	results, err = idx.Search("Go concurrency", "oldest")
+	results, err = idx.Search("Go concurrency", "oldest", nil)
 	if err != nil {
 		t.Fatalf("Search oldest: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestSearchRelevanceDefault(t *testing.T) {
 	idx.Reindex()
 
 	// Empty string sort should use relevance (default)
-	results, err := idx.Search("Go programming", "")
+	results, err := idx.Search("Go programming", "", nil)
 	if err != nil {
 		t.Fatalf("Search with empty sort: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestSearchRelevanceDefault(t *testing.T) {
 	}
 
 	// Explicit "relevance" should also work
-	results2, err := idx.Search("Go programming", "relevance")
+	results2, err := idx.Search("Go programming", "relevance", nil)
 	if err != nil {
 		t.Fatalf("Search with relevance sort: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestStartSweep(t *testing.T) {
 	// Wait for the initial sweep to fire and complete.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		results, err := idx.Search("sweep discovers", "")
+		results, err := idx.Search("sweep discovers", "", nil)
 		if err != nil {
 			t.Fatalf("Search: %v", err)
 		}
@@ -516,7 +516,7 @@ func TestStartSweepDisabledByClose(t *testing.T) {
 	}
 	defer idx2.Close()
 
-	results, err := idx2.Search("should not appear", "")
+	results, err := idx2.Search("should not appear", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -534,5 +534,74 @@ func TestIndexBusyTimeout(t *testing.T) {
 	}
 	if timeout != 5000 {
 		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
+}
+
+func TestSearchDateRangeFilter(t *testing.T) {
+	// Tests that date_from and date_to parameters correctly filter results.
+	idx, memDir := testIndex(t)
+
+	oldFile := filepath.Join(memDir, "old.md")
+	newFile := filepath.Join(memDir, "new.md")
+
+	os.WriteFile(oldFile, []byte("Historical document about alpha project"), 0644)
+	oldTime := time.Now().Add(-7 * 24 * time.Hour)
+	os.Chtimes(oldFile, oldTime, oldTime)
+
+	os.WriteFile(newFile, []byte("Recent document about beta project"), 0644)
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	// Without date filter - should find both
+	results, err := idx.Search("project", "", nil)
+	if err != nil {
+		t.Fatalf("Search without filter: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results without filter, got %d", len(results))
+	}
+
+	// With date_from - should exclude old file
+	dateFrom := time.Now().Add(-2 * 24 * time.Hour)
+	results, err = idx.Search("project", "", &SearchOptions{DateFrom: &dateFrom})
+	if err != nil {
+		t.Fatalf("Search with date_from: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results with date_from")
+	}
+	for _, r := range results {
+		if r.Path == "old.md" {
+			t.Error("old.md should be excluded by date_from filter")
+		}
+	}
+
+	// With date_to - should exclude new file
+	dateTo := time.Now().Add(-3 * 24 * time.Hour)
+	results, err = idx.Search("project", "", &SearchOptions{DateTo: &dateTo})
+	if err != nil {
+		t.Fatalf("Search with date_to: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results with date_to")
+	}
+	for _, r := range results {
+		if r.Path == "new.md" {
+			t.Error("new.md should be excluded by date_to filter")
+		}
+	}
+
+	// With both date_from and date_to - should exclude both if range is narrow
+	middleFrom := time.Now().Add(-5 * 24 * time.Hour)
+	middleTo := time.Now().Add(-4 * 24 * time.Hour)
+	results, err = idx.Search("project", "", &SearchOptions{DateFrom: &middleFrom, DateTo: &middleTo})
+	if err != nil {
+		t.Fatalf("Search with both filters: %v", err)
+	}
+	// Should find nothing (both files are outside the 1-day window)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results with narrow date range, got %d", len(results))
 	}
 }

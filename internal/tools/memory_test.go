@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/memory"
 )
@@ -55,10 +56,10 @@ func TestMemorySearch(t *testing.T) {
 	}
 
 	// Should find "buy" in both files
-	if !strings.Contains(result.Text,"notes.md") {
+	if !strings.Contains(result.Text, "notes.md") {
 		t.Errorf("missing notes.md in result: %q", result.Text)
 	}
-	if !strings.Contains(result.Text,"todo.md") {
+	if !strings.Contains(result.Text, "todo.md") {
 		t.Errorf("missing todo.md in result: %q", result.Text)
 	}
 
@@ -124,10 +125,10 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	}
 
 	// Should show both memory and conversation results with source labels
-	if !strings.Contains(result.Text,"[memory]") {
+	if !strings.Contains(result.Text, "[memory]") {
 		t.Errorf("missing [memory] source label in result: %q", result.Text)
 	}
-	if !strings.Contains(result.Text,"[conversation]") {
+	if !strings.Contains(result.Text, "[conversation]") {
 		t.Errorf("missing [conversation] source label in result: %q", result.Text)
 	}
 }
@@ -153,7 +154,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with sort=newest: %v", err)
 	}
-	if !strings.Contains(result.Text,"recent.md") {
+	if !strings.Contains(result.Text, "recent.md") {
 		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 
@@ -163,7 +164,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with sort=oldest: %v", err)
 	}
-	if !strings.Contains(result.Text,"recent.md") {
+	if !strings.Contains(result.Text, "recent.md") {
 		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 
@@ -173,7 +174,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with sort=relevance: %v", err)
 	}
-	if !strings.Contains(result.Text,"recent.md") {
+	if !strings.Contains(result.Text, "recent.md") {
 		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 
@@ -183,7 +184,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with default sort: %v", err)
 	}
-	if !strings.Contains(result.Text,"recent.md") {
+	if !strings.Contains(result.Text, "recent.md") {
 		t.Errorf("missing recent.md in result: %q", result.Text)
 	}
 }
@@ -232,7 +233,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with backend=fts5: %v", err)
 	}
-	if !strings.Contains(result.Text,"notes.md") {
+	if !strings.Contains(result.Text, "notes.md") {
 		t.Errorf("fts5 backend should find notes.md: %q", result.Text)
 	}
 
@@ -242,7 +243,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with backend=bleve: %v", err)
 	}
-	if !strings.Contains(result.Text,"notes.md") {
+	if !strings.Contains(result.Text, "notes.md") {
 		t.Errorf("bleve backend should find notes.md: %q", result.Text)
 	}
 
@@ -252,7 +253,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute with default backend: %v", err)
 	}
-	if !strings.Contains(result.Text,"notes.md") {
+	if !strings.Contains(result.Text, "notes.md") {
 		t.Errorf("default backend should find notes.md: %q", result.Text)
 	}
 }
@@ -278,5 +279,111 @@ func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
 	schemaStr := string(tool.Parameters)
 	if strings.Contains(schemaStr, "backend") {
 		t.Error("schema should NOT include 'backend' parameter when only one backend configured")
+	}
+}
+
+func TestMemorySearchDateRange(t *testing.T) {
+	// Tests date_from and date_to filtering functionality.
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	oldFile := filepath.Join(memDir, "old.md")
+	newFile := filepath.Join(memDir, "new.md")
+
+	os.WriteFile(oldFile, []byte("Historical document about project alpha"), 0644)
+	oldTime := time.Now().Add(-7 * 24 * time.Hour)
+	os.Chtimes(oldFile, oldTime, oldTime)
+
+	os.WriteFile(newFile, []byte("Recent document about project beta"), 0644)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, err := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+	idx.Reindex()
+
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
+
+	// Search without date filter should find both
+	params, _ := json.Marshal(map[string]string{"query": "project"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute without date filter: %v", err)
+	}
+	if !strings.Contains(result.Text, "old.md") || !strings.Contains(result.Text, "new.md") {
+		t.Errorf("expected both files without date filter: %q", result.Text)
+	}
+
+	// Search with date_from should exclude old file
+	dateFrom := time.Now().Add(-2 * 24 * time.Hour).Format("2006-01-02")
+	params, _ = json.Marshal(map[string]string{"query": "project", "date_from": dateFrom})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with date_from: %v", err)
+	}
+	if strings.Contains(result.Text, "old.md") {
+		t.Errorf("old.md should be excluded by date_from: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "new.md") {
+		t.Errorf("new.md should be included by date_from: %q", result.Text)
+	}
+
+	// Search with date_to should exclude new file
+	dateTo := time.Now().Add(-3 * 24 * time.Hour).Format("2006-01-02")
+	params, _ = json.Marshal(map[string]string{"query": "project", "date_to": dateTo})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with date_to: %v", err)
+	}
+	if !strings.Contains(result.Text, "old.md") {
+		t.Errorf("old.md should be included by date_to: %q", result.Text)
+	}
+	if strings.Contains(result.Text, "new.md") {
+		t.Errorf("new.md should be excluded by date_to: %q", result.Text)
+	}
+}
+
+func TestMemorySearchDateRangeInvalid(t *testing.T) {
+	// Tests that invalid date format returns a clear error.
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, err := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewIndex: %v", err)
+	}
+	defer idx.Close()
+
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
+
+	// Invalid date_from format
+	params, _ := json.Marshal(map[string]string{"query": "test", "date_from": "2024/01/15"})
+	_, err = tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for invalid date_from format")
+	}
+	if !strings.Contains(err.Error(), "date_from") {
+		t.Errorf("error should mention date_from: %v", err)
+	}
+
+	// Invalid date_to format
+	params, _ = json.Marshal(map[string]string{"query": "test", "date_to": "Jan 15, 2024"})
+	_, err = tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for invalid date_to format")
+	}
+	if !strings.Contains(err.Error(), "date_to") {
+		t.Errorf("error should mention date_to: %v", err)
 	}
 }

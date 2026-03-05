@@ -45,7 +45,7 @@ func TestBleveReindex(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go programming", "")
+	results, err := idx.Search("Go programming", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestBleveReindexIdempotent(t *testing.T) {
 	idx.Reindex()
 	idx.Reindex() // second reindex should not duplicate
 
-	results, err := idx.Search("unique content", "")
+	results, err := idx.Search("unique content", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestBleveReindexSkipsNonMarkdown(t *testing.T) {
 
 	idx.Reindex()
 
-	results, err := idx.Search("content", "")
+	results, err := idx.Search("content", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestBleveSearchNoMatches(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("nothing relevant here"), 0644)
 	idx.Reindex()
 
-	results, err := idx.Search("xyzzy", "")
+	results, err := idx.Search("xyzzy", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestBleveSearchNoMatches(t *testing.T) {
 func TestBleveSearchEmptyIndex(t *testing.T) {
 	idx, _ := testBleveIndex(t)
 
-	results, err := idx.Search("anything", "")
+	results, err := idx.Search("anything", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestBleveSearchSubdirectories(t *testing.T) {
 
 	idx.Reindex()
 
-	results, err := idx.Search("winter", "")
+	results, err := idx.Search("winter", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestBlevePorterStemming(t *testing.T) {
 	idx.Reindex()
 
 	// English analyzer uses Porter stemming — "program" should match variants
-	results, err := idx.Search("program", "")
+	results, err := idx.Search("program", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestBleveMultiSourceIndexing(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go interfaces", "")
+	results, err := idx.Search("Go interfaces", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestBleveWeightedRanking(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("quick brown", "")
+	results, err := idx.Search("quick brown", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestBleveSearchRecency(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go concurrency", "newest")
+	results, err := idx.Search("Go concurrency", "newest", nil)
 	if err != nil {
 		t.Fatalf("Search newest: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestBleveSearchRecency(t *testing.T) {
 	}
 
 	// Oldest sort
-	results, err = idx.Search("Go concurrency", "oldest")
+	results, err = idx.Search("Go concurrency", "oldest", nil)
 	if err != nil {
 		t.Fatalf("Search oldest: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestBleveSearchRelevanceDefault(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Go programming language features"), 0644)
 	idx.Reindex()
 
-	results, err := idx.Search("Go programming", "")
+	results, err := idx.Search("Go programming", "", nil)
 	if err != nil {
 		t.Fatalf("Search with empty sort: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestBleveSearchRelevanceDefault(t *testing.T) {
 		t.Fatal("expected results with empty sort")
 	}
 
-	results2, err := idx.Search("Go programming", "relevance")
+	results2, err := idx.Search("Go programming", "relevance", nil)
 	if err != nil {
 		t.Fatalf("Search with relevance sort: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestBleveStartSweep(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		results, err := idx.Search("sweep discovers", "")
+		results, err := idx.Search("sweep discovers", "", nil)
 		if err != nil {
 			t.Fatalf("Search: %v", err)
 		}
@@ -350,7 +350,7 @@ func TestBleveStartSweepDisabledByClose(t *testing.T) {
 	}
 	defer idx2.Close()
 
-	results, err := idx2.Search("should not appear", "")
+	results, err := idx2.Search("should not appear", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestBleveReopenExisting(t *testing.T) {
 	}
 	defer idx2.Close()
 
-	results, err := idx2.Search("persistent data", "")
+	results, err := idx2.Search("persistent data", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestBleveSnippetContainsHighlight(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The quick brown fox jumps over the lazy dog in the sunny afternoon"), 0644)
 	idx.Reindex()
 
-	results, err := idx.Search("quick brown fox", "")
+	results, err := idx.Search("quick brown fox", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -413,5 +413,62 @@ func TestBleveSnippetContainsHighlight(t *testing.T) {
 	// Snippet should contain highlight markers (> <)
 	if results[0].Snippet == "" {
 		t.Error("snippet should not be empty")
+	}
+}
+
+func TestBleveSearchDateRangeFilter(t *testing.T) {
+	// Tests that date_from and date_to parameters correctly filter results in bleve.
+	idx, memDir := testBleveIndex(t)
+
+	oldFile := filepath.Join(memDir, "old.md")
+	newFile := filepath.Join(memDir, "new.md")
+
+	os.WriteFile(oldFile, []byte("Historical document about alpha project"), 0644)
+	oldTime := time.Now().Add(-7 * 24 * time.Hour)
+	os.Chtimes(oldFile, oldTime, oldTime)
+
+	os.WriteFile(newFile, []byte("Recent document about beta project"), 0644)
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	// Without date filter - should find both
+	results, err := idx.Search("project", "", nil)
+	if err != nil {
+		t.Fatalf("Search without filter: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results without filter, got %d", len(results))
+	}
+
+	// With date_from - should exclude old file
+	dateFrom := time.Now().Add(-2 * 24 * time.Hour)
+	results, err = idx.Search("project", "", &SearchOptions{DateFrom: &dateFrom})
+	if err != nil {
+		t.Fatalf("Search with date_from: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results with date_from")
+	}
+	for _, r := range results {
+		if r.Path == "old.md" {
+			t.Error("old.md should be excluded by date_from filter")
+		}
+	}
+
+	// With date_to - should exclude new file
+	dateTo := time.Now().Add(-3 * 24 * time.Hour)
+	results, err = idx.Search("project", "", &SearchOptions{DateTo: &dateTo})
+	if err != nil {
+		t.Fatalf("Search with date_to: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results with date_to")
+	}
+	for _, r := range results {
+		if r.Path == "new.md" {
+			t.Error("new.md should be excluded by date_to filter")
+		}
 	}
 }
