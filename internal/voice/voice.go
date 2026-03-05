@@ -3,6 +3,7 @@ package voice
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"foci/internal/config"
 	"foci/internal/log"
 )
 
@@ -45,22 +47,22 @@ func WithRate(t TTS, rate float64) TTS {
 	}
 }
 
-// NewTTS creates a TTS provider from config values.
+// NewTTS creates a TTS provider from a TTSConfig and resolved API key.
 // Rate is NOT baked in — apply at resolution time via WithRate.
-func NewTTS(format, endpoint, apiKey, model, voiceName, command, responseFormat string) (TTS, error) {
-	switch format {
+func NewTTS(cfg config.TTSConfig, apiKey string) (TTS, error) {
+	switch cfg.Format {
 	case "edge-tts":
-		return &EdgeTTS{Command: command, Voice: voiceName}, nil
+		return &EdgeTTS{Command: cfg.Command, Voice: cfg.Voice}, nil
 	case "openai":
 		return &OpenAITTS{
-			Endpoint:       endpoint,
+			Endpoint:       cfg.Endpoint,
 			APIKey:         apiKey,
-			Model:          model,
-			Voice:          voiceName,
-			ResponseFormat: responseFormat,
+			Model:          cfg.Model,
+			Voice:          cfg.Voice,
+			ResponseFormat: cfg.ResponseFormat,
 		}, nil
 	default:
-		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", format)
+		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", cfg.Format)
 	}
 }
 
@@ -206,6 +208,15 @@ type OpenAITTS struct {
 	ResponseFormat string  // e.g. "mp3", "wav" (default: "wav")
 }
 
+// ttsRequest is the JSON payload for an OpenAI-compatible TTS API call.
+type ttsRequest struct {
+	Model          string  `json:"model"`
+	Input          string  `json:"input"`
+	Voice          string  `json:"voice"`
+	Speed          float64 `json:"speed,omitempty"`
+	ResponseFormat string  `json:"response_format"`
+}
+
 func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	log.Debugf("voice", "tts openai text=%d chars model=%s", len(text), o.Model)
 	voice := o.Voice
@@ -217,14 +228,18 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		responseFormat = "wav"
 	}
 
-	var payload string
-	if o.Speed > 0 {
-		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q,"speed":%.2f,"response_format":%q}`, o.Model, text, voice, o.Speed, responseFormat)
-	} else {
-		payload = fmt.Sprintf(`{"model":%q,"input":%q,"voice":%q,"response_format":%q}`, o.Model, text, voice, responseFormat)
+	payload, err := json.Marshal(&ttsRequest{
+		Model:          o.Model,
+		Input:          text,
+		Voice:          voice,
+		Speed:          o.Speed,
+		ResponseFormat: responseFormat,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal tts request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", o.Endpoint, strings.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", o.Endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("create tts request: %w", err)
 	}

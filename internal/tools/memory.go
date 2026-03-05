@@ -37,11 +37,21 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, order []string) *T
 	}
 }
 
+// dateSchemaProperties is the shared JSON fragment for date_from/date_to schema properties.
+const dateSchemaProperties = `"date_from": {
+				"type": "string",
+				"description": "Filter results to entries on or after this date (YYYY-MM-DD format, e.g., '2024-01-15')"
+			},
+			"date_to": {
+				"type": "string",
+				"description": "Filter results to entries on or before this date (YYYY-MM-DD format, e.g., '2024-12-31')"
+			}`
+
 // buildMemorySearchSchema builds the tool parameter schema.
 // When multiple backends are available, includes the "backend" parameter.
 func buildMemorySearchSchema(names []string) json.RawMessage {
 	if len(names) <= 1 {
-		return json.RawMessage(`{
+		return json.RawMessage(fmt.Sprintf(`{
 			"type": "object",
 			"properties": {
 				"query": {
@@ -53,17 +63,10 @@ func buildMemorySearchSchema(names []string) json.RawMessage {
 					"enum": ["relevance", "newest", "oldest"],
 					"description": "Sort order: relevance (default, weighted by source), newest (most recently modified first), or oldest (least recently modified first)"
 				},
-				"date_from": {
-					"type": "string",
-					"description": "Filter results to entries on or after this date (YYYY-MM-DD format, e.g., '2024-01-15')"
-				},
-				"date_to": {
-					"type": "string",
-					"description": "Filter results to entries on or before this date (YYYY-MM-DD format, e.g., '2024-12-31')"
-				}
+				%s
 			},
 			"required": ["query"]
-		}`)
+		}`, dateSchemaProperties))
 	}
 
 	// Build backend enum JSON
@@ -90,17 +93,10 @@ func buildMemorySearchSchema(names []string) json.RawMessage {
 				"enum": %s,
 				"description": "Search backend to query (default: %s)"
 			},
-			"date_from": {
-				"type": "string",
-				"description": "Filter results to entries on or after this date (YYYY-MM-DD format, e.g., '2024-01-15')"
-			},
-			"date_to": {
-				"type": "string",
-				"description": "Filter results to entries on or before this date (YYYY-MM-DD format, e.g., '2024-12-31')"
-			}
+			%s
 		},
 		"required": ["query"]
-	}`, enumJSON, names[0]))
+	}`, enumJSON, names[0], dateSchemaProperties))
 }
 
 func memorySearch(ctx context.Context, params json.RawMessage, backends map[string]memory.Searcher, defaultBackend string) (ToolResult, error) {
@@ -140,9 +136,9 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 			if err != nil {
 				return ToolResult{}, fmt.Errorf("invalid date_to format (use YYYY-MM-DD): %w", err)
 			}
-			// Set to end of day to include the entire date
-			endOfDay := t.Add(24*time.Hour - time.Second)
-			opts.DateTo = &endOfDay
+			// Exclusive upper bound: start of the next day
+			nextDay := t.AddDate(0, 0, 1)
+			opts.DateTo = &nextDay
 		}
 	}
 
