@@ -4,7 +4,7 @@ BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 GOBIN ?= $(shell go env GOPATH)/bin
 
-LDFLAGS = -X main.version=$(VERSION) \
+LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
@@ -15,6 +15,7 @@ all: build cli foci-call
 build:
 	@mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/foci-gw ./cmd/foci-gw
+	@command -v upx >/dev/null 2>&1 && upx -q bin/foci-gw || true
 
 cli:
 	@mkdir -p bin
