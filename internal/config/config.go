@@ -181,7 +181,7 @@ type OpenAIConfig struct {
 type AnthropicConfig struct {
 	HTTPTimeout              string `toml:"http_timeout"`                // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout          string `toml:"usage_api_timeout"`           // HTTP timeout for usage API calls (default "10s")
-	UsageCacheTTL            string `toml:"usage_cache_ttl"`             // cache TTL for usage API responses (default "5m")
+	UsageCacheTTL            string `toml:"usage_cache_ttl"`             // cache TTL for usage API responses (default "10m")
 	CCCredentialsPollInterval string `toml:"cc_credentials_poll_interval"` // how often to re-read CC credentials file (default "30s")
 	UseSDK                   bool   `toml:"use_sdk"`                     // use SDK transport (default true; false = raw HTTP)
 	Streaming                bool   `toml:"streaming"`                   // use streaming API (default false; requires use_sdk)
@@ -1120,7 +1120,7 @@ func Load(path string) (*Config, error) {
 	// Anthropic defaults
 	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
-	setStringDefault(&cfg.Anthropic.UsageCacheTTL, "5m")
+	setStringDefault(&cfg.Anthropic.UsageCacheTTL, "10m")
 	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
 	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
 	setStringDefault(&cfg.Anthropic.Effort, "low")
