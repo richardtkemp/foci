@@ -22,3 +22,6 @@ conversation.db-shm
 coverage.out
 coverage.html
 internal/tools/logs/tmux.debug
+*.out
+cover.html
+COVERAGE-PROGRESS.md
