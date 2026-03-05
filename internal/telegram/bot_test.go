@@ -1733,6 +1733,35 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	}
 }
 
+func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.sessionKey = ""
+	b.SetStateStore(ss, "bot:test")
+	b.setDefaultChat(12345)
+
+	k1 := b.SessionKey()
+	k2 := b.SessionKey()
+	if k1 != k2 {
+		t.Errorf("SessionKey() not stable: %q vs %q", k1, k2)
+	}
+}
+
+func TestDefaultSessionKey_IsStable(t *testing.T) {
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.SetStateStore(ss, "bot:test")
+	b.setDefaultChat(12345)
+
+	k1 := b.DefaultSessionKey()
+	k2 := b.DefaultSessionKey()
+	if k1 != k2 {
+		t.Errorf("DefaultSessionKey() not stable: %q vs %q", k1, k2)
+	}
+}
+
 func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true

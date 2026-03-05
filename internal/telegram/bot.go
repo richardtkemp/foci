@@ -294,7 +294,7 @@ func (b *Bot) SessionKey() string {
 	if b.agentID != "" {
 		chatID := b.defaultChatID()
 		if chatID != 0 {
-			return SessionKeyForChat(b.agentID, chatID)
+			return b.sessionKeyForMsg(chatID)
 		}
 	}
 	return ""
@@ -392,7 +392,7 @@ func (b *Bot) DefaultSessionKey() string {
 	if chatID == 0 {
 		return ""
 	}
-	return SessionKeyForChat(b.agentID, chatID)
+	return b.sessionKeyForMsg(chatID)
 }
 
 // Username returns the bot's Telegram username.
