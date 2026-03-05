@@ -313,6 +313,16 @@ func stringsEqual(a, b []string) bool {
 	return true
 }
 
+// toolExists checks if a tool with the given name exists in the list.
+func toolExists(tools []*mcp.Tool, name string) bool {
+	for _, t := range tools {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // mcpToolSchema is the JSON Schema for the mcp tool parameters.
 var mcpToolSchema = json.RawMessage(`{
 	"type": "object",
@@ -392,19 +402,12 @@ func (m *Manager) execute(ctx context.Context, params json.RawMessage) (tools.To
 	m.mu.Unlock()
 
 	if conn == nil {
-		return tools.TextResult(fmt.Sprintf("error: unknown MCP server %q", p.Server)), nil
+		return tools.TextResult("error: unknown MCP server " + p.Server), nil
 	}
 
 	// Verify the tool exists on this server.
-	found := false
-	for _, t := range conn.tools {
-		if t.Name == p.Tool {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return tools.TextResult(fmt.Sprintf("error: server %q has no tool %q", p.Server, p.Tool)), nil
+	if !toolExists(conn.tools, p.Tool) {
+		return tools.TextResult("error: server " + p.Server + " has no tool " + p.Tool), nil
 	}
 
 	// Parse arguments into a map for the SDK.
