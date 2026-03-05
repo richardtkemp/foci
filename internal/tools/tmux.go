@@ -242,6 +242,22 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 	}, inst.ClearAll
 }
 
+// ptrBool dereferences a *bool pointer, returning the value or defaultValue if nil.
+func ptrBool(ptr *bool, defaultValue bool) bool {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultValue
+}
+
+// ptrInt returns the value of an int if greater than zero, otherwise defaultValue.
+func ptrInt(value, defaultValue int) int {
+	if value > 0 {
+		return value
+	}
+	return defaultValue
+}
+
 func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	var p struct {
 		Operation        string `json:"operation"`
@@ -262,37 +278,17 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 
 	switch p.Operation {
 	case "start":
-		watch := true
-		if p.Watch != nil {
-			watch = *p.Watch
-		}
-		return inst.start(ctx, p.Name, p.Command, p.Workdir, p.Keys, watch)
+		return inst.start(ctx, p.Name, p.Command, p.Workdir, p.Keys, ptrBool(p.Watch, true))
 	case "send":
-		enter := true
-		if p.Enter != nil {
-			enter = *p.Enter
-		}
-		return inst.send(ctx, p.Name, p.Keys, enter)
+		return inst.send(ctx, p.Name, p.Keys, ptrBool(p.Enter, true))
 	case "read":
-		lines := 50
-		if p.Lines > 0 {
-			lines = p.Lines
-		}
-		return inst.read(ctx, p.Name, lines, p.Raw)
+		return inst.read(ctx, p.Name, ptrInt(p.Lines, 50), p.Raw)
 	case "list":
 		return inst.list(ctx)
 	case "kill":
 		return inst.kill(ctx, p.Name)
 	case "watch":
-		window := 0
-		if p.Window > 0 {
-			window = p.Window
-		}
-		threshold := 30
-		if p.ThresholdSeconds > 0 {
-			threshold = p.ThresholdSeconds
-		}
-		return inst.watch(ctx, p.Name, window, threshold)
+		return inst.watch(ctx, p.Name, ptrInt(p.Window, 0), ptrInt(p.ThresholdSeconds, 30))
 	case "unwatch":
 		return inst.unwatch(ctx, p.Name)
 	default:
