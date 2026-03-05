@@ -261,48 +261,31 @@ func readUserRSS(uid int) (int64, error) {
 	return totalRSS, nil
 }
 
-// parseStatusFields reads a /proc/[pid]/status file and extracts specified fields.
-// Each fieldFn is called with the line and should update its state based on the line.
-func parseStatusFields(path string, fieldFns ...func(string)) error {
+// readStatusRSS reads a /proc/[pid]/status file and returns (VmRSS in kB, isOwnedByUID).
+func readStatusRSS(path, uidStr string) (rssKB int64, owned bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return 0, false
 	}
 	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		for _, fn := range fieldFns {
-			fn(scanner.Text())
+		line := scanner.Text()
+		if strings.HasPrefix(line, "Uid:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] == uidStr {
+				owned = true
+			}
+		}
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				rssKB, _ = strconv.ParseInt(fields[1], 10, 64)
+			}
 		}
 	}
-	return nil
-}
-
-// readStatusRSS reads a /proc/[pid]/status file and returns (VmRSS in kB, isOwnedByUID).
-func readStatusRSS(path, uidStr string) (rssKB int64, owned bool) {
-	var rss int64
-	var uidMatch bool
-
-	_ = parseStatusFields(path,
-		func(line string) {
-			if strings.HasPrefix(line, "Uid:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && fields[1] == uidStr {
-					uidMatch = true
-				}
-			}
-		},
-		func(line string) {
-			if strings.HasPrefix(line, "VmRSS:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					rss, _ = strconv.ParseInt(fields[1], 10, 64)
-				}
-			}
-		},
-	)
-	return rss, uidMatch
+	return
 }
 
 // readMemoryPressure reads PSI memory avg10 from /proc/pressure/memory.
@@ -367,32 +350,34 @@ func findLargestProcess(uid, selfPid int) (int, string, int64, error) {
 
 // readStatusFull reads a /proc/[pid]/status file and returns (VmRSS in kB, isOwnedByUID, comm).
 func readStatusFull(path, uidStr string) (rssKB int64, owned bool, comm string) {
-	_ = parseStatusFields(path,
-		func(line string) {
-			if strings.HasPrefix(line, "Name:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					comm = fields[1]
-				}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, false, ""
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "Name:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				comm = fields[1]
 			}
-		},
-		func(line string) {
-			if strings.HasPrefix(line, "Uid:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 && fields[1] == uidStr {
-					owned = true
-				}
+		}
+		if strings.HasPrefix(line, "Uid:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] == uidStr {
+				owned = true
 			}
-		},
-		func(line string) {
-			if strings.HasPrefix(line, "VmRSS:") {
-				fields := strings.Fields(line)
-				if len(fields) >= 2 {
-					rssKB, _ = strconv.ParseInt(fields[1], 10, 64)
-				}
+		}
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				rssKB, _ = strconv.ParseInt(fields[1], 10, 64)
 			}
-		},
-	)
+		}
+	}
 	return
 }
 
