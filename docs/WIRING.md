@@ -57,7 +57,6 @@ config.Load(path)                                        ← validates values; l
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
-    → agent.RestoreVoiceMode(defaultSessionKey())           ← deferred until default chat is known
     → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store
     → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
@@ -677,12 +676,10 @@ Telegram voice note → downloadFile(voice.FileID) → voice.Transcriber.Transcr
   → "[voice] transcript text" queued as regular message
 ```
 
-API key from `secrets.toml` under `[groq] api_key`. Endpoint and model configurable in `[voice]` config section (defaults: `https://api.groq.com/openai/v1/audio/transcriptions`, `whisper-large-v3`).
+API key resolved via `secret` field in `[[stt]]` config or auto-detected from endpoint hostname.
 
 **Outbound (TTS):**
-Two paths:
-1. **Voice mode** — session-level flag toggled via `/voice`. When on, all agent text replies are converted to voice notes via `voice.TTS.Synthesize()` before sending.
-2. **TTS via send_telegram** — the agent can call `send_telegram(text="...", send_as="voice")` to synthesize speech and send a voice note. Works regardless of voice mode.
+TTS via send_telegram — the agent can call `send_telegram(text="...", send_as="voice")` to synthesize speech and send a voice note.
 
 ```
 voice.TTS.Synthesize(text) → Edge TTS CLI or OpenRouter TTS API
@@ -691,14 +688,9 @@ voice.TTS.Synthesize(text) → Edge TTS CLI or OpenRouter TTS API
 
 Two TTS providers:
 - **Edge TTS** (default, free): Uses `edge-tts` CLI. Configurable voice and rate (`--rate "+20%"`).
-- **OpenAI** (via OpenRouter): API key from `secrets.toml` under `[openrouter] api_key`. Configurable endpoint/model/voice/speed.
+- **OpenAI** (via OpenRouter or Groq): API key resolved via `secret` field in `[[tts]]` config or auto-detected from endpoint hostname.
 
-Speech rate configurable via `tts_rate` in `[voice]` config section. For edge-tts: percentage (e.g. `"+20%"`). For openai: float 0.25–4.0 (e.g. `"1.5"`).
-
-**Voice mode metadata:** When voice mode is on, the metadata prefix includes `voice=on`:
-```
-[meta] time=2026-02-21T05:30:00Z gap=3h12m voice=on model=claude-haiku-4-5
-```
+Speech rate configurable via `rate` in `[[tts]]` entries and per-agent `tts_rate` multiplier. Effective rate = entry.rate × agent.tts_rate (0 treated as 1.0). Translated automatically for each provider (edge-tts `--rate "+30%"`, openai `speed: 1.3`).
 
 The agent sees this and adjusts its style (shorter, conversational, no markdown).
 
@@ -731,7 +723,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 - `turnMu` — serializes agent turns (prevents concurrent STT→agent→TTS pipelines)
 - `audioMu` — protects recording state and audio buffer
 
-**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` returns `voice.WithRate(ttsProvider, rate)`. Gate: `cfg.Voice.WSEnabled && voiceAPIKey != "" && sttProvider != nil`.
+**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate)`. Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
 ## Multiball (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
@@ -795,7 +787,7 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 - `GET /status` — dispatches `/status` for the specified agent
 - `POST /command` — dispatches slash command (bypasses agent context)
 - `POST /wake` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session.
-- `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[voice] ws_enabled = true`.
+- `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[http] ws_enabled = true`.
 - `POST /-/reload-credentials` — hot-reload API credentials from `secrets.toml`. Called by `foci auth` after saving a new token. Only registered when using static token auth (setup-token or API key), not OAuth fallback.
 
 ## CLI Tool (`cmd/foci/`)

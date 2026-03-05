@@ -91,21 +91,3 @@ func TestNotifyThinkingCtxNilSafe(t *testing.T) {
 	}
 }
 
-func TestSendVoiceCtxNilSafe(t *testing.T) {
-	// Should not panic with no callbacks
-	sendVoiceCtx(context.Background(), []byte("data"))
-
-	// Should not deliver empty data
-	var called bool
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		VoiceReplyFunc: func(data []byte) { called = true },
-	})
-	sendVoiceCtx(ctx, nil)
-	if called {
-		t.Error("should not call VoiceReplyFunc with nil data")
-	}
-	sendVoiceCtx(ctx, []byte{})
-	if called {
-		t.Error("should not call VoiceReplyFunc with empty data")
-	}
-}

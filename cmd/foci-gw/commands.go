@@ -191,11 +191,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		}
 	}
 
-	cmds.Register(command.NewVoiceCommand(
-		func(ctx context.Context) bool { return p.ag.VoiceMode(p.sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, on bool) { p.ag.SetVoiceMode(p.sessionKeyFromCtx(ctx), on) },
-	))
-
 	// /multiball and /mb — per-agent pool first, shared pool fallback.
 	forkFn := func(ctx context.Context) (string, error) {
 		return forkMultiball(p, cmds, ctx)

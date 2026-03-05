@@ -26,8 +26,8 @@ type httpHandlerDeps struct {
 	botMgr             *telegram.BotManager
 	cfg                *config.Config
 	ctx                context.Context
-	sttProvider        voice.STT
-	ttsProvider        voice.TTS
+	ttsMap             map[string]voice.TTS
+	sttMap             map[string]voice.STT
 	reloadCredentials  func() error // hot-reload credentials from secrets.toml (nil if not supported)
 }
 
@@ -105,7 +105,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/wake", handleWake(d, resolveAgent, isAgentActive))
 
 	endpointList := "/send, /status, /command, /wake"
-	if d.cfg.Voice.WSEnabled && d.sttProvider != nil {
+	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"
 		log.Infof("http", "/voice WebSocket endpoint enabled")

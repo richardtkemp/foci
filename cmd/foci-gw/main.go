@@ -147,10 +147,8 @@ Subcommands:
 	}
 
 	// ========== Voice providers ==========
-	groqKey, _ := sec.store.Get("groq.api_key")
-	openrouterKey, _ := sec.store.Get("openrouter.api_key")
 	braveKey, _ := sec.store.Get("brave.api_key")
-	sttProvider, ttsProvider := initVoice(cfg, groqKey, openrouterKey)
+	ttsMap, sttMap := initVoice(cfg, sec.store)
 
 	startTime := time.Now()
 	botMgr := telegram.NewBotManager()
@@ -229,8 +227,8 @@ Subcommands:
 			todoStore:             mem.todoStore,
 			toolDetailStore:       toolDetailStore,
 			sessionIndex:          si.sessionIndex,
-			sttProvider:           sttProvider,
-			ttsProvider:           ttsProvider,
+			ttsMap:                ttsMap,
+			sttMap:                sttMap,
 			braveKey:              braveKey,
 			usageClient:           usageClient,
 			botMgr:                botMgr,
@@ -257,7 +255,7 @@ Subcommands:
 
 	// ========== Post-agent setup ==========
 	setupSharedMultiball(botMgr, agents, agentOrder, cfg, sec.store, si.sessions,
-		sttProvider, ttsProvider, toolDetailStore, si.stateStore, ctx)
+		ttsMap, sttMap, toolDetailStore, si.stateStore, ctx)
 	setupWarningHooks(agents, cfg)
 	if stop := setupTmuxMemoryMonitor(agents, agentOrder, cfg, botMgr, ctx); stop != nil {
 		defer stop()
@@ -310,8 +308,8 @@ Subcommands:
 		botMgr:            botMgr,
 		cfg:               cfg,
 		ctx:               ctx,
-		sttProvider:       sttProvider,
-		ttsProvider:       ttsProvider,
+		ttsMap:            ttsMap,
+		sttMap:            sttMap,
 		reloadCredentials: reloadCreds,
 	})
 

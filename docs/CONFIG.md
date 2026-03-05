@@ -113,7 +113,7 @@ HTTP API server.
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
 | `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 
-Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `GET /voice` (WebSocket, when `[voice] ws_enabled = true`).
+Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
 
 All endpoints accept an `agent` field (JSON body for POST, query param for GET) to target a specific agent by ID. When empty or omitted, the first configured agent is used. The `/send` endpoint also accepts an optional `session` field to target a specific session key (defaults to `main`).
 
@@ -229,21 +229,34 @@ weight = 0.5
 
 Per-agent memory sources (`[[agents.memory.sources]]`) are documented in [Agent-Only: Memory](#memory).
 
-### `[voice]`
+### `[[tts]]`
 
-Voice support (speech-to-text and text-to-speech). The `tts_rate` field can be overridden per-agent via `[defaults]` — see [Global-or-Agent: Voice](#voice-1).
+Text-to-speech provider entries. Multiple entries are supported; the first is the default. Agents override by id via `tts = "id"` in their config.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `stt_endpoint` | string | `"https://api.groq.com/openai/v1/audio/transcriptions"` | OpenAI-compatible Whisper endpoint for speech-to-text. |
-| `stt_model` | string | `"whisper-large-v3"` | Whisper model name. |
-| `tts_provider` | string | `""` | TTS provider: `"edge-tts"` or `"openai"`. `""` disables TTS. |
-| `tts_endpoint` | string | `""` | API endpoint for OpenAI TTS provider. |
-| `tts_model` | string | `""` | Model name for OpenAI TTS (e.g. `"tts-1-mini"`). |
-| `tts_voice` | string | `""` | Voice name (provider-specific). `""` defaults to `"alloy"` for OpenAI provider. |
-| `ws_enabled` | bool | `false` | Enable the `/voice` WebSocket endpoint for real-time two-way voice conversation (FOCI app). Requires a configured STT provider. Authenticated via `http.api_key` (same as other endpoints). |
+| `id` | string | `""` | Lookup key for agent overrides. |
+| `format` | string | `""` | Provider format: `"openai"` or `"edge-tts"`. |
+| `endpoint` | string | `""` | API endpoint URL (ignored for edge-tts). |
+| `model` | string | `""` | Model name (ignored for edge-tts). |
+| `voice` | string | `""` | Voice name (format-specific). `""` defaults to `"alloy"` for OpenAI. |
+| `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. |
+| `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. |
+| `command` | string | `"edge-tts"` | Binary for edge-tts format. |
 
-STT requires a Groq API key in `secrets.toml` (`[groq] api_key`). TTS with OpenAI provider requires an OpenRouter key (`[openrouter] api_key`).
+### `[[stt]]`
+
+Speech-to-text provider entries. Multiple entries are supported; the first is the default. Agents override by id via `stt = "id"` in their config.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `id` | string | `""` | Lookup key for agent overrides. |
+| `format` | string | `""` | Provider format: `"openai"` (only supported format). |
+| `endpoint` | string | `""` | API endpoint URL. |
+| `model` | string | `""` | Model name (e.g. `"whisper-large-v3"`). |
+| `secret` | string | `""` | Secret name in secrets.toml. If empty, auto-detected from endpoint hostname. |
+
+API keys are resolved via the `secret` field or auto-detected from the endpoint hostname (e.g. `https://api.groq.com/...` → `groq.api_key` in secrets.toml). The `/voice` WebSocket endpoint is enabled via `[http] ws_enabled = true`.
 
 ### `[bitwarden]`
 
@@ -658,7 +671,9 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `tts_rate` | float | `0` | `[voice]` / `[defaults]` | TTS speech rate multiplier. `1.3` = 30% faster, `0.8` = 20% slower. `0` uses `[voice] tts_rate` config. Translated automatically for each provider (edge-tts `--rate "+30%"`, openai `speed: 1.3`). |
+| `tts_rate` | float | `0` | `[defaults]` | Per-agent TTS speech rate multiplier. Combined with entry rate: effective = entry.rate × agent.tts_rate (0 treated as 1.0). |
+| `tts` | string | `""` | `[defaults]` | Override TTS entry by id (empty = default entry). |
+| `stt` | string | `""` | `[defaults]` | Override STT entry by id (empty = default entry). |
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
@@ -930,9 +945,6 @@ api_key = "gsk_..."
 [openrouter]
 api_key = "sk-or-..."
 
-[voice]
-api_key = "your-voice-api-key"
-
 [custom]
 github_token = "ghp_..."
 allowed_hosts = ["api.github.com"]
@@ -1063,14 +1075,21 @@ full_payload = true
 payload_file = "/home/foci/api-payload.jsonl"
 cache_bust_detect = true
 
-[voice]
-stt_endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-stt_model = "whisper-large-v3"
-tts_provider = "openai"
-tts_endpoint = "https://openrouter.ai/api/v1"
-tts_model = "openai/tts-1-mini"
-tts_voice = "alloy"
-tts_rate = 1.2
+[[tts]]
+id = "openrouter"
+format = "openai"
+endpoint = "https://openrouter.ai/api/v1/audio/speech"
+model = "openai/tts-1-mini"
+voice = "alloy"
+rate = 1.2
+secret = "openrouter.api_key"
+
+[[stt]]
+id = "groq-whisper"
+format = "openai"
+endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+model = "whisper-large-v3"
+secret = "groq.api_key"
 
 [tools]
 tmux_cols = 300

@@ -28,8 +28,8 @@ func setupSharedMultiball(
 	cfg *config.Config,
 	store *secrets.Store,
 	sessions *session.Store,
-	sttProvider voice.STT,
-	ttsProvider voice.TTS,
+	ttsMap map[string]voice.TTS,
+	sttMap map[string]voice.STT,
 	toolDetailStore *telegram.ToolDetailStore,
 	stateStore *state.Store,
 	ctx context.Context,
@@ -39,6 +39,9 @@ func setupSharedMultiball(
 	}
 
 	firstInst := agents[agentOrder[0]]
+	firstACfg := firstInst.agentCfg
+	sharedSTT := resolveSTT(sttMap, firstACfg.STT)
+	sharedTTS := resolveTTS(ttsMap, cfg.TTS, firstACfg.TTS, firstACfg.TTSRate)
 	for _, botName := range cfg.Telegram.MultiballBots {
 		mbToken := config.ResolveBotToken(botName, "", store)
 		if mbToken == "" {
@@ -52,11 +55,11 @@ func setupSharedMultiball(
 			continue
 		}
 		configureMultiballBot(mbBot, multiballBotConfig{
-			sttProvider:     sttProvider,
-			ttsProvider:     ttsProvider,
+			sttProvider:     sharedSTT,
+			ttsProvider:     sharedTTS,
 			stopAliases:     cfg.Telegram.StopAliases,
 			enableStopAlias: cfg.Telegram.EnableStopAliases,
-			acfg:            firstInst.agentCfg,
+			acfg:            firstACfg,
 			cfg:             cfg,
 			toolDetailStore: toolDetailStore,
 			stateStore:      stateStore,

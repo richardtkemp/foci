@@ -290,7 +290,7 @@ type TTSConfig struct {
 	Model    string  `toml:"model"`    // model name (ignored for edge-tts)
 	Voice    string  `toml:"voice"`    // voice name (format-specific)
 	Rate     float64 `toml:"rate"`     // speed multiplier: 1.0 = normal, 0 = omit
-	APIKey   string  `toml:"api_key"`  // secret name in secrets.toml (optional, fallback: hostname)
+	Secret   string  `toml:"secret"`   // secret name in secrets.toml (optional, fallback: hostname)
 	Command  string  `toml:"command"`  // binary for edge-tts (default: "edge-tts")
 }
 
@@ -301,7 +301,7 @@ type STTConfig struct {
 	Format   string `toml:"format"`   // "openai" (only supported format currently)
 	Endpoint string `toml:"endpoint"` // API URL
 	Model    string `toml:"model"`    // model name
-	APIKey   string `toml:"api_key"`  // secret name in secrets.toml (optional, fallback: hostname)
+	Secret   string `toml:"secret"`   // secret name in secrets.toml (optional, fallback: hostname)
 }
 
 type BitwardenConfig struct {

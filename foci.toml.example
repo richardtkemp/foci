@@ -230,6 +230,7 @@ compaction_threshold = 0.8
 port = 18791
 bind = "127.0.0.1"
 # graceful_shutdown_timeout = "30s"
+# ws_enabled = false                      # enable /voice WebSocket endpoint
 
 # ─── Logging ──────────────────────────────────────────────────────────
 # [logging]
@@ -254,16 +255,33 @@ bind = "127.0.0.1"
 # archive_dir = ""                        # default: log_dir/archive/
 # messages_in_log = false
 
-# ─── Voice ────────────────────────────────────────────────────────────
-# [voice]
-# ws_enabled = false
-# stt_endpoint = ""                       # default: Groq
-# stt_model = "whisper-large-v3"
-# tts_provider = "edge-tts"              # edge-tts or openai
-# tts_endpoint = ""
-# tts_model = ""
-# tts_voice = ""
-# tts_rate = 0.0
+# ─── TTS (text-to-speech) ─────────────────────────────────────────────
+# First entry is the default. Agents override by id via tts = "id".
+#
+# [[tts]]
+# id = "groq-playai"
+# format = "openai"
+# endpoint = "https://api.groq.com/openai/v1/audio/speech"
+# model = "playai-tts"
+# voice = "Arista-PlayAI"
+# rate = 1.3                              # speed multiplier (0 = omit)
+# secret = "groq.api_key"                 # secret name in secrets.toml
+#
+# [[tts]]
+# id = "edge"
+# format = "edge-tts"
+# voice = "en-US-AndrewNeural"
+# rate = 1.3
+
+# ─── STT (speech-to-text) ────────────────────────────────────────────
+# First entry is the default. Agents override by id via stt = "id".
+#
+# [[stt]]
+# id = "groq-whisper"
+# format = "openai"
+# endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+# model = "whisper-large-v3"
+# secret = "groq.api_key"                 # secret name in secrets.toml
 
 # ─── Bitwarden ────────────────────────────────────────────────────────
 # [bitwarden]

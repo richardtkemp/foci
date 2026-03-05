@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestWhisperSTT_Transcribe(t *testing.T) {
+func TestOpenAISTT_Transcribe(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
@@ -51,7 +51,7 @@ func TestWhisperSTT_Transcribe(t *testing.T) {
 	}))
 	defer server.Close()
 
-	stt := &WhisperSTT{
+	stt := &OpenAISTT{
 		Endpoint: server.URL,
 		APIKey:   "test-key",
 		Model:    "whisper-large-v3",
@@ -66,14 +66,14 @@ func TestWhisperSTT_Transcribe(t *testing.T) {
 	}
 }
 
-func TestWhisperSTT_APIError(t *testing.T) {
+func TestOpenAISTT_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("invalid api key"))
 	}))
 	defer server.Close()
 
-	stt := &WhisperSTT{
+	stt := &OpenAISTT{
 		Endpoint: server.URL,
 		APIKey:   "bad-key",
 		Model:    "whisper-1",
@@ -284,7 +284,100 @@ func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
 	}
 }
 
+// --- Factory function tests ---
+
+// TestNewTTS_OpenAI verifies that NewTTS("openai", ...) returns an *OpenAITTS
+// with all fields wired correctly.
+func TestNewTTS_OpenAI(t *testing.T) {
+	tts, err := NewTTS("openai", "https://api.example.com/tts", "key123", "tts-1", "alloy", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	oai, ok := tts.(*OpenAITTS)
+	if !ok {
+		t.Fatalf("expected *OpenAITTS, got %T", tts)
+	}
+	if oai.Endpoint != "https://api.example.com/tts" {
+		t.Errorf("endpoint = %q", oai.Endpoint)
+	}
+	if oai.APIKey != "key123" {
+		t.Errorf("apiKey = %q", oai.APIKey)
+	}
+	if oai.Model != "tts-1" {
+		t.Errorf("model = %q", oai.Model)
+	}
+	if oai.Voice != "alloy" {
+		t.Errorf("voice = %q", oai.Voice)
+	}
+	if oai.Speed != 0 {
+		t.Errorf("speed should be 0 (rate applied later), got %v", oai.Speed)
+	}
+}
+
+// TestNewTTS_EdgeTTS verifies that NewTTS("edge-tts", ...) returns an *EdgeTTS
+// with voice and command fields set.
+func TestNewTTS_EdgeTTS(t *testing.T) {
+	tts, err := NewTTS("edge-tts", "", "", "", "en-US-AndrewNeural", "/usr/bin/edge-tts")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	edge, ok := tts.(*EdgeTTS)
+	if !ok {
+		t.Fatalf("expected *EdgeTTS, got %T", tts)
+	}
+	if edge.Voice != "en-US-AndrewNeural" {
+		t.Errorf("voice = %q", edge.Voice)
+	}
+	if edge.Command != "/usr/bin/edge-tts" {
+		t.Errorf("command = %q", edge.Command)
+	}
+}
+
+// TestNewTTS_UnknownFormat verifies that NewTTS rejects unknown format strings.
+func TestNewTTS_UnknownFormat(t *testing.T) {
+	_, err := NewTTS("whisper", "", "", "", "", "")
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+	if !strings.Contains(err.Error(), "unknown TTS format") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestNewSTT_OpenAI verifies that NewSTT("openai", ...) returns an *OpenAISTT
+// with all fields wired correctly.
+func TestNewSTT_OpenAI(t *testing.T) {
+	stt, err := NewSTT("openai", "https://api.groq.com/stt", "groq-key", "whisper-large-v3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	oai, ok := stt.(*OpenAISTT)
+	if !ok {
+		t.Fatalf("expected *OpenAISTT, got %T", stt)
+	}
+	if oai.Endpoint != "https://api.groq.com/stt" {
+		t.Errorf("endpoint = %q", oai.Endpoint)
+	}
+	if oai.APIKey != "groq-key" {
+		t.Errorf("apiKey = %q", oai.APIKey)
+	}
+	if oai.Model != "whisper-large-v3" {
+		t.Errorf("model = %q", oai.Model)
+	}
+}
+
+// TestNewSTT_UnknownFormat verifies that NewSTT rejects unknown format strings.
+func TestNewSTT_UnknownFormat(t *testing.T) {
+	_, err := NewSTT("edge-tts", "", "", "")
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+	if !strings.Contains(err.Error(), "unknown STT format") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // Verify interface compliance at compile time.
-var _ STT = (*WhisperSTT)(nil)
+var _ STT = (*OpenAISTT)(nil)
 var _ TTS = (*EdgeTTS)(nil)
 var _ TTS = (*OpenAITTS)(nil)

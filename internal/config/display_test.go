@@ -245,10 +245,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Logging.FullPayload = true
 	cfg.Logging.CacheBustDetect = true
 	cfg.Logging.CacheBustIdleMinutes = 10
-	cfg.Voice.STTEndpoint = "https://api.groq.com"
-	cfg.Voice.STTModel = "whisper-large-v3"
-	cfg.Voice.TTSProvider = "edge-tts"
-	cfg.Voice.TTSVoice = "en-US-AriaNeural"
+	cfg.TTS = []TTSConfig{{ID: "edge", Format: "edge-tts", Voice: "en-US-AriaNeural"}}
+	cfg.STT = []STTConfig{{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com", Model: "whisper-large-v3"}}
 	cfg.Environment.DocsPath = "/docs"
 	cfg.Skills.Dirs = []string{"/skills"}
 	cfg.ManaWarnings.Thresholds = []int{50, 25, 10}

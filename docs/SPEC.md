@@ -122,20 +122,9 @@ multiball_bots = ["spare1", "spare2"]            # shared pool (fallback for any
 
 ### Voice (Telegram Voice Notes)
 
-**Inbound:** Receive Telegram voice notes → transcribe via Whisper API (OpenAI-compatible, via OpenRouter or local) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
+**Inbound:** Receive Telegram voice notes → transcribe via STT provider (OpenAI-compatible, e.g. Groq Whisper) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
 
-**Outbound:** Agent can send voice replies via `send_telegram(text="...", send_as="voice")`. Text → TTS engine (Edge TTS or similar, free) → send as Telegram voice note. Good for when the human is mobile/driving.
-
-**Voice mode:** A session-level flag toggled by the user ("voice mode on"/"voice mode off"). When active:
-- All agent replies are sent as voice notes via TTS
-- The flag is included in message metadata: `voice=on`
-- The agent sees this and adjusts style — shorter, conversational, no markdown, no code blocks
-
-```
-[meta] time=2026-02-21T05:30:00Z gap=3h12m voice=on model=claude-haiku-4-5 prev_cost=$0.043
-```
-
-Voice mode is session state, not config — it resets on session reset.
+**Outbound:** Agent can send voice replies via `send_telegram(text="...", send_as="voice")`. Text → TTS engine (Edge TTS, OpenAI, or similar) → send as Telegram voice note. Good for when the human is mobile/driving.
 
 ### WebSocket Voice Endpoint (`/voice`)
 
@@ -147,7 +136,7 @@ A WebSocket endpoint for real-time two-way voice conversation with an agent. Use
 
 **Concurrency:** Three mutexes per connection — `writeMu` (all WebSocket writes), `turnMu` (serializes agent turns), `audioMu` (recording state). TTS failures are non-fatal (text response still delivered).
 
-**Auth:** Uses `http.api_key` (same as all other endpoints). Enabled when `[voice] ws_enabled = true` AND STT provider is configured.
+**Auth:** Uses `http.api_key` (same as all other endpoints). Enabled when `[http] ws_enabled = true` AND an `[[stt]]` entry is configured.
 
 ### Media Persistence
 
@@ -911,10 +900,16 @@ dir = "/home/rich/git/openclaw/workspace/memory"
 max_result_chars = 10000
 temp_dir = "/tmp/foci-tool-results"
 
-[voice]
-stt_endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-stt_model = "whisper-large-v3"
-tts_provider = "edge-tts"
+[[stt]]
+id = "groq-whisper"
+format = "openai"
+endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
+model = "whisper-large-v3"
+
+[[tts]]
+id = "edge"
+format = "edge-tts"
+voice = "en-US-AndrewNeural"
 
 [http]
 port = 18791

@@ -45,17 +45,49 @@ func WithRate(t TTS, rate float64) TTS {
 	}
 }
 
+// NewTTS creates a TTS provider from config values.
+// Rate is NOT baked in — apply at resolution time via WithRate.
+func NewTTS(format, endpoint, apiKey, model, voiceName, command string) (TTS, error) {
+	switch format {
+	case "edge-tts":
+		return &EdgeTTS{Command: command, Voice: voiceName}, nil
+	case "openai":
+		return &OpenAITTS{
+			Endpoint: endpoint,
+			APIKey:   apiKey,
+			Model:    model,
+			Voice:    voiceName,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", format)
+	}
+}
+
+// NewSTT creates an STT provider from config values.
+func NewSTT(format, endpoint, apiKey, model string) (STT, error) {
+	switch format {
+	case "openai":
+		return &OpenAISTT{
+			Endpoint: endpoint,
+			APIKey:   apiKey,
+			Model:    model,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown STT format %q (must be \"openai\")", format)
+	}
+}
+
 // --- STT implementations ---
 
-// WhisperSTT sends audio to an OpenAI-compatible Whisper API.
+// OpenAISTT sends audio to an OpenAI-compatible audio transcription API.
 // Works with Groq, OpenAI, or any compatible endpoint.
-type WhisperSTT struct {
+type OpenAISTT struct {
 	Endpoint string // e.g. "https://api.groq.com/openai/v1/audio/transcriptions"
 	APIKey   string // Bearer token
 	Model    string // e.g. "whisper-large-v3"
 }
 
-func (w *WhisperSTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
+func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
 	log.Debugf("voice", "stt audio=%d bytes model=%s", len(audioData), w.Model)
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
