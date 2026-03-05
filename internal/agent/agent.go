@@ -279,20 +279,25 @@ func (a *Agent) SessionEffort(sessionKey string) string {
 	return a.Effort
 }
 
-// SetSessionEffort sets the per-session effort override and persists it.
-func (a *Agent) SetSessionEffort(sessionKey, value string) {
+// sessionStringWithDefault is a helper that returns a session-specific override
+// or the agent-wide default if the override is empty.
+func (a *Agent) sessionStringWithDefault(sessionKey string, getter func(*sessionMeta) string, defaultVal string) string {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
-	sm.effort = value
-	a.metaMu.Unlock()
-
-	if a.StateStore != nil {
-		if value == "" {
-			_ = a.StateStore.Delete("effort:" + sessionKey)
-		} else if err := a.StateStore.Set("effort:"+sessionKey, value); err != nil {
-			a.logger().Errorf("session=%s persist effort: %v", sessionKey, err)
-		}
+	defer a.metaMu.Unlock()
+	val := getter(sm)
+	if val != "" {
+		return val
 	}
+	return defaultVal
+}
+
+// SetSessionEffort sets the per-session effort override and persists it.
+func (a *Agent) SetSessionEffort(sessionKey, value string) {
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
+		sm.effort = value
+	})
+	a.persistSessionString(sessionKey, "effort", value)
 }
 
 // SessionThinking returns the effective thinking mode for the session.
@@ -309,18 +314,10 @@ func (a *Agent) SessionThinking(sessionKey string) string {
 
 // SetSessionThinking sets the per-session thinking override and persists it.
 func (a *Agent) SetSessionThinking(sessionKey, value string) {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	sm.thinking = value
-	a.metaMu.Unlock()
-
-	if a.StateStore != nil {
-		if value == "" {
-			_ = a.StateStore.Delete("thinking:" + sessionKey)
-		} else if err := a.StateStore.Set("thinking:"+sessionKey, value); err != nil {
-			a.logger().Errorf("session=%s persist thinking: %v", sessionKey, err)
-		}
-	}
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
+		sm.thinking = value
+	})
+	a.persistSessionString(sessionKey, "thinking", value)
 }
 
 // SessionModel returns the effective model for the session.
@@ -384,21 +381,14 @@ func (a *Agent) SessionNoCompact(sessionKey string) bool {
 
 // SetSessionNoCompact sets the per-session no_compact override and persists it.
 func (a *Agent) SetSessionNoCompact(sessionKey string, value bool) {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	sm.noCompact = value
-	a.metaMu.Unlock()
-
-	if a.StateStore != nil {
-		key := "no_compact:" + sessionKey
-		val := ""
-		if value {
-			val = "true"
-		}
-		if err := a.StateStore.Set(key, val); err != nil {
-			a.logger().Errorf("session=%s persist no_compact: %v", sessionKey, err)
-		}
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
+		sm.noCompact = value
+	})
+	val := ""
+	if value {
+		val = "true"
 	}
+	a.persistSessionString(sessionKey, "no_compact", val)
 }
 
 // RestoreSessionOverrides loads per-session effort/thinking/model/no_compact from state store.
@@ -408,53 +398,45 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	}
 	var restored []string
 	var val string
+
+	// Restore effort
 	if a.StateStore.Get("effort:"+sessionKey, &val) && val != "" {
-		sm := a.getSessionMeta(sessionKey)
-		a.metaMu.Lock()
-		sm.effort = val
-		a.metaMu.Unlock()
+		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.effort = val })
 		restored = append(restored, "effort="+val)
 	}
+
+	// Restore thinking
 	if a.StateStore.Get("thinking:"+sessionKey, &val) && val != "" {
-		sm := a.getSessionMeta(sessionKey)
-		a.metaMu.Lock()
-		sm.thinking = val
-		a.metaMu.Unlock()
+		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.thinking = val })
 		restored = append(restored, "thinking="+val)
 	}
+
+	// Restore model and endpoint
 	if a.StateStore.Get("model:"+sessionKey, &val) && val != "" {
-		sm := a.getSessionMeta(sessionKey)
-		a.metaMu.Lock()
-		sm.model = val
-		a.metaMu.Unlock()
+		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.model = val })
 		restored = append(restored, "model="+val)
 
 		// Restore endpoint and resolve the matching client
 		var ep string
 		if a.StateStore.Get("model_endpoint:"+sessionKey, &ep) && ep != "" {
-			sm2 := a.getSessionMeta(sessionKey)
-			a.metaMu.Lock()
-			sm2.modelEndpoint = ep
-			a.metaMu.Unlock()
+			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelEndpoint = ep })
 			restored = append(restored, "endpoint="+ep)
 
 			if a.GetClient != nil {
 				format := config.InferFormat(val)
 				if c := a.GetClient(ep, format); c != nil {
-					a.metaMu.Lock()
-					sm2.client = c
-					a.metaMu.Unlock()
+					a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 				}
 			}
 		}
 	}
+
+	// Restore no_compact
 	if a.StateStore.Get("no_compact:"+sessionKey, &val) && val != "" {
-		sm := a.getSessionMeta(sessionKey)
-		a.metaMu.Lock()
-		sm.noCompact = (val == "true")
-		a.metaMu.Unlock()
+		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.noCompact = (val == "true") })
 		restored = append(restored, "no_compact")
 	}
+
 	if len(restored) > 0 {
 		a.logger().Infof("restored session overrides for %s: %s", sessionKey, strings.Join(restored, ", "))
 	}
@@ -529,6 +511,38 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 		a.meta[key] = m
 	}
 	return m
+}
+
+// getMetaLocked returns the session meta value while holding metaMu.
+// Returns zero value if meta is nil. Caller must NOT hold metaMu.
+func (a *Agent) getMetaLocked(sessionKey string, getter func(*sessionMeta) interface{}) interface{} {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return getter(sm)
+}
+
+// setMetaLocked sets the session meta value while holding metaMu.
+// Caller must NOT hold metaMu.
+func (a *Agent) setMetaLocked(sessionKey string, setter func(*sessionMeta)) {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	setter(sm)
+	a.metaMu.Unlock()
+}
+
+// persistSessionString persists a string key-value pair to StateStore.
+// Deletes the key if value is empty.
+func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
+	if a.StateStore == nil {
+		return
+	}
+	key := prefix + ":" + sessionKey
+	if value == "" {
+		_ = a.StateStore.Delete(key)
+	} else if err := a.StateStore.Set(key, value); err != nil {
+		a.logger().Errorf("session=%s persist %s: %v", sessionKey, prefix, err)
+	}
 }
 
 // ResetCacheBaseline clears the cache-read baseline for a session so that the
