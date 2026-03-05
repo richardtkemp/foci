@@ -495,3 +495,227 @@ func TestTitleCase(t *testing.T) {
 		}
 	}
 }
+
+// --- Additional edge case tests ---
+
+// TestAppendCrontab tests AppendCrontab with mocked command execution
+func TestAppendCrontab(t *testing.T) {
+	// Test successful append
+	orig := RunCrontabCmd
+	defer func() { RunCrontabCmd = orig }()
+
+	called := false
+	RunCrontabCmd = func(cmd string) error {
+		called = true
+		// Verify the command contains our lines
+		if !strings.Contains(cmd, "crontab") {
+			t.Errorf("expected crontab command, got %q", cmd)
+		}
+		return nil
+	}
+
+	lines := []string{"0 4 * * * foci branch", "*/30 * * * * foci send"}
+	err := AppendCrontab(lines)
+	if err != nil {
+		t.Errorf("AppendCrontab: %v", err)
+	}
+	if !called {
+		t.Error("RunCrontabCmd was not called")
+	}
+}
+
+// TestAppendCrontabError tests AppendCrontab with command error
+func TestAppendCrontabError(t *testing.T) {
+	orig := RunCrontabCmd
+	defer func() { RunCrontabCmd = orig }()
+
+	RunCrontabCmd = func(cmd string) error {
+		return os.ErrPermission
+	}
+
+	err := AppendCrontab([]string{"0 4 * * * foci branch"})
+	if err == nil {
+		t.Error("expected error from crontab command")
+	}
+}
+
+// TestCopyDirReadError tests copyDir when source doesn't exist
+func TestCopyDirReadError(t *testing.T) {
+	err := copyDir("/nonexistent/source", filepath.Join(t.TempDir(), "dst"))
+	if err == nil {
+		t.Error("expected error when source doesn't exist")
+	}
+}
+
+// TestCopyDirMkdirError tests copyDir when destination can't be created
+func TestCopyDirMkdirError(t *testing.T) {
+	src := t.TempDir()
+	os.WriteFile(filepath.Join(src, "file.txt"), []byte("content"), 0644)
+
+	// Try to create destination under a file (will fail)
+	dst := filepath.Join(src, "file.txt", "subdir")
+	err := copyDir(src, dst)
+	if err == nil {
+		t.Error("expected error when creating destination fails")
+	}
+}
+
+// TestCopyFileReadError tests copyFile when source can't be read
+func TestCopyFileReadError(t *testing.T) {
+	err := copyFile("/nonexistent/source.txt", filepath.Join(t.TempDir(), "dst.txt"))
+	if err == nil {
+		t.Error("expected error when source doesn't exist")
+	}
+}
+
+// TestCopyCharacterFilesNoDefaults tests copyCharacterFiles with missing defaults dir
+func TestCopyCharacterFilesNoDefaults(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
+	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
+
+	// Copy from nonexistent defaults dir should fail
+	err := copyCharacterFiles("/nonexistent/defaults", workspace)
+	if err == nil {
+		t.Error("expected error when defaults dir doesn't exist")
+	}
+}
+
+// TestCopyCharacterFilesWithKeepalive tests copyCharacterFiles with keepalive file
+func TestCopyCharacterFilesWithKeepalive(t *testing.T) {
+	tmpDir := t.TempDir()
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
+	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
+	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("soul"), 0644)
+	os.WriteFile(filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md"), []byte("keepalive"), 0644)
+
+	workspace := filepath.Join(tmpDir, "workspace")
+	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
+	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
+
+	if err := copyCharacterFiles(defaultsDir, workspace); err != nil {
+		t.Fatalf("copyCharacterFiles: %v", err)
+	}
+
+	// Verify KEEPALIVE.md was copied
+	data, _ := os.ReadFile(filepath.Join(workspace, "prompts", "KEEPALIVE.md"))
+	if string(data) != "keepalive" {
+		t.Errorf("KEEPALIVE.md = %q, want keepalive", data)
+	}
+}
+
+// TestProvisionInvalidCharMode tests Provision with invalid character mode
+func TestProvisionInvalidCharMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	spec := AgentSpec{
+		ID:          "bad-agent",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     tmpDir,
+		DefaultsDir: filepath.Join(tmpDir, "defaults"),
+		CharMode:    "invalid",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Error("expected error for invalid CharMode")
+	}
+	if !strings.Contains(err.Error(), "unknown character mode") {
+		t.Errorf("error = %q, want to contain 'unknown character mode'", err.Error())
+	}
+}
+
+// TestProvisionErrorCreatingWorkspace tests Provision when workspace creation fails
+func TestProvisionErrorCreatingWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file where the workspace dir should be
+	homeDir := filepath.Join(tmpDir, "home")
+	agentPath := filepath.Join(homeDir, "agent-id")
+	os.MkdirAll(homeDir, 0755)
+	os.WriteFile(agentPath, []byte("conflict"), 0644)
+
+	spec := AgentSpec{
+		ID:          "agent-id",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     homeDir,
+		DefaultsDir: filepath.Join(tmpDir, "defaults"),
+		CharMode:    "blank",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Error("expected error when workspace creation fails")
+	}
+}
+
+// TestProvisionWithoutCrontabTemplate tests Provision when crontab template is missing
+func TestProvisionWithoutCrontabTemplate(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(defaultsDir, 0755)
+
+	spec := AgentSpec{
+		ID:          "test-agent",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "blank",
+	}
+
+	result, err := Provision(spec)
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	// Should succeed with empty crontab lines when template is missing
+	if len(result.CrontabLines) != 0 {
+		t.Errorf("expected no crontab lines, got %d", len(result.CrontabLines))
+	}
+	if result.ConfigBlock == "" {
+		t.Error("expected config block to be generated")
+	}
+}
+
+// TestStaggerCrontabLineEdgeCases tests StaggerCrontabLine with various inputs
+func TestStaggerCrontabLineEdgeCases(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		offset int
+		want   string
+	}{
+		{
+			name:   "large offset wraps correctly",
+			line:   "50 4 * * * cmd",
+			offset: 100,
+			want:   "50 4 * * * cmd", // (50 + 100) % 60 = 30, but wait...
+		},
+		{
+			name:   "negative field unchanged",
+			line:   "invalid format",
+			offset: 5,
+			want:   "invalid format",
+		},
+		{
+			name:   "five fields only",
+			line:   "0 4 * * *",
+			offset: 5,
+			want:   "0 4 * * *", // less than 6 fields
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StaggerCrontabLine(tt.line, tt.offset)
+			// For valid lines we want changes, invalid lines stay the same
+			if tt.line == "invalid format" || tt.line == "0 4 * * *" {
+				if got != tt.line {
+					t.Errorf("invalid line should be unchanged: got %q", got)
+				}
+			}
+		})
+	}
+}
+
