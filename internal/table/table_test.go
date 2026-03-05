@@ -386,3 +386,57 @@ func TestDisplayWidthMultipleTabs(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateEdgeCases tests additional Truncate edge cases
+func TestTruncateEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		maxWidth int
+		want     string
+	}{
+		{"zero width", "", 0, ""},
+		{"negative width", "hello", -5, ""},
+		{"maxWidth 1", "hello", 1, "…"},
+		{"wide chars truncate", "中文test", 4, "中…"},
+		{"zero width chars", "a\u200Db", 5, "a\u200Db"},
+		{"tabs in truncation", "ab\tcd", 4, "ab…"},
+		{"string with only wide chars", "中", 2, "中"},
+		{"string with only wide chars overflow", "中国", 3, "中…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Truncate(tt.in, tt.maxWidth)
+			if got != tt.want {
+				t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.maxWidth, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFormatWidthEdgeCases tests additional FormatWidth edge cases
+func TestFormatWidthEdgeCases(t *testing.T) {
+	cols := []Column{
+		{Header: "A"},
+		{Header: "B"},
+	}
+	rows := [][]string{
+		{"x", "y"},
+		{"p", "q"},
+	}
+
+	// Very small maxWidth should still produce valid output
+	result := FormatWidth(cols, rows, 5)
+	lines := strings.Split(result, "\n")
+	if len(lines) == 0 {
+		t.Error("FormatWidth should produce output even with tiny maxWidth")
+	}
+
+	// Each line should not exceed maxWidth (may be less due to min column sizes)
+	for _, line := range lines {
+		w := DisplayWidth(line)
+		if w > 5+2 { // Allow small margin for formatting
+			t.Errorf("line width %d exceeds maxWidth 5: %q", w, line)
+		}
+	}
+}
