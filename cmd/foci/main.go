@@ -33,6 +33,15 @@ var client = &http.Client{Timeout: 5 * time.Minute}
 // When adding new flags, add the env var fallback in parseSendFlags (for send flags)
 // or cmdBranch (for branch-specific flags), and update the usage() text for both.
 
+// legacyEnvFallback returns the value of the legacy CLOD_ env var if it exists.
+// Used for backward compatibility with old CLOD_ environment variable names.
+func legacyEnvFallback(envKey string) string {
+	if strings.HasPrefix(envKey, "FOCI_") {
+		return os.Getenv("CLOD_" + strings.TrimPrefix(envKey, "FOCI_"))
+	}
+	return ""
+}
+
 // envDefault returns val if non-empty, otherwise falls back to the env var.
 // Checks FOCI_ prefix first, then CLOD_ prefix as legacy fallback.
 func envDefault(val, envKey string) string {
@@ -42,11 +51,7 @@ func envDefault(val, envKey string) string {
 	if v := os.Getenv(envKey); v != "" {
 		return v
 	}
-	// Legacy fallback: CLOD_ prefix
-	if strings.HasPrefix(envKey, "FOCI_") {
-		return os.Getenv("CLOD_" + strings.TrimPrefix(envKey, "FOCI_"))
-	}
-	return ""
+	return legacyEnvFallback(envKey)
 }
 
 // envBool returns true if val is true, or the env var is non-empty.
@@ -55,11 +60,7 @@ func envBool(val bool, envKey string) bool {
 	if val || os.Getenv(envKey) != "" {
 		return true
 	}
-	// Legacy fallback: CLOD_ prefix
-	if strings.HasPrefix(envKey, "FOCI_") {
-		return os.Getenv("CLOD_"+strings.TrimPrefix(envKey, "FOCI_")) != ""
-	}
-	return false
+	return legacyEnvFallback(envKey) != ""
 }
 
 // wantsHelp returns true if args contain -h or --help.
