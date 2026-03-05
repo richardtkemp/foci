@@ -105,6 +105,9 @@ type Bot struct {
 	steerMode  bool         // steer mode enabled: user messages route to buffer during active turns
 	steerMu    sync.Mutex   // protects steerParts
 	steerParts []string     // pending steer messages; drained atomically
+
+	streamOutput         bool          // stream model output to Telegram in real-time
+	streamUpdateInterval time.Duration // duration between Telegram message edits during streaming
 }
 
 // defaultLogger is used when a Bot is constructed without a ComponentLogger
@@ -238,6 +241,12 @@ func (b *Bot) SetInjectedMessageHeader(s string) {
 func (b *Bot) SetSteerMode(enabled bool) {
 	b.steerMode = enabled
 }
+
+// SetStreamOutput enables or disables real-time streaming of model output to Telegram.
+func (b *Bot) SetStreamOutput(enabled bool) { b.streamOutput = enabled }
+
+// SetStreamUpdateInterval sets the duration between Telegram message edits during streaming.
+func (b *Bot) SetStreamUpdateInterval(d time.Duration) { b.streamUpdateInterval = d }
 
 // appendSteer adds text to the steer buffer. Called by the receiver goroutine.
 func (b *Bot) appendSteer(text string) {
@@ -1036,6 +1045,16 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Track tool calls for live visibility via send+edit pattern.
 	tracker := &toolCallTracker{bot: b, chatID: qm.msg.Chat.Id}
 
+	// Stream writer: real-time message updates during streaming.
+	var sw *streamWriter
+	if b.streamOutput {
+		interval := b.streamUpdateInterval
+		if interval == 0 {
+			interval = 250 * time.Millisecond
+		}
+		sw = newStreamWriter(b.client, qm.msg.Chat.Id, interval)
+	}
+
 	// Accumulate thinking blocks for the turn
 	var thinkingBuf strings.Builder
 
@@ -1065,8 +1084,11 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			}
 			thinkingBuf.WriteString(thinking)
 		},
-		// Streaming delta callbacks: refresh typing indicator to keep it alive.
+		// Streaming delta callbacks: update stream writer + refresh typing indicator.
 		TextDeltaObserver: func(delta string) {
+			if sw != nil {
+				sw.OnDelta(delta)
+			}
 			_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 		},
 		// Steer: drain buffered user messages for injection between tool calls.
@@ -1099,6 +1121,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		b.OnTurnComplete()
 	}
 
+	// Finish the stream writer and get the message ID it created (if any).
+	var streamMsgID int64
+	if sw != nil {
+		streamMsgID = sw.Finish()
+	}
+
 	// Guard against empty responses (e.g. end_turn after tool use with no text).
 	// Sending an empty string to Telegram would fail with "message text is empty".
 	if strings.TrimSpace(response) == "" {
@@ -1110,14 +1138,29 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// a toggle button ("compact" mode).
 	thinkingText := thinkingBuf.String()
 
-	// If we sent a tool-call message, try to edit it with the final response.
-	// Fall back to sendReply if the response is too long for a single edit
-	// or if the edit fails. Skip when thinking will be shown — thinking-aware
-	// send functions handle the full reply (preview edit can't include thinking).
+	// Determine which message to edit with the final response.
+	// The stream message takes priority (it's what the user sees as "in-progress"),
+	// then the tool call preview message.
 	hasThinking := thinkingText != "" && b.showThinking != "off" && b.showThinking != ""
-	editID := tracker.lastMsgID()
 
-	if editID != 0 && b.showToolCalls == "preview" && !hasThinking && len(response) <= 4096 {
+	editID := tracker.lastMsgID()
+	if streamMsgID != 0 {
+		editID = streamMsgID
+	}
+
+	// Try to edit an existing message with the final HTML-formatted response.
+	// Works for both stream messages and tool call preview messages.
+	// Skip when thinking will be shown — thinking-aware send functions handle the full reply.
+	var canEditInPlace bool
+	if streamMsgID != 0 {
+		// Stream messages can always be edited (no show_tool_calls mode gate).
+		canEditInPlace = editID != 0 && !hasThinking && len(response) <= 4096
+	} else {
+		// Tool call preview: only edit in preview mode.
+		canEditInPlace = editID != 0 && b.showToolCalls == "preview" && !hasThinking && len(response) <= 4096
+	}
+
+	if canEditInPlace {
 		htmlResp := ConvertToTelegramHTML(response, b.tableOpts())
 		_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 			ChatId:    qm.msg.Chat.Id,
@@ -1142,16 +1185,35 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Full thinking: prepend italic thinking + divider to response
 	if b.showThinking == "true" && thinkingText != "" {
 		b.sendReplyWithFullThinking(qm.msg, qm.userID, response, thinkingText)
+		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
 
 	// Compact thinking: send response with "Show thinking" toggle button
 	if b.showThinking == "compact" && thinkingText != "" {
 		b.sendReplyWithThinking(qm.msg, qm.userID, response, thinkingText)
+		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
 
 	b.sendReply(qm.msg, qm.userID, response)
+	b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
+}
+
+// editStreamPreview edits the stream message to a truncated preview when the
+// final response was sent as a separate message (too long, has thinking, etc.).
+func (b *Bot) editStreamPreview(streamMsgID, chatID int64, response string) {
+	if streamMsgID == 0 {
+		return
+	}
+	preview := truncate(response, 200)
+	_, _, _ = b.client.EditMessageText(
+		htmlEscapeBot(preview)+"\n\n<i>(full response below)</i>",
+		&gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: streamMsgID,
+			ParseMode: "HTML",
+		})
 }
 
 // cancelTurn cancels the in-flight agent turn, if any.
