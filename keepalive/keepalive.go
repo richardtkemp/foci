@@ -39,17 +39,18 @@ type BranchFunc func(branchType, promptText string, noCompact bool)
 
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
-	log              *log.ComponentLogger
-	agentID          string
-	kaCfg            config.KeepaliveConfig
-	bgCfg            config.BackgroundConfig
-	mfCfg            config.MemoryFormationConfig
-	promptSearchDirs []string
-	todoStore        *memory.TodoStore
-	stateStore       *state.Store
-	branchFn         BranchFunc
-	manaMonitor      *mana.Monitor
+	log               *log.ComponentLogger
+	agentID           string
+	kaCfg             config.KeepaliveConfig
+	bgCfg             config.BackgroundConfig
+	mfCfg             config.MemoryFormationConfig
+	promptSearchDirs  []string
+	todoStore         *memory.TodoStore
+	stateStore        *state.Store
+	branchFn          BranchFunc
+	manaMonitor       *mana.Monitor
 	warningDispatcher *warnings.Dispatcher
+	drainFn           func() // called each tick to drain rate-limit queues
 
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
@@ -70,16 +71,17 @@ type Runner struct {
 
 // RunnerConfig holds all the dependencies for creating a Runner.
 type RunnerConfig struct {
-	AgentID              string
-	Keepalive            config.KeepaliveConfig
-	Background           config.BackgroundConfig
-	MemoryFormation      config.MemoryFormationConfig
-	PromptSearchDirs     []string // directories to search for prompt files (agent workspace, shared)
-	TodoStore            *memory.TodoStore
-	StateStore           *state.Store
-	BranchFunc           BranchFunc
-	ManaMonitor          *mana.Monitor
-	WarningDispatcher    *warnings.Dispatcher
+	AgentID           string
+	Keepalive         config.KeepaliveConfig
+	Background        config.BackgroundConfig
+	MemoryFormation   config.MemoryFormationConfig
+	PromptSearchDirs  []string // directories to search for prompt files (agent workspace, shared)
+	TodoStore         *memory.TodoStore
+	StateStore        *state.Store
+	BranchFunc        BranchFunc
+	ManaMonitor       *mana.Monitor
+	WarningDispatcher *warnings.Dispatcher
+	DrainFn           func() // called each tick to drain rate-limit queues; nil = skip
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -97,6 +99,7 @@ func New(cfg RunnerConfig) *Runner {
 		branchFn:          cfg.BranchFunc,
 		manaMonitor:       cfg.ManaMonitor,
 		warningDispatcher: cfg.WarningDispatcher,
+		drainFn:           cfg.DrainFn,
 		lastCacheWarmed:   now,
 		lastInteraction:   now,
 		lastMemoryFormation: now,
@@ -151,6 +154,9 @@ func (r *Runner) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if r.drainFn != nil {
+				r.drainFn()
+			}
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
 			r.maybeMemoryFormation()
