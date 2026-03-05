@@ -89,9 +89,6 @@ func TestLoadDefaults(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-
-[anthropic]
-token = "test-token"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -135,8 +132,6 @@ func TestLoadCustomManaName(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-[anthropic]
-token = "test-token"
 
 [usage_warnings]
 name = "juice"
@@ -163,8 +158,6 @@ func TestLoadCustomCommands(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-[anthropic]
-token = "test-token"
 
 [[commands]]
 name = "usage"
@@ -965,7 +958,6 @@ max_tool_loops = 50
 max_output_tokens = 16384
 
 [anthropic]
-token = "test-token"
 http_timeout = "180s"
 usage_api_timeout = "15s"
 
@@ -1051,9 +1043,6 @@ func TestNewConfigDefaults(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-
-[anthropic]
-token = "test-token"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -1376,7 +1365,6 @@ func TestValidateNewDurationFields(t *testing.T) {
 [agent]
 id = "test"
 [anthropic]
-token = "test"
 http_timeout = "invalid"
 `,
 			wantErr: "http_timeout",
@@ -1386,8 +1374,6 @@ http_timeout = "invalid"
 			toml: `
 [agent]
 id = "test"
-[anthropic]
-token = "test"
 [database]
 busy_timeout = "invalid"
 `,
@@ -1398,8 +1384,6 @@ busy_timeout = "invalid"
 			toml: `
 [agent]
 id = "test"
-[anthropic]
-token = "test"
 [telegram]
 long_poll_timeout = "invalid"
 `,
@@ -1410,8 +1394,6 @@ long_poll_timeout = "invalid"
 			toml: `
 [agent]
 id = "test"
-[anthropic]
-token = "test"
 [http]
 graceful_shutdown_timeout = "invalid"
 `,
@@ -1422,8 +1404,6 @@ graceful_shutdown_timeout = "invalid"
 			toml: `
 [agent]
 id = "test"
-[anthropic]
-token = "test"
 [tools]
 tmux_command_timeout = "invalid"
 `,
@@ -1434,8 +1414,6 @@ tmux_command_timeout = "invalid"
 			toml: `
 [agent]
 id = "test"
-[anthropic]
-token = "test"
 [tools]
 web_fetch_timeout = "invalid"
 `,
@@ -1446,8 +1424,6 @@ web_fetch_timeout = "invalid"
 			toml: `
 [agent]
 id = "test"
-[anthropic]
-token = "test"
 [tools]
 web_search_timeout = "invalid"
 `,
@@ -2669,8 +2645,6 @@ func TestEndpointDefaults(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-[anthropic]
-token = "test-token"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -2713,8 +2687,6 @@ func TestEndpointUserOverride(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-[anthropic]
-token = "test-token"
 
 [endpoints.local]
 format = "openai"
@@ -2756,8 +2728,6 @@ func TestModelMigrationAddsEndpointPrefix(t *testing.T) {
 [agent]
 id = "test"
 model = "anthropic/claude-opus-4-6"
-[anthropic]
-token = "test-token"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -2778,8 +2748,6 @@ func TestModelValidationRejectsColonFormat(t *testing.T) {
 [agent]
 id = "test"
 model = "anthropic:claude-haiku-4-5"
-[anthropic]
-token = "test-token"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -2802,8 +2770,6 @@ func TestModelValidationRejectsInvalidFormat(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-[anthropic]
-token = "test-token"
 
 [endpoints.bad]
 format = "grpc"
@@ -2825,8 +2791,6 @@ func TestAliasDefaultsIncludeEndpointPrefix(t *testing.T) {
 	toml := `
 [agent]
 id = "test"
-[anthropic]
-token = "test-token"
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
