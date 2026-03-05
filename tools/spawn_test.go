@@ -1350,8 +1350,8 @@ func TestSpawnExploreToolSet(t *testing.T) {
 		toolNames[name] = true
 	}
 
-	// Must include: ls, find, grep (exploration tools)
-	for _, name := range []string{"ls", "find", "grep"} {
+	// Must include: ls, find, grep, git (exploration tools)
+	for _, name := range []string{"ls", "find", "grep", "git"} {
 		if !toolNames[name] {
 			t.Errorf("expected exploration tool %q in explore mode", name)
 		}
@@ -1518,7 +1518,7 @@ func TestSpawnExploreMode(t *testing.T) {
 	for _, td := range receivedReq.Tools {
 		toolNames[td.Name()] = true
 	}
-	for _, expected := range []string{"ls", "find", "grep", "read"} {
+	for _, expected := range []string{"ls", "find", "grep", "git", "read"} {
 		if !toolNames[expected] {
 			t.Errorf("expected %s in explore tools", expected)
 		}
