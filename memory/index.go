@@ -317,31 +317,35 @@ func (idx *Index) StartSweep(initial, interval time.Duration) {
 	stop := idx.sweepStop
 	idx.mu.Unlock()
 
-	go func() {
+	go runSweepLoop(stop, initial, interval, "sweep", idx.Reindex)
+}
+
+// runSweepLoop executes periodic reindexing after an initial delay.
+// Used by both Index and BleveIndex.
+func runSweepLoop(stop <-chan struct{}, initial, interval time.Duration, logPrefix string, reindexFn func() error) {
+	select {
+	case <-time.After(initial):
+	case <-stop:
+		return
+	}
+	log.Infof("memory", "%s: initial reindex", logPrefix)
+	if err := reindexFn(); err != nil {
+		log.Errorf("memory", "%s reindex: %v", logPrefix, err)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
 		select {
-		case <-time.After(initial):
+		case <-ticker.C:
+			log.Infof("memory", "%s: periodic reindex", logPrefix)
+			if err := reindexFn(); err != nil {
+				log.Errorf("memory", "%s reindex: %v", logPrefix, err)
+			}
 		case <-stop:
 			return
 		}
-		log.Infof("memory", "sweep: initial reindex")
-		if err := idx.Reindex(); err != nil {
-			log.Errorf("memory", "sweep reindex: %v", err)
-		}
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				log.Infof("memory", "sweep: periodic reindex")
-				if err := idx.Reindex(); err != nil {
-					log.Errorf("memory", "sweep reindex: %v", err)
-				}
-			case <-stop:
-				return
-			}
-		}
-	}()
+	}
 }
 
 // Close closes the watcher, stops the sweep goroutine, and closes the database.

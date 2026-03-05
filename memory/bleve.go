@@ -287,31 +287,7 @@ func (b *BleveIndex) StartSweep(initial, interval time.Duration) {
 	stop := b.sweepStop
 	b.mu.Unlock()
 
-	go func() {
-		select {
-		case <-time.After(initial):
-		case <-stop:
-			return
-		}
-		log.Infof("memory", "bleve sweep: initial reindex")
-		if err := b.Reindex(); err != nil {
-			log.Errorf("memory", "bleve sweep reindex: %v", err)
-		}
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				log.Infof("memory", "bleve sweep: periodic reindex")
-				if err := b.Reindex(); err != nil {
-					log.Errorf("memory", "bleve sweep reindex: %v", err)
-				}
-			case <-stop:
-				return
-			}
-		}
-	}()
+	go runSweepLoop(stop, initial, interval, "bleve sweep", b.Reindex)
 }
 
 // Close closes the watcher, stops the sweep goroutine, and closes the index.

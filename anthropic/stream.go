@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"foci/provider"
 
@@ -31,48 +30,12 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler
 	}
 
 	// Phase 1: standard retries for all retryable errors.
-	const maxRetries = 3
-	backoff := c.retryBaseDelay
-	if backoff == 0 {
-		backoff = 2 * time.Second
+	resp, lastErr := c.retryWithBackoff(ctx, "stream", func() (*MessageResponse, error) {
+		return c.streamOnce(ctx, req, handler)
+	})
+	if lastErr == nil {
+		return resp, nil
 	}
-
-	var lastErr error
-	loopStart := time.Now()
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			slog.Warn("anthropic: stream retrying after error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-		}
-
-		slog.Debug("anthropic: stream_attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
-		attemptStart := time.Now()
-		resp, err := c.streamOnce(ctx, req, handler)
-		attemptDur := time.Since(attemptStart)
-		if err == nil {
-			slog.Debug("anthropic: stream_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
-			c.signalRecovery()
-			return resp, nil
-		}
-		lastErr = err
-		slog.Debug("anthropic: stream_attempt_fail", "attempt", attempt, "duration", attemptDur, "error", err, "elapsed_total", time.Since(loopStart))
-
-		var apiErr *APIError
-		if !errors.As(err, &apiErr) {
-			return nil, err
-		}
-
-		if !apiErr.IsRetryable() {
-			return nil, err
-		}
-	}
-
-	slog.Debug("anthropic: stream_exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
 
 	// Phase 2: extended overload retries (529 only).
 	var apiErr *APIError
@@ -80,41 +43,9 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler
 		return nil, lastErr
 	}
 
-	overloadBackoff := c.overloadBaseDelay()
-	maxDuration := c.overloadMaxDuration()
-	overloadStart := time.Now()
-	recoverCh := c.enterOverload()
-
-	for time.Since(overloadStart) < maxDuration {
-		slog.Warn("anthropic: stream overload retry", "backoff", overloadBackoff.String(), "elapsed", time.Since(overloadStart).String(), "max", maxDuration.String())
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(overloadBackoff):
-		case <-recoverCh:
-			slog.Info("anthropic: stream overload recovery signal received, retrying immediately")
-			recoverCh = c.enterOverload()
-		}
-
-		resp, err := c.streamOnce(ctx, req, handler)
-		if err == nil {
-			slog.Info("anthropic: stream recovered from overload", "elapsed", time.Since(overloadStart).String())
-			c.signalRecovery()
-			return resp, nil
-		}
-		lastErr = err
-
-		var retryAPIErr *APIError
-		if !errors.As(err, &retryAPIErr) || !retryAPIErr.IsRetryable() {
-			return nil, err
-		}
-
-		overloadBackoff *= 2
-	}
-
-	slog.Warn("anthropic: stream overload retries exhausted", "elapsed", time.Since(overloadStart).String())
-	return nil, lastErr
+	return c.retryWithOverload(ctx, "stream overload", func() (*MessageResponse, error) {
+		return c.streamOnce(ctx, req, handler)
+	})
 }
 
 // streamOnce performs a single streaming request. Returns the accumulated response.
