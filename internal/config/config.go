@@ -555,6 +555,30 @@ type Config struct {
 
 // validate checks semantic validity of config values after parsing and defaults.
 // Returns an error describing the first invalid value found.
+// validateRange checks if value is within [min, max] inclusive.
+func validateRange(value, min, max float64, fieldName string) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s = %g: must be between %g and %g", fieldName, value, min, max)
+	}
+	return nil
+}
+
+// validateIntRange checks if value is within [min, max] inclusive.
+func validateIntRange(value, min, max int, fieldName string) error {
+	if value < min || value > max {
+		return fmt.Errorf("%s = %d: must be between %d and %d", fieldName, value, min, max)
+	}
+	return nil
+}
+
+// validateEnum checks if value is in the allowed set.
+func validateEnum(value string, allowed map[string]bool, fieldName string) error {
+	if !allowed[value] {
+		return fmt.Errorf("%s = %q: not in allowed values", fieldName, value)
+	}
+	return nil
+}
+
 func validate(cfg *Config) error {
 	// Validate agent model format (must use slash syntax, not colon)
 	for _, a := range cfg.Agents {
@@ -590,22 +614,22 @@ func validate(cfg *Config) error {
 	}
 
 	// Sessions
-	if cfg.Sessions.CompactionThreshold < 0 || cfg.Sessions.CompactionThreshold > 1.0 {
-		return fmt.Errorf("[sessions] compaction_threshold = %g: must be between 0.0 and 1.0", cfg.Sessions.CompactionThreshold)
+	if err := validateRange(cfg.Sessions.CompactionThreshold, 0.0, 1.0, "[sessions] compaction_threshold"); err != nil {
+		return err
 	}
-	if cfg.Sessions.CompactionMaxTokens < 0 {
-		return fmt.Errorf("[sessions] compaction_max_tokens = %d: must not be negative", cfg.Sessions.CompactionMaxTokens)
+	if err := validateIntRange(cfg.Sessions.CompactionMaxTokens, 0, 2147483647, "[sessions] compaction_max_tokens"); err != nil {
+		return err
 	}
-	if cfg.Sessions.CompactionMinMessages < 0 {
-		return fmt.Errorf("[sessions] compaction_min_messages = %d: must not be negative", cfg.Sessions.CompactionMinMessages)
+	if err := validateIntRange(cfg.Sessions.CompactionMinMessages, 0, 2147483647, "[sessions] compaction_min_messages"); err != nil {
+		return err
 	}
-	if cfg.Sessions.CompactionPreserveMessages < 0 {
-		return fmt.Errorf("[sessions] compaction_preserve_messages = %d: must not be negative", cfg.Sessions.CompactionPreserveMessages)
+	if err := validateIntRange(cfg.Sessions.CompactionPreserveMessages, 0, 2147483647, "[sessions] compaction_preserve_messages"); err != nil {
+		return err
 	}
 
 	// HTTP
-	if cfg.HTTP.Port < 1 || cfg.HTTP.Port > 65535 {
-		return fmt.Errorf("[http] port = %d: must be between 1 and 65535", cfg.HTTP.Port)
+	if err := validateIntRange(cfg.HTTP.Port, 1, 65535, "[http] port"); err != nil {
+		return err
 	}
 
 	// Logging
@@ -626,8 +650,8 @@ func validate(cfg *Config) error {
 
 	// Memory sources
 	for i, src := range cfg.Memory.Sources {
-		if src.Weight < 0 || src.Weight > 1.0 {
-			return fmt.Errorf("[memory] sources[%d] (%s) weight = %g: must be between 0.0 and 1.0", i, src.Name, src.Weight)
+		if err := validateRange(src.Weight, 0.0, 1.0, fmt.Sprintf("[memory] sources[%d] (%s) weight", i, src.Name)); err != nil {
+			return err
 		}
 	}
 	for _, backend := range cfg.Memory.SearchBackends {
@@ -635,18 +659,18 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("[memory] search_backends: unknown backend %q (must be \"fts5\" or \"bleve\")", backend)
 		}
 	}
-	if cfg.Memory.ConversationWeight < 0 || cfg.Memory.ConversationWeight > 1.0 {
-		return fmt.Errorf("[memory] conversation_weight = %g: must be between 0.0 and 1.0", cfg.Memory.ConversationWeight)
+	if err := validateRange(cfg.Memory.ConversationWeight, 0.0, 1.0, "[memory] conversation_weight"); err != nil {
+		return err
 	}
 
 	// Mana warnings thresholds
 	for i, t := range cfg.ManaWarnings.Thresholds {
-		if t < 0 || t > 100 {
-			return fmt.Errorf("[usage_warnings] thresholds[%d] = %d: must be between 0 and 100", i, t)
+		if err := validateIntRange(t, 0, 100, fmt.Sprintf("[usage_warnings] thresholds[%d]", i)); err != nil {
+			return err
 		}
 	}
-	if cfg.ManaWarnings.RestoreThreshold < 0 || cfg.ManaWarnings.RestoreThreshold > 100 {
-		return fmt.Errorf("[usage_warnings] restore_threshold = %d: must be between 0 and 100", cfg.ManaWarnings.RestoreThreshold)
+	if err := validateIntRange(cfg.ManaWarnings.RestoreThreshold, 0, 100, "[usage_warnings] restore_threshold"); err != nil {
+		return err
 	}
 	for _, a := range cfg.Agents {
 		for i, t := range a.UsageWarnings.Thresholds {
