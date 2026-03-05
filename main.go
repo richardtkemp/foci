@@ -189,6 +189,10 @@ Subcommands:
 			log.Fatalf("agent %q: %v", acfg.ID, err)
 		}
 
+		// Update acfg.Model to the resolved developer/model_id format so all
+		// downstream code (SplitDeveloperModel, agent.Model) uses the full ID.
+		acfg.Model = resolved.Developer + "/" + resolved.ModelID
+
 		agentClient := clients.GetClient(resolved.Endpoint, resolved.Format)
 		if agentClient == nil {
 			log.Errorf("main", "agent %q: endpoint %q unavailable for model %q (format: %s)", acfg.ID, resolved.Endpoint, resolved.ModelID, resolved.Format)
