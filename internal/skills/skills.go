@@ -81,6 +81,29 @@ func (r *Registry) SystemBlock(workDir string) string {
 	return b.String()
 }
 
+// CheckSizes returns warning strings for any skill whose SKILL.md exceeds
+// maxChars bytes. Returns nil if maxChars <= 0 (guard disabled) or no skills
+// exceed the limit.
+func (r *Registry) CheckSizes(maxChars int) []string {
+	if maxChars <= 0 {
+		return nil
+	}
+	var warnings []string
+	for _, s := range r.skills {
+		info, err := os.Stat(s.Path)
+		if err != nil {
+			continue
+		}
+		if size := int(info.Size()); size > maxChars {
+			warnings = append(warnings, fmt.Sprintf(
+				"skill %q SKILL.md is %d bytes, exceeds max_result_chars (%d) — agent will see truncated instructions",
+				s.Name, size, maxChars,
+			))
+		}
+	}
+	return warnings
+}
+
 // shortPath returns the shorter of absPath or its relative form from baseDir.
 // If baseDir is empty or filepath.Rel fails, absPath is returned unchanged.
 func shortPath(absPath, baseDir string) string {

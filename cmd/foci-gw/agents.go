@@ -317,6 +317,11 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
+	maxRC := p.cfg.Tools.MaxResultChars
+	if len(acfg.SkillsDirs) > 0 {
+		maxRC = resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	}
+	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
 
 	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
 	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
