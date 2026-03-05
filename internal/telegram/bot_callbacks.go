@@ -12,33 +12,42 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
-func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, opts []command.KeyboardOption) {
-	// Group options by row
+// buildCommandKeyboard groups KeyboardOptions by row and returns an
+// InlineKeyboardMarkup with callback data prefixed by "cmd:/cmdName ".
+func buildCommandKeyboard(cmdName string, opts []command.KeyboardOption) gotgbot.InlineKeyboardMarkup {
 	rowMap := make(map[int][]gotgbot.InlineKeyboardButton)
 	maxRow := 0
 	for _, opt := range opts {
-		data := fmt.Sprintf("cmd:/%s %s", cmdName, opt.Data)
 		rowMap[opt.Row] = append(rowMap[opt.Row], gotgbot.InlineKeyboardButton{
 			Text:         opt.Label,
-			CallbackData: data,
+			CallbackData: fmt.Sprintf("cmd:/%s %s", cmdName, opt.Data),
 		})
 		if opt.Row > maxRow {
 			maxRow = opt.Row
 		}
 	}
-
 	rows := make([][]gotgbot.InlineKeyboardButton, 0, maxRow+1)
 	for i := 0; i <= maxRow; i++ {
 		if buttons, ok := rowMap[i]; ok {
 			rows = append(rows, buttons)
 		}
 	}
+	return gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
 
+// singleButtonKeyboard returns an InlineKeyboardMarkup with one button.
+func singleButtonKeyboard(text, callbackData string) gotgbot.InlineKeyboardMarkup {
+	return gotgbot.InlineKeyboardMarkup{
+		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
+			{Text: text, CallbackData: callbackData},
+		}},
+	}
+}
+
+func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, opts []command.KeyboardOption) {
 	label := fmt.Sprintf("/%s:", cmdName)
 	_, _ = b.client.SendMessage(chatID, label, &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: rows,
-		},
+		ReplyMarkup: buildCommandKeyboard(cmdName, opts),
 	})
 }
 
@@ -123,40 +132,12 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 
 // editMessageWithKeyboard replaces the message with a chained inline keyboard.
 func (b *Bot) editMessageWithKeyboard(chatID, msgID int64, parentName, cmdText string, opts []command.KeyboardOption) {
-	// Group options by row
-	rowMap := make(map[int][]command.KeyboardOption)
-	for _, o := range opts {
-		rowMap[o.Row] = append(rowMap[o.Row], o)
-	}
-	maxRow := 0
-	for r := range rowMap {
-		if r > maxRow {
-			maxRow = r
-		}
-	}
-	var rows [][]gotgbot.InlineKeyboardButton
-	for r := 0; r <= maxRow; r++ {
-		ropts := rowMap[r]
-		if len(ropts) == 0 {
-			continue
-		}
-		var buttons []gotgbot.InlineKeyboardButton
-		for _, o := range ropts {
-			buttons = append(buttons, gotgbot.InlineKeyboardButton{
-				Text:         o.Label,
-				CallbackData: fmt.Sprintf("cmd:/%s %s", parentName, o.Data),
-			})
-		}
-		rows = append(rows, buttons)
-	}
-
 	display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
+	kb := buildCommandKeyboard(parentName, opts)
 	_, _, _ = b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 		ChatId:    chatID,
 		MessageId: msgID,
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: rows,
-		},
+		ReplyMarkup: kb,
 	})
 }
 
@@ -181,28 +162,22 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 		stored.expanded = true
 		stored.chatID = chatID
 		b.toolResults.Store(msgID, stored)
+		kb := singleButtonKeyboard("Hide", fmt.Sprintf("tc:hide:%d", msgID))
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Hide", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
-				}},
-			},
+			ReplyMarkup: kb,
 		})
 	case "hide":
 		stored.expanded = false
 		b.toolResults.Store(msgID, stored)
+		kb := singleButtonKeyboard("Show full", fmt.Sprintf("tc:show:%d", msgID))
 		_, _, _ = b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", msgID)},
-				}},
-			},
+			ReplyMarkup: kb,
 		})
 	}
 }
@@ -218,26 +193,20 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 	switch action {
 	case "show":
 		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.displayWidth)
+		kb := singleButtonKeyboard("Hide thinking", fmt.Sprintf("th:hide:%d", msgID))
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Hide thinking", CallbackData: fmt.Sprintf("th:hide:%d", msgID)},
-				}},
-			},
+			ReplyMarkup: kb,
 		})
 	case "hide":
+		kb := singleButtonKeyboard("Show thinking", fmt.Sprintf("th:show:%d", msgID))
 		_, _, _ = b.client.EditMessageText(entry.responseHTML, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show thinking", CallbackData: fmt.Sprintf("th:show:%d", msgID)},
-				}},
-			},
+			ReplyMarkup: kb,
 		})
 	}
 }
@@ -322,15 +291,11 @@ func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessag
 func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawMessage) {
 	compact := formatToolCallCompact(toolName, params)
 	full := t.bot.formatToolCall(toolName, params)
-	sendOpts := &gotgbot.SendMessageOpts{
-		ParseMode: "HTML",
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-				{Text: "Show full", CallbackData: "tc:show:0"},
-			}},
-		},
-	}
-	sent, err := t.bot.client.SendMessage(t.chatID, compact, sendOpts)
+	kb := singleButtonKeyboard("Show full", "tc:show:0")
+	sent, err := t.bot.client.SendMessage(t.chatID, compact, &gotgbot.SendMessageOpts{
+		ParseMode:   "HTML",
+		ReplyMarkup: kb,
+	})
 	if err != nil {
 		t.bot.logger().Debugf("send tool call msg: %v", err)
 		return
@@ -343,15 +308,12 @@ func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawM
 		fullInput:   full,
 		chatID:      t.chatID,
 	})
+	kb = singleButtonKeyboard("Show full", fmt.Sprintf("tc:show:%d", t.msgID))
 	_, _, _ = t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
 		ChatId:    t.chatID,
 		MessageId: t.msgID,
 		ParseMode: "HTML",
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-				{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", t.msgID)},
-			}},
-		},
+		ReplyMarkup: kb,
 	})
 }
 
@@ -413,15 +375,12 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 
 	if wasExpanded {
 		expanded := formatToolCallWithResult(full, result)
+		kb := singleButtonKeyboard("Hide", fmt.Sprintf("tc:hide:%d", msgID))
 		_, _, _ = t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    t.chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Hide", CallbackData: fmt.Sprintf("tc:hide:%d", msgID)},
-				}},
-			},
+			ReplyMarkup: kb,
 		})
 	}
 }

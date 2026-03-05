@@ -247,6 +247,13 @@ func NewCostCommand(apiLogPath string) *Command {
 		Name:        "cost",
 		Description: "API cost summary",
 		Category:    "observability",
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "today", Data: "today"},
+				{Label: "24h", Data: "24h"},
+				{Label: "week", Data: "week"},
+			}
+		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			entries := readAPILog(apiLogPath)
 			if len(entries) == 0 {

@@ -351,6 +351,50 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 			t.Error("current model should be marked with ✓")
 		}
 	})
+
+	t.Run("cost", func(t *testing.T) {
+		// Verify /cost has keyboard options for its subcommands.
+		cmd := NewCostCommand(t.TempDir() + "/empty.jsonl")
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("cost command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		wantData := map[string]bool{"today": false, "24h": false, "week": false}
+		for _, o := range opts {
+			if _, ok := wantData[o.Data]; ok {
+				wantData[o.Data] = true
+			}
+		}
+		for k, found := range wantData {
+			if !found {
+				t.Errorf("missing keyboard option for %q", k)
+			}
+		}
+	})
+
+	t.Run("compact", func(t *testing.T) {
+		// Verify /compact has keyboard options for run and dry-run.
+		cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) { return 0, nil })
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("compact command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 2 {
+			t.Fatalf("got %d options, want 2", len(opts))
+		}
+	})
+
+	t.Run("bitwarden", func(t *testing.T) {
+		// Verify /bitwarden has keyboard options for status and setup.
+		cmd := NewBitwardenCommand(nil, false)
+		if cmd.KeyboardOptions == nil {
+			t.Fatal("bitwarden command should have KeyboardOptions")
+		}
+		opts := cmd.KeyboardOptions(context.Background())
+		if len(opts) != 2 {
+			t.Fatalf("got %d options, want 2", len(opts))
+		}
+	})
 }
 
 func TestLookupChainKeyboard(t *testing.T) {

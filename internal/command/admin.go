@@ -601,6 +601,12 @@ func NewCompactCommand(compactFn func(ctx context.Context, dryRun bool) (int, er
 		Name:        "compact",
 		Description: "Trigger manual context compaction",
 		Category:    "operations",
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "compact", Data: "run"},
+				{Label: "dry-run", Data: "dry-run"},
+			}
+		},
 		Execute: func(ctx context.Context, args string) (string, error) {
 			dryRun := strings.TrimSpace(args) == "dry-run"
 			oldCount, err := compactFn(ctx, dryRun)
