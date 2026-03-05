@@ -23,4 +23,4 @@ conversation.db-shm
 .claude/
 coverage.out
 coverage.html
-update.sh
+tools/logs/tmux.debug
