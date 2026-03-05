@@ -408,6 +408,53 @@ func TestParseSkillFileEmptyName(t *testing.T) {
 	}
 }
 
+func TestCheckSizes(t *testing.T) {
+	dir := t.TempDir()
+	small := "---\nname: small\ndescription: Small skill\n---\nShort body.\n"
+	writeSkillMD(t, dir, "small", small)
+
+	big := "---\nname: big\ndescription: Big skill\n---\n" + strings.Repeat("x", 2000)
+	writeSkillMD(t, dir, "big", big)
+
+	reg := Load([]string{dir})
+	if reg.Len() != 2 {
+		t.Fatalf("expected 2 skills, got %d", reg.Len())
+	}
+
+	// Limit below small — both should warn
+	warnings := reg.CheckSizes(10)
+	if len(warnings) != 2 {
+		t.Fatalf("expected 2 warnings, got %d: %v", len(warnings), warnings)
+	}
+
+	// Limit above both
+	warnings = reg.CheckSizes(50000)
+	if len(warnings) != 0 {
+		t.Errorf("expected 0 warnings with high limit, got %d", len(warnings))
+	}
+
+	// Limit between small and big — only big should warn
+	warnings = reg.CheckSizes(500)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "big") {
+		t.Errorf("warning should mention 'big', got: %s", warnings[0])
+	}
+
+	// Zero limit (disabled) — no warnings
+	warnings = reg.CheckSizes(0)
+	if warnings != nil {
+		t.Errorf("expected nil with zero limit, got %v", warnings)
+	}
+
+	// Negative limit (disabled) — no warnings
+	warnings = reg.CheckSizes(-1)
+	if warnings != nil {
+		t.Errorf("expected nil with negative limit, got %v", warnings)
+	}
+}
+
 // tmpFile creates a temporary file with content and seeks to start
 func tmpFile(t *testing.T, content string) *os.File {
 	f, err := os.CreateTemp(t.TempDir(), "*.md")

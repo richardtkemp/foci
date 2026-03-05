@@ -288,14 +288,13 @@ func runReset(p cmdRegParams) error {
 
 // runConfig handles the /config command.
 func runConfig(p cmdRegParams, ctx context.Context, args string) (string, error) {
-	dw, _ := ctx.Value(command.DisplayWidthKey{}).(int)
 	switch strings.TrimSpace(strings.ToLower(args)) {
 	case "toml":
 		return config.FormatConfigTOML(p.cfg, p.acfg), nil
 	case "table":
-		return strings.Join(config.FormatConfigGrouped(p.cfg, p.acfg, dw), "\x00"), nil
+		return strings.Join(config.FormatConfigGrouped(p.cfg, p.acfg), "\x00"), nil
 	case "available":
-		return "```\n" + config.FormatAvailable(p.cfg, p.acfg, dw) + "\n```", nil
+		return config.FormatAvailable(p.cfg, p.acfg), nil
 	default:
 		return "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults", nil
 	}
@@ -516,6 +515,11 @@ func runReload(p cmdRegParams) (string, error) {
 			{Type: "text", Text: newSkillRegistry.SystemBlock(p.acfg.Workspace)},
 		}
 	}
+	maxRC := p.cfg.Tools.MaxResultChars
+	if len(p.acfg.SkillsDirs) > 0 {
+		maxRC = resolveInt(p.acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	}
+	checkSkillSizes(newSkillRegistry, maxRC, p.acfg.ID)
 	p.ag.ExtraSystemBlocks = newExtraSystemBlocks
 	return fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: foci.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", newSkillRegistry.Len()), nil
 }

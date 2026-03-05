@@ -17,6 +17,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
@@ -32,6 +33,13 @@ func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, sess config.Sessions
 		maxTotal = 80000
 	}
 	for _, w := range bootstrap.CheckSizes(maxFile, maxTotal) {
+		log.Warnf(agentID, "%s", w)
+	}
+}
+
+// checkSkillSizes logs warnings if any skill's SKILL.md exceeds maxResultChars.
+func checkSkillSizes(registry *skills.Registry, maxResultChars int, agentID string) {
+	for _, w := range registry.CheckSizes(maxResultChars) {
 		log.Warnf(agentID, "%s", w)
 	}
 }
