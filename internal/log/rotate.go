@@ -172,16 +172,20 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 		return nil
 	}
 
-	// Rename temp archive to final name with timestamp range.
-	archivePath := archiveName(path, archiveDir, archiveFirst, archiveLast)
-	if err := os.Rename(tmpArchivePath, archivePath); err != nil {
-		return fmt.Errorf("rename archive: %w", err)
-	}
-
-	// Close temp file and atomically replace the original.
+	// Replace the source file BEFORE committing the archive. If the source
+	// rename fails, tmpArchivePath is still at its temp path and the defer
+	// cleans it up — no orphaned archive, no data duplication. The reverse
+	// order (archive first, then source) would leave a committed archive
+	// with the source unchanged on failure, causing repeated re-archival of
+	// the same lines.
 	_ = tmpFile.Close()
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp to %s: %w", path, err)
+	}
+
+	archivePath := archiveName(path, archiveDir, archiveFirst, archiveLast)
+	if err := os.Rename(tmpArchivePath, archivePath); err != nil {
+		return fmt.Errorf("rename archive: %w", err)
 	}
 
 	Infof("rotate", "rotated %s: archived %d old lines to %s", path, archivedLines, archivePath)
