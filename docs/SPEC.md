@@ -64,20 +64,7 @@ Default orientation text is embedded in `prompts/branch-orientation-headless.md`
 - Session file rotation: on compaction, the pre-compaction file is renamed to a timestamp-based archive (e.g. `5970082313.2026-03-04T02-30-00Z.jsonl`) before writing the new compacted session. If multiple compactions occur within the same second, a counter is added (e.g. `.2026-03-04T02-30-00Z.2.jsonl`). Archives are preserved for usage tracking and audit — nothing reads them during normal operation.
 - Async-pending guard: compaction is deferred while a session has pending async tool results (spawn clone, auto-backgrounded shell/http). This prevents compacting away the context that the async result relates to. Compaction fires naturally on a later turn once all results have been delivered.
 
-**Configuration:**
-```toml
-[sessions]
-compaction_threshold = 0.8               # compact at 80% of context window
-compaction_max_tokens = 4096             # max output tokens for summary
-compaction_min_messages = 4              # min messages before compacting
-compaction_summary_prompt = ""           # path to summary prompt file (empty = minimal fallback)
-compaction_handoff_msg = "..."           # message after compaction
-compaction_debug = false                 # send summary as Telegram file attachment (default false)
-compaction_preserve_messages = 25        # preserve last N messages through compaction (0 disables)
-session_reset_prompt = ""                # path to reset prompt file (empty = disabled)
-```
-
-All parameters have sensible defaults. Customize only what you need. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+All compaction parameters are configurable per-agent or globally: threshold, max tokens, min messages, summary/handoff/reset prompts, debug mode, and preserve-messages count. Prompt files are read live — edits take effect without restart. See [CONFIG.md](CONFIG.md).
 
 ### Session Metadata Index
 
@@ -106,15 +93,7 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 
 `/multiball` forks a session to a secondary Telegram bot — same agent, same context snapshot, parallel thread. Bots can be per-agent or shared pool. See [docs/MULTIBALL.md](docs/MULTIBALL.md) for bot pool config, session lifecycle, routing, and use cases.
 
-```toml
-[[agents]]
-id = "clutch"
-telegram_bot = "primary"
-multiball_bots = ["clutchling", "clutchling2"]  # per-agent pool
-
-[telegram]
-multiball_bots = ["spare1", "spare2"]            # shared pool (fallback for any agent)
-```
+Per-agent multiball pools are configured in the agent's `multiball_bots` list. A shared fallback pool is configured globally under `[telegram]`. See [CONFIG.md](CONFIG.md).
 
 **Acquisition priority:** per-agent pool first, shared pool as fallback. Released bots return to whichever pool they came from.
 
@@ -237,31 +216,13 @@ By default (wake=false), reminders surface as injected context at the specified 
 
 ### Effort Parameter
 
-Controls how much work Claude does per turn. Lower effort = shorter responses, fewer tool calls, less thinking. Configurable at global and per-agent level, overridable at runtime via `/effort` command.
-
-```toml
-[defaults]
-effort = "high"    # global default
-
-[[agents]]
-id = "clutch"
-effort = "high"    # per-agent override
-```
+Controls how much work Claude does per turn. Lower effort = shorter responses, fewer tool calls, less thinking. Configurable globally and per-agent. Overridable at runtime via `/effort`.
 
 ### Adaptive Thinking
 
 Enables extended thinking (Opus 4.6). In adaptive mode, the model decides when and how much to think. Thinking blocks are interleaved between tool calls. Thinking content is preserved in session history. Thinking tokens count toward mana — opt-in per agent.
 
-```toml
-[defaults]
-thinking = "adaptive"   # global default
-
-[[agents]]
-id = "thinker"
-thinking = "adaptive"   # per-agent override
-```
-
-Runtime toggle: `/thinking adaptive` or `/thinking off`.
+Configurable globally and per-agent. Runtime toggle: `/thinking adaptive` or `/thinking off`.
 
 #### Showing thinking in Telegram
 
@@ -273,16 +234,7 @@ By default, thinking blocks are stripped from Telegram messages. The `show_think
 
 The `display_width` config (default 32) controls the character width of divider lines used in thinking display.
 
-```toml
-[telegram]
-show_thinking = "compact"   # global default
-display_width = 32          # divider width in characters
-
-[[agents]]
-id = "thinker"
-show_thinking = "true"      # per-agent override
-display_width = 60          # wider dividers for this agent
-```
+Configurable globally and per-agent via `show_thinking`. The `display_width` config controls divider line width.
 
 Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
 
@@ -397,13 +349,7 @@ Before returning the guard message, the agent makes a side-call to Haiku to auto
 
 This prevents large tool results (e.g. `shell cat bigfile.txt`) from permanently bloating session history. The agent can still access the full result via the saved file — it just doesn't sit in context forever.
 
-```toml
-[tools]
-max_result_chars = 15000              # max chars before writing to file
-temp_dir = "/tmp/foci-tool-results"   # where to write large results
-summary_context_turns = 5             # recent turns for auto-summary context
-summary_context_chars = 6000          # max chars of context sent to Haiku
-```
+Configurable: max result chars, temp directory, summary context turns, and summary context chars. See [CONFIG.md](CONFIG.md).
 
 **http_request — file saves, binary handling, and auto-background:**
 - `save_to` — save response body to a specific file path (returns status + headers + path, not body)
@@ -498,35 +444,13 @@ Skills are not dynamic plugins — no code loading, no compilation. Just directo
 
 **Multiple Sources with Weights:**
 
-Configure multiple indexed directories, each with a configurable weight multiplier in `foci.toml`:
-
-```toml
-[[memory.sources]]
-name = "canonical"
-dir = "/home/foci/workspace/memory"
-weight = 1.0      # highest priority: 2.0x multiplier
-
-[[memory.sources]]
-name = "code"
-dir = "/home/foci/src"
-weight = 0.3      # lower priority: 1.3x multiplier
-
-[[memory.sources]]
-name = "docs"
-dir = "/home/foci/docs"
-weight = 0.5      # medium priority: 1.5x multiplier
-```
+Configured via `[[memory.sources]]` entries, each with a name, directory, and weight multiplier. See [CONFIG.md](CONFIG.md).
 
 Each source is indexed with `source={sourceName}` and searched with weight multiplier: `rank * (1.0 + weight)`.
 
 **Backward Compatibility:**
 
-If `sources` array is empty, fall back to single `dir` field (default weight=1.0):
-
-```toml
-[memory]
-dir = "/home/foci/workspace/memory"   # old way, still works
-```
+If `sources` is empty, falls back to a single `dir` field with default weight.
 
 **Search:** Pluggable search backends — FTS5 (default) and bleve. Both can run simultaneously for A/B comparison.
 
@@ -553,10 +477,7 @@ ORDER BY weighted_rank;
 
 **Bleve backend** — blevesearch/bleve full-text index. Files only (no conversation history). English analyzer with Porter stemming, per-source weighted ranking, highlighted snippets. Index stored at `{data_dir}/memory.bleve`. Clean rebuild on each reindex (close → remove → recreate).
 
-```toml
-[memory]
-search_backends = ["fts5", "bleve"]   # run both simultaneously
-```
+Active backends are listed in `search_backends` (default: `["fts5"]`).
 
 When multiple backends are active, the `memory_search` tool exposes a `backend` parameter so the agent can choose which to query. When only one backend is active, the parameter is hidden.
 
@@ -564,13 +485,7 @@ When multiple backends are active, the `memory_search` tool exposes a `backend` 
 
 - Memory files: re-indexed on startup
 - File watching: optional auto-reindex when `.md` files change via fsnotify
-- Debounce: configurable delay (default 0s = immediate):
-
-```toml
-[memory]
-reindex_debounce = "500ms"   # wait 500ms after file change before reindexing
-```
-
+- Debounce delay is configurable (default: immediate).
 - Conversation history: indexed as messages are logged (FTS5 only — bleve skips conversations)
 
 **Why FTS5 over vector embeddings:**
@@ -647,14 +562,8 @@ Credentials are loaded once at startup into process memory. Built-in integration
 
 ### Per-agent secrets
 
-Secrets in `secrets.toml` are global by default. Agents can have their own overrides via `[agents.ID]` sections:
-```toml
-[custom]
-github_token = "ghp_default"
+Secrets in `secrets.toml` are global by default. Agents can have their own overrides via `[agents.ID]` sections.
 
-[agents.fotini.custom]
-github_token = "ghp_fotini_account"
-```
 Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.setup_token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (shell templates, http_request, redaction, system prompt secret names).
 
 ### What the agent knows about secrets
@@ -752,12 +661,7 @@ Structured JSONL, one object per API request. For debugging cache behaviour, tra
 
 Searchable with `jq` (JSONL) or `sqlite3 api.db` (SQLite). The agent can query its own API logs via tools.
 
-**Full payload logging:** Optional — records complete API request/response bodies (system prompt, messages, tool calls, full response). Off by default (large files, contains conversation content). Enable in config:
-
-```toml
-[logging]
-full_payload = true   # write full API payloads to api-payload.jsonl
-```
+**Full payload logging:** Optional — records complete API request/response bodies (system prompt, messages, tool calls, full response). Off by default (large files, contains conversation content). Configurable via `full_payload` in `[logging]`.
 
 Useful during development and debugging. The agent and `/last` can reference it for detailed inspection of what was actually sent to Anthropic.
 
@@ -823,22 +727,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 
 ### Custom commands (TOML config)
 
-```toml
-[[commands]]
-name = "usage"
-description = "Show API usage stats"
-script = "jq -s 'map(.cost_usd) | add' api.jsonl"
-
-[[commands]]
-name = "logs"
-description = "Recent event log"
-script = "tail -20 foci.log"
-
-[[commands]]
-name = "health"
-description = "System health check"
-script = "~/scripts/health-check.sh"
-```
+Custom commands are defined as `[[commands]]` entries with a name, description, shell script, and optional timeout. See [CONFIG.md](CONFIG.md).
 
 Each custom command runs a shell script and returns stdout as a Telegram message. Timeout: 10s default, configurable per command.
 
@@ -869,85 +758,7 @@ If the agent is mid-turn processing a previous message, `/status` still returns 
 
 ## Config
 
-Single TOML file. Flat, commented, no deep nesting.
-
-**Single agent (legacy):**
-```toml
-# foci.toml
-
-[agent]
-id = "main"
-model = "claude-haiku-4-5"
-workspace = "/home/rich/git/openclaw/workspace"
-
-[anthropic]
-setup_token = "sk-ant-oat01-..."   # from `foci auth` (Claude Code setup token)
-
-[telegram]
-bot_token = "8351531463:AAH..."
-allowed_users = ["5970082313"]
-
-[sessions]
-dir = "/home/rich/git/foci/sessions"
-compaction_threshold = 0.8
-compaction_max_tokens = 4096
-compaction_min_messages = 4
-
-[memory]
-dir = "/home/rich/git/openclaw/workspace/memory"
-
-[tools]
-max_result_chars = 10000
-temp_dir = "/tmp/foci-tool-results"
-
-[[stt]]
-id = "groq-whisper"
-format = "openai"
-endpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-model = "whisper-large-v3"
-
-[[tts]]
-id = "edge"
-format = "edge-tts"
-voice = "en-US-AndrewNeural"
-
-[http]
-port = 18791
-bind = "127.0.0.1"
-
-[logging]
-level = "INFO"
-event_file = "foci.log"
-api_file = "api.jsonl"
-```
-
-**Multi-agent:**
-```toml
-[[agents]]
-id = "clutch"
-model = "claude-sonnet-4-6"
-workspace = "/home/rich/workspace1"
-telegram_bot = "primary"              # references [telegram.bots.primary]
-multiball_bots = ["clutchling"]       # per-agent multiball pool
-
-[[agents]]
-id = "scout"
-workspace = "/home/rich/workspace2"
-telegram_bot = "scout"
-# no multiball_bots = uses shared pool only (if configured)
-
-[telegram]
-allowed_users = ["5970082313"]
-multiball_bots = ["spare1"]           # shared pool (fallback for any agent)
-
-[telegram.bots]
-primary = { token_secret = "telegram.primary" }
-clutchling = { token_secret = "telegram.clutchling" }
-scout = { token_secret = "telegram.scout" }
-spare1 = { token_secret = "telegram.spare1" }
-```
-
-Both formats supported. `[agent]` (singular) is auto-promoted to a single-element `[[agents]]` array. Bot tokens resolved from `secrets.toml` via `token_secret` reference.
+Single TOML file. Flat, commented, no deep nesting. Supports single-agent (`[agent]`) and multi-agent (`[[agents]]`) formats. Bot tokens are resolved from `secrets.toml` via convention. See [CONFIG.md](CONFIG.md) for the full reference.
 
 
 ## Testing Priority
@@ -992,11 +803,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 
 ### Config references character files
 
-```toml
-[agent]
-workspace = "/home/foci/character"
-# bootstrap loads: identity.md, soul.md, user.md, agents.md, tools.md, memory.md
-```
+The agent's `workspace` path points to the character file directory. Bootstrap loads system files in the configured order.
 
 ### Template content
 
