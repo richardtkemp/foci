@@ -2,11 +2,14 @@ package voice
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"foci/internal/config"
 )
 
 func TestOpenAISTT_Transcribe(t *testing.T) {
@@ -190,7 +193,7 @@ func TestOpenAITTS_SpeedIncluded(t *testing.T) {
 		t.Fatalf("synthesize: %v", err)
 	}
 
-	if !strings.Contains(gotBody, `"speed":1.50`) {
+	if !strings.Contains(gotBody, `"speed":1.5`) {
 		t.Errorf("payload should contain speed field: %s", gotBody)
 	}
 }
@@ -286,10 +289,17 @@ func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
 
 // --- Factory function tests ---
 
-// TestNewTTS_OpenAI verifies that NewTTS("openai", ...) returns an *OpenAITTS
-// with all fields wired correctly.
+// TestNewTTS_OpenAI verifies that NewTTS with an openai config returns an *OpenAITTS
+// with all fields wired correctly from the TTSConfig struct.
 func TestNewTTS_OpenAI(t *testing.T) {
-	tts, err := NewTTS("openai", "https://api.example.com/tts", "key123", "tts-1", "alloy", "", "mp3")
+	cfg := config.TTSConfig{
+		Format:         "openai",
+		Endpoint:       "https://api.example.com/tts",
+		Model:          "tts-1",
+		Voice:          "alloy",
+		ResponseFormat: "mp3",
+	}
+	tts, err := NewTTS(cfg, "key123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -317,10 +327,15 @@ func TestNewTTS_OpenAI(t *testing.T) {
 	}
 }
 
-// TestNewTTS_EdgeTTS verifies that NewTTS("edge-tts", ...) returns an *EdgeTTS
+// TestNewTTS_EdgeTTS verifies that NewTTS with an edge-tts config returns an *EdgeTTS
 // with voice and command fields set.
 func TestNewTTS_EdgeTTS(t *testing.T) {
-	tts, err := NewTTS("edge-tts", "", "", "", "en-US-AndrewNeural", "/usr/bin/edge-tts", "")
+	cfg := config.TTSConfig{
+		Format:  "edge-tts",
+		Voice:   "en-US-AndrewNeural",
+		Command: "/usr/bin/edge-tts",
+	}
+	tts, err := NewTTS(cfg, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -338,7 +353,7 @@ func TestNewTTS_EdgeTTS(t *testing.T) {
 
 // TestNewTTS_UnknownFormat verifies that NewTTS rejects unknown format strings.
 func TestNewTTS_UnknownFormat(t *testing.T) {
-	_, err := NewTTS("whisper", "", "", "", "", "", "")
+	_, err := NewTTS(config.TTSConfig{Format: "whisper"}, "")
 	if err == nil {
 		t.Fatal("expected error for unknown format")
 	}
@@ -377,6 +392,37 @@ func TestNewSTT_UnknownFormat(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown STT format") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestOpenAITTS_ResponseFormatInPayload verifies that response_format from config
+// is included in the JSON payload sent to the TTS API.
+func TestOpenAITTS_ResponseFormatInPayload(t *testing.T) {
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &gotBody)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("audio"))
+	}))
+	defer server.Close()
+
+	tts := &OpenAITTS{
+		Endpoint:       server.URL,
+		APIKey:         "key",
+		Model:          "model",
+		Voice:          "alloy",
+		ResponseFormat: "opus",
+	}
+
+	_, err := tts.Synthesize(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+
+	rf, ok := gotBody["response_format"].(string)
+	if !ok || rf != "opus" {
+		t.Errorf("response_format = %v, want \"opus\"", gotBody["response_format"])
 	}
 }
 
