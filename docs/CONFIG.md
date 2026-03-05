@@ -50,6 +50,8 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `cc_credentials_poll_interval` | string | `"30s"` | How often to re-read Claude Code credentials from `~/.claude/.credentials.json`. |
 | `use_sdk` | bool | `true` | Use official Anthropic SDK for API transport. When `false`, falls back to hand-rolled HTTP (legacy). SDK transport is required for streaming. |
 | `streaming` | bool | `false` | Use streaming API for Anthropic requests (global default). Requires `use_sdk = true`. When enabled, text and thinking deltas are delivered incrementally. Per-agent override available in `[defaults]` and `[[agents]]`. |
+| `effort` | string | `"low"` | Effort level for Anthropic API requests: `"low"`, `"medium"`, `"high"`. Applied as default for agents using Anthropic models. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/effort`. |
+| `thinking` | string | `"adaptive"` | Thinking mode for Anthropic models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
 
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
@@ -61,6 +63,7 @@ Google Gemini API configuration.
 |-----|------|---------|-------------|
 | `http_timeout` | string | `"120s"` | HTTP timeout for Gemini API calls. Go duration format. |
 | `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
+| `thinking` | string | `"adaptive"` | Thinking mode for Gemini models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
 
 Requires `gemini.api_key` in `secrets.toml`. Use `model = "gemini:gemini-2.5-flash"` in `[defaults]` or per-agent to use.
 
@@ -532,10 +535,10 @@ Set global defaults in `[defaults]`:
 [defaults]
 model = "anthropic:claude-sonnet-4-6"
 max_tool_loops = 50
-effort = "low"
-thinking = "adaptive"
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
+
+Effort and thinking defaults are set in provider sections (`[anthropic]`, `[gemini]`) and automatically applied based on the agent's model format. Per-agent overrides in `[[agents]]` still work. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort, the params are stripped and the request is retried once.
 
 Override per-agent in `[[agents]]`:
 ```toml
@@ -555,8 +558,8 @@ Set in `[defaults]`, overridable per-agent.
 | `model` | string | `"anthropic:claude-haiku-4-5"` | Model in `endpoint:model_id` format. The endpoint prefix selects which API endpoint to use (e.g. `"gemini:gemini-2.5-flash"`, `"openrouter:claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `:` are auto-migrated with an inferred endpoint. |
 | `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
-| `effort` | string | `""` | Effort level for API requests: `"low"`, `"medium"`, `"high"`. `""` omits (uses API default). Overridable at runtime via `/effort`. Per-session overrides persist across restarts via state store and reset when a new session starts. |
-| `thinking` | string | `""` | Thinking mode: `"adaptive"` enables adaptive extended thinking (Opus 4.6). `""` or `"off"` = disabled. Overridable at runtime via `/thinking`. Per-session overrides persist across restarts via state store. Thinking tokens count toward mana. |
+| `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
+| `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults come from provider sections (`[anthropic] thinking`, `[gemini] thinking`). Only applied for Anthropic and Gemini models — silently skipped for other providers. Overridable at runtime via `/thinking`. |
 | `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 

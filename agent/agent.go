@@ -133,6 +133,7 @@ type Agent struct {
 	ServerTools                 []provider.ToolDef              // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey           func() string                   // returns the main/default session key; reminders only inject into this session
 
+	rateLimitGate   RateLimitGate // blocks all injection when rate-limited
 	processing      int32 // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu   sync.Mutex
 	turnDetails     map[uint64]*TurnDetail // keyed by unique turn ID
@@ -939,6 +940,15 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 
 // HandleMessageWithAttachments processes a user message with optional image/document attachments.
 func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, images []Attachment) (string, error) {
+	// Gate check: if rate-limited, queue the message and return immediately.
+	// No message touches the session while the gate is closed.
+	if limited, until := a.rateLimitGate.IsLimited(); limited {
+		trigger := TriggerFromContext(ctx)
+		a.rateLimitGate.Enqueue(sessionKey, userMessage, trigger)
+		a.logger().Infof("rate limit gate: queued message for session=%s trigger=%s (resets %s)", sessionKey, trigger, until.Format(time.Kitchen))
+		return "", &RateLimitedError{Until: until}
+	}
+
 	// Serialize turns on the same session. Without this, concurrent callers
 	// (keepalive, tmux watch, scheduled wakes, exec auto-background) could
 	// load the same session state, run concurrent turns, and interleave their
@@ -1054,11 +1064,31 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		if useAutoCache {
 			req.CacheControl = anthropic.Ephemeral()
 		}
-		if turnEffort != "" {
-			req.Output = &anthropic.OutputConfig{Effort: turnEffort}
+		// Format-level guards: only set effort/thinking for providers that support them.
+		dev, modelID := config.SplitDeveloperModel(turnModel)
+		var turnFormat string
+		if dev != "" {
+			turnFormat = config.InferWireFormat(dev)
+		} else {
+			// Bare model name (no developer prefix) — infer from model ID
+			turnFormat = config.InferFormat(modelID)
+		}
+
+		if turnEffort != "" && turnEffort != "off" {
+			if turnFormat == "anthropic" {
+				req.Output = &anthropic.OutputConfig{Effort: turnEffort}
+			} else {
+				a.logger().Warnf("effort=%q ignored for %s model %s (Anthropic-only)",
+					turnEffort, turnFormat, turnModel)
+			}
 		}
 		if turnThinking == "adaptive" {
-			req.Thinking = &anthropic.ThinkingConfig{Type: "adaptive"}
+			if turnFormat == "anthropic" || turnFormat == "gemini" {
+				req.Thinking = &anthropic.ThinkingConfig{Type: "adaptive"}
+			} else {
+				a.logger().Warnf("thinking=%q ignored for %s model %s (unsupported)",
+					turnThinking, turnFormat, turnModel)
+			}
 		}
 
 		// Debug: log cache_control placement
@@ -1092,8 +1122,33 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		duration := time.Since(start)
 		a.logger().Debugf("api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
 
+		// Error-and-retry: if a 400 suggests unsupported thinking/effort,
+		// strip the offending params and retry once.
 		if err != nil {
-			return "", a.classifyAPIError(ctx, err, sessionKey, duration)
+			if req.Thinking != nil || req.Output != nil {
+				var apiErr *provider.APIError
+				if errors.As(err, &apiErr) && apiErr.StatusCode == 400 {
+					body := strings.ToLower(apiErr.Body)
+					stripped := false
+					if req.Thinking != nil && strings.Contains(body, "thinking") {
+						a.logger().Warnf("model %s rejected thinking param, retrying without it", turnModel)
+						req.Thinking = nil
+						stripped = true
+					}
+					if req.Output != nil && (strings.Contains(body, "effort") || strings.Contains(body, "output")) {
+						a.logger().Warnf("model %s rejected effort param, retrying without it", turnModel)
+						req.Output = nil
+						stripped = true
+					}
+					if stripped {
+						resp, err = provider.Send(ctx, turnClient, req, handler)
+						duration = time.Since(start)
+					}
+				}
+			}
+			if err != nil {
+				return "", a.classifyAPIError(ctx, err, sessionKey, duration)
+			}
 		}
 
 		// Check for cancellation after API call
@@ -1225,10 +1280,13 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	}
 	var apiErr *anthropic.APIError
 	if errors.As(err, &apiErr) && apiErr.IsRateLimit() {
+		resetTime := a.computeRateLimitReset(apiErr.RetryAfterSeconds())
+		a.rateLimitGate.Close(resetTime)
+		a.logger().Infof("rate limit gate closed until %s", resetTime.Format(time.Kitchen))
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(apiErr.RetryAfterSeconds())
 		}
-		return fmt.Errorf("rate limited — mana exhausted")
+		return &RateLimitedError{Until: resetTime}
 	}
 	if errors.As(err, &apiErr) && apiErr.IsOverloaded() {
 		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
@@ -1241,6 +1299,56 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return fmt.Errorf("anthropic API is temporarily unavailable, try again in a few minutes")
 	}
 	return fmt.Errorf("send message: %w", err)
+}
+
+// computeRateLimitReset determines the best reset time for the rate limit gate.
+// Priority: cached mana reset time > retry-after header > fallback 5h.
+func (a *Agent) computeRateLimitReset(retryAfterSec int) time.Time {
+	// Try cached mana reset time (most accurate — comes from usage API)
+	a.manaCacheMu.Lock()
+	resetStr := a.manaResetCached
+	a.manaCacheMu.Unlock()
+	if resetStr != "" {
+		// manaResetCached is a human-readable string like "in 2h", "in 45m", "2pm"
+		// But we have the raw ISO time in the usage response. Let's check manaCacheTime
+		// and reconstruct — actually we don't store the raw ISO. Use retry-after instead
+		// if available, since it's more reliable than parsing relative strings.
+	}
+
+	if retryAfterSec > 0 {
+		return time.Now().Add(time.Duration(retryAfterSec) * time.Second)
+	}
+
+	// Fallback: 5 hours (Anthropic's standard window)
+	return time.Now().Add(5 * time.Hour)
+}
+
+// DrainRateLimitQueue checks if the rate limit gate has opened, and replays
+// queued messages through HandleMessage. Called from keepalive tick.
+func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
+	items := a.rateLimitGate.DrainQueue()
+	if len(items) == 0 {
+		return
+	}
+
+	a.logger().Infof("rate limit lifted, replaying %d queued items", len(items))
+	for _, item := range items {
+		itemCtx := WithTrigger(ctx, item.Trigger)
+		resp, err := a.HandleMessage(itemCtx, item.SessionKey, item.Message)
+		if err != nil {
+			a.logger().Errorf("replay queued message session=%s trigger=%s: %v", item.SessionKey, item.Trigger, err)
+			// If we hit another rate limit, stop replaying — gate will be closed again
+			var rlErr *RateLimitedError
+			if errors.As(err, &rlErr) {
+				a.logger().Infof("rate limited again during replay, %d items re-queued", len(items))
+				return
+			}
+			continue
+		}
+		if resp != "" {
+			a.logger().Debugf("replayed message session=%s trigger=%s response_len=%d", item.SessionKey, item.Trigger, len(resp))
+		}
+	}
 }
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.

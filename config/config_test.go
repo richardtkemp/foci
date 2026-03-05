@@ -1649,7 +1649,7 @@ func TestLoadThinkingConfig(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[defaults]
+[anthropic]
 thinking = "adaptive"
 
 [[agents]]
@@ -1665,13 +1665,28 @@ thinking = "off"
 		t.Fatalf("Load: %v", err)
 	}
 
-	// Agent "smart" should inherit "adaptive" from defaults
-	if cfg.Agents[0].Thinking != "adaptive" {
-		t.Errorf("agent smart: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
+	// Provider-section default should be set
+	if cfg.Anthropic.Thinking != "adaptive" {
+		t.Errorf("anthropic: Thinking = %q, want %q", cfg.Anthropic.Thinking, "adaptive")
+	}
+	// Agent "smart" has no per-agent override — empty until ApplyProviderDefaults
+	if cfg.Agents[0].Thinking != "" {
+		t.Errorf("agent smart: Thinking = %q, want %q (empty before ApplyProviderDefaults)", cfg.Agents[0].Thinking, "")
 	}
 	// Agent "fast" should keep its explicit "off"
 	if cfg.Agents[1].Thinking != "off" {
 		t.Errorf("agent fast: Thinking = %q, want %q", cfg.Agents[1].Thinking, "off")
+	}
+
+	// Simulate main.go calling ApplyProviderDefaults for an Anthropic agent
+	ApplyProviderDefaults(&cfg.Agents[0], "anthropic", cfg)
+	if cfg.Agents[0].Thinking != "adaptive" {
+		t.Errorf("agent smart after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
+	}
+	// Agent "fast" already has explicit "off" — ApplyProviderDefaults should not change it
+	ApplyProviderDefaults(&cfg.Agents[1], "anthropic", cfg)
+	if cfg.Agents[1].Thinking != "off" {
+		t.Errorf("agent fast after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[1].Thinking, "off")
 	}
 }
 
@@ -1696,8 +1711,57 @@ id = "default"
 	if cfg.Agents[0].Thinking != "adaptive" {
 		t.Errorf("agent thinker: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
 	}
-	if cfg.Agents[1].Thinking != "adaptive" {
-		t.Errorf("agent default: Thinking = %q, want %q (inherited from defaults)", cfg.Agents[1].Thinking, "adaptive")
+	// Agent "default" has no per-agent override — empty after Load()
+	// Defaults come from provider section via ApplyProviderDefaults in main.go
+	if cfg.Agents[1].Thinking != "" {
+		t.Errorf("agent default: Thinking = %q, want %q (empty before ApplyProviderDefaults)", cfg.Agents[1].Thinking, "")
+	}
+}
+
+func TestApplyProviderDefaults(t *testing.T) {
+	cfg := &Config{
+		Anthropic: AnthropicConfig{Effort: "low", Thinking: "adaptive"},
+		Gemini:    GeminiConfig{Thinking: "adaptive"},
+	}
+
+	// Anthropic agent gets both effort and thinking
+	agent := AgentConfig{}
+	ApplyProviderDefaults(&agent, "anthropic", cfg)
+	if agent.Effort != "low" {
+		t.Errorf("anthropic effort = %q, want %q", agent.Effort, "low")
+	}
+	if agent.Thinking != "adaptive" {
+		t.Errorf("anthropic thinking = %q, want %q", agent.Thinking, "adaptive")
+	}
+
+	// Gemini agent gets thinking but not effort
+	agent2 := AgentConfig{}
+	ApplyProviderDefaults(&agent2, "gemini", cfg)
+	if agent2.Effort != "" {
+		t.Errorf("gemini effort = %q, want %q", agent2.Effort, "")
+	}
+	if agent2.Thinking != "adaptive" {
+		t.Errorf("gemini thinking = %q, want %q", agent2.Thinking, "adaptive")
+	}
+
+	// OpenAI agent gets neither
+	agent3 := AgentConfig{}
+	ApplyProviderDefaults(&agent3, "openai", cfg)
+	if agent3.Effort != "" {
+		t.Errorf("openai effort = %q, want %q", agent3.Effort, "")
+	}
+	if agent3.Thinking != "" {
+		t.Errorf("openai thinking = %q, want %q", agent3.Thinking, "")
+	}
+
+	// Per-agent override is preserved
+	agent4 := AgentConfig{Effort: "high", Thinking: "off"}
+	ApplyProviderDefaults(&agent4, "anthropic", cfg)
+	if agent4.Effort != "high" {
+		t.Errorf("override effort = %q, want %q", agent4.Effort, "high")
+	}
+	if agent4.Thinking != "off" {
+		t.Errorf("override thinking = %q, want %q", agent4.Thinking, "off")
 	}
 }
 
@@ -2134,6 +2198,7 @@ id = "inherits"
 
 func TestApplyDefaultsReflect(t *testing.T) {
 	// Verify that the reflect-based waterfall copies all DefaultsConfig fields.
+	// Note: effort and thinking are now in provider sections, not [defaults].
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -2143,12 +2208,14 @@ max_tool_loops = 50
 max_output_tokens = 16384
 braindead_threshold = 20
 braindead_prompt = "watch it"
-effort = "high"
-thinking = "adaptive"
 duplicate_messages = true
 inject_agent_warnings = true
 compaction_effort = "low"
 system_files = ["A.md", "B.md"]
+
+[anthropic]
+effort = "high"
+thinking = "adaptive"
 
 [[agents]]
 id = "bare"
@@ -2180,11 +2247,20 @@ effort = "low"
 	if bare.BraindeadPrompt != "watch it" {
 		t.Errorf("bare BraindeadPrompt = %q", bare.BraindeadPrompt)
 	}
+	// Effort/thinking come from provider sections via ApplyProviderDefaults, not [defaults]
+	if bare.Effort != "" {
+		t.Errorf("bare Effort = %q, want empty (set via ApplyProviderDefaults)", bare.Effort)
+	}
+	if bare.Thinking != "" {
+		t.Errorf("bare Thinking = %q, want empty (set via ApplyProviderDefaults)", bare.Thinking)
+	}
+	// Verify ApplyProviderDefaults fills them in
+	ApplyProviderDefaults(&bare, "anthropic", cfg)
 	if bare.Effort != "high" {
-		t.Errorf("bare Effort = %q", bare.Effort)
+		t.Errorf("bare Effort after ApplyProviderDefaults = %q, want high", bare.Effort)
 	}
 	if bare.Thinking != "adaptive" {
-		t.Errorf("bare Thinking = %q", bare.Thinking)
+		t.Errorf("bare Thinking after ApplyProviderDefaults = %q, want adaptive", bare.Thinking)
 	}
 	if !bare.DuplicateMessages {
 		t.Error("bare DuplicateMessages should be true")
