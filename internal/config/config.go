@@ -96,44 +96,50 @@ type AgentMemoryConfig struct {
 }
 
 type AgentConfig struct {
-	ID                               string            `toml:"id"`
-	Name                             string            `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji                            string            `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Model                            string            `toml:"model"`    // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "flash")
-	Endpoint                         string            `toml:"endpoint"` // optional: which endpoint config to use (auto-selected from developer if empty)
-	Workspace                        string            `toml:"workspace"`
-	SystemFiles                      []string          `toml:"system_files"`                        // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages                bool              `toml:"duplicate_messages"`                  // send user text twice per API call (improves instruction following)
-	BatchPartialAssistantMessages    bool              `toml:"batch_partial_assistant_messages"`    // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
-	BatchPartialJoiner               string            `toml:"batch_partial_joiner"`                // separator between batched partial messages (default: "")
-	BranchOrientationPrompt          string            `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
-	BranchOrientationMultiballPrompt string            `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
-	BranchOrientationHeadlessPrompt  string            `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
-	TelegramBot                      string            `toml:"telegram_bot"`                        // bot name; token resolved via "telegram.<bot>" secret
-	BotSecret                        string            `toml:"bot_secret"`                          // override secret key for bot token (default: "telegram.<telegram_bot>")
-	MultiballBots                    []string          `toml:"multiball_bots"`                      // additional bot names for multiball (optional)
-	Memory                           AgentMemoryConfig `toml:"memory"`                              // per-agent memory sources (combined with global [memory])
-	MaxToolLoops                     int               `toml:"max_tool_loops"`                      // max tool iterations per turn (default 25)
-	MaxOutputTokens                  int               `toml:"max_output_tokens"`                   // max tokens in model response (default 8192)
-	BraindeadThreshold               int               `toml:"braindead_threshold"`                 // consecutive tool loops before warning (0 = disabled, default 10)
-	BraindeadPrompt                  string            `toml:"braindead_prompt"`                    // warning text injected as user message
-	TurnLockWarnThreshold            string            `toml:"turn_lock_warn_threshold"`            // warn if turn lock wait exceeds this duration (Go duration, default "3m")
-	Effort                           string            `toml:"effort"`                              // effort level: "low" (default), "medium", "high"
-	Thinking                         string            `toml:"thinking"`                            // thinking mode: "adaptive" (default) or "off"
-	Streaming                        *bool             `toml:"streaming"`                           // per-agent streaming override (nil = use global anthropic.streaming)
-	TTS                              string            `toml:"tts"`                                 // per-agent TTS provider id (empty = default [[tts]] entry)
-	STT                              string            `toml:"stt"`                                 // per-agent STT provider id (empty = default [[stt]] entry)
-	TTSRate                          float64           `toml:"tts_rate"`                            // per-agent TTS speech rate multiplier (0 = use entry rate only)
-	InjectAgentWarnings              bool              `toml:"inject_agent_warnings"`               // inject warnings/errors into agent session (default false)
-	StartupNotification              *bool             `toml:"startup_notification"`                // send startup notification (nil = use global enable_startup_notify)
-	ShowToolCalls                    *ToolCallDisplay  `toml:"show_tool_calls"`                     // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
-	ShowThinking                     *ShowThinking     `toml:"show_thinking"`                       // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
-	DisplayWidth                     *int              `toml:"display_width"`                       // display width for dividers in Telegram (nil = use global telegram.display_width)
-	TableWrapLines                   *int              `toml:"table_wrap_lines"`                    // max wrapped lines per table cell (nil = use global, 0 = truncate, default 5)
-	TableStyle                       *string           `toml:"table_style"`                         // table style: "pretty" (default) or "markdown" (nil = use global telegram.table_style)
-	MessagesInLog                    *bool             `toml:"messages_in_log"`                     // log user message content to event log (nil = use global logging.messages_in_log)
-	ReceivedFilesDir                 string            `toml:"received_files_dir"`                  // save received files to this directory (empty = disabled)
-	AllowedUsers                     []string          `toml:"allowed_users"`                       // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
+	ID        string `toml:"id"`
+	Name      string `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji     string `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Model     string `toml:"model"`    // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "flash")
+	Endpoint  string `toml:"endpoint"` // optional: which endpoint config to use (auto-selected from developer if empty)
+	Workspace string `toml:"workspace"`
+
+	SystemFiles                   []string `toml:"system_files"`                     // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
+	DuplicateMessages             bool     `toml:"duplicate_messages"`               // send user text twice per API call (improves instruction following)
+	BatchPartialAssistantMessages bool     `toml:"batch_partial_assistant_messages"` // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
+	BatchPartialJoiner            string   `toml:"batch_partial_joiner"`             // separator between batched partial messages (default: "")
+
+	BranchOrientationPrompt          string `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
+	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
+	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
+
+	TelegramBot   string            `toml:"telegram_bot"`   // bot name; token resolved via "telegram.<bot>" secret
+	BotSecret     string            `toml:"bot_secret"`     // override secret key for bot token (default: "telegram.<telegram_bot>")
+	MultiballBots []string          `toml:"multiball_bots"` // additional bot names for multiball (optional)
+	Memory        AgentMemoryConfig `toml:"memory"`         // per-agent memory sources (combined with global [memory])
+
+	MaxToolLoops          int    `toml:"max_tool_loops"`           // max tool iterations per turn (default 25)
+	MaxOutputTokens       int    `toml:"max_output_tokens"`        // max tokens in model response (default 8192)
+	BraindeadThreshold    int    `toml:"braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
+	BraindeadPrompt       string `toml:"braindead_prompt"`         // warning text injected as user message
+	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
+	Effort                string `toml:"effort"`                   // effort level: "low" (default), "medium", "high"
+	Thinking              string `toml:"thinking"`                 // thinking mode: "adaptive" (default) or "off"
+	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
+
+	TTS     string  `toml:"tts"`      // per-agent TTS provider id (empty = default [[tts]] entry)
+	STT     string  `toml:"stt"`      // per-agent STT provider id (empty = default [[stt]] entry)
+	TTSRate float64 `toml:"tts_rate"` // per-agent TTS speech rate multiplier (0 = use entry rate only)
+
+	InjectAgentWarnings bool             `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
+	StartupNotification *bool            `toml:"startup_notification"`  // send startup notification (nil = use global enable_startup_notify)
+	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
+	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
+	DisplayWidth        *int             `toml:"display_width"`         // display width for dividers in Telegram (nil = use global telegram.display_width)
+	TableWrapLines      *int             `toml:"table_wrap_lines"`      // max wrapped lines per table cell (nil = use global, 0 = truncate, default 5)
+	TableStyle          *string          `toml:"table_style"`           // table style: "pretty" (default) or "markdown" (nil = use global telegram.table_style)
+	MessagesInLog       *bool            `toml:"messages_in_log"`       // log user message content to event log (nil = use global logging.messages_in_log)
+	ReceivedFilesDir    string           `toml:"received_files_dir"`    // save received files to this directory (empty = disabled)
+	AllowedUsers        []string         `toml:"allowed_users"`         // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
 	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
 	CompactionThreshold        *float64 `toml:"compaction_threshold"`         // compact at this % of context window
 	CompactionSummaryPrompt    string   `toml:"compaction_summary_prompt"`    // path to summary prompt file
@@ -211,21 +217,24 @@ type TelegramConfig struct {
 }
 
 type SessionsConfig struct {
-	Dir                              string  `toml:"dir"`
-	CompactionThreshold              float64 `toml:"compaction_threshold"`                // compact at this % of context window (default 0.8)
-	CompactionMaxTokens              int     `toml:"compaction_max_tokens"`               // max output tokens for summary (default 4096)
-	CompactionMinMessages            int     `toml:"compaction_min_messages"`             // min messages before compacting (default 4)
-	CompactionSummaryPrompt          string  `toml:"compaction_summary_prompt"`           // path to summary prompt file
-	CompactionHandoffMsg             string  `toml:"compaction_handoff_msg"`              // handoff message after compaction
-	CompactionNotify                 *bool   `toml:"compaction_notify"`                   // send Telegram notification on compaction (default true)
-	MaxSystemPromptFile              int     `toml:"max_system_prompt_chars_file"`        // per-file char threshold for warnings (default 20000)
-	MaxSystemPromptTotal             int     `toml:"max_system_prompt_chars_total"`       // total system prompt char threshold (default 80000)
-	CompactionDebug                  bool    `toml:"compaction_debug"`                    // send compaction summary as Telegram file attachment (default false)
-	CompactionPreserveMessages       int     `toml:"compaction_preserve_messages"`        // preserve last N messages through compaction (default 25, 0 disables)
-	BranchOrientationPrompt          string  `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
-	BranchOrientationMultiballPrompt string  `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
-	BranchOrientationHeadlessPrompt  string  `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
-	ArchiveAfter                     string  `toml:"archive_after"`                       // gzip idle sessions after this duration (default "168h" = 7 days)
+	Dir string `toml:"dir"`
+
+	CompactionThreshold        float64 `toml:"compaction_threshold"`          // compact at this % of context window (default 0.8)
+	CompactionMaxTokens        int     `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
+	CompactionMinMessages      int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
+	CompactionSummaryPrompt    string  `toml:"compaction_summary_prompt"`     // path to summary prompt file
+	CompactionHandoffMsg       string  `toml:"compaction_handoff_msg"`        // handoff message after compaction
+	CompactionNotify           *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
+	MaxSystemPromptFile        int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
+	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
+	CompactionDebug            bool    `toml:"compaction_debug"`              // send compaction summary as Telegram file attachment (default false)
+	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
+
+	BranchOrientationPrompt          string `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
+	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
+	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
+
+	ArchiveAfter string `toml:"archive_after"` // gzip idle sessions after this duration (default "168h" = 7 days)
 }
 
 type MemorySource struct {
@@ -265,26 +274,30 @@ type HTTPConfig struct {
 }
 
 type LoggingConfig struct {
-	Level                             string `toml:"level"`
-	EventFile                         string `toml:"event_file"`
-	APIFile                           string `toml:"api_file"`
-	APIDB                             string `toml:"api_db"` // SQLite API call log path (empty = disabled, default: {data_dir}/api.db)
-	ConversationFile                  string `toml:"conversation_file"`
-	FullPayload                       bool   `toml:"full_payload"`                         // write full API payloads to api-payload.jsonl
-	PayloadFile                       string `toml:"payload_file"`                         // path to api-payload.jsonl (default: api-payload.jsonl)
-	CacheBustDetect                   bool   `toml:"cache_bust_detect"`                    // alert when cache_read drops >50% vs previous request
-	CacheBustIdleMinutes              int    `toml:"cache_bust_idle_minutes"`              // suppress cache bust alert if session idle > N minutes (default 10)
+	Level            string `toml:"level"`
+	EventFile        string `toml:"event_file"`
+	APIFile          string `toml:"api_file"`
+	APIDB            string `toml:"api_db"` // SQLite API call log path (empty = disabled, default: {data_dir}/api.db)
+	ConversationFile string `toml:"conversation_file"`
+
+	FullPayload          bool   `toml:"full_payload"`            // write full API payloads to api-payload.jsonl
+	PayloadFile          string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
+	CacheBustDetect      bool   `toml:"cache_bust_detect"`       // alert when cache_read drops >50% vs previous request
+	CacheBustIdleMinutes int    `toml:"cache_bust_idle_minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
+
 	WarningMaxPerWindow               int    `toml:"warning_max_per_window"`               // max identical warnings per window before suppression (default 3)
 	WarningWindowDuration             string `toml:"warning_window_duration"`              // time window for warning dedup (default "5m")
 	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"`    // min interval between proactive warning turns when user is active (default "5m")
 	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"`  // min interval when user is inactive (default "1h")
 	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold"` // user is "active" if last message within this window (default "10m")
-	LogRotation                       bool   `toml:"log_rotation"`                         // enable built-in log rotation (default true)
-	RotationPeriod                    string `toml:"rotation_period"`                      // how often to rotate (default "24h")
-	RetentionPeriod                   string `toml:"retention_period"`                     // keep lines newer than this (default "48h")
-	RotationMaxLineSize               string `toml:"rotation_max_line_size"`               // max line size for scanner buffer (default "64MB")
-	ArchiveDir                        string `toml:"archive_dir"`                          // gzip archive directory (default: log_dir/archive/)
-	MessagesInLog                     bool   `toml:"messages_in_log"`                      // log user message content to event log (default false for privacy)
+
+	LogRotation         bool   `toml:"log_rotation"`           // enable built-in log rotation (default true)
+	RotationPeriod      string `toml:"rotation_period"`        // how often to rotate (default "24h")
+	RetentionPeriod     string `toml:"retention_period"`       // keep lines newer than this (default "48h")
+	RotationMaxLineSize string `toml:"rotation_max_line_size"` // max line size for scanner buffer (default "64MB")
+	ArchiveDir          string `toml:"archive_dir"`            // gzip archive directory (default: log_dir/archive/)
+
+	MessagesInLog bool `toml:"messages_in_log"` // log user message content to event log (default false for privacy)
 }
 
 // TTSConfig describes a text-to-speech provider entry.
@@ -404,35 +417,41 @@ type CommandConfig struct {
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
 type DefaultsConfig struct {
-	Model                         string           `toml:"model"`                            // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
-	DuplicateMessages             bool             `toml:"duplicate_messages"`               // default duplicate_messages (default: false)
-	BatchPartialAssistantMessages bool             `toml:"batch_partial_assistant_messages"` // default batch_partial_assistant_messages (default: false)
-	BatchPartialJoiner            string           `toml:"batch_partial_joiner"`             // default separator between batched partial messages (default: "")
-	InjectAgentWarnings           bool             `toml:"inject_agent_warnings"`            // default inject_agent_warnings (default: false)
-	MaxToolLoops                  int              `toml:"max_tool_loops"`                   // default max_tool_loops (default: 25)
-	MaxOutputTokens               int              `toml:"max_output_tokens"`                // default max_output_tokens (default: 8192)
-	BraindeadThreshold            int              `toml:"braindead_threshold"`              // default braindead threshold (default: 10)
-	BraindeadPrompt               string           `toml:"braindead_prompt"`                 // default braindead prompt
-	TurnLockWarnThreshold         string           `toml:"turn_lock_warn_threshold"`         // default turn lock warn threshold (default: "3m")
-	Streaming                     *bool            `toml:"streaming"`                        // default streaming (nil = use global anthropic.streaming)
-	ShowToolCalls                 *ToolCallDisplay `toml:"show_tool_calls"`                  // default show_tool_calls (default: "off")
-	ShowThinking                  *ShowThinking    `toml:"show_thinking"`                    // default show_thinking (default: "off")
-	SystemFiles                   []string         `toml:"system_files"`                     // default system file list
-	CompactionEffort              string           `toml:"compaction_effort"`                // default compaction effort (empty = use session effort)
-	MaxResultChars                int              `toml:"max_result_chars"`                 // default max_result_chars (default 15000)
-	MaxSummaryChars               int              `toml:"max_summary_chars"`                // default max_summary_chars (default 300000)
-	AutoSummarise                 *bool            `toml:"auto_summarise"`                   // default auto_summarise (nil = use [tools] value)
-	SummaryContextTurns           int              `toml:"summary_context_turns"`            // default summary_context_turns (default 5)
-	SummaryContextChars           int              `toml:"summary_context_chars"`            // default summary_context_chars (default 6000)
-	MaxSummaryInputChars          int              `toml:"max_summary_input_chars"`          // default max_summary_input_chars (default 100000)
-	MaxImagePixels                int              `toml:"max_image_pixels"`                 // default max_image_pixels (default 2073600 = 1920*1080)
-	SearchProvider                string           `toml:"search_provider"`                  // default search provider: "brave" (default) or "anthropic"
-	FetchProvider                 string           `toml:"fetch_provider"`                   // default fetch provider: "anthropic" (default) or "builtin"
-	InjectedMessageHeader         string           `toml:"injected_message_header"`          // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
-	TTS                           string           `toml:"tts"`                              // default TTS provider id
-	STT                           string           `toml:"stt"`                              // default STT provider id
-	TTSRate                       float64          `toml:"tts_rate"`                         // default TTS speech rate multiplier
-	SteerMode                     bool             `toml:"steer_mode"`                       // default steer_mode (default: true)
+	Model string `toml:"model"` // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
+
+	DuplicateMessages             bool   `toml:"duplicate_messages"`               // default duplicate_messages (default: false)
+	BatchPartialAssistantMessages bool   `toml:"batch_partial_assistant_messages"` // default batch_partial_assistant_messages (default: false)
+	BatchPartialJoiner            string `toml:"batch_partial_joiner"`             // default separator between batched partial messages (default: "")
+
+	InjectAgentWarnings   bool   `toml:"inject_agent_warnings"`    // default inject_agent_warnings (default: false)
+	MaxToolLoops          int    `toml:"max_tool_loops"`           // default max_tool_loops (default: 25)
+	MaxOutputTokens       int    `toml:"max_output_tokens"`        // default max_output_tokens (default: 8192)
+	BraindeadThreshold    int    `toml:"braindead_threshold"`      // default braindead threshold (default: 10)
+	BraindeadPrompt       string `toml:"braindead_prompt"`         // default braindead prompt
+	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // default turn lock warn threshold (default: "3m")
+
+	Streaming        *bool            `toml:"streaming"`         // default streaming (nil = use global anthropic.streaming)
+	ShowToolCalls    *ToolCallDisplay `toml:"show_tool_calls"`   // default show_tool_calls (default: "off")
+	ShowThinking     *ShowThinking    `toml:"show_thinking"`     // default show_thinking (default: "off")
+	SystemFiles      []string         `toml:"system_files"`      // default system file list
+	CompactionEffort string           `toml:"compaction_effort"` // default compaction effort (empty = use session effort)
+
+	MaxResultChars       int   `toml:"max_result_chars"`        // default max_result_chars (default 15000)
+	MaxSummaryChars      int   `toml:"max_summary_chars"`       // default max_summary_chars (default 300000)
+	AutoSummarise        *bool `toml:"auto_summarise"`          // default auto_summarise (nil = use [tools] value)
+	SummaryContextTurns  int   `toml:"summary_context_turns"`   // default summary_context_turns (default 5)
+	SummaryContextChars  int   `toml:"summary_context_chars"`   // default summary_context_chars (default 6000)
+	MaxSummaryInputChars int   `toml:"max_summary_input_chars"` // default max_summary_input_chars (default 100000)
+	MaxImagePixels       int   `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
+
+	SearchProvider        string `toml:"search_provider"`         // default search provider: "brave" (default) or "anthropic"
+	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "anthropic" (default) or "builtin"
+	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
+
+	TTS       string  `toml:"tts"`        // default TTS provider id
+	STT       string  `toml:"stt"`        // default STT provider id
+	TTSRate   float64 `toml:"tts_rate"`   // default TTS speech rate multiplier
+	SteerMode bool    `toml:"steer_mode"` // default steer_mode (default: true)
 }
 
 // ModelsConfig holds model-related configuration.

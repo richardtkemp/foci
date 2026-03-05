@@ -5,7 +5,7 @@ import "time"
 // SearchOptions contains optional parameters for memory search.
 type SearchOptions struct {
 	DateFrom *time.Time // Only include results from this date onwards (inclusive)
-	DateTo   *time.Time // Only include results up to this date (inclusive)
+	DateTo   *time.Time // Only include results before this date (exclusive upper bound; typically start of next day)
 }
 
 // Searcher is the interface that memory search backends implement.
