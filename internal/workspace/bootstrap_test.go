@@ -344,3 +344,141 @@ func TestSectionSizesEmpty(t *testing.T) {
 		t.Errorf("expected empty sizes, got %d", len(sizes))
 	}
 }
+
+// TestBuildSecretsBlock_NoSecretsNoBitwarden tests buildSecretsBlock with no secrets
+func TestBuildSecretsBlock_NoSecretsNoBitwarden(t *testing.T) {
+	block := buildSecretsBlock([]string{}, false)
+
+	if block.Type != "text" {
+		t.Errorf("Type = %q, want text", block.Type)
+	}
+	if block.Text != "" {
+		t.Errorf("Text should be empty for no secrets, got %q", block.Text)
+	}
+}
+
+// TestBuildSecretsBlock_WithSecrets tests buildSecretsBlock with secret names
+func TestBuildSecretsBlock_WithSecrets(t *testing.T) {
+	secretNames := []string{"anthropic.api_key", "openai.token", "custom.secret"}
+	block := buildSecretsBlock(secretNames, false)
+
+	if block.Type != "text" {
+		t.Errorf("Type = %q, want text", block.Type)
+	}
+	if !strings.Contains(block.Text, "Available secrets") {
+		t.Errorf("Text should mention available secrets, got %q", block.Text)
+	}
+	for _, name := range secretNames {
+		if !strings.Contains(block.Text, name) {
+			t.Errorf("Text should contain %q", name)
+		}
+	}
+}
+
+// TestBuildSecretsBlock_WithBitwarden tests buildSecretsBlock with Bitwarden
+func TestBuildSecretsBlock_WithBitwarden(t *testing.T) {
+	block := buildSecretsBlock([]string{}, true)
+
+	if !strings.Contains(block.Text, "Bitwarden") {
+		t.Errorf("Text should mention Bitwarden, got %q", block.Text)
+	}
+	if !strings.Contains(block.Text, "bitwarden_search") {
+		t.Errorf("Text should mention bitwarden_search, got %q", block.Text)
+	}
+}
+
+// TestBuildSecretsBlock_WithSecretsAndBitwarden tests buildSecretsBlock with both
+func TestBuildSecretsBlock_WithSecretsAndBitwarden(t *testing.T) {
+	secretNames := []string{"api.key"}
+	block := buildSecretsBlock(secretNames, true)
+
+	if !strings.Contains(block.Text, "api.key") {
+		t.Errorf("Text should contain api.key")
+	}
+	if !strings.Contains(block.Text, "Bitwarden") {
+		t.Errorf("Text should contain Bitwarden")
+	}
+	if !strings.Contains(block.Text, "\n\n") {
+		t.Errorf("Text should have separator between sections")
+	}
+}
+
+// TestSystemBlocks_AllFiles tests SystemBlocks when all files are loaded
+func TestSystemBlocks_AllFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am test."), 0644)
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("My soul."), 0644)
+	os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("My craft."), 0644)
+
+	// Create Bootstrap with custom file order
+	b := NewBootstrap(dir, []string{"IDENTITY.md", "SOUL.md", "CRAFT.md"})
+
+	// Set secret names to trigger secrets block
+	b.SetSecretNames([]string{"api.key"}, false)
+
+	blocks := b.SystemBlocks()
+
+	// Should have: IDENTITY, SOUL, CRAFT, secrets
+	if len(blocks) < 3 {
+		t.Errorf("Expected at least 3 blocks, got %d", len(blocks))
+	}
+
+	// Find the secrets block
+	foundSecrets := false
+	for _, block := range blocks {
+		if strings.Contains(block.Text, "Available secrets") {
+			foundSecrets = true
+			break
+		}
+	}
+	if !foundSecrets {
+		t.Error("SystemBlocks should include secrets block")
+	}
+}
+
+// TestLoadFromDisk tests loadFromDisk with existing files
+func TestLoadFromDisk(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create some workspace files
+	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("Identity content"), 0644)
+	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Soul content"), 0644)
+
+	b := NewBootstrap(dir, nil)
+	blocks := b.loadFromDisk()
+
+	// Should return blocks for files that exist
+	if len(blocks) == 0 {
+		t.Error("loadFromDisk should return blocks for existing files")
+	}
+
+	// Each block should have its content
+	hasIdentity := false
+	hasSoul := false
+	for _, block := range blocks {
+		if strings.Contains(block.Text, "Identity") {
+			hasIdentity = true
+		}
+		if strings.Contains(block.Text, "Soul") {
+			hasSoul = true
+		}
+	}
+
+	if !hasIdentity || !hasSoul {
+		t.Errorf("Expected blocks for IDENTITY and SOUL files, got %d blocks", len(blocks))
+	}
+}
+
+// TestLoadFromDisk_Empty tests loadFromDisk with empty directory
+func TestLoadFromDisk_Empty(t *testing.T) {
+	dir := t.TempDir()
+	b := NewBootstrap(dir, nil)
+
+	blocks := b.loadFromDisk()
+
+	// Should return empty slice when no files exist
+	if len(blocks) != 0 {
+		t.Errorf("Expected no blocks for empty dir, got %d", len(blocks))
+	}
+}
