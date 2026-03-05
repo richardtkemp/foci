@@ -13,21 +13,18 @@ const (
 	AlignRight = 1
 )
 
+// tabWidth is the display width of a tab character (standard terminal width).
+const tabWidth = 4
+
 // Column describes a table column.
 type Column struct {
 	Header string
 	Align  int // AlignLeft (default) or AlignRight
 }
 
-// Format renders rows as a column-aligned table with a header line and
-// a separator. Columns auto-size to the widest value using display width
-// (East Asian Wide characters count as 2, combining marks as 0).
-func Format(cols []Column, rows [][]string) string {
-	if len(cols) == 0 {
-		return ""
-	}
-
-	// Measure max display width per column (header vs all row values).
+// measureColumnWidths calculates the maximum display width for each column
+// by considering the header and all row values.
+func measureColumnWidths(cols []Column, rows [][]string) []int {
 	widths := make([]int, len(cols))
 	for i, c := range cols {
 		widths[i] = DisplayWidth(c.Header)
@@ -42,6 +39,18 @@ func Format(cols []Column, rows [][]string) string {
 			}
 		}
 	}
+	return widths
+}
+
+// Format renders rows as a column-aligned table with a header line and
+// a separator. Columns auto-size to the widest value using display width
+// (East Asian Wide characters count as 2, combining marks as 0).
+func Format(cols []Column, rows [][]string) string {
+	if len(cols) == 0 {
+		return ""
+	}
+
+	widths := measureColumnWidths(cols, rows)
 
 	// Total width including 2-space gaps between columns.
 	totalWidth := 0
@@ -110,7 +119,7 @@ func DisplayWidth(s string) int {
 	for _, r := range s {
 		switch {
 		case r == '\t':
-			width += 4 - (width % 4)
+			width += tabWidth - (width % tabWidth)
 		case unicode.IsControl(r):
 		case isWide(r):
 			width += 2
@@ -147,20 +156,7 @@ func FormatWidth(cols []Column, rows [][]string, maxWidth int) string {
 	const minCol = 4
 
 	// Measure natural widths.
-	widths := make([]int, len(cols))
-	for i, c := range cols {
-		widths[i] = DisplayWidth(c.Header)
-	}
-	for _, row := range rows {
-		for i, cell := range row {
-			if i >= len(cols) {
-				break
-			}
-			if w := DisplayWidth(cell); w > widths[i] {
-				widths[i] = w
-			}
-		}
-	}
+	widths := measureColumnWidths(cols, rows)
 
 	// Gaps: 2 spaces between columns.
 	gaps := 2 * (len(cols) - 1)
@@ -183,7 +179,6 @@ func FormatWidth(cols []Column, rows [][]string, maxWidth int) string {
 			if w > widths[widest] {
 				widest = i
 			}
-			_ = w
 		}
 		if widths[widest] <= minCol {
 			break // can't shrink further
@@ -262,7 +257,7 @@ func Truncate(s string, maxWidth int) string {
 		rw := 1
 		switch {
 		case r == '\t':
-			rw = 4 - (w % 4)
+			rw = tabWidth - (w % tabWidth)
 		case isZeroWidth(r):
 			rw = 0
 		case isWide(r):
