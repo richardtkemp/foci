@@ -186,20 +186,7 @@ func migrateFiles(sessionDir string, dryRun bool, dbPath string) (int, error) {
 	}
 
 	// Build map of file modification times for version timestamps
-	fileTimes := make(map[string]int64) // oldKey -> mtime
-	filepath.Walk(sessionDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".jsonl.gz") {
-			return nil
-		}
-		rel, _ := filepath.Rel(sessionDir, path)
-		oldPath := strings.TrimSuffix(strings.TrimSuffix(rel, ".jsonl.gz"), ".jsonl")
-		oldKey := strings.ReplaceAll(oldPath, string(filepath.Separator), ":")
-		fileTimes[oldKey] = info.ModTime().Unix()
-		return nil
-	})
+	fileTimes := buildFileTimesMap(sessionDir)
 
 	// Fallback: read branch_meta from files not in index
 	err := filepath.Walk(sessionDir, func(path string, info os.FileInfo, err error) error {
@@ -585,6 +572,25 @@ func convertAsRootWithVersion(oldKey string, versionTS int64) string {
 	return fmt.Sprintf("%s/%s%s/%d", agentID, typeCode, id, versionTS)
 }
 
+// buildFileTimesMap walks the session directory and builds a map of old keys to file modification times.
+func buildFileTimesMap(sessionDir string) map[string]int64 {
+	fileTimes := make(map[string]int64)
+	filepath.Walk(sessionDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".jsonl.gz") {
+			return nil
+		}
+		rel, _ := filepath.Rel(sessionDir, path)
+		oldPath := strings.TrimSuffix(strings.TrimSuffix(rel, ".jsonl.gz"), ".jsonl")
+		oldKey := strings.ReplaceAll(oldPath, string(filepath.Separator), ":")
+		fileTimes[oldKey] = info.ModTime().Unix()
+		return nil
+	})
+	return fileTimes
+}
+
 func stripArchiveSuffix(id string) string {
 	// Match timestamp pattern: .YYYY-MM-DDTHH-MM-SSZ or .YYYY-MM-DDTHH-MM-SSZ.N
 	timestampPattern := regexp.MustCompile(`\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z(\.\d+)?$`)
@@ -618,20 +624,7 @@ func migrateDatabase(dbPath string, dryRun bool, sessionDir string) (int, error)
 	}
 
 	// Build file times map for version timestamps
-	fileTimes := make(map[string]int64)
-	filepath.Walk(sessionDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".jsonl.gz") {
-			return nil
-		}
-		rel, _ := filepath.Rel(sessionDir, path)
-		oldPath := strings.TrimSuffix(strings.TrimSuffix(rel, ".jsonl.gz"), ".jsonl")
-		oldKey := strings.ReplaceAll(oldPath, string(filepath.Separator), ":")
-		fileTimes[oldKey] = info.ModTime().Unix()
-		return nil
-	})
+	fileTimes := buildFileTimesMap(sessionDir)
 
 	// Fallback: check files for branch_meta
 	filepath.Walk(sessionDir, func(path string, info os.FileInfo, err error) error {
