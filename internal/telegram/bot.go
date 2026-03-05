@@ -1231,7 +1231,7 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 }
 
 
-// SendNotification sends a plain text notification to the last known chat.
+// SendNotification sends a plain text notification to the default chat.
 // Used for system alerts (cache bust, etc.) — not an agent turn, no tokens spent.
 // Silently skips empty or whitespace-only messages.
 func (b *Bot) SendNotification(text string) {
@@ -1240,10 +1240,13 @@ func (b *Bot) SendNotification(text string) {
 		return
 	}
 
-	b.chatMu.Lock()
-	chatID := b.chatID
-	b.chatMu.Unlock()
-
+	chatID := b.defaultChatID()
+	if chatID == 0 {
+		// Fall back to last known chat (e.g. when no state store is configured).
+		b.chatMu.Lock()
+		chatID = b.chatID
+		b.chatMu.Unlock()
+	}
 	if chatID == 0 {
 		b.logger().Warnf("no chat ID for notification: %s", text)
 		return
@@ -1295,10 +1298,13 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	}
 }
 
-// SendInjected sends a system/injected text message to the last known chat.
+// SendInjected sends a system/injected text message to the default chat.
 // Prepends the configured InjectedMessageHeader (if non-empty) so users can
 // distinguish system messages from agent replies. Returns an error if no chat
 // ID is available. Silently skips empty or whitespace-only messages.
+//
+// Prefer SendToSession when a session key is available — it routes to the
+// correct chat for chat-based sessions.
 func (b *Bot) SendInjected(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
@@ -1308,12 +1314,40 @@ func (b *Bot) SendInjected(text string) error {
 		text = b.injectedMessageHeader + "\n" + text
 	}
 
-	b.chatMu.Lock()
-	chatID := b.chatID
-	b.chatMu.Unlock()
-
+	chatID := b.defaultChatID()
 	if chatID == 0 {
-		return fmt.Errorf("no chat ID — no messages received yet")
+		// Fall back to last known chat (e.g. when no state store is configured).
+		b.chatMu.Lock()
+		chatID = b.chatID
+		b.chatMu.Unlock()
+	}
+	if chatID == 0 {
+		return fmt.Errorf("no chat ID — no default chat configured")
+	}
+
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
+	return nil
+}
+
+// SendToSession sends a system/injected text message to the chat associated
+// with the given session key. Falls back to the bot's default chat if the
+// session key doesn't contain a chat ID (e.g. independent sessions).
+// Prepends the configured InjectedMessageHeader (if non-empty).
+func (b *Bot) SendToSession(sessionKey, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	if b.injectedMessageHeader != "" {
+		text = b.injectedMessageHeader + "\n" + text
+	}
+
+	chatID := session.ChatIDFromKey(sessionKey)
+	if chatID == 0 {
+		chatID = b.defaultChatID()
+	}
+	if chatID == 0 {
+		return fmt.Errorf("no chat ID for session %q and no default chat", sessionKey)
 	}
 
 	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")

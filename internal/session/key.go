@@ -222,6 +222,36 @@ func IndependentSessionKey(agentID string) string {
 	return NewIndependentSession(agentID).String()
 }
 
+// ChatIDFromKey extracts the chat ID from a session key string.
+// Supports the current format "{agentID}/c{chatID}/{versionTS}" (and branches
+// since root type 'c' is preserved) and legacy colon-separated formats
+// "agent:<name>:chat:<chatID>" and "agent:<name>:<chatID>".
+// Returns 0 if the key doesn't contain a chat ID.
+func ChatIDFromKey(key string) int64 {
+	// New format: try structured parse first.
+	if sk, err := ParseSessionKey(key); err == nil {
+		if id := sk.ChatID(); id != 0 {
+			return id
+		}
+	}
+
+	// Legacy colon-separated formats.
+	parts := strings.Split(key, ":")
+	// agent:X:chat:CHATID
+	if len(parts) >= 4 && parts[2] == "chat" {
+		if id, err := strconv.ParseInt(parts[3], 10, 64); err == nil {
+			return id
+		}
+	}
+	// agent:X:CHATID (third segment is numeric)
+	if len(parts) == 3 {
+		if id, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
+			return id
+		}
+	}
+	return 0
+}
+
 // BranchFromSession creates a branch child key from a parent session key string.
 func BranchFromSession(parentKey string) (string, error) {
 	parent, err := ParseSessionKey(parentKey)

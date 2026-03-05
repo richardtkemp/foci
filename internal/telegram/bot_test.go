@@ -1042,9 +1042,84 @@ func TestSendInjected_SendsNonEmptyMessage(t *testing.T) {
 	}
 }
 
+// --- SendToSession ---
+
+// TestSendToSession_ChatSession verifies that SendToSession extracts the chat ID
+// from a chat-based session key and sends to that specific chat.
+func TestSendToSession_ChatSession(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Session key with chat ID 67890
+	err := b.SendToSession("main/c67890/1709590000", "hello from session")
+	if err != nil {
+		t.Fatalf("SendToSession error: %v", err)
+	}
+	if mock.sentCount() != 1 {
+		t.Errorf("sentCount = %d, want 1", mock.sentCount())
+	}
+}
+
+// TestSendToSession_IndependentSessionFallsBackToDefault verifies that SendToSession
+// falls back to defaultChatID when the session key has no chat ID (independent session).
+func TestSendToSession_IndependentSessionFallsBackToDefault(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	// Independent session has no chat ID — needs a default chat fallback.
+	// Set up a state store with a default chat.
+	dir := t.TempDir()
+	store := state.New(filepath.Join(dir, "state.db"))
+	b.agentID = "main"
+	b.SetStateStore(store, "bot:main")
+	b.setDefaultChat(11111)
+
+	if err := b.SendToSession("main/i1709596800/1709596800", "hello independent"); err != nil {
+		t.Fatalf("SendToSession error: %v", err)
+	}
+	if mock.sentCount() != 1 {
+		t.Errorf("sentCount = %d, want 1", mock.sentCount())
+	}
+}
+
+// TestSendToSession_NoChatIDNoDefaultErrors verifies that SendToSession returns
+// an error when the session key has no chat ID and no default chat is configured.
+func TestSendToSession_NoChatIDNoDefaultErrors(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	err := b.SendToSession("main/i1709596800/1709596800", "hello")
+	if err == nil {
+		t.Fatal("expected error when no chat ID and no default")
+	}
+}
+
+// TestSendToSession_SkipsEmptyMessage verifies that empty messages are silently skipped.
+func TestSendToSession_SkipsEmptyMessage(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	if err := b.SendToSession("main/c123/1709590000", ""); err != nil {
+		t.Errorf("SendToSession with empty text should not error, got: %v", err)
+	}
+	if mock.sentCount() != 0 {
+		t.Errorf("sentCount = %d, want 0", mock.sentCount())
+	}
+}
+
+// TestSendToSession_BranchKeyUsesParentChat verifies that branch session keys
+// still resolve to the parent chat ID (root type 'c' is preserved in branches).
+func TestSendToSession_BranchKeyUsesParentChat(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	err := b.SendToSession("main/c67890/1709590000/b1709596800", "branch message")
+	if err != nil {
+		t.Fatalf("SendToSession error: %v", err)
+	}
+	if mock.sentCount() != 1 {
+		t.Errorf("sentCount = %d, want 1", mock.sentCount())
+	}
+}
+
 // --- Async notifier delivery ---
 // These tests verify the contract that async-notifier turns (tmux watch,
-// exec auto-background) deliver responses via SendInjected, matching the
+// exec auto-background) deliver responses via SendToSession, matching the
 // wiring in main.go's notifier closure.
 
 func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {

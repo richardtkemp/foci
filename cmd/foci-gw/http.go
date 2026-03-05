@@ -131,7 +131,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Conte
 		}
 		if resp != "" && !silent {
 			if bot := botMgr.BotForSessionOrPrimary(sessionKey, inst.id); bot != nil {
-				if err := bot.SendInjected(resp); err != nil {
+				if err := bot.SendToSession(sessionKey, resp); err != nil {
 					log.Errorf(logTag, "async telegram delivery: %v", err)
 				}
 			}
