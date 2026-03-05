@@ -165,20 +165,3 @@ func NewThinkingCommand(getThinking func(context.Context) string, setThinking fu
 	}
 }
 
-// NewVoiceCommand returns a /voice command to toggle voice mode.
-// Callbacks receive the command's context so callers can resolve per-session state.
-func NewVoiceCommand(getVoice func(context.Context) bool, setVoice func(context.Context, bool)) *Command {
-	return &Command{
-		Name:        "voice",
-		Description: "Toggle voice mode (replies sent as voice notes)",
-		Category:    "operations",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			current := getVoice(ctx)
-			setVoice(ctx, !current)
-			if !current {
-				return "Voice mode ON — replies will be sent as voice notes.", nil
-			}
-			return "Voice mode OFF — replies will be sent as text.", nil
-		},
-	}
-}

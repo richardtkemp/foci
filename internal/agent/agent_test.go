@@ -1187,32 +1187,6 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 	}
 }
 
-func TestVoiceMode(t *testing.T) {
-	ag := &Agent{Model: "test"}
-
-	// Default: voice mode off
-	if ag.VoiceMode("session1") {
-		t.Error("voice mode should be off by default")
-	}
-
-	// Turn on
-	ag.SetVoiceMode("session1", true)
-	if !ag.VoiceMode("session1") {
-		t.Error("voice mode should be on after SetVoiceMode(true)")
-	}
-
-	// Other session unaffected
-	if ag.VoiceMode("session2") {
-		t.Error("voice mode should be off for different session")
-	}
-
-	// Turn off
-	ag.SetVoiceMode("session1", false)
-	if ag.VoiceMode("session1") {
-		t.Error("voice mode should be off after SetVoiceMode(false)")
-	}
-}
-
 func TestSessionEffort(t *testing.T) {
 	ag := &Agent{Model: "test", Effort: "low"}
 
@@ -1381,24 +1355,6 @@ func TestRestoreSessionOverrides_NilStateStore(t *testing.T) {
 
 	if got := ag.SessionEffort("s1"); got != "low" {
 		t.Errorf("effort with nil store = %q, want %q", got, "low")
-	}
-}
-
-func TestBuildMetaPrefix_VoiceMode(t *testing.T) {
-	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
-
-	// Without voice mode
-	sm := &sessionMeta{}
-	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "", false, sm)
-	if strings.Contains(prefix, "voice=on") {
-		t.Errorf("should not contain voice=on when voice mode off: %q", prefix)
-	}
-
-	// With voice mode
-	sm.voiceMode = true
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "", false, sm)
-	if !strings.Contains(prefix, "voice=on") {
-		t.Errorf("should contain voice=on when voice mode on: %q", prefix)
 	}
 }
 
@@ -1772,28 +1728,6 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 	}
 	if !repairFound {
 		t.Error("repair tool_result not persisted to session store")
-	}
-}
-
-func TestVoiceReplyFunc(t *testing.T) {
-	var received []byte
-	cb := &TurnCallbacks{
-		VoiceReplyFunc: func(data []byte) {
-			received = data
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
-
-	sendVoiceCtx(ctx, []byte("test-audio"))
-	if string(received) != "test-audio" {
-		t.Errorf("got %q, want %q", string(received), "test-audio")
-	}
-
-	// Empty context -- no delivery
-	received = nil
-	sendVoiceCtx(context.Background(), []byte("should-not-deliver"))
-	if received != nil {
-		t.Error("should not deliver without callbacks in context")
 	}
 }
 

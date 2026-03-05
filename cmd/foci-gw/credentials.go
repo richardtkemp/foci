@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,65 +134,76 @@ func startClaudeForRefresh() {
 	}
 }
 
-// initVoice sets up STT and TTS providers based on config and available API keys.
-func initVoice(cfg *config.Config, groqKey, openrouterKey string) (voice.STT, voice.TTS) {
-	var sttProvider voice.STT
-	var ttsProvider voice.TTS
+// resolveVoiceAPIKey resolves an API key for a voice provider.
+// If explicit is set, it looks up that secret name. Otherwise it extracts
+// the hostname prefix from the endpoint URL and tries "{prefix}.api_key".
+func resolveVoiceAPIKey(store *secrets.Store, explicit, endpoint string) string {
+	if explicit != "" {
+		if v, ok := store.Get(explicit); ok {
+			return v
+		}
+		return ""
+	}
+	if endpoint == "" {
+		return ""
+	}
+	// Extract hostname prefix: "https://api.groq.com/..." → "groq"
+	host := endpoint
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	// Strip "api." prefix: "api.groq.com" → "groq.com"
+	host = strings.TrimPrefix(host, "api.")
+	// Take first segment: "groq.com" → "groq"
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		host = host[:i]
+	}
+	if host == "" {
+		return ""
+	}
+	key := host + ".api_key"
+	if v, ok := store.Get(key); ok {
+		return v
+	}
+	return ""
+}
 
-	// STT: Whisper API (Groq by default, any OpenAI-compatible endpoint)
-	sttEndpoint := cfg.Voice.STTEndpoint
-	if sttEndpoint == "" {
-		sttEndpoint = "https://api.groq.com/openai/v1/audio/transcriptions"
-	}
-	sttModel := cfg.Voice.STTModel
-	if sttModel == "" {
-		sttModel = "whisper-large-v3"
-	}
-	if groqKey != "" {
-		sttProvider = &voice.WhisperSTT{
-			Endpoint: sttEndpoint,
-			APIKey:   groqKey,
-			Model:    sttModel,
-		}
-		log.Infof("main", "voice STT enabled (whisper, %s)", sttModel)
-	}
+// initVoice sets up TTS and STT providers from [[tts]] and [[stt]] config arrays.
+// Returns maps keyed by entry ID; the first entry is also keyed as "" (default).
+func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voice.TTS, sttMap map[string]voice.STT) {
+	ttsMap = make(map[string]voice.TTS)
+	sttMap = make(map[string]voice.STT)
 
-	// TTS: edge-tts (default, free) or openai-compatible API
-	ttsProviderName := cfg.Voice.TTSProvider
-	if ttsProviderName == "" {
-		ttsProviderName = "edge-tts"
-	}
-	switch ttsProviderName {
-	case "edge-tts":
-		ttsProvider = &voice.EdgeTTS{
-			Voice: cfg.Voice.TTSVoice,
-			Rate:  cfg.Voice.TTSRate,
+	for i, entry := range cfg.TTS {
+		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
+		t, err := voice.NewTTS(entry.Format, entry.Endpoint, apiKey, entry.Model, entry.Voice, entry.Command)
+		if err != nil {
+			log.Warnf("main", "tts[%d] %q: %v", i, entry.ID, err)
+			continue
 		}
-		log.Infof("main", "voice TTS enabled (edge-tts, voice=%s rate=%.2f)", cfg.Voice.TTSVoice, cfg.Voice.TTSRate)
-	case "openai":
-		ttsEndpoint := cfg.Voice.TTSEndpoint
-		if ttsEndpoint == "" {
-			ttsEndpoint = "https://openrouter.ai/api/v1/audio/speech"
+		ttsMap[entry.ID] = t
+		if i == 0 {
+			ttsMap[""] = t // default
 		}
-		ttsModel := cfg.Voice.TTSModel
-		if ttsModel == "" {
-			ttsModel = "openai/tts-1-mini"
-		}
-		ttsVoice := cfg.Voice.TTSVoice
-		if ttsVoice == "" {
-			ttsVoice = "alloy"
-		}
-		ttsProvider = &voice.OpenAITTS{
-			Endpoint: ttsEndpoint,
-			APIKey:   openrouterKey,
-			Model:    ttsModel,
-			Voice:    ttsVoice,
-			Speed:    cfg.Voice.TTSRate,
-		}
-		log.Infof("main", "voice TTS enabled (openai, %s, voice=%s rate=%.2f)", ttsModel, ttsVoice, cfg.Voice.TTSRate)
-	default:
-		log.Warnf("main", "unknown tts_provider %q, TTS disabled", ttsProviderName)
+		log.Infof("main", "TTS %q enabled (format=%s voice=%s)", entry.ID, entry.Format, entry.Voice)
 	}
 
-	return sttProvider, ttsProvider
+	for i, entry := range cfg.STT {
+		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
+		s, err := voice.NewSTT(entry.Format, entry.Endpoint, apiKey, entry.Model)
+		if err != nil {
+			log.Warnf("main", "stt[%d] %q: %v", i, entry.ID, err)
+			continue
+		}
+		sttMap[entry.ID] = s
+		if i == 0 {
+			sttMap[""] = s // default
+		}
+		log.Infof("main", "STT %q enabled (format=%s model=%s)", entry.ID, entry.Format, entry.Model)
+	}
+
+	return ttsMap, sttMap
 }

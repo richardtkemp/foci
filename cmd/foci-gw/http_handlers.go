@@ -293,16 +293,13 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			msgs, err := d.sessions.Load(key)
 			return err == nil && msgs != nil
 		},
-		STT: d.sttProvider,
+		STT: resolveSTT(d.sttMap, ""),
 		AgentTTS: func(agentID string) voice.TTS {
-			if d.ttsProvider == nil {
-				return nil
-			}
 			inst, ok := d.agents[agentID]
 			if !ok {
-				return d.ttsProvider
+				return resolveTTS(d.ttsMap, d.cfg.TTS, "", 0)
 			}
-			return voice.WithRate(d.ttsProvider, inst.agentCfg.TTSRate)
+			return resolveTTS(d.ttsMap, d.cfg.TTS, inst.agentCfg.TTS, inst.agentCfg.TTSRate)
 		},
 	}
 }
