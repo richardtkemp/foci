@@ -57,7 +57,12 @@ func TestContextLimit(t *testing.T) {
 		{"gemini-2.5-flash", 1_000_000},
 		{"gemini-2.0-flash", 1_000_000},
 		{"gemini-1.5-pro", 2_000_000},
+		{"gemini-1.5-flash", 2_000_000},
+		{"gemini-2.0-pro", 1_000_000},
+		{"gemini-other", 1_000_000},
 		{"unknown-model", 200_000},
+		{"gpt-4", 200_000},
+		{"", 200_000},
 	}
 	for _, tt := range tests {
 		if got := contextLimit(tt.model); got != tt.want {
