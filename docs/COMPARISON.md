@@ -43,7 +43,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | Web fetch | ✅ | ✅ | ✅ |
 | Low-cost summarization | ✅ Haiku-powered | ❌ | ❌ |
 | Tmux integration | ✅ full lifecycle, autopilot | ❌ | ❌ |
-| Browser automation | ❌ | ✅ full CDP control | ❌ |
+| Browser automation | 🔜 coming soon | ✅ full CDP control | ❌ |
 | Reminders / alarms | ✅ time/duration/date | ❌ | ❌ |
 | Scratchpad | ✅ survives compaction | ❌ | ❌ |
 | Todo / task list | ✅ priority + tags | ❌ | ❌ |
@@ -179,7 +179,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Cron jobs | ✅ via system cron + CLI | ✅ built-in CronService | ✅ CronService |
 | Heartbeat / periodic tasks | ✅ keepalive + background work | ✅ configurable interval | ✅ HeartbeatService |
-| Webhook ingestion | ❌ | ✅ token-validated hooks | ❌ |
+| Webhook ingestion | 🔜 coming soon | ✅ token-validated hooks | ❌ |
 | Idle-triggered background work | ✅ mana-gated, todo-driven | ❌ | ❌ |
 | Gmail integration | ❌ | ✅ Pub/Sub | ❌ |
 
