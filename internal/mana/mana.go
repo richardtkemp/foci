@@ -33,6 +33,14 @@ func FromUtilization(utilization float64) float64 {
 	return m
 }
 
+// formatPercentValue formats a percentage as a compact string (decimal for <1%, integer for ≥1%).
+func formatPercentValue(percent float64) string {
+	if percent < 1 {
+		return fmt.Sprintf("%.1f%%", percent)
+	}
+	return fmt.Sprintf("%.0f%%", percent)
+}
+
 // FormatPercent returns a compact mana percentage string from usage data.
 // Returns "" if unavailable.
 func FormatPercent(usage *anthropic.UsageResponse) string {
@@ -40,10 +48,7 @@ func FormatPercent(usage *anthropic.UsageResponse) string {
 		return ""
 	}
 	m := FromUtilization(*usage.FiveHour.Utilization)
-	if m < 1 {
-		return fmt.Sprintf("%.1f%%", m)
-	}
-	return fmt.Sprintf("%.0f%%", m)
+	return formatPercentValue(m)
 }
 
 // FormatReset returns a human-readable reset time string from usage data.
@@ -65,13 +70,7 @@ func FormatUsage(usage *anthropic.UsageResponse) string {
 
 	if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
 		util := *usage.FiveHour.Utilization
-		utilStr := ""
-		if util < 1 {
-			utilStr = fmt.Sprintf("%.1f%%", util)
-		} else {
-			utilStr = fmt.Sprintf("%.0f%%", util)
-		}
-		parts = append(parts, fmt.Sprintf("%s used", utilStr))
+		parts = append(parts, fmt.Sprintf("%s used", formatPercentValue(util)))
 
 		if usage.FiveHour.ResetsAt != nil {
 			if resetTime := ParseResetTime(*usage.FiveHour.ResetsAt); resetTime != "" {
@@ -176,49 +175,55 @@ func NewMonitor(usageClient *anthropic.UsageClient, stalenessTimeout time.Durati
 	}
 }
 
+// needsPoll returns true if a polling interval has elapsed since last poll.
+func (m *Monitor) needsPoll() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return time.Since(m.lastUsagePoll) >= PollInterval
+}
+
+// updateCachedUsage updates cached mana and reset time from usage response.
+func (m *Monitor) updateCachedUsage(usage *anthropic.UsageResponse) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastUsagePoll = time.Now()
+	if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
+		m.cachedMana = FromUtilization(*usage.FiveHour.Utilization)
+	}
+	if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
+		m.cachedReset, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
+	}
+}
+
+// getCachedState returns the cached mana, reset time, poll age, and whether it has been polled.
+func (m *Monitor) getCachedState() (mana float64, resetsAt time.Time, pollAge time.Duration, isZero bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cachedMana, m.cachedReset, time.Since(m.lastUsagePoll), m.lastUsagePoll.IsZero()
+}
+
 // IsGoodFor checks whether we can afford to run background work with the given invest interval.
 func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) bool {
 	if m.usageClient == nil {
 		return true // no usage client = no rate limiting
 	}
 
-	m.mu.Lock()
-	needPoll := time.Since(m.lastUsagePoll) >= PollInterval
-	m.mu.Unlock()
-
-	if needPoll {
+	if m.needsPoll() {
 		usage, err := m.usageClient.GetUsage(ctx)
 		if err != nil {
 			m.log.Warnf("usage API: %v", err)
 			return false // err on the side of caution
 		}
-
-		m.mu.Lock()
-		m.lastUsagePoll = time.Now()
-		if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
-			m.cachedMana = FromUtilization(*usage.FiveHour.Utilization)
-		}
-		if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
-			m.cachedReset, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
-		}
-		m.mu.Unlock()
+		m.updateCachedUsage(usage)
 	}
 
 	// Staleness guard: if the last successful poll is too old, deny spending.
-	m.mu.Lock()
-	pollAge := time.Since(m.lastUsagePoll)
-	staleThreshold := m.stalenessTimeout
-	m.mu.Unlock()
+	manaVal, resetsAt, pollAge, isZero := m.getCachedState()
 
-	if m.lastUsagePoll.IsZero() || pollAge > staleThreshold {
-		m.log.Debugf("mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), staleThreshold)
+	if isZero || pollAge > m.stalenessTimeout {
+		m.log.Debugf("mana stale (last poll %s ago, threshold %s)", pollAge.Round(time.Second), m.stalenessTimeout)
 		return false
 	}
-
-	m.mu.Lock()
-	manaVal := m.cachedMana
-	resetsAt := m.cachedReset
-	m.mu.Unlock()
 
 	return IsGood(manaVal, resetsAt, investInterval, time.Now())
 }
