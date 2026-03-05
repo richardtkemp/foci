@@ -950,3 +950,50 @@ func TestIsArchiveFile(t *testing.T) {
 		}
 	}
 }
+
+// TestLastActivity tests the LastActivity function
+func TestLastActivity(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "test/c123/1000000000"
+
+	// Write a message to create the file
+	s.Append(key, msg("user", "test message"))
+
+	// Get the last activity time
+	lastActivity := s.LastActivity(key)
+
+	// Should be a valid RFC3339 formatted timestamp
+	if lastActivity == "n/a" {
+		t.Error("LastActivity should return a timestamp, not n/a")
+	}
+	if len(lastActivity) < 19 {
+		t.Errorf("LastActivity = %q, doesn't look like RFC3339 format", lastActivity)
+	}
+}
+
+// TestLastActivity_Missing tests LastActivity with a non-existent session
+func TestLastActivity_Missing(t *testing.T) {
+	s := NewStore(t.TempDir())
+	key := "test/c999/1000000000"
+
+	// Try to get activity for non-existent session
+	lastActivity := s.LastActivity(key)
+
+	// Should return "n/a"
+	if lastActivity != "n/a" {
+		t.Errorf("LastActivity for missing session = %q, want 'n/a'", lastActivity)
+	}
+}
+
+// TestLastActivity_InvalidKey tests LastActivity with an invalid key
+func TestLastActivity_InvalidKey(t *testing.T) {
+	s := NewStore(t.TempDir())
+
+	// Try with invalid key (missing parts)
+	lastActivity := s.LastActivity("invalid")
+
+	// Should return "n/a" due to SessionPath error
+	if lastActivity != "n/a" {
+		t.Errorf("LastActivity with invalid key = %q, want 'n/a'", lastActivity)
+	}
+}
