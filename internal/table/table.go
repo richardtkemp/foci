@@ -325,3 +325,106 @@ var zeroWidthRanges = &unicode.RangeTable{
 }
 
 func isZeroWidth(r rune) bool { return unicode.Is(zeroWidthRanges, r) }
+
+// WrapText word-wraps s to fit within maxWidth display columns.
+// Splits at word boundaries (spaces); hard-breaks words wider than maxWidth.
+// If result exceeds maxLines, truncates to maxLines with "…" on the last line.
+// maxLines <= 0 means unlimited lines.
+func WrapText(s string, maxWidth, maxLines int) []string {
+	if s == "" {
+		return []string{""}
+	}
+	if maxWidth <= 0 {
+		return []string{s}
+	}
+
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	var lines []string
+	var curLine strings.Builder
+	curWidth := 0
+
+	flush := func() {
+		lines = append(lines, curLine.String())
+		curLine.Reset()
+		curWidth = 0
+	}
+
+	for _, word := range words {
+		ww := DisplayWidth(word)
+
+		// Hard-break words wider than maxWidth
+		if ww > maxWidth {
+			// Flush current line if non-empty
+			if curWidth > 0 {
+				flush()
+			}
+			// Break the word into maxWidth-sized chunks
+			var chunk strings.Builder
+			cw := 0
+			for _, r := range word {
+				rw := 1
+				switch {
+				case r == '\t':
+					rw = tabWidth - (cw % tabWidth)
+				case isZeroWidth(r):
+					rw = 0
+				case isWide(r):
+					rw = 2
+				}
+				if cw+rw > maxWidth && cw > 0 {
+					lines = append(lines, chunk.String())
+					chunk.Reset()
+					cw = 0
+				}
+				chunk.WriteRune(r)
+				cw += rw
+			}
+			if chunk.Len() > 0 {
+				curLine.WriteString(chunk.String())
+				curWidth = cw
+			}
+			continue
+		}
+
+		// Does the word fit on the current line?
+		needed := ww
+		if curWidth > 0 {
+			needed += 1 // space separator
+		}
+		if curWidth+needed > maxWidth {
+			// Word doesn't fit — start a new line
+			if curWidth > 0 {
+				flush()
+			}
+		}
+		if curWidth > 0 {
+			curLine.WriteByte(' ')
+			curWidth++
+		}
+		curLine.WriteString(word)
+		curWidth += ww
+	}
+	if curWidth > 0 {
+		flush()
+	}
+
+	// Apply maxLines cap
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+		// Indicate truncation with "…" on the last line
+		last := lines[maxLines-1]
+		if DisplayWidth(last)+1 <= maxWidth {
+			// Room to append "…"
+			lines[maxLines-1] = last + "…"
+		} else {
+			// Need to truncate to fit "…"
+			lines[maxLines-1] = Truncate(last, maxWidth)
+		}
+	}
+
+	return lines
+}

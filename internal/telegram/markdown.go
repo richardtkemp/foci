@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// TableOpts controls table formatting in ConvertToTelegramHTML.
+type TableOpts struct {
+	MaxWidth  int // max display columns for the table (0 = no constraint)
+	WrapLines int // max wrapped lines per cell (0 = truncate instead of wrap)
+}
+
 // ConvertToTelegramHTML converts standard markdown to Telegram's HTML format.
 // HTML is simpler and safer than MarkdownV2 (no escaping hell).
 //
@@ -25,7 +31,7 @@ import (
 // - --- / *** / ___ -> em-dash horizontal rule
 // - - item / * item -> bullet lists
 // - 1. item -> ordered lists
-func ConvertToTelegramHTML(text string) string {
+func ConvertToTelegramHTML(text string, opts ...TableOpts) string {
 	// Convert markdown formatting in order of precedence
 	// Code blocks first (preserve everything inside)
 	var codeBlocks []string
@@ -44,7 +50,11 @@ func ConvertToTelegramHTML(text string) string {
 
 	// Tables: detect blocks of lines containing | with a separator row (---).
 	// Extract early to protect | chars from other conversions.
-	text = convertTables(text, &codeBlocks)
+	var tOpts TableOpts
+	if len(opts) > 0 {
+		tOpts = opts[0]
+	}
+	text = convertTables(text, &codeBlocks, tOpts)
 
 	// Inline code (extract early to protect content)
 	var inlineCodes []string
@@ -122,7 +132,7 @@ func ConvertToTelegramHTML(text string) string {
 // with properly padded columns. A table is identified by consecutive lines
 // containing | characters where at least one line matches the separator
 // pattern (e.g. |---|---|).
-func convertTables(text string, codeBlocks *[]string) string {
+func convertTables(text string, codeBlocks *[]string, opts TableOpts) string {
 	lines := strings.Split(text, "\n")
 	sepRe := regexp.MustCompile(`^\|?\s*[-:]+[-|\s:]*$`)
 
@@ -153,7 +163,7 @@ func convertTables(text string, codeBlocks *[]string) string {
 			// Need at least a header + separator + data row, with a separator
 			if hasSep && tableEnd-tableStart >= 2 {
 				tableLines := lines[tableStart:tableEnd]
-				formatted := formatTable(tableLines, sepRe)
+				formatted := formatTable(tableLines, sepRe, opts)
 				idx := len(*codeBlocks)
 				*codeBlocks = append(*codeBlocks, "<pre>"+htmlEscape(formatted)+"</pre>")
 				result = append(result, fmt.Sprintf("[CODEBLOCK%d]", idx))
@@ -187,7 +197,9 @@ func parseCells(line string) []string {
 }
 
 // formatTable normalizes column widths across all rows and rebuilds the table.
-func formatTable(lines []string, sepRe *regexp.Regexp) string {
+// When opts.MaxWidth > 0, columns are shrunk to fit and cells are wrapped
+// (opts.WrapLines > 0) or truncated (opts.WrapLines == 0).
+func formatTable(lines []string, sepRe *regexp.Regexp, opts TableOpts) string {
 	// Parse all rows into cells
 	type row struct {
 		cells []string
@@ -227,24 +239,78 @@ func formatTable(lines []string, sepRe *regexp.Regexp) string {
 		}
 	}
 
-	// Rebuild each row with padded cells
+	// Shrink columns to fit MaxWidth if set.
+	// Row overhead: "| " + join(" | ") + " |" = 3*ncols + 1
+	if opts.MaxWidth > 0 && maxCols > 0 {
+		const minCol = 3
+		overhead := 3*maxCols + 1
+		for {
+			total := overhead
+			for _, w := range colWidths {
+				total += w
+			}
+			if total <= opts.MaxWidth {
+				break
+			}
+			// Find widest column
+			widest := 0
+			for i, w := range colWidths {
+				if w > colWidths[widest] {
+					widest = i
+				}
+			}
+			if colWidths[widest] <= minCol {
+				break
+			}
+			colWidths[widest]--
+		}
+	}
+
+	// Rebuild each row with padded cells, wrapping if needed
 	var out []string
 	for _, r := range rows {
-		var parts []string
+		if r.isSep {
+			var parts []string
+			for j := 0; j < maxCols; j++ {
+				parts = append(parts, strings.Repeat("-", colWidths[j]))
+			}
+			out = append(out, "| "+strings.Join(parts, " | ")+" |")
+			continue
+		}
+
+		// Wrap or truncate each cell to its column width
+		cellLines := make([][]string, maxCols)
+		maxLines := 1
 		for j := 0; j < maxCols; j++ {
+			cell := ""
+			if j < len(r.cells) {
+				cell = r.cells[j]
+			}
 			w := colWidths[j]
-			if r.isSep {
-				parts = append(parts, strings.Repeat("-", w))
+			if table.DisplayWidth(cell) <= w {
+				cellLines[j] = []string{cell}
+			} else if opts.WrapLines > 0 {
+				cellLines[j] = table.WrapText(cell, w, opts.WrapLines)
 			} else {
-				cell := ""
-				if j < len(r.cells) {
-					cell = r.cells[j]
-				}
-				// Pad with spaces to display width
-				parts = append(parts, table.PadRight(cell, w))
+				cellLines[j] = []string{table.Truncate(cell, w)}
+			}
+			if len(cellLines[j]) > maxLines {
+				maxLines = len(cellLines[j])
 			}
 		}
-		out = append(out, "| "+strings.Join(parts, " | ")+" |")
+
+		// Emit one output line per wrapped line
+		for line := 0; line < maxLines; line++ {
+			var parts []string
+			for j := 0; j < maxCols; j++ {
+				cell := ""
+				if line < len(cellLines[j]) {
+					cell = cellLines[j][line]
+				}
+				parts = append(parts, table.PadRight(cell, colWidths[j]))
+			}
+			out = append(out, "| "+strings.Join(parts, " | ")+" |")
+		}
 	}
 	return strings.Join(out, "\n")
 }

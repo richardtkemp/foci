@@ -64,6 +64,9 @@ func FormatConfig(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 	if cfg.Defaults.DisplayWidth != nil {
 		add("defaults", "display_width", *cfg.Defaults.DisplayWidth)
 	}
+	if cfg.Defaults.TableWrapLines != nil {
+		add("defaults", "table_wrap_lines", *cfg.Defaults.TableWrapLines)
+	}
 	if cfg.Defaults.InjectedMessageHeader != "" {
 		add("defaults", "injected_message_header", cfg.Defaults.InjectedMessageHeader)
 	}
@@ -293,6 +296,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.DisplayWidth != nil {
 		add("display_width", *agent.DisplayWidth)
 	}
+	if agent.TableWrapLines != nil {
+		add("table_wrap_lines", *agent.TableWrapLines)
+	}
 	if agent.MessagesInLog != nil {
 		add("messages_in_log", *agent.MessagesInLog)
 	}
@@ -415,6 +421,9 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig, maxWidth ...int) []stri
 	}
 	if cfg.Defaults.DisplayWidth != nil {
 		addDefault("display_width", *cfg.Defaults.DisplayWidth, false)
+	}
+	if cfg.Defaults.TableWrapLines != nil {
+		addDefault("table_wrap_lines", *cfg.Defaults.TableWrapLines, false)
 	}
 	if cfg.Defaults.InjectedMessageHeader != "" {
 		addDefault("injected_message_header", cfg.Defaults.InjectedMessageHeader, false)
@@ -771,6 +780,13 @@ func FormatAvailable(cfg *Config, agent AgentConfig, maxWidth ...int) string {
 			dw = *cfg.Defaults.DisplayWidth
 		}
 		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use defaults)"})
+	}
+	if agent.TableWrapLines == nil {
+		twl := 5
+		if cfg.Defaults.TableWrapLines != nil {
+			twl = *cfg.Defaults.TableWrapLines
+		}
+		opts = append(opts, availableOption{"agent", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use defaults)"})
 	}
 	if agent.Effort == "" && cfg.Anthropic.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})

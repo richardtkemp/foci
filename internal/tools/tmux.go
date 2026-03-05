@@ -741,8 +741,6 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		return ToolResult{}, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
 	}
 
-	sessionKey := SessionKeyFromContext(ctx)
-
 	inst.mu.Lock()
 	ownedNames := make(map[string]string, len(inst.owned))
 	for k, v := range inst.owned {
@@ -770,30 +768,29 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		age := formatTmuxAge(createdUnix)
 
 		storedKey, isOwned := ownedNames[name]
-		// Check if this session belongs to the current session key
-		isOwnedByMe := isOwned && (storedKey == sessionKey || (storedKey == "" && sessionKey == ""))
 		if isOwned {
 			ownedStillExist = true
 		}
 
-		// Status: owned / watched / idle
-		status := "idle"
-		if isOwnedByMe {
-			status = "owned"
-		} else if isOwned {
-			status = "other"
+		// Owner: extract agent ID from session key.
+		owner := "-"
+		if isOwned && storedKey != "" {
+			if idx := strings.Index(storedKey, "/"); idx > 0 {
+				owner = storedKey[:idx]
+			} else {
+				owner = storedKey
+			}
 		}
 
 		watchInfo := "-"
 		for _, ws := range watched {
 			if ws.session == name {
-				status = "watched"
 				watchInfo = fmt.Sprintf("w%d: %s", ws.window, ws.threshold.Round(time.Second))
 				break
 			}
 		}
 
-		rows = append(rows, []string{name, windows, age, status, watchInfo})
+		rows = append(rows, []string{name, windows, age, owner, watchInfo})
 	}
 
 	if len(rows) == 0 {

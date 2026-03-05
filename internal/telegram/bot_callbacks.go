@@ -101,7 +101,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 	// Strip multi-message separators for edit (edit replaces single message)
 	result = strings.ReplaceAll(result, "\x00", "\n\n")
 
-	display := ConvertToTelegramHTML(result)
+	display := ConvertToTelegramHTML(result, b.tableOpts())
 	if len(display) > 4096 {
 		display = display[:4090] + "\n..."
 	}
