@@ -284,3 +284,127 @@ func TestStartStop(t *testing.T) {
 	cancel()
 	g.Stop()
 }
+
+func TestNewMemoryGuard(t *testing.T) {
+	cfg := MemoryGuardConfig{
+		Interval:          time.Second,
+		WarnPercent:       25,
+		KillPercent:       40,
+		PressureThreshold: 10.0,
+	}
+	warnFn := func(msg string) {
+		// no-op
+	}
+
+	g := NewMemoryGuard(cfg, warnFn)
+
+	if g.cfg.WarnPercent != 25 {
+		t.Errorf("WarnPercent = %d, want 25", g.cfg.WarnPercent)
+	}
+	if g.cfg.KillPercent != 40 {
+		t.Errorf("KillPercent = %d, want 40", g.cfg.KillPercent)
+	}
+	if g.uid == 0 {
+		t.Errorf("uid should be set to current user")
+	}
+}
+
+func TestMemoryGuard_Start_ZeroInterval(t *testing.T) {
+	cfg := MemoryGuardConfig{
+		Interval: 0, // Disabled
+	}
+	g := NewMemoryGuard(cfg, func(msg string) {})
+
+	ctx := context.Background()
+	g.Start(ctx)
+
+	// Should return immediately without starting goroutine
+	if g.done != nil {
+		t.Errorf("done channel should not be created with zero interval")
+	}
+}
+
+func TestMemoryGuard_Stop_WithoutStart(t *testing.T) {
+	g := NewMemoryGuard(MemoryGuardConfig{}, func(msg string) {})
+	g.Stop() // Should not panic
+}
+
+func TestMemoryGuard_GetMemTotal_Error(t *testing.T) {
+	g := &MemoryGuard{
+		cfg: MemoryGuardConfig{
+			WarnPercent: 25,
+			KillPercent: 40,
+		},
+		uid: 1000,
+		getMemTotalFn: func() (int64, error) {
+			return 0, fmt.Errorf("can't read /proc/meminfo")
+		},
+		getUserRSSFn: func(uid int) (int64, error) {
+			return 0, nil
+		},
+		getPressureFn: func() (float64, error) {
+			return 0, nil
+		},
+	}
+
+	g.checkOnce() // Should not panic, just skip the check
+}
+
+func TestMemoryGuard_GetUserRSS_Error(t *testing.T) {
+	g := &MemoryGuard{
+		cfg: MemoryGuardConfig{
+			WarnPercent: 25,
+			KillPercent: 40,
+		},
+		uid: 1000,
+		getMemTotalFn: func() (int64, error) {
+			return 16 * 1024 * 1024, nil
+		},
+		getUserRSSFn: func(uid int) (int64, error) {
+			return 0, fmt.Errorf("can't read proc")
+		},
+		getPressureFn: func() (float64, error) {
+			return 0, nil
+		},
+	}
+
+	g.checkOnce() // Should not panic, just skip the check
+}
+
+func TestMemoryGuard_GetPressure_Error(t *testing.T) {
+	g, ms := newTestGuard(25, 40, 10.0)
+	ms.userRSSKB = ms.memTotalKB * 30 / 100 // Above warn threshold
+
+	g.getPressureFn = func() (float64, error) {
+		return 0, fmt.Errorf("can't read pressure")
+	}
+
+	g.checkOnce() // Should not panic
+}
+
+func TestMemoryGuard_Multiple_Kills(t *testing.T) {
+	g, ms := newTestGuard(25, 40, 10.0)
+	ms.memTotalKB = 1000 // Small total to make ratios work
+
+	// Set user RSS to 500 (50% of total)
+	ms.userRSSKB = 500
+	ms.pressureAvg10 = 20.0
+
+	killCount := 0
+	g.killProcessFn = func(pid int) error {
+		killCount++
+		// Simulate process death reducing RSS
+		ms.mu.Lock()
+		defer ms.mu.Unlock()
+		ms.userRSSKB -= 200 // Reduce by amount of killed process
+		ms.largestRSS -= 200
+		return nil
+	}
+
+	// After first kill (300 RSS remaining, 30%), should still be above 25% warn but below 40% kill
+	g.checkOnce()
+
+	if killCount > 1 {
+		t.Errorf("expected at most 1 kill per check, got %d", killCount)
+	}
+}

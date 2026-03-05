@@ -1511,3 +1511,177 @@ allowed_hosts = ["api.open.com"]
 		t.Errorf("bob open hosts = %v", hosts)
 	}
 }
+
+// TestGeneratePassphraseWordCount tests GeneratePassphrase with various word counts
+func TestGeneratePassphraseWordCount(t *testing.T) {
+	tests := []struct {
+		name      string
+		wordCount int
+	}{
+		{"one word", 1},
+		{"short", 4},
+		{"standard", 5},
+		{"long", 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			phrase, err := GeneratePassphrase(tt.wordCount)
+			if err != nil {
+				t.Fatalf("GeneratePassphrase(%d): %v", tt.wordCount, err)
+			}
+			// Count hyphens - should be wordCount - 1
+			expectedHyphens := tt.wordCount - 1
+			actualHyphens := strings.Count(phrase, "-")
+			if actualHyphens != expectedHyphens {
+				t.Errorf("GeneratePassphrase(%d) hyphens = %d, want %d", tt.wordCount, actualHyphens, expectedHyphens)
+			}
+			// Should contain only hyphens and lowercase letters
+			for _, c := range phrase {
+				if !((c >= 'a' && c <= 'z') || c == '-') {
+					t.Errorf("unexpected character %q in passphrase", c)
+				}
+			}
+		})
+	}
+}
+
+// TestGeneratePassphraseZeroError tests error case for zero words
+func TestGeneratePassphraseZeroError(t *testing.T) {
+	_, err := GeneratePassphrase(0)
+	if err == nil {
+		t.Error("GeneratePassphrase(0) should error")
+	}
+}
+
+// TestAllowedHostsPerSecret tests AllowedHosts with per-secret lookup
+func TestAllowedHostsPerSecret(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "secrets.toml")
+	content := `
+[anthropic]
+api_key = "sk-123"
+allowed_hosts = ["api.anthropic.com", "api2.anthropic.com"]
+
+[custom]
+token = "custom-token"
+allowed_hosts = ["api.custom.com"]
+`
+	os.WriteFile(path, []byte(content), 0600)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Test AllowedHosts with specific secret
+	hosts := s.AllowedHosts("anthropic.api_key")
+	if len(hosts) != 2 || hosts[0] != "api.anthropic.com" {
+		t.Errorf("AllowedHosts(anthropic.api_key) = %v", hosts)
+	}
+
+	// Test with custom section
+	hosts = s.AllowedHosts("custom.token")
+	if len(hosts) != 1 || hosts[0] != "api.custom.com" {
+		t.Errorf("AllowedHosts(custom.token) = %v", hosts)
+	}
+
+	// Test with non-existent section
+	hosts = s.AllowedHosts("nonexistent.key")
+	if len(hosts) != 0 {
+		t.Errorf("AllowedHosts(nonexistent.key) = %v, want nil/empty", hosts)
+	}
+}
+
+// TestCheckHostAllowedSuccess tests CheckHostAllowed with valid host
+func TestCheckHostAllowedSuccess(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "secrets.toml")
+	content := `
+[anthropic]
+api_key = "sk-123"
+allowed_hosts = ["api.anthropic.com"]
+`
+	os.WriteFile(path, []byte(content), 0600)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Valid host in allowed list
+	err = s.CheckHostAllowed("anthropic.api_key", "https://api.anthropic.com/v1/messages")
+	if err != nil {
+		t.Errorf("CheckHostAllowed with valid host: %v", err)
+	}
+}
+
+// TestCheckHostAllowedFailure tests CheckHostAllowed with invalid host
+func TestCheckHostAllowedFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "secrets.toml")
+	content := `
+[anthropic]
+api_key = "sk-123"
+allowed_hosts = ["api.anthropic.com"]
+`
+	os.WriteFile(path, []byte(content), 0600)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Invalid host not in allowed list
+	err = s.CheckHostAllowed("anthropic.api_key", "https://evil.com/steal")
+	if err == nil {
+		t.Error("CheckHostAllowed with invalid host should error")
+	}
+}
+
+// TestIsBlockedPathDefault tests default blocked paths
+func TestIsBlockedPathDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "secrets.toml")
+	os.WriteFile(path, []byte(""), 0600)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Default blocked paths
+	if !s.IsBlockedPath("secrets.toml") {
+		t.Error("secrets.toml should be blocked by default")
+	}
+	if !s.IsBlockedPath("/proc/self/environ") {
+		t.Error("/proc/self/environ should be blocked by default")
+	}
+
+	// Non-blocked path
+	if s.IsBlockedPath("/tmp/test.txt") {
+		t.Error("/tmp/test.txt should not be blocked")
+	}
+}
+
+// TestAddAndCheckBlockedPaths tests adding blocked paths
+func TestAddAndCheckBlockedPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "secrets.toml")
+	os.WriteFile(path, []byte(""), 0600)
+
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Add custom blocked paths
+	s.AddBlockedPaths([]string{"/root/.ssh/id_rsa", "/etc/passwd"})
+
+	if !s.IsBlockedPath("/root/.ssh/id_rsa") {
+		t.Error("/root/.ssh/id_rsa should be blocked after AddBlockedPaths")
+	}
+	if !s.IsBlockedPath("/etc/passwd") {
+		t.Error("/etc/passwd should be blocked after AddBlockedPaths")
+	}
+}

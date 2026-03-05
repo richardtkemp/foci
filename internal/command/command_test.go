@@ -605,3 +605,126 @@ func TestSecretsCommand(t *testing.T) {
 		t.Errorf("empty args result = %q, want usage", result)
 	}
 }
+
+type mockWizard struct {
+	responses map[string]string
+	done      bool
+}
+
+func (m *mockWizard) Handle(text string) (string, bool) {
+	if response, ok := m.responses[text]; ok {
+		return response, m.done
+	}
+	return "no response", m.done
+}
+
+func TestSetWizard(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{
+		responses: map[string]string{
+			"hello": "hi there",
+		},
+		done: false,
+	}
+
+	reg.SetWizard(wizard)
+
+	// Verify wizard was set by calling HandleMessage
+	resp, handled := reg.HandleMessage("hello")
+	if !handled {
+		t.Error("HandleMessage should indicate wizard handled the message")
+	}
+	if resp != "hi there" {
+		t.Errorf("response = %q, want %q", resp, "hi there")
+	}
+}
+
+func TestClearWizard(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{
+		responses: map[string]string{
+			"test": "response",
+		},
+	}
+
+	reg.SetWizard(wizard)
+	reg.ClearWizard()
+
+	// After clearing, HandleMessage should not handle messages
+	_, handled := reg.HandleMessage("test")
+	if handled {
+		t.Error("HandleMessage should not handle after wizard is cleared")
+	}
+}
+
+func TestHandleMessageWizardCancel(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{
+		responses: map[string]string{},
+	}
+
+	reg.SetWizard(wizard)
+	resp, handled := reg.HandleMessage("/cancel")
+
+	if !handled {
+		t.Error("HandleMessage should handle /cancel")
+	}
+	if !strings.Contains(resp, "cancelled") {
+		t.Errorf("response = %q, want 'cancelled'", resp)
+	}
+
+	// Wizard should be cleared
+	_, handled = reg.HandleMessage("test")
+	if handled {
+		t.Error("wizard should be cleared after /cancel")
+	}
+}
+
+func TestHandleMessageWizardStop(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{
+		responses: map[string]string{},
+	}
+
+	reg.SetWizard(wizard)
+	resp, handled := reg.HandleMessage("/stop")
+
+	if !handled {
+		t.Error("HandleMessage should handle /stop")
+	}
+	if !strings.Contains(resp, "cancelled") {
+		t.Errorf("response = %q, want 'cancelled'", resp)
+	}
+
+	// Wizard should be cleared
+	_, handled = reg.HandleMessage("test")
+	if handled {
+		t.Error("wizard should be cleared after /stop")
+	}
+}
+
+func TestHandleMessageWizardDone(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{
+		responses: map[string]string{
+			"input": "output",
+		},
+		done: true, // Wizard finishes after this handle
+	}
+
+	reg.SetWizard(wizard)
+	resp, handled := reg.HandleMessage("input")
+
+	if !handled {
+		t.Error("HandleMessage should handle the message")
+	}
+	if resp != "output" {
+		t.Errorf("response = %q, want %q", resp, "output")
+	}
+
+	// Wizard should be cleared since it returned done=true
+	_, handled = reg.HandleMessage("another")
+	if handled {
+		t.Error("wizard should be cleared when it returns done=true")
+	}
+}
