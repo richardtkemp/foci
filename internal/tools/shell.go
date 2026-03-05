@@ -394,17 +394,20 @@ func bgDeliverResult(notifier *AsyncNotifier, sessionKey string, done <-chan err
 	}()
 }
 
-// formatResult formats command output with error info, truncation, and redaction.
-func formatResult(output string, err error, ctx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) string {
-	result := output
-
-	// Redact secrets from output
+// redactSecrets removes sensitive information from output using available stores.
+func redactSecrets(output string, store *secrets.Store, bwStore *bitwarden.Store) string {
 	if store != nil {
-		result = store.Redact(result)
+		output = store.Redact(output)
 	}
 	if bwStore != nil {
-		result = bwStore.Redact(result)
+		output = bwStore.Redact(output)
 	}
+	return output
+}
+
+// formatResult formats command output with error info, truncation, and redaction.
+func formatResult(output string, err error, ctx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) string {
+	result := redactSecrets(output, store, bwStore)
 
 	if err != nil {
 		if ctx.Err() != nil {
@@ -425,14 +428,8 @@ type separatedOutput struct {
 
 // formatSeparatedResult returns a JSON object with stdout, stderr, and exit_code.
 func formatSeparatedResult(stdout, stderr string, err error, store *secrets.Store, bwStore *bitwarden.Store) string {
-	if store != nil {
-		stdout = store.Redact(stdout)
-		stderr = store.Redact(stderr)
-	}
-	if bwStore != nil {
-		stdout = bwStore.Redact(stdout)
-		stderr = bwStore.Redact(stderr)
-	}
+	stdout = redactSecrets(stdout, store, bwStore)
+	stderr = redactSecrets(stderr, store, bwStore)
 
 	code := 0
 	if err != nil {
