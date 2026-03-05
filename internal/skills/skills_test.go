@@ -243,3 +243,182 @@ func TestNoScript(t *testing.T) {
 		t.Errorf("command = %q, want empty", s.Command)
 	}
 }
+
+// TestShortPathComparison tests shortPath returns the shorter of absolute or relative
+func TestShortPathComparison(t *testing.T) {
+	tests := []struct {
+		name       string
+		absPath    string
+		baseDir    string
+		expectRel  bool
+	}{
+		{
+			"relative shorter",
+			"/home/rich/workspace/test/SKILL.md",
+			"/home/rich/workspace",
+			true, // rel would be "test/SKILL.md"
+		},
+		{
+			"absolute shorter",
+			"/tmp/SKILL.md",
+			"/very/long/base/directory/path",
+			false, // absolute path is shorter
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := shortPath(tt.absPath, tt.baseDir)
+			if tt.expectRel {
+				if strings.HasPrefix(result, "/") {
+					t.Errorf("expected relative path, got %q", result)
+				}
+			} else {
+				if result != tt.absPath {
+					t.Errorf("shortPath = %q, want %q", result, tt.absPath)
+				}
+			}
+		})
+	}
+}
+
+// TestShortPathEmptyBase tests shortPath with empty baseDir
+func TestShortPathEmptyBase(t *testing.T) {
+	absPath := "/absolute/path/to/skill"
+	result := shortPath(absPath, "")
+	if result != absPath {
+		t.Errorf("shortPath with empty baseDir = %q, want %q", result, absPath)
+	}
+}
+
+// TestShortPathRelError tests shortPath when filepath.Rel fails
+func TestShortPathRelError(t *testing.T) {
+	// This is hard to test since filepath.Rel rarely fails in practice
+	// Test with paths that might cause issues
+	absPath := "/abs/path"
+	baseDir := "relative/base"
+	result := shortPath(absPath, baseDir)
+	// Should return the original path when Rel fails
+	if result != absPath {
+		t.Errorf("shortPath with relative baseDir = %q", result)
+	}
+}
+
+// TestParseFrontmatterMissing tests parseFrontmatter with missing frontmatter
+func TestParseFrontmatterMissing(t *testing.T) {
+	content := "no frontmatter here\njust content"
+	f := tmpFile(t, content)
+	defer f.Close()
+	_, err := parseFrontmatter(f)
+	if err == nil {
+		t.Error("expected error for missing frontmatter")
+	}
+}
+
+// TestParseFrontmatterUnterminated tests parseFrontmatter with unterminated frontmatter
+func TestParseFrontmatterUnterminated(t *testing.T) {
+	content := "---\nname: test\ndescription: something\n"
+	f := tmpFile(t, content)
+	defer f.Close()
+	_, err := parseFrontmatter(f)
+	if err == nil {
+		t.Error("expected error for unterminated frontmatter")
+	}
+	if !strings.Contains(err.Error(), "unterminated") {
+		t.Errorf("expected unterminated error, got %v", err)
+	}
+}
+
+// TestParseFrontmatterMalformedLines tests parseFrontmatter with malformed lines
+func TestParseFrontmatterMalformedLines(t *testing.T) {
+	content := `---
+name: test
+no colon on this line
+malformed = format
+description: A test skill
+---
+`
+	f := tmpFile(t, content)
+	defer f.Close()
+	fm, err := parseFrontmatter(f)
+	if err != nil {
+		t.Fatalf("parseFrontmatter: %v", err)
+	}
+	// Should skip malformed lines and keep valid ones
+	if fm["name"] != "test" {
+		t.Errorf("name = %q, want test", fm["name"])
+	}
+	if fm["description"] != "A test skill" {
+		t.Errorf("description = %q, want A test skill", fm["description"])
+	}
+	if fm["no colon on this line"] != "" {
+		t.Errorf("malformed line should not be in map")
+	}
+}
+
+// TestParseFrontmatterQuotedValues tests parseFrontmatter with various quote styles
+func TestParseFrontmatterQuotedValues(t *testing.T) {
+	content := `---
+single: 'quoted value'
+double: "another value"
+unquoted: plain
+empty_quotes: ""
+---
+`
+	f := tmpFile(t, content)
+	defer f.Close()
+	fm, err := parseFrontmatter(f)
+	if err != nil {
+		t.Fatalf("parseFrontmatter: %v", err)
+	}
+
+	tests := []struct {
+		key   string
+		want  string
+	}{
+		{"single", "quoted value"},
+		{"double", "another value"},
+		{"unquoted", "plain"},
+		{"empty_quotes", ""},
+	}
+
+	for _, tt := range tests {
+		got := fm[tt.key]
+		if got != tt.want {
+			t.Errorf("%s = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+}
+
+// TestParseSkillFileEmptyName tests parseSkillFile with missing name field
+func TestParseSkillFileEmptyName(t *testing.T) {
+	dir := t.TempDir()
+	content := "---\ndescription: No name here\n---\nContent"
+	skillDir := filepath.Join(dir, "skill")
+	os.MkdirAll(skillDir, 0755)
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	os.WriteFile(skillPath, []byte(content), 0644)
+
+	_, err := parseSkillFile(skillPath, skillDir)
+	if err == nil {
+		t.Error("expected error for missing name field")
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("expected name error, got %v", err)
+	}
+}
+
+// tmpFile creates a temporary file with content and seeks to start
+func tmpFile(t *testing.T, content string) *os.File {
+	f, err := os.CreateTemp(t.TempDir(), "*.md")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatalf("seek temp file: %v", err)
+	}
+	return f
+}
