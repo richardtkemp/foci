@@ -189,8 +189,11 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return TextResult(result), nil
 
 			case "explore":
-			exploreResolved := resolveExploreModel(deps.Model, deps.ModelAliases)
-			exploreClient := resolveSpawnClient(deps.Client, exploreResolved, deps.GetClient)
+				exploreResolved, err := resolveExploreModel(deps.Model, deps.ModelAliases)
+				if err != nil {
+					return ToolResult{}, err
+				}
+				exploreClient := resolveSpawnClient(deps.Client, exploreResolved, deps.GetClient)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
@@ -610,16 +613,17 @@ func resolveSpawnClient(defaultClient provider.Client, resolved *config.Resolved
 
 // resolveExploreModel selects the cheapest model for exploration mode.
 // Uses haiku for most models, but flash for Gemini models.
-func resolveExploreModel(parentModel string, aliases map[string]string) *config.ResolvedModel {
+func resolveExploreModel(parentModel string, aliases map[string]string) (*config.ResolvedModel, error) {
 	_, parentModelID := config.SplitDeveloperModel(parentModel)
 	exploreAlias := "haiku"
 	if strings.HasPrefix(parentModelID, "gemini-") {
 		exploreAlias = "flash"
 	}
-	// resolveExploreModel should not fail — if it does, we've misconfigured the aliases.
-	// This is defensive: always return a valid model or panic during init, not runtime.
-	resolved, _ := config.ResolveModel(exploreAlias, "", aliases)
-	return resolved
+	resolved, err := config.ResolveModel(exploreAlias, "", aliases)
+	if err != nil {
+		return nil, fmt.Errorf("resolve explore model: %w", err)
+	}
+	return resolved, nil
 }
 
 // buildSpawnContext creates a spawn context with timeout and session/inherit markers.

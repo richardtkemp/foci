@@ -25,7 +25,7 @@ func resolvePtr[T any](perAgent *T, global T) T {
 	return global
 }
 
-// Specialized helpers for common types (for backward compatibility and clarity)
+// Typed wrappers for readability at call sites.
 
 // resolveInt returns the per-agent value if non-zero, otherwise global.
 func resolveInt(perAgent, global int) int {

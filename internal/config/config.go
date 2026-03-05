@@ -155,8 +155,9 @@ type AgentConfig struct {
 	AutoSummarise       *bool  `toml:"auto_summarise"`        // auto-summarise oversized results (nil = use global)
 	SummaryContextTurns int    `toml:"summary_context_turns"` // recent turns for auto-summary context (0 = use global)
 	SummaryContextChars int    `toml:"summary_context_chars"` // max chars of context for auto-summary (0 = use global)
-	SearchProvider      string `toml:"search_provider"`       // "anthropic" or "brave" (empty = use global)
-	FetchProvider       string `toml:"fetch_provider"`        // "anthropic" or "builtin" (empty = use global)
+	SearchProvider         string `toml:"search_provider"`          // "anthropic" or "brave" (empty = use global)
+	FetchProvider          string `toml:"fetch_provider"`           // "anthropic" or "builtin" (empty = use global)
+	InjectedMessageHeader  string `toml:"injected_message_header"`  // header prepended to injected messages (empty = use default)
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
 	Background      BackgroundConfig      `toml:"background"`       // per-agent background override
@@ -403,8 +404,9 @@ type DefaultsConfig struct {
 	AutoSummarise       *bool            `toml:"auto_summarise"`        // default auto_summarise (nil = use [tools] value)
 	SummaryContextTurns int              `toml:"summary_context_turns"` // default summary_context_turns (default 5)
 	SummaryContextChars int              `toml:"summary_context_chars"` // default summary_context_chars (default 6000)
-	SearchProvider      string           `toml:"search_provider"`       // default search provider: "brave" (default) or "anthropic"
-	FetchProvider       string           `toml:"fetch_provider"`        // default fetch provider: "anthropic" (default) or "builtin"
+	SearchProvider         string           `toml:"search_provider"`          // default search provider: "brave" (default) or "anthropic"
+	FetchProvider          string           `toml:"fetch_provider"`           // default fetch provider: "anthropic" (default) or "builtin"
+	InjectedMessageHeader  string           `toml:"injected_message_header"`  // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
 }
 
 // ModelsConfig holds model-related configuration.
@@ -571,10 +573,10 @@ func validateIntRange(value, min, max int, fieldName string) error {
 	return nil
 }
 
-// validateEnum checks if value is in the allowed set.
-func validateEnum(value string, allowed map[string]bool, fieldName string) error {
-	if !allowed[value] {
-		return fmt.Errorf("%s = %q: not in allowed values", fieldName, value)
+// validateNonNegative checks that value is >= 0.
+func validateNonNegative(value int, fieldName string) error {
+	if value < 0 {
+		return fmt.Errorf("%s = %d: must not be negative", fieldName, value)
 	}
 	return nil
 }
@@ -617,13 +619,13 @@ func validate(cfg *Config) error {
 	if err := validateRange(cfg.Sessions.CompactionThreshold, 0.0, 1.0, "[sessions] compaction_threshold"); err != nil {
 		return err
 	}
-	if err := validateIntRange(cfg.Sessions.CompactionMaxTokens, 0, 2147483647, "[sessions] compaction_max_tokens"); err != nil {
+	if err := validateNonNegative(cfg.Sessions.CompactionMaxTokens, "[sessions] compaction_max_tokens"); err != nil {
 		return err
 	}
-	if err := validateIntRange(cfg.Sessions.CompactionMinMessages, 0, 2147483647, "[sessions] compaction_min_messages"); err != nil {
+	if err := validateNonNegative(cfg.Sessions.CompactionMinMessages, "[sessions] compaction_min_messages"); err != nil {
 		return err
 	}
-	if err := validateIntRange(cfg.Sessions.CompactionPreserveMessages, 0, 2147483647, "[sessions] compaction_preserve_messages"); err != nil {
+	if err := validateNonNegative(cfg.Sessions.CompactionPreserveMessages, "[sessions] compaction_preserve_messages"); err != nil {
 		return err
 	}
 
@@ -1153,6 +1155,7 @@ func Load(path string) (*Config, error) {
 		v := 44
 		cfg.Defaults.DisplayWidth = &v
 	}
+	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 
 	// Keepalive/background defaults
 	setStringDefault(&cfg.Keepalive.Interval, "55m")
