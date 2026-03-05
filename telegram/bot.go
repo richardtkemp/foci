@@ -83,6 +83,9 @@ type Bot struct {
 	chatID     int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
 
+	chatSessionKeys map[int64]string // cache of chat ID → session key (prevents regenerating keys on every message)
+	chatKeysMu      sync.RWMutex     // protects chatSessionKeys
+
 	stateStore           *state.Store // nil = no persistence
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
 	toolCallPreviewChars int          // max chars for tool call preview (default 450)
@@ -137,16 +140,17 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 	}
 
 	return &Bot{
-		log:          log.NewComponentLogger("telegram:" + agentID),
-		api:          api,
-		client:       api,
-		agent:        ag,
-		commands:     cmds,
-		lastMsgStore: lastMsgStore,
-		allowedUsers: allowed,
-		agentID:      agentID,
-		botToken:     token,
-		queue:        make(chan queuedMessage, 64),
+		log:               log.NewComponentLogger("telegram:" + agentID),
+		api:               api,
+		client:            api,
+		agent:             ag,
+		commands:          cmds,
+		lastMsgStore:      lastMsgStore,
+		allowedUsers:      allowed,
+		agentID:           agentID,
+		botToken:          token,
+		queue:             make(chan queuedMessage, 64),
+		chatSessionKeys:   make(map[int64]string),
 	}, nil
 }
 
@@ -228,8 +232,9 @@ func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidt
 // For use in tests outside the telegram package.
 func NewBotForTest() *Bot {
 	return &Bot{
-		log:   log.NewComponentLogger("telegram:test"),
-		queue: make(chan queuedMessage, 64),
+		log:             log.NewComponentLogger("telegram:test"),
+		queue:           make(chan queuedMessage, 64),
+		chatSessionKeys: make(map[int64]string),
 	}
 }
 
@@ -294,8 +299,21 @@ func SessionKeyForChat(agentID string, chatID int64) string {
 }
 
 // sessionKeyForMsg returns the session key for the message's chat.
+// Uses a cache to avoid regenerating keys on every message.
 func (b *Bot) sessionKeyForMsg(chatID int64) string {
-	return SessionKeyForChat(b.agentID, chatID)
+	b.chatKeysMu.RLock()
+	if key, ok := b.chatSessionKeys[chatID]; ok {
+		b.chatKeysMu.RUnlock()
+		return key
+	}
+	b.chatKeysMu.RUnlock()
+
+	// Cache miss — generate and store new key
+	key := SessionKeyForChat(b.agentID, chatID)
+	b.chatKeysMu.Lock()
+	b.chatSessionKeys[chatID] = key
+	b.chatKeysMu.Unlock()
+	return key
 }
 
 // SetSessionKey changes the override session key (used for multiball fork/done).
