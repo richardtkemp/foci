@@ -16,6 +16,7 @@ import (
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search"
 	blevehtml "github.com/blevesearch/bleve/v2/search/highlight/format/html"
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -150,12 +151,30 @@ func (b *BleveIndex) Reindex() error {
 // Search queries the bleve index. sort controls result ordering:
 // "relevance" (default/empty) orders by weighted score,
 // "newest" orders by mtime descending, "oldest" orders by mtime ascending.
-func (b *BleveIndex) Search(query string, sortOrder string) ([]Result, error) {
+// opts provides optional date range filtering.
+func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptions) ([]Result, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	q := bleve.NewQueryStringQuery(query)
-	req := bleve.NewSearchRequest(q)
+	// Build the main query
+	mainQuery := bleve.NewQueryStringQuery(queryStr)
+
+	var finalQuery query.Query = mainQuery
+
+	// Apply date range filter if provided
+	if opts != nil && (opts.DateFrom != nil || opts.DateTo != nil) {
+		dateQuery := bleve.NewNumericRangeQuery(
+			floatPtrFromTime(opts.DateFrom),
+			floatPtrFromTime(opts.DateTo),
+		)
+		dateQuery.SetField("mtime")
+
+		// Combine with AND conjunction
+		conjunction := bleve.NewConjunctionQuery(mainQuery, dateQuery)
+		finalQuery = conjunction
+	}
+
+	req := bleve.NewSearchRequest(finalQuery)
 	req.Size = 20
 	req.Fields = []string{"path", "source", "mtime"}
 
@@ -207,6 +226,15 @@ func (b *BleveIndex) Search(query string, sortOrder string) ([]Result, error) {
 	}
 
 	return results, nil
+}
+
+// floatPtrFromTime converts a time pointer to a float64 pointer (unix timestamp).
+func floatPtrFromTime(t *time.Time) *float64 {
+	if t == nil {
+		return nil
+	}
+	f := float64(t.Unix())
+	return &f
 }
 
 // buildSnippet extracts a snippet from a bleve search hit.

@@ -213,11 +213,11 @@ func TestInjectWelcomeFile_TriggersTurnOnlyWithContent(t *testing.T) {
 
 func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 	tests := []struct {
-		name        string
-		toolCalls   config.ToolCallDisplay
-		thinking    config.ShowThinking
-		wantTool    string
-		wantThink   string
+		name      string
+		toolCalls config.ToolCallDisplay
+		thinking  config.ShowThinking
+		wantTool  string
+		wantThink string
 	}{
 		{
 			name:      "off/off",
@@ -440,7 +440,7 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	results, err := idx.Search("Go interfaces", "")
+	results, err := idx.Search("Go interfaces", "", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -464,10 +464,10 @@ func ptr[T any](v T) *T { return &v }
 func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	bot := telegram.NewBotForTest()
 	acfg := config.AgentConfig{
-		ShowToolCalls: ptr(config.ToolCallFull),
-		ShowThinking:  ptr(config.ShowThinkingCompact),
-		DisplayWidth:  ptr(80),
-		MessagesInLog: ptr(true),
+		ShowToolCalls:    ptr(config.ToolCallFull),
+		ShowThinking:     ptr(config.ShowThinkingCompact),
+		DisplayWidth:     ptr(80),
+		MessagesInLog:    ptr(true),
 		ReceivedFilesDir: "/agent/files",
 	}
 	cfg := &config.Config{
@@ -760,8 +760,8 @@ func TestAuthMiddleware(t *testing.T) {
 	tests := []struct {
 		name       string
 		path       string
-		bearer     string   // Authorization: Bearer value
-		queryKey   string   // api_key query param
+		bearer     string // Authorization: Bearer value
+		queryKey   string // api_key query param
 		wantStatus int
 	}{
 		{
