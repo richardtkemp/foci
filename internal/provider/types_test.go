@@ -481,3 +481,33 @@ func TestContentBlockUnmarshalJSON_ToolResultMultipleBlocks(t *testing.T) {
 		t.Errorf("decoded = %+v, want Content 'first'", cb)
 	}
 }
+
+// TestContentBlockUnmarshalJSON_ToolResultEmptyArray tests array format with no blocks
+func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
+	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[]}`)
+	var cb ContentBlock
+	if err := json.Unmarshal(data, &cb); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Empty array: extractToolResultContent checks len(blocks) > 0
+	// When false, it falls back to string(raw) = string([]) = "[]"
+	if cb.Type != "tool_result" {
+		t.Errorf("Type = %q, want tool_result", cb.Type)
+	}
+	if cb.Content != "[]" {
+		t.Errorf("Content = %q, want [] (fallback to raw string)", cb.Content)
+	}
+}
+
+// TestContentBlockUnmarshalJSON_ToolResultInvalidJSON tests fallback to raw string
+func TestContentBlockUnmarshalJSON_ToolResultInvalidJSON(t *testing.T) {
+	// Content that is neither string nor valid array format - should fallback to raw
+	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":"raw-json-fallback"}`)
+	var cb ContentBlock
+	if err := json.Unmarshal(data, &cb); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cb.Type != "tool_result" || cb.Content != "raw-json-fallback" {
+		t.Errorf("decoded = %+v, want Content 'raw-json-fallback'", cb)
+	}
+}
