@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 // Level represents a log severity level.
@@ -192,51 +192,32 @@ func Init(cfg Config) error {
 
 // InitAPIDB opens (or creates) the SQLite API call log.
 func InitAPIDB(path string) error {
-	db, err := sql.Open("sqlite", path)
+	db, err := sqlite.OpenInit(path,
+		`CREATE TABLE IF NOT EXISTS api_calls (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			ts                 DATETIME NOT NULL,
+			session            TEXT NOT NULL,
+			model              TEXT NOT NULL,
+			input_tokens       INTEGER,
+			output_tokens      INTEGER,
+			cache_read_tokens  INTEGER,
+			cache_write_tokens INTEGER,
+			cost_usd           REAL,
+			duration_ms        INTEGER,
+			stop_reason        TEXT,
+			call_type          TEXT NOT NULL,
+			session_file       TEXT,
+			session_line       INTEGER
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`,
+	)
 	if err != nil {
-		return fmt.Errorf("open api db: %w", err)
-	}
-
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS api_calls (
-		id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-		ts                 DATETIME NOT NULL,
-		session            TEXT NOT NULL,
-		model              TEXT NOT NULL,
-		input_tokens       INTEGER,
-		output_tokens      INTEGER,
-		cache_read_tokens  INTEGER,
-		cache_write_tokens INTEGER,
-		cost_usd           REAL,
-		duration_ms        INTEGER,
-		stop_reason        TEXT,
-		call_type          TEXT NOT NULL,
-		session_file       TEXT,
-		session_line       INTEGER
-	)`)
-	if err != nil {
-		_ = db.Close()
-		return fmt.Errorf("create api_calls table: %w", err)
+		return err
 	}
 
 	// Add provider column if it doesn't exist (migration for existing DBs).
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN provider TEXT DEFAULT ''`)
-
-	// Indexes for common queries
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`); err != nil {
-		std.event(WARN, "api_db", "create ts index: %v", err)
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`); err != nil {
-		std.event(WARN, "api_db", "create session index: %v", err)
-	}
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,

@@ -3,10 +3,11 @@ package log
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 // ConversationEntry is a single message in the conversation log.
@@ -27,30 +28,18 @@ type ConversationLog struct {
 	mu sync.Mutex
 }
 
-var convLog *ConversationLog
+var (
+	convLogs     map[string]*ConversationLog // agentID → log
+	convFallback *ConversationLog            // used when session can't be routed
+)
 
 // ConversationHook is called for each logged conversation entry.
 // Set by main.go to index conversation text into the memory FTS5 index.
 var ConversationHook func(text, session string)
 
-// InitConversation opens (or creates) the SQLite conversation log.
-func InitConversation(path string) error {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return fmt.Errorf("open conversation db: %w", err)
-	}
-
-	// WAL mode for concurrent reads
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return fmt.Errorf("set busy timeout: %w", err)
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS messages (
+// openConversationLog opens a single conversation log database.
+func openConversationLog(path string) (*ConversationLog, error) {
+	db, err := sqlite.OpenInit(path, `CREATE TABLE IF NOT EXISTS messages (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		ts         TEXT    NOT NULL,
 		direction  TEXT    NOT NULL,
@@ -63,32 +52,92 @@ func InitConversation(path string) error {
 		error      TEXT
 	)`)
 	if err != nil {
-		_ = db.Close()
-		return fmt.Errorf("create messages table: %w", err)
+		return nil, err
 	}
+	return &ConversationLog{db: db}, nil
+}
 
-	convLog = &ConversationLog{db: db}
+// InitConversation opens a single conversation log (used by tests and single-agent setups).
+func InitConversation(path string) error {
+	cl, err := openConversationLog(path)
+	if err != nil {
+		return err
+	}
+	convLogs = map[string]*ConversationLog{"": cl}
+	convFallback = cl
 	return nil
 }
 
-// CloseConversation closes the conversation log database.
-func CloseConversation() {
-	if convLog != nil {
-		_ = convLog.db.Close()
-		convLog = nil
+// InitPerAgentConversation opens per-agent conversation log databases.
+// pathFn maps each agent ID to its database path.
+func InitPerAgentConversation(agentIDs []string, pathFn func(string) string) error {
+	m := make(map[string]*ConversationLog, len(agentIDs))
+	for _, id := range agentIDs {
+		cl, err := openConversationLog(pathFn(id))
+		if err != nil {
+			// Close already-opened logs on failure.
+			for _, opened := range m {
+				_ = opened.db.Close()
+			}
+			return fmt.Errorf("init conversation log for %s: %w", id, err)
+		}
+		m[id] = cl
 	}
+	convLogs = m
+	// Use the first agent as fallback for entries without a routable session.
+	if len(agentIDs) > 0 {
+		convFallback = m[agentIDs[0]]
+	}
+	return nil
+}
+
+// CloseConversation closes all conversation log databases.
+func CloseConversation() {
+	for _, cl := range convLogs {
+		_ = cl.db.Close()
+	}
+	convLogs = nil
+	convFallback = nil
 }
 
 // Conversation logs a conversation entry. No-op if not initialized.
 func Conversation(entry ConversationEntry) {
-	if convLog == nil {
+	cl := resolveConvLog(entry.Session)
+	if cl == nil {
 		return
 	}
-	convLog.log(entry)
+	cl.log(entry)
 
 	if ConversationHook != nil && entry.Text != "" {
 		ConversationHook(entry.Text, entry.Session)
 	}
+}
+
+// resolveConvLog picks the per-agent log for a session key, falling back
+// to the default log when the session can't be routed.
+func resolveConvLog(session string) *ConversationLog {
+	if len(convLogs) == 0 {
+		return nil
+	}
+	if agentID := agentFromSession(session); agentID != "" {
+		if cl, ok := convLogs[agentID]; ok {
+			return cl
+		}
+	}
+	return convFallback
+}
+
+// agentFromSession extracts the agent ID from a session key of the form
+// "agent:<id>:...". Returns "" if the format doesn't match.
+func agentFromSession(session string) string {
+	if !strings.HasPrefix(session, "agent:") {
+		return ""
+	}
+	rest := session[len("agent:"):]
+	if idx := strings.IndexByte(rest, ':'); idx > 0 {
+		return rest[:idx]
+	}
+	return ""
 }
 
 func (c *ConversationLog) log(entry ConversationEntry) {

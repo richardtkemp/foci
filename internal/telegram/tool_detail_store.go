@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"foci/internal/log"
-
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 const (
@@ -26,35 +25,19 @@ type ToolDetailStore struct {
 // NewToolDetailStore opens (or creates) the SQLite database for tool call details.
 // Sets PRAGMA auto_vacuum=INCREMENTAL so incremental_vacuum reclaims space.
 func NewToolDetailStore(dbPath string) (*ToolDetailStore, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqlite.OpenInit(dbPath,
+		"PRAGMA auto_vacuum=INCREMENTAL",
+		`CREATE TABLE IF NOT EXISTS tool_call_details (
+			message_id  INTEGER PRIMARY KEY,
+			compact_text TEXT NOT NULL,
+			full_input   TEXT NOT NULL,
+			result       TEXT NOT NULL,
+			created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		)`,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("open tool detail db: %w", err)
+		return nil, err
 	}
-
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA auto_vacuum=INCREMENTAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set auto_vacuum: %w", err)
-	}
-
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tool_call_details (
-		message_id  INTEGER PRIMARY KEY,
-		compact_text TEXT NOT NULL,
-		full_input   TEXT NOT NULL,
-		result       TEXT NOT NULL,
-		created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-	)`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("create table: %w", err)
-	}
-
 	return &ToolDetailStore{db: db}, nil
 }
 

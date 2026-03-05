@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"foci/internal/sqlite"
 )
 
 // TodoItem represents a single todo entry.
@@ -28,32 +28,23 @@ type TodoStore struct {
 	db *sql.DB
 }
 
-// closeOnErr closes the database and returns a wrapped error.
-// Used in error paths during initialization.
-func closeOnErr(db *sql.DB, message string, err error) error {
-	_ = db.Close()
-	return fmt.Errorf("%s: %w", message, err)
-}
-
 // NewTodoStore creates or opens the todo database.
 func NewTodoStore(dbPath string) (*TodoStore, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sqlite.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open todo db: %w", err)
+		return nil, err
 	}
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return nil, closeOnErr(db, "set WAL mode", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		return nil, closeOnErr(db, "set busy timeout", err)
+	closeOnErr := func(msg string, err error) (*TodoStore, error) {
+		_ = db.Close()
+		return nil, fmt.Errorf("%s: %w", msg, err)
 	}
 
 	// Check if the table already exists and what schema it has.
 	var tableDDL string
 	err = db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='todos'").Scan(&tableDDL)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, closeOnErr(db, "check table schema", err)
+		return closeOnErr("check table schema", err)
 	}
 
 	if err == sql.ErrNoRows {
@@ -72,24 +63,24 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 			PRIMARY KEY (agent_id, id)
 		)`)
 		if err != nil {
-			return nil, closeOnErr(db, "create todos table", err)
+			return closeOnErr("create todos table", err)
 		}
 	} else if strings.Contains(strings.ToUpper(tableDDL), "AUTOINCREMENT") {
 		// Old schema with AUTOINCREMENT — migrate to composite PK.
 		// Ensure updated_at exists before migration (may be missing on very old DBs).
 		if !columnExists(db, "todos", "updated_at") {
 			if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
-				return nil, closeOnErr(db, "add updated_at column", err)
+				return closeOnErr("add updated_at column", err)
 			}
 		}
 		if err := migrateTodosCompositeKey(db); err != nil {
-			return nil, closeOnErr(db, "migrate todos to composite key", err)
+			return closeOnErr("migrate todos to composite key", err)
 		}
 	} else {
 		// Already new schema — ensure updated_at exists (defensive).
 		if !columnExists(db, "todos", "updated_at") {
 			if _, err := db.Exec("ALTER TABLE todos ADD COLUMN updated_at TEXT"); err != nil {
-				return nil, closeOnErr(db, "add updated_at column", err)
+				return closeOnErr("add updated_at column", err)
 			}
 		}
 	}
@@ -378,6 +369,20 @@ func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
 	}
 	defer func() { _ = rows.Close() }()
 	return scanTodos(rows)
+}
+
+// MigrateFrom copies rows for agentID from oldDBPath into this store using ATTACH.
+func (s *TodoStore) MigrateFrom(oldDBPath, agentID string) error {
+	if _, err := s.db.Exec("ATTACH DATABASE ? AS old", oldDBPath); err != nil {
+		return fmt.Errorf("attach old db: %w", err)
+	}
+	defer func() { _, _ = s.db.Exec("DETACH DATABASE old") }()
+
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO todos (id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at, updated_at)
+		 SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, completed_at, updated_at
+		 FROM old.todos WHERE agent_id = ?`, agentID)
+	return err
 }
 
 // Close closes the underlying database.

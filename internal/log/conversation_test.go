@@ -5,8 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
+// TestConversationLog verifies that conversation entries are written to the database
+// and can be queried back with correct fields.
 func TestConversationLog(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 
@@ -122,11 +126,18 @@ func TestConversationLog(t *testing.T) {
 	}
 }
 
+// TestConversationNoopWhenUninitialized verifies that logging doesn't panic
+// when the conversation system hasn't been initialized.
 func TestConversationNoopWhenUninitialized(t *testing.T) {
 	// Save and restore global state
-	saved := convLog
-	convLog = nil
-	defer func() { convLog = saved }()
+	savedLogs := convLogs
+	savedFallback := convFallback
+	convLogs = nil
+	convFallback = nil
+	defer func() {
+		convLogs = savedLogs
+		convFallback = savedFallback
+	}()
 
 	// Should not panic
 	Conversation(ConversationEntry{
@@ -138,6 +149,8 @@ func TestConversationNoopWhenUninitialized(t *testing.T) {
 	})
 }
 
+// TestConversationBusyTimeout verifies that the conversation database has the
+// correct busy_timeout PRAGMA set.
 func TestConversationBusyTimeout(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 
@@ -147,10 +160,75 @@ func TestConversationBusyTimeout(t *testing.T) {
 	defer CloseConversation()
 
 	var timeout int
-	if err := convLog.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+	if err := convFallback.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
 		t.Fatalf("query busy_timeout: %v", err)
 	}
 	if timeout != 5000 {
 		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
+}
+
+// TestAgentFromSession verifies extraction of agent IDs from session key strings.
+func TestAgentFromSession(t *testing.T) {
+	tests := []struct {
+		session string
+		want    string
+	}{
+		{"agent:clutch:chat:123:abc", "clutch"},
+		{"agent:otto:main", "otto"},
+		{"agent::empty", ""},
+		{"other:format", ""},
+		{"", ""},
+		{"agent:", ""},
+	}
+	for _, tt := range tests {
+		got := agentFromSession(tt.session)
+		if got != tt.want {
+			t.Errorf("agentFromSession(%q) = %q, want %q", tt.session, got, tt.want)
+		}
+	}
+}
+
+// TestPerAgentConversationRouting verifies that entries are routed to the
+// correct per-agent database based on session key.
+func TestPerAgentConversationRouting(t *testing.T) {
+	dir := t.TempDir()
+
+	agentIDs := []string{"alpha", "beta"}
+	pathFn := func(id string) string {
+		return filepath.Join(dir, "conversation-"+id+".db")
+	}
+	if err := InitPerAgentConversation(agentIDs, pathFn); err != nil {
+		t.Fatalf("InitPerAgentConversation: %v", err)
+	}
+	defer CloseConversation()
+
+	// Log to alpha
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "hello alpha", Session: "agent:alpha:main",
+	})
+	// Log to beta
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "2", Username: "v", ChatID: 2,
+		Text: "hello beta", Session: "agent:beta:main",
+	})
+
+	// Verify alpha's DB has 1 row
+	alphaDB, _ := sql.Open("sqlite", pathFn("alpha"))
+	defer alphaDB.Close()
+	var alphaCount int
+	alphaDB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&alphaCount)
+	if alphaCount != 1 {
+		t.Errorf("alpha messages = %d, want 1", alphaCount)
+	}
+
+	// Verify beta's DB has 1 row
+	betaDB, _ := sql.Open("sqlite", pathFn("beta"))
+	defer betaDB.Close()
+	var betaCount int
+	betaDB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&betaCount)
+	if betaCount != 1 {
+		t.Errorf("beta messages = %d, want 1", betaCount)
 	}
 }

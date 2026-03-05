@@ -35,7 +35,7 @@ config.Load(path)                                        ← validates values; l
   → returns sessionInfra{sessions, sessionIndex, stateStore, cleanup}
 
 → initMemorySystem(cfg)                                  ← memory_init.go
-  → memory: ReminderStore + Scratchpad + TodoStore       ← shared across agents (scoped per-agent via agent_id)
+  → memory: ReminderStore + Scratchpad + TodoStores       ← ReminderStore/Scratchpad shared; TodoStore per-agent (todo-{agentID}.db)
   → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
 
   Shared resources (created once in main.go):
@@ -122,7 +122,8 @@ DiagnoseRestart(stateStore, startTime, logsDir)
 ```
 main
  ├── config        → table
- ├── log           → modernc.org/sqlite
+ ├── sqlite        → modernc.org/sqlite (shared Open + AgentPath utility)
+ ├── log           → sqlite
  ├── table         (no deps)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
@@ -130,8 +131,8 @@ main
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
- ├── session       → provider, log
- ├── memory        → modernc.org/sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
+ ├── session       → provider, log, sqlite
+ ├── memory        → sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → log, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
@@ -146,7 +147,7 @@ main
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
  ├── keepalive     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
- └── telegram      → agent, command, log, table, voice
+ └── telegram      → agent, command, log, sqlite, table, voice
 ```
 
 No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `provider` defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic` and `gemini` both implement `provider.Client`, translating between neutral types and their wire formats. Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `keepalive` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
@@ -502,9 +503,9 @@ Four outputs:
    - Written automatically by `log.API()` when `api_db` is configured
    - Queryable: `sqlite3 api.db "SELECT call_type, count(*) FROM api_calls GROUP BY call_type"`
 
-4. **Conversation log** (`conversation.db`): SQLite database logging exact Telegram messages sent and received. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
+4. **Conversation log** (`conversation-{agentID}.db`): Per-agent SQLite databases logging exact Telegram messages sent and received. Entries are routed to the correct agent's database by parsing the session key. Table `messages` with columns: `id`, `ts`, `direction` (recv/sent), `user_id`, `username`, `chat_id`, `text`, `parse_mode`, `session`, `error`.
    - Use: `log.Conversation(log.ConversationEntry{...})`
-   - Queryable with `sqlite3 conversation.db "SELECT * FROM messages"`
+   - Queryable with `sqlite3 conversation-clutch.db "SELECT * FROM messages"`
    - Useful for debugging formatting (see exact markdown sent vs plain text fallback)
 
 ## Tool System (`tools/`)
