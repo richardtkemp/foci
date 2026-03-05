@@ -47,7 +47,7 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
-| `usage_cache_ttl` | string | `"5m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. |
+| `usage_cache_ttl` | string | `"10m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. On fetch errors, retries use exponential backoff (starting at cache TTL, doubling up to 1h). |
 | `cc_credentials_poll_interval` | string | `"30s"` | How often to re-read Claude Code credentials from `~/.claude/.credentials.json`. |
 | `use_sdk` | bool | `true` | Use official Anthropic SDK for API transport. When `false`, falls back to hand-rolled HTTP (legacy). SDK transport is required for streaming. |
 | `streaming` | bool | `false` | Use streaming API for Anthropic requests (global default). Requires `use_sdk = true`. When enabled, text and thinking deltas are delivered incrementally. Per-agent override available in `[defaults]` and `[[agents]]`. |

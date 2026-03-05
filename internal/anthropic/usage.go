@@ -36,8 +36,13 @@ type UsageResponse struct {
 	ExtraUsage        *ExtraUsage  `json:"extra_usage"`
 }
 
-// defaultCacheTTL is the default cache duration for usage API responses.
-const defaultCacheTTL = 5 * time.Minute
+const (
+	// defaultCacheTTL is the default cache duration for usage API responses.
+	defaultCacheTTL = 5 * time.Minute
+
+	// maxErrBackoff caps exponential backoff for consecutive fetch errors.
+	maxErrBackoff = 1 * time.Hour
+)
 
 // UsageClient is a client for the Anthropic usage API (requires OAuth token)
 type UsageClient struct {
@@ -50,6 +55,12 @@ type UsageClient struct {
 	cached   *UsageResponse
 	cachedAt time.Time
 	cacheTTL time.Duration
+
+	// Error backoff state: after a fetch failure, suppress retries with
+	// exponential backoff starting at cacheTTL and doubling up to maxErrBackoff.
+	lastErr    error
+	lastErrAt  time.Time
+	errBackoff time.Duration
 }
 
 // NewUsageClient creates a new usage API client with a static OAuth token.
@@ -84,13 +95,15 @@ func (c *UsageClient) SetCacheTTL(d time.Duration) {
 	c.cacheTTL = d
 }
 
-// Invalidate clears the cached usage response, forcing the next GetUsage call
-// to fetch from the API. Useful for /mana force-refresh or tests.
+// Invalidate clears the cached usage response and error backoff state, forcing
+// the next GetUsage call to fetch from the API. Useful for /mana force-refresh or tests.
 func (c *UsageClient) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cached = nil
 	c.cachedAt = time.Time{}
+	c.lastErr = nil
+	c.errBackoff = 0
 }
 
 // resolveToken returns the token to use for usage API requests.
@@ -106,6 +119,8 @@ func (c *UsageClient) resolveToken() (string, error) {
 
 // GetUsage retrieves the current usage from the Anthropic API.
 // Results are cached for cacheTTL; concurrent callers share the same cached value.
+// On fetch errors, retries are suppressed with exponential backoff (starting at
+// cacheTTL, doubling up to maxErrBackoff). A successful fetch resets the backoff.
 func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 	c.mu.Lock()
 	if c.cached != nil && time.Since(c.cachedAt) < c.cacheTTL {
@@ -113,16 +128,36 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 		c.mu.Unlock()
 		return resp, nil
 	}
+	// In error backoff — return last error without retrying.
+	if c.lastErr != nil && time.Since(c.lastErrAt) < c.errBackoff {
+		err := c.lastErr
+		c.mu.Unlock()
+		return nil, err
+	}
 	c.mu.Unlock()
 
 	resp, err := c.fetchUsage(ctx)
 	if err != nil {
+		c.mu.Lock()
+		if c.errBackoff == 0 {
+			c.errBackoff = c.cacheTTL
+		} else {
+			c.errBackoff *= 2
+		}
+		if c.errBackoff > maxErrBackoff {
+			c.errBackoff = maxErrBackoff
+		}
+		c.lastErr = err
+		c.lastErrAt = time.Now()
+		c.mu.Unlock()
 		return nil, err
 	}
 
 	c.mu.Lock()
 	c.cached = resp
 	c.cachedAt = time.Now()
+	c.lastErr = nil
+	c.errBackoff = 0
 	c.mu.Unlock()
 
 	return resp, nil
