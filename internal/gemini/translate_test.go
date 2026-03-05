@@ -119,6 +119,57 @@ func TestMessagesToGenai_ToolResultError(t *testing.T) {
 	}
 }
 
+func TestMessagesToGenai_ToolResultNameLookup(t *testing.T) {
+	// Test that FunctionResponse.Name is populated by looking up the tool_use
+	// even when the tool_result block's Name field is empty.
+	msgs := []provider.Message{
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "tu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			// Note: Name field is empty — should be looked up from previous tool_use
+			{Type: "tool_result", ToolUseID: "tu_1", Content: "file1\nfile2"},
+		}},
+	}
+
+	contents := messagesToGenai(msgs)
+	if len(contents) != 2 {
+		t.Fatalf("contents = %d, want 2", len(contents))
+	}
+
+	fr := contents[1].Parts[0].FunctionResponse
+	if fr == nil {
+		t.Fatal("expected FunctionResponse")
+	}
+	// The critical fix: Name should be "exec" (looked up from tu_1), not empty
+	if fr.Name != "exec" {
+		t.Errorf("fr.Name = %q, want exec (looked up from tool_use)", fr.Name)
+	}
+	if fr.Response["output"] != "file1\nfile2" {
+		t.Errorf("fr.Response = %v", fr.Response)
+	}
+}
+
+func TestMessagesToGenai_ToolResultNameFallback(t *testing.T) {
+	// Test fallback behavior when ToolUseID doesn't match any previous tool_use
+	// (shouldn't happen in normal flow, but the code should be defensive)
+	msgs := []provider.Message{
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "tu_unknown", Name: "fallback_name", Content: "result"},
+		}},
+	}
+
+	contents := messagesToGenai(msgs)
+	fr := contents[0].Parts[0].FunctionResponse
+	if fr == nil {
+		t.Fatal("expected FunctionResponse")
+	}
+	// Should fall back to block.Name since lookup failed
+	if fr.Name != "fallback_name" {
+		t.Errorf("fr.Name = %q, want fallback_name", fr.Name)
+	}
+}
+
 func TestToolsToGenai(t *testing.T) {
 	defs := []provider.ToolDef{
 		provider.NewCustomTool("exec", "run commands", json.RawMessage(`{

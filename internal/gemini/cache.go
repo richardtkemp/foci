@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5" // #nosec G501 - used for cache key generation, not security
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
@@ -83,7 +84,7 @@ func (m *CacheManager) EnsureCache(ctx context.Context, model string, system *ge
 
 	cached, err := m.client.Caches.Create(ctx, model, cfg)
 	if err != nil {
-		log.Warnf("gemini_cache", "create cache: %v", err)
+		logCacheCreationError(err)
 		return ""
 	}
 
@@ -148,4 +149,21 @@ func contentHash(system *genai.Content, tools []*genai.Tool) [16]byte {
 	var result [16]byte
 	copy(result[:], h.Sum(nil))
 	return result
+}
+
+// logCacheCreationError logs cache creation errors with context-appropriate messages.
+// Both rate-limiting and free-tier limits result in the same fallback (no cache),
+// but we provide specific diagnostics for each case.
+func logCacheCreationError(err error) {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "429") || strings.Contains(msg, "RESOURCE_EXHAUSTED"):
+		if strings.Contains(msg, "TotalCachedContentStorageTokensPerModelFreeTier") && strings.Contains(msg, "limit=0") {
+			log.Warnf("gemini_cache", "caching not available on free tier (limit=0), continuing without cache")
+		} else {
+			log.Warnf("gemini_cache", "cache rate limited (429), continuing without cache")
+		}
+	default:
+		log.Warnf("gemini_cache", "create cache failed: %v", err)
+	}
 }

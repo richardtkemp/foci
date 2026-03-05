@@ -64,9 +64,15 @@ func messagesToGenai(msgs []provider.Message) []*genai.Content {
 				if block.IsError {
 					resp = map[string]any{"error": block.Content}
 				}
+				// Look up the tool name by matching the ToolUseID to a previous tool_use
+				name := toolResultName(msgs, block.ToolUseID)
+				if name == "" {
+					// Fall back to block.Name if lookup fails (shouldn't happen in normal flow)
+					name = block.Name
+				}
 				parts = append(parts, &genai.Part{
 					FunctionResponse: &genai.FunctionResponse{
-						Name:     block.Name,
+						Name:     name,
 						Response: resp,
 						ID:       block.ToolUseID,
 					},
