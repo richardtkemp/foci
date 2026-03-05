@@ -121,6 +121,9 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 		BranchFunc:        branchFn,
 		ManaMonitor:       manaMonitor,
 		WarningDispatcher: warningDispatcher,
+		DrainFn: func() {
+			inst.ag.DrainRateLimitQueue(p.ctx)
+		},
 	})
 	runner.Start(p.ctx)
 	inst.kaRunner = runner

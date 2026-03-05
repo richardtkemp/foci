@@ -1302,19 +1302,8 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 }
 
 // computeRateLimitReset determines the best reset time for the rate limit gate.
-// Priority: cached mana reset time > retry-after header > fallback 5h.
+// Uses retry-after header if available, otherwise falls back to 5h.
 func (a *Agent) computeRateLimitReset(retryAfterSec int) time.Time {
-	// Try cached mana reset time (most accurate — comes from usage API)
-	a.manaCacheMu.Lock()
-	resetStr := a.manaResetCached
-	a.manaCacheMu.Unlock()
-	if resetStr != "" {
-		// manaResetCached is a human-readable string like "in 2h", "in 45m", "2pm"
-		// But we have the raw ISO time in the usage response. Let's check manaCacheTime
-		// and reconstruct — actually we don't store the raw ISO. Use retry-after instead
-		// if available, since it's more reliable than parsing relative strings.
-	}
-
 	if retryAfterSec > 0 {
 		return time.Now().Add(time.Duration(retryAfterSec) * time.Second)
 	}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -3838,5 +3839,135 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 	expected := "Step 1 done.Step 2 done.All done!"
 	if finalResp != expected {
 		t.Errorf("final response = %q, want %q", finalResp, expected)
+	}
+}
+
+func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
+	// When the gate is closed, HandleMessage should queue the message
+	// and return RateLimitedError without touching the session.
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		t.Fatal("API should not be called when gate is closed")
+		return nil
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// Close the gate
+	until := time.Now().Add(1 * time.Hour)
+	ag.rateLimitGate.Close(until)
+
+	ctx := WithTrigger(context.Background(), "telegram")
+	_, err := ag.HandleMessage(ctx, "test/igate/1000000000", "Hello")
+	if err == nil {
+		t.Fatal("expected RateLimitedError")
+	}
+
+	var rlErr *RateLimitedError
+	if !errors.As(err, &rlErr) {
+		t.Fatalf("expected *RateLimitedError, got %T: %v", err, err)
+	}
+	if !rlErr.Until.Equal(until) {
+		t.Errorf("until = %v, want %v", rlErr.Until, until)
+	}
+}
+
+func TestHandleMessageRateLimitClosesGate(t *testing.T) {
+	// A 429 from the API should close the gate so subsequent calls are blocked.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "300")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
+	}))
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// First call hits the API, gets 429, closes gate
+	_, err := ag.HandleMessage(context.Background(), "test/igate429/1000000000", "Hello")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var rlErr *RateLimitedError
+	if !errors.As(err, &rlErr) {
+		t.Fatalf("expected *RateLimitedError, got %T: %v", err, err)
+	}
+
+	// Gate should now be closed
+	limited, _ := ag.rateLimitGate.IsLimited()
+	if !limited {
+		t.Error("gate should be closed after 429")
+	}
+
+	// Second call should be blocked by the gate (no API hit)
+	_, err = ag.HandleMessage(context.Background(), "test/igate429/1000000000", "World")
+	if err == nil {
+		t.Fatal("expected RateLimitedError on second call")
+	}
+	if !errors.As(err, &rlErr) {
+		t.Fatalf("expected *RateLimitedError on second call, got %T: %v", err, err)
+	}
+}
+
+func TestDrainRateLimitQueue(t *testing.T) {
+	// When the gate opens, DrainRateLimitQueue should replay messages.
+	var apiCalls atomic.Int32
+	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+		apiCalls.Add(1)
+		return &provider.MessageResponse{
+			ID:         "msg_drain",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("replayed"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	defer server.Close()
+
+	client := newTestClientWithBase(server.URL, "test-token")
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	// Queue items as if rate-limited
+	ag.rateLimitGate.Close(time.Now().Add(-1 * time.Second)) // already expired
+	ag.rateLimitGate.Enqueue("test/idrain/1000000000", "msg1", "user")
+	ag.rateLimitGate.Enqueue("test/idrain/1000000000", "msg2", "keepalive")
+
+	ag.DrainRateLimitQueue(context.Background())
+
+	if got := apiCalls.Load(); got != 2 {
+		t.Errorf("expected 2 API calls from replay, got %d", got)
 	}
 }
