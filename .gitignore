@@ -1,4 +1,7 @@
 /bin
+/foci-gw
+/foci
+/foci-call
 foci.toml
 sessions/
 tasks/
