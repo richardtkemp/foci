@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 
+	"foci/internal/session"
 	"foci/internal/voice"
 )
 
@@ -194,34 +193,9 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 }
 
 // ChatIDFromSessionKey extracts the chat ID from a session key.
-// Supports the current format "{agentID}/c{chatID}/{versionTS}" and legacy
-// colon-separated formats "agent:<name>:chat:<chatID>" and "agent:<name>:<chatID>".
-// Returns 0 if the key doesn't contain a chat ID.
+// Delegates to session.ChatIDFromKey for the actual parsing.
 func ChatIDFromSessionKey(key string) int64 {
-	// New format: agentID/c{chatID}/versionTS (slash-separated, type char 'c')
-	if slashParts := strings.Split(key, "/"); len(slashParts) >= 2 {
-		typeID := slashParts[1]
-		if len(typeID) >= 2 && typeID[0] == 'c' {
-			if id, err := strconv.ParseInt(typeID[1:], 10, 64); err == nil {
-				return id
-			}
-		}
-	}
-
-	parts := strings.Split(key, ":")
-	// Legacy format: agent:X:chat:CHATID
-	if len(parts) >= 4 && parts[2] == "chat" {
-		if id, err := strconv.ParseInt(parts[3], 10, 64); err == nil {
-			return id
-		}
-	}
-	// Legacy format: agent:X:CHATID (third segment is numeric)
-	if len(parts) == 3 {
-		if id, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
-			return id
-		}
-	}
-	return 0
+	return session.ChatIDFromKey(key)
 }
 
 func joinWords(words []string) string {

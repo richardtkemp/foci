@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"strings"
 	"testing"
 
 	"foci/internal/command"
@@ -424,9 +423,11 @@ func TestMultiball_SetSessionKeyDirectSkipsCallback(t *testing.T) {
 	}
 }
 
-// --- Multiball routing pattern tests (BotForSession + PrimaryBot fallback) ---
+// --- BotForSessionOrPrimary routing tests ---
 
-func TestMultiballRouting_MultiballSessionUsesMultiballBot(t *testing.T) {
+// TestBotForSessionOrPrimary_MultiballSessionUsesMultiballBot verifies that
+// BotForSessionOrPrimary returns the multiball bot when it holds the session key.
+func TestBotForSessionOrPrimary_MultiballSessionUsesMultiballBot(t *testing.T) {
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -438,23 +439,15 @@ func TestMultiballRouting_MultiballSessionUsesMultiballBot(t *testing.T) {
 	acquired, _ := mgr.Pool("clutch").Acquire()
 	acquired.SetSessionKey(sessionKey)
 
-	// Pattern from main.go: check multiball first, fallback to primary
-	var bot *Bot
-	if strings.Contains(sessionKey, ":multiball:") {
-		if mb := mgr.BotForSession(sessionKey); mb != nil {
-			bot = mb
-		}
-	}
-	if bot == nil {
-		bot = mgr.PrimaryBot("clutch")
-	}
-
+	bot := mgr.BotForSessionOrPrimary(sessionKey, "clutch")
 	if bot != acquired {
-		t.Errorf("routing should find multiball bot for multiball session key")
+		t.Errorf("BotForSessionOrPrimary should find multiball bot for its session key")
 	}
 }
 
-func TestMultiballRouting_MultiballSessionFallsBackToPrimary(t *testing.T) {
+// TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary verifies
+// fallback to primary when no secondary bot holds the session key.
+func TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary(t *testing.T) {
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -462,25 +455,15 @@ func TestMultiballRouting_MultiballSessionFallsBackToPrimary(t *testing.T) {
 	mb := testSecondaryBot("mb1")
 	mgr.AddMultiball("clutch", mb)
 
-	// No bot assigned to this session key
-	sessionKey := "agent:clutch:multiball:mb-unassigned"
-
-	var bot *Bot
-	if strings.Contains(sessionKey, ":multiball:") {
-		if mb := mgr.BotForSession(sessionKey); mb != nil {
-			bot = mb
-		}
-	}
-	if bot == nil {
-		bot = mgr.PrimaryBot("clutch")
-	}
-
+	bot := mgr.BotForSessionOrPrimary("agent:clutch:multiball:mb-unassigned", "clutch")
 	if bot != primary {
-		t.Errorf("routing should fall back to primary when multiball bot not found")
+		t.Errorf("BotForSessionOrPrimary should fall back to primary when multiball bot not found")
 	}
 }
 
-func TestMultiballRouting_NonMultiballSessionUsesPrimary(t *testing.T) {
+// TestBotForSessionOrPrimary_NonMultiballSessionUsesPrimary verifies that
+// a regular (non-multiball) session key routes to the primary bot.
+func TestBotForSessionOrPrimary_NonMultiballSessionUsesPrimary(t *testing.T) {
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -490,64 +473,71 @@ func TestMultiballRouting_NonMultiballSessionUsesPrimary(t *testing.T) {
 	acquired, _ := mgr.Pool("clutch").Acquire()
 	acquired.SetSessionKey("agent:clutch:multiball:mb-100")
 
-	// Non-multiball session key
-	sessionKey := "agent:clutch:main"
-
-	var bot *Bot
-	if strings.Contains(sessionKey, ":multiball:") {
-		if mb := mgr.BotForSession(sessionKey); mb != nil {
-			bot = mb
-		}
-	}
-	if bot == nil {
-		bot = mgr.PrimaryBot("clutch")
-	}
-
+	bot := mgr.BotForSessionOrPrimary("agent:clutch:main", "clutch")
 	if bot != primary {
-		t.Errorf("routing should use primary for non-multiball session key")
+		t.Errorf("BotForSessionOrPrimary should use primary for non-multiball session key")
 	}
 }
 
-func TestMultiballRouting_NoPrimaryReturnsNil(t *testing.T) {
+// TestBotForSessionOrPrimary_NoPrimaryReturnsNil verifies nil when no
+// primary bot is registered and no secondary matches.
+func TestBotForSessionOrPrimary_NoPrimaryReturnsNil(t *testing.T) {
 	mgr := NewBotManager()
-	// No primary bot registered
 
-	sessionKey := "agent:clutch:main"
-
-	var bot *Bot
-	if strings.Contains(sessionKey, ":multiball:") {
-		if mb := mgr.BotForSession(sessionKey); mb != nil {
-			bot = mb
-		}
-	}
-	if bot == nil {
-		bot = mgr.PrimaryBot("clutch")
-	}
-
+	bot := mgr.BotForSessionOrPrimary("agent:clutch:main", "clutch")
 	if bot != nil {
-		t.Errorf("routing should return nil when no primary bot exists")
+		t.Errorf("BotForSessionOrPrimary should return nil when no primary bot exists")
 	}
 }
 
-func TestMultiballRouting_MultiballNoPrimaryReturnsNil(t *testing.T) {
+// TestBotForSessionOrPrimary_MultiballNoPrimaryReturnsNil verifies nil when
+// multiball exists but no bot holds the key and no primary is registered.
+func TestBotForSessionOrPrimary_MultiballNoPrimaryReturnsNil(t *testing.T) {
 	mgr := NewBotManager()
-	// No primary, but multiball exists (edge case)
 	mb := testSecondaryBot("mb1")
 	mgr.AddMultiball("clutch", mb)
 
-	sessionKey := "agent:clutch:multiball:mb-unassigned"
-
-	var bot *Bot
-	if strings.Contains(sessionKey, ":multiball:") {
-		if found := mgr.BotForSession(sessionKey); found != nil {
-			bot = found
-		}
-	}
-	if bot == nil {
-		bot = mgr.PrimaryBot("clutch")
-	}
-
+	bot := mgr.BotForSessionOrPrimary("agent:clutch:multiball:mb-unassigned", "clutch")
 	if bot != nil {
-		t.Errorf("routing should return nil when multiball not found and no primary exists")
+		t.Errorf("BotForSessionOrPrimary should return nil when multiball not found and no primary exists")
+	}
+}
+
+// TestBotForSessionOrPrimary_NewFormatBranchKey verifies that new slash-separated
+// branch keys (which don't contain ":multiball:") still find the secondary bot
+// when it holds that session key. This was broken when BotForSessionOrPrimary
+// gated the lookup on strings.Contains(":multiball:").
+func TestBotForSessionOrPrimary_NewFormatBranchKey(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+
+	// New-format branch key assigned to multiball bot
+	sessionKey := "clutch/c12345/1709590000/b1709596800"
+	acquired, _ := mgr.Pool("clutch").Acquire()
+	acquired.SetSessionKey(sessionKey)
+
+	bot := mgr.BotForSessionOrPrimary(sessionKey, "clutch")
+	if bot != acquired {
+		t.Errorf("BotForSessionOrPrimary should find multiball bot for new-format branch key")
+	}
+}
+
+// TestBotForSessionOrPrimary_NewFormatChatKey verifies that new slash-separated
+// chat keys route to primary when no secondary holds the key.
+func TestBotForSessionOrPrimary_NewFormatChatKey(t *testing.T) {
+	mgr := NewBotManager()
+	primary, _ := testBot(nil, command.NewRegistry())
+	mgr.AddPrimary("clutch", primary)
+
+	mb := testSecondaryBot("mb1")
+	mgr.AddMultiball("clutch", mb)
+
+	bot := mgr.BotForSessionOrPrimary("clutch/c12345/1709590000", "clutch")
+	if bot != primary {
+		t.Errorf("BotForSessionOrPrimary should fall back to primary for unmatched new-format key")
 	}
 }

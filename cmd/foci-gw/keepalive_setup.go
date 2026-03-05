@@ -86,7 +86,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 					return
 				}
 				if bot := p.botMgr.BotForSessionOrPrimary(sk, agentID); bot != nil {
-					if err := bot.SendInjected(resp); err != nil {
+					if err := bot.SendToSession(sk, resp); err != nil {
 						log.Errorf("keepalive", "proactive warning telegram delivery: %v", err)
 					}
 				}

@@ -182,6 +182,71 @@ func TestSessionKeyBranch(t *testing.T) {
 	}
 }
 
+// TestChatIDFromKey verifies that ChatIDFromKey extracts chat IDs from both
+// new slash-separated and legacy colon-separated session key formats,
+// including branch keys which preserve the root chat type.
+func TestChatIDFromKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want int64
+	}{
+		{
+			name: "new format chat root",
+			key:  "main/c123456/1709590000",
+			want: 123456,
+		},
+		{
+			name: "new format chat branch",
+			key:  "main/c123456/1709590000/b1709596800",
+			want: 123456,
+		},
+		{
+			name: "new format independent root",
+			key:  "main/i1709596800/1709596800",
+			want: 0,
+		},
+		{
+			name: "new format independent branch",
+			key:  "main/i1709596800/1709596800/b1709596900",
+			want: 0,
+		},
+		{
+			name: "legacy agent:name:chat:chatID",
+			key:  "agent:main:chat:789",
+			want: 789,
+		},
+		{
+			name: "legacy agent:name:chatID",
+			key:  "agent:main:456",
+			want: 456,
+		},
+		{
+			name: "empty key",
+			key:  "",
+			want: 0,
+		},
+		{
+			name: "garbage",
+			key:  "not-a-session-key",
+			want: 0,
+		},
+		{
+			name: "new format with collision",
+			key:  "main/c999/1709590000/b1709596800.2",
+			want: 999,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ChatIDFromKey(tt.key); got != tt.want {
+				t.Errorf("ChatIDFromKey(%q) = %d, want %d", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChatID(t *testing.T) {
 	tests := []struct {
 		name string
