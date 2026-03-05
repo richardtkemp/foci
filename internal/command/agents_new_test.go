@@ -19,6 +19,7 @@ func testDeps(agents []AgentInfo, secrets []string) AgentNewDeps {
 	}
 }
 
+// Verifies the full wizard flow: name → model → character mode, collecting all values correctly.
 func TestAgentWizardHappyPath(t *testing.T) {
 	deps := testDeps(
 		[]AgentInfo{{ID: "existing"}},
@@ -37,7 +38,6 @@ func TestAgentWizardHappyPath(t *testing.T) {
 		wantDone bool
 		contains string
 	}{
-		{"greek-tutor", false, "Display name"},
 		{"Greek Tutor", false, "Model"},
 		{"opus", false, "Character files"},
 		{"defaults", true, "Created!"},
@@ -57,7 +57,7 @@ func TestAgentWizardHappyPath(t *testing.T) {
 		t.Fatal("createFn not called")
 	}
 	if captured.id != "greek-tutor" {
-		t.Errorf("id = %q", captured.id)
+		t.Errorf("id = %q, want greek-tutor", captured.id)
 	}
 	if captured.display != "Greek Tutor" {
 		t.Errorf("display = %q", captured.display)
@@ -70,31 +70,41 @@ func TestAgentWizardHappyPath(t *testing.T) {
 	}
 }
 
-func TestAgentWizardInvalidID(t *testing.T) {
-	for _, bad := range []string{"", "123", "-starts-dash"} {
-		deps := testDeps(nil, nil)
-		w := newAgentWizard(deps)
-		w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
+// Verifies that empty or unparseable names are rejected.
+func TestAgentWizardInvalidName(t *testing.T) {
+	deps := testDeps(nil, nil)
+	w := newAgentWizard(deps)
+	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
-		resp, done := w.Handle(bad)
-		if done {
-			t.Errorf("invalid ID %q should not advance wizard", bad)
-		}
-		if !strings.Contains(resp, "Invalid ID") {
-			t.Errorf("invalid ID %q: response = %q", bad, resp)
-		}
-		if w.step != 0 {
-			t.Errorf("invalid ID %q: step = %d, want 0", bad, w.step)
-		}
+	// Empty name
+	resp, done := w.Handle("")
+	if done {
+		t.Error("empty name should not advance wizard")
+	}
+	if !strings.Contains(resp, "empty") {
+		t.Errorf("expected empty warning, got %q", resp)
+	}
+	if w.step != 0 {
+		t.Errorf("step = %d, want 0", w.step)
+	}
+
+	// Name that produces no valid slug (all special chars)
+	resp, done = w.Handle("!!!")
+	if done {
+		t.Error("invalid name should not advance wizard")
+	}
+	if !strings.Contains(resp, "valid ID") {
+		t.Errorf("expected slug error, got %q", resp)
 	}
 }
 
-func TestAgentWizardDuplicateID(t *testing.T) {
+// Verifies that a name matching an existing agent's ID is rejected.
+func TestAgentWizardDuplicateName(t *testing.T) {
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
-	resp, done := w.Handle("clutch")
+	resp, done := w.Handle("Clutch")
 	if done {
 		t.Error("duplicate should not advance wizard")
 	}
@@ -103,7 +113,8 @@ func TestAgentWizardDuplicateID(t *testing.T) {
 	}
 }
 
-func TestAgentWizardDefaultDisplayName(t *testing.T) {
+// Verifies that the ID is correctly slugified from the display name.
+func TestAgentWizardSlugFromName(t *testing.T) {
 	deps := testDeps(nil, nil)
 	w := newAgentWizard(deps)
 	var captured *agentWizard
@@ -112,26 +123,27 @@ func TestAgentWizardDefaultDisplayName(t *testing.T) {
 		return "ok", nil
 	}
 
-	w.Handle("greek-tutor") // ID
-	w.Handle("")            // empty display → defaults to TitleCase
-	w.Handle("sonnet")      // model
-	w.Handle("defaults")    // char mode
+	w.Handle("My Cool Agent")
+	w.Handle("sonnet")
+	w.Handle("defaults")
 
-	if captured.display != "Greek Tutor" {
-		t.Errorf("display = %q, want Greek Tutor", captured.display)
+	if captured.id != "my-cool-agent" {
+		t.Errorf("id = %q, want my-cool-agent", captured.id)
+	}
+	if captured.display != "My Cool Agent" {
+		t.Errorf("display = %q, want My Cool Agent", captured.display)
 	}
 }
 
+// Verifies the missing token secret warning appears after the model step.
 func TestAgentWizardTokenWarning(t *testing.T) {
-	// When secret does not exist, model step should show warning
 	deps := testDeps(nil, []string{"telegram.existing"})
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
-	w.Handle("newagent")      // ID
-	w.Handle("New Agent")     // display
+	w.Handle("New Agent") // name → id="new-agent"
 
-	// Model step — token secret telegram.newagent doesn't exist
+	// Model step — token secret telegram.new-agent doesn't exist
 	resp, done := w.Handle("sonnet")
 	if done {
 		t.Error("should not be done after model step")
@@ -144,14 +156,13 @@ func TestAgentWizardTokenWarning(t *testing.T) {
 	}
 }
 
+// Verifies no warning when the token secret exists.
 func TestAgentWizardExistingSecret(t *testing.T) {
-	// When secret exists, no warning
 	deps := testDeps(nil, []string{"telegram.myagent"})
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
 	w.Handle("myagent")
-	w.Handle("My Agent")
 
 	resp, done := w.Handle("sonnet")
 	if done {
@@ -162,6 +173,7 @@ func TestAgentWizardExistingSecret(t *testing.T) {
 	}
 }
 
+// Verifies model alias resolution.
 func TestAgentWizardModelResolution(t *testing.T) {
 	tests := []struct {
 		input string
@@ -183,6 +195,7 @@ func TestAgentWizardModelResolution(t *testing.T) {
 	}
 }
 
+// Verifies copying character files from an existing agent.
 func TestAgentWizardCharModeCopy(t *testing.T) {
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, []string{"telegram.newagent"})
 	w := newAgentWizard(deps)
@@ -193,7 +206,6 @@ func TestAgentWizardCharModeCopy(t *testing.T) {
 	}
 
 	w.Handle("newagent")
-	w.Handle("New Agent")
 	w.Handle("sonnet")
 
 	resp, done := w.Handle("copy clutch")
@@ -206,13 +218,13 @@ func TestAgentWizardCharModeCopy(t *testing.T) {
 	_ = resp
 }
 
+// Verifies that copying from a nonexistent agent is rejected.
 func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, []string{"telegram.newagent"})
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
 	w.Handle("newagent")
-	w.Handle("New Agent")
 	w.Handle("sonnet")
 
 	resp, done := w.Handle("copy nonexistent")
@@ -224,6 +236,7 @@ func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
 	}
 }
 
+// Verifies the openclaw character mode.
 func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 	deps := testDeps(nil, []string{"telegram.oc-agent"})
 	w := newAgentWizard(deps)
@@ -233,7 +246,6 @@ func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 		return "ok", nil
 	}
 
-	w.Handle("oc-agent")
 	w.Handle("OC Agent")
 	w.Handle("sonnet")
 	w.Handle("openclaw")
@@ -242,6 +254,7 @@ func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 	}
 }
 
+// Verifies blank, defaults (empty input), and invalid character modes.
 func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	deps := testDeps(nil, []string{"telegram.agent1", "telegram.agent2", "telegram.agent3"})
 
@@ -253,7 +266,6 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 		return "ok", nil
 	}
 	w.Handle("agent1")
-	w.Handle("Agent")
 	w.Handle("")
 	w.Handle("blank")
 	if mode != "blank" {
@@ -267,7 +279,6 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 		return "ok", nil
 	}
 	w2.Handle("agent2")
-	w2.Handle("Agent")
 	w2.Handle("")
 	w2.Handle("")
 	if mode != "defaults" {
@@ -278,7 +289,6 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	w3 := newAgentWizard(deps)
 	w3.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 	w3.Handle("agent3")
-	w3.Handle("Agent")
 	w3.Handle("")
 	resp, done := w3.Handle("invalid")
 	if done {
@@ -289,6 +299,7 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	}
 }
 
+// Verifies the full agent creation including workspace, config, and character files.
 func TestCreateWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -381,6 +392,7 @@ func TestCreateWorkspace(t *testing.T) {
 	}
 }
 
+// Verifies blank character mode creates empty template files.
 func TestCreateWorkspaceBlank(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -426,6 +438,7 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 	}
 }
 
+// Verifies the wizard registry routes messages correctly and cleans up when done.
 func TestRegistryHandleMessage(t *testing.T) {
 	reg := NewRegistry()
 
@@ -467,6 +480,7 @@ func TestRegistryHandleMessage(t *testing.T) {
 	}
 }
 
+// Verifies /cancel clears the active wizard.
 func TestRegistryHandleMessageCancel(t *testing.T) {
 	reg := NewRegistry()
 	w := &testWizard{responses: []string{"should not see"}, doneAt: 99}
@@ -486,6 +500,7 @@ func TestRegistryHandleMessageCancel(t *testing.T) {
 	}
 }
 
+// Verifies /stop also clears the active wizard.
 func TestRegistryHandleMessageStop(t *testing.T) {
 	reg := NewRegistry()
 	w := &testWizard{responses: []string{"should not see"}, doneAt: 99}
@@ -500,6 +515,7 @@ func TestRegistryHandleMessageStop(t *testing.T) {
 	}
 }
 
+// Verifies the /agents new subcommand starts the wizard with the correct prompt.
 func TestAgentsNewSubcommand(t *testing.T) {
 	reg := NewRegistry()
 	deps := &AgentNewDeps{
@@ -518,8 +534,8 @@ func TestAgentsNewSubcommand(t *testing.T) {
 	if !strings.Contains(result, "Wizard") {
 		t.Errorf("expected wizard prompt, got %q", result)
 	}
-	if !strings.Contains(result, "Agent ID") {
-		t.Errorf("expected Agent ID prompt, got %q", result)
+	if !strings.Contains(result, "Agent name") {
+		t.Errorf("expected Agent name prompt, got %q", result)
 	}
 
 	_, ok := reg.HandleMessage("test-input")
@@ -528,6 +544,7 @@ func TestAgentsNewSubcommand(t *testing.T) {
 	}
 }
 
+// Verifies wizard is unavailable when deps are nil.
 func TestAgentsNewDisabled(t *testing.T) {
 	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, nil, nil)
 

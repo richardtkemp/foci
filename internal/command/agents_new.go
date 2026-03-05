@@ -43,43 +43,37 @@ func (w *agentWizard) Handle(text string) (response string, done bool) {
 	text = strings.TrimSpace(text)
 
 	switch w.step {
-	case 0: // Agent ID
-		return w.handleID(text)
-	case 1: // Display name
-		return w.handleDisplay(text)
-	case 2: // Model
+	case 0: // Name
+		return w.handleName(text)
+	case 1: // Model
 		return w.handleModel(text)
-	case 3: // Character mode
+	case 2: // Character mode
 		return w.handleCharMode(text)
 	default:
 		return "Unexpected state.", true
 	}
 }
 
-func (w *agentWizard) handleID(text string) (string, bool) {
-	text = strings.ToLower(text)
-	if !provision.IsValidAgentID(text) {
-		return "Invalid ID — must match `[a-z][a-z0-9-]*` (e.g. `greek-tutor`). Try again:", false
+func (w *agentWizard) handleName(text string) (string, bool) {
+	if text == "" {
+		return "Name cannot be empty. Try again:", false
+	}
+
+	id := provision.ToSlug(text)
+	if !provision.IsValidAgentID(id) {
+		return fmt.Sprintf("Could not form a valid ID from %q (got %q) — try a simpler name:", text, id), false
 	}
 
 	// Check uniqueness
 	for _, a := range w.deps.ListFn() {
-		if a.ID == text {
-			return fmt.Sprintf("Agent `%s` already exists. Choose a different ID:", text), false
+		if a.ID == id {
+			return fmt.Sprintf("Agent `%s` already exists. Choose a different name:", id), false
 		}
 	}
 
-	w.id = text
-	w.step = 1
-	return fmt.Sprintf("Display name (default: `%s`):", provision.TitleCase(text)), false
-}
-
-func (w *agentWizard) handleDisplay(text string) (string, bool) {
-	if text == "" {
-		text = provision.TitleCase(w.id)
-	}
 	w.display = text
-	w.step = 2
+	w.id = id
+	w.step = 1
 	return "Model — `opus`, `sonnet`, `haiku`, or full model ID (default: `sonnet`):", false
 }
 
@@ -106,7 +100,7 @@ func (w *agentWizard) handleModel(text string) (string, bool) {
 		warning = fmt.Sprintf("\n⚠️  Secret `%s` not found — you'll need to add it with `/secrets set %s <token>` before starting.", tokenSecret, tokenSecret)
 	}
 
-	w.step = 3
+	w.step = 2
 	return fmt.Sprintf("Character files — `defaults` (recommended), `openclaw`, `copy <agent-id>`, or `blank` (default: `defaults`):%s", warning), false
 }
 
