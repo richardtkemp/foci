@@ -1,8 +1,9 @@
-package table
+package display
 
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDisplayWidth(t *testing.T) {
@@ -73,53 +74,26 @@ func TestFormat(t *testing.T) {
 		t.Fatalf("expected 5 lines, got %d:\n%s", len(lines), got)
 	}
 
-	// Header should have "Name" left-aligned and "Score" right-aligned.
-	if !strings.HasPrefix(lines[0], "Name   ") {
-		t.Errorf("header should start with left-aligned Name, got: %q", lines[0])
+	// Header row should be pipe-delimited
+	if !strings.HasPrefix(lines[0], "| Name") {
+		t.Errorf("header should start with '| Name', got: %q", lines[0])
 	}
-	if !strings.Contains(lines[0], "Score") {
-		t.Errorf("header should contain Score, got: %q", lines[0])
-	}
-
-	// Separator should be all ─.
-	for _, r := range lines[1] {
-		if r != '─' {
-			t.Errorf("separator should be all ─, got rune %c in: %q", r, lines[1])
-			break
-		}
+	if !strings.HasSuffix(lines[0], " |") {
+		t.Errorf("header should end with ' |', got: %q", lines[0])
 	}
 
-	// Score column should be right-aligned (100 not padded, 95 padded left).
-	// Alice's row should have " 95" (padded).
-	if !strings.Contains(lines[2], " 95") {
-		t.Errorf("expected right-aligned 95, got: %q", lines[2])
+	// Separator should have pipes and dashes
+	if !strings.Contains(lines[1], "---") {
+		t.Errorf("separator should contain '---', got: %q", lines[1])
 	}
-}
-
-func TestFormatUnicode(t *testing.T) {
-	cols := []Column{
-		{Header: "Name"},
-		{Header: "Value"},
-	}
-	rows := [][]string{
-		{"日本語", "abc"},
-		{"hello", "世界"},
+	// Right-aligned column should have ---:
+	if !strings.Contains(lines[1], "---:") {
+		t.Errorf("separator should contain '---:' for right-aligned column, got: %q", lines[1])
 	}
 
-	got := Format(cols, rows)
-	lines := strings.Split(got, "\n")
-
-	// All lines (except separator) should have the same display width.
-	headerW := DisplayWidth(lines[0])
-	for i, line := range lines {
-		if i == 1 { // separator
-			continue
-		}
-		w := DisplayWidth(line)
-		if w != headerW {
-			t.Errorf("line %d display width %d != header width %d\nline: %q\nfull:\n%s",
-				i, w, headerW, line, got)
-		}
+	// Data rows should be pipe-delimited
+	if !strings.Contains(lines[2], "| Alice |") {
+		t.Errorf("data row should contain '| Alice |', got: %q", lines[2])
 	}
 }
 
@@ -153,8 +127,8 @@ func TestFormatSingleColumn(t *testing.T) {
 	if len(lines) != 4 { // header + sep + 2 rows
 		t.Fatalf("expected 4 lines, got %d:\n%s", len(lines), got)
 	}
-	if !strings.Contains(lines[0], "Item") {
-		t.Errorf("header missing 'Item': %q", lines[0])
+	if !strings.Contains(lines[0], "| Item |") {
+		t.Errorf("header missing '| Item |': %q", lines[0])
 	}
 }
 
@@ -168,43 +142,9 @@ func TestFormatMismatchedRowLengths(t *testing.T) {
 	if len(lines) != 3 { // header + sep + 1 row
 		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
 	}
-
-	// Row longer than columns — extra cells should be ignored
-	rows = [][]string{{"a", "b", "c", "d", "e"}}
-	got = Format(cols, rows)
-	lines = strings.Split(got, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), got)
-	}
-	// Extra cells should not appear
-	if strings.Contains(lines[2], "d") || strings.Contains(lines[2], "e") {
-		t.Errorf("extra cells should be ignored: %q", lines[2])
-	}
-}
-
-func TestFormatRightAlignUnicode(t *testing.T) {
-	cols := []Column{
-		{Header: "Name"},
-		{Header: "Count", Align: AlignRight},
-	}
-	rows := [][]string{
-		{"日本", "42"},
-		{"ab", "7"},
-	}
-
-	got := Format(cols, rows)
-	lines := strings.Split(got, "\n")
-
-	// All content lines (not separator) should have the same display width
-	headerW := DisplayWidth(lines[0])
-	for i, line := range lines {
-		if i == 1 {
-			continue
-		}
-		w := DisplayWidth(line)
-		if w != headerW {
-			t.Errorf("line %d display width %d != header width %d\nline: %q", i, w, headerW, line)
-		}
+	// Should have 3 pipe-delimited cells
+	if strings.Count(lines[2], "|") != 4 { // leading + 3 separators
+		t.Errorf("row should have 4 pipes, got: %q", lines[2])
 	}
 }
 
@@ -299,94 +239,6 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-func TestFormatWidth(t *testing.T) {
-	cols := []Column{
-		{Header: "Name"},
-		{Header: "Description"},
-	}
-	rows := [][]string{
-		{"exec", "Execute shell commands in a sandbox"},
-		{"read", "Read file contents"},
-	}
-
-	// With plenty of width, should match Format
-	wide := FormatWidth(cols, rows, 200)
-	normal := Format(cols, rows)
-	if wide != normal {
-		t.Errorf("FormatWidth with large maxWidth should match Format:\ngot:\n%s\nwant:\n%s", wide, normal)
-	}
-
-	// With narrow width, lines should not exceed maxWidth
-	narrow := FormatWidth(cols, rows, 30)
-	for _, line := range strings.Split(narrow, "\n") {
-		w := DisplayWidth(line)
-		if w > 30 {
-			t.Errorf("line exceeds maxWidth 30 (width %d): %q", w, line)
-		}
-	}
-
-	// Zero maxWidth delegates to Format
-	zero := FormatWidth(cols, rows, 0)
-	if zero != normal {
-		t.Error("FormatWidth with 0 should delegate to Format")
-	}
-
-	// Separator must not overflow even when columns can't shrink further.
-	tiny := FormatWidth(cols, rows, 12)
-	for _, line := range strings.Split(tiny, "\n") {
-		w := DisplayWidth(line)
-		if w > 12 {
-			t.Errorf("line exceeds maxWidth 12 (width %d): %q", w, line)
-		}
-	}
-}
-
-func TestFormatEmojiColumnAlignment(t *testing.T) {
-	// Regression: ✏️ (U+270F + U+FE0F) was measured wider than ✅ (U+2705)
-	// because variation selector U+FE0F wasn't treated as zero-width.
-	cols := []Column{
-		{Header: ""},
-		{Header: "Prompt"},
-		{Header: "Location"},
-	}
-	rows := [][]string{
-		{"✏\uFE0F", "keepalive", "clutch/prompts/"},
-		{"✅", "branch_orient", "shared/prompts/"},
-	}
-
-	got := Format(cols, rows)
-	lines := strings.Split(got, "\n")
-
-	headerW := DisplayWidth(lines[0])
-	for i, line := range lines {
-		if i == 1 { // separator
-			continue
-		}
-		w := DisplayWidth(line)
-		if w != headerW {
-			t.Errorf("line %d display width %d != header width %d\nline: %q\nfull:\n%s",
-				i, w, headerW, line, got)
-		}
-	}
-}
-
-func TestDisplayWidthMultipleTabs(t *testing.T) {
-	tests := []struct {
-		in   string
-		want int
-	}{
-		{"\t\t", 8},        // 0→4, 4→8
-		{"ab\t", 4},        // ab(2) + tab to 4 = 4
-		{"abcd\t", 8},      // abcd(4) + tab to 8 = 8
-		{"abc\tdef\t", 8},  // abc(3)+tab→4(+1)+def(3)=7+tab→8(+1)=8
-	}
-	for _, tt := range tests {
-		if got := DisplayWidth(tt.in); got != tt.want {
-			t.Errorf("DisplayWidth(%q) = %d, want %d", tt.in, got, tt.want)
-		}
-	}
-}
-
 // TestTruncateEdgeCases tests additional Truncate edge cases
 func TestTruncateEdgeCases(t *testing.T) {
 	tests := []struct {
@@ -411,6 +263,23 @@ func TestTruncateEdgeCases(t *testing.T) {
 				t.Errorf("Truncate(%q, %d) = %q, want %q", tt.in, tt.maxWidth, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDisplayWidthMultipleTabs(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"\t\t", 8},        // 0→4, 4→8
+		{"ab\t", 4},        // ab(2) + tab to 4 = 4
+		{"abcd\t", 8},      // abcd(4) + tab to 8 = 8
+		{"abc\tdef\t", 8},  // abc(3)+tab→4(+1)+def(3)=7+tab→8(+1)=8
+	}
+	for _, tt := range tests {
+		if got := DisplayWidth(tt.in); got != tt.want {
+			t.Errorf("DisplayWidth(%q) = %d, want %d", tt.in, got, tt.want)
+		}
 	}
 }
 
@@ -510,29 +379,87 @@ func TestWrapText(t *testing.T) {
 	}
 }
 
-// TestFormatWidthEdgeCases tests additional FormatWidth edge cases
-func TestFormatWidthEdgeCases(t *testing.T) {
-	cols := []Column{
-		{Header: "A"},
-		{Header: "B"},
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{38 * time.Second, "38s"},
+		{90 * time.Second, "1m30s"},
+		{3*time.Hour + 12*time.Minute, "3h12m"},
+		{49*time.Hour + 30*time.Minute, "2d1h"},
+		{-5 * time.Second, "5s"}, // negative duration
 	}
-	rows := [][]string{
-		{"x", "y"},
-		{"p", "q"},
-	}
-
-	// Very small maxWidth should still produce valid output
-	result := FormatWidth(cols, rows, 5)
-	lines := strings.Split(result, "\n")
-	if len(lines) == 0 {
-		t.Error("FormatWidth should produce output even with tiny maxWidth")
-	}
-
-	// Each line should not exceed maxWidth (may be less due to min column sizes)
-	for _, line := range lines {
-		w := DisplayWidth(line)
-		if w > 5+2 { // Allow small margin for formatting
-			t.Errorf("line width %d exceeds maxWidth 5: %q", w, line)
+	for _, tt := range tests {
+		got := FormatDuration(tt.d)
+		if got != tt.want {
+			t.Errorf("FormatDuration(%v) = %q, want %q", tt.d, got, tt.want)
 		}
+	}
+}
+
+func TestFormatCommas(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1000, "1,000"},
+		{32793, "32,793"},
+		{200000, "200,000"},
+		{1234567, "1,234,567"},
+	}
+	for _, tt := range tests {
+		got := FormatCommas(tt.n)
+		if got != tt.want {
+			t.Errorf("FormatCommas(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1.0 MB"},
+		{1073741824, "1.0 GB"},
+	}
+	for _, tt := range tests {
+		got := FormatBytes(tt.n)
+		if got != tt.want {
+			t.Errorf("FormatBytes(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestRelativeTime(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"just now", now.Add(-10 * time.Second), "just now"},
+		{"1m ago", now.Add(-90 * time.Second), "1m ago"},
+		{"5m ago", now.Add(-5 * time.Minute), "5m ago"},
+		{"1h ago", now.Add(-90 * time.Minute), "1h ago"},
+		{"3h ago", now.Add(-3 * time.Hour), "3h ago"},
+		{"1d ago", now.Add(-36 * time.Hour), "1d ago"},
+		{"3d ago", now.Add(-72 * time.Hour), "3d ago"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := RelativeTime(tt.t)
+			if got != tt.want {
+				t.Errorf("RelativeTime() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

@@ -129,14 +129,10 @@ func TestCacheCommand(t *testing.T) {
 	if !strings.Contains(result, "avg") && !strings.Contains(result, "% hit") {
 		t.Errorf("missing avg hit rate in:\n%s", result)
 	}
-	// Code block table format
-	if !strings.Contains(result, "```") {
-		t.Errorf("expected code block in:\n%s", result)
-	}
 	if !strings.Contains(result, "Time") || !strings.Contains(result, "CacheRead") || !strings.Contains(result, "Hit%") {
 		t.Errorf("missing table headers in:\n%s", result)
 	}
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("missing separator line in:\n%s", result)
 	}
 
@@ -233,21 +229,16 @@ func TestCostCommandToday(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Total line (header before code block)
 	if !strings.Contains(result, "$0.08") {
 		t.Errorf("expected today's total in:\n%s", result)
 	}
 	if !strings.Contains(result, "2 calls") {
 		t.Errorf("expected 2 calls in:\n%s", result)
 	}
-	// Code block table format
-	if !strings.Contains(result, "```") {
-		t.Errorf("expected code block in:\n%s", result)
-	}
 	if !strings.Contains(result, "Session") || !strings.Contains(result, "Cost") || !strings.Contains(result, "Calls") {
 		t.Errorf("missing table headers in:\n%s", result)
 	}
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("missing separator line in:\n%s", result)
 	}
 	// Per-session breakdown
@@ -365,17 +356,13 @@ func TestCostCommand24h(t *testing.T) {
 	if !strings.Contains(result, "$0.14") {
 		t.Errorf("expected total $0.14 in:\n%s", result)
 	}
-	// Code block table format
-	if !strings.Contains(result, "```") {
-		t.Errorf("expected code block in:\n%s", result)
-	}
 	// Category table headers and rows
 	for _, label := range []string{"Category", "Cache reads", "Cache writes", "Input", "Output", "Total"} {
 		if !strings.Contains(result, label) {
 			t.Errorf("missing %q in:\n%s", label, result)
 		}
 	}
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("missing separator line in:\n%s", result)
 	}
 }
@@ -409,17 +396,13 @@ func TestCostCommandWeek(t *testing.T) {
 	if !strings.Contains(result, "$1.00") {
 		t.Errorf("expected total $1.00 in:\n%s", result)
 	}
-	// Code block table format
-	if !strings.Contains(result, "```") {
-		t.Errorf("expected code block in:\n%s", result)
-	}
 	// Table headers and summary rows
 	for _, want := range []string{"Date", "Cost", "Total", "Mean/day"} {
 		if !strings.Contains(result, want) {
 			t.Errorf("missing %q in:\n%s", want, result)
 		}
 	}
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("missing separator line in:\n%s", result)
 	}
 	// Today's date should appear
@@ -674,15 +657,11 @@ func TestToolsCommand(t *testing.T) {
 	})
 
 	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
-		t.Errorf("result not wrapped in code block:\n%s", result)
+	if !strings.Contains(result, "| Name |") {
+		t.Errorf("missing pipe table header:\n%s", result)
 	}
 	if !strings.Contains(result, "shell") || !strings.Contains(result, "read") {
 		t.Errorf("missing tools in:\n%s", result)
-	}
-	// Check alignment (both names should have same column width)
-	if !strings.Contains(result, "shell  Run commands") {
-		t.Errorf("expected aligned columns:\n%s", result)
 	}
 }
 
@@ -760,7 +739,6 @@ func TestPromptsCommand(t *testing.T) {
 	}
 
 	checks := []string{
-		"```",
 		"agent: clutch",
 		"compaction_summary",
 		"✏️",  // custom file
@@ -777,7 +755,7 @@ func TestPromptsCommand(t *testing.T) {
 		"disabled",
 		"braindead_warning",
 		"[default inline: 5 chars]",
-		"─",  // table separator
+		"---",  // table separator
 		"Unrecognised prompt files",
 		"daily-review.md",
 	}
@@ -794,10 +772,6 @@ func TestPromptsCommand(t *testing.T) {
 		if len(parts) == 2 && strings.Contains(parts[1], "compaction.md") {
 			t.Errorf("known filename compaction.md should not appear in unrecognised section:\n%s", result)
 		}
-	}
-	// Should have 2 separate code blocks (configured prompts + unrecognised files)
-	if strings.Count(result, "```") != 4 { // 2 opening + 2 closing
-		t.Errorf("expected 2 code blocks (4 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
 	}
 }
 
@@ -824,16 +798,12 @@ func TestPromptsCommandEmpty(t *testing.T) {
 	if !strings.Contains(result, "✅") {
 		t.Errorf("expected ✅ emoji in:\n%s", result)
 	}
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("expected table separator in:\n%s", result)
 	}
 	// No unrecognised files section when no files
 	if strings.Contains(result, "Unrecognised") {
 		t.Errorf("should not show unrecognised section when no files:\n%s", result)
-	}
-	// Only 1 code block (configured prompts, no files section)
-	if strings.Count(result, "```") != 2 {
-		t.Errorf("expected 1 code block (2 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
 	}
 }
 
@@ -1248,25 +1218,6 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
-func TestFormatCommas(t *testing.T) {
-	tests := []struct {
-		n    int
-		want string
-	}{
-		{0, "0"},
-		{999, "999"},
-		{1000, "1,000"},
-		{32793, "32,793"},
-		{200000, "200,000"},
-		{1234567, "1,234,567"},
-	}
-	for _, tt := range tests {
-		got := formatCommas(tt.n)
-		if got != tt.want {
-			t.Errorf("formatCommas(%d) = %q, want %q", tt.n, got, tt.want)
-		}
-	}
-}
 
 func TestScriptCommand(t *testing.T) {
 	cmd := NewScriptCommand("test", "test cmd", "echo hello from script", 10)
@@ -1363,22 +1314,6 @@ func TestHelpCommand(t *testing.T) {
 	}
 }
 
-func TestFormatDuration(t *testing.T) {
-	tests := []struct {
-		d    time.Duration
-		want string
-	}{
-		{5 * time.Second, "5s"},
-		{90 * time.Second, "1m30s"},
-		{2*time.Hour + 15*time.Minute, "2h15m0s"},
-	}
-	for _, tt := range tests {
-		got := formatDuration(tt.d)
-		if got != tt.want {
-			t.Errorf("formatDuration(%v) = %q, want %q", tt.d, got, tt.want)
-		}
-	}
-}
 
 func TestMultiballCommand(t *testing.T) {
 	forked := false
@@ -1426,17 +1361,13 @@ func TestAgentsCommand(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Code block table format
 	if !strings.Contains(result, "Agents") {
 		t.Errorf("missing header in:\n%s", result)
-	}
-	if !strings.Contains(result, "```") {
-		t.Errorf("expected code block in:\n%s", result)
 	}
 	if !strings.Contains(result, "ID") || !strings.Contains(result, "Session") || !strings.Contains(result, "Messages") {
 		t.Errorf("missing table headers in:\n%s", result)
 	}
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("missing separator line in:\n%s", result)
 	}
 	if !strings.Contains(result, "agent:main:main") {
@@ -1924,16 +1855,12 @@ func TestSecretsListTable(t *testing.T) {
 	if !strings.Contains(result, "Secrets (5 keys)") {
 		t.Errorf("missing header in:\n%s", result)
 	}
-	// Code block
-	if !strings.Contains(result, "```") {
-		t.Errorf("expected code block in:\n%s", result)
-	}
 	// Table headers
 	if !strings.Contains(result, "Section") || !strings.Contains(result, "Key") || !strings.Contains(result, "Allowed Hosts") {
 		t.Errorf("missing table headers in:\n%s", result)
 	}
 	// Separator
-	if !strings.Contains(result, "─") {
+	if !strings.Contains(result, "---") {
 		t.Errorf("missing separator in:\n%s", result)
 	}
 	// Section grouping — "telegram" should appear once, not three times

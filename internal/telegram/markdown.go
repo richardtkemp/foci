@@ -1,7 +1,7 @@
 package telegram
 
 import (
-	"foci/internal/table"
+	"foci/internal/display"
 	"fmt"
 	"regexp"
 	"strings"
@@ -196,7 +196,7 @@ func parseCells(line string) []string {
 	return cells
 }
 
-// formatTable normalizes column widths across all rows and rebuilds the table.
+// formatTable normalizes column widths across all rows and rebuilds the display.
 // When opts.MaxWidth > 0, columns are shrunk to fit and cells are wrapped
 // (opts.WrapLines > 0) or truncated (opts.WrapLines == 0).
 func formatTable(lines []string, sepRe *regexp.Regexp, opts TableOpts) string {
@@ -225,7 +225,7 @@ func formatTable(lines []string, sepRe *regexp.Regexp, opts TableOpts) string {
 		}
 		for j, cell := range r.cells {
 			if j < maxCols {
-				w := table.DisplayWidth(cell)
+				w := display.DisplayWidth(cell)
 				if w > colWidths[j] {
 					colWidths[j] = w
 				}
@@ -287,12 +287,12 @@ func formatTable(lines []string, sepRe *regexp.Regexp, opts TableOpts) string {
 				cell = r.cells[j]
 			}
 			w := colWidths[j]
-			if table.DisplayWidth(cell) <= w {
+			if display.DisplayWidth(cell) <= w {
 				cellLines[j] = []string{cell}
 			} else if opts.WrapLines > 0 {
-				cellLines[j] = table.WrapText(cell, w, opts.WrapLines)
+				cellLines[j] = display.WrapText(cell, w, opts.WrapLines)
 			} else {
-				cellLines[j] = []string{table.Truncate(cell, w)}
+				cellLines[j] = []string{display.Truncate(cell, w)}
 			}
 			if len(cellLines[j]) > maxLines {
 				maxLines = len(cellLines[j])
@@ -307,7 +307,7 @@ func formatTable(lines []string, sepRe *regexp.Regexp, opts TableOpts) string {
 				if line < len(cellLines[j]) {
 					cell = cellLines[j][line]
 				}
-				parts = append(parts, table.PadRight(cell, colWidths[j]))
+				parts = append(parts, display.PadRight(cell, colWidths[j]))
 			}
 			out = append(out, "| "+strings.Join(parts, " | ")+" |")
 		}

@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"foci/internal/table"
+	"foci/internal/display"
 )
 func NewResetCommand(resetFn func() error) *Command {
 	return &Command{
@@ -49,7 +49,7 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 			if len(tools) == 0 {
 				return "No tools registered.", nil
 			}
-			cols := []table.Column{
+			cols := []display.Column{
 				{Header: "Name"},
 				{Header: "Description"},
 			}
@@ -57,7 +57,7 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 			for i, t := range tools {
 				tableRows[i] = []string{t.Name, t.Description}
 			}
-			return "```\n" + table.FormatWidth(cols, tableRows, displayWidth(ctx)) + "\n```", nil
+			return display.Format(cols, tableRows), nil
 		},
 	}
 }
@@ -166,14 +166,13 @@ func relPath(path string) string {
 }
 
 // promptsDisplay renders the /prompts output (no subcommand).
-func promptsDisplay(ctx context.Context, data PromptsData) string {
+func promptsDisplay(_ context.Context, data PromptsData) string {
 	var sb strings.Builder
-	width := displayWidth(ctx)
 
 	// Part 1 — Configured prompts table
 	fmt.Fprintf(&sb, "Prompts (agent: %s)\n\n", data.AgentID)
 
-	cols := []table.Column{
+	cols := []display.Column{
 		{Header: ""},
 		{Header: "Prompt"},
 		{Header: "Location"},
@@ -217,9 +216,7 @@ func promptsDisplay(ctx context.Context, data PromptsData) string {
 		rows = append(rows, []string{emoji, p.Label, location})
 	}
 
-	sb.WriteString("```\n")
-	sb.WriteString(table.FormatWidth(cols, rows, width))
-	sb.WriteString("\n```")
+	sb.WriteString(display.Format(cols, rows))
 
 	// Part 2 — Unrecognised files
 	var unrecognised []PromptFile
@@ -229,8 +226,8 @@ func promptsDisplay(ctx context.Context, data PromptsData) string {
 		}
 	}
 	if len(unrecognised) > 0 {
-		sb.WriteString("\n\nUnrecognised prompt files\n\n```\n")
-		fileCols := []table.Column{
+		sb.WriteString("\n\nUnrecognised prompt files\n\n")
+		fileCols := []display.Column{
 			{Header: "Dir"},
 			{Header: "File"},
 		}
@@ -238,8 +235,7 @@ func promptsDisplay(ctx context.Context, data PromptsData) string {
 		for _, f := range unrecognised {
 			fileRows = append(fileRows, []string{relPath(f.Dir) + "/", f.Name})
 		}
-		sb.WriteString(table.FormatWidth(fileCols, fileRows, width))
-		sb.WriteString("\n```")
+		sb.WriteString(display.Format(fileCols, fileRows))
 	}
 
 	return sb.String()
@@ -688,7 +684,7 @@ func NewSecretsCommand(store SecretsStore) *Command {
 					}
 				}
 
-				cols := []table.Column{
+				cols := []display.Column{
 					{Header: "Section"},
 					{Header: "Key"},
 					{Header: "Allowed Hosts"},
@@ -705,8 +701,8 @@ func NewSecretsCommand(store SecretsStore) *Command {
 						tableRows = append(tableRows, []string{sec, k, hosts})
 					}
 				}
-				return fmt.Sprintf("Secrets (%d keys)\n\n```\n%s\n```",
-					len(names), table.FormatWidth(cols, tableRows, displayWidth(ctx))), nil
+				return fmt.Sprintf("Secrets (%d keys)\n\n%s",
+					len(names), display.Format(cols, tableRows)), nil
 
 			case "hosts":
 				return secretsHostsSubcmd(store, parts[1:])

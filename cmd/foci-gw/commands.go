@@ -287,7 +287,7 @@ func runReset(p cmdRegParams) error {
 
 
 // runConfig handles the /config command.
-func runConfig(p cmdRegParams, ctx context.Context, args string) (string, error) {
+func runConfig(p cmdRegParams, _ context.Context, args string) (string, error) {
 	switch strings.TrimSpace(strings.ToLower(args)) {
 	case "toml":
 		return config.FormatConfigTOML(p.cfg, p.acfg), nil

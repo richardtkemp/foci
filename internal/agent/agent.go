@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"foci/internal/anthropic"
+	"foci/internal/display"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -505,7 +506,7 @@ func parseMetaTime(text string) (time.Time, bool) {
 func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm *sessionMeta) string {
 	gap := "none"
 	if !sm.lastMessageTime.IsZero() {
-		gap = formatGap(now.Sub(sm.lastMessageTime))
+		gap = display.FormatDuration(now.Sub(sm.lastMessageTime))
 	}
 
 	voiceFlag := ""
@@ -534,24 +535,6 @@ func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm
 		manaFlag)
 }
 
-// formatGap formats a duration as human-readable (e.g., "3h12m", "2d4h", "38s").
-func formatGap(d time.Duration) string {
-	if d < 0 {
-		d = -d
-	}
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
-	}
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	return fmt.Sprintf("%dd%dh", days, hours)
-}
 
 // LastUserMessageTime returns the last user message time for the session.
 // Used by keepalive proactive warning dispatch to determine user activity.
