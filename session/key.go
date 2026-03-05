@@ -194,10 +194,15 @@ func (k SessionKey) ChatID() int64 {
 	return id
 }
 
-// ChatSessionKey constructs a chat session key string for the given agent and chat ID.
-// Uses current timestamp as version. Call this when creating a NEW chat session.
-func ChatSessionKey(agentID string, chatID int64) string {
+// NewChatSessionKey creates a NEW chat session key with the current timestamp.
+// Each call generates a unique key — cache the result if you need stable keys across calls.
+func NewChatSessionKey(agentID string, chatID int64) string {
 	return NewChatSession(agentID, chatID).String()
+}
+
+// Deprecated: use NewChatSessionKey instead. Kept for backward compatibility.
+func ChatSessionKey(agentID string, chatID int64) string {
+	return NewChatSessionKey(agentID, chatID)
 }
 
 // IndependentSessionKey constructs an independent session key string.

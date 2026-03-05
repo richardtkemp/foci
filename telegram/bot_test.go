@@ -137,12 +137,13 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 		allowed[u] = true
 	}
 	b := &Bot{
-		client:       mock,
-		commands:     cmds,
-		lastMsgStore: command.NewLastMessageStore(),
-		allowedUsers: allowed,
-		sessionKey:   "agent:test:main",
-		queue:        make(chan queuedMessage, 64),
+		client:          mock,
+		commands:        cmds,
+		lastMsgStore:    command.NewLastMessageStore(),
+		allowedUsers:    allowed,
+		sessionKey:      "agent:test:main",
+		queue:           make(chan queuedMessage, 64),
+		chatSessionKeys: make(map[int64]string),
 	}
 	return b, mock
 }
