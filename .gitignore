@@ -1,5 +1,4 @@
 /bin
-/migrate-sessions
 foci.toml
 sessions/
 tasks/
