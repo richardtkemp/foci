@@ -72,6 +72,12 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 	case cfg.Defaults.DisplayWidth != nil:
 		bot.SetDisplayWidth(*cfg.Defaults.DisplayWidth)
 	}
+	switch {
+	case acfg.TableWrapLines != nil:
+		bot.SetTableWrapLines(*acfg.TableWrapLines)
+	case cfg.Defaults.TableWrapLines != nil:
+		bot.SetTableWrapLines(*cfg.Defaults.TableWrapLines)
+	}
 	if acfg.MessagesInLog != nil {
 		bot.SetMessagesInLog(*acfg.MessagesInLog)
 	} else {

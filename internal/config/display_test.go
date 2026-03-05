@@ -226,6 +226,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ShowThinking = &showCompact
 	displayWidth := 44
 	agent.DisplayWidth = &displayWidth
+	tableWrapLines := 5
+	agent.TableWrapLines = &tableWrapLines
 	agent.ReceivedFilesDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"

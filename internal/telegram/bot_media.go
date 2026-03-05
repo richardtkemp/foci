@@ -102,7 +102,7 @@ func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 	if b.injectedMessageHeader != "" {
 		text = b.injectedMessageHeader + "\n" + text
 	}
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text), "", "")
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
 	return nil
 }
 

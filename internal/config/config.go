@@ -127,6 +127,7 @@ type AgentConfig struct {
 	ShowToolCalls           *ToolCallDisplay  `toml:"show_tool_calls"`           // show tool call messages in Telegram (nil = use global telegram.show_tool_calls)
 	ShowThinking            *ShowThinking     `toml:"show_thinking"`             // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
 	DisplayWidth            *int              `toml:"display_width"`             // display width for dividers in Telegram (nil = use global telegram.display_width)
+	TableWrapLines          *int              `toml:"table_wrap_lines"`          // max wrapped lines per table cell (nil = use global, 0 = truncate, default 5)
 	MessagesInLog           *bool             `toml:"messages_in_log"`           // log user message content to event log (nil = use global logging.messages_in_log)
 	ReceivedFilesDir        string            `toml:"received_files_dir"`        // save received files to this directory (empty = disabled)
 	AllowedUsers            []string          `toml:"allowed_users"`             // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
@@ -397,6 +398,7 @@ type DefaultsConfig struct {
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`       // default show_tool_calls (default: "off")
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`         // default show_thinking (default: "off")
 	DisplayWidth        *int             `toml:"display_width"`         // default display_width (default: 44)
+	TableWrapLines      *int             `toml:"table_wrap_lines"`      // default table_wrap_lines (default: 5)
 	SystemFiles         []string         `toml:"system_files"`          // default system file list
 	CompactionEffort    string           `toml:"compaction_effort"`     // default compaction effort (empty = use session effort)
 	MaxResultChars      int              `toml:"max_result_chars"`      // default max_result_chars (default 15000)
@@ -968,6 +970,10 @@ func Load(path string) (*Config, error) {
 	if cfg.Defaults.DisplayWidth == nil {
 		v := 44
 		cfg.Defaults.DisplayWidth = &v
+	}
+	if cfg.Defaults.TableWrapLines == nil {
+		v := 5
+		cfg.Defaults.TableWrapLines = &v
 	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 

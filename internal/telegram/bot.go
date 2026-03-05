@@ -92,6 +92,7 @@ type Bot struct {
 	showToolCalls        string       // tool call display mode: "off", "preview", "full"
 	showThinking         string       // thinking display mode: "off", "compact", "true"
 	displayWidth         int          // character width for dividers (default 44)
+	tableWrapLines       int          // max wrapped lines per table cell (default 5)
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	receivedFilesDir     string       // if non-empty, save received files to this directory
 	injectedMessageHeader string              // prepended to injected (system) messages; empty disables
@@ -191,6 +192,16 @@ func (b *Bot) SetShowThinking(mode string) {
 // SetDisplayWidth sets the character width used for divider lines.
 func (b *Bot) SetDisplayWidth(width int) {
 	b.displayWidth = width
+}
+
+// SetTableWrapLines sets the max wrapped lines per table cell.
+func (b *Bot) SetTableWrapLines(n int) {
+	b.tableWrapLines = n
+}
+
+// tableOpts returns the TableOpts for this bot's display settings.
+func (b *Bot) tableOpts() TableOpts {
+	return TableOpts{MaxWidth: b.displayWidth, WrapLines: b.tableWrapLines}
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -1056,7 +1067,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	editID := tracker.lastMsgID()
 
 	if editID != 0 && b.showToolCalls == "preview" && !hasThinking && len(response) <= 4096 {
-		htmlResp := ConvertToTelegramHTML(response)
+		htmlResp := ConvertToTelegramHTML(response, b.tableOpts())
 		_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 			ChatId:    qm.msg.Chat.Id,
 			MessageId: editID,
@@ -1142,7 +1153,7 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 		if part == "" {
 			continue
 		}
-		b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(part), userID, msg.From.Username)
+		b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(part, b.tableOpts()), userID, msg.From.Username)
 	}
 }
 
@@ -1150,7 +1161,7 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 // Thinking and response are converted to HTML separately to avoid markdown interference.
 func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
-	responseHTML := ConvertToTelegramHTML(response)
+	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
 	divider := "\n" + strings.Repeat("—", b.displayWidth) + "\n\n"
 	b.sendHTMLChunks(msg.Chat.Id, thinkingHTML+divider+responseHTML, userID, msg.From.Username)
 }
@@ -1158,7 +1169,7 @@ func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, res
 // sendReplyWithThinking sends a response with a "Show thinking" inline keyboard button.
 // The thinking content is stored for later toggle via callback query.
 func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
-	responseHTML := ConvertToTelegramHTML(response)
+	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
 
 	// Send with placeholder button (msgID unknown until sent)
 	sendOpts := &gotgbot.SendMessageOpts{
@@ -1298,7 +1309,7 @@ func (b *Bot) SendInjected(text string) error {
 		return fmt.Errorf("no chat ID — no messages received yet")
 	}
 
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text), "", "")
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
 	return nil
 }
 

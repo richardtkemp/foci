@@ -414,6 +414,102 @@ func TestTruncateEdgeCases(t *testing.T) {
 	}
 }
 
+func TestWrapText(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		maxWidth int
+		maxLines int
+		want     []string
+	}{
+		{
+			name:     "fits within width",
+			s:        "hello world",
+			maxWidth: 20,
+			maxLines: 5,
+			want:     []string{"hello world"},
+		},
+		{
+			name:     "simple word wrap",
+			s:        "the quick brown fox",
+			maxWidth: 10,
+			maxLines: 5,
+			want:     []string{"the quick", "brown fox"},
+		},
+		{
+			name:     "max lines cap with truncation",
+			s:        "one two three four five six",
+			maxWidth: 8,
+			maxLines: 2,
+			want:     []string{"one two", "three…"},
+		},
+		{
+			name:     "long word hard-break",
+			s:        "abcdefghijklmnop",
+			maxWidth: 5,
+			maxLines: 0,
+			want:     []string{"abcde", "fghij", "klmno", "p"},
+		},
+		{
+			name:     "wide characters CJK",
+			s:        "中文 测试 数据",
+			maxWidth: 6,
+			maxLines: 0,
+			want:     []string{"中文", "测试", "数据"},
+		},
+		{
+			name:     "empty string",
+			s:        "",
+			maxWidth: 10,
+			maxLines: 5,
+			want:     []string{""},
+		},
+		{
+			name:     "zero maxLines unlimited",
+			s:        "a b c d e f",
+			maxWidth: 3,
+			maxLines: 0,
+			want:     []string{"a b", "c d", "e f"},
+		},
+		{
+			name:     "single word fits exactly",
+			s:        "hello",
+			maxWidth: 5,
+			maxLines: 5,
+			want:     []string{"hello"},
+		},
+		{
+			name:     "mixed CJK and ASCII",
+			s:        "hello 世界 test",
+			maxWidth: 8,
+			maxLines: 0,
+			want:     []string{"hello", "世界", "test"},
+		},
+		{
+			name:     "hard-break CJK word",
+			s:        "中文测試",
+			maxWidth: 5,
+			maxLines: 0,
+			want:     []string{"中文", "测試"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WrapText(tt.s, tt.maxWidth, tt.maxLines)
+			if len(got) != len(tt.want) {
+				t.Fatalf("WrapText(%q, %d, %d) returned %d lines, want %d\n  got:  %q\n  want: %q",
+					tt.s, tt.maxWidth, tt.maxLines, len(got), len(tt.want), got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("WrapText(%q, %d, %d) line %d = %q, want %q",
+						tt.s, tt.maxWidth, tt.maxLines, i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 // TestFormatWidthEdgeCases tests additional FormatWidth edge cases
 func TestFormatWidthEdgeCases(t *testing.T) {
 	cols := []Column{

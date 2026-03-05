@@ -331,3 +331,52 @@ func TestConvertToTelegramHTML(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertToTelegramHTMLTableWrapping(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		opts TableOpts
+		want string
+	}{
+		{
+			name: "table constrained and wrapped",
+			in:   "| Tool | Description |\n|------|-------------|\n| exec | Execute shell commands in a sandbox |",
+			opts: TableOpts{MaxWidth: 30, WrapLines: 5},
+			want: "<pre>| Tool | Description         |\n| ---- | ------------------- |\n| exec | Execute shell       |\n|      | commands in a       |\n|      | sandbox             |</pre>",
+		},
+		{
+			name: "wrap lines cap with truncation",
+			in:   "| Col |\n|-----|\n| one two three four five six seven eight |",
+			opts: TableOpts{MaxWidth: 15, WrapLines: 2},
+			want: "<pre>| Col         |\n| ----------- |\n| one two     |\n| three four… |</pre>",
+		},
+		{
+			name: "separator row stays single line",
+			in:   "| A | B |\n|---|---|\n| x | y |",
+			opts: TableOpts{MaxWidth: 40, WrapLines: 5},
+			want: "<pre>| A   | B   |\n| --- | --- |\n| x   | y   |</pre>",
+		},
+		{
+			name: "no opts unchanged",
+			in:   "| Col1 | Col2 |\n|------|------|\n| a    | b    |",
+			opts: TableOpts{},
+			want: "<pre>| Col1 | Col2 |\n| ---- | ---- |\n| a    | b    |</pre>",
+		},
+		{
+			name: "wrap disabled truncates",
+			in:   "| Name |\n|------|\n| a very long name here |",
+			opts: TableOpts{MaxWidth: 15, WrapLines: 0},
+			want: "<pre>| Name        |\n| ----------- |\n| a very lon… |</pre>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ConvertToTelegramHTML(tt.in, tt.opts)
+			if got != tt.want {
+				t.Errorf("ConvertToTelegramHTML with opts\n  got  = %q\n  want = %q", got, tt.want)
+			}
+		})
+	}
+}
