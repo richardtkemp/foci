@@ -85,7 +85,6 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cmdText string) {
 	cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, "")
 	cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, chatID)
-	cmdCtx = context.WithValue(cmdCtx, command.DisplayWidthKey{}, b.displayWidth)
 
 	// Check if this bare subcommand needs a chained keyboard (e.g. /tmux kill → pick session)
 	if parentName, opts, ok := b.commands.LookupChainKeyboard(cmdCtx, cmdText); ok {

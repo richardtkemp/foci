@@ -474,9 +474,9 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 		Defaults: config.DefaultsConfig{
 			ShowToolCalls: ptr(config.ToolCallOff),
 			ShowThinking:  ptr(config.ShowThinkingOff),
-			DisplayWidth:  ptr(44),
 		},
 		Telegram: config.TelegramConfig{
+			DisplayWidth:     ptr(44),
 			ReceivedFilesDir: "/global/files",
 		},
 		Logging: config.LoggingConfig{
@@ -511,9 +511,9 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 		Defaults: config.DefaultsConfig{
 			ShowToolCalls: ptr(config.ToolCallPreview),
 			ShowThinking:  ptr(config.ShowThinkingTrue),
-			DisplayWidth:  ptr(60),
 		},
 		Telegram: config.TelegramConfig{
+			DisplayWidth:     ptr(60),
 			ReceivedFilesDir: "/global/files",
 		},
 		Logging: config.LoggingConfig{
@@ -531,7 +531,7 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 		t.Errorf("ShowThinking = %q, want %q (defaults fallback)", st, "true")
 	}
 	if dw != 60 {
-		t.Errorf("DisplayWidth = %d, want 60 (defaults fallback)", dw)
+		t.Errorf("DisplayWidth = %d, want 60 (telegram fallback)", dw)
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")
@@ -569,7 +569,9 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 		Defaults: config.DefaultsConfig{
 			ShowToolCalls: ptr(config.ToolCallOff),
 			ShowThinking:  ptr(config.ShowThinkingCompact),
-			DisplayWidth:  ptr(44),
+		},
+		Telegram: config.TelegramConfig{
+			DisplayWidth: ptr(44),
 		},
 		Logging: config.LoggingConfig{
 			MessagesInLog: true,
@@ -586,7 +588,7 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 		t.Errorf("ShowThinking = %q, want %q (defaults fallback)", st, "compact")
 	}
 	if dw != 44 {
-		t.Errorf("DisplayWidth = %d, want 44 (defaults fallback)", dw)
+		t.Errorf("DisplayWidth = %d, want 44 (telegram fallback)", dw)
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")

@@ -403,7 +403,7 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 			for i, r := range rows {
 				tableRows[i] = []string{r.id, r.session, r.status, r.model, r.msgs}
 			}
-			return "Agents\n\n" + display.Format(cols, tableRows), nil
+			return "Agents\n\n" + display.MarkdownTable(cols, tableRows), nil
 		},
 	}
 }

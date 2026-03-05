@@ -130,6 +130,7 @@ type AgentConfig struct {
 	ShowThinking                     *ShowThinking     `toml:"show_thinking"`                       // show thinking blocks in Telegram (nil = use global telegram.show_thinking)
 	DisplayWidth                     *int              `toml:"display_width"`                       // display width for dividers in Telegram (nil = use global telegram.display_width)
 	TableWrapLines                   *int              `toml:"table_wrap_lines"`                    // max wrapped lines per table cell (nil = use global, 0 = truncate, default 5)
+	TableStyle                       *string           `toml:"table_style"`                         // table style: "pretty" (default) or "markdown" (nil = use global telegram.table_style)
 	MessagesInLog                    *bool             `toml:"messages_in_log"`                     // log user message content to event log (nil = use global logging.messages_in_log)
 	ReceivedFilesDir                 string            `toml:"received_files_dir"`                  // save received files to this directory (empty = disabled)
 	AllowedUsers                     []string          `toml:"allowed_users"`                       // per-agent allowed Telegram user IDs (empty = use global [telegram] allowed_users)
@@ -158,6 +159,8 @@ type AgentConfig struct {
 	AutoSummarise         *bool  `toml:"auto_summarise"`          // auto-summarise oversized results (nil = use global)
 	SummaryContextTurns   int    `toml:"summary_context_turns"`   // recent turns for auto-summary context (0 = use global)
 	SummaryContextChars   int    `toml:"summary_context_chars"`   // max chars of context for auto-summary (0 = use global)
+	MaxSummaryInputChars  int    `toml:"max_summary_input_chars"` // max chars embedded in summary prompt (0 = use global)
+	MaxImagePixels        int    `toml:"max_image_pixels"`        // max pixels (w*h) before downscaling images (0 = use global)
 	SearchProvider        string `toml:"search_provider"`         // "anthropic" or "brave" (empty = use global)
 	FetchProvider         string `toml:"fetch_provider"`          // "anthropic" or "builtin" (empty = use global)
 	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected messages (empty = use default)
@@ -202,6 +205,9 @@ type TelegramConfig struct {
 	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string   `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 	ReceivedFilesDir    string   `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
+	DisplayWidth        *int     `toml:"display_width"`         // display width for dividers (default 44)
+	TableWrapLines      *int     `toml:"table_wrap_lines"`      // max wrapped lines per table cell (default 5)
+	TableStyle          *string  `toml:"table_style"`           // table style: "pretty" (default) or "markdown"
 }
 
 type SessionsConfig struct {
@@ -366,6 +372,8 @@ type ToolsConfig struct {
 	MaxUploadFileSize       int64    `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
 	SummaryContextTurns     int      `toml:"summary_context_turns"`      // recent turns for auto-summary context (default 5)
 	SummaryContextChars     int      `toml:"summary_context_chars"`      // max chars of context for auto-summary (default 6000)
+	MaxSummaryInputChars    int      `toml:"max_summary_input_chars"`    // max chars of tool result embedded in summary prompt (default 100000)
+	MaxImagePixels          int      `toml:"max_image_pixels"`           // max pixels (w*h) before downscaling images (default 2073600)
 	SearchProvider          string   `toml:"search_provider"`            // "brave" (default) or "anthropic"
 	FetchProvider           string   `toml:"fetch_provider"`             // "anthropic" (default) or "builtin"
 	WebSearchMaxUses        int      `toml:"web_search_max_uses"`        // max searches per API call (0 = unlimited)
@@ -409,8 +417,6 @@ type DefaultsConfig struct {
 	Streaming                     *bool            `toml:"streaming"`                        // default streaming (nil = use global anthropic.streaming)
 	ShowToolCalls                 *ToolCallDisplay `toml:"show_tool_calls"`                  // default show_tool_calls (default: "off")
 	ShowThinking                  *ShowThinking    `toml:"show_thinking"`                    // default show_thinking (default: "off")
-	DisplayWidth                  *int             `toml:"display_width"`                    // default display_width (default: 44)
-	TableWrapLines                *int             `toml:"table_wrap_lines"`                 // default table_wrap_lines (default: 5)
 	SystemFiles                   []string         `toml:"system_files"`                     // default system file list
 	CompactionEffort              string           `toml:"compaction_effort"`                // default compaction effort (empty = use session effort)
 	MaxResultChars                int              `toml:"max_result_chars"`                 // default max_result_chars (default 15000)
@@ -418,6 +424,8 @@ type DefaultsConfig struct {
 	AutoSummarise                 *bool            `toml:"auto_summarise"`                   // default auto_summarise (nil = use [tools] value)
 	SummaryContextTurns           int              `toml:"summary_context_turns"`            // default summary_context_turns (default 5)
 	SummaryContextChars           int              `toml:"summary_context_chars"`            // default summary_context_chars (default 6000)
+	MaxSummaryInputChars          int              `toml:"max_summary_input_chars"`          // default max_summary_input_chars (default 100000)
+	MaxImagePixels                int              `toml:"max_image_pixels"`                 // default max_image_pixels (default 2073600 = 1920*1080)
 	SearchProvider                string           `toml:"search_provider"`                  // default search provider: "brave" (default) or "anthropic"
 	FetchProvider                 string           `toml:"fetch_provider"`                   // default fetch provider: "anthropic" (default) or "builtin"
 	InjectedMessageHeader         string           `toml:"injected_message_header"`          // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
@@ -985,14 +993,6 @@ func Load(path string) (*Config, error) {
 		v := ShowThinkingOff
 		cfg.Defaults.ShowThinking = &v
 	}
-	if cfg.Defaults.DisplayWidth == nil {
-		v := 44
-		cfg.Defaults.DisplayWidth = &v
-	}
-	if cfg.Defaults.TableWrapLines == nil {
-		v := 5
-		cfg.Defaults.TableWrapLines = &v
-	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
 
@@ -1170,11 +1170,25 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Tools.TmuxMemoryKill, "30%")
 	setIntDefault(&cfg.Tools.SummaryContextTurns, 5)
 	setIntDefault(&cfg.Tools.SummaryContextChars, 6000)
+	setIntDefault(&cfg.Tools.MaxSummaryInputChars, 100000)
+	setIntDefault(&cfg.Tools.MaxImagePixels, 1920*1080) // 2,073,600 pixels
 
 	// Telegram defaults
 	setIntDefault(&cfg.Telegram.MessageQueueSize, 64)
 	setStringDefault(&cfg.Telegram.LongPollTimeout, "65s")
 	setStringDefault(&cfg.Telegram.MultiballSessionTTL, "60m")
+	if cfg.Telegram.DisplayWidth == nil {
+		v := 44
+		cfg.Telegram.DisplayWidth = &v
+	}
+	if cfg.Telegram.TableWrapLines == nil {
+		v := 5
+		cfg.Telegram.TableWrapLines = &v
+	}
+	if cfg.Telegram.TableStyle == nil {
+		v := "pretty"
+		cfg.Telegram.TableStyle = &v
+	}
 
 	// HTTP defaults
 	setStringDefault(&cfg.HTTP.GracefulShutdownTimeout, "30s")

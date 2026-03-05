@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
+	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/state"
@@ -93,6 +94,7 @@ type Bot struct {
 	showThinking         string       // thinking display mode: "off", "compact", "true"
 	displayWidth         int          // character width for dividers (default 44)
 	tableWrapLines       int          // max wrapped lines per table cell (default 5)
+	tableStyle           string       // table style: "pretty" (default) or "markdown"
 	messagesInLog        bool         // log user message content to event log (default false for privacy)
 	receivedFilesDir     string       // if non-empty, save received files to this directory
 	injectedMessageHeader string              // prepended to injected (system) messages; empty disables
@@ -203,9 +205,14 @@ func (b *Bot) SetTableWrapLines(n int) {
 	b.tableWrapLines = n
 }
 
-// tableOpts returns the TableOpts for this bot's display settings.
-func (b *Bot) tableOpts() TableOpts {
-	return TableOpts{MaxWidth: b.displayWidth, WrapLines: b.tableWrapLines}
+// SetTableStyle sets the table rendering style ("pretty" or "markdown").
+func (b *Bot) SetTableStyle(style string) {
+	b.tableStyle = style
+}
+
+// tableOpts returns the RenderOpts for this bot's display settings.
+func (b *Bot) tableOpts() display.RenderOpts {
+	return display.RenderOpts{MaxWidth: b.displayWidth, WrapLines: b.tableWrapLines, Style: b.tableStyle}
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -958,7 +965,6 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, user
 func (b *Bot) commandContext(ctx context.Context, userID string, chatID int64) context.Context {
 	ctx = context.WithValue(ctx, command.LastMessageUserKey{}, userID)
 	ctx = context.WithValue(ctx, command.ChatIDKey{}, chatID)
-	ctx = context.WithValue(ctx, command.DisplayWidthKey{}, b.displayWidth)
 	return ctx
 }
 

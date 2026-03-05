@@ -89,6 +89,9 @@ Telegram bot configuration. Fields `allowed_users`, `received_files_dir`, and `e
 | `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. `"0"` disables auto-reclaim. Go duration format. Applies to both per-agent and shared pools. |
 | `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
+| `display_width` | int | `44` | Character width for table width constraint. Tables in `<pre>` blocks are shrunk to fit this width and cells are wrapped or truncated. Overridable per-agent. |
+| `table_wrap_lines` | int | `5` | Max wrapped lines per table cell when tables are constrained to `display_width`. `0` truncates with `…` instead of wrapping. Overridable per-agent. |
+| `table_style` | string | `"pretty"` | Table rendering style: `"pretty"` (no pipe borders, `─` separator, 2-space column gaps) or `"markdown"` (pipe-delimited `\| col \| col \|`). Overridable per-agent. |
 
 #### Bot token resolution
 
@@ -604,8 +607,6 @@ Set in `[defaults]`, overridable per-agent.
 |-----|------|---------|-------------|
 | `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
 | `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Accepts bool (`true` → `"true"`, `false` → `"off"`). |
-| `display_width` | int | `44` | Character width for divider lines and table width constraint. Tables in `<pre>` blocks are shrunk to fit this width and cells are wrapped or truncated. |
-| `table_wrap_lines` | int | `5` | Max wrapped lines per table cell when tables are constrained to `display_width`. `0` truncates with `…` instead of wrapping. |
 | `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages (keepalive, async notifier, HTTP API, proactive warnings) so users can distinguish them from agent replies. Empty string disables the header. |
 
 ### Message Handling
@@ -645,6 +646,8 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). Global: `[tools]` or `[defaults]`. |
 | `max_summary_chars` | int | `300000` | Max chars to auto-summarise via Haiku. Results larger than this are saved to file with hints but skip the summary call. Global: `[tools]` or `[defaults]`. |
 | `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via Haiku. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]` or `[defaults]`. Per-agent `unset` inherits from `[tools]`. |
+| `max_summary_input_chars` | int | `100000` | Max chars of tool result text embedded in the summary prompt sent to Haiku. Larger results are truncated in the prompt (the full output is on disk). Prevents excessive memory use and token cost during auto-summarisation. Global: `[tools]` or `[defaults]`. |
+| `max_image_pixels` | int | `2073600` | Max pixels (width × height) for images before downscaling. Images exceeding this are proportionally resized and re-encoded as JPEG (quality 85). Default is 1920×1080. `0` disables downscaling. Global: `[tools]` or `[defaults]`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. Global: `[tools]`. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` clone sessions per agent. Global: `[tools]`. |
 | `explore_max_depth` | int | `100` | Max tool loops for `spawn` explore mode. Explore agents do multi-step research so this is higher than the default `max_tool_loops`. Global: `[tools]`. |
@@ -667,6 +670,9 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 |-----|------|---------|-----------------|-------------|
 | `allowed_users` | string[] | `[]` | `[telegram]` | Telegram user IDs allowed to interact with bots. `[]` falls back to global `[telegram] allowed_users`. |
 | `received_files_dir` | string | `$workspace/received_files` | `[telegram]` | Save received media (images, videos, video notes, documents) to this directory. `""` in global disables. Per-agent defaults to `$workspace/received_files`. Relative paths resolve against `$HOME`. Filename formats — Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
+| `display_width` | int | `44` | `[telegram]` | Per-agent override for `[telegram] display_width`. |
+| `table_wrap_lines` | int | `5` | `[telegram]` | Per-agent override for `[telegram] table_wrap_lines`. |
+| `table_style` | string | `"pretty"` | `[telegram]` | Per-agent override for `[telegram] table_style`. |
 
 ### Voice
 

@@ -16,7 +16,6 @@ func testConfig() (*Config, AgentConfig) {
 		Defaults: DefaultsConfig{
 			ShowToolCalls: func() *ToolCallDisplay { v := ToolCallPreview; return &v }(),
 			ShowThinking:  func() *ShowThinking { v := ShowThinkingOff; return &v }(),
-			DisplayWidth:  func() *int { v := 44; return &v }(),
 		},
 		Telegram: TelegramConfig{
 			AllowedUsers:        []string{"alice"},
@@ -25,6 +24,7 @@ func testConfig() (*Config, AgentConfig) {
 			MultiballSessionTTL: "60m",
 			MessageQueueSize:    64,
 			LongPollTimeout:     "65s",
+			DisplayWidth:        func() *int { v := 44; return &v }(),
 		},
 		Sessions: SessionsConfig{
 			Dir:                   "/data/sessions",
@@ -228,6 +228,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.DisplayWidth = &displayWidth
 	tableWrapLines := 5
 	agent.TableWrapLines = &tableWrapLines
+	tableStyle := "pretty"
+	agent.TableStyle = &tableStyle
 	agent.ReceivedFilesDir = "/tmp/images"
 	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"
