@@ -179,7 +179,7 @@ func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voic
 
 	for i, entry := range cfg.TTS {
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
-		t, err := voice.NewTTS(entry.Format, entry.Endpoint, apiKey, entry.Model, entry.Voice, entry.Command)
+		t, err := voice.NewTTS(entry.Format, entry.Endpoint, apiKey, entry.Model, entry.Voice, entry.Command, entry.ResponseFormat)
 		if err != nil {
 			log.Warnf("main", "tts[%d] %q: %v", i, entry.ID, err)
 			continue

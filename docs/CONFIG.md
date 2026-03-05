@@ -243,6 +243,7 @@ Text-to-speech provider entries. Multiple entries are supported; the first is th
 | `rate` | float | `0` | Speed multiplier: `1.3` = 30% faster, `0.8` = 20% slower. `0` means omit/default. |
 | `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. |
 | `command` | string | `"edge-tts"` | Binary for edge-tts format. |
+| `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |
 
 ### `[[stt]]`
 
