@@ -19,6 +19,28 @@ type SessionKey struct {
 	Collision int    // collision counter, 0 for first
 }
 
+// parseTypeID extracts a single-character type code and the remaining string ID.
+// Returns an error if the input is too short.
+func parseTypeID(s string) (rune, string, error) {
+	if len(s) < 2 {
+		return 0, "", fmt.Errorf("invalid type+id segment: %q", s)
+	}
+	return rune(s[0]), s[1:], nil
+}
+
+// parseTypeTS extracts a single-character type code and parses the remaining timestamp.
+// Returns an error if the input is too short or if the timestamp cannot be parsed.
+func parseTypeTS(s string) (rune, int64, error) {
+	if len(s) < 2 {
+		return 0, 0, fmt.Errorf("invalid child segment: %q", s)
+	}
+	ts, err := strconv.ParseInt(s[1:], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid child timestamp: %w", err)
+	}
+	return rune(s[0]), ts, nil
+}
+
 // String converts the key to its string representation.
 func (k SessionKey) String() string {
 	var sb strings.Builder
@@ -66,11 +88,10 @@ func ParseSessionKey(s string) (SessionKey, error) {
 	agentID := parts[0]
 
 	// Parse type and ID from second part (e.g., "c123" or "i1709596800")
-	if len(parts[1]) < 2 {
-		return SessionKey{}, fmt.Errorf("invalid type+id segment: %q", parts[1])
+	typ, id, err := parseTypeID(parts[1])
+	if err != nil {
+		return SessionKey{}, err
 	}
-	typ := rune(parts[1][0])
-	id := parts[1][1:]
 
 	// Parse version timestamp
 	versionTS, err := strconv.ParseInt(parts[2], 10, 64)
@@ -88,15 +109,11 @@ func ParseSessionKey(s string) (SessionKey, error) {
 
 	// Check for child suffix (4th part)
 	if len(parts) >= 4 {
-		childPart := parts[3]
-		if len(childPart) < 2 {
-			return SessionKey{}, fmt.Errorf("invalid child segment: %q", childPart)
-		}
-		key.ChildType = rune(childPart[0])
-		childTS, err := strconv.ParseInt(childPart[1:], 10, 64)
+		childType, childTS, err := parseTypeTS(parts[3])
 		if err != nil {
-			return SessionKey{}, fmt.Errorf("invalid child timestamp: %w", err)
+			return SessionKey{}, err
 		}
+		key.ChildType = childType
 		key.ChildTS = childTS
 	}
 
@@ -123,33 +140,31 @@ func NewIndependentSession(agentID string) SessionKey {
 	return SessionKey{
 		AgentID:   agentID,
 		Type:      'i',
-		ID:        strconv.FormatInt(ts, 10),
+		ID:        strconv.FormatInt(ts, 10), // independent sessions use timestamp as ID
 		VersionTS: ts,
+	}
+}
+
+// withChild creates a child session key with the given child type.
+func (k SessionKey) withChild(childType rune) SessionKey {
+	return SessionKey{
+		AgentID:   k.AgentID,
+		Type:      k.Type,
+		ID:        k.ID,
+		VersionTS: k.VersionTS,
+		ChildType: childType,
+		ChildTS:   time.Now().Unix(),
 	}
 }
 
 // Branch creates a branch from this session.
 func (k SessionKey) Branch() SessionKey {
-	return SessionKey{
-		AgentID:   k.AgentID,
-		Type:      k.Type,
-		ID:        k.ID,
-		VersionTS: k.VersionTS,
-		ChildType: 'b',
-		ChildTS:   time.Now().Unix(),
-	}
+	return k.withChild('b')
 }
 
 // IndependentSpawn creates an independent spawn from this session.
 func (k SessionKey) IndependentSpawn() SessionKey {
-	return SessionKey{
-		AgentID:   k.AgentID,
-		Type:      k.Type,
-		ID:        k.ID,
-		VersionTS: k.VersionTS,
-		ChildType: 'i',
-		ChildTS:   time.Now().Unix(),
-	}
+	return k.withChild('i')
 }
 
 // WithCollision returns a copy with the collision counter set.
