@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -220,29 +219,14 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	closers = append(closers, result.scratchpadStore)
 
 	// Per-agent todo stores
-	oldTodoDB := cfg.DataPath("todo.db")
-	needTodoMigrate := fileExists(oldTodoDB)
 	for _, acfg := range cfg.Agents {
 		agentTodoPath := sqlite.AgentPath(cfg.DataPath("todo.db"), acfg.ID)
 		ts, err := memory.NewTodoStore(agentTodoPath)
 		if err != nil {
 			log.Fatalf("main", "create todo store for %s: %v", acfg.ID, err)
 		}
-		if needTodoMigrate {
-			if err := ts.MigrateFrom(oldTodoDB, acfg.ID); err != nil {
-				log.Errorf("main", "migrate todos for %s: %v", acfg.ID, err)
-			}
-		}
 		result.todoStores[acfg.ID] = ts
 		closers = append(closers, ts)
-	}
-	if needTodoMigrate {
-		if err := os.Rename(oldTodoDB, oldTodoDB+".migrated"); err != nil {
-			log.Errorf("main", "rename old todo.db: %v", err)
-		}
-		// Clean up WAL/SHM files from the old database
-		_ = os.Remove(oldTodoDB + "-wal")
-		_ = os.Remove(oldTodoDB + "-shm")
 	}
 
 	result.cleanup = func() {
@@ -251,9 +235,4 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	}
 	return result
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

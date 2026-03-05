@@ -1,12 +1,9 @@
 package memory
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 func TestTodoAddAndList(t *testing.T) {
@@ -158,74 +155,6 @@ func TestTodoPerAgentIDs(t *testing.T) {
 	}
 	if item2.Text != "A2 first" {
 		t.Errorf("agent2 #1 text = %q, want %q", item2.Text, "A2 first")
-	}
-}
-
-func TestTodoMigrationFromAutoincrement(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "todo_migrate.db")
-
-	// Create an old-schema table with AUTOINCREMENT.
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	_, err = db.Exec(`CREATE TABLE todos (
-		id           INTEGER PRIMARY KEY AUTOINCREMENT,
-		text         TEXT    NOT NULL,
-		status       TEXT    NOT NULL DEFAULT 'open',
-		priority     TEXT    NOT NULL DEFAULT 'medium',
-		tags         TEXT    NOT NULL DEFAULT '',
-		close_reason TEXT    NOT NULL DEFAULT '',
-		agent_id     TEXT    NOT NULL,
-		created_at   TEXT    NOT NULL,
-		completed_at TEXT,
-		updated_at   TEXT
-	)`)
-	if err != nil {
-		t.Fatalf("create old table: %v", err)
-	}
-
-	// Insert data with global IDs (1, 2, 3).
-	now := time.Now().UTC().Format(time.RFC3339)
-	db.Exec(`INSERT INTO todos (text, status, priority, tags, agent_id, created_at, updated_at) VALUES ('Task A1', 'open', 'high', '', 'agent1', ?, ?)`, now, now)
-	db.Exec(`INSERT INTO todos (text, status, priority, tags, agent_id, created_at, updated_at) VALUES ('Task A2', 'open', 'medium', '', 'agent2', ?, ?)`, now, now)
-	db.Exec(`INSERT INTO todos (text, status, priority, tags, agent_id, created_at, updated_at) VALUES ('Task A3', 'open', 'low', '', 'agent1', ?, ?)`, now, now)
-	_ = db.Close()
-
-	// Open with NewTodoStore — should trigger migration.
-	store, err := NewTodoStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewTodoStore after migration: %v", err)
-	}
-	defer store.Close()
-
-	// Existing IDs should be preserved.
-	items1, _ := store.List("agent1", "", "", "")
-	if len(items1) != 2 {
-		t.Fatalf("agent1: expected 2 items, got %d", len(items1))
-	}
-	// Old global IDs 1 and 3 are preserved.
-	if items1[0].ID != 1 || items1[1].ID != 3 {
-		t.Errorf("agent1 IDs = (%d, %d), want (1, 3)", items1[0].ID, items1[1].ID)
-	}
-
-	items2, _ := store.List("agent2", "", "", "")
-	if len(items2) != 1 {
-		t.Fatalf("agent2: expected 1 item, got %d", len(items2))
-	}
-	if items2[0].ID != 2 {
-		t.Errorf("agent2 ID = %d, want 2", items2[0].ID)
-	}
-
-	// New IDs continue from max(id)+1 per agent.
-	newID1, _ := store.Add("agent1", "New A1", "medium", "")
-	if newID1 != 4 {
-		t.Errorf("agent1 new ID = %d, want 4 (max was 3)", newID1)
-	}
-	newID2, _ := store.Add("agent2", "New A2", "medium", "")
-	if newID2 != 3 {
-		t.Errorf("agent2 new ID = %d, want 3 (max was 2)", newID2)
 	}
 }
 
