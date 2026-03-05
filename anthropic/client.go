@@ -263,6 +263,27 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	// Phase 1: standard retries for all retryable errors.
+	resp, lastErr := c.retryWithBackoff(ctx, "send", func() (*MessageResponse, error) {
+		return c.sendOnce(ctx, body, req)
+	})
+	if lastErr == nil {
+		return resp, nil
+	}
+
+	// Phase 2: extended overload retries (529 only).
+	var apiErr *APIError
+	if !errors.As(lastErr, &apiErr) || !apiErr.IsOverloaded() {
+		return nil, lastErr
+	}
+
+	return c.retryWithOverload(ctx, "overload", func() (*MessageResponse, error) {
+		return c.sendOnce(ctx, body, req)
+	})
+}
+
+// retryWithBackoff performs standard exponential backoff retries for retryable errors.
+// Returns (response, nil) on success, or (nil, lastError) on failure.
+func (c *Client) retryWithBackoff(ctx context.Context, logPrefix string, retryFn func() (*MessageResponse, error)) (*MessageResponse, error) {
 	const maxRetries = 3
 	backoff := c.retryBaseDelay
 	if backoff == 0 {
@@ -273,7 +294,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	loopStart := time.Now()
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			slog.Warn("anthropic: retrying after server error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
+			slog.Warn("anthropic: "+logPrefix+" retrying after error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -282,17 +303,17 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 			backoff *= 2
 		}
 
-		slog.Debug("anthropic: send_attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
+		slog.Debug("anthropic: "+logPrefix+"_attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
 		attemptStart := time.Now()
-		resp, err := c.sendOnce(ctx, body, req)
+		resp, err := retryFn()
 		attemptDur := time.Since(attemptStart)
 		if err == nil {
-			slog.Debug("anthropic: send_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
+			slog.Debug("anthropic: "+logPrefix+"_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
 			c.signalRecovery()
 			return resp, nil
 		}
 		lastErr = err
-		slog.Debug("anthropic: send_attempt_fail", "attempt", attempt, "duration", attemptDur, "error", err, "elapsed_total", time.Since(loopStart))
+		slog.Debug("anthropic: "+logPrefix+"_attempt_fail", "attempt", attempt, "duration", attemptDur, "error", err, "elapsed_total", time.Since(loopStart))
 
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
@@ -300,38 +321,37 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 		}
 
 		if !apiErr.IsRetryable() {
-			return nil, err // non-retryable errors fail immediately
+			return nil, err
 		}
 	}
 
-	slog.Debug("anthropic: send_exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
+	slog.Debug("anthropic: "+logPrefix+"_exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
+	return nil, lastErr
+}
 
-	// Phase 2: extended overload retries (529 only).
-	var apiErr *APIError
-	if !errors.As(lastErr, &apiErr) || !apiErr.IsOverloaded() {
-		return nil, lastErr
-	}
-
+// retryWithOverload handles extended overload retry logic for both regular and streaming requests.
+func (c *Client) retryWithOverload(ctx context.Context, logPrefix string, retryFn func() (*MessageResponse, error)) (*MessageResponse, error) {
 	overloadBackoff := c.overloadBaseDelay()
 	maxDuration := c.overloadMaxDuration()
 	overloadStart := time.Now()
 	recoverCh := c.enterOverload()
+	var lastErr error
 
 	for time.Since(overloadStart) < maxDuration {
-		slog.Warn("anthropic: overload retry", "backoff", overloadBackoff.String(), "elapsed", time.Since(overloadStart).String(), "max", maxDuration.String())
+		slog.Warn("anthropic: "+logPrefix+" retry", "backoff", overloadBackoff.String(), "elapsed", time.Since(overloadStart).String(), "max", maxDuration.String())
 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(overloadBackoff):
 		case <-recoverCh:
-			slog.Info("anthropic: overload recovery signal received, retrying immediately")
+			slog.Info("anthropic: "+logPrefix+" recovery signal received, retrying immediately")
 			recoverCh = c.enterOverload() // re-acquire for next iteration
 		}
 
-		resp, err := c.sendOnce(ctx, body, req)
+		resp, err := retryFn()
 		if err == nil {
-			slog.Info("anthropic: recovered from overload", "elapsed", time.Since(overloadStart).String())
+			slog.Info("anthropic: recovered from "+logPrefix, "elapsed", time.Since(overloadStart).String())
 			c.signalRecovery()
 			return resp, nil
 		}
@@ -345,7 +365,7 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 		overloadBackoff *= 2
 	}
 
-	slog.Warn("anthropic: overload retries exhausted", "elapsed", time.Since(overloadStart).String())
+	slog.Warn("anthropic: "+logPrefix+" retries exhausted", "elapsed", time.Since(overloadStart).String())
 	return nil, lastErr
 }
 

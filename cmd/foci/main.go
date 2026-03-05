@@ -72,42 +72,35 @@ func wantsHelp(args []string) bool {
 	return false
 }
 
-// parseAddrFlag extracts --addr from args, returning the address and remaining args.
-func parseAddrFlag(args []string) (addr string, rest []string) {
+// parseFlagValue extracts a flag value from args, returning the value and remaining args.
+// Supports both --flag value and --flag=value formats.
+func parseFlagValue(args []string, flagName string) (value string, rest []string) {
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--addr" && i+1 < len(args) {
-			addr = args[i+1]
+		if args[i] == "--"+flagName && i+1 < len(args) {
+			value = args[i+1]
 			rest = append(rest, args[:i]...)
 			rest = append(rest, args[i+2:]...)
-			return addr, rest
+			return value, rest
 		}
-		if strings.HasPrefix(args[i], "--addr=") {
-			addr = args[i][len("--addr="):]
+		prefix := "--" + flagName + "="
+		if strings.HasPrefix(args[i], prefix) {
+			value = args[i][len(prefix):]
 			rest = append(rest, args[:i]...)
 			rest = append(rest, args[i+1:]...)
-			return addr, rest
+			return value, rest
 		}
 	}
 	return "", args
 }
 
+// parseAddrFlag extracts --addr from args, returning the address and remaining args.
+func parseAddrFlag(args []string) (addr string, rest []string) {
+	return parseFlagValue(args, "addr")
+}
+
 // parseAPIKeyFlag extracts --api-key from args, returning the key and remaining args.
 func parseAPIKeyFlag(args []string) (apiKey string, rest []string) {
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--api-key" && i+1 < len(args) {
-			apiKey = args[i+1]
-			rest = append(rest, args[:i]...)
-			rest = append(rest, args[i+2:]...)
-			return apiKey, rest
-		}
-		if strings.HasPrefix(args[i], "--api-key=") {
-			apiKey = args[i][len("--api-key="):]
-			rest = append(rest, args[:i]...)
-			rest = append(rest, args[i+1:]...)
-			return apiKey, rest
-		}
-	}
-	return "", args
+	return parseFlagValue(args, "api-key")
 }
 
 // authTransport is an http.RoundTripper that injects an Authorization: Bearer
