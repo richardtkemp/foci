@@ -140,9 +140,9 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 			if err != nil {
 				return ToolResult{}, fmt.Errorf("invalid date_to format (use YYYY-MM-DD): %w", err)
 			}
-			// Set to end of day to include the entire date
-			endOfDay := t.Add(24*time.Hour - time.Second)
-			opts.DateTo = &endOfDay
+			// Exclusive upper bound: start of the next day
+			nextDay := t.AddDate(0, 0, 1)
+			opts.DateTo = &nextDay
 		}
 	}
 
