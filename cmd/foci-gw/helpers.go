@@ -6,52 +6,55 @@ import (
 	"foci/internal/config"
 )
 
-// resolveInt returns the per-agent value if non-zero, otherwise global.
-func resolveInt(perAgent, global int) int {
-	if perAgent != 0 {
+// resolveZeroable returns the per-agent value if non-zero, otherwise global.
+// Works for any comparable type where zero value means "not set".
+func resolveZeroable[T comparable](perAgent, global T) T {
+	var zero T
+	if perAgent != zero {
 		return perAgent
 	}
 	return global
+}
+
+// resolvePtr returns *perAgent if non-nil, otherwise global.
+// Works for any pointer type.
+func resolvePtr[T any](perAgent *T, global T) T {
+	if perAgent != nil {
+		return *perAgent
+	}
+	return global
+}
+
+// Specialized helpers for common types (for backward compatibility and clarity)
+
+// resolveInt returns the per-agent value if non-zero, otherwise global.
+func resolveInt(perAgent, global int) int {
+	return resolveZeroable(perAgent, global)
 }
 
 // resolveInt64 returns the per-agent value if non-zero, otherwise global.
 func resolveInt64(perAgent, global int64) int64 {
-	if perAgent != 0 {
-		return perAgent
-	}
-	return global
+	return resolveZeroable(perAgent, global)
 }
 
 // resolveIntPtr returns *perAgent if non-nil, otherwise global.
 func resolveIntPtr(perAgent *int, global int) int {
-	if perAgent != nil {
-		return *perAgent
-	}
-	return global
+	return resolvePtr(perAgent, global)
 }
 
 // resolveBoolPtr returns the per-agent value if non-nil, otherwise the global default.
 func resolveBoolPtr(perAgent *bool, global bool) bool {
-	if perAgent != nil {
-		return *perAgent
-	}
-	return global
+	return resolvePtr(perAgent, global)
 }
 
 // resolveFloat64Ptr returns *perAgent if non-nil, otherwise global.
 func resolveFloat64Ptr(perAgent *float64, global float64) float64 {
-	if perAgent != nil {
-		return *perAgent
-	}
-	return global
+	return resolvePtr(perAgent, global)
 }
 
 // resolveString returns the per-agent value if non-empty, otherwise global.
 func resolveString(perAgent, global string) string {
-	if perAgent != "" {
-		return perAgent
-	}
-	return global
+	return resolveZeroable(perAgent, global)
 }
 
 // resolveOrientPath resolves the branch orientation prompt path for a given variant.
