@@ -498,11 +498,13 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 		args = append(args, "-c", workdir)
 	}
 
-	// If keys are provided, we need special handling
+	// If keys are provided, append them as a shell-quoted argument to the command
+	finalCommand := command
 	if keys != "" && command != "" {
-		// Don't pass command to new-session, we'll send it manually
-	} else if command != "" {
-		args = append(args, command)
+		finalCommand = command + " " + fmt.Sprintf("%q", keys)
+	}
+	if finalCommand != "" {
+		args = append(args, finalCommand)
 	}
 
 	out, err := runTmux(ctx, args...)
@@ -527,14 +529,6 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 
 	result := fmt.Sprintf("Session started: %s", name)
 
-	// Handle the special keys sequence if keys are provided
-	if keys != "" && command != "" {
-		if err := inst.executeKeysSequence(ctx, name, command, keys); err != nil {
-			return ToolResult{}, fmt.Errorf("keys sequence failed: %w", err)
-		}
-		result += " (command sent and keys executed after loading)"
-	}
-
 	// Auto-watch for inactivity if requested and notifier is available
 	if watch && inst.notifier != nil {
 		watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
@@ -548,156 +542,6 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	return TextResult(result), nil
 }
 
-// executeKeysSequence performs the special sequence when keys are provided on start
-func (inst *tmuxInstance) executeKeysSequence(ctx context.Context, name, command, keys string) error {
-	log.Debugf("tmux", "executeKeysSequence: name=%s command=%q keys=%q", name, command, keys)
-	LogExecuteKeysSequenceEntry(name, command, keys)
-
-	// Step a: Send the command string to the pane (WITHOUT pressing enter yet)
-	// Use -l flag to send command as literal string (prevents tmux from interpreting special characters).
-	_, err := runTmux(ctx, "send-keys", "-t", name, "-l", command)
-	if err != nil {
-		LogExecuteKeysSequenceExit(false, err.Error())
-		return fmt.Errorf("send command: %w", err)
-	}
-	LogExecuteKeysSendCommand(len(command))
-
-	// Step b: Capture the pane content (this is the "baseline")
-	baseline, err := runTmux(ctx, "capture-pane", "-t", name, "-p")
-	if err != nil {
-		LogExecuteKeysSequenceExit(false, err.Error())
-		return fmt.Errorf("capture baseline: %w", err)
-	}
-	baselineNormalized := normalizePaneContent(baseline)
-	LogExecuteKeysBaseline(len(baseline), baselineNormalized)
-
-	// Step c: Press enter (to actually run the command)
-	time.Sleep(200 * time.Millisecond) // Brief pause as in send function
-	_, err = runTmux(ctx, "send-keys", "-t", name, "Enter")
-	if err != nil {
-		LogExecuteKeysSequenceExit(false, err.Error())
-		return fmt.Errorf("send enter: %w", err)
-	}
-	LogExecuteKeysSendEnter()
-
-	// Steps d-e: Poll until output differs from baseline (command has started)
-	log.Debugf("tmux", "executeKeysSequence: waiting for command to start producing output...")
-	LogExecuteKeysPollStarting()
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	// Give it a reasonable timeout
-	startTimeout := time.After(30 * time.Second)
-	pollCount := 0
-	pollStartTime := time.Now()
-
-	for {
-		select {
-		case <-ticker.C:
-			pollCount++
-			current, err := runTmux(ctx, "capture-pane", "-t", name, "-p")
-			if err != nil {
-				LogExecuteKeysSequenceExit(false, err.Error())
-				return fmt.Errorf("capture during start wait: %w", err)
-			}
-			currentNormalized := normalizePaneContent(current)
-			elapsed := time.Since(pollStartTime).Seconds()
-			changed := currentNormalized != baselineNormalized
-			LogExecuteKeysPollTick(pollCount, elapsed, hashContent(currentNormalized), currentNormalized, changed)
-
-			if changed {
-				log.Debugf("tmux", "executeKeysSequence: command has started producing output")
-				LogExecuteKeysTransitionToStable(pollCount)
-				goto waitForStable
-			}
-
-		case <-startTimeout:
-			LogExecuteKeysSequenceExit(false, "timeout waiting for command to start")
-			return fmt.Errorf("timeout waiting for command to start producing output")
-		case <-ctx.Done():
-			LogExecuteKeysSequenceExit(false, ctx.Err().Error())
-			return ctx.Err()
-		}
-	}
-
-waitForStable:
-	// Steps f-g: Poll until output is stable for 5 consecutive polls (1 second)
-	log.Debugf("tmux", "executeKeysSequence: waiting for output to stabilize...")
-	stableCount := 0
-	var lastContent string
-
-	// Capture initial content for stability checking
-	current, err := runTmux(ctx, "capture-pane", "-t", name, "-p")
-	if err != nil {
-		LogExecuteKeysSequenceExit(false, err.Error())
-		return fmt.Errorf("capture for stability: %w", err)
-	}
-	lastContent = normalizePaneContent(current)
-
-	// Give it a reasonable timeout for stability
-	stableTimeout := time.After(60 * time.Second)
-	stablePollCount := 0
-	stablePollStartTime := time.Now()
-
-	for {
-		select {
-		case <-ticker.C:
-			stablePollCount++
-			current, err := runTmux(ctx, "capture-pane", "-t", name, "-p")
-			if err != nil {
-				LogExecuteKeysSequenceExit(false, err.Error())
-				return fmt.Errorf("capture during stability wait: %w", err)
-			}
-			currentNormalized := normalizePaneContent(current)
-			elapsed := time.Since(stablePollStartTime).Seconds()
-			changed := currentNormalized != lastContent
-			LogExecuteKeysPollStable(stablePollCount, stableCount, 5, elapsed, hashContent(currentNormalized), currentNormalized, changed)
-
-			if currentNormalized == lastContent {
-				stableCount++
-				if stableCount >= 5 {
-					log.Debugf("tmux", "executeKeysSequence: output is stable, sending keys")
-					goto sendKeys
-				}
-			} else {
-				stableCount = 0
-				lastContent = currentNormalized
-			}
-
-		case <-stableTimeout:
-			LogExecuteKeysSequenceExit(false, "timeout waiting for output to stabilize")
-			return fmt.Errorf("timeout waiting for output to stabilize")
-		case <-ctx.Done():
-			LogExecuteKeysSequenceExit(false, ctx.Err().Error())
-			return ctx.Err()
-		}
-	}
-
-sendKeys:
-	// Step h: Send the keys string to the pane
-	// Use -l flag to send keys as literal string (prevents tmux from interpreting special characters)
-	_, err = runTmux(ctx, "send-keys", "-t", name, "-l", keys)
-	if err != nil {
-		LogExecuteKeysSequenceExit(false, err.Error())
-		return fmt.Errorf("send keys: %w", err)
-	}
-	LogExecuteKeysSendKeys(len(keys))
-
-	// Step i: Wait 200ms
-	time.Sleep(200 * time.Millisecond)
-
-	// Step j: Press enter
-	_, err = runTmux(ctx, "send-keys", "-t", name, "Enter")
-	if err != nil {
-		LogExecuteKeysSequenceExit(false, err.Error())
-		return fmt.Errorf("send final enter: %w", err)
-	}
-	LogExecuteKeysSendFinalEnter()
-
-	log.Debugf("tmux", "executeKeysSequence: completed successfully")
-	LogExecuteKeysSequenceExit(true, "")
-	return nil
-}
 
 func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter bool) (ToolResult, error) {
 	if name == "" {
