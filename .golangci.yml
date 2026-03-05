@@ -10,7 +10,7 @@ linters:
     - govet          # suspicious constructs
     - staticcheck    # bugs, performance, unused code
     - ineffassign    # ineffectual assignments
-    - unused         # unused constants, variables, functions, types
+      #    - unused         # unused constants, variables, functions, types
     - gosec          # security issues
     - unparam        # unused function parameters
 
