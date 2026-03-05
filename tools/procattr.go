@@ -47,6 +47,7 @@ func init() {
 	}
 
 	// Build filtered list: all groups EXCEPT foci-secrets
+	// #nosec G115 - GID/UID conversions are safe, values are always non-negative and within uint32 range
 	var filteredGroups []uint32
 	found := false
 	for _, g := range currentGroups {

@@ -3,7 +3,7 @@ package command
 import (
 	"bufio"
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 - used for content checksums, not security
 	"fmt"
 	"os"
 	"os/exec"

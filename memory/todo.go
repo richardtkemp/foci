@@ -304,6 +304,7 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 	setClauses = append(setClauses, "updated_at = ?")
 	args = append(args, now)
 
+	// #nosec G202 - setClauses contains only hard-coded column names, not user input
 	query := "UPDATE todos SET " + strings.Join(setClauses, ", ") + " WHERE id = ? AND agent_id = ?"
 	args = append(args, id, agentID)
 

@@ -2,7 +2,7 @@ package tools
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 - used for content checksums, not security
 	"encoding/json"
 	"fmt"
 	"os"

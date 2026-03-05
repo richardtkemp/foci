@@ -124,7 +124,7 @@ func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) 
 // buildConfig translates a provider.MessageRequest into genai.GenerateContentConfig.
 func buildConfig(req *provider.MessageRequest) *genai.GenerateContentConfig {
 	config := &genai.GenerateContentConfig{
-		MaxOutputTokens: int32(req.MaxTokens),
+		MaxOutputTokens: int32(req.MaxTokens), // #nosec G115 - token limits are well within int32 range
 	}
 
 	// System instruction

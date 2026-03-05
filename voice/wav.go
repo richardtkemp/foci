@@ -13,6 +13,7 @@ import (
 //
 // Returns a complete WAV file (44-byte header + PCM data).
 func wrapPCMInWAV(pcm []byte, sampleRate, numChannels, bitsPerSample int) []byte {
+	// #nosec G115 - WAV format fields have specific sizes, values are within valid audio parameter ranges
 	byteRate := sampleRate * numChannels * bitsPerSample / 8
 	blockAlign := numChannels * bitsPerSample / 8
 	dataSize := len(pcm)

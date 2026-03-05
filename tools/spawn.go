@@ -393,10 +393,10 @@ func spawnGuardResult(toolName, result string, limit int) string {
 		return result // fallback: return original
 	}
 	if _, err := f.WriteString(result); err != nil {
-		f.Close()
+		_ = f.Close() // #nosec G104 - best effort cleanup
 		return result
 	}
-	f.Close()
+	_ = f.Close() // #nosec G104 - file already written successfully
 	return fmt.Sprintf("Result too large (%d chars). Full output saved to %s. Use the read tool to inspect it.", len(result), f.Name())
 }
 
