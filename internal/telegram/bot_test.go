@@ -2750,3 +2750,163 @@ func TestFormatToolCallWithResult_Truncation(t *testing.T) {
 		t.Error("expected truncation indicator ...")
 	}
 }
+
+// --- Steer buffer ---
+
+// TestSteerBuffer_AppendAndDrain verifies basic append/drain semantics:
+// multiple appends accumulate and drain joins them with newlines.
+func TestSteerBuffer_AppendAndDrain(t *testing.T) {
+	b, _ := testBot([]string{}, command.NewRegistry())
+
+	b.appendSteer("first")
+	b.appendSteer("second")
+	b.appendSteer("third")
+
+	got := b.drainSteer()
+	want := "first\nsecond\nthird"
+	if got != want {
+		t.Errorf("drainSteer() = %q, want %q", got, want)
+	}
+
+	// Second drain should return empty
+	if again := b.drainSteer(); again != "" {
+		t.Errorf("second drain = %q, want empty", again)
+	}
+}
+
+// TestSteerBuffer_DrainEmpty verifies that draining an empty buffer returns "".
+func TestSteerBuffer_DrainEmpty(t *testing.T) {
+	b, _ := testBot([]string{}, command.NewRegistry())
+	if got := b.drainSteer(); got != "" {
+		t.Errorf("drainSteer() on empty buffer = %q, want empty", got)
+	}
+}
+
+// TestSteerBuffer_Concurrent verifies that concurrent appends and drains
+// don't race or lose data.
+func TestSteerBuffer_Concurrent(t *testing.T) {
+	b, _ := testBot([]string{}, command.NewRegistry())
+
+	const n = 100
+	done := make(chan struct{})
+
+	// Writer goroutine
+	go func() {
+		for i := 0; i < n; i++ {
+			b.appendSteer(fmt.Sprintf("msg-%d", i))
+		}
+		close(done)
+	}()
+
+	// Drain periodically until writer is done and buffer is empty
+	var collected []string
+	for {
+		if text := b.drainSteer(); text != "" {
+			collected = append(collected, text)
+		}
+		select {
+		case <-done:
+			// Writer finished — drain remaining
+			if text := b.drainSteer(); text != "" {
+				collected = append(collected, text)
+			}
+			// Verify we got all messages
+			joined := strings.Join(collected, "\n")
+			for i := 0; i < n; i++ {
+				want := fmt.Sprintf("msg-%d", i)
+				if !strings.Contains(joined, want) {
+					t.Errorf("missing %q in collected steer text", want)
+				}
+			}
+			return
+		default:
+		}
+	}
+}
+
+// TestReceiveMessage_SteerRoutesToBuffer verifies that when steer mode is
+// enabled and a turn is active, text messages go to the steer buffer instead
+// of the queue.
+func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.SetSteerMode(true)
+
+	// Simulate active turn
+	_, cancel := context.WithCancel(context.Background())
+	b.turnMu.Lock()
+	b.turnCancel = cancel
+	b.turnMu.Unlock()
+	defer cancel()
+
+	msg := makeMsg(111, "owner", "change direction")
+	b.receiveMessage(context.Background(), msg)
+
+	// Should NOT be in the queue
+	if len(b.queue) != 0 {
+		t.Error("message should not be in queue when steer mode is active")
+	}
+
+	// Should be in steer buffer
+	got := b.drainSteer()
+	if got != "change direction" {
+		t.Errorf("steer buffer = %q, want %q", got, "change direction")
+	}
+}
+
+// TestReceiveMessage_SteerDisabledQueuesNormally verifies that when steer mode
+// is disabled, messages go to the queue even during an active turn.
+func TestReceiveMessage_SteerDisabledQueuesNormally(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	// steerMode defaults to false
+
+	// Simulate active turn
+	_, cancel := context.WithCancel(context.Background())
+	b.turnMu.Lock()
+	b.turnCancel = cancel
+	b.turnMu.Unlock()
+	defer cancel()
+
+	msg := makeMsg(111, "owner", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	if len(b.queue) != 1 {
+		t.Errorf("queue length = %d, want 1", len(b.queue))
+	}
+	if got := b.drainSteer(); got != "" {
+		t.Errorf("steer buffer should be empty, got %q", got)
+	}
+}
+
+// TestReceiveMessage_SteerNoActiveTurnQueuesNormally verifies that when steer
+// mode is enabled but no turn is active, messages go to the normal queue.
+func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.SetSteerMode(true)
+
+	// No active turn (turnCancel is nil)
+	msg := makeMsg(111, "owner", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	if len(b.queue) != 1 {
+		t.Errorf("queue length = %d, want 1", len(b.queue))
+	}
+	if got := b.drainSteer(); got != "" {
+		t.Errorf("steer buffer should be empty, got %q", got)
+	}
+}
+
+// TestSetSteerMode verifies that SetSteerMode toggles the flag.
+func TestSetSteerMode(t *testing.T) {
+	b, _ := testBot([]string{}, command.NewRegistry())
+	if b.steerMode {
+		t.Error("steerMode should default to false")
+	}
+	b.SetSteerMode(true)
+	if !b.steerMode {
+		t.Error("steerMode should be true after SetSteerMode(true)")
+	}
+	b.SetSteerMode(false)
+	if b.steerMode {
+		t.Error("steerMode should be false after SetSteerMode(false)")
+	}
+}

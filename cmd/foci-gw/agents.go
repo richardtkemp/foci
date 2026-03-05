@@ -93,6 +93,7 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 	} else {
 		bot.SetInjectedMessageHeader(cfg.Defaults.InjectedMessageHeader)
 	}
+	bot.SetSteerMode(acfg.SteerMode)
 }
 
 // checkActivityGate parses if_active/if_inactive durations, checks them against
@@ -101,8 +102,8 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 
 // multiballBotConfig holds common settings applied to every multiball bot.
 type multiballBotConfig struct {
-	sttProvider     voice.STT
-	ttsProvider     voice.TTS
+	sttProvider     voice.STT // resolved STT for this agent
+	ttsProvider     voice.TTS // resolved TTS for this agent (with rate)
 	stopAliases     []string
 	enableStopAlias bool
 	acfg            config.AgentConfig
@@ -157,8 +158,8 @@ type setupParams struct {
 	todoStore       *memory.TodoStore
 	toolDetailStore *telegram.ToolDetailStore
 	sessionIndex    *session.SessionIndex
-	sttProvider     voice.STT
-	ttsProvider     voice.TTS
+	ttsMap          map[string]voice.TTS
+	sttMap          map[string]voice.STT
 	braveKey        string
 	usageClient     *anthropic.UsageClient
 	botMgr          *telegram.BotManager
@@ -339,13 +340,14 @@ func setupAgent(p setupParams) *agentInstance {
 	compactor.AgentID = acfg.ID
 
 	// Per-agent send_telegram tool (closure captures this agent's bot)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate)
 	registry.Register(tools.NewSendTelegramTool(func(sessionKey string) tools.TelegramSender {
 		bot := p.botMgr.BotForSessionOrPrimary(sessionKey, acfg.ID)
 		if bot == nil {
 			return nil
 		}
 		return bot
-	}, p.ttsProvider))
+	}, agentTTS))
 
 	// send_to_session tool — inject messages into other sessions.
 	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.botMgr, p.ctx)
@@ -418,7 +420,6 @@ func setupAgent(p setupParams) *agentInstance {
 	// Restore per-session state and seed session meta for default session (if any).
 	// These are no-ops if no default session exists yet (first startup).
 	if sk := defaultSessionKey(); sk != "" {
-		ag.RestoreVoiceMode(sk)
 		ag.RestoreSessionOverrides(sk)
 		ag.SeedSessionMeta(sk)
 	}
@@ -581,11 +582,13 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		primaryBot.SetToolDetailStore(p.toolDetailStore)
 	}
 
-	if p.sttProvider != nil {
-		primaryBot.SetTranscriber(p.sttProvider)
+	agentSTT := resolveSTT(p.sttMap, acfg.STT)
+	agentTTSForBot := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate)
+	if agentSTT != nil {
+		primaryBot.SetTranscriber(agentSTT)
 	}
-	if p.ttsProvider != nil {
-		primaryBot.SetTTS(voice.WithRate(p.ttsProvider, acfg.TTSRate))
+	if agentTTSForBot != nil {
+		primaryBot.SetTTS(agentTTSForBot)
 	}
 	primaryBot.SetStopAliases(p.cfg.Telegram.StopAliases, p.cfg.Telegram.EnableStopAliases)
 	primaryBot.SetToolCallPreviewChars(p.cfg.Tools.ToolCallPreviewChars)
@@ -689,8 +692,8 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 			continue
 		}
 		configureMultiballBot(mbBot, multiballBotConfig{
-			sttProvider:     p.sttProvider,
-			ttsProvider:     p.ttsProvider,
+			sttProvider:     resolveSTT(p.sttMap, acfg.STT),
+			ttsProvider:     resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate),
 			stopAliases:     p.cfg.Telegram.StopAliases,
 			enableStopAlias: p.cfg.Telegram.EnableStopAliases,
 			acfg:            acfg,
@@ -803,6 +806,52 @@ func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []
 
 
 
+
+// resolveTTS looks up a TTS provider by id (empty → default), applies the
+// combined rate (entry.Rate × agentRate, 0 treated as 1.0), and returns the
+// rate-adjusted provider.
+func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, agentRate float64) voice.TTS {
+	baseTTS := ttsMap[ttsID]
+	if baseTTS == nil {
+		baseTTS = ttsMap[""] // default
+	}
+	if baseTTS == nil {
+		return nil
+	}
+	// Find entry rate from config
+	var entryRate float64
+	if ttsID == "" && len(ttsEntries) > 0 {
+		entryRate = ttsEntries[0].Rate
+	} else {
+		for _, e := range ttsEntries {
+			if e.ID == ttsID {
+				entryRate = e.Rate
+				break
+			}
+		}
+	}
+	// Combine: treat 0 as 1.0
+	eff := entryRate
+	if eff == 0 {
+		eff = 1.0
+	}
+	if agentRate != 0 {
+		eff *= agentRate
+	}
+	if eff == 1.0 {
+		eff = 0 // WithRate(0) returns the original provider unchanged
+	}
+	return voice.WithRate(baseTTS, eff)
+}
+
+// resolveSTT looks up an STT provider by id (empty → default).
+func resolveSTT(sttMap map[string]voice.STT, sttID string) voice.STT {
+	stt := sttMap[sttID]
+	if stt == nil {
+		stt = sttMap[""] // default
+	}
+	return stt
+}
 
 // resolveMessageTransforms returns per-agent message transforms if set, otherwise global.
 func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []config.MessageTransform {

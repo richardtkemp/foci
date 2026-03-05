@@ -38,13 +38,13 @@ func isUserTrigger(trigger string) bool {
 // Using context avoids cross-turn races from mutable Agent fields.
 type TurnCallbacks struct {
 	ReplyFunc            ReplyFunc
-	VoiceReplyFunc       VoiceReplyFunc
 	ToolCallObserver     ToolCallObserver
 	ToolResultObserver   ToolResultObserver
 	ThinkingObserver     func(thinking string)
 	ActivityFunc         func()
 	TextDeltaObserver    func(delta string)
 	ThinkingDeltaObserver func(delta string)
+	SteerCheckFunc       func() string // non-blocking; returns "" if no pending steer
 }
 
 // WithTurnCallbacks attaches TurnCallbacks to a context.
@@ -93,13 +93,6 @@ func notifyThinkingCtx(ctx context.Context, thinking string) {
 	}
 }
 
-// sendVoiceCtx sends a voice note via context callbacks.
-func sendVoiceCtx(ctx context.Context, data []byte) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.VoiceReplyFunc != nil && len(data) > 0 {
-		cb.VoiceReplyFunc(data)
-	}
-}
-
 // notifyTextDeltaCtx calls the text delta observer via context.
 func notifyTextDeltaCtx(ctx context.Context, delta string) {
 	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.TextDeltaObserver != nil && delta != "" {
@@ -112,5 +105,14 @@ func notifyThinkingDeltaCtx(ctx context.Context, delta string) {
 	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ThinkingDeltaObserver != nil && delta != "" {
 		cb.ThinkingDeltaObserver(delta)
 	}
+}
+
+// steerCheckFromCtx calls the steer check function via context.
+// Returns "" if no steer callback is set or no steer text is pending.
+func steerCheckFromCtx(ctx context.Context) string {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.SteerCheckFunc != nil {
+		return cb.SteerCheckFunc()
+	}
+	return ""
 }
 

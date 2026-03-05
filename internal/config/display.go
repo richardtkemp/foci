@@ -192,27 +192,35 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
 
-	// voice
-	if cfg.Voice.STTEndpoint != "" {
-		add("voice", "stt_endpoint", cfg.Voice.STTEndpoint)
+	// tts
+	for i, e := range cfg.TTS {
+		prefix := fmt.Sprintf("tts[%d]", i)
+		add(prefix, "id", e.ID)
+		add(prefix, "format", e.Format)
+		if e.Endpoint != "" {
+			add(prefix, "endpoint", e.Endpoint)
+		}
+		if e.Model != "" {
+			add(prefix, "model", e.Model)
+		}
+		if e.Voice != "" {
+			add(prefix, "voice", e.Voice)
+		}
+		if e.Rate != 0 {
+			add(prefix, "rate", e.Rate)
+		}
 	}
-	if cfg.Voice.STTModel != "" {
-		add("voice", "stt_model", cfg.Voice.STTModel)
-	}
-	if cfg.Voice.TTSProvider != "" {
-		add("voice", "tts_provider", cfg.Voice.TTSProvider)
-	}
-	if cfg.Voice.TTSEndpoint != "" {
-		add("voice", "tts_endpoint", cfg.Voice.TTSEndpoint)
-	}
-	if cfg.Voice.TTSModel != "" {
-		add("voice", "tts_model", cfg.Voice.TTSModel)
-	}
-	if cfg.Voice.TTSVoice != "" {
-		add("voice", "tts_voice", cfg.Voice.TTSVoice)
-	}
-	if cfg.Voice.TTSRate != 0 {
-		add("voice", "tts_rate", cfg.Voice.TTSRate)
+	// stt
+	for i, e := range cfg.STT {
+		prefix := fmt.Sprintf("stt[%d]", i)
+		add(prefix, "id", e.ID)
+		add(prefix, "format", e.Format)
+		if e.Endpoint != "" {
+			add(prefix, "endpoint", e.Endpoint)
+		}
+		if e.Model != "" {
+			add(prefix, "model", e.Model)
+		}
 	}
 
 	// database
@@ -270,10 +278,17 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Effort != "" {
 		add("effort", agent.Effort)
 	}
+	if agent.TTS != "" {
+		add("tts", agent.TTS)
+	}
+	if agent.STT != "" {
+		add("stt", agent.STT)
+	}
 	if agent.TTSRate != 0 {
 		add("tts_rate", agent.TTSRate)
 	}
 	add("inject_agent_warnings", agent.InjectAgentWarnings)
+	add("steer_mode", agent.SteerMode)
 	if agent.StartupNotification != nil {
 		add("startup_notification", *agent.StartupNotification)
 	}
@@ -546,26 +561,33 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	if len(cfg.ManaWarnings.Thresholds) > 0 {
 		addGlobal("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
 	}
-	if cfg.Voice.STTEndpoint != "" {
-		addGlobal("voice", "stt_endpoint", cfg.Voice.STTEndpoint)
+	for i, e := range cfg.TTS {
+		prefix := fmt.Sprintf("tts[%d]", i)
+		addGlobal(prefix, "id", e.ID)
+		addGlobal(prefix, "format", e.Format)
+		if e.Endpoint != "" {
+			addGlobal(prefix, "endpoint", e.Endpoint)
+		}
+		if e.Model != "" {
+			addGlobal(prefix, "model", e.Model)
+		}
+		if e.Voice != "" {
+			addGlobal(prefix, "voice", e.Voice)
+		}
+		if e.Rate != 0 {
+			addGlobal(prefix, "rate", e.Rate)
+		}
 	}
-	if cfg.Voice.STTModel != "" {
-		addGlobal("voice", "stt_model", cfg.Voice.STTModel)
-	}
-	if cfg.Voice.TTSProvider != "" {
-		addGlobal("voice", "tts_provider", cfg.Voice.TTSProvider)
-	}
-	if cfg.Voice.TTSEndpoint != "" {
-		addGlobal("voice", "tts_endpoint", cfg.Voice.TTSEndpoint)
-	}
-	if cfg.Voice.TTSModel != "" {
-		addGlobal("voice", "tts_model", cfg.Voice.TTSModel)
-	}
-	if cfg.Voice.TTSVoice != "" {
-		addGlobal("voice", "tts_voice", cfg.Voice.TTSVoice)
-	}
-	if cfg.Voice.TTSRate != 0 {
-		addGlobal("voice", "tts_rate", cfg.Voice.TTSRate)
+	for i, e := range cfg.STT {
+		prefix := fmt.Sprintf("stt[%d]", i)
+		addGlobal(prefix, "id", e.ID)
+		addGlobal(prefix, "format", e.Format)
+		if e.Endpoint != "" {
+			addGlobal(prefix, "endpoint", e.Endpoint)
+		}
+		if e.Model != "" {
+			addGlobal(prefix, "model", e.Model)
+		}
 	}
 	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
 	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
@@ -654,7 +676,8 @@ type displayConfig struct {
 	Skills        SkillsConfig       `toml:"skills"`
 	Cache         CacheConfig        `toml:"cache"`
 	UsageWarnings ManaWarningsConfig `toml:"usage_warnings"`
-	Voice         VoiceConfig        `toml:"voice"`
+	TTS           []TTSConfig        `toml:"tts"`
+	STT           []STTConfig        `toml:"stt"`
 	Database      DatabaseConfig     `toml:"database"`
 	Anthropic     displayAnthropic   `toml:"anthropic"`
 }
@@ -702,7 +725,8 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Skills:        cfg.Skills,
 		Cache:         cfg.Cache,
 		UsageWarnings: cfg.ManaWarnings,
-		Voice:         cfg.Voice,
+		TTS:           cfg.TTS,
+		STT:           cfg.STT,
 		Database:      cfg.Database,
 		Anthropic: displayAnthropic{
 			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,
@@ -749,7 +773,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "additional bot names for multiball"})
 	}
 	if agent.TTSRate == 0 {
-		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate override (0 = use [voice] tts_rate)"})
+		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
 	}
 	// Only show agent override options when the global fallback isn't covering them.
 	if agent.StartupNotification == nil && !cfg.Telegram.EnableStartupNotify {
@@ -831,17 +855,11 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Voice fields
-	if cfg.Voice.STTEndpoint == "" {
-		opts = append(opts, availableOption{"voice", "stt_endpoint", "(Groq)", "STT API endpoint"})
+	if len(cfg.TTS) == 0 {
+		opts = append(opts, availableOption{"tts", "(none)", "[[tts]]", "add TTS entries for text-to-speech"})
 	}
-	if cfg.Voice.STTModel == "" {
-		opts = append(opts, availableOption{"voice", "stt_model", "whisper-large-v3", "STT model name"})
-	}
-	if cfg.Voice.TTSProvider == "" {
-		opts = append(opts, availableOption{"voice", "tts_provider", "edge-tts", "TTS provider"})
-	}
-	if cfg.Voice.TTSVoice == "" {
-		opts = append(opts, availableOption{"voice", "tts_voice", "\"\"", "TTS voice name"})
+	if len(cfg.STT) == 0 {
+		opts = append(opts, availableOption{"stt", "(none)", "[[stt]]", "add STT entries for speech-to-text"})
 	}
 
 	// Environment fields

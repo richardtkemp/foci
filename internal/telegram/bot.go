@@ -99,6 +99,10 @@ type Bot struct {
 	toolResults          sync.Map            // message ID (int64) → toolResultEntry; for inline keyboard expansion
 	thinkingStore        sync.Map            // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 	toolDetailStore      *ToolDetailStore    // nil = no persistence; write-through to SQLite
+
+	steerMode  bool         // steer mode enabled: user messages route to buffer during active turns
+	steerMu    sync.Mutex   // protects steerParts
+	steerParts []string     // pending steer messages; drained atomically
 }
 
 // defaultLogger is used when a Bot is constructed without a ComponentLogger
@@ -219,6 +223,33 @@ func (b *Bot) SetReceivedFilesDir(dir string) {
 // Empty string disables the header.
 func (b *Bot) SetInjectedMessageHeader(s string) {
 	b.injectedMessageHeader = s
+}
+
+// SetSteerMode enables or disables steer mode.
+// When enabled, user messages route to the steer buffer during active turns
+// instead of queuing behind the turn lock.
+func (b *Bot) SetSteerMode(enabled bool) {
+	b.steerMode = enabled
+}
+
+// appendSteer adds text to the steer buffer. Called by the receiver goroutine.
+func (b *Bot) appendSteer(text string) {
+	b.steerMu.Lock()
+	b.steerParts = append(b.steerParts, text)
+	b.steerMu.Unlock()
+}
+
+// drainSteer returns all pending steer text joined with newlines and clears the buffer.
+// Called by the agent loop via SteerCheckFunc. Returns "" if no messages are pending.
+func (b *Bot) drainSteer() string {
+	b.steerMu.Lock()
+	defer b.steerMu.Unlock()
+	if len(b.steerParts) == 0 {
+		return ""
+	}
+	text := strings.Join(b.steerParts, "\n")
+	b.steerParts = nil
+	return text
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.
@@ -825,6 +856,19 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		return
 	}
 
+	// Steer mode: if a turn is active, route text to the steer buffer
+	// so it gets injected between tool calls instead of queuing behind the turn lock.
+	if b.steerMode && text != "" && len(images) == 0 {
+		b.turnMu.Lock()
+		active := b.turnCancel != nil
+		b.turnMu.Unlock()
+		if active {
+			b.appendSteer(text)
+			b.logger().Infof("steer: buffered message from %s", formatUserInfo(msg.From))
+			return
+		}
+	}
+
 	select {
 	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, images: images}:
 	default:
@@ -926,6 +970,13 @@ func (b *Bot) agentWorker(ctx context.Context) {
 			return
 		case qm := <-b.queue:
 			b.processAgentMessage(ctx, qm)
+			// Drain steer messages that arrived after the turn completed.
+			// Process them as normal follow-up turns so the user's redirection
+			// isn't silently dropped.
+			if orphan := b.drainSteer(); orphan != "" {
+				b.logger().Infof("steer: processing orphaned steer message as follow-up turn")
+				b.processAgentMessage(ctx, queuedMessage{msg: qm.msg, userID: qm.userID, text: orphan})
+			}
 		}
 	}
 }
@@ -992,10 +1043,6 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			b.sendReply(qm.msg, qm.userID, text)
 			tracker.resetMsgID()
 		},
-		// Voice reply delivery (for voice mode)
-		VoiceReplyFunc: func(oggData []byte) {
-			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, oggData)
-		},
 		// Refresh typing indicator when tools complete
 		ActivityFunc: func() {
 			_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
@@ -1016,6 +1063,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		TextDeltaObserver: func(delta string) {
 			_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
 		},
+		// Steer: drain buffered user messages for injection between tool calls.
+		SteerCheckFunc: b.drainSteer,
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
@@ -1048,17 +1097,6 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Sending an empty string to Telegram would fail with "message text is empty".
 	if strings.TrimSpace(response) == "" {
 		b.logger().Debugf("agent returned empty response for %s, not sending", sk)
-		return
-	}
-
-	// Voice mode: convert final reply to voice note
-	if b.agent.VoiceMode(sk) && b.tts != nil && response != "" {
-		if audioData, err := b.tts.Synthesize(turnCtx, response); err != nil {
-			b.logger().Errorf("tts for voice mode: %v", err)
-			b.sendReply(qm.msg, qm.userID, response) // fall back to text
-		} else {
-			b.sendVoiceNote(qm.msg.Chat.Id, qm.userID, qm.msg.From.Username, audioData)
-		}
 		return
 	}
 
