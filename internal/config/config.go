@@ -236,7 +236,7 @@ type SessionsConfig struct {
 	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 
-	ArchiveAfter string `toml:"archive_after"` // gzip idle sessions after this duration (default "168h" = 7 days)
+	ArchiveAfter string `toml:"archive_after"` // gzip idle sessions after this duration (default "24h")
 }
 
 type MemorySource struct {
@@ -1072,7 +1072,7 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
-	setStringDefault(&cfg.Sessions.ArchiveAfter, "168h")
+	setStringDefault(&cfg.Sessions.ArchiveAfter, "24h")
 	setIntDefault(&cfg.HTTP.Port, 18791)
 	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")
 	if cfg.DataDir == "" {
