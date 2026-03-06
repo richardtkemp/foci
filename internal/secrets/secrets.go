@@ -642,7 +642,7 @@ func (s *Store) CheckSecurity() []string {
 			if !found {
 				warnings = append(warnings,
 					fmt.Sprintf("process does not have %s in supplementary groups — add SupplementaryGroups=%s to systemd unit",
-						SecurityGroupName, SecurityGroupName))
+						securityGroupName, securityGroupName))
 			}
 		}
 	}

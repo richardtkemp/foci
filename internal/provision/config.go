@@ -6,8 +6,6 @@ import (
 )
 
 // GenerateAgentBlock produces a [[agents]] TOML fragment for an agent.
-// BotName defaults to spec.ID; only emitted when different.
-// Token secret follows the convention telegram.<BotName>; bot_secret only emitted when different.
 func GenerateAgentBlock(spec AgentSpec) string {
 	var sb strings.Builder
 

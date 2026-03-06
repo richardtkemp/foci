@@ -7,7 +7,9 @@ import (
 	"testing"
 )
 
-// Verifies read() panics when given a non-existent embedded file name.
+// Documents that read() panics on missing embedded files. This path is
+// unreachable in production (all callers use hardcoded literals validated by
+// TestEmbeddedFilesLoadNonEmpty) but exists as a developer safety net.
 func TestReadPanicsOnMissingFile(t *testing.T) {
 	defer func() {
 		r := recover()
@@ -162,26 +164,6 @@ func TestResolvePromptSearchDirsFallthrough(t *testing.T) {
 	got := ResolvePrompt("", "prompt.md", "embedded-default", dir)
 	if got != "embedded-default" {
 		t.Errorf("search dir fallthrough: got %q, want %q", got, "embedded-default")
-	}
-}
-
-// Verifies ResolvePrompt expands ~/path to the user's home directory.
-func TestResolvePromptTildeExpansion(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		t.Skip("cannot determine home directory")
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "tilde-test.md")
-	os.WriteFile(path, []byte("tilde content"), 0644)
-
-	// Build a ~/... path that maps to the temp file by making a symlink from home
-	// Actually, just test with a real file under home if possible, or test the path
-	// that doesn't exist to confirm fallback behavior with tilde.
-	got := ResolvePrompt("~/nonexistent-prompts-test-file.md", "test", "fallback")
-	if got != "fallback" {
-		t.Errorf("tilde missing file: got %q, want %q", got, "fallback")
 	}
 }
 

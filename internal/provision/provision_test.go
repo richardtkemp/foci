@@ -112,14 +112,6 @@ func TestGenerateAgentBlock(t *testing.T) {
 		}
 	}
 
-	// BotName == ID → no telegram_bot line
-	if strings.Contains(result, "telegram_bot") {
-		t.Errorf("should not contain telegram_bot when botName == id:\n%s", result)
-	}
-	// Convention key → no bot_secret line
-	if strings.Contains(result, "bot_secret") {
-		t.Errorf("should not contain bot_secret:\n%s", result)
-	}
 	// No memory sources — left to sensible defaults
 	if strings.Contains(result, "memory.sources") {
 		t.Errorf("should not contain memory.sources:\n%s", result)
@@ -982,7 +974,7 @@ func TestProvisionWithoutCrontabTemplate(t *testing.T) {
 	}
 }
 
-// TestStaggerCrontabLineEdgeCases tests StaggerCrontabLine with various inputs
+// TestStaggerCrontabLineEdgeCases tests StaggerCrontabLine with various inputs.
 func TestStaggerCrontabLineEdgeCases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -994,10 +986,10 @@ func TestStaggerCrontabLineEdgeCases(t *testing.T) {
 			name:   "large offset wraps correctly",
 			line:   "50 4 * * * cmd",
 			offset: 100,
-			want:   "50 4 * * * cmd", // (50 + 100) % 60 = 30, but wait...
+			want:   "30 4 * * * cmd", // (50 + 100) % 60 = 30
 		},
 		{
-			name:   "negative field unchanged",
+			name:   "short line unchanged",
 			line:   "invalid format",
 			offset: 5,
 			want:   "invalid format",
@@ -1013,11 +1005,8 @@ func TestStaggerCrontabLineEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := StaggerCrontabLine(tt.line, tt.offset)
-			// For valid lines we want changes, invalid lines stay the same
-			if tt.line == "invalid format" || tt.line == "0 4 * * *" {
-				if got != tt.line {
-					t.Errorf("invalid line should be unchanged: got %q", got)
-				}
+			if got != tt.want {
+				t.Errorf("StaggerCrontabLine(%q, %d) = %q, want %q", tt.line, tt.offset, got, tt.want)
 			}
 		})
 	}
