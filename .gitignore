@@ -23,6 +23,7 @@ todo-*.db-shm
 .gopath/
 .setup-install.sh
 .staged-WELCOME.md
+.claude
 .claude/
 codeql-db/
 coverage.out
