@@ -37,11 +37,31 @@ gh codeql query run query.ql --database=codeql-db
 # select f, "Constructor function"
 ```
 
-### When to use what:
-- **Simple patterns**: Use `Grep` tool or `gogrep`
-- **Dataflow/persistence audit**: Use CodeQL or write quick `go/ast` script
-- **Systematic exploration**: Use Task tool with `Explore` agent
-- **Manual grep**: Last resort, prefer Go-aware tools
+### When to use what (for Claude):
+**Most useful for quick investigations:**
+1. **gopls references** - Find all uses of a field/function/type:
+   ```bash
+   $(go env GOPATH)/bin/gopls references internal/telegram/bot.go:93:2
+   ```
+   Output: List of file:line:col for every reference
+
+2. **gopls definition** - Jump to where something is defined:
+   ```bash
+   $(go env GOPATH)/bin/gopls definition internal/telegram/bot.go:411:9
+   ```
+   Output: Definition location with docstring
+
+3. **Grep tool** - Still excellent for pattern matching:
+   ```bash
+   grep -rn "\.sessionKeyForMsg(" --include="*.go"
+   ```
+
+**For deeper analysis:**
+- **CodeQL** - Create database once, run complex queries
+- **Explore agent** - Systematic multi-step investigations
+- **Quick go/ast script** - Custom one-off analysis
+
+**Note:** Always use gopls via `$(go env GOPATH)/bin/gopls` since it's not in PATH.
 
 ## When You Make Changes
 
