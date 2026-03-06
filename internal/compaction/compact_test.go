@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1367,4 +1368,168 @@ func TestCheckConfig_Unsafe(t *testing.T) {
 	// Capture any warnings (they go to the logger)
 	// Just verify it doesn't panic when config is unsafe
 	c.checkConfig()
+}
+
+// Verifies Compact returns an error when the session store can't load the session.
+func TestCompactLoadError(t *testing.T) {
+	dir := t.TempDir()
+	store := session.NewStore(dir)
+	sessionKey := "test/imain/1000000000"
+
+	// Create a file where the session directory should be to cause I/O error.
+	// SessionPath returns <dir>/test/imain/1000000000/root.jsonl
+	// Making 1000000000 a file prevents opening root.jsonl inside it.
+	os.MkdirAll(filepath.Join(dir, "test", "imain"), 0755)
+	os.WriteFile(filepath.Join(dir, "test", "imain", "1000000000"), []byte("conflict"), 0644)
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	_, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
+	if err == nil {
+		t.Fatal("expected error when session can't be loaded")
+	}
+	if !strings.Contains(err.Error(), "load session for compaction") {
+		t.Errorf("error = %q, want 'load session for compaction'", err)
+	}
+}
+
+// Verifies Compact handles the case where preserveN would go negative
+// (preserveMessages set higher than len(messages) minus minMessages).
+func TestCompactPreserveNegativeClamped(t *testing.T) {
+	server := mockCompactionServer("Summary.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain/1000000000"
+
+	// Add exactly 4 messages (equals minMessages)
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a1")})
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	// preserveMessages=3 with only 4 messages and minMessages=4:
+	// len(messages)-preserveN = 4-3 = 1 < minMessages(4), so preserveN = 4-4 = 0
+	c.WithConfig(4096, 4, 3)
+
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Should have compacted everything (no preservation since preserveN clamped to 0)
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("after compact: %d messages, want 3 (no preserved)", len(msgs))
+	}
+}
+
+// Verifies that walk-back past minMessages drops preservation entirely.
+// Build a session where ALL messages before the last few are tool_use pairs,
+// so safeSplitPoint walks all the way back past minMessages.
+func TestCompactWalkBackBelowMinMessages(t *testing.T) {
+	server := mockCompactionServer("Summary after walk-back.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain/1000000000"
+
+	// Build: u0, [toolUse1, toolResult1], [toolUse2, toolResult2], [toolUse3, toolResult3], a_final
+	// That's 8 messages. minMessages=6, preserve=2.
+	// splitIdx = 8-2 = 6. msgs[5] = toolResult3 which is user, msgs[4] = toolUse3 which is assistant with tool_use.
+	// prev of splitIdx(6) is msgs[5] which is user → no walk-back needed? Let me restructure.
+	//
+	// Actually need: every message near the split to be assistant+tool_use so walk-back keeps going.
+	// u0, a0, u1, toolUseA, toolResultA, toolUseB, toolResultB, a_final = 8 msgs
+	// With minMessages=6, preserve=3: splitIdx = 8-3 = 5 (toolResultA)
+	// prev(4) = toolUseA → walk to 4. prev(3) = u1 → stop. splitIdx=4.
+	// 4 >= minMessages(6)? No! 4 < 6 → "walk-back pushed split below minMessages", preserveN=0.
+
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
+	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
+	store.Append(sessionKey, toolUseMsg("toolu_A"))
+	store.Append(sessionKey, toolResultMsg("toolu_A"))
+	store.Append(sessionKey, toolUseMsg("toolu_B"))
+	store.Append(sessionKey, toolResultMsg("toolu_B"))
+	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("done")})
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c.WithConfig(4096, 6, 3) // minMessages=6, preserve=3
+
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Walk-back should have pushed split below minMessages, so nothing is preserved.
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("after compact: %d messages, want 3 (walk-back dropped preservation)", len(msgs))
+	}
+}
+
+// Verifies Compact handles a scratchpad All() error gracefully (logs warning, continues).
+func TestCompactScratchpadError(t *testing.T) {
+	server := mockCompactionServer("Summary with scratchpad error.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain/1000000000"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+	}
+
+	// Create a scratchpad backed by a closed database to trigger All() error.
+	dbPath := filepath.Join(t.TempDir(), "scratchpad.db")
+	sp, err := memory.NewScratchpad(dbPath)
+	if err != nil {
+		t.Fatalf("NewScratchpad: %v", err)
+	}
+	sp.Close() // close before use → All() will error
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c.Scratchpad = sp
+	c.AgentID = "test"
+
+	// Should succeed despite scratchpad error (it's best-effort).
+	_, err = c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	if err != nil {
+		t.Fatalf("Compact should succeed despite scratchpad error: %v", err)
+	}
+}
+
+// Verifies Compact returns an error when session Replace fails.
+func TestCompactReplaceError(t *testing.T) {
+	server := mockCompactionServer("Summary.")
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	dir := t.TempDir()
+	store := session.NewStore(dir)
+	sessionKey := "test/imain/1000000000"
+
+	for i := 0; i < 3; i++ {
+		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+	}
+
+	// Make the session directory read-only so Replace can't write.
+	sessDir := filepath.Join(dir, "test", "imain", "1000000000")
+	os.Chmod(sessDir, 0555)
+	t.Cleanup(func() { os.Chmod(sessDir, 0755) })
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	if err == nil {
+		t.Fatal("expected error when Replace fails")
+	}
+	if !strings.Contains(err.Error(), "replace session after compaction") {
+		t.Errorf("error = %q, want 'replace session after compaction'", err)
+	}
 }
