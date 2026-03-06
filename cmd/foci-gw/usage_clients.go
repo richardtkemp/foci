@@ -10,6 +10,9 @@ import (
 	"foci/internal/secrets"
 )
 
+// Compile-time verification that usageClientRegistry implements provider.UsageClientProvider
+var _ provider.UsageClientProvider = (*usageClientRegistry)(nil)
+
 // supportsUsageAPI returns whether a provider format supports usage/quota tracking.
 func supportsUsageAPI(format string) bool {
 	switch format {
