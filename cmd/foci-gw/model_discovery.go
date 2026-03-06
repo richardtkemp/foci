@@ -5,16 +5,16 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/log"
 	oai "foci/internal/openai"
+	"foci/internal/provider"
 	"foci/internal/secrets"
 )
 
 // modelLister is an interface for listing models, enabling test mocking.
 type modelLister interface {
-	ListModels() ([]anthropic.ModelInfo, error)
+	ListModels() ([]provider.ModelInfo, error)
 }
 
 // resolveAllAliases inspects the aliases map, determines which providers are in use,
@@ -104,7 +104,7 @@ func resolveAnthropicAliases(client modelLister, aliases map[string]string) {
 
 // openaiModelLister is an interface for listing OpenAI models, enabling test mocking.
 type openaiModelLister interface {
-	ListModels(ctx context.Context) ([]oai.ModelInfo, error)
+	ListModels(ctx context.Context) ([]provider.ModelInfo, error)
 }
 
 // openaiAliasFamily maps an alias key to the substring that should appear in
@@ -146,13 +146,13 @@ func resolveOpenAIAliases(ctx context.Context, client openaiModelLister, aliases
 
 	for _, entry := range toResolve {
 		var bestID string
-		var bestCreated int64
+		var bestTime time.Time
 		for _, m := range models {
 			if !strings.Contains(strings.ToLower(m.ID), entry.match) {
 				continue
 			}
-			if m.Created > bestCreated {
-				bestCreated = m.Created
+			if m.CreatedAt.After(bestTime) {
+				bestTime = m.CreatedAt
 				bestID = m.ID
 			}
 		}

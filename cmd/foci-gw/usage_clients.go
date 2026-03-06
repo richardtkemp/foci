@@ -3,27 +3,13 @@ package main
 import (
 	"sync"
 
-	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/provider"
-	"foci/internal/secrets"
 )
 
 // Compile-time verification that usageClientRegistry implements provider.UsageClientProvider
 var _ provider.UsageClientProvider = (*usageClientRegistry)(nil)
-
-// supportsUsageAPI returns whether a provider format supports usage/quota tracking.
-func supportsUsageAPI(format string) bool {
-	switch format {
-	case "anthropic":
-		return true
-	case "gemini", "openai":
-		return false
-	default:
-		return false
-	}
-}
 
 // usageClientRegistry lazily creates UsageClient instances per API key.
 // Key format: "format:api_key_secret_name"
@@ -31,21 +17,19 @@ type usageClientRegistry struct {
 	mu      sync.Mutex
 	entries map[string]*usageClientEntry
 
-	cfg   *config.Config
-	store *secrets.Store
+	cfg *config.Config
 }
 
 type usageClientEntry struct {
-	client *anthropic.UsageClient
+	client provider.UsageClient
 	once   sync.Once
 }
 
 // newUsageClientRegistry creates a registry that lazily initializes UsageClients.
-func newUsageClientRegistry(cfg *config.Config, store *secrets.Store) *usageClientRegistry {
+func newUsageClientRegistry(cfg *config.Config) *usageClientRegistry {
 	return &usageClientRegistry{
 		entries: make(map[string]*usageClientEntry),
 		cfg:     cfg,
-		store:   store,
 	}
 }
 
@@ -53,20 +37,17 @@ func newUsageClientRegistry(cfg *config.Config, store *secrets.Store) *usageClie
 // Creates and caches by format:api_key pair.
 func (r *usageClientRegistry) GetUsageClient(endpointName string) provider.UsageClient {
 	if endpointName == "" {
-		endpointName = "anthropic"
+		return nil
 	}
 
 	epCfg, ok := r.cfg.Endpoints[endpointName]
 	if !ok {
-		// Default to anthropic endpoint with standard config
-		epCfg = config.EndpointConfig{
-			Format: "anthropic",
-			APIKey: "anthropic.api_key",
-		}
+		return nil
 	}
 
-	// Check if format supports usage API (extensible, not hardcoded)
-	if !supportsUsageAPI(epCfg.Format) {
+	// Only formats with a registered resolver can provide usage clients.
+	resolver, ok := formatResolvers[epCfg.Format]
+	if !ok {
 		return nil
 	}
 
@@ -89,19 +70,12 @@ func (r *usageClientRegistry) GetUsageClient(endpointName string) provider.Usage
 	r.mu.Unlock()
 
 	entry.once.Do(func() {
-		// Check if format has a custom resolver
-		if resolver, ok := formatResolvers[epCfg.Format]; ok {
-			client, err := resolver.ResolveUsageClient(endpointName, apiKeyName, r.store)
-			if err != nil {
-				log.Debugf("usage_registry", "no usage client for %q: %v", endpointName, err)
-				return
-			}
-			entry.client = client
+		client, err := resolver.ResolveUsageClient(endpointName, apiKeyName)
+		if err != nil {
+			log.Debugf("usage_registry", "no usage client for %q: %v", endpointName, err)
 			return
 		}
-
-		// Fallback: simple resolution (shouldn't happen if resolver registered)
-		log.Debugf("usage_registry", "no resolver for format %q", epCfg.Format)
+		entry.client = client
 	})
 
 	return entry.client

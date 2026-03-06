@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/anthropic"
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
@@ -517,9 +516,9 @@ func runReload(p cmdRegParams) (string, error) {
 	p.ag.InvalidateSystemCaches()
 	checkSystemPromptSizes(p.bootstrap, p.cfg.Sessions, p.acfg.ID)
 	newSkillRegistry := skills.Load(p.skillsDirs)
-	var newExtraSystemBlocks []anthropic.SystemBlock
+	var newExtraSystemBlocks []provider.SystemBlock
 	if newSkillRegistry.Len() > 0 {
-		newExtraSystemBlocks = []anthropic.SystemBlock{
+		newExtraSystemBlocks = []provider.SystemBlock{
 			{Type: "text", Text: newSkillRegistry.SystemBlock(p.acfg.Workspace)},
 		}
 	}

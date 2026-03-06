@@ -6,16 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/anthropic"
-	oai "foci/internal/openai"
+	"foci/internal/provider"
 )
 
 type mockModelLister struct {
-	models []anthropic.ModelInfo
+	models []provider.ModelInfo
 	err    error
 }
 
-func (m *mockModelLister) ListModels() ([]anthropic.ModelInfo, error) {
+func (m *mockModelLister) ListModels() ([]provider.ModelInfo, error) {
 	return m.models, m.err
 }
 
@@ -24,7 +23,7 @@ func TestResolveAnthropicAliases(t *testing.T) {
 	t2 := time.Date(2025, 10, 1, 0, 0, 0, 0, time.UTC)
 
 	mock := &mockModelLister{
-		models: []anthropic.ModelInfo{
+		models: []provider.ModelInfo{
 			{ID: "claude-haiku-4-5-20250901", CreatedAt: t1},
 			{ID: "claude-haiku-4-5-20251001", CreatedAt: t2},
 			{ID: "claude-sonnet-4-6-20250514", CreatedAt: t1},
@@ -87,7 +86,7 @@ func TestResolveAnthropicAliasesNilMap(t *testing.T) {
 
 func TestResolveAnthropicAliasesNoMatchingModels(t *testing.T) {
 	mock := &mockModelLister{
-		models: []anthropic.ModelInfo{
+		models: []provider.ModelInfo{
 			{ID: "claude-sonnet-4-6-20250514", CreatedAt: time.Now()},
 		},
 	}
@@ -111,7 +110,7 @@ func TestResolveAnthropicAliasesNoMatchingModels(t *testing.T) {
 
 func TestResolveAnthropicAliasesNoAnthropicAliases(t *testing.T) {
 	mock := &mockModelLister{
-		models: []anthropic.ModelInfo{
+		models: []provider.ModelInfo{
 			{ID: "claude-haiku-4-5-20251001", CreatedAt: time.Now()},
 		},
 	}
@@ -131,22 +130,22 @@ func TestResolveAnthropicAliasesNoAnthropicAliases(t *testing.T) {
 // --- OpenAI alias resolution tests ---
 
 type mockOpenAIModelLister struct {
-	models []oai.ModelInfo
+	models []provider.ModelInfo
 	err    error
 }
 
-func (m *mockOpenAIModelLister) ListModels(ctx context.Context) ([]oai.ModelInfo, error) {
+func (m *mockOpenAIModelLister) ListModels(ctx context.Context) ([]provider.ModelInfo, error) {
 	return m.models, m.err
 }
 
 func TestResolveOpenAIAliases(t *testing.T) {
 	mock := &mockOpenAIModelLister{
-		models: []oai.ModelInfo{
-			{ID: "gpt-4o-2025-06-01", Created: 1717200000, OwnedBy: "openai"},
-			{ID: "gpt-4o-2025-08-01", Created: 1722470400, OwnedBy: "openai"},
-			{ID: "o3-2025-07-15", Created: 1720000000, OwnedBy: "openai"},
-			{ID: "o4-mini-2025-05-01", Created: 1714521600, OwnedBy: "openai"},
-			{ID: "o4-mini-2025-09-01", Created: 1725148800, OwnedBy: "openai"},
+		models: []provider.ModelInfo{
+			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
+			{ID: "gpt-4o-2025-08-01", CreatedAt: time.Unix(1722470400, 0)},
+			{ID: "o3-2025-07-15", CreatedAt: time.Unix(1720000000, 0)},
+			{ID: "o4-mini-2025-05-01", CreatedAt: time.Unix(1714521600, 0)},
+			{ID: "o4-mini-2025-09-01", CreatedAt: time.Unix(1725148800, 0)},
 		},
 	}
 
@@ -204,8 +203,8 @@ func TestResolveOpenAIAliasesNilMap(t *testing.T) {
 
 func TestResolveOpenAIAliasesNoMatchingModels(t *testing.T) {
 	mock := &mockOpenAIModelLister{
-		models: []oai.ModelInfo{
-			{ID: "gpt-4o-2025-06-01", Created: 1717200000, OwnedBy: "openai"},
+		models: []provider.ModelInfo{
+			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
 		},
 	}
 
@@ -228,8 +227,8 @@ func TestResolveOpenAIAliasesNoMatchingModels(t *testing.T) {
 
 func TestResolveOpenAIAliasesNoOpenAIAliases(t *testing.T) {
 	mock := &mockOpenAIModelLister{
-		models: []oai.ModelInfo{
-			{ID: "gpt-4o-2025-06-01", Created: 1717200000, OwnedBy: "openai"},
+		models: []provider.ModelInfo{
+			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
 		},
 	}
 
@@ -251,8 +250,8 @@ func TestResolveOpenAIAliasesNoOpenAIAliases(t *testing.T) {
 
 func TestResolveOpenAIAliasesSkipsNonOpenAIPrefixed(t *testing.T) {
 	mock := &mockOpenAIModelLister{
-		models: []oai.ModelInfo{
-			{ID: "gpt-4o-2025-06-01", Created: 1717200000, OwnedBy: "openai"},
+		models: []provider.ModelInfo{
+			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
 		},
 	}
 

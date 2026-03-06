@@ -45,9 +45,10 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
+		Endpoint:  "anthropic",
 	}
 
-	// Close the gate for anthropic endpoint (default)
+	// Close the gate for the agent's endpoint
 	until := time.Now().Add(1 * time.Hour)
 	gate := ag.getOrCreateRateLimitGate("anthropic")
 	gate.Close(until)
@@ -87,6 +88,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
+		Endpoint:  "anthropic",
 	}
 
 	// First call hits the API, gets 429, closes gate
@@ -276,7 +278,7 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 // Test getOrCreateRateLimitGate creates gates lazily and returns the same instance.
 // Test getOrCreateRateLimitGate creates gates lazily and returns the same instance.
 func TestGetOrCreateRateLimitGate(t *testing.T) {
-	ag := &Agent{}
+	ag := &Agent{Endpoint: "anthropic"}
 
 	// First call creates gate
 	gate1 := ag.getOrCreateRateLimitGate("anthropic")
@@ -296,10 +298,10 @@ func TestGetOrCreateRateLimitGate(t *testing.T) {
 		t.Error("expected different gate for different endpoint")
 	}
 
-	// Empty endpoint defaults to "anthropic"
+	// Empty endpoint defaults to agent's configured endpoint
 	gate4 := ag.getOrCreateRateLimitGate("")
 	if gate4 != gate1 {
-		t.Error("expected empty endpoint to default to anthropic gate")
+		t.Error("expected empty endpoint to default to agent endpoint gate")
 	}
 }
 

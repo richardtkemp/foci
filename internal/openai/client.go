@@ -83,26 +83,18 @@ func (c *Client) IsCachingAvailable() bool {
 	return false
 }
 
-// ModelInfo holds metadata about an available OpenAI model.
-type ModelInfo struct {
-	ID      string
-	Created int64 // unix timestamp
-	OwnedBy string
-}
-
 // ListModels calls the OpenAI Models.List endpoint and returns available models.
-func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
+func (c *Client) ListModels(ctx context.Context) ([]provider.ModelInfo, error) {
 	page, err := c.client.Models.List(ctx)
 	if err != nil {
 		return nil, classifyError(err)
 	}
 
-	var models []ModelInfo
+	var models []provider.ModelInfo
 	for _, m := range page.Data {
-		models = append(models, ModelInfo{
-			ID:      m.ID,
-			Created: m.Created,
-			OwnedBy: m.OwnedBy,
+		models = append(models, provider.ModelInfo{
+			ID:        m.ID,
+			CreatedAt: time.Unix(m.Created, 0).UTC(),
 		})
 	}
 	return models, nil

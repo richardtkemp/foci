@@ -9,27 +9,9 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/provider"
 	"foci/internal/secrets"
 )
-
-// CredentialResolver interface allows format-specific packages to implement
-// custom credential resolution logic. The main package checks if a format has
-// a custom resolver and delegates to it; otherwise falls back to simple API key.
-type CredentialResolver interface {
-	// ResolveClient returns a configured Client for the given endpoint.
-	// apiKeyName is the secret name for the API key (e.g., "anthropic.api_key").
-	// baseURL is the endpoint base URL (empty = SDK default).
-	// Returns error if credentials cannot be resolved.
-	ResolveClient(ctx context.Context, endpointName string, apiKeyName string, baseURL string, store SecretsStore) (*Client, error)
-
-	// ResolveUsageClient returns a configured UsageClient for the given endpoint,
-	// or nil if the format doesn't support usage API or credentials cannot be resolved.
-	ResolveUsageClient(endpointName string, apiKeyName string, store SecretsStore) (*UsageClient, error)
-
-	// GetReloadFunc returns a function that reloads credentials from disk,
-	// or nil if hot-reload is not supported.
-	GetReloadFunc(secretsPath string) func() error
-}
 
 // tokenHolder is a thread-safe, swappable credential string.
 // Used with NewClientWithTokenFunc so credentials can be hot-reloaded
@@ -61,18 +43,21 @@ func (h *tokenHolder) Set(token string) {
 	h.token = token
 }
 
-// AnthropicResolver implements CredentialResolver for anthropic-format endpoints.
+// AnthropicResolver implements provider.CredentialResolver for anthropic-format endpoints.
 // It handles the 3-tier priority: setup-token (OAuth) → API key → Claude Code credentials.
 type AnthropicResolver struct {
-	ccSrc        *CCTokenSource
-	credHolders  map[string]*tokenHolder
-	mu           sync.Mutex
-	httpTimeout  time.Duration
+	store         SecretsStore
+	ccSrc         *CCTokenSource
+	credHolders   map[string]*tokenHolder
+	mu            sync.Mutex
+	httpTimeout   time.Duration
 	usageCacheTTL time.Duration
+	useSDK        bool
 }
 
 // NewResolver creates and initializes an AnthropicResolver.
 // Initializes the shared CCTokenSource and sets up expiry callback to trigger token refresh.
+// The store is captured and used for all subsequent credential resolution calls.
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
 	httpTimeout, err := time.ParseDuration(anthropicCfg.HTTPTimeout)
 	if err != nil {
@@ -106,18 +91,20 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 	}
 
 	return &AnthropicResolver{
+		store:         store,
 		ccSrc:         ccSrc,
 		credHolders:   make(map[string]*tokenHolder),
 		httpTimeout:   httpTimeout,
 		usageCacheTTL: usageCacheTTL,
+		useSDK:        anthropicCfg.UseSDK,
 	}, nil
 }
 
-// ResolveClient implements CredentialResolver.ResolveClient.
+// ResolveClient implements provider.CredentialResolver.
 // Priority: (1) setup-token, (2) api_key, (3) Claude Code credentials.
-func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName string, apiKeyName string, baseURL string, store SecretsStore) (*Client, error) {
+func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string) (provider.Client, error) {
 	// Priority 1: setup-token (OAuth)
-	setupToken, ok := store.Get("anthropic.setup_token")
+	setupToken, ok := r.store.Get("anthropic.setup_token")
 	if ok && setupToken != "" {
 		log.Infof("anthropic", "using setup-token from secrets (endpoint %q)", endpointName)
 		holder := NewTokenHolder(setupToken)
@@ -128,11 +115,12 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName stri
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
+		c.SetUseSDK(r.useSDK)
 		return c, nil
 	}
 
 	// Priority 2: API key
-	apiKey, ok := store.Get(apiKeyName)
+	apiKey, ok := r.store.Get(apiKeyName)
 	if ok && apiKey != "" {
 		log.Infof("anthropic", "using API key from secrets (endpoint %q)", endpointName)
 		holder := NewTokenHolder(apiKey)
@@ -143,6 +131,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName stri
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
+		c.SetUseSDK(r.useSDK)
 		return c, nil
 	}
 
@@ -153,17 +142,18 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName stri
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
+		c.SetUseSDK(r.useSDK)
 		return c, nil
 	}
 
 	return nil, fmt.Errorf("no Anthropic credentials found — run: foci auth")
 }
 
-// ResolveUsageClient implements CredentialResolver.ResolveUsageClient.
+// ResolveUsageClient implements provider.CredentialResolver.
 // The usage API requires OAuth credentials with user:profile scope, so only
 // Claude Code credentials are supported. Setup-tokens and API keys don't have
 // OAuth scopes and will be rejected by the usage endpoint.
-func (r *AnthropicResolver) ResolveUsageClient(endpointName string, apiKeyName string, store SecretsStore) (*UsageClient, error) {
+func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (provider.UsageClient, error) {
 	// Usage API requires OAuth with user:profile scope — only CC credentials work.
 	if r.ccSrc != nil {
 		client := NewUsageClientWithFunc(r.ccSrc.Token)

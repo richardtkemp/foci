@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/anthropic"
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
@@ -276,7 +275,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
-	var serverTools []anthropic.ToolDef
+	var serverTools []provider.ToolDef
 
 	searchProvider := resolveString(acfg.SearchProvider, p.cfg.Tools.SearchProvider)
 	if searchProvider == "anthropic" {
@@ -328,9 +327,9 @@ func setupAgent(p setupParams) *agentInstance {
 		skillsDirs = acfg.SkillsDirs
 	}
 	skillRegistry := skills.Load(skillsDirs)
-	var extraSystemBlocks []anthropic.SystemBlock
+	var extraSystemBlocks []provider.SystemBlock
 	if skillRegistry.Len() > 0 {
-		extraSystemBlocks = []anthropic.SystemBlock{
+		extraSystemBlocks = []provider.SystemBlock{
 			{Type: "text", Text: skillRegistry.SystemBlock(acfg.Workspace)},
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
@@ -801,7 +800,7 @@ func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder
 
 // buildServerTool constructs an anthropic server tool config map with optional
 // max_uses, allowed_domains, and blocked_domains fields.
-func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []string) anthropic.ToolDef {
+func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []string) provider.ToolDef {
 	cfg := map[string]interface{}{
 		"type": toolType,
 		"name": toolName,
@@ -815,7 +814,7 @@ func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []
 	if len(blocked) > 0 {
 		cfg["blocked_domains"] = blocked
 	}
-	return anthropic.NewServerTool(cfg)
+	return provider.NewServerTool(cfg)
 }
 
 

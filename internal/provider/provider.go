@@ -63,6 +63,25 @@ func Send(ctx context.Context, client Client, req *MessageRequest, handler *Stre
 	return nil, lastErr
 }
 
+// CredentialResolver handles format-specific credential resolution.
+// Formats with complex auth (e.g. OAuth, setup tokens, credential chaining)
+// implement this interface. The resolver captures its secrets store at construction
+// time — callers don't pass credentials per-call.
+type CredentialResolver interface {
+	// ResolveClient returns a configured Client for the given endpoint.
+	// apiKeyName is the secret name for the API key (e.g., "anthropic.api_key").
+	// baseURL is the endpoint base URL (empty = default).
+	ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string) (Client, error)
+
+	// ResolveUsageClient returns a configured UsageClient for the given endpoint,
+	// or nil if usage tracking is not supported or credentials are unavailable.
+	ResolveUsageClient(endpointName, apiKeyName string) (UsageClient, error)
+
+	// GetReloadFunc returns a function that reloads credentials from disk,
+	// or nil if hot-reload is not supported.
+	GetReloadFunc(secretsPath string) func() error
+}
+
 // ClientProvider provides access to API clients for different endpoint:format pairs.
 // Implementations manage client lifecycle (creation, caching, initialization).
 type ClientProvider interface {

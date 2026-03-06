@@ -11,7 +11,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// ModelInfo holds metadata about an available model from any provider.
+type ModelInfo struct {
+	ID        string
+	CreatedAt time.Time
+}
 
 // CacheControl marks a content block for prompt caching.
 type CacheControl struct {

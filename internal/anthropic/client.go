@@ -372,13 +372,6 @@ func (c *Client) countTokensRaw(ctx context.Context, req *MessageRequest) (int, 
 	return resp.InputTokens, nil
 }
 
-// ModelInfo represents a model returned by the /v1/models endpoint.
-type ModelInfo struct {
-	ID          string    `json:"id"`
-	DisplayName string    `json:"display_name"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
 // ListModels calls the /v1/models endpoint to list available models.
 func (c *Client) ListModels() ([]ModelInfo, error) {
 	if c.useSDK {
@@ -405,9 +398,8 @@ func (c *Client) listModelsSDK() ([]ModelInfo, error) {
 	var models []ModelInfo
 	for _, m := range page.Data {
 		models = append(models, ModelInfo{
-			ID:          m.ID,
-			DisplayName: m.DisplayName,
-			CreatedAt:   m.CreatedAt,
+			ID:        m.ID,
+			CreatedAt: m.CreatedAt,
 		})
 	}
 	return models, nil
@@ -447,11 +439,18 @@ func (c *Client) listModelsRaw() ([]ModelInfo, error) {
 	}
 
 	var resp struct {
-		Data []ModelInfo `json:"data"`
+		Data []struct {
+			ID        string    `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	return resp.Data, nil
+	models := make([]ModelInfo, len(resp.Data))
+	for i, m := range resp.Data {
+		models[i] = ModelInfo{ID: m.ID, CreatedAt: m.CreatedAt}
+	}
+	return models, nil
 }
