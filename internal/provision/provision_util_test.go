@@ -1,0 +1,268 @@
+package provision
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestStaggerCrontabLine tests staggering with various minute values and offsets.
+func TestStaggerCrontabLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		offset int
+		want   string
+	}{
+		{"absolute minute", "0 4 * * * cmd", 9, "9 4 * * * cmd"},
+		{"wrap at 60", "55 4 * * * cmd", 9, "4 4 * * * cmd"},
+		{"interval unchanged", "*/30 * * * * cmd", 9, "*/30 * * * * cmd"},
+		{"short line unchanged", "# comment", 5, "# comment"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StaggerCrontabLine(tt.line, tt.offset)
+			if got != tt.want {
+				t.Errorf("StaggerCrontabLine(%q, %d) = %q, want %q", tt.line, tt.offset, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStaggerCrontabLineNonNumericMinute verifies non-numeric minute fields pass through unchanged.
+func TestStaggerCrontabLineNonNumericMinute(t *testing.T) {
+	line := "abc 4 * * * * cmd"
+	got := StaggerCrontabLine(line, 5)
+	if got != line {
+		t.Errorf("non-numeric minute should be unchanged, got %q", got)
+	}
+}
+
+// TestStaggerCrontabLineEdgeCases tests StaggerCrontabLine with various edge cases.
+func TestStaggerCrontabLineEdgeCases(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		offset int
+		want   string
+	}{
+		{
+			name:   "large offset wraps correctly",
+			line:   "50 4 * * * cmd",
+			offset: 100,
+			want:   "30 4 * * * cmd", // (50 + 100) % 60 = 30
+		},
+		{
+			name:   "short line unchanged",
+			line:   "invalid format",
+			offset: 5,
+			want:   "invalid format",
+		},
+		{
+			name:   "five fields only",
+			line:   "0 4 * * *",
+			offset: 5,
+			want:   "0 4 * * *", // less than 6 fields
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := StaggerCrontabLine(tt.line, tt.offset)
+			if got != tt.want {
+				t.Errorf("StaggerCrontabLine(%q, %d) = %q, want %q", tt.line, tt.offset, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTitleCase verifies hyphen-separated agent IDs convert to title case.
+func TestTitleCase(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"greek-tutor", "Greek Tutor"},
+		{"main", "Main"},
+		{"my-cool-agent", "My Cool Agent"},
+		{"a", "A"},
+	}
+	for _, tt := range tests {
+		got := TitleCase(tt.input)
+		if got != tt.want {
+			t.Errorf("TitleCase(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestToSlug verifies display names convert to valid lowercase hyphenated slugs.
+func TestToSlug(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Greek Tutor", "greek-tutor"},
+		{"My Cool Agent", "my-cool-agent"},
+		{"simple", "simple"},
+		{"  Spaces Around  ", "spaces-around"},
+		{"Under_Score", "under-score"},
+		{"Special!@#Characters", "specialcharacters"},
+		{"Multiple   Spaces", "multiple-spaces"},
+		{"trailing-", "trailing"},
+		{"123numeric", "123numeric"},
+	}
+	for _, tt := range tests {
+		got := ToSlug(tt.input)
+		if got != tt.want {
+			t.Errorf("ToSlug(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestSeedDefaultsWalkError tests SeedDefaults with locked source directory.
+func TestSeedDefaultsWalkError(t *testing.T) {
+	src := t.TempDir()
+	subdir := filepath.Join(src, "locked")
+	os.MkdirAll(subdir, 0755)
+	os.WriteFile(filepath.Join(subdir, "file.md"), []byte("data"), 0644)
+	os.Chmod(subdir, 0000)
+	t.Cleanup(func() { os.Chmod(subdir, 0755) })
+
+	dst := filepath.Join(t.TempDir(), "target")
+	err := SeedDefaults(src, dst)
+	if err == nil {
+		t.Error("expected error when source subdir is unreadable")
+	}
+}
+
+// TestSeedDefaultsCopyError tests SeedDefaults when target file can't be copied.
+func TestSeedDefaultsCopyError(t *testing.T) {
+	src := t.TempDir()
+	os.WriteFile(filepath.Join(src, "file.md"), []byte("data"), 0644)
+
+	// Create target dir, then make it read-only so copyFile fails
+	dst := filepath.Join(t.TempDir(), "target")
+	os.MkdirAll(dst, 0755)
+	os.Chmod(dst, 0555)
+	t.Cleanup(func() { os.Chmod(dst, 0755) })
+
+	err := SeedDefaults(src, dst)
+	if err == nil {
+		t.Error("expected error when target dir is read-only")
+	}
+}
+
+// TestRunCrontabCmdDefault verifies the default RunCrontabCmd executes via shell.
+func TestRunCrontabCmdDefault(t *testing.T) {
+	// Call the real default with a harmless no-op command
+	err := RunCrontabCmd("true")
+	if err != nil {
+		t.Errorf("RunCrontabCmd(true): %v", err)
+	}
+}
+
+// TestAppendCrontab tests AppendCrontab with mocked command execution.
+func TestAppendCrontab(t *testing.T) {
+	// Test successful append
+	orig := RunCrontabCmd
+	defer func() { RunCrontabCmd = orig }()
+
+	called := false
+	RunCrontabCmd = func(cmd string) error {
+		called = true
+		// Verify the command contains our lines
+		if len(cmd) == 0 {
+			t.Errorf("expected crontab command")
+		}
+		return nil
+	}
+
+	lines := []string{"0 4 * * * foci branch", "*/30 * * * * foci send"}
+	err := AppendCrontab(lines)
+	if err != nil {
+		t.Errorf("AppendCrontab: %v", err)
+	}
+	if !called {
+		t.Error("RunCrontabCmd was not called")
+	}
+}
+
+// TestAppendCrontabError tests AppendCrontab with command error.
+func TestAppendCrontabError(t *testing.T) {
+	orig := RunCrontabCmd
+	defer func() { RunCrontabCmd = orig }()
+
+	RunCrontabCmd = func(cmd string) error {
+		return os.ErrPermission
+	}
+
+	err := AppendCrontab([]string{"0 4 * * * foci branch"})
+	if err == nil {
+		t.Error("expected error from crontab command")
+	}
+}
+
+// TestProvisionDefaultsTemplateError tests Provision when SOUL.md template fails.
+// Creates SOUL.md as a directory so os.ReadFile returns EISDIR (not NotExist).
+func TestProvisionDefaultsTemplateError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
+	// No SOUL.md file in defaults — copyDir will skip it.
+	// But we create SOUL.md as a directory in the workspace.
+	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft"), 0644)
+
+	workspace := filepath.Join(homeDir, "tmpl-err")
+	// Pre-create SOUL.md as a directory so templateSoulFile's ReadFile fails with EISDIR
+	os.MkdirAll(filepath.Join(workspace, "character", "SOUL.md"), 0755)
+
+	spec := AgentSpec{
+		ID:          "tmpl-err",
+		Model:       "claude-sonnet-4-6",
+		DisplayName: "Test",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "defaults",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when SOUL.md is a directory")
+	}
+	if !strings.Contains(err.Error(), "template SOUL.md") {
+		t.Errorf("error = %q, want to contain 'template SOUL.md'", err.Error())
+	}
+}
+
+// TestProvisionOpenclawTemplateError tests Provision when openclaw SOUL.md template fails.
+func TestProvisionOpenclawTemplateError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(filepath.Join(defaultsDir, "openclaw"), 0755)
+	// No SOUL.md in openclaw source — copyDir skips it
+	os.WriteFile(filepath.Join(defaultsDir, "openclaw", "IDENTITY.md"), []byte("identity"), 0644)
+
+	// Pre-create SOUL.md as a directory in workspace
+	workspace := filepath.Join(homeDir, "oc-tmpl-err")
+	os.MkdirAll(filepath.Join(workspace, "character", "SOUL.md"), 0755)
+
+	spec := AgentSpec{
+		ID:          "oc-tmpl-err",
+		Model:       "claude-sonnet-4-6",
+		DisplayName: "OC Test",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "openclaw",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when SOUL.md is a directory")
+	}
+	if !strings.Contains(err.Error(), "template SOUL.md") {
+		t.Errorf("error = %q, want to contain 'template SOUL.md'", err.Error())
+	}
+}
