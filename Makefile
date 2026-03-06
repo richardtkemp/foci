@@ -46,19 +46,36 @@ coverage-html:
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
 
-# Enforce minimum coverage threshold (default: 45%, excludes cmd packages)
-COVERAGE_THRESHOLD ?= 45.0
+# Enforce minimum coverage thresholds (excludes cmd packages)
+COVERAGE_TOTAL_MIN ?= 75.0
+COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
-	@echo "=== Checking Coverage Threshold ($(COVERAGE_THRESHOLD)%) [internal packages only] ==="
+	@echo "=== Checking Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) [internal only] ==="
 	@go test -p=$(shell nproc 2>/dev/null || echo 4) -coverprofile=coverage.out ./internal/... > /dev/null 2>&1 || true
 	@TOTAL=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	echo "Total coverage: $$TOTAL%"; \
-	if [ "$$(echo "$$TOTAL < $(COVERAGE_THRESHOLD)" | bc -l)" -eq 1 ]; then \
-		echo "❌ Coverage $$TOTAL% is below threshold $(COVERAGE_THRESHOLD)%"; \
-		exit 1; \
+	FAILED=0; \
+	if [ "$$(echo "$$TOTAL < $(COVERAGE_TOTAL_MIN)" | bc -l)" -eq 1 ]; then \
+		echo "❌ Total coverage $$TOTAL% is below $(COVERAGE_TOTAL_MIN)%"; \
+		FAILED=1; \
 	else \
-		echo "✅ Coverage $$TOTAL% meets threshold $(COVERAGE_THRESHOLD)%"; \
+		echo "✅ Total coverage $$TOTAL% meets $(COVERAGE_TOTAL_MIN)%"; \
+	fi; \
+	echo ""; \
+	echo "Per-package coverage:"; \
+	go test -p=$(shell nproc 2>/dev/null || echo 4) -cover ./internal/... 2>&1 | grep "^ok" | while read -r line; do \
+		PKG=$$(echo "$$line" | awk '{print $$2}'); \
+		COV=$$(echo "$$line" | grep -oP 'coverage: \K[0-9.]+' || echo "0"); \
+		if [ "$$(echo "$$COV < $(COVERAGE_PKG_MIN)" | bc -l)" -eq 1 ]; then \
+			echo "  ❌ $$PKG: $$COV% (below $(COVERAGE_PKG_MIN)%)"; \
+			FAILED=1; \
+		else \
+			echo "  ✅ $$PKG: $$COV%"; \
+		fi; \
+	done; \
+	if [ "$$FAILED" -eq 1 ]; then \
+		exit 1; \
 	fi
 
 clean:
