@@ -536,14 +536,14 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
 			if err != nil {
 				msg := fmt.Sprintf("[SPAWN RESULT] Branch %s failed:\n\n%v", branchKey, err)
-				deps.Notifier.Notify(parentSession, msg)
+				deps.Notifier.InjectToAgent(parentSession, msg, "")
 				return
 			}
 			if result == "" {
 				result = "(empty response)"
 			}
 			msg := fmt.Sprintf("[SPAWN RESULT] Branch %s completed:\n\n%s", branchKey, result)
-			deps.Notifier.Notify(parentSession, msg)
+			deps.Notifier.InjectToAgent(parentSession, msg, "")
 		}()
 
 		promptPreview := truncatePromptPreview(prompt)

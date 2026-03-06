@@ -1983,7 +1983,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
-		notifier := tools.NewAsyncNotifier(func(sk, msg string) {})
+		notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 		env.ag.AsyncNotifier = notifier
 		var notified []string
 		env.ag.CompactionNotifyFunc = func(session string, msg string) {

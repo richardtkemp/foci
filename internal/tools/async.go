@@ -9,15 +9,17 @@ import "sync"
 // It also tracks pending async results per session so that compaction
 // can be deferred until all outstanding results have been delivered.
 type AsyncNotifier struct {
-	fn func(sessionKey, message string)
+	fn func(targetSession, message string, replyToSession string)
 
 	mu      sync.Mutex
 	pending map[string]int // session key → count of pending results
 }
 
 // NewAsyncNotifier creates an AsyncNotifier that calls fn with each message.
-// The sessionKey identifies which session originated the command.
-func NewAsyncNotifier(fn func(sessionKey, message string)) *AsyncNotifier {
+// The targetSession identifies which session should process the message.
+// If replyToSession is non-empty, the response is routed to that session
+// instead of being sent to targetSession's Telegram chat.
+func NewAsyncNotifier(fn func(targetSession, message string, replyToSession string)) *AsyncNotifier {
 	return &AsyncNotifier{
 		fn:      fn,
 		pending: make(map[string]int),
@@ -62,10 +64,12 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 	return n.pending[sessionKey] > 0
 }
 
-// Notify delivers a message to the specified agent session. Safe to call
-// on a nil receiver or with a nil fn.
-func (n *AsyncNotifier) Notify(sessionKey, message string) {
+// InjectToAgent delivers a message to the specified agent session for processing.
+// If replyToSession is non-empty, the agent's response is routed to that session
+// instead of being sent to targetSession's Telegram chat.
+// Safe to call on a nil receiver or with a nil fn.
+func (n *AsyncNotifier) InjectToAgent(targetSession, message string, replyToSession string) {
 	if n != nil && n.fn != nil {
-		n.fn(sessionKey, message)
+		n.fn(targetSession, message, replyToSession)
 	}
 }
