@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/memory"
 	"foci/internal/secrets"
@@ -598,7 +599,7 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 // ========== tokenHolder tests ==========
 
 func TestTokenHolder_GetSet(t *testing.T) {
-	h := &tokenHolder{token: "initial"}
+	h := anthropic.NewTokenHolder("initial")
 	tok, err := h.Get()
 	if err != nil {
 		t.Fatalf("Get: unexpected error: %v", err)
@@ -618,7 +619,7 @@ func TestTokenHolder_GetSet(t *testing.T) {
 }
 
 func TestTokenHolder_EmptyReturnsError(t *testing.T) {
-	h := &tokenHolder{}
+	h := anthropic.NewTokenHolder("")
 	_, err := h.Get()
 	if err == nil {
 		t.Fatal("expected error for empty tokenHolder")
@@ -626,7 +627,7 @@ func TestTokenHolder_EmptyReturnsError(t *testing.T) {
 }
 
 func TestTokenHolder_ConcurrentAccess(t *testing.T) {
-	h := &tokenHolder{token: "start"}
+	h := anthropic.NewTokenHolder("start")
 	var wg sync.WaitGroup
 
 	// Concurrent writers
@@ -665,7 +666,7 @@ func TestReloadCredentialsEndpoint_Success(t *testing.T) {
 	os.WriteFile(secretsPath, []byte(`[anthropic]
 setup_token = "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-pass-validation-checks-here"`+"\n"), 0600)
 
-	holder := &tokenHolder{token: "old-token"}
+	holder := anthropic.NewTokenHolder("old-token")
 	cfg := &config.Config{}
 
 	reloadFn := func() error {

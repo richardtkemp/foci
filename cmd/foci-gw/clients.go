@@ -19,10 +19,9 @@ type clientRegistry struct {
 	mu      sync.Mutex
 	entries map[string]*clientEntry
 
-	cfg             *config.Config
-	store           *secrets.Store
-	anthropicClient *anthropic.Client
-	ctx             context.Context
+	cfg *config.Config
+	store *secrets.Store
+	ctx   context.Context
 }
 
 type clientEntry struct {
@@ -30,13 +29,12 @@ type clientEntry struct {
 	once   sync.Once
 }
 
-func newClientRegistry(cfg *config.Config, store *secrets.Store, anthropicClient *anthropic.Client, ctx context.Context) *clientRegistry {
+func newClientRegistry(cfg *config.Config, store *secrets.Store, ctx context.Context) *clientRegistry {
 	return &clientRegistry{
-		entries:         make(map[string]*clientEntry),
-		cfg:             cfg,
-		store:           store,
-		anthropicClient: anthropicClient,
-		ctx:             ctx,
+		entries: make(map[string]*clientEntry),
+		cfg:     cfg,
+		store:   store,
+		ctx:     ctx,
 	}
 }
 
@@ -58,27 +56,38 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 			return
 		}
 
-		// Resolve API key from secrets store
+		// Resolve API key name (used for both custom resolvers and simple resolution)
 		apiKeyName := epCfg.APIKey
 		if apiKeyName == "" {
 			apiKeyName = endpointName + ".api_key"
 		}
 
-		switch format {
-		case "anthropic":
-			// Built-in anthropic endpoint uses resolveCredentials (setup-token, API key, CC creds).
-			// Other endpoints using anthropic format use simple API key auth.
-			if endpointName == "anthropic" {
-				entry.client = r.anthropicClient
+		// Resolve base URL for endpoint
+		baseURL := epCfg.URLForFormat(format)
+
+		// Check if format has a custom resolver (e.g., anthropic)
+		if resolver, ok := formatResolvers[format]; ok {
+			client, err := resolver.ResolveClient(r.ctx, endpointName, apiKeyName, baseURL, r.store)
+			if err != nil {
+				log.Errorf("main", "resolve %s client for endpoint %q: %v", format, endpointName, err)
 				return
 			}
+			client.SetUseSDK(r.cfg.Anthropic.UseSDK)
+			entry.client = client
+			return
+		}
+
+		// Default: simple API key resolution for formats without custom resolver
+
+		switch format {
+		case "anthropic":
 			apiKey, _ := r.store.Get(apiKeyName)
 			if apiKey == "" {
 				log.Errorf("main", "%s not found in secrets — endpoint %q (anthropic format) unavailable", apiKeyName, endpointName)
 				return
 			}
 			httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(r.cfg.Anthropic.HTTPTimeout, 600*time.Second))
-			holder := &tokenHolder{token: apiKey}
+			holder := anthropic.NewTokenHolder(apiKey)
 			c := anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout)
 			url := epCfg.URLForFormat("anthropic")
 			if url != "" {
