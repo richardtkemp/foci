@@ -9,20 +9,24 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// driverName is the SQL driver to use. Overridden in tests.
+var driverName = "sqlite"
+
 // Open opens a SQLite database with standard settings (WAL mode, 5s busy timeout).
 // On error the database is closed before returning.
 func Open(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open(driverName, path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", filepath.Base(path), err)
 	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy timeout: %w", err)
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("sqlite pragma %s: %w", filepath.Base(path), err)
+		}
 	}
 	return db, nil
 }
