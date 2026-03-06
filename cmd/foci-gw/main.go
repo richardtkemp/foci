@@ -19,7 +19,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
-	oai "foci/internal/openai"
 	"foci/internal/secrets"
 	"foci/internal/telegram"
 )
@@ -119,18 +118,8 @@ Subcommands:
 	usageClients := newUsageClientRegistry(cfg, sec.store)
 
 	// ========== Dynamic model alias resolution ==========
-	if anthropicClient := clients.GetClient("anthropic", "anthropic"); anthropicClient != nil {
-		if ac, ok := anthropicClient.(*anthropic.Client); ok {
-			resolveAnthropicAliases(ac, cfg.Models.Aliases)
-		}
-	}
-	if openaiKey, _ := sec.store.Get("openai.api_key"); openaiKey != "" {
-		var openaiOpts []oai.Option
-		if cfg.OpenAI.BaseURL != "" {
-			openaiOpts = append(openaiOpts, oai.WithBaseURL(cfg.OpenAI.BaseURL))
-		}
-		resolveOpenAIAliases(ctx, oai.NewClient(openaiKey, openaiOpts...), cfg.Models.Aliases)
-	}
+	openaiKey, _ := sec.store.Get("openai.api_key")
+	resolveAllAliases(ctx, clients, openaiKey, cfg.OpenAI, cfg.Models.Aliases)
 
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)
