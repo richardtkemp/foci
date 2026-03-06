@@ -495,6 +495,172 @@ func TestSendMessageServerErrorRecovery(t *testing.T) {
 	}
 }
 
+func TestRetryCallbacks(t *testing.T) {
+	// Verify that retry callbacks are called exactly once per retry sequence,
+	// and success callback is called when retry succeeds.
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts <= 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MessageResponse{
+			ID:         "msg_ok",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []ContentBlock{{Type: "text", Text: "hello"}},
+			StopReason: "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+	client.retryBaseDelay = time.Millisecond
+
+	var firstRetryCalled, successCalled bool
+	var firstRetryEndpoint string
+	ctx := WithRetryCallbacks(context.Background(), &RetryCallbacks{
+		OnFirstRetry: func(endpoint string) {
+			if firstRetryCalled {
+				t.Error("OnFirstRetry called more than once")
+			}
+			firstRetryCalled = true
+			firstRetryEndpoint = endpoint
+		},
+		OnSuccess: func() {
+			successCalled = true
+		},
+	})
+
+	resp, err := client.SendMessage(ctx, &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempts != 3 {
+		t.Errorf("attempts = %d, want 3", attempts)
+	}
+	if resp.ID != "msg_ok" {
+		t.Errorf("resp.ID = %q, want msg_ok", resp.ID)
+	}
+	if !firstRetryCalled {
+		t.Error("OnFirstRetry was not called")
+	}
+	if firstRetryEndpoint != server.URL {
+		t.Errorf("OnFirstRetry endpoint = %q, want %q", firstRetryEndpoint, server.URL)
+	}
+	if !successCalled {
+		t.Error("OnSuccess was not called")
+	}
+}
+
+func TestRetryCallbacksNoRetry(t *testing.T) {
+	// When request succeeds on first attempt, callbacks should not fire.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MessageResponse{
+			ID:         "msg_ok",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []ContentBlock{{Type: "text", Text: "hello"}},
+			StopReason: "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+
+	var firstRetryCalled, successCalled bool
+	ctx := WithRetryCallbacks(context.Background(), &RetryCallbacks{
+		OnFirstRetry: func(endpoint string) {
+			firstRetryCalled = true
+		},
+		OnSuccess: func() {
+			successCalled = true
+		},
+	})
+
+	_, err := client.SendMessage(ctx, &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if firstRetryCalled {
+		t.Error("OnFirstRetry should not be called on first-attempt success")
+	}
+	if successCalled {
+		t.Error("OnSuccess should not be called on first-attempt success")
+	}
+}
+
+func TestRetryCallbacks529Overload(t *testing.T) {
+	// Verify callbacks work with 529 overload retries (phase 2).
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := int(attempts.Add(1))
+		if n <= 6 {
+			w.WriteHeader(529)
+			w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MessageResponse{
+			ID:         "msg_ok",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    []ContentBlock{{Type: "text", Text: "hello"}},
+			StopReason: "end_turn",
+		})
+	}))
+	defer server.Close()
+
+	client := NewClientWithBase(server.URL, "test-key")
+	client.retryBaseDelay = time.Millisecond
+
+	var firstRetryCalled, successCalled bool
+	ctx := WithRetryCallbacks(context.Background(), &RetryCallbacks{
+		OnFirstRetry: func(endpoint string) {
+			if firstRetryCalled {
+				t.Error("OnFirstRetry called more than once")
+			}
+			firstRetryCalled = true
+		},
+		OnSuccess: func() {
+			successCalled = true
+		},
+	})
+
+	resp, err := client.SendMessage(ctx, &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 256,
+		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ID != "msg_ok" {
+		t.Errorf("resp.ID = %q, want msg_ok", resp.ID)
+	}
+	if !firstRetryCalled {
+		t.Error("OnFirstRetry was not called")
+	}
+	if !successCalled {
+		t.Error("OnSuccess was not called")
+	}
+}
+
 func TestSendMessageInvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

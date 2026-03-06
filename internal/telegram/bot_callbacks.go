@@ -252,10 +252,11 @@ type toolCallTracker struct {
 	bot    *Bot
 	chatID int64
 
-	mu       sync.Mutex
-	msgID    int64  // Telegram message ID of the current tool-call message
-	text     string // last compact summary HTML (full mode) or full HTML (preview mode)
-	fullText string // last full formatted tool call HTML (full mode only)
+	mu         sync.Mutex
+	msgID      int64  // Telegram message ID of the current tool-call message
+	text       string // last compact summary HTML (full mode) or full HTML (preview mode)
+	fullText   string // last full formatted tool call HTML (full mode only)
+	retryMsgID int64  // Telegram message ID of the retry notification message
 }
 
 // lastMsgID returns the current tool-call message ID (thread-safe).
@@ -383,6 +384,54 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 			ReplyMarkup: kb,
 		})
 	}
+}
+
+// notifyRetry sends a retry notification message on first API retry.
+func (t *toolCallTracker) notifyRetry(endpoint string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Parse endpoint to extract a readable name
+	endpointName := endpoint
+	if strings.Contains(endpoint, "anthropic.com") {
+		endpointName = "Anthropic API"
+	} else if strings.Contains(endpoint, "openrouter") {
+		endpointName = "OpenRouter"
+	} else if strings.Contains(endpoint, "generativelanguage.googleapis.com") {
+		endpointName = "Gemini API"
+	}
+
+	text := fmt.Sprintf("⏳ <i>%s is busy right now, retrying...</i>", endpointName)
+	sent, err := t.bot.client.SendMessage(t.chatID, text, &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
+	})
+	if err != nil {
+		t.bot.logger().Debugf("send retry notification: %v", err)
+		return
+	}
+	t.retryMsgID = sent.MessageId
+}
+
+// clearRetryNotification deletes or overwrites the retry notification on success.
+func (t *toolCallTracker) clearRetryNotification() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.retryMsgID == 0 {
+		return
+	}
+
+	// Overwrite with success message
+	_, _, err := t.bot.client.EditMessageText("✓ <i>Request completed</i>", &gotgbot.EditMessageTextOpts{
+		ChatId:    t.chatID,
+		MessageId: t.retryMsgID,
+		ParseMode: "HTML",
+	})
+	if err != nil {
+		t.bot.logger().Debugf("clear retry notification: %v", err)
+	}
+
+	t.retryMsgID = 0
 }
 
 // toolResultEntry stores the compact summary, full input text, and result
