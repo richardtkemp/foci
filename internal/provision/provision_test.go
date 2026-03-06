@@ -522,6 +522,286 @@ func TestToSlug(t *testing.T) {
 
 // --- Additional edge case tests ---
 
+// Verifies StaggerCrontabLine passes through lines with non-numeric, non-interval minute fields.
+func TestStaggerCrontabLineNonNumericMinute(t *testing.T) {
+	line := "abc 4 * * * * cmd"
+	got := StaggerCrontabLine(line, 5)
+	if got != line {
+		t.Errorf("non-numeric minute should be unchanged, got %q", got)
+	}
+}
+
+// Verifies copyDir returns an error when a file within the source dir can't be copied.
+func TestCopyDirCopyFileError(t *testing.T) {
+	src := t.TempDir()
+	// Create an unreadable file
+	unreadable := filepath.Join(src, "secret.md")
+	os.WriteFile(unreadable, []byte("secret"), 0644)
+	os.Chmod(unreadable, 0000)
+	t.Cleanup(func() { os.Chmod(unreadable, 0644) })
+
+	dst := filepath.Join(t.TempDir(), "target")
+	err := copyDir(src, dst)
+	if err == nil {
+		t.Error("expected error when source file is unreadable")
+	}
+}
+
+// Verifies copyFile returns an error when the destination can't be created.
+func TestCopyFileCreateError(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src.txt")
+	os.WriteFile(src, []byte("data"), 0644)
+
+	// Destination is inside a file (can't create)
+	dst := filepath.Join(src, "nested", "dst.txt")
+	err := copyFile(src, dst)
+	if err == nil {
+		t.Error("expected error when destination can't be created")
+	}
+}
+
+// Verifies templateSoulFile returns an error for non-NotExist read failures (e.g. permission denied).
+func TestTemplateSoulFileReadError(t *testing.T) {
+	tmpDir := t.TempDir()
+	soulPath := filepath.Join(tmpDir, "SOUL.md")
+	os.WriteFile(soulPath, []byte("content"), 0644)
+	os.Chmod(soulPath, 0000)
+	t.Cleanup(func() { os.Chmod(soulPath, 0644) })
+
+	err := templateSoulFile(soulPath, "Name")
+	if err == nil {
+		t.Error("expected error for unreadable SOUL.md")
+	}
+}
+
+// Verifies Provision returns a wrapped error when copying defaults character files fails.
+func TestProvisionDefaultsCopyError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	// No character dir in defaults → copyDir will fail
+	os.MkdirAll(defaultsDir, 0755)
+
+	spec := AgentSpec{
+		ID:          "err-agent",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "defaults",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when defaults character dir is missing")
+	}
+	if !strings.Contains(err.Error(), "copy defaults") {
+		t.Errorf("error = %q, want to contain 'copy defaults'", err)
+	}
+}
+
+// Verifies Provision returns a wrapped error when templateSoulFile fails in defaults mode.
+// Creates SOUL.md as a directory in the workspace so os.ReadFile returns EISDIR (not NotExist).
+func TestProvisionDefaultsTemplateError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
+	// No SOUL.md file in defaults — copyDir will skip it.
+	// But we create SOUL.md as a directory in the workspace.
+	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft"), 0644)
+
+	workspace := filepath.Join(homeDir, "tmpl-err")
+	// Pre-create SOUL.md as a directory so templateSoulFile's ReadFile fails with EISDIR
+	os.MkdirAll(filepath.Join(workspace, "character", "SOUL.md"), 0755)
+
+	spec := AgentSpec{
+		ID:          "tmpl-err",
+		Model:       "claude-sonnet-4-6",
+		DisplayName: "Test",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "defaults",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when SOUL.md is a directory")
+	}
+	if !strings.Contains(err.Error(), "template SOUL.md") {
+		t.Errorf("error = %q, want to contain 'template SOUL.md'", err)
+	}
+}
+
+// Verifies Provision returns a wrapped error when openclaw dir is missing.
+func TestProvisionOpenclawCopyError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(defaultsDir, 0755) // no openclaw subdir
+
+	spec := AgentSpec{
+		ID:          "oc-err",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "openclaw",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when openclaw dir is missing")
+	}
+	if !strings.Contains(err.Error(), "copy openclaw") {
+		t.Errorf("error = %q, want to contain 'copy openclaw'", err)
+	}
+}
+
+// Verifies Provision returns a wrapped error when openclaw templateSoulFile fails.
+// Uses the same directory-as-file trick: pre-create SOUL.md as a directory,
+// don't include SOUL.md in openclaw source, so templateSoulFile hits EISDIR.
+func TestProvisionOpenclawTemplateError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(filepath.Join(defaultsDir, "openclaw"), 0755)
+	// No SOUL.md in openclaw source — copyDir skips it
+	os.WriteFile(filepath.Join(defaultsDir, "openclaw", "IDENTITY.md"), []byte("identity"), 0644)
+
+	// Pre-create SOUL.md as a directory in workspace
+	workspace := filepath.Join(homeDir, "oc-tmpl-err")
+	os.MkdirAll(filepath.Join(workspace, "character", "SOUL.md"), 0755)
+
+	spec := AgentSpec{
+		ID:          "oc-tmpl-err",
+		Model:       "claude-sonnet-4-6",
+		DisplayName: "OC Test",
+		HomeDir:     homeDir,
+		DefaultsDir: defaultsDir,
+		CharMode:    "openclaw",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when SOUL.md is a directory")
+	}
+	if !strings.Contains(err.Error(), "template SOUL.md") {
+		t.Errorf("error = %q, want to contain 'template SOUL.md'", err)
+	}
+}
+
+// Verifies Provision returns a wrapped error when source agent doesn't exist in copy mode.
+func TestProvisionCopySourceMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+
+	spec := AgentSpec{
+		ID:          "copy-err",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     homeDir,
+		DefaultsDir: filepath.Join(tmpDir, "defaults"),
+		CharMode:    "copy",
+		CopyFrom:    "nonexistent-agent",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Fatal("expected error when source agent doesn't exist")
+	}
+	if !strings.Contains(err.Error(), "copy from nonexistent-agent") {
+		t.Errorf("error = %q, want to contain 'copy from nonexistent-agent'", err)
+	}
+}
+
+// Verifies Provision returns a wrapped error when blank mode can't write character files.
+func TestProvisionBlankWriteError(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := filepath.Join(tmpDir, "home")
+	workspace := filepath.Join(homeDir, "blank-err")
+	charDir := filepath.Join(workspace, "character")
+	os.MkdirAll(charDir, 0755)
+
+	// Make character dir read-only so WriteFile fails
+	os.Chmod(charDir, 0555)
+	t.Cleanup(func() { os.Chmod(charDir, 0755) })
+
+	spec := AgentSpec{
+		ID:          "blank-err",
+		Model:       "claude-sonnet-4-6",
+		HomeDir:     homeDir,
+		DefaultsDir: filepath.Join(tmpDir, "defaults"),
+		CharMode:    "blank",
+	}
+
+	_, err := Provision(spec)
+	if err == nil {
+		t.Error("expected error when character dir is read-only")
+	}
+}
+
+// Verifies copyCharacterFiles returns nil when no KEEPALIVE.md exists in defaults.
+func TestCopyCharacterFilesNoKeepalive(t *testing.T) {
+	tmpDir := t.TempDir()
+	defaultsDir := filepath.Join(tmpDir, "defaults")
+	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
+	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("soul"), 0644)
+	// No prompts/KEEPALIVE.md
+
+	workspace := filepath.Join(tmpDir, "workspace")
+	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
+	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
+
+	if err := copyCharacterFiles(defaultsDir, workspace); err != nil {
+		t.Fatalf("copyCharacterFiles: %v", err)
+	}
+
+	// KEEPALIVE.md should not exist in workspace
+	if _, err := os.Stat(filepath.Join(workspace, "prompts", "KEEPALIVE.md")); !os.IsNotExist(err) {
+		t.Errorf("expected no KEEPALIVE.md, but it exists or stat returned unexpected error: %v", err)
+	}
+}
+
+// Verifies SeedDefaults handles Walk errors (e.g. permission denied during traversal).
+func TestSeedDefaultsWalkError(t *testing.T) {
+	src := t.TempDir()
+	subdir := filepath.Join(src, "locked")
+	os.MkdirAll(subdir, 0755)
+	os.WriteFile(filepath.Join(subdir, "file.md"), []byte("data"), 0644)
+	os.Chmod(subdir, 0000)
+	t.Cleanup(func() { os.Chmod(subdir, 0755) })
+
+	dst := filepath.Join(t.TempDir(), "target")
+	err := SeedDefaults(src, dst)
+	if err == nil {
+		t.Error("expected error when source subdir is unreadable")
+	}
+}
+
+// Verifies SeedDefaults returns an error when target file can't be copied.
+func TestSeedDefaultsCopyError(t *testing.T) {
+	src := t.TempDir()
+	os.WriteFile(filepath.Join(src, "file.md"), []byte("data"), 0644)
+
+	// Create target dir, then make it read-only so copyFile fails
+	dst := filepath.Join(t.TempDir(), "target")
+	os.MkdirAll(dst, 0755)
+	os.Chmod(dst, 0555)
+	t.Cleanup(func() { os.Chmod(dst, 0755) })
+
+	err := SeedDefaults(src, dst)
+	if err == nil {
+		t.Error("expected error when target dir is read-only")
+	}
+}
+
+// Verifies the default RunCrontabCmd function executes a shell command via exec.
+func TestRunCrontabCmdDefault(t *testing.T) {
+	// Call the real default with a harmless no-op command
+	err := RunCrontabCmd("true")
+	if err != nil {
+		t.Errorf("RunCrontabCmd(true): %v", err)
+	}
+}
+
 // TestAppendCrontab tests AppendCrontab with mocked command execution
 func TestAppendCrontab(t *testing.T) {
 	// Test successful append
