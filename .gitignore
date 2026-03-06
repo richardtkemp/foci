@@ -24,6 +24,7 @@ todo-*.db-shm
 .setup-install.sh
 .staged-WELCOME.md
 .claude/
+codeql-db/
 coverage.out
 coverage.html
 internal/tools/logs/tmux.debug

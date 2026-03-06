@@ -16,8 +16,10 @@ require (
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/blevesearch/bleve/v2 v2.5.7
+	github.com/go-rod/rod v0.116.2
 	github.com/modelcontextprotocol/go-sdk v1.4.0
 	github.com/openai/openai-go/v3 v3.24.0
+	golang.org/x/image v0.36.0
 	google.golang.org/genai v1.48.0
 )
 
@@ -48,7 +50,6 @@ require (
 	github.com/blevesearch/zapx/v15 v15.4.2 // indirect
 	github.com/blevesearch/zapx/v16 v16.2.8 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/go-rod/rod v0.116.2 // indirect
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
 	github.com/gogs/chardet v0.0.0-20211120154057-b7413eaefb8f // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -79,7 +80,6 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
-	golang.org/x/image v0.36.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
