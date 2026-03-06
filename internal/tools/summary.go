@@ -16,13 +16,12 @@ import (
 // NewSummaryTool creates a tool that summarizes/extracts information from a file
 // via a fast, cheap model call without loading the full content into the agent's context.
 // defaultClient is the agent's default provider client.
-// getClient lazily initializes and returns a client for an endpoint:format pair.
-// peekClient checks for an existing client without initializing.
-// agentModel is the agent's configured model (endpoint:model_id format), used to pick
+// clientProvider provides access to clients for different endpoint:format pairs.
+// agentModel is the agent's configured model (developer/model_id format), used to pick
 // the right lightweight model for the summary call (e.g. haiku for Anthropic, flash for Gemini).
 // modelAliases maps short names (e.g. "haiku") to full model IDs (with endpoint prefix);
 // used to resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(defaultClient provider.Client, getClient func(endpoint, format string) provider.Client, peekClient func(endpoint, format string) provider.Client, agentModel string, modelAliases map[string]string) *Tool {
+func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, agentModel string, modelAliases map[string]string) *Tool {
 	// Parse the agent's model to get the bare model ID
 	// agentModel is now in developer/model_id format
 	_, agentModelID := splitDeveloperModel(agentModel)
@@ -38,12 +37,11 @@ func NewSummaryTool(defaultClient provider.Client, getClient func(endpoint, form
 	// Resolve which client to use based on the summary model.
 	resolveClient := func() provider.Client {
 		// Use config.ResolveModel to handle the summary alias
-		// Import config package at the top of the file
 		resolved, err := resolveModelForSummary(summaryAlias, modelAliases)
-		if err != nil || getClient == nil {
+		if err != nil || clientProvider == nil {
 			return defaultClient
 		}
-		if c := getClient(resolved.Endpoint, resolved.Format); c != nil {
+		if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
 			return c
 		}
 		return defaultClient

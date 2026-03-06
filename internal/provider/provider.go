@@ -62,3 +62,33 @@ func Send(ctx context.Context, client Client, req *MessageRequest, handler *Stre
 
 	return nil, lastErr
 }
+
+// ClientProvider provides access to API clients for different endpoint:format pairs.
+// Implementations manage client lifecycle (creation, caching, initialization).
+type ClientProvider interface {
+	// GetClient returns the client for an endpoint:format pair, initializing it on first use.
+	// Returns nil if the endpoint/format is not configured or initialization fails.
+	GetClient(endpoint, format string) Client
+
+	// PeekClient returns an existing client for an endpoint:format pair without initializing it.
+	// Returns nil if the client hasn't been created yet or doesn't exist.
+	PeekClient(endpoint, format string) Client
+
+	// ResolveEndpointClient resolves the client for an endpoint+modelID pair.
+	// Infers wire format from model name, falls back to openai if endpoint doesn't support it.
+	ResolveEndpointClient(endpoint, modelID string) Client
+}
+
+// UsageClientProvider provides access to usage tracking clients for different endpoints.
+type UsageClientProvider interface {
+	// GetUsageClient returns the usage client for the given endpoint.
+	// Returns nil if usage tracking is not available for this endpoint.
+	GetUsageClient(endpoint string) UsageClient
+}
+
+// CombinedClientProvider combines both client and usage client provision.
+// Implementations can satisfy both interfaces.
+type CombinedClientProvider interface {
+	ClientProvider
+	UsageClientProvider
+}

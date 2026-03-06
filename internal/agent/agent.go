@@ -76,77 +76,76 @@ type CacheBustFunc func(session string, prevRead, curRead int)
 
 // Agent is the core agent loop.
 type Agent struct {
-	Client        provider.Client
-	GetClient     func(endpoint, format string) provider.Client  // lazy-init client for endpoint:format
-	PeekClient    func(endpoint, format string) provider.Client  // no-init check for client existence
-	Sessions      *session.Store
-	Tools         *tools.Registry
-	Bootstrap     *workspace.Bootstrap
-	Compactor     *compaction.Compactor // nil disables auto-compaction
-	AsyncNotifier *tools.AsyncNotifier  // nil disables async-pending compaction guard
-	Reminders     *memory.ReminderStore // nil disables reminder injection
-	AgentID       string                // unique agent identifier (for per-agent DB queries)
-	Model         string
-	Endpoint      string                // agent's default endpoint (sessions inherit this unless overridden)
-	Log           *log.ComponentLogger  // structured logger for this agent
+	Client                        provider.Client
+	ClientProvider                provider.ClientProvider        // provides access to API clients for different endpoint:format pairs
+	Sessions                      *session.Store
+	Tools                         *tools.Registry
+	Bootstrap                     *workspace.Bootstrap
+	Compactor                     *compaction.Compactor // nil disables auto-compaction
+	AsyncNotifier                 *tools.AsyncNotifier  // nil disables async-pending compaction guard
+	Reminders                     *memory.ReminderStore // nil disables reminder injection
+	AgentID                       string                // unique agent identifier (for per-agent DB queries)
+	Model                         string
+	Endpoint                      string               // agent's default endpoint (sessions inherit this unless overridden)
+	Log                           *log.ComponentLogger // structured logger for this agent
 
-	EnvironmentBlock            string                          // pre-built environment context block (prepended first in system prompt)
-	ExtraSystemBlocks           []provider.SystemBlock          // additional system blocks (e.g. skills list), injected before cache marker
-	CacheStrategy               string                          // "auto" (top-level) or "explicit" (manual breakpoints)
-	CacheBustDetect             bool                            // detect cache busts (cache_read drop >50%)
-	CacheBustIdleThreshold      time.Duration                   // suppress cache bust alert if session idle > this (default 10m)
-	CacheBustAlert              CacheBustFunc                   // callback for cache bust alerts
-	DuplicateMessages           bool                            // send user text twice per API call (improves instruction following)
-	BatchPartialAssistantMessages bool                          // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
-	BatchPartialJoiner           string                         // separator between batched partial messages (default "")
-	MaxResultChars              int                             // max chars for tool result before writing to file (0 disables)
-	ToolResultTempDir           string                          // where to write large tool results
-	ModelAliases                map[string]string               // for resolving "haiku" → full model ID
-	SummaryContextTurns         int                             // recent conversation turns for summary context
-	SummaryContextChars         int                             // max chars of context to send to Haiku
-	MaxSummaryChars             int                             // max chars to auto-summarise (skip Haiku above this)
-	MaxSummaryInputChars        int                             // max chars of tool result embedded in summary prompt (0 = no limit)
-	MaxImagePixels              int                             // max pixels (w*h) for images before downscaling; 0 disables
-	AutoSummarise               bool                            // enable auto-summarise of oversized tool results (default true)
-	Warnings                    *warnings.Queue                 // nil disables warning injection into session
-	ManaWatcher                 *ManaWatcher                    // nil disables mana threshold warnings
-	ManaWarnFunc                func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
-	MaxTokensWarnFunc           func(string)                    // callback when stop_reason=max_tokens (response truncated)
-	RateLimitFunc               func(retryAfter int)            // callback when API returns 429 (rate limit exhausted)
-	CompactionNotifyFunc        func(string, string)            // callback for compaction notifications (session key, message)
-	CompactionDebugFunc         func(string, string)            // callback for compaction debug (session key, summary text)
-	OnActivity                  func(string)                    // callback when a session has activity (session key); nil disables
-	Redact                      func(string) string             // redact secrets from tool output; nil disables
-	StateStore                  *state.Store                    // nil disables state persistence
-	UsageClient                 provider.UsageClient            // nil disables mana metadata
-	GetUsageClient              func(endpoint string) provider.UsageClient // per-API-key usage client resolution
-	MessageTransforms           []CompiledTransform             // compiled regex rules for inbound message transformation
-	CompactionSummaryPromptPath string   // file path; read at compaction time via prompts.ResolvePrompt
-	CompactionHandoffMsg        string   // inline handoff message; empty resolves from search dirs or embedded default
-	PromptSearchDirs            []string // directories to search for prompt files (agent workspace, shared)
-	MaxToolLoops                int                             // max tool iterations per turn (default 25)
-	MaxOutputTokens             int                             // max tokens in model response (default 8192)
-	BraindeadWarningEnable      bool                            // enable braindead warning (default true)
-	BraindeadWarningThreshold   int                             // consecutive tool loops before warning (0 = disabled)
-	BraindeadWarningPrompt      string                          // warning text (empty = hardcoded default)
-	TurnLockWarnThreshold       time.Duration                   // warn if turn lock wait exceeds this (default 3m)
-	Effort                      string                          // effort level for API requests (empty = omit from request)
-	Thinking                    string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
-	Streaming                   bool                            // use streaming API when provider supports it
-	ManaInvestInterval          time.Duration                   // invest interval for mana good/bad indicator; 0 = no indicator
-	ServerTools                 []provider.ToolDef              // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
-	DefaultSessionKey           func() string                   // returns the main/default session key; reminders only inject into this session
+	EnvironmentBlock              string                          // pre-built environment context block (prepended first in system prompt)
+	ExtraSystemBlocks             []provider.SystemBlock          // additional system blocks (e.g. skills list), injected before cache marker
+	CacheStrategy                 string                          // "auto" (top-level) or "explicit" (manual breakpoints)
+	CacheBustDetect               bool                            // detect cache busts (cache_read drop >50%)
+	CacheBustIdleThreshold        time.Duration                   // suppress cache bust alert if session idle > this (default 10m)
+	CacheBustAlert                CacheBustFunc                   // callback for cache bust alerts
+	DuplicateMessages             bool                            // send user text twice per API call (improves instruction following)
+	BatchPartialAssistantMessages bool                            // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
+	BatchPartialJoiner            string                          // separator between batched partial messages (default "")
+	MaxResultChars                int                             // max chars for tool result before writing to file (0 disables)
+	ToolResultTempDir             string                          // where to write large tool results
+	ModelAliases                  map[string]string               // for resolving "haiku" → full model ID
+	SummaryContextTurns           int                             // recent conversation turns for summary context
+	SummaryContextChars           int                             // max chars of context to send to Haiku
+	MaxSummaryChars               int                             // max chars to auto-summarise (skip Haiku above this)
+	MaxSummaryInputChars          int                             // max chars of tool result embedded in summary prompt (0 = no limit)
+	MaxImagePixels                int                             // max pixels (w*h) for images before downscaling; 0 disables
+	AutoSummarise                 bool                            // enable auto-summarise of oversized tool results (default true)
+	Warnings                      *warnings.Queue                 // nil disables warning injection into session
+	ManaWatcher                   *ManaWatcher                    // nil disables mana threshold warnings
+	ManaWarnFunc                  func(string)                    // callback for mana threshold warnings (e.g. Telegram notification)
+	MaxTokensWarnFunc             func(string)                    // callback when stop_reason=max_tokens (response truncated)
+	RateLimitFunc                 func(retryAfter int)            // callback when API returns 429 (rate limit exhausted)
+	CompactionNotifyFunc          func(string, string)            // callback for compaction notifications (session key, message)
+	CompactionDebugFunc           func(string, string)            // callback for compaction debug (session key, summary text)
+	OnActivity                    func(string)                    // callback when a session has activity (session key); nil disables
+	Redact                        func(string) string             // redact secrets from tool output; nil disables
+	StateStore                    *state.Store                    // nil disables state persistence
+	UsageClient                   provider.UsageClient            // nil disables mana metadata
+	UsageClientProvider           provider.UsageClientProvider    // per-endpoint usage client resolution (nil = use default UsageClient)
+	MessageTransforms             []CompiledTransform             // compiled regex rules for inbound message transformation
+	CompactionSummaryPromptPath   string                          // file path; read at compaction time via prompts.ResolvePrompt
+	CompactionHandoffMsg          string                          // inline handoff message; empty resolves from search dirs or embedded default
+	PromptSearchDirs              []string                        // directories to search for prompt files (agent workspace, shared)
+	MaxToolLoops                  int                             // max tool iterations per turn (default 25)
+	MaxOutputTokens               int                             // max tokens in model response (default 8192)
+	BraindeadWarningEnable        bool                            // enable braindead warning (default true)
+	BraindeadWarningThreshold     int                             // consecutive tool loops before warning (0 = disabled)
+	BraindeadWarningPrompt        string                          // warning text (empty = hardcoded default)
+	TurnLockWarnThreshold         time.Duration                   // warn if turn lock wait exceeds this (default 3m)
+	Effort                        string                          // effort level for API requests (empty = omit from request)
+	Thinking                      string                          // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
+	Streaming                     bool                            // use streaming API when provider supports it
+	ManaInvestInterval            time.Duration                   // invest interval for mana good/bad indicator; 0 = no indicator
+	ServerTools                   []provider.ToolDef              // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
+	DefaultSessionKey             func() string                   // returns the main/default session key; reminders only inject into this session
 
 	rateLimitGates   map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu sync.RWMutex              // protects rateLimitGates map access
 	processing       int32                     // atomic: number of in-flight HandleMessage calls
-	turnDetailsMu   sync.Mutex
-	turnDetails     map[uint64]*TurnDetail // keyed by unique turn ID
-	turnIDCounter   uint64                 // atomic: monotonic turn ID
-	turnLocksMu     sync.Mutex
-	turnLocks       map[string]*sync.Mutex // per-session turn serialization
-	metaMu          sync.Mutex
-	meta            map[string]*sessionMeta // per-session metadata
+	turnDetailsMu    sync.Mutex
+	turnDetails      map[uint64]*TurnDetail // keyed by unique turn ID
+	turnIDCounter    uint64                 // atomic: monotonic turn ID
+	turnLocksMu      sync.Mutex
+	turnLocks        map[string]*sync.Mutex // per-session turn serialization
+	metaMu           sync.Mutex
+	meta             map[string]*sessionMeta // per-session metadata
 }
 
 // TransformMessage applies compiled message transforms to the text.
@@ -280,8 +279,8 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provi
 	sm.modelEndpoint = endpoint
 	sm.client = client
 	// Update usage client for new endpoint
-	if a.GetUsageClient != nil {
-		sm.usageClient = a.GetUsageClient(endpoint)
+	if a.UsageClientProvider != nil {
+		sm.usageClient = a.UsageClientProvider.GetUsageClient(endpoint)
 	}
 	a.metaMu.Unlock()
 
@@ -377,17 +376,17 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelEndpoint = ep })
 			restored = append(restored, "endpoint="+ep)
 
-			if a.GetClient != nil {
+			if a.ClientProvider != nil {
 				format := config.InferFormat(val)
-				if c := a.GetClient(ep, format); c != nil {
+				if c := a.ClientProvider.GetClient(ep, format); c != nil {
 					a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 				}
 			}
 
 			// Restore usage client for the endpoint
-			if a.GetUsageClient != nil {
+			if a.UsageClientProvider != nil {
 				a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
-					sm.usageClient = a.GetUsageClient(ep)
+					sm.usageClient = a.UsageClientProvider.GetUsageClient(ep)
 				})
 			}
 		}

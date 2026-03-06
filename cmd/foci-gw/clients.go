@@ -14,6 +14,9 @@ import (
 	"foci/internal/secrets"
 )
 
+// Compile-time verification that clientRegistry implements provider.ClientProvider
+var _ provider.ClientProvider = (*clientRegistry)(nil)
+
 // clientRegistry lazily creates provider clients on first use per endpoint:format pair.
 type clientRegistry struct {
 	mu      sync.Mutex

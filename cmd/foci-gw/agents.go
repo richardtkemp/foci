@@ -151,32 +151,30 @@ func configureMultiballBot(bot *telegram.Bot, mc multiballBotConfig) {
 
 // setupParams holds the shared resources needed by each agent.
 type setupParams struct {
-	acfg            config.AgentConfig
-	cfg             *config.Config
-	configPath      string
-	client          provider.Client
-	getClient       func(endpoint, format string) provider.Client
-	peekClient      func(endpoint, format string) provider.Client
-	resolveEndpointClient func(endpoint, modelID string) provider.Client
-	sessions        *session.Store
-	store           *secrets.Store
-	bwStore         *bitwarden.Store
-	stateStore      *state.Store
-	memBackends     map[string]memory.Searcher
-	reminderStore   *memory.ReminderStore
-	scratchpadStore *memory.Scratchpad
-	todoStore       *memory.TodoStore
-	toolDetailStore *telegram.ToolDetailStore
-	sessionIndex    *session.SessionIndex
-	ttsMap          map[string]voice.TTS
-	sttMap          map[string]voice.STT
-	braveKey        string
-	usageClientReg  *usageClientRegistry
-	botMgr          *telegram.BotManager
-	startTime       time.Time
-	ctx             context.Context
-	agentListFn     func() []command.AgentInfo
-	agentResolverFn func(agentID string) *agentInstance
+	acfg                config.AgentConfig
+	cfg                 *config.Config
+	configPath          string
+	client              provider.Client
+	clientProvider      provider.ClientProvider
+	usageClientProvider provider.UsageClientProvider
+	sessions            *session.Store
+	store               *secrets.Store
+	bwStore             *bitwarden.Store
+	stateStore          *state.Store
+	memBackends         map[string]memory.Searcher
+	reminderStore       *memory.ReminderStore
+	scratchpadStore     *memory.Scratchpad
+	todoStore           *memory.TodoStore
+	toolDetailStore     *telegram.ToolDetailStore
+	sessionIndex        *session.SessionIndex
+	ttsMap              map[string]voice.TTS
+	sttMap              map[string]voice.STT
+	braveKey            string
+	botMgr              *telegram.BotManager
+	startTime           time.Time
+	ctx                 context.Context
+	agentListFn         func() []command.AgentInfo
+	agentResolverFn     func(agentID string) *agentInstance
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
@@ -273,7 +271,7 @@ func setupAgent(p setupParams) *agentInstance {
 	registry.Register(tools.NewReadTool(agentStore))
 	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.getClient, p.peekClient, acfg.Model, p.cfg.Models.Aliases))
+	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, acfg.Model, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
@@ -380,11 +378,10 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
-		Log:                         log.NewComponentLogger("agent:" + acfg.ID),
-		Client:                      p.client,
-		GetClient:                   p.getClient,
-		PeekClient:                  p.peekClient,
-		Sessions:                    p.sessions,
+		Log:            log.NewComponentLogger("agent:" + acfg.ID),
+		Client:         p.client,
+		ClientProvider: p.clientProvider,
+		Sessions:       p.sessions,
 		Tools:                       registry,
 		ServerTools:                 serverTools,
 		EnvironmentBlock:            envBlock,
@@ -411,11 +408,11 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxSummaryChars:             resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
 		MaxSummaryInputChars:        resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
 		MaxImagePixels:              resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
-		AutoSummarise:               resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
-		StateStore:                  p.stateStore,
-		UsageClient:                 p.usageClientReg.GetUsageClient(defaultEndpoint),
-		GetUsageClient:              p.usageClientReg.GetUsageClient,
-		MessageTransforms:           agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
+		AutoSummarise:       resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
+		StateStore:          p.stateStore,
+		UsageClient:         p.usageClientProvider.GetUsageClient(defaultEndpoint),
+		UsageClientProvider: p.usageClientProvider,
+		MessageTransforms:   agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
 		CompactionSummaryPromptPath: resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		PromptSearchDirs:            promptSearchDirs,
@@ -470,11 +467,10 @@ func setupAgent(p setupParams) *agentInstance {
 	// Uses lazy getter for agent since ag is assigned later in this function.
 	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
-		Client:          p.client,
-		GetClient:       p.getClient,
-		PeekClient:      p.peekClient,
-		Bootstrap:       bootstrap,
-		Registry:        registry,
+		Client:         p.client,
+		ClientProvider: p.clientProvider,
+		Bootstrap:      bootstrap,
+		Registry:       registry,
 		Sessions:        &sessionBranchAdapter{store: p.sessions},
 		AgentID:         acfg.ID,
 		Model:           acfg.Model,
@@ -495,31 +491,31 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent slash commands
 	lastMsgStore := command.NewLastMessageStore()
 	cmds := registerAgentCommands(cmdRegParams{
-		ag:                    ag,
-		acfg:                  acfg,
-		defaultSessionKey:     defaultSessionKey,
-		sessionKeyFromCtx:     sessionKeyFromCtx,
-		bootstrap:             bootstrap,
-		promptSearchDirs:      promptSearchDirs,
-		compactionThreshold:   compactionThreshold,
-		cfg:                   p.cfg,
-		configPath:            p.configPath,
-		sessions:              p.sessions,
-		stateStore:            p.stateStore,
-		sessionIndex:          p.sessionIndex,
-		client:                p.client,
-		resolveEndpointClient: p.resolveEndpointClient,
-		usageClientReg:        p.usageClientReg,
-		botMgr:                p.botMgr,
-		store:                 p.store,
-		bwStore:               p.bwStore,
-		startTime:             p.startTime,
-		ctx:                   p.ctx,
-		registry:              registry,
-		tmuxTool:              tmuxTool,
-		skillsDirs:            skillsDirs,
-		skillRegistry:         skillRegistry,
-		agentListFn:           p.agentListFn,
+		ag:                  ag,
+		acfg:                acfg,
+		defaultSessionKey:   defaultSessionKey,
+		sessionKeyFromCtx:   sessionKeyFromCtx,
+		bootstrap:           bootstrap,
+		promptSearchDirs:    promptSearchDirs,
+		compactionThreshold: compactionThreshold,
+		cfg:                 p.cfg,
+		configPath:          p.configPath,
+		sessions:            p.sessions,
+		stateStore:          p.stateStore,
+		sessionIndex:        p.sessionIndex,
+		client:              p.client,
+		clientProvider:      p.clientProvider,
+		usageClientProvider: p.usageClientProvider,
+		botMgr:              p.botMgr,
+		store:               p.store,
+		bwStore:             p.bwStore,
+		startTime:           p.startTime,
+		ctx:                 p.ctx,
+		registry:            registry,
+		tmuxTool:            tmuxTool,
+		skillsDirs:          skillsDirs,
+		skillRegistry:       skillRegistry,
+		agentListFn:         p.agentListFn,
 	}, lastMsgStore)
 
 	// Finalize exec tool description with dynamically-generated shell function list.

@@ -79,18 +79,17 @@ var spawnExploreAllowed = map[string]bool{
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
 	Client             provider.Client
-	GetClient          func(endpoint, format string) provider.Client  // lazy-init client for endpoint:format
-	PeekClient         func(endpoint, format string) provider.Client  // no-init check for client existence
+	ClientProvider     provider.ClientProvider                  // provides access to clients for different endpoint:format pairs
 	Bootstrap          SystemBlocksProvider
 	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
-	Model              string                                   // parent's default model (endpoint:model format)
-	ModelAliases       map[string]string                        // model aliases (e.g. "haiku" → "anthropic:claude-haiku-4-5")
-	MaxInherit         int                                      // semaphore size (from config)
-	MaxToolLoops       int                                      // max tool loops for raw/character spawns
-	ExploreMaxDepth    int                                      // max tool loops for explore spawns
-	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
+	Model              string            // parent's default model (endpoint:model format)
+	ModelAliases       map[string]string // model aliases (e.g. "haiku" → "anthropic:claude-haiku-4-5")
+	MaxInherit         int               // semaphore size (from config)
+	MaxToolLoops       int               // max tool loops for raw/character spawns
+	ExploreMaxDepth    int               // max tool loops for explore spawns
+	Notifier           *AsyncNotifier    // async result delivery for inherit mode
 	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
 }
 
@@ -153,7 +152,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return ToolResult{}, err
 			}
 
-			client := resolveSpawnClient(deps.Client, resolved, deps.GetClient)
+			client := resolveSpawnClient(deps.Client, resolved, deps.ClientProvider)
 
 			// Use bare model ID for API calls
 			model := resolved.ModelID
@@ -194,7 +193,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				if err != nil {
 					return ToolResult{}, err
 				}
-				exploreClient := resolveSpawnClient(deps.Client, exploreResolved, deps.GetClient)
+				exploreClient := resolveSpawnClient(deps.Client, exploreResolved, deps.ClientProvider)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
@@ -590,11 +589,11 @@ func resolveSpawnModel(userModel, parentModel string, aliases map[string]string)
 
 // resolveSpawnClient selects the best client for a spawn call.
 // Uses GetClient if available to select by endpoint and format, falls back to default client.
-func resolveSpawnClient(defaultClient provider.Client, resolved *config.ResolvedModel, getClient func(endpoint, format string) provider.Client) provider.Client {
-	if getClient == nil {
+func resolveSpawnClient(defaultClient provider.Client, resolved *config.ResolvedModel, clientProvider provider.ClientProvider) provider.Client {
+	if clientProvider == nil {
 		return defaultClient
 	}
-	if c := getClient(resolved.Endpoint, resolved.Format); c != nil {
+	if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
 		return c
 	}
 	return defaultClient

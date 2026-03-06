@@ -47,19 +47,19 @@ type cmdRegParams struct {
 	compactionThreshold float64
 
 	// Shared infrastructure
-	cfg                   *config.Config
-	configPath            string
-	sessions              *session.Store
-	stateStore            *state.Store
-	sessionIndex          *session.SessionIndex
-	client                provider.Client
-	resolveEndpointClient func(endpoint, modelID string) provider.Client
-	usageClientReg        *usageClientRegistry
-	botMgr                *telegram.BotManager
-	store                 *secrets.Store
-	bwStore               *bitwarden.Store
-	startTime             time.Time
-	ctx                   context.Context
+	cfg                 *config.Config
+	configPath          string
+	sessions            *session.Store
+	stateStore          *state.Store
+	sessionIndex        *session.SessionIndex
+	client              provider.Client
+	clientProvider      provider.ClientProvider
+	usageClientProvider provider.UsageClientProvider
+	botMgr              *telegram.BotManager
+	store               *secrets.Store
+	bwStore             *bitwarden.Store
+	startTime           time.Time
+	ctx                 context.Context
 
 	// Tools & skills
 	registry      *tools.Registry
@@ -103,8 +103,8 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		func(ctx context.Context) string { return p.ag.SessionModel(p.sessionKeyFromCtx(ctx)) },
 		func(ctx context.Context, endpoint string, m string) {
 			var client provider.Client
-			if endpoint != "" {
-				client = p.resolveEndpointClient(endpoint, m)
+			if endpoint != "" && p.clientProvider != nil {
+				client = p.clientProvider.ResolveEndpointClient(endpoint, m)
 			}
 			p.ag.SetSessionModel(p.sessionKeyFromCtx(ctx), m, endpoint, client)
 		},
@@ -464,8 +464,8 @@ func buildDiffSummary(p cmdRegParams, ctx context.Context, customText, defaultTe
 	// Resolve the cheap model
 	var diffClient provider.Client
 	var cheapModel string
-	if resolved, err := config.ResolveModel(cheapAlias, "", p.cfg.Models.Aliases); err == nil {
-		diffClient = p.resolveEndpointClient(resolved.Endpoint, resolved.ModelID)
+	if resolved, err := config.ResolveModel(cheapAlias, "", p.cfg.Models.Aliases); err == nil && p.clientProvider != nil {
+		diffClient = p.clientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.ModelID)
 		cheapModel = resolved.Developer + "/" + resolved.ModelID
 	}
 	if diffClient == nil {
