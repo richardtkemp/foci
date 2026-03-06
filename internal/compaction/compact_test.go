@@ -1426,8 +1426,10 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 }
 
 // Verifies that walk-back past minMessages drops preservation entirely.
-// Build a session where ALL messages before the last few are tool_use pairs,
-// so safeSplitPoint walks all the way back past minMessages.
+// 8 messages with minMessages=6 and preserve=3: preserveN is first clamped to 2
+// (since 8-3=5 < minMessages), giving splitIdx=6. safeSplitPoint walks back
+// from 6 to 5 (messages[5] is assistant+tool_use). Then 5 < minMessages(6)
+// triggers the "walk-back pushed split below minMessages" path, dropping to preserveN=0.
 func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	server := mockCompactionServer("Summary after walk-back.")
 	defer server.Close()
@@ -1435,17 +1437,6 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
-
-	// Build: u0, [toolUse1, toolResult1], [toolUse2, toolResult2], [toolUse3, toolResult3], a_final
-	// That's 8 messages. minMessages=6, preserve=2.
-	// splitIdx = 8-2 = 6. msgs[5] = toolResult3 which is user, msgs[4] = toolUse3 which is assistant with tool_use.
-	// prev of splitIdx(6) is msgs[5] which is user → no walk-back needed? Let me restructure.
-	//
-	// Actually need: every message near the split to be assistant+tool_use so walk-back keeps going.
-	// u0, a0, u1, toolUseA, toolResultA, toolUseB, toolResultB, a_final = 8 msgs
-	// With minMessages=6, preserve=3: splitIdx = 8-3 = 5 (toolResultA)
-	// prev(4) = toolUseA → walk to 4. prev(3) = u1 → stop. splitIdx=4.
-	// 4 >= minMessages(6)? No! 4 < 6 → "walk-back pushed split below minMessages", preserveN=0.
 
 	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
 	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})

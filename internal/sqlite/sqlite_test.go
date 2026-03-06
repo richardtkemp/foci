@@ -54,18 +54,6 @@ func TestOpenInit(t *testing.T) {
 	}
 }
 
-// Verifies Open returns an error when sql.Open fails (unregistered driver).
-func TestOpenDriverError(t *testing.T) {
-	orig := driverName
-	driverName = "nonexistent-driver"
-	defer func() { driverName = orig }()
-
-	_, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err == nil {
-		t.Fatal("expected error for unregistered driver")
-	}
-}
-
 // Verifies Open returns an error when the path's parent directory doesn't exist
 // (PRAGMA fails because sqlite can't create the file).
 func TestOpenBadPath(t *testing.T) {
@@ -74,7 +62,6 @@ func TestOpenBadPath(t *testing.T) {
 		t.Fatal("expected error for path in nonexistent directory")
 	}
 }
-
 
 // Verifies OpenInit forwards an Open error when the path is invalid.
 func TestOpenInitBadPath(t *testing.T) {

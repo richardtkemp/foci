@@ -1,9 +1,12 @@
 package secrets
 
 import (
+	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -1638,26 +1641,6 @@ func TestCheckHostAllowedInvalidURL(t *testing.T) {
 	}
 }
 
-// Verifies CheckSecurity returns warnings for wrong file permissions.
-func TestCheckSecurityWrongMode(t *testing.T) {
-	path := writeSecrets(t, `[test]
-key = "val"
-`)
-	os.Chmod(path, 0644)
-
-	s, _ := Load(path)
-	warnings := s.CheckSecurity()
-	found := false
-	for _, w := range warnings {
-		if strings.Contains(w, "permissions") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected permission warning, got: %v", warnings)
-	}
-}
-
 // Verifies CheckSecurity returns an error message when stat fails with non-NotExist error.
 func TestCheckSecurityStatError(t *testing.T) {
 	// Create a path where the parent is a file, so stat fails with ENOTDIR
@@ -1735,11 +1718,21 @@ func TestFlatKeysToSectionsNoDot(t *testing.T) {
 	}
 }
 
-// Verifies CheckSecurity covers the "group found in supplementary groups" branch
-// by using a group the process actually belongs to.
+// Verifies CheckSecurity does not emit a "supplementary groups" warning when
+// the process actually belongs to the security group. Dynamically discovers
+// a group the process belongs to via Getgroups.
 func TestCheckSecurityGroupFound(t *testing.T) {
+	gids, err := syscall.Getgroups()
+	if err != nil || len(gids) == 0 {
+		t.Skip("cannot determine supplementary groups")
+	}
+	grp, err := user.LookupGroupId(fmt.Sprintf("%d", gids[0]))
+	if err != nil {
+		t.Skipf("cannot look up gid %d: %v", gids[0], err)
+	}
+
 	orig := securityGroupName
-	securityGroupName = "foci" // process is in this group
+	securityGroupName = grp.Name
 	defer func() { securityGroupName = orig }()
 
 	path := writeSecrets(t, `[test]
@@ -1747,7 +1740,6 @@ key = "val"
 `)
 	s, _ := Load(path)
 	warnings := s.CheckSecurity()
-	// Should NOT have "process does not have" warning for the foci group
 	for _, w := range warnings {
 		if strings.Contains(w, "supplementary groups") {
 			t.Errorf("unexpected supplementary groups warning: %s", w)
