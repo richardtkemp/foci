@@ -61,6 +61,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				"reason": {
 					"type": "string",
 					"description": "Reason for the transition (required for 'transition' to 'done' or 'dropped', e.g. 'implemented in abc1234', 'no longer relevant')"
+				},
+				"sort": {
+					"type": "string",
+					"enum": ["priority", "created", "updated"],
+					"description": "Sort order for 'list' (default: priority). 'priority' sorts by status then priority, 'created' sorts by creation timestamp (oldest first), 'updated' sorts by last update timestamp (newest first)"
 				}
 			},
 			"required": ["action"]
@@ -77,6 +82,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				State    string  `json:"state"`
 				Query    string  `json:"query"`
 				Reason   string  `json:"reason"`
+				Sort     string  `json:"sort"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return ToolResult{}, fmt.Errorf("parse params: %w", err)
@@ -87,7 +93,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return todoAdd(store, agentID, p.Text, p.Priority, p.Tag)
 			case "list":
 				status := normalizeStatusFilter(p.Status)
-				return todoList(store, agentID, status, p.Tag, p.Priority)
+				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort)
 			case "search":
 				return todoSearch(store, agentID, p.Query)
 			case "get":
@@ -151,8 +157,8 @@ func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (Tool
 	return TextResult(fmt.Sprintf("Added #%d (%s)", id, pri)), nil
 }
 
-func todoList(store *memory.TodoStore, agentID, status, tag, priority string) (ToolResult, error) {
-	items, err := store.List(agentID, status, tag, priority)
+func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort string) (ToolResult, error) {
+	items, err := store.List(agentID, status, tag, priority, sort)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list todos: %w", err)
 	}
