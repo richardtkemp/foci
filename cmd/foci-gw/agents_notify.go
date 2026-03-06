@@ -9,6 +9,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/session"
 	"foci/prompts"
 	"foci/internal/telegram"
 	"foci/internal/tools"
@@ -32,8 +33,14 @@ func newAsyncNotifier(
 
 			bot := botMgr.BotForSessionOrPrimary(target, agentID)
 
+			// Branch sessions without their own multiball bot should not
+			// deliver replies to Telegram — they'd leak into the parent's chat.
+			// The response still gets written to the branch JSONL via HandleMessage.
+			sk, parseErr := session.ParseSessionKey(target)
+			isBranchWithoutBot := parseErr == nil && !sk.IsRoot() && botMgr.BotForSession(target) == nil
+
 			notifyCtx := agent.WithTrigger(ctx, "async_notify")
-			if bot != nil {
+			if bot != nil && !isBranchWithoutBot {
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
 						if err := bot.SendToSession(target, text); err != nil {
@@ -52,8 +59,12 @@ func newAsyncNotifier(
 			if resp == "" {
 				return
 			}
-			if bot == nil {
-				log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", agentID, target)
+			if bot == nil || isBranchWithoutBot {
+				if isBranchWithoutBot {
+					log.Debugf("async_notify", "branch session %s has no dedicated bot, skipping telegram delivery", target)
+				} else {
+					log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", agentID, target)
+				}
 				return
 			}
 			if err := bot.SendToSession(target, resp); err != nil {
