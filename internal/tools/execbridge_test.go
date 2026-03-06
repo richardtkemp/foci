@@ -786,6 +786,124 @@ func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 	}
 }
 
+func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
+	// Verify that all generated shell functions reject unrecognized flags
+	r := NewRegistry()
+	tools := []struct {
+		name       string
+		params     json.RawMessage
+		validFlags []string
+	}{
+		{
+			name:       "web_search",
+			params:     json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+			validFlags: []string{"--query"},
+		},
+		{
+			name:       "memory_search",
+			params:     json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`),
+			validFlags: []string{"--query"},
+		},
+		{
+			name:       "web_fetch",
+			params:     json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"raw":{"type":"boolean"}}}`),
+			validFlags: []string{"--raw"},
+		},
+		{
+			name:       "http_request",
+			params:     json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"save_to":{"type":"string"}}}`),
+			validFlags: []string{"--method", "--body", "--header", "--save-to", "--include-headers"},
+		},
+		{
+			name:       "send_telegram",
+			params:     json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
+			validFlags: []string{"--file", "--send-as"},
+		},
+		{
+			name:       "todo",
+			params:     json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"priority":{"type":"string"},"tag":{"type":"string"},"query":{"type":"string"},"status":{"type":"string"},"id":{"type":"integer"},"reason":{"type":"string"},"sort":{"type":"string"}}}`),
+			validFlags: []string{"--text", "--priority", "--tag", "--query", "--status", "--id", "--reason", "--sort"},
+		},
+		{
+			name:       "summary",
+			params:     json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"prompt":{"type":"string"}}}`),
+			validFlags: []string{"--file"},
+		},
+		{
+			name:       "spawn",
+			params:     json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string"},"model":{"type":"string"},"context":{"type":"string"}}}`),
+			validFlags: []string{"--model", "--context"},
+		},
+		{
+			name:       "tmux",
+			params:     json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"},"name":{"type":"string"},"command":{"type":"string"},"workdir":{"type":"string"},"watch":{"type":"boolean"},"keys":{"type":"string"},"enter":{"type":"boolean"},"lines":{"type":"integer"},"window":{"type":"integer"},"threshold_seconds":{"type":"integer"},"raw":{"type":"boolean"}}}`),
+			validFlags: []string{"--name", "--command", "--workdir", "--watch", "--keys", "--enter", "--lines", "--window", "--threshold", "--raw"},
+		},
+	}
+
+	for _, tool := range tools {
+		r.Register(&Tool{
+			Name:       tool.name,
+			ExecExport: true,
+			Parameters: tool.params,
+			Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+				return TextResult("ok"), nil
+			},
+		})
+	}
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	data, err := os.ReadFile(bridge.FuncsPath())
+	if err != nil {
+		t.Fatalf("read funcs file: %v", err)
+	}
+	content := string(data)
+
+	for _, tool := range tools {
+		funcName := "foci_" + tool.name
+		if !strings.Contains(content, funcName+"()") {
+			t.Errorf("funcs file should contain %s()", funcName)
+			continue
+		}
+
+		// Find the function definition
+		funcStart := strings.Index(content, funcName+"()")
+		if funcStart == -1 {
+			continue
+		}
+		funcEnd := strings.Index(content[funcStart:], "\nexport -f "+funcName)
+		if funcEnd == -1 {
+			funcEnd = len(content) - funcStart
+		}
+		funcBody := content[funcStart : funcStart+funcEnd]
+
+		// Should contain error handling for unrecognized flags
+		if !strings.Contains(funcBody, `--*)`) {
+			t.Errorf("%s should have wildcard case for unrecognized flags", funcName)
+		}
+		if !strings.Contains(funcBody, `echo "error: unrecognized flag:`) {
+			t.Errorf("%s should print error for unrecognized flag", funcName)
+		}
+		if !strings.Contains(funcBody, `"valid flags:`) {
+			t.Errorf("%s should list valid flags in error message", funcName)
+		}
+
+		// Should list all valid flags in error message
+		for _, flag := range tool.validFlags {
+			// The error message should mention the flag (without the --)
+			flagName := strings.TrimPrefix(flag, "--")
+			if !strings.Contains(funcBody, flagName) {
+				t.Errorf("%s error message should mention valid flag %s", funcName, flag)
+			}
+		}
+	}
+}
+
 // callBridge connects to a bridge socket and sends a request, returning the result and error.
 func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) {
 	t.Helper()

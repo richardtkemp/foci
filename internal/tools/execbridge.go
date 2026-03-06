@@ -274,6 +274,10 @@ func generateShellFunc(t *Tool) string {
   while [ $# -gt 0 ]; do
     case "$1" in
       --query) query="$2"; shift 2 ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --query" >&2
+        return 1 ;;
       *) query="$query $1"; shift ;;
     esac
   done
@@ -294,6 +298,10 @@ func generateShellFunc(t *Tool) string {
   while [ $# -gt 0 ]; do
     case "$1" in
       --raw) raw=true; shift ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --raw" >&2
+        return 1 ;;
       *) url="$1"; shift ;;
     esac
   done
@@ -318,6 +326,10 @@ func generateShellFunc(t *Tool) string {
       --header) headers="$(echo "$headers" | jq --arg k "${2%%%%:*}" --arg v "${2#*: }" '. + {($k): $v}')"; shift 2 ;;
       --save-to) save_to="$2"; shift 2 ;;
       --include-headers) inc_headers=true; shift ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --method --body --header --save-to --include-headers" >&2
+        return 1 ;;
       *) url="$1"; shift ;;
     esac
   done
@@ -347,6 +359,10 @@ func generateShellFunc(t *Tool) string {
       --file) file_path="$2"; shift 2 ;;
       --send-as) send_as="$2"; shift 2 ;;
       -) read_stdin=true; shift ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --file --send-as" >&2
+        return 1 ;;
       *) text="$text $1"; shift ;;
     esac
   done
@@ -392,6 +408,10 @@ func generateShellFunc(t *Tool) string {
       --id) id="$2"; shift 2 ;;
       --reason) reason="$2"; shift 2 ;;
       --sort) sort="$2"; shift 2 ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --text --priority --tag --query --status --id --reason --sort" >&2
+        return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
           add|edit) text="$text $1" ;;
@@ -460,6 +480,10 @@ func generateShellFunc(t *Tool) string {
   while [ $# -gt 0 ]; do
     case "$1" in
       --file) file="$2"; shift 2 ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --file" >&2
+        return 1 ;;
       *) prompt="$prompt $1"; shift ;;
     esac
   done
@@ -491,6 +515,10 @@ func generateShellFunc(t *Tool) string {
     case "$1" in
       --model) model="$2"; shift 2 ;;
       --context) ctx_mode="$2"; shift 2 ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --model --context" >&2
+        return 1 ;;
       *) prompt="$prompt $1"; shift ;;
     esac
   done
@@ -529,7 +557,13 @@ func generateShellFunc(t *Tool) string {
       --window) window="$2"; shift 2 ;;
       --threshold) threshold="$2"; shift 2 ;;
       --raw) raw=true; shift ;;
-      *) shift ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --name --command --workdir --watch --keys --enter --lines --window --threshold --raw" >&2
+        return 1 ;;
+      *)
+        echo "error: unexpected positional argument: $1" >&2
+        return 1 ;;
     esac
   done
   case "$op" in
