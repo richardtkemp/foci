@@ -55,6 +55,7 @@ config.Load(path)                                        ← validates values; l
     → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
     → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
+    → bot.SetSessionIndex(sessionIndex)                   ← persists chat→session key mapping for continuity across restarts
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
@@ -780,8 +781,8 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 - Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `agent:ID:chat:CHATID`
 - `SessionKey()` — returns override key (secondary bots) or default chat session (primary bots)
 - `SetSessionKey()` — thread-safe override (multiball fork/done)
-- `Bot.SessionKeyForChat(chatID)` — stable cached session key for a chat
-- `NewSessionKeyForChat(agentID, chatID)` — creates a NEW session key (uncached)
+- `Bot.SessionKeyForChat(chatID)` — stable cached session key for a chat. On first call for a chat, checks session index for persisted key before generating new one. New keys are persisted to `chat_metadata` table in session index under key `session_key`. This ensures the same session is resumed after restart instead of creating a new timestamped session.
+- `NewSessionKeyForChat(agentID, chatID)` — creates a NEW session key with current timestamp (uncached, unpersisted)
 - Default chat: first message sets the default; persisted in state store as `agent:ID:default_chat`
 - Username recording: persisted per chat for `/sessions list` display
 - `isSecondary` flag — enables `/done` handling, idle message rejection

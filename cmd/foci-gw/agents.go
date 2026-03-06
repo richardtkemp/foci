@@ -585,6 +585,9 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		}
 		primaryBot.SetStateStore(p.stateStore, botKey)
 	}
+	if p.sessionIndex != nil {
+		primaryBot.SetSessionIndex(p.sessionIndex)
+	}
 	if p.toolDetailStore != nil {
 		primaryBot.SetToolDetailStore(p.toolDetailStore)
 	}

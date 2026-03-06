@@ -37,6 +37,12 @@ type botClient interface {
 	AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.AnswerCallbackQueryOpts) (bool, error)
 }
 
+// sessionIndexInterface abstracts session index operations for testability.
+type sessionIndexInterface interface {
+	GetChatMetadata(agentID string, chatID int64, key string) (string, error)
+	SetChatMetadata(agentID string, chatID int64, key, value string) error
+}
+
 // attachment is a downloaded image ready for the agent.
 type attachment struct {
 	data      []byte
@@ -86,6 +92,7 @@ type Bot struct {
 
 	chatSessionKeys map[int64]string // cache of chat ID → session key (prevents regenerating keys on every message)
 	chatKeysMu      sync.RWMutex     // protects chatSessionKeys
+	sessionIndex    sessionIndexInterface // nil = no session key persistence across restarts
 
 	stateStore           *state.Store // nil = no persistence
 	stateKey             string       // state key prefix (e.g. "bot:mybot")
@@ -325,6 +332,12 @@ func (b *Bot) SetStateStore(store *state.Store, key string) {
 	}
 }
 
+// SetSessionIndex sets the session index for persisting chat-to-session-key mappings.
+// Must be called before the bot starts receiving messages to ensure session continuity across restarts.
+func (b *Bot) SetSessionIndex(idx sessionIndexInterface) {
+	b.sessionIndex = idx
+}
+
 // SetSecondary marks this bot as a secondary bot in the given pool.
 func (b *Bot) SetSecondary(pool *Pool) {
 	b.isSecondary = true
@@ -371,8 +384,10 @@ func (b *Bot) SessionKeyForChat(chatID int64) string {
 }
 
 // sessionKeyForMsg returns the session key for the message's chat.
-// Uses a cache to avoid regenerating keys on every message.
+// Uses an in-memory cache and session index to avoid regenerating keys on every message.
+// Persists new keys to the session index for continuity across restarts.
 func (b *Bot) sessionKeyForMsg(chatID int64) string {
+	// Check in-memory cache first
 	b.chatKeysMu.RLock()
 	if key, ok := b.chatSessionKeys[chatID]; ok {
 		b.chatKeysMu.RUnlock()
@@ -380,11 +395,33 @@ func (b *Bot) sessionKeyForMsg(chatID int64) string {
 	}
 	b.chatKeysMu.RUnlock()
 
-	// Cache miss — generate and store new key
+	// In-memory cache miss — check session index (persisted across restarts)
+	if b.sessionIndex != nil && b.agentID != "" {
+		if persistedKey, err := b.sessionIndex.GetChatMetadata(b.agentID, chatID, "session_key"); err == nil && persistedKey != "" {
+			// Found persisted key — populate in-memory cache and return
+			b.chatKeysMu.Lock()
+			b.chatSessionKeys[chatID] = persistedKey
+			b.chatKeysMu.Unlock()
+			b.logger().Infof("restored session key for chat %d: %s", chatID, persistedKey)
+			return persistedKey
+		}
+	}
+
+	// No persisted key — generate new key and persist it
 	key := NewSessionKeyForChat(b.agentID, chatID)
 	b.chatKeysMu.Lock()
 	b.chatSessionKeys[chatID] = key
 	b.chatKeysMu.Unlock()
+
+	// Persist to session index for future restarts
+	if b.sessionIndex != nil && b.agentID != "" {
+		if err := b.sessionIndex.SetChatMetadata(b.agentID, chatID, "session_key", key); err != nil {
+			b.logger().Errorf("persist session key for chat %d: %v", chatID, err)
+		} else {
+			b.logger().Infof("persisted new session key for chat %d: %s", chatID, key)
+		}
+	}
+
 	return key
 }
 
