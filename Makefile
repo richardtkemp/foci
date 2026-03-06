@@ -8,7 +8,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl check clean setup-hooks
+.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl verify-persistence check clean setup-hooks
 
 all: build cli foci-call
 
@@ -108,4 +108,8 @@ complex: vet
 	@echo "=== gocognit (>100) ==="
 	@$(GOBIN)/gocognit -over 100 . || true
 
-check: test lint coverage-check
+verify-persistence:
+	@echo "=== CodeQL Persistence Verification ==="
+	@./scripts/verify-persistence.sh
+
+check: test lint coverage-check verify-persistence
