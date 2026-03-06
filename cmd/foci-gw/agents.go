@@ -822,52 +822,6 @@ func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []
 
 
 
-// resolveTTS looks up a TTS provider by id (empty → default), applies the
-// combined rate (entry.Rate × agentRate, 0 treated as 1.0), and returns the
-// rate-adjusted provider.
-func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, agentRate float64) voice.TTS {
-	baseTTS := ttsMap[ttsID]
-	if baseTTS == nil {
-		baseTTS = ttsMap[""] // default
-	}
-	if baseTTS == nil {
-		return nil
-	}
-	// Find entry rate from config
-	var entryRate float64
-	if ttsID == "" && len(ttsEntries) > 0 {
-		entryRate = ttsEntries[0].Rate
-	} else {
-		for _, e := range ttsEntries {
-			if e.ID == ttsID {
-				entryRate = e.Rate
-				break
-			}
-		}
-	}
-	// Combine: treat 0 as 1.0
-	eff := entryRate
-	if eff == 0 {
-		eff = 1.0
-	}
-	if agentRate != 0 {
-		eff *= agentRate
-	}
-	if eff == 1.0 {
-		eff = 0 // WithRate(0) returns the original provider unchanged
-	}
-	return voice.WithRate(baseTTS, eff)
-}
-
-// resolveSTT looks up an STT provider by id (empty → default).
-func resolveSTT(sttMap map[string]voice.STT, sttID string) voice.STT {
-	stt := sttMap[sttID]
-	if stt == nil {
-		stt = sttMap[""] // default
-	}
-	return stt
-}
-
 // resolveMessageTransforms returns per-agent message transforms if set, otherwise global.
 func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []config.MessageTransform {
 	if len(acfg.MessageTransforms) > 0 {
