@@ -430,12 +430,6 @@ func setupAgent(p setupParams) *agentInstance {
 	} else if p.bwStore != nil {
 		ag.Redact = p.bwStore.Redact
 	}
-	// Restore per-session state and seed session meta for default session (if any).
-	// These are no-ops if no default session exists yet (first startup).
-	if sk := defaultSessionKey(); sk != "" {
-		ag.RestoreSessionOverrides(sk)
-		ag.SeedSessionMeta(sk)
-	}
 
 	// Warning injection queue (if enabled per-agent)
 	if acfg.InjectAgentWarnings {
