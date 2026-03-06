@@ -6,6 +6,43 @@ Read `docs/WIRING.md` for the full architecture and wiring diagram. It explains 
 
 Read `docs/SPEC.md` for the design intent and philosophy.
 
+## Code Investigation Tools
+
+When investigating patterns like "which values aren't persisted" or "dataflow analysis", use these tools instead of manual grep:
+
+### gogrep (Go-aware grep)
+```bash
+# Search for map fields in structs
+gogrep -x 'map[$_]$_' ./...
+
+# Find struct definitions
+gogrep -x 'type $NAME struct { $*_ }' ./internal/...
+
+# Pattern matching with context
+gogrep -A 3 -B 1 'pattern' ./...
+```
+Installed at: `$(go env GOPATH)/bin/gogrep`
+
+### CodeQL (Deep semantic analysis)
+```bash
+# Create database (one-time, takes ~30s)
+gh codeql database create codeql-db --language=go
+
+# Run query
+gh codeql query run query.ql --database=codeql-db
+
+# Example query file (query.ql):
+# import go
+# from Function f where f.getName().matches("New%")
+# select f, "Constructor function"
+```
+
+### When to use what:
+- **Simple patterns**: Use `Grep` tool or `gogrep`
+- **Dataflow/persistence audit**: Use CodeQL or write quick `go/ast` script
+- **Systematic exploration**: Use Task tool with `Explore` agent
+- **Manual grep**: Last resort, prefer Go-aware tools
+
 ## When You Make Changes
 
 - **DON'T REPEAT YOURSELF!!** Any time you want to create a new function, or just add functionality, check if the the logic already exists somewhere. fzf is available, might be helpful. Don't duplicate logic. Feel free to extract or refactor in order to make your changes DRY.
