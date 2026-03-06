@@ -118,8 +118,7 @@ Subcommands:
 	usageClients := newUsageClientRegistry(cfg, sec.store)
 
 	// ========== Dynamic model alias resolution ==========
-	openaiKey, _ := sec.store.Get("openai.api_key")
-	resolveAllAliases(ctx, clients, openaiKey, cfg.OpenAI, cfg.Models.Aliases)
+	resolveAllAliases(ctx, clients, sec.store, cfg, cfg.Models.Aliases)
 
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)
