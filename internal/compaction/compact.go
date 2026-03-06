@@ -222,7 +222,7 @@ func estimateTokens(messages []provider.Message) int {
 }
 
 // ShouldCompact returns true if the session likely exceeds the threshold.
-func (c *Compactor) ShouldCompact(messages []provider.Message, lastUsage *provider.Usage) bool {
+func (c *Compactor) ShouldCompact(sessionKey string, messages []provider.Message, lastUsage *provider.Usage) bool {
 	limit := contextLimit(c.model)
 	threshold := int(float64(limit) * c.threshold)
 	estimated := estimateTokens(messages)
@@ -239,7 +239,7 @@ func (c *Compactor) ShouldCompact(messages []provider.Message, lastUsage *provid
 		result = estimated > threshold
 	}
 
-	c.log.Debugf("should_compact: input=%d threshold=%d estimated=%d result=%v", input, threshold, estimated, result)
+	c.log.Debugf("should_compact session=%s: input=%d threshold=%d estimated=%d result=%v", sessionKey, input, threshold, estimated, result)
 	return result
 }
 

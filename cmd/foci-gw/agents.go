@@ -942,7 +942,7 @@ func buildBranchFunc(
 		// Cron tasks are branches from the default session
 		branchKey, branchErr := session.BranchFromSession(parentKey)
 		if branchErr != nil {
-			log.Errorf("keepalive", "%s branch key error: %v", branchType, branchErr)
+			log.Errorf("keepalive", "%s branch key error (parent=%s): %v", branchType, parentKey, branchErr)
 			return
 		}
 
@@ -1064,7 +1064,7 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 	// Create session-end memory branch
 	branchKey, err := session.BranchFromSession(sessionKey)
 	if err != nil {
-		log.Errorf("session-end-memory", "create branch key: %v", err)
+		log.Errorf("session-end-memory", "create branch key for session %s: %v", sessionKey, err)
 		return
 	}
 	orientText := buildOrientation(branchKey, sessionKey, "session-end-memory")
@@ -1072,7 +1072,7 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 		NoResetHook:        true,
 		OrientationMessage: orientText,
 	}); err != nil {
-		log.Errorf("session-end-memory", "branch error: %v", err)
+		log.Errorf("session-end-memory", "branch error for session %s → %s: %v", sessionKey, branchKey, err)
 		return
 	}
 

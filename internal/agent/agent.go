@@ -1338,7 +1338,7 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []anthropic.SystemBlock {
 
 // maybeCompact checks whether context compaction is needed and performs it.
 func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessionKey string, messages []anthropic.Message, system []anthropic.SystemBlock, usage *anthropic.Usage, sm *sessionMeta) {
-	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) || !a.Compactor.ShouldCompact(messages, usage) {
+	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) || !a.Compactor.ShouldCompact(sessionKey, messages, usage) {
 		return
 	}
 	if a.SessionNoCompact(sessionKey) {
