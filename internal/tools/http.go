@@ -269,7 +269,9 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 		}
 		ext := extensionForContentType(contentType)
 		var randBytes [4]byte
-		rand.Read(randBytes[:])
+		if _, err := rand.Read(randBytes[:]); err != nil {
+			return ToolResult{}, fmt.Errorf("generate random filename: %w", err)
+		}
 		savePath = filepath.Join(dir, "http-"+hex.EncodeToString(randBytes[:])+ext)
 	}
 

@@ -49,7 +49,7 @@ func messagesToGenai(msgs []provider.Message) []*genai.Content {
 			case "tool_use":
 				args := make(map[string]any)
 				if len(block.Input) > 0 {
-					json.Unmarshal(block.Input, &args)
+					_ = json.Unmarshal(block.Input, &args) // best effort parsing, empty args on failure
 				}
 				parts = append(parts, &genai.Part{
 					FunctionCall: &genai.FunctionCall{

@@ -48,7 +48,7 @@ func SetInFile(path string, target SetTarget, value string) (string, error) {
 		return "", fmt.Errorf("write temp: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath) // best effort cleanup
+		_ = os.Remove(tmpPath) // best effort cleanup
 		return "", fmt.Errorf("rename: %w", err)
 	}
 

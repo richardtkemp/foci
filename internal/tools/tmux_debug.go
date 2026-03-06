@@ -69,8 +69,9 @@ func logDebug(operation, details string) {
 }
 
 // logDebugf writes a formatted debug message.
-func logDebugf(operation, format string, args ...interface{}) {
-	logDebug(operation, fmt.Sprintf(format, args...))
+// operation parameter is kept for future extensibility, currently only "send" is used.
+func logDebugf(_ /* operation */, format string, args ...interface{}) {
+	logDebug("send", fmt.Sprintf(format, args...))
 }
 
 // LogSendEntry logs entry to send function.

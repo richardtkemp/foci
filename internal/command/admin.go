@@ -306,7 +306,8 @@ func promptsReinstall(data PromptsData) (string, error) {
 	for name, content := range data.EmbeddedPrompts {
 		path := filepath.Join(dir, name)
 		existing, err := os.ReadFile(path)
-		if err == nil && md5.Sum(existing) == md5.Sum([]byte(content)) { // #nosec G401 - content comparison, not security
+		// #nosec G401 - content comparison only, not security
+		if err == nil && md5.Sum(existing) == md5.Sum([]byte(content)) {
 			matched++
 			continue
 		}
@@ -367,18 +368,18 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, deps Prompt
 	tmpPath := tmpFile.Name()
 	if _, err := tmpFile.WriteString(content.String()); err != nil {
 		_ = tmpFile.Close() // #nosec G104 - best effort cleanup
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("write temp file: %w", err)
 	}
 	_ = tmpFile.Close() // #nosec G104 - file already written successfully
 
 	if deps.SendDocFn != nil {
 		if err := deps.SendDocFn(tmpPath); err != nil {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 			return "", fmt.Errorf("send document: %w", err)
 		}
 	}
-	os.Remove(tmpPath)
+	_ = os.Remove(tmpPath)
 
 	changed := diffChangedLines(diff)
 	return fmt.Sprintf("Diff for %s sent (%d lines changed).", label, changed), nil

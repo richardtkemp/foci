@@ -274,6 +274,7 @@ func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *Browse
 }
 
 func browserStart(mgr *BrowserManager, p browserParams) (ToolResult, error) {
+	_ = p // unused but required for function signature consistency
 	if err := mgr.Start(); err != nil {
 		return ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
 	}
@@ -281,6 +282,7 @@ func browserStart(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 }
 
 func browserStop(mgr *BrowserManager, p browserParams) (ToolResult, error) {
+	_ = p // unused but required for function signature consistency
 	if err := mgr.Stop(); err != nil {
 		return ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
 	}
@@ -314,7 +316,7 @@ func browserNavigate(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 }
 
 func browserClick(mgr *BrowserManager, p browserParams) (ToolResult, error) {
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -331,7 +333,7 @@ func browserType(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 		return ToolResult{Text: "Error: text required"}, nil
 	}
 
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -363,7 +365,7 @@ func browserPress(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 }
 
 func browserHover(mgr *BrowserManager, p browserParams) (ToolResult, error) {
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -380,7 +382,7 @@ func browserSelect(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 		return ToolResult{Text: "Error: values required"}, nil
 	}
 
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -393,7 +395,7 @@ func browserSelect(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 }
 
 func browserScroll(mgr *BrowserManager, p browserParams) (ToolResult, error) {
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -460,6 +462,7 @@ func browserScreenshot(mgr *BrowserManager, p browserParams) (ToolResult, error)
 }
 
 func browserPDF(mgr *BrowserManager, p browserParams) (ToolResult, error) {
+	_ = p // unused but required for function signature consistency
 	page, err := mgr.getPage()
 	if err != nil {
 		return ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
@@ -505,7 +508,7 @@ func browserWait(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 }
 
 func browserGetText(mgr *BrowserManager, p browserParams) (ToolResult, error) {
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -523,7 +526,7 @@ func browserGetAttribute(mgr *BrowserManager, p browserParams) (ToolResult, erro
 		return ToolResult{Text: "Error: attribute required"}, nil
 	}
 
-	_, el, err := resolveElement(mgr, p)
+	el, err := resolveElement(mgr, p)
 	if err != nil {
 		return ToolResult{Text: err.Error()}, nil
 	}
@@ -588,23 +591,23 @@ func browserListElements(mgr *BrowserManager, p browserParams) (ToolResult, erro
 	return ToolResult{Text: strings.Join(lines, "\n")}, nil
 }
 
-func resolveElement(mgr *BrowserManager, p browserParams) (*rod.Page, *rod.Element, error) {
+func resolveElement(mgr *BrowserManager, p browserParams) (*rod.Element, error) {
 	selector := buildSelector(p)
 	if selector == "" {
-		return nil, nil, fmt.Errorf("no selector provided")
+		return nil, fmt.Errorf("no selector provided")
 	}
 
 	page, err := mgr.getPage()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	el, err := mgr.withTimeout(page, p.TimeoutMs).Element(selector)
 	if err != nil {
-		return nil, nil, fmt.Errorf("element not found: %v\n\nTry list_elements to see available elements", err)
+		return nil, fmt.Errorf("element not found: %v\n\nTry list_elements to see available elements", err)
 	}
 
-	return page, el, nil
+	return el, nil
 }
 
 func buildSelector(p browserParams) string {
