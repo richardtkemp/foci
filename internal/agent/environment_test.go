@@ -26,7 +26,7 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -85,7 +85,7 @@ func TestEnvironmentBlockOmittedWhenEmpty(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})

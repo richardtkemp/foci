@@ -25,7 +25,7 @@ type keepaliveParams struct {
 	stateStore            *state.Store
 	todoStore             *memory.TodoStore
 	ctx                   context.Context
-	resolveEndpointClient func(endpoint, modelID string) provider.Client
+	resolveEndpointClient func(endpoint, format string) provider.Client
 }
 
 // setupKeepalive creates and starts a keepalive runner for an agent instance.
@@ -37,7 +37,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	var client provider.Client
 	if err == nil {
 		endpoint = resolved.Endpoint
-		client = p.resolveEndpointClient(endpoint, acfg.Model)
+		client = p.resolveEndpointClient(endpoint, resolved.Format)
 	}
 
 	// Check if provider supports caching

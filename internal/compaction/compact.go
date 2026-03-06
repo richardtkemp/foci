@@ -74,9 +74,10 @@ func (c *Compactor) checkConfig() {
 }
 
 // contextLimit returns the approximate context window for a model.
+// Accepts both bare ("claude-opus-4-6") and full ("anthropic/claude-opus-4-6") model IDs.
 func contextLimit(model string) int {
 	switch {
-	case strings.HasPrefix(model, "claude-"):
+	case strings.Contains(model, "claude-"):
 		return 200_000
 	case strings.Contains(model, "gemini-2.5-pro"),
 		strings.Contains(model, "gemini-2.5-flash"):

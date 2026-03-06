@@ -270,7 +270,7 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

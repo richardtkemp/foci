@@ -49,7 +49,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -169,7 +169,7 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -219,7 +219,7 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 

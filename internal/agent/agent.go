@@ -50,6 +50,7 @@ type sessionMeta struct {
 	thinking        string          // per-session thinking override (empty = use agent default)
 	model           string          // per-session model override (empty = use agent default)
 	modelEndpoint   string          // per-session endpoint override (empty = use agent default)
+	modelFormat     string          // per-session format override (empty = use agent default)
 	client          provider.Client      // per-session client override (nil = use a.Client)
 	usageClient     provider.UsageClient // per-session usage client (nil = use agent default)
 	noCompact       bool                 // per-session no_compact flag (sticky across async operations)
@@ -85,7 +86,8 @@ type Agent struct {
 	AsyncNotifier                 *tools.AsyncNotifier  // nil disables async-pending compaction guard
 	Reminders                     *memory.ReminderStore // nil disables reminder injection
 	AgentID                       string                // unique agent identifier (for per-agent DB queries)
-	Model                         string
+	Model                         string               // "developer/model_id" format (e.g. "anthropic/claude-opus-4-6")
+	Format                        string               // wire format resolved at startup (e.g. "anthropic", "gemini", "openai")
 	Endpoint                      string               // agent's default endpoint (sessions inherit this unless overridden)
 	Log                           *log.ComponentLogger // structured logger for this agent
 
@@ -270,13 +272,14 @@ func (a *Agent) SessionModel(sessionKey string) string {
 	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.model }, a.Model)
 }
 
-// SetSessionModel sets the per-session model, endpoint, and client override and persists it.
+// SetSessionModel sets the per-session model, endpoint, format, and client override and persists it.
 // client may be nil to fall back to the agent's default client.
-func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provider.Client) {
+func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, client provider.Client) {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	sm.model = value
 	sm.modelEndpoint = endpoint
+	sm.modelFormat = format
 	sm.client = client
 	// Update usage client for new endpoint
 	if a.UsageClientProvider != nil {
@@ -288,6 +291,7 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provi
 		if value == "" {
 			_ = a.StateStore.Delete("model:" + sessionKey)
 			_ = a.StateStore.Delete("model_endpoint:" + sessionKey)
+			_ = a.StateStore.Delete("model_format:" + sessionKey)
 		} else {
 			if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
 				a.logger().Errorf("session=%s persist model: %v", sessionKey, err)
@@ -297,8 +301,18 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provi
 					a.logger().Errorf("session=%s persist model_endpoint: %v", sessionKey, err)
 				}
 			}
+			if format != "" {
+				if err := a.StateStore.Set("model_format:"+sessionKey, format); err != nil {
+					a.logger().Errorf("session=%s persist model_format: %v", sessionKey, err)
+				}
+			}
 		}
 	}
+}
+
+// SessionFormat returns the effective wire format for the session.
+func (a *Agent) SessionFormat(sessionKey string) string {
+	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.modelFormat }, a.Format)
 }
 
 // SessionClient returns the effective client for the session.
@@ -365,30 +379,32 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 		restored = append(restored, "thinking="+val)
 	}
 
-	// Restore model and endpoint
+	// Restore model, endpoint, format, and resolve the matching client
 	if a.StateStore.Get("model:"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.model = val })
 		restored = append(restored, "model="+val)
 
-		// Restore endpoint and resolve the matching client
-		var ep string
+		var ep, format string
 		if a.StateStore.Get("model_endpoint:"+sessionKey, &ep) && ep != "" {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelEndpoint = ep })
 			restored = append(restored, "endpoint="+ep)
+		}
+		if a.StateStore.Get("model_format:"+sessionKey, &format) && format != "" {
+			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelFormat = format })
+			restored = append(restored, "format="+format)
+		}
 
-			if a.ClientProvider != nil {
-				format := config.InferFormat(val)
-				if c := a.ClientProvider.GetClient(ep, format); c != nil {
-					a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
-				}
+		if ep != "" && format != "" && a.ClientProvider != nil {
+			if c := a.ClientProvider.GetClient(ep, format); c != nil {
+				a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 			}
+		}
 
-			// Restore usage client for the endpoint
-			if a.UsageClientProvider != nil {
-				a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
-					sm.usageClient = a.UsageClientProvider.GetUsageClient(ep)
-				})
-			}
+		// Restore usage client for the endpoint
+		if ep != "" && a.UsageClientProvider != nil {
+			a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
+				sm.usageClient = a.UsageClientProvider.GetUsageClient(ep)
+			})
 		}
 	}
 
@@ -1559,7 +1575,8 @@ func logCacheDebug(sessionKey string, system []provider.SystemBlock, messages []
 
 	// Warn about minimum token thresholds
 	minTokens := 2048 // Haiku default
-	if model == "claude-sonnet-4-5" || model == "claude-opus-4-6" {
+	bareModel := config.StripDeveloperPrefix(model)
+	if bareModel == "claude-sonnet-4-5" || bareModel == "claude-opus-4-6" {
 		minTokens = 1024
 	}
 

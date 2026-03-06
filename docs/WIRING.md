@@ -23,7 +23,7 @@ config.Load(path)                                        ← validates values; l
   → Lazy client registry: clients created on first use per endpoint:format pair (sync.Once)
   →   GetClient(endpoint, format) — lazy-init, returns provider.Client
   →   PeekClient(endpoint, format) — no-init check, returns nil if not yet created
-  →   ResolveEndpointClient(endpoint, modelID) — infers format from model name, calls GetClient
+  →   ResolveEndpointClient(endpoint, format) — validates format against endpoint support, calls GetClient
 
 → initSessions(cfg)                                      ← sessions_init.go
   → session.NewStore(dir)
@@ -396,16 +396,15 @@ Agents can switch endpoints at runtime via `/model endpoint:alias` (e.g. `/model
 | **Wire format** | `anthropic`, `openai`, `gemini` | Which Go client serializes the request |
 | **Model ID** | `claude-opus-4-6` | String passed in the API call |
 
-**Format inference:** `config.InferFormat(modelID)` — `claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai. Unknown → openai (universal fallback). Multi-format endpoints (like openrouter with both `anthropic_url` and `openai_url`) auto-select the right URL based on the inferred format.
+**Format resolution:** `config.ResolveModel()` resolves the wire format once at startup (or `/model` switch) from the developer prefix: `anthropic/*` → anthropic format, `google/*` → gemini format, `openai/*` → openai format, unknown → openai (universal fallback). The resolved format is persisted on `Agent.Format` and `sessionMeta.modelFormat` — it is never re-inferred from the model name. Multi-format endpoints (like openrouter with both `anthropic_url` and `openai_url`) auto-select the right URL based on the stored format.
 
 **Resolution chain:**
-1. `/model openrouter:opus` → resolve alias `opus` → `anthropic:claude-opus-4-6` → parse endpoint `anthropic`, but user specified `openrouter` → use `openrouter:claude-opus-4-6`
-2. `config.InferFormat("claude-opus-4-6")` → `"anthropic"`
-3. `getClient("openrouter", "anthropic")` → lazy-init anthropic client for openrouter endpoint
-4. Per-session client override stored in `sessionMeta.client`, endpoint in `sessionMeta.modelEndpoint`
-5. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
+1. `/model openrouter:opus` → resolve alias `opus` → `anthropic/claude-opus-4-6` → parse developer `anthropic`, but user specified `openrouter` → endpoint=`openrouter`, format=`anthropic`
+2. `ResolveEndpointClient("openrouter", "anthropic")` → lazy-init anthropic client for openrouter endpoint
+3. Per-session client override stored in `sessionMeta.client`, endpoint in `sessionMeta.modelEndpoint`, format in `sessionMeta.modelFormat`
+4. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
 
-**Wiring:** `agent.GetClient` and `agent.PeekClient` are function fields (not a map) that delegate to the lazy client registry in `main.go`. These are shared with `tools.SpawnDeps` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
+**Wiring:** `agent.ClientProvider` implements `provider.ClientProvider` and delegates to the lazy client registry in `main.go`. This is shared with `tools.SpawnDeps` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
 
 **Compaction:** `Compactor.Compact()` receives the client as a parameter (not stored on the struct), so compaction uses the session's active provider client.
 
@@ -596,7 +595,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
-**`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The `resolveModel` callback in `main.go` parses the endpoint prefix, resolves aliases (which now include endpoint prefixes, e.g. `opus` → `anthropic:claude-opus-4-6`), and returns `(endpoint, model)`. The `setModel` callback calls `resolveEndpointClient(endpoint, model)` to lazy-init the correct client and calls `ag.SetSessionModel(sessionKey, model, endpoint, client)` to store the model, endpoint, and per-session client override. Both endpoint and model are persisted to state store for restoration across restarts.
+**`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The `resolveModel` callback in `main.go` calls `config.ResolveModel()` to resolve aliases and returns `(endpoint, model, format)`. The `setModel` callback calls `ResolveEndpointClient(endpoint, format)` to lazy-init the correct client and calls `ag.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
 
 **Command registration** (`commands.go` in main package): All per-agent slash commands are registered in `registerAgentCommands()`, which takes a `cmdRegParams` struct bundling agent references, config, clients, and stores. Large command bodies (e.g. `/prompts` data builder, `/compact`, `/sessions`) are extracted into named top-level functions in `commands.go` rather than inline closures, reducing cognitive complexity. The `command` package also defines `AgentDeps` (`command/deps.go`) which documents the dependency surface between commands and agent internals. Commands use callbacks for telegram operations to avoid importing the `telegram` package (which imports `command`).
 
@@ -791,7 +790,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 **Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<telegram_username>`. Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `main.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetAgentAndCommands` and gets the primary bot's chat ID for notifications.
 
-**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort:<sessionKey>`, `thinking:<sessionKey>`, `model:<sessionKey>`, `model_endpoint:<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all four — for model overrides, it reads the endpoint and calls `GetClient(endpoint, InferFormat(model))` to restore the correct client. The `/voice` mode follows the same pattern under `voice:<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
+**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort:<sessionKey>`, `thinking:<sessionKey>`, `model:<sessionKey>`, `model_endpoint:<sessionKey>`, `model_format:<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all five — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern under `voice:<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
 
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool

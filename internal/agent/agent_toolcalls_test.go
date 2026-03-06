@@ -115,7 +115,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -212,7 +212,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -296,7 +296,7 @@ func TestToolResultRedaction(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -367,7 +367,7 @@ func TestToolErrorRedaction(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

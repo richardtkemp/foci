@@ -101,22 +101,19 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	cmds.Register(command.NewModelCommand(
 		func(ctx context.Context) string { return p.ag.SessionModel(p.sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, endpoint string, m string) {
+		func(ctx context.Context, endpoint string, m string, format string) {
 			var client provider.Client
-			if endpoint != "" && p.clientProvider != nil {
-				client = p.clientProvider.ResolveEndpointClient(endpoint, m)
+			if endpoint != "" && format != "" && p.clientProvider != nil {
+				client = p.clientProvider.ResolveEndpointClient(endpoint, format)
 			}
-			p.ag.SetSessionModel(p.sessionKeyFromCtx(ctx), m, endpoint, client)
+			p.ag.SetSessionModel(p.sessionKeyFromCtx(ctx), m, endpoint, format, client)
 		},
-		func(input string) (string, string) {
-			// Use new ResolveModel for resolution
+		func(input string) (string, string, string) {
 			resolved, err := config.ResolveModel(input, "", aliases)
 			if err != nil {
-				// Fallback for invalid input - return empty endpoint
-				return "", input
+				return "", input, ""
 			}
-			// Return endpoint and full model string (developer/model_id)
-			return resolved.Endpoint, resolved.Developer + "/" + resolved.ModelID
+			return resolved.Endpoint, resolved.Developer + "/" + resolved.ModelID, resolved.Format
 		},
 		aliases,
 	))
@@ -465,7 +462,7 @@ func buildDiffSummary(p cmdRegParams, ctx context.Context, customText, defaultTe
 	var diffClient provider.Client
 	var cheapModel string
 	if resolved, err := config.ResolveModel(cheapAlias, "", p.cfg.Models.Aliases); err == nil && p.clientProvider != nil {
-		diffClient = p.clientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.ModelID)
+		diffClient = p.clientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
 		cheapModel = resolved.Developer + "/" + resolved.ModelID
 	}
 	if diffClient == nil {

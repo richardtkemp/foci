@@ -74,9 +74,9 @@ type ClientProvider interface {
 	// Returns nil if the client hasn't been created yet or doesn't exist.
 	PeekClient(endpoint, format string) Client
 
-	// ResolveEndpointClient resolves the client for an endpoint+modelID pair.
-	// Infers wire format from model name, falls back to openai if endpoint doesn't support it.
-	ResolveEndpointClient(endpoint, modelID string) Client
+	// ResolveEndpointClient resolves the client for an endpoint+format pair.
+	// Falls back to openai format if the endpoint doesn't support the given format.
+	ResolveEndpointClient(endpoint, format string) Client
 }
 
 // UsageClientProvider provides access to usage tracking clients for different endpoints.
