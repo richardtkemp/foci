@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -944,4 +945,468 @@ func TestPayload(t *testing.T) {
 		Model:   "test-model",
 	})
 	// No panic = pass
+}
+
+// TestLevelStringUnknown verifies that an out-of-range Level returns "???".
+func TestLevelStringUnknown(t *testing.T) {
+	if got := Level(99).String(); got != "???" {
+		t.Errorf("Level(99).String() = %q, want %q", got, "???")
+	}
+}
+
+// TestInitBadPayloadPath verifies Init returns an error for a bad payload file path.
+func TestInitBadPayloadPath(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	err := Init(Config{PayloadFile: "/nonexistent/dir/payload.jsonl"})
+	if err == nil {
+		t.Fatal("expected error for bad payload file path")
+	}
+}
+
+// TestReopenAllFiles verifies that reopen closes and reopens all three file types.
+func TestReopenAllFiles(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	eventPath := filepath.Join(dir, "foci.log")
+	apiPath := filepath.Join(dir, "api.jsonl")
+	payloadPath := filepath.Join(dir, "payload.jsonl")
+
+	err := Init(Config{
+		Level:       "INFO",
+		EventFile:   eventPath,
+		APIFile:     apiPath,
+		PayloadFile: payloadPath,
+	})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	// Write before reopen
+	Infof("test", "before reopen")
+	API(APIEntry{Session: "test", Model: "test"})
+	Payload(PayloadEntry{Session: "test", Model: "test"})
+
+	// Reopen
+	if err := Reopen(); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+
+	// Write after reopen — should succeed to new file handles
+	Infof("test", "after reopen")
+	API(APIEntry{Session: "test2", Model: "test"})
+	Payload(PayloadEntry{Session: "test2", Model: "test"})
+
+	// Force close to flush
+	Close()
+
+	// Verify content persists in all files
+	eventData, _ := os.ReadFile(eventPath)
+	if !strings.Contains(string(eventData), "after reopen") {
+		t.Errorf("event log missing post-reopen message")
+	}
+	apiData, _ := os.ReadFile(apiPath)
+	if !strings.Contains(string(apiData), "test2") {
+		t.Errorf("api log missing post-reopen entry")
+	}
+	payloadData, _ := os.ReadFile(payloadPath)
+	if !strings.Contains(string(payloadData), "test2") {
+		t.Errorf("payload log missing post-reopen entry")
+	}
+}
+
+// TestReopenNoFiles verifies that reopen is a no-op when no files are open.
+func TestReopenNoFiles(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// No files configured — should succeed without error
+	if err := Reopen(); err != nil {
+		t.Fatalf("Reopen with no files: %v", err)
+	}
+}
+
+// TestReopenEventError verifies reopen returns an error when the event file can't be reopened.
+func TestReopenEventError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	eventPath := filepath.Join(dir, "foci.log")
+
+	err := Init(Config{Level: "INFO", EventFile: eventPath})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	// Point event path to a non-writable location
+	std.mu.Lock()
+	std.eventPath = "/nonexistent/dir/foci.log"
+	std.mu.Unlock()
+
+	if err := Reopen(); err == nil {
+		t.Fatal("expected error reopening event file with bad path")
+	}
+}
+
+// TestReopenAPIError verifies reopen returns an error when the API file can't be reopened.
+func TestReopenAPIError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	apiPath := filepath.Join(dir, "api.jsonl")
+
+	err := Init(Config{Level: "INFO", APIFile: apiPath})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	std.mu.Lock()
+	std.apiPath = "/nonexistent/dir/api.jsonl"
+	std.mu.Unlock()
+
+	if err := Reopen(); err == nil {
+		t.Fatal("expected error reopening API file with bad path")
+	}
+}
+
+// TestReopenPayloadError verifies reopen returns an error when the payload file can't be reopened.
+func TestReopenPayloadError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	payloadPath := filepath.Join(dir, "payload.jsonl")
+
+	err := Init(Config{Level: "INFO", PayloadFile: payloadPath})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	std.mu.Lock()
+	std.payloadPath = "/nonexistent/dir/payload.jsonl"
+	std.mu.Unlock()
+
+	if err := Reopen(); err == nil {
+		t.Fatal("expected error reopening payload file with bad path")
+	}
+}
+
+// TestCalculateCostOpenAIFallback verifies that unknown OpenAI models use OpenAI fallback pricing.
+func TestCalculateCostOpenAIFallback(t *testing.T) {
+	// 1M input tokens on unknown OpenAI model = $5.00
+	cost := CalculateCost("gpt-5-turbo", 1_000_000, 0, 0, 0)
+	if cost != 5.0 {
+		t.Errorf("1M input unknown openai = %f, want 5.0", cost)
+	}
+
+	// 1M output tokens on unknown OpenAI model = $15.00
+	cost = CalculateCost("o4-mini", 0, 1_000_000, 0, 0)
+	if cost != 15.0 {
+		t.Errorf("1M output unknown openai = %f, want 15.0", cost)
+	}
+}
+
+// TestAPIDefaultCallType verifies that empty CallType defaults to "conversation".
+func TestAPIDefaultCallType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "api.jsonl")
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	SetAPIWriter(f)
+	defer func() {
+		SetAPIWriter(nil)
+		f.Close()
+	}()
+
+	API(APIEntry{Session: "test", Model: "test"})
+
+	f.Close()
+	data, _ := os.ReadFile(path)
+	var decoded APIEntry
+	json.Unmarshal(data, &decoded)
+	if decoded.CallType != "conversation" {
+		t.Errorf("default CallType = %q, want %q", decoded.CallType, "conversation")
+	}
+}
+
+// TestAPIProviderInference verifies that provider is auto-inferred from model name.
+func TestAPIProviderInference(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "api.jsonl")
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	SetAPIWriter(f)
+	defer func() {
+		SetAPIWriter(nil)
+		f.Close()
+	}()
+
+	tests := []struct {
+		model    string
+		wantProv string
+	}{
+		{"gemini-2.5-pro", "gemini"},
+		{"gpt-4", "openai"},
+		{"claude-haiku-4-5", ""},
+	}
+
+	for _, tt := range tests {
+		f.Truncate(0)
+		f.Seek(0, 0)
+
+		API(APIEntry{Session: "test", Model: tt.model})
+
+		f.Sync()
+		data, _ := os.ReadFile(path)
+		var decoded APIEntry
+		json.Unmarshal(bytes.TrimSpace(data), &decoded)
+		if decoded.Provider != tt.wantProv {
+			t.Errorf("model %q → provider = %q, want %q", tt.model, decoded.Provider, tt.wantProv)
+		}
+	}
+}
+
+// TestWarnHookBuffering verifies that warnings logged before SetWarnHook are replayed.
+func TestWarnHookBuffering(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// Reset warn hook state
+	warnMu.Lock()
+	warnHook = nil
+	warnBuffer = nil
+	warnMu.Unlock()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	// Log warnings before hook is set
+	Warnf("config", "early warning 1")
+	Errorf("config", "early error 2")
+
+	// Now set the hook — buffered warnings should be replayed
+	var replayed []warnHookEntry
+	SetWarnHook(func(level Level, component string, msg string) {
+		replayed = append(replayed, warnHookEntry{level, component, msg})
+	})
+
+	if len(replayed) != 2 {
+		t.Fatalf("replayed %d buffered warnings, want 2", len(replayed))
+	}
+	if replayed[0].level != WARN || replayed[0].msg != "early warning 1" {
+		t.Errorf("replayed[0] = %+v", replayed[0])
+	}
+	if replayed[1].level != ERROR || replayed[1].msg != "early error 2" {
+		t.Errorf("replayed[1] = %+v", replayed[1])
+	}
+
+	// After hook is set, new warnings should fire directly
+	Warnf("test", "live warning")
+	if len(replayed) != 3 {
+		t.Errorf("total hook calls = %d, want 3", len(replayed))
+	}
+
+	// Clean up
+	warnMu.Lock()
+	warnHook = nil
+	warnBuffer = nil
+	warnMu.Unlock()
+}
+
+// TestInitEventFileOpenError verifies Init returns an error when MkdirAll succeeds
+// but the file itself can't be opened (e.g. path is a directory).
+func TestInitEventFileOpenError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	// Create a directory where the file should be — OpenFile on a directory fails
+	badPath := filepath.Join(dir, "foci.log")
+	os.MkdirAll(badPath, 0755)
+
+	err := Init(Config{EventFile: badPath})
+	if err == nil {
+		Close()
+		t.Fatal("expected error when event path is a directory")
+	}
+}
+
+// TestInitAPIFileOpenError verifies Init returns an error when the API file can't be opened.
+func TestInitAPIFileOpenError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	badPath := filepath.Join(dir, "api.jsonl")
+	os.MkdirAll(badPath, 0755)
+
+	err := Init(Config{APIFile: badPath})
+	if err == nil {
+		Close()
+		t.Fatal("expected error when API path is a directory")
+	}
+}
+
+// TestInitPayloadFileOpenError verifies Init returns an error when the payload file can't be opened.
+func TestInitPayloadFileOpenError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	badPath := filepath.Join(dir, "payload.jsonl")
+	os.MkdirAll(badPath, 0755)
+
+	err := Init(Config{PayloadFile: badPath})
+	if err == nil {
+		Close()
+		t.Fatal("expected error when payload path is a directory")
+	}
+}
+
+// TestInitAPIDBError verifies InitAPIDB returns an error for an invalid path.
+func TestInitAPIDBError(t *testing.T) {
+	err := InitAPIDB("/nonexistent/deep/dir/api.db")
+	if err == nil {
+		CloseAPIDB()
+		t.Fatal("expected error for bad DB path")
+	}
+}
+
+// TestInsertError verifies insert logs an error when the statement execution fails.
+func TestInsertError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+
+	// Close the stmt to force an exec error
+	apiLog.stmt.Close()
+
+	apiLog.insert(APIEntry{
+		Timestamp: time.Now(),
+		Session:   "test",
+		Model:     "test",
+		CallType:  "conversation",
+	})
+
+	// Should have logged an error
+	if !strings.Contains(buf.String(), "insert error") {
+		t.Errorf("expected insert error log, got: %s", buf.String())
+	}
+
+	// Clean up — close DB (stmt already closed)
+	apiLog.db.Close()
+	apiLog = nil
+}
+
+// TestConversationLogInsertError verifies that the conversation log handles
+// a DB insert error gracefully (logs an error, doesn't panic).
+func TestConversationLogInsertError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
+	if err := InitConversation(dbPath); err != nil {
+		t.Fatalf("InitConversation: %v", err)
+	}
+
+	// Close the DB to force an error on insert
+	convFallback.db.Close()
+
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "should fail", Session: "",
+	})
+
+	if !strings.Contains(buf.String(), "insert error") {
+		t.Errorf("expected insert error log, got: %s", buf.String())
+	}
+
+	// Clean up
+	convLogs = nil
+	convFallback = nil
+}
+
+// TestPayloadNoFile verifies that payload() is a no-op when payloadFile is nil.
+func TestPayloadNoFileNoOp(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	// payloadFile is nil — should not panic
+	std.payload(PayloadEntry{Session: "test", Model: "test"})
+}
+
+// TestFatalf verifies that Fatalf logs and exits with code 1.
+// Uses the subprocess test pattern since Fatalf calls os.Exit.
+func TestFatalf(t *testing.T) {
+	if os.Getenv("TEST_FATALF_SUBPROCESS") == "1" {
+		SetOutput(os.Stderr)
+		Fatalf("test", "fatal error: %s", "boom")
+		return // unreachable
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFatalf$")
+	cmd.Env = append(os.Environ(), "TEST_FATALF_SUBPROCESS=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected non-zero exit")
+	}
+
+	// Verify exit code 1
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		if exitErr.ExitCode() != 1 {
+			t.Errorf("exit code = %d, want 1", exitErr.ExitCode())
+		}
+	} else {
+		t.Fatalf("unexpected error type: %v", err)
+	}
+
+	// Verify the error message was logged
+	if !strings.Contains(stderr.String(), "fatal error: boom") {
+		t.Errorf("stderr missing fatal message: %s", stderr.String())
+	}
+}
+
+// TestInsertSessionLineNullability verifies that session_line is NULL for 0
+// and non-NULL for positive values in the SQLite API log.
+func TestInsertSessionLineNullability(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	apiLog.insert(APIEntry{
+		Timestamp:   time.Now(),
+		Session:     "test",
+		Model:       "test",
+		CallType:    "conversation",
+		SessionLine: 42,
+		SessionFile: "/test.jsonl",
+	})
+
+	var sl sql.NullInt64
+	apiLog.db.QueryRow("SELECT session_line FROM api_calls WHERE session_line IS NOT NULL").Scan(&sl)
+	if !sl.Valid || sl.Int64 != 42 {
+		t.Errorf("session_line = %v, want 42", sl)
+	}
 }

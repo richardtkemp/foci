@@ -1,6 +1,7 @@
 package log
 
 import (
+	"bytes"
 	"compress/gzip"
 	"io"
 	"os"
@@ -295,6 +296,296 @@ func TestStartRotationStop(t *testing.T) {
 		t.Fatal("stop() did not return within 2s")
 	}
 }
+
+// TestRotateFileAllOld verifies that when all lines are old, the active file
+// is left empty and everything goes to the archive.
+func TestRotateFileAllOld(t *testing.T) {
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
+	lines := `{"ts":"` + old + `","msg":"old1"}` + "\n" +
+		`{"ts":"` + old + `","msg":"old2"}` + "\n"
+	os.WriteFile(logPath, []byte(lines), 0644)
+
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	// Active file should be empty
+	data, _ := os.ReadFile(logPath)
+	if strings.TrimSpace(string(data)) != "" {
+		t.Errorf("active file should be empty, got %q", string(data))
+	}
+
+	// Archive should contain both lines
+	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.jsonl.gz"))
+	if len(archives) != 1 {
+		t.Fatalf("expected 1 archive, got %d", len(archives))
+	}
+	archived := readGzip(t, archives[0])
+	archivedLines := strings.Split(strings.TrimSpace(archived), "\n")
+	if len(archivedLines) != 2 {
+		t.Fatalf("archived %d lines, want 2", len(archivedLines))
+	}
+}
+
+// TestRotateAllWithFailingFile verifies rotateAll logs a warning when a file fails to rotate.
+func TestRotateAllWithFailingFile(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+	SetLevel(DEBUG)
+
+	dir := t.TempDir()
+	// Use a path inside a non-writable directory to trigger mkdir failure for archive
+	badPath := filepath.Join(dir, "test.jsonl")
+	os.WriteFile(badPath, []byte(`{"ts":"`+time.Now().UTC().Add(-72*time.Hour).Format(time.RFC3339)+`","msg":"old"}`+"\n"), 0644)
+
+	rotateAll(RotationConfig{
+		Period:      time.Hour,
+		Retention:   48 * time.Hour,
+		MaxLineSize: 1024 * 1024,
+		ArchiveDir:  "/nonexistent/archive/dir",
+		Files:       []string{badPath},
+	})
+
+	output := buf.String()
+	if !strings.Contains(output, "WARN") || !strings.Contains(output, "rotate") {
+		t.Errorf("expected warning about rotate failure, got: %s", output)
+	}
+}
+
+// TestRotateFileLineTooLong verifies that rotateFile handles lines exceeding max buffer size.
+func TestRotateFileLineTooLong(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
+	// Create a line that exceeds the max line size
+	longLine := `{"ts":"` + old + `","msg":"` + strings.Repeat("x", 200) + `"}`
+	os.WriteFile(logPath, []byte(longLine+"\n"), 0644)
+
+	// Use a very small max line size to trigger ErrTooLong
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 32)
+	if err == nil {
+		t.Fatal("expected error for too-long line")
+	}
+	if !strings.Contains(err.Error(), "scan") {
+		t.Errorf("expected scan error, got: %v", err)
+	}
+	// Should log an error about the line being too long
+	if !strings.Contains(buf.String(), "rotation_max_line_size") {
+		t.Errorf("expected rotation_max_line_size error, got: %s", buf.String())
+	}
+}
+
+// TestParseJSONLTimestampUnterminatedQuote verifies that a JSONL line with
+// "ts":" but no closing quote returns false.
+func TestParseJSONLTimestampUnterminatedQuote(t *testing.T) {
+	line := `{"ts":"2026-02-20T10:00:00Z`
+	_, ok := parseJSONLTimestamp([]byte(line))
+	if ok {
+		t.Error("expected false for unterminated quote")
+	}
+}
+
+// TestParseTimestampDispatch verifies parseTimestamp routes to the correct parser.
+func TestParseTimestampDispatch(t *testing.T) {
+	// JSONL path
+	ts, ok := parseTimestamp("api.jsonl", []byte(`{"ts":"2026-02-20T10:00:00Z","data":1}`))
+	if !ok {
+		t.Fatal("expected ok for JSONL")
+	}
+	want, _ := time.Parse(time.RFC3339, "2026-02-20T10:00:00Z")
+	if !ts.Equal(want) {
+		t.Errorf("JSONL ts = %v, want %v", ts, want)
+	}
+
+	// Event log path
+	ts, ok = parseTimestamp("foci.log", []byte("2026-02-20T10:00:00Z INFO  [main] hello"))
+	if !ok {
+		t.Fatal("expected ok for event log")
+	}
+	if !ts.Equal(want) {
+		t.Errorf("event ts = %v, want %v", ts, want)
+	}
+}
+
+// TestStartRotationRunsImmediately verifies the rotation goroutine runs immediately on start
+// and processes files in the config.
+func TestStartRotationRunsImmediately(t *testing.T) {
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
+	os.WriteFile(logPath, []byte(`{"ts":"`+old+`","msg":"old"}`+"\n"), 0644)
+
+	stop := StartRotation(RotationConfig{
+		Period:      1 * time.Hour, // long period — we rely on immediate run
+		Retention:   48 * time.Hour,
+		MaxLineSize: 1024 * 1024,
+		ArchiveDir:  archiveDir,
+		Files:       []string{logPath},
+	})
+	defer stop()
+
+	// Wait for the immediate run to complete
+	time.Sleep(200 * time.Millisecond)
+
+	// Archive should exist from the immediate run
+	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.jsonl.gz"))
+	if len(archives) != 1 {
+		t.Errorf("expected 1 archive from immediate run, got %d", len(archives))
+	}
+}
+
+// TestRotateFileAllUnparseable verifies that when all lines have no parseable
+// timestamp, nothing is archived and the active file is unchanged.
+func TestRotateFileAllUnparseable(t *testing.T) {
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	content := "no timestamp here\nalso no timestamp\n"
+	os.WriteFile(logPath, []byte(content), 0644)
+
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	// File should be unchanged — unparseable lines are kept
+	data, _ := os.ReadFile(logPath)
+	if string(data) != content {
+		t.Errorf("file was modified when all lines are unparseable")
+	}
+}
+
+// TestRotateAllReopenError verifies that rotateAll logs an error when
+// Reopen fails after rotation.
+func TestRotateAllReopenError(t *testing.T) {
+	resetGlobal()
+	defer resetGlobal()
+
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
+	os.WriteFile(logPath, []byte(`{"ts":"`+old+`","msg":"old"}`+"\n"), 0644)
+
+	// Set up the logger with a valid event file, then break its path
+	eventPath := filepath.Join(dir, "foci.log")
+	err := Init(Config{Level: "INFO", EventFile: eventPath})
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Close()
+
+	// Capture output after Init (Init replaces eventOut)
+	var buf bytes.Buffer
+	SetOutput(&buf)
+
+	// Break the event path so Reopen fails
+	std.mu.Lock()
+	std.eventPath = "/nonexistent/dir/foci.log"
+	std.mu.Unlock()
+
+	rotateAll(RotationConfig{
+		Period:      time.Hour,
+		Retention:   48 * time.Hour,
+		MaxLineSize: 1024 * 1024,
+		ArchiveDir:  archiveDir,
+		Files:       []string{logPath},
+	})
+
+	if !strings.Contains(buf.String(), "reopen after rotation") {
+		t.Errorf("expected reopen error log, got: %s", buf.String())
+	}
+}
+
+// Note: rotateFile stat/seek errors are defensive code for OS-level failures
+// that can't be reliably triggered in unit tests.
+
+// TestRotateFileCreateTempError verifies rotateFile handles temp file creation errors.
+func TestRotateFileCreateTempError(t *testing.T) {
+	srcDir := t.TempDir()
+	logPath := filepath.Join(srcDir, "test.jsonl")
+
+	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
+	os.WriteFile(logPath, []byte(`{"ts":"`+old+`","msg":"old"}`+"\n"), 0644)
+
+	// Make the log dir read-only so CreateTemp fails
+	os.Chmod(srcDir, 0555)
+	defer os.Chmod(srcDir, 0755)
+
+	archiveDir := t.TempDir()
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err == nil {
+		t.Fatal("expected error when source dir is read-only")
+	}
+	if !strings.Contains(err.Error(), "create temp") {
+		t.Errorf("expected 'create temp' error, got: %v", err)
+	}
+}
+
+// TestRotateFileCreateTempArchiveError verifies rotateFile handles archive temp file creation errors.
+func TestRotateFileCreateTempArchiveError(t *testing.T) {
+	srcDir := t.TempDir()
+	logPath := filepath.Join(srcDir, "test.jsonl")
+
+	old := time.Now().UTC().Add(-72 * time.Hour).Format(time.RFC3339)
+	os.WriteFile(logPath, []byte(`{"ts":"`+old+`","msg":"old"}`+"\n"), 0644)
+
+	// Archive dir exists but is read-only
+	archiveDir := filepath.Join(t.TempDir(), "archive")
+	os.MkdirAll(archiveDir, 0555)
+	defer os.Chmod(archiveDir, 0755)
+
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err == nil {
+		t.Fatal("expected error when archive dir is read-only")
+	}
+	if !strings.Contains(err.Error(), "create temp archive") {
+		t.Errorf("expected 'create temp archive' error, got: %v", err)
+	}
+}
+
+// TestRotateFileOpenError verifies rotateFile returns an error for a non-NotExist open failure.
+func TestRotateFileOpenError(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	// Create the file then make it unreadable
+	os.WriteFile(logPath, []byte("data\n"), 0644)
+	os.Chmod(logPath, 0000)
+	defer os.Chmod(logPath, 0644)
+
+	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"), 1024*1024)
+	if err == nil {
+		t.Fatal("expected error when file is unreadable")
+	}
+	if !strings.Contains(err.Error(), "open") {
+		t.Errorf("expected 'open' error, got: %v", err)
+	}
+}
+
+// Note: rotateFile rename errors (source rename, archive rename) are OS-level
+// defensive paths that require blocking rename while allowing temp file creation,
+// which is not reliably testable without OS-level tricks.
 
 func readGzip(t *testing.T, path string) string {
 	t.Helper()
