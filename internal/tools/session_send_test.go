@@ -28,7 +28,7 @@ func (m *mockSessionAppender) Append(key string, msg provider.Message) error {
 func TestSendToSession(t *testing.T) {
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -77,7 +77,7 @@ func TestSendToSession(t *testing.T) {
 func TestSendToSessionReplyToSession(t *testing.T) {
 	store := &mockSessionAppender{}
 	callerNotified := false
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		callerNotified = true
 	})
 
@@ -219,7 +219,7 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	// chat sessions routes to the correct target session key, enabling
 	// chat ID extraction for Telegram delivery.
 	store := &mockSessionAppender{}
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		// reply_to=caller: verify the notifier receives the TARGET session key
 		// so the async_notify callback can extract the chat ID.
 		if ChatIDFromSessionKey(sk) == 0 {

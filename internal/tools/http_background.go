@@ -36,7 +36,7 @@ func runHTTPBackground(
 			} else {
 				msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, result.Text)
 			}
-			notifier.Notify(sk, msg)
+			notifier.Notify(sk, msg, "")
 		}()
 		return TextResult(fmt.Sprintf("Request running in background. Results will be delivered when complete.\n%s", displayURL)), nil, true
 	}
@@ -77,7 +77,7 @@ func runHTTPBackground(
 				} else {
 					msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, r.output.Text)
 				}
-				notifier.Notify(sk, msg)
+				notifier.Notify(sk, msg, "")
 			}()
 			return TextResult(fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL)), nil, true
 

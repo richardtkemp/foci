@@ -201,7 +201,7 @@ func TestSpawnContextClone(t *testing.T) {
 		called:   make(chan struct{}, 1),
 	}
 	mockSessions := &mockSessionBrancher{}
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		called <- msg
 	})
 
@@ -478,7 +478,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	// Use notifier to detect completion of background spawns.
 	var completions int32
 	allDone := make(chan struct{})
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		if c := atomic.AddInt32(&completions, 1); c == 4 {
 			close(allDone)
 		}
@@ -572,7 +572,7 @@ func (a *channelSpawnAgent) HandleMessage(ctx context.Context, sessionKey string
 func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	// Verify the notifier receives [SPAWN RESULT] with correct session and content.
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -624,7 +624,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 func TestSpawnInheritAsyncError(t *testing.T) {
 	// Verify errors are delivered via notifier with "failed:" tag.
 	delivered := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		delivered <- msg
 	})
 

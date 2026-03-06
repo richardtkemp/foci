@@ -9,6 +9,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/prompts"
 	"foci/internal/telegram"
@@ -23,14 +24,55 @@ func newAsyncNotifier(
 	botMgr *telegram.BotManager,
 	agentID string,
 	ctx context.Context,
+	sessions tools.SessionAppender,
 ) *tools.AsyncNotifier {
-	return tools.NewAsyncNotifier(func(originSession, message string) {
+	return tools.NewAsyncNotifier(func(targetSession, message string, replyToSession string) {
 		go func() {
-			target := originSession
+			target := targetSession
 			if target == "" {
 				target = defaultSessionKey()
 			}
 
+			// If replyToSession is set, route response back to caller
+			if replyToSession != "" {
+				notifyCtx := agent.WithTrigger(ctx, "async_notify")
+				// Process message on target session
+				resp, err := getAgent().HandleMessage(notifyCtx, target, message)
+				if err != nil {
+					log.Errorf("async_notify", "error processing on target %s: %v", target, err)
+					return
+				}
+				if resp == "" {
+					return
+				}
+
+				// Format response with source session prefix
+				formattedResp := "Message from session: " + target + "\n" + resp
+
+				// STEP 1: Append to calling session JSONL (record the response)
+				msg := provider.Message{
+					Role:    "user",
+					Content: provider.TextContent(formattedResp),
+				}
+				if err := sessions.Append(replyToSession, msg); err != nil {
+					log.Errorf("async_notify", "failed to append to caller %s: %v", replyToSession, err)
+					return
+				}
+
+				// STEP 2: Display to user in calling session's Telegram chat
+				// Note: SendToSession() displays to the user, doesn't append to session
+				callerBot := botMgr.BotForSession(replyToSession)
+				if callerBot != nil {
+					if err := callerBot.SendToSession(replyToSession, formattedResp); err != nil {
+						log.Errorf("async_notify", "telegram delivery to caller %s: %v", replyToSession, err)
+					}
+				} else {
+					log.Debugf("async_notify", "no bot for caller session %s, response recorded but not displayed", replyToSession)
+				}
+				return
+			}
+
+			// Otherwise use existing behavior (display to target's Telegram)
 			bot := botMgr.BotForSessionOrPrimary(target, agentID)
 
 			// Branch sessions without their own multiball bot should not
