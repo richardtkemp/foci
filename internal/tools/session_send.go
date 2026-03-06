@@ -12,9 +12,10 @@ import (
 )
 
 // SessionAppender appends a message to a session.
-// IMPORTANT: Tools should use session.Store.BoundTo(sessionKey) to get a
-// BoundAppender that prevents cross-session writes. Direct use of Store.Append()
-// allows writing to any session and should be avoided in tool code.
+// IMPORTANT: Tools must use session.Store.For(sessionKey) to get a SessionWriter
+// that prevents cross-session writes. All write operations on SessionWriter check
+// that the target session matches the bound session. Attempting to write to a
+// different session will fail with an error.
 type SessionAppender interface {
 	Append(key string, msg provider.Message) error
 }
