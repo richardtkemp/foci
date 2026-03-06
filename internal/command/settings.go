@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 )
-func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string), resolveModel func(string) (string, string), modelAliases map[string]string) *Command {
+func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string, string), resolveModel func(string) (string, string, string), modelAliases map[string]string) *Command {
 	return &Command{
 		Name:        "model",
 		Description: "Show or switch model (supports endpoint:alias syntax, e.g. gemini:flash)",
@@ -15,8 +15,8 @@ func NewModelCommand(getModel func(context.Context) string, setModel func(contex
 			if args == "" {
 				return fmt.Sprintf("Current model: %s", getModel(ctx)), nil
 			}
-			endpoint, resolved := resolveModel(args)
-			setModel(ctx, endpoint, resolved)
+			endpoint, resolved, format := resolveModel(args)
+			setModel(ctx, endpoint, resolved, format)
 			display := resolved
 			if endpoint != "" {
 				display = endpoint + ":" + resolved

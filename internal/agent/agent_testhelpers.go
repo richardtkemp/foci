@@ -17,23 +17,23 @@ func mockServer(responseFunc func(req *provider.MessageRequest) *provider.Messag
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Read raw body to check for stream flag before decoding.
 		var raw json.RawMessage
-		json.NewDecoder(r.Body).Decode(&raw)
+		_ = json.NewDecoder(r.Body).Decode(&raw)
 
 		var req provider.MessageRequest
-		json.Unmarshal(raw, &req)
+		_ = json.Unmarshal(raw, &req)
 
 		resp := responseFunc(&req)
 
 		// Check if this is a streaming request.
 		var envelope struct{ Stream bool }
-		json.Unmarshal(raw, &envelope)
+		_ = json.Unmarshal(raw, &envelope)
 		if envelope.Stream {
 			serveSSE(w, resp)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 }
 
@@ -48,7 +48,7 @@ func serveSSE(w http.ResponseWriter, resp *provider.MessageResponse) {
 
 	text := provider.TextOf(resp.Content)
 
-	fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", mustJSON(map[string]any{
+	_, _ = fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", mustJSON(map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
 			"id": resp.ID, "type": "message", "role": "assistant",
@@ -63,31 +63,31 @@ func serveSSE(w http.ResponseWriter, resp *provider.MessageResponse) {
 	}))
 	flusher.Flush()
 
-	fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n", mustJSON(map[string]any{
+	_, _ = fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n", mustJSON(map[string]any{
 		"type": "content_block_start", "index": 0,
 		"content_block": map[string]any{"type": "text", "text": ""},
 	}))
 	flusher.Flush()
 
-	fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", mustJSON(map[string]any{
+	_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", mustJSON(map[string]any{
 		"type": "content_block_delta", "index": 0,
 		"delta": map[string]any{"type": "text_delta", "text": text},
 	}))
 	flusher.Flush()
 
-	fmt.Fprintf(w, "event: content_block_stop\ndata: %s\n\n", mustJSON(map[string]any{
+	_, _ = fmt.Fprintf(w, "event: content_block_stop\ndata: %s\n\n", mustJSON(map[string]any{
 		"type": "content_block_stop", "index": 0,
 	}))
 	flusher.Flush()
 
-	fmt.Fprintf(w, "event: message_delta\ndata: %s\n\n", mustJSON(map[string]any{
+	_, _ = fmt.Fprintf(w, "event: message_delta\ndata: %s\n\n", mustJSON(map[string]any{
 		"type": "message_delta",
 		"delta": map[string]any{"stop_reason": resp.StopReason, "stop_sequence": nil},
 		"usage": map[string]any{"output_tokens": resp.Usage.OutputTokens},
 	}))
 	flusher.Flush()
 
-	fmt.Fprintf(w, "event: message_stop\ndata: %s\n\n", mustJSON(map[string]any{
+	_, _ = fmt.Fprintf(w, "event: message_stop\ndata: %s\n\n", mustJSON(map[string]any{
 		"type": "message_stop",
 	}))
 	flusher.Flush()
@@ -98,8 +98,8 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-func newTestClientWithBase(baseURL, apiKey string) *anthropic.Client {
-	c := anthropic.NewClientWithBase(baseURL, apiKey)
+func newTestClientWithBase(baseURL string) *anthropic.Client {
+	c := anthropic.NewClientWithBase(baseURL, "test-token")
 	c.SetUseSDK(true)
 	return c
 }

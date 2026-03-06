@@ -27,7 +27,7 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -98,7 +98,7 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -158,7 +158,7 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -198,7 +198,7 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -239,7 +239,7 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -278,7 +278,7 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -327,7 +327,7 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{

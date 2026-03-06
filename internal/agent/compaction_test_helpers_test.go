@@ -65,7 +65,7 @@ func newCompactionTestEnv(t *testing.T, turnCount *atomic.Int32, highTokenTurn i
 	server := compactionMockServer(turnCount, highTokenTurn)
 	t.Cleanup(server.Close)
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)

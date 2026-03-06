@@ -88,28 +88,31 @@ func TestSessionThinking(t *testing.T) {
 }
 
 func TestSessionModel(t *testing.T) {
-	ag := &Agent{Model: "claude-haiku-4-5"}
+	ag := &Agent{Model: "anthropic/claude-haiku-4-5", Format: "anthropic"}
 
 	// Default: falls back to agent-wide
-	if got := ag.SessionModel("s1"); got != "claude-haiku-4-5" {
-		t.Errorf("SessionModel fallback = %q, want %q", got, "claude-haiku-4-5")
+	if got := ag.SessionModel("s1"); got != "anthropic/claude-haiku-4-5" {
+		t.Errorf("SessionModel fallback = %q, want %q", got, "anthropic/claude-haiku-4-5")
 	}
 
 	// Set per-session override
-	ag.SetSessionModel("s1", "claude-sonnet-4-5", "anthropic", nil)
-	if got := ag.SessionModel("s1"); got != "claude-sonnet-4-5" {
-		t.Errorf("SessionModel after set = %q, want %q", got, "claude-sonnet-4-5")
+	ag.SetSessionModel("s1", "anthropic/claude-sonnet-4-5", "anthropic", "anthropic", nil)
+	if got := ag.SessionModel("s1"); got != "anthropic/claude-sonnet-4-5" {
+		t.Errorf("SessionModel after set = %q, want %q", got, "anthropic/claude-sonnet-4-5")
+	}
+	if got := ag.SessionFormat("s1"); got != "anthropic" {
+		t.Errorf("SessionFormat after set = %q, want %q", got, "anthropic")
 	}
 
 	// Other session unaffected
-	if got := ag.SessionModel("s2"); got != "claude-haiku-4-5" {
-		t.Errorf("SessionModel other session = %q, want %q", got, "claude-haiku-4-5")
+	if got := ag.SessionModel("s2"); got != "anthropic/claude-haiku-4-5" {
+		t.Errorf("SessionModel other session = %q, want %q", got, "anthropic/claude-haiku-4-5")
 	}
 
 	// Clear override
-	ag.SetSessionModel("s1", "", "", nil)
-	if got := ag.SessionModel("s1"); got != "claude-haiku-4-5" {
-		t.Errorf("SessionModel after clear = %q, want %q", got, "claude-haiku-4-5")
+	ag.SetSessionModel("s1", "", "", "", nil)
+	if got := ag.SessionModel("s1"); got != "anthropic/claude-haiku-4-5" {
+		t.Errorf("SessionModel after clear = %q, want %q", got, "anthropic/claude-haiku-4-5")
 	}
 }
 
@@ -130,7 +133,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	// Persist values via setters
 	ag.SetSessionEffort("s1", "high")
 	ag.SetSessionThinking("s1", "adaptive")
-	ag.SetSessionModel("s1", "claude-opus-4-6", "anthropic", nil)
+	ag.SetSessionModel("s1", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
 	ag.SetSessionNoCompact("s1", true)
 
 	// Create a fresh agent (simulating restart) with the same state store
@@ -156,8 +159,11 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	if got := ag2.SessionThinking("s1"); got != "adaptive" {
 		t.Errorf("after restore thinking = %q, want %q", got, "adaptive")
 	}
-	if got := ag2.SessionModel("s1"); got != "claude-opus-4-6" {
-		t.Errorf("after restore model = %q, want %q", got, "claude-opus-4-6")
+	if got := ag2.SessionModel("s1"); got != "anthropic/claude-opus-4-6" {
+		t.Errorf("after restore model = %q, want %q", got, "anthropic/claude-opus-4-6")
+	}
+	if got := ag2.SessionFormat("s1"); got != "anthropic" {
+		t.Errorf("after restore format = %q, want %q", got, "anthropic")
 	}
 	if got := ag2.SessionNoCompact("s1"); got != true {
 		t.Errorf("after restore no_compact = %v, want %v", got, true)

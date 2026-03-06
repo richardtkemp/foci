@@ -18,6 +18,13 @@ import (
 	"foci/internal/workspace"
 )
 
+// usageClientProviderFunc adapts a function to the provider.UsageClientProvider interface.
+type usageClientProviderFunc func(endpoint string) provider.UsageClient
+
+func (f usageClientProviderFunc) GetUsageClient(endpoint string) provider.UsageClient {
+	return f(endpoint)
+}
+
 func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 	// When the gate is closed, HandleMessage should queue the message
 	// and return RateLimitedError without touching the session.
@@ -27,7 +34,7 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -69,7 +76,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -125,7 +132,7 @@ func TestDrainRateLimitQueue(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-token")
+	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -195,7 +202,7 @@ func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
 func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 	ag := &Agent{
 		UsageClient:        nil,
-		GetUsageClient:     func(endpoint string) provider.UsageClient { return nil },
+		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
 		ManaInvestInterval: 30 * time.Minute,
 	}
 
@@ -219,7 +226,7 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 
 	ag := &Agent{
 		UsageClient:        mockClient,
-		GetUsageClient:     func(endpoint string) provider.UsageClient { return mockClient },
+		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return mockClient }),
 		ManaInvestInterval: 0, // disabled
 	}
 
@@ -252,7 +259,7 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	// This is the common path for non-Anthropic endpoints
 	ag := &Agent{
 		UsageClient:        nil,
-		GetUsageClient:     func(endpoint string) provider.UsageClient { return nil },
+		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
 		ManaInvestInterval: 30 * time.Minute,
 	}
 

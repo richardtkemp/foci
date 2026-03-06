@@ -511,37 +511,6 @@ func (e EndpointConfig) URLForFormat(f string) string {
 	return e.URL
 }
 
-// InferFormat returns the wire format for a model ID based on naming conventions.
-// "claude-*" → "anthropic", "gemini-*" → "gemini", "gpt-*"/"o3*"/"o4*" → "openai".
-// Also recognizes common model nicknames: "flash" → "gemini", "opus"/"sonnet"/"haiku" → "anthropic".
-// Returns "openai" as the universal fallback.
-func InferFormat(modelID string) string {
-	modelID = strings.ToLower(strings.TrimSpace(modelID))
-
-	// Full model names with prefixes
-	if strings.HasPrefix(modelID, "claude-") {
-		return "anthropic"
-	}
-	if strings.HasPrefix(modelID, "gemini-") {
-		return "gemini"
-	}
-	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
-		if strings.HasPrefix(modelID, p) {
-			return "openai"
-		}
-	}
-
-	// Common model nicknames
-	switch modelID {
-	case "flash":
-		return "gemini"
-	case "opus", "sonnet", "haiku":
-		return "anthropic"
-	}
-
-	return "openai" // universal fallback
-}
-
 // KeepaliveConfig controls the cache keepalive timer.
 type KeepaliveConfig struct {
 	Enabled  bool   `toml:"enabled"`  // enable keepalive timer (default: false)

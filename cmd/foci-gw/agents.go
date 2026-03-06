@@ -181,11 +181,12 @@ type setupParams struct {
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
-	// Resolve agent's default endpoint for usage client
+	// Resolve agent's default endpoint and format
 	resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, p.cfg.Models.Aliases)
-	var defaultEndpoint string
+	var defaultEndpoint, defaultFormat string
 	if err == nil {
 		defaultEndpoint = resolved.Endpoint
+		defaultFormat = resolved.Format
 	}
 
 	// Prompt search directories: agent workspace first, then shared.
@@ -342,8 +343,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
 	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
-	_, bareModelID := config.SplitDeveloperModel(acfg.Model)
-	compactor := compaction.NewCompactor(p.sessions, bareModelID, compactionThreshold)
+	compactor := compaction.NewCompactor(p.sessions, acfg.Model, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
 		p.cfg.Sessions.CompactionMinMessages,
@@ -391,7 +391,8 @@ func setupAgent(p setupParams) *agentInstance {
 		Reminders:                   p.reminderStore,
 		DefaultSessionKey:           defaultSessionKey,
 		AgentID:                     acfg.ID,
-		Model:                       bareModelID,
+		Model:                       acfg.Model,
+		Format:                      defaultFormat,
 		Endpoint:                    defaultEndpoint,
 		ExtraSystemBlocks:           extraSystemBlocks,
 		CacheStrategy:               p.cfg.Cache.Strategy,

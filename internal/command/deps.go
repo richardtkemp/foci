@@ -32,7 +32,7 @@ type AgentDeps struct {
 
 	// Provider client resolution
 	Client                provider.Client
-	ResolveEndpointClient func(endpoint, modelID string) provider.Client
+	ResolveEndpointClient func(endpoint, format string) provider.Client
 	GetClient             func(endpoint, format string) provider.Client
 	PeekClient            func(endpoint, format string) provider.Client
 

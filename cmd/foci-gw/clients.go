@@ -164,15 +164,9 @@ func (r *clientRegistry) PeekClient(endpointName, format string) provider.Client
 	return entry.client
 }
 
-// ResolveEndpointClient resolves the client for an endpoint+modelID pair.
-// Infers wire format from model name, falls back to openai if endpoint doesn't support it.
-// Note: modelID can be either a bare model ID or developer/model_id format.
-func (r *clientRegistry) ResolveEndpointClient(endpointName, modelID string) provider.Client {
-	// Extract bare model ID if it's in developer/model_id format
-	_, bareModelID := config.SplitDeveloperModel(modelID)
-
-	// Infer wire format from the model ID
-	format := config.InferFormat(bareModelID)
+// ResolveEndpointClient resolves the client for an endpoint+format pair.
+// Falls back to openai format if the endpoint doesn't support the given format.
+func (r *clientRegistry) ResolveEndpointClient(endpointName, format string) provider.Client {
 	epCfg, ok := r.cfg.Endpoints[endpointName]
 	if ok && !epCfg.SupportsFormat(format) {
 		format = "openai" // universal fallback

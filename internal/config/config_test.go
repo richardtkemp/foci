@@ -2562,37 +2562,6 @@ func TestSplitDeveloperModelLegacy(t *testing.T) {
 	}
 }
 
-func TestInferFormat(t *testing.T) {
-	tests := []struct {
-		model string
-		want  string
-	}{
-		{"claude-haiku-4-5", "anthropic"},
-		{"claude-opus-4-6", "anthropic"},
-		{"claude-sonnet-4-5-20250929", "anthropic"},
-		{"gemini-2.5-flash", "gemini"},
-		{"gemini-2.5-pro", "gemini"},
-		{"gpt-4o", "openai"},
-		{"gpt-4o-mini", "openai"},
-		{"o3", "openai"},
-		{"o3-mini", "openai"},
-		{"o4-mini", "openai"},
-		{"o1", "openai"},
-		{"chatgpt-4o-latest", "openai"},
-		// Unknown model falls back to openai
-		{"llama-3-70b", "openai"},
-		{"mistral-large", "openai"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			got := InferFormat(tt.model)
-			if got != tt.want {
-				t.Errorf("InferFormat(%q) = %q, want %q", tt.model, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestEndpointConfig_SupportsFormat(t *testing.T) {
 	// Single-format endpoint
 	single := EndpointConfig{Format: "anthropic"}
