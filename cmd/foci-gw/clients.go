@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/gemini"
 	"foci/internal/log"
@@ -70,12 +69,11 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 
 		// Check if format has a custom resolver (e.g., anthropic)
 		if resolver, ok := formatResolvers[format]; ok {
-			client, err := resolver.ResolveClient(r.ctx, endpointName, apiKeyName, baseURL, r.store)
+			client, err := resolver.ResolveClient(r.ctx, endpointName, apiKeyName, baseURL)
 			if err != nil {
 				log.Errorf("main", "resolve %s client for endpoint %q: %v", format, endpointName, err)
 				return
 			}
-			client.SetUseSDK(r.cfg.Anthropic.UseSDK)
 			entry.client = client
 			return
 		}
@@ -83,23 +81,6 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 		// Default: simple API key resolution for formats without custom resolver
 
 		switch format {
-		case "anthropic":
-			apiKey, _ := r.store.Get(apiKeyName)
-			if apiKey == "" {
-				log.Errorf("main", "%s not found in secrets — endpoint %q (anthropic format) unavailable", apiKeyName, endpointName)
-				return
-			}
-			httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(r.cfg.Anthropic.HTTPTimeout, 600*time.Second))
-			holder := anthropic.NewTokenHolder(apiKey)
-			c := anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout)
-			url := epCfg.URLForFormat("anthropic")
-			if url != "" {
-				c.SetBaseURL(url)
-			}
-			c.SetUseSDK(r.cfg.Anthropic.UseSDK)
-			entry.client = c
-			log.Infof("main", "anthropic client ready for endpoint %q (url=%s)", endpointName, url)
-
 		case "gemini":
 			if endpointName == "gemini" {
 				// Built-in gemini endpoint

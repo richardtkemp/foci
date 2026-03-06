@@ -1238,14 +1238,14 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return &RateLimitedError{Until: resetTime}
 	}
 	if apiErr.IsOverloaded() {
-		return fmt.Errorf("Anthropic API is overloaded — try again shortly")
+		return fmt.Errorf("API is overloaded — try again shortly")
 	}
 	if apiErr.IsRetryable() {
 		a.logger().Debugf("server error detail: %s", err)
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(0)
 		}
-		return fmt.Errorf("anthropic API is temporarily unavailable, try again in a few minutes")
+		return fmt.Errorf("API is temporarily unavailable, try again in a few minutes")
 	}
 	return fmt.Errorf("send message: %w", err)
 }
@@ -1303,7 +1303,7 @@ func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
 // creating it if it doesn't exist yet. Thread-safe.
 func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
 	if endpoint == "" {
-		endpoint = "anthropic" // default
+		endpoint = a.Endpoint
 	}
 
 	// Fast path: read lock

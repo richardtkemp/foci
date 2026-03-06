@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"foci/internal/provider"
 )
@@ -43,11 +44,9 @@ func TestListModels(t *testing.T) {
 	if models[0].ID != "gpt-4o-2025-08-01" {
 		t.Errorf("models[0].ID = %q, want gpt-4o-2025-08-01", models[0].ID)
 	}
-	if models[0].Created != 1722470400 {
-		t.Errorf("models[0].Created = %d, want 1722470400", models[0].Created)
-	}
-	if models[0].OwnedBy != "openai" {
-		t.Errorf("models[0].OwnedBy = %q, want openai", models[0].OwnedBy)
+	wantTime := time.Unix(1722470400, 0).UTC()
+	if !models[0].CreatedAt.Equal(wantTime) {
+		t.Errorf("models[0].CreatedAt = %v, want %v", models[0].CreatedAt, wantTime)
 	}
 	if models[1].ID != "o3-2025-07-15" {
 		t.Errorf("models[1].ID = %q, want o3-2025-07-15", models[1].ID)

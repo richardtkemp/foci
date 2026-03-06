@@ -22,6 +22,7 @@ type (
 	UsageWindow    = provider.UsageWindow
 	ExtraUsage     = provider.ExtraUsage
 	UsageResponse  = provider.UsageResponse
+	ModelInfo      = provider.ModelInfo
 )
 
 // Re-export constructors and helpers so anthropic-internal code compiles unchanged.

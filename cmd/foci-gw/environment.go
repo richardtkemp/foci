@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"foci/internal/agent"
-	"foci/internal/anthropic"
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
@@ -83,7 +82,7 @@ func buildContextInfoFn(
 		}
 		// Load messages once (shared between breakdown and counting)
 		sk := defaultSessionKey()
-		var msgs []anthropic.Message
+		var msgs []provider.Message
 		if sk != "" {
 			if loaded, err := sessions.LoadFull(sk); err == nil {
 				msgs = loaded
@@ -144,14 +143,14 @@ func buildContextInfoFn(
 					bootstrapBlocks[i].CacheControl = nil
 				}
 
-				var allSystem []anthropic.SystemBlock
+				var allSystem []provider.SystemBlock
 				if ag.EnvironmentBlock != "" {
-					allSystem = append(allSystem, anthropic.SystemBlock{Type: "text", Text: ag.EnvironmentBlock})
+					allSystem = append(allSystem, provider.SystemBlock{Type: "text", Text: ag.EnvironmentBlock})
 				}
 				allSystem = append(allSystem, bootstrapBlocks...)
-				var cleanExtra []anthropic.SystemBlock
+				var cleanExtra []provider.SystemBlock
 				if len(ag.ExtraSystemBlocks) > 0 {
-					cleanExtra = make([]anthropic.SystemBlock, len(ag.ExtraSystemBlocks))
+					cleanExtra = make([]provider.SystemBlock, len(ag.ExtraSystemBlocks))
 					copy(cleanExtra, ag.ExtraSystemBlocks)
 					for i := range cleanExtra {
 						cleanExtra[i].CacheControl = nil
@@ -162,20 +161,20 @@ func buildContextInfoFn(
 				// Build per-section list for individual counting
 				type sectionDef struct {
 					name   string
-					blocks []anthropic.SystemBlock
+					blocks []provider.SystemBlock
 				}
 				var secs []sectionDef
 				if ag.EnvironmentBlock != "" {
 					secs = append(secs, sectionDef{
 						name:   "Environment",
-						blocks: []anthropic.SystemBlock{{Type: "text", Text: ag.EnvironmentBlock}},
+						blocks: []provider.SystemBlock{{Type: "text", Text: ag.EnvironmentBlock}},
 					})
 				}
 				for i, sz := range bootstrapSizes {
 					if i < len(bootstrapBlocks) {
 						secs = append(secs, sectionDef{
 							name:   sz.Name,
-							blocks: []anthropic.SystemBlock{bootstrapBlocks[i]},
+							blocks: []provider.SystemBlock{bootstrapBlocks[i]},
 						})
 					}
 				}
@@ -184,8 +183,8 @@ func buildContextInfoFn(
 				}
 
 				// Common request components
-				dummyMsgs := []anthropic.Message{
-					{Role: "user", Content: anthropic.TextContent(".")},
+				dummyMsgs := []provider.Message{
+					{Role: "user", Content: provider.TextContent(".")},
 				}
 				toolDefs := registry.ToolDefs()
 				maxOutput := acfg.MaxOutputTokens
@@ -208,21 +207,21 @@ func buildContextInfoFn(
 
 				go func() {
 					defer wg.Done()
-					fullCount, fullErr = client.CountTokens(ctx, &anthropic.MessageRequest{
+					fullCount, fullErr = client.CountTokens(ctx, &provider.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						System: allSystem, Messages: messages, Tools: toolDefs,
 					})
 				}()
 				go func() {
 					defer wg.Done()
-					systemCount, systemErr = client.CountTokens(ctx, &anthropic.MessageRequest{
+					systemCount, systemErr = client.CountTokens(ctx, &provider.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						System: allSystem, Messages: dummyMsgs, Tools: toolDefs,
 					})
 				}()
 				go func() {
 					defer wg.Done()
-					baselineCount, baselineErr = client.CountTokens(ctx, &anthropic.MessageRequest{
+					baselineCount, baselineErr = client.CountTokens(ctx, &provider.MessageRequest{
 						Model: ag.Model, MaxTokens: maxOutput,
 						Messages: dummyMsgs, Tools: toolDefs,
 					})
@@ -231,7 +230,7 @@ func buildContextInfoFn(
 					i, sec := i, sec
 					go func() {
 						defer wg.Done()
-						rawSecCounts[i], rawSecErrs[i] = client.CountTokens(ctx, &anthropic.MessageRequest{
+						rawSecCounts[i], rawSecErrs[i] = client.CountTokens(ctx, &provider.MessageRequest{
 							Model: ag.Model, MaxTokens: maxOutput,
 							System: sec.blocks, Messages: dummyMsgs, Tools: toolDefs,
 						})

@@ -115,7 +115,7 @@ Subcommands:
 	}
 
 	clients := newClientRegistry(cfg, sec.store, ctx)
-	usageClients := newUsageClientRegistry(cfg, sec.store)
+	usageClients := newUsageClientRegistry(cfg)
 
 	// ========== Dynamic model alias resolution ==========
 	resolveAllAliases(ctx, clients, sec.store, cfg, cfg.Models.Aliases)
@@ -282,9 +282,7 @@ Subcommands:
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	var reloadCreds func() error
 	if resolver, ok := formatResolvers["anthropic"]; ok {
-		if ar, ok := resolver.(*anthropic.AnthropicResolver); ok {
-			reloadCreds = ar.GetReloadFunc(secretsPath)
-		}
+		reloadCreds = resolver.GetReloadFunc(secretsPath)
 	}
 	if reloadCreds == nil {
 		reloadCreds = func() error {

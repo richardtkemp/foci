@@ -7,13 +7,14 @@ import (
 	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/provider"
 	"foci/internal/secrets"
 	"foci/internal/voice"
 )
 
 // formatResolvers maps wire format names to custom CredentialResolver implementations.
 // Formats without an entry fall back to simple API key resolution.
-var formatResolvers = make(map[string]anthropic.CredentialResolver)
+var formatResolvers = make(map[string]provider.CredentialResolver)
 
 // initCredentialResolvers initializes the credential resolver registry.
 // Currently registers the anthropic resolver.
