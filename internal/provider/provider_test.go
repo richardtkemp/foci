@@ -195,3 +195,56 @@ func TestSendWithEmptyHandlerUsesStreaming(t *testing.T) {
 		t.Error("StreamMessage was not called with empty handler")
 	}
 }
+
+// mockSelfRetryingClient implements a client that handles its own retries.
+type mockSelfRetryingClient struct {
+	mockClient
+	sendMessageCalls int
+}
+
+func (m *mockSelfRetryingClient) HandlesOwnRetries() bool {
+	return true
+}
+
+func (m *mockSelfRetryingClient) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+	m.sendMessageCalls++
+	return m.mockClient.SendMessage(ctx, req)
+}
+
+func TestSendWithSelfRetryingClientSkipsProviderRetry(t *testing.T) {
+	// Verify that clients implementing HandlesOwnRetries() skip provider-level retry
+	mock := &mockSelfRetryingClient{
+		mockClient: mockClient{
+			response: &MessageResponse{
+				ID:   "msg_test",
+				Type: "message",
+				Role: "assistant",
+				Content: []ContentBlock{
+					{Type: "text", Text: "Hello"},
+				},
+			},
+		},
+	}
+
+	req := &MessageRequest{
+		Model:     "test-model",
+		MaxTokens: 100,
+		Messages: []Message{
+			{Role: "user", Content: TextContent("Hi")},
+		},
+	}
+
+	resp, err := Send(context.Background(), mock, req, nil)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	// Should be called exactly once (no provider-level retry)
+	if mock.sendMessageCalls != 1 {
+		t.Errorf("SendMessage called %d times, want 1 (should skip provider retry)", mock.sendMessageCalls)
+	}
+}
