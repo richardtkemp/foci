@@ -685,7 +685,7 @@ func TestConfigCommand(t *testing.T) {
 		default:
 			return "usage text", nil
 		}
-	})
+	}, nil, nil)
 	// No args → usage
 	result, _ := cmd.Execute(context.Background(), "")
 	if result != "usage text" {

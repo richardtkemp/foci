@@ -1,0 +1,170 @@
+package config
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// Verifies Fields returns a non-empty registry and all entries have required fields populated.
+func TestFieldsNonEmpty(t *testing.T) {
+	fields := Fields()
+	if len(fields) == 0 {
+		t.Fatal("Fields() returned empty slice")
+	}
+	for i, f := range fields {
+		if f.Section == "" {
+			t.Errorf("field %d: empty Section", i)
+		}
+		if f.Key == "" {
+			t.Errorf("field %d: empty Key", i)
+		}
+		if f.Description == "" {
+			t.Errorf("field %d (%s.%s): empty Description", i, f.Section, f.Key)
+		}
+	}
+}
+
+// Verifies LookupField finds known fields and returns false for unknown ones.
+func TestLookupField(t *testing.T) {
+	// Known field
+	f, ok := LookupField("defaults.model")
+	if !ok {
+		t.Fatal("LookupField(defaults.model) returned false")
+	}
+	if f.Key != "model" || f.Section != "defaults" {
+		t.Errorf("got section=%q key=%q", f.Section, f.Key)
+	}
+
+	// Case insensitive
+	f2, ok := LookupField("DEFAULTS.MODEL")
+	if !ok {
+		t.Fatal("LookupField case-insensitive returned false")
+	}
+	if f2.Key != f.Key {
+		t.Error("case-insensitive lookup returned different field")
+	}
+
+	// Unknown
+	_, ok = LookupField("nonexistent.field")
+	if ok {
+		t.Error("LookupField should return false for unknown field")
+	}
+}
+
+// Verifies FieldSections returns unique section names in registry order.
+func TestFieldSections(t *testing.T) {
+	sections := FieldSections()
+	if len(sections) == 0 {
+		t.Fatal("FieldSections() returned empty")
+	}
+
+	// Check uniqueness
+	seen := map[string]bool{}
+	for _, s := range sections {
+		if seen[s] {
+			t.Errorf("duplicate section: %s", s)
+		}
+		seen[s] = true
+	}
+
+	// Should include well-known sections
+	for _, want := range []string{"defaults", "agent", "sessions", "tools", "logging"} {
+		if !seen[want] {
+			t.Errorf("missing expected section %q", want)
+		}
+	}
+}
+
+// Verifies FieldsInSection returns the correct subset and empty for unknown sections.
+func TestFieldsInSection(t *testing.T) {
+	fields := FieldsInSection("defaults")
+	if len(fields) == 0 {
+		t.Fatal("FieldsInSection(defaults) returned empty")
+	}
+	for _, f := range fields {
+		if f.Section != "defaults" {
+			t.Errorf("unexpected section %q in defaults results", f.Section)
+		}
+	}
+
+	// Case insensitive
+	fields2 := FieldsInSection("DEFAULTS")
+	if len(fields2) != len(fields) {
+		t.Errorf("case-insensitive returned %d fields vs %d", len(fields2), len(fields))
+	}
+
+	// Unknown section
+	empty := FieldsInSection("nonexistent")
+	if len(empty) != 0 {
+		t.Errorf("unknown section returned %d fields", len(empty))
+	}
+}
+
+// Verifies every field in the registry maps to a real TOML-tagged field
+// in the corresponding config struct via reflection.
+func TestFieldsMatchStructTags(t *testing.T) {
+	// Map section names to the struct types they represent.
+	sectionStructs := map[string]reflect.Type{
+		"defaults":         reflect.TypeOf(DefaultsConfig{}),
+		"agent":            reflect.TypeOf(AgentConfig{}),
+		"anthropic":        reflect.TypeOf(AnthropicConfig{}),
+		"gemini":           reflect.TypeOf(GeminiConfig{}),
+		"sessions":         reflect.TypeOf(SessionsConfig{}),
+		"telegram":         reflect.TypeOf(TelegramConfig{}),
+		"tools":            reflect.TypeOf(ToolsConfig{}),
+		"logging":          reflect.TypeOf(LoggingConfig{}),
+		"memory":           reflect.TypeOf(MemoryConfig{}),
+		"keepalive":        reflect.TypeOf(KeepaliveConfig{}),
+		"background":       reflect.TypeOf(BackgroundConfig{}),
+		"memory_formation": reflect.TypeOf(MemoryFormationConfig{}),
+		"environment":      reflect.TypeOf(EnvironmentConfig{}),
+		"cache":            reflect.TypeOf(CacheConfig{}),
+		"usage_warnings":   reflect.TypeOf(ManaWarningsConfig{}),
+		"database":         reflect.TypeOf(DatabaseConfig{}),
+		"http":             reflect.TypeOf(HTTPConfig{}),
+	}
+
+	for _, f := range Fields() {
+		st, ok := sectionStructs[f.Section]
+		if !ok {
+			t.Errorf("field %s.%s: section %q has no mapped struct", f.Section, f.Key, f.Section)
+			continue
+		}
+
+		key := f.Key
+		// Dotted keys like "keepalive.enabled" need to resolve the nested struct.
+		if dotIdx := strings.Index(key, "."); dotIdx >= 0 {
+			prefix := key[:dotIdx]
+			suffix := key[dotIdx+1:]
+			// Find the nested struct by its TOML tag.
+			found := false
+			for i := 0; i < st.NumField(); i++ {
+				tag := st.Field(i).Tag.Get("toml")
+				if tag == prefix && st.Field(i).Type.Kind() == reflect.Struct {
+					st = st.Field(i).Type
+					key = suffix
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("field %s.%s: nested struct %q not found in %s", f.Section, f.Key, prefix, st.Name())
+				continue
+			}
+		}
+
+		// Look for the TOML tag in the struct.
+		tagFound := false
+		for i := 0; i < st.NumField(); i++ {
+			tag := st.Field(i).Tag.Get("toml")
+			if tag == key {
+				tagFound = true
+				break
+			}
+		}
+		if !tagFound {
+			t.Errorf("field %s.%s: TOML tag %q not found in struct %s", f.Section, f.Key, key, st.Name())
+		}
+	}
+}
