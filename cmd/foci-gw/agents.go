@@ -171,7 +171,7 @@ type setupParams struct {
 	ttsMap          map[string]voice.TTS
 	sttMap          map[string]voice.STT
 	braveKey        string
-	usageClient     *anthropic.UsageClient
+	usageClientReg  *usageClientRegistry
 	botMgr          *telegram.BotManager
 	startTime       time.Time
 	ctx             context.Context
@@ -182,6 +182,13 @@ type setupParams struct {
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
+
+	// Resolve agent's default endpoint for usage client
+	resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, p.cfg.Models.Aliases)
+	var defaultEndpoint string
+	if err == nil {
+		defaultEndpoint = resolved.Endpoint
+	}
 
 	// Prompt search directories: agent workspace first, then shared.
 	// Used by ResolvePrompt when no explicit path is configured.
@@ -405,7 +412,8 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxImagePixels:              resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
 		AutoSummarise:               resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
 		StateStore:                  p.stateStore,
-		UsageClient:                 p.usageClient,
+		UsageClient:                 p.usageClientReg.GetUsageClient(defaultEndpoint),
+		GetUsageClient:              p.usageClientReg.GetUsageClient,
 		MessageTransforms:           agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
 		CompactionSummaryPromptPath: resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
 		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
@@ -500,7 +508,7 @@ func setupAgent(p setupParams) *agentInstance {
 		sessionIndex:          p.sessionIndex,
 		client:                p.client,
 		resolveEndpointClient: p.resolveEndpointClient,
-		usageClient:           p.usageClient,
+		usageClientReg:        p.usageClientReg,
 		botMgr:                p.botMgr,
 		store:                 p.store,
 		bwStore:               p.bwStore,
