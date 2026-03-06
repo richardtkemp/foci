@@ -120,7 +120,8 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 }
 
 // List returns todo items for an agent, optionally filtered by status, tag, and/or priority.
-func (s *TodoStore) List(agentID, status, tag, priority string) ([]TodoItem, error) {
+// sort can be "priority" (default), "created", or "updated".
+func (s *TodoStore) List(agentID, status, tag, priority, sort string) ([]TodoItem, error) {
 	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
@@ -138,10 +139,18 @@ func (s *TodoStore) List(agentID, status, tag, priority string) ([]TodoItem, err
 		args = append(args, priority)
 	}
 
-	if status != "" {
-		query += ` ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
-	} else {
-		query += ` ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+	// Apply sort order
+	switch sort {
+	case "created":
+		query += ` ORDER BY created_at ASC, id ASC`
+	case "updated":
+		query += ` ORDER BY updated_at DESC, id DESC`
+	default: // "priority" or empty (default)
+		if status != "" {
+			query += ` ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+		} else {
+			query += ` ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+		}
 	}
 
 	rows, err := s.db.Query(query, args...)
