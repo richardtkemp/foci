@@ -189,6 +189,105 @@ func TestAgentFromSession(t *testing.T) {
 	}
 }
 
+// TestConversationHook verifies that ConversationHook is called for non-empty text entries.
+func TestConversationHook(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
+	if err := InitConversation(dbPath); err != nil {
+		t.Fatalf("InitConversation: %v", err)
+	}
+	defer CloseConversation()
+
+	var hookedText, hookedSession string
+	ConversationHook = func(text, session string) {
+		hookedText = text
+		hookedSession = session
+	}
+	defer func() { ConversationHook = nil }()
+
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "hook test", Session: "agent:main:chat:1",
+	})
+
+	if hookedText != "hook test" {
+		t.Errorf("hook text = %q, want %q", hookedText, "hook test")
+	}
+	if hookedSession != "agent:main:chat:1" {
+		t.Errorf("hook session = %q, want %q", hookedSession, "agent:main:chat:1")
+	}
+
+	// Empty text should NOT trigger the hook
+	hookedText = ""
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "", Session: "agent:main:chat:1",
+	})
+	if hookedText != "" {
+		t.Errorf("hook should not fire for empty text, got %q", hookedText)
+	}
+}
+
+// TestConversationFallbackRouting verifies that entries with an unknown agent
+// session are routed to the fallback log.
+func TestConversationFallbackRouting(t *testing.T) {
+	dir := t.TempDir()
+	agentIDs := []string{"alpha"}
+	pathFn := func(id string) string {
+		return filepath.Join(dir, "conversation-"+id+".db")
+	}
+	if err := InitPerAgentConversation(agentIDs, pathFn); err != nil {
+		t.Fatalf("InitPerAgentConversation: %v", err)
+	}
+	defer CloseConversation()
+
+	// Unknown agent session should go to fallback (alpha)
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "unknown agent", Session: "agent:unknown:chat:1",
+	})
+
+	// Non-agent session should also go to fallback
+	Conversation(ConversationEntry{
+		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
+		Text: "no agent prefix", Session: "direct:chat:1",
+	})
+
+	alphaDB, _ := sql.Open("sqlite", pathFn("alpha"))
+	defer alphaDB.Close()
+	var count int
+	alphaDB.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count)
+	if count != 2 {
+		t.Errorf("fallback messages = %d, want 2", count)
+	}
+}
+
+// TestInitPerAgentConversationError verifies that InitPerAgentConversation
+// cleans up already-opened logs when one fails to open.
+func TestInitPerAgentConversationError(t *testing.T) {
+	dir := t.TempDir()
+	pathFn := func(id string) string {
+		if id == "bad" {
+			return "/nonexistent/dir/conv.db"
+		}
+		return filepath.Join(dir, "conversation-"+id+".db")
+	}
+
+	err := InitPerAgentConversation([]string{"good", "bad"}, pathFn)
+	if err == nil {
+		CloseConversation()
+		t.Fatal("expected error for bad path")
+	}
+}
+
+// TestInitConversationError verifies InitConversation returns an error for a bad path.
+func TestInitConversationError(t *testing.T) {
+	err := InitConversation("/nonexistent/dir/conv.db")
+	if err == nil {
+		CloseConversation()
+		t.Fatal("expected error for bad path")
+	}
+}
+
 // TestPerAgentConversationRouting verifies that entries are routed to the
 // correct per-agent database based on session key.
 func TestPerAgentConversationRouting(t *testing.T) {
