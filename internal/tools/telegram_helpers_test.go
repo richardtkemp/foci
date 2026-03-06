@@ -45,7 +45,7 @@ type mockChatDataCall struct {
 	data   []byte
 }
 
-func (m *mockTelegramSender) SendInjected(text string) error {
+func (m *mockTelegramSender) SendText(text string) error {
 	m.textCalls = append(m.textCalls, text)
 	return m.textErr
 }
@@ -80,7 +80,7 @@ func (m *mockTelegramSender) SendAnimation(filePath string) error {
 	return m.animationErr
 }
 
-func (m *mockTelegramSender) SendInjectedToChat(chatID int64, text string) error {
+func (m *mockTelegramSender) SendTextToChat(chatID int64, text string) error {
 	m.chatTextCalls = append(m.chatTextCalls, mockChatCall{chatID, text})
 	return m.textErr
 }

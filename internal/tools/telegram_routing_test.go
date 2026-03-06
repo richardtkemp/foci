@@ -37,7 +37,7 @@ func TestSendTelegramChatRouting(t *testing.T) {
 		t.Errorf("text = %q", mock.chatTextCalls[0].value)
 	}
 	if len(mock.textCalls) != 0 {
-		t.Errorf("default SendInjected should not be called, got %d calls", len(mock.textCalls))
+		t.Errorf("default SendText should not be called, got %d calls", len(mock.textCalls))
 	}
 }
 
@@ -111,7 +111,7 @@ func TestSendTelegramFallbackNoChat(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should use default SendInjected, not chat-targeted
+	// Should use default SendText, not chat-targeted
 	if len(mock.textCalls) != 1 {
 		t.Fatalf("expected 1 default textCall, got %d", len(mock.textCalls))
 	}

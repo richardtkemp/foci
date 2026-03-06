@@ -93,17 +93,22 @@ func (b *Bot) lastChatID() (int64, error) {
 	return chatID, nil
 }
 
-// SendInjectedToChat sends an injected/system text message to a specific chat ID.
-// Prepends the configured InjectedMessageHeader (if non-empty).
-func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
+// SendTextToChat sends a text message to a specific chat ID without any header.
+func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	if b.injectedMessageHeader != "" {
-		text = b.injectedMessageHeader + "\n" + text
-	}
 	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
 	return nil
+}
+
+// SendInjectedToChat sends an injected/system text message to a specific chat ID.
+// Prepends the configured InjectedMessageHeader (if non-empty).
+func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
+	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
+		text = b.injectedMessageHeader + "\n" + text
+	}
+	return b.SendTextToChat(chatID, text)
 }
 
 // sendMediaFile is a generic helper for sending media files to Telegram.
