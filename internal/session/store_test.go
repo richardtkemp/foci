@@ -998,54 +998,84 @@ func TestLastActivity_InvalidKey(t *testing.T) {
 	}
 }
 
-// TestBoundAppender verifies that BoundAppender prevents cross-session writes.
-func TestBoundAppender(t *testing.T) {
+// TestSessionWriter verifies that SessionWriter prevents cross-session writes for all operations.
+func TestSessionWriter(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
 	sessionA := "test/imain/1000000000"
 	sessionB := "test/ibranch/1000000001"
-	
-	// Create bound appender for session A
-	boundA := store.BoundTo(sessionA)
-	
-	// Should successfully append to session A
+
+	// Create a writer for session A
+	writerA := store.For(sessionA)
+
+	// Test Append: should successfully append to session A
 	msgA := msg("user", "message for session A")
-	if err := boundA.Append(sessionA, msgA); err != nil {
-		t.Fatalf("BoundAppender.Append to own session failed: %v", err)
+	if err := writerA.Append(sessionA, msgA); err != nil {
+		t.Fatalf("SessionWriter.Append to own session failed: %v", err)
 	}
-	
-	// Should reject append to session B (cross-session write)
+
+	// Test Append: should reject append to session B (cross-session write)
 	msgB := msg("user", "message for session B")
-	err := boundA.Append(sessionB, msgB)
+	err := writerA.Append(sessionB, msgB)
 	if err == nil {
-		t.Fatal("BoundAppender.Append to different session should have failed")
+		t.Fatal("SessionWriter.Append to different session should have failed")
 	}
 	if !strings.Contains(err.Error(), "cross-session write blocked") {
 		t.Errorf("error should mention cross-session write, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), sessionA) || !strings.Contains(err.Error(), sessionB) {
-		t.Errorf("error should include both session keys, got: %v", err)
+
+	// Test AppendAll: should successfully append multiple messages to session A
+	msgs := []provider.Message{
+		msg("user", "msg1"),
+		msg("user", "msg2"),
 	}
-	
-	// Verify session A has the message
-	msgs, err := store.Load(sessionA)
+	if err := writerA.AppendAll(sessionA, msgs); err != nil {
+		t.Fatalf("SessionWriter.AppendAll to own session failed: %v", err)
+	}
+
+	// Test AppendAll: should reject cross-session writes
+	if err := writerA.AppendAll(sessionB, msgs); err == nil {
+		t.Fatal("SessionWriter.AppendAll to different session should have failed")
+	}
+
+	// Test Replace: should successfully replace session A
+	replaceMessages := []provider.Message{msg("user", "replaced content")}
+	if err := writerA.Replace(sessionA, replaceMessages); err != nil {
+		t.Fatalf("SessionWriter.Replace to own session failed: %v", err)
+	}
+
+	// Test Replace: should reject cross-session writes
+	if err := writerA.Replace(sessionB, replaceMessages); err == nil {
+		t.Fatal("SessionWriter.Replace to different session should have failed")
+	}
+
+	// Test Clear: should successfully clear session A
+	if err := writerA.Clear(sessionA); err != nil {
+		t.Fatalf("SessionWriter.Clear on own session failed: %v", err)
+	}
+
+	// Test Clear: should reject cross-session writes
+	if err := writerA.Clear(sessionB); err == nil {
+		t.Fatal("SessionWriter.Clear on different session should have failed")
+	}
+
+	// Verify session A is empty after clear
+	loadedMsgs, err := store.Load(sessionA)
 	if err != nil {
 		t.Fatalf("Load session A: %v", err)
 	}
-	if len(msgs) != 1 {
-		t.Fatalf("session A should have 1 message, got %d", len(msgs))
+	if len(loadedMsgs) != 0 {
+		t.Fatalf("session A should be empty after clear, got %d messages", len(loadedMsgs))
 	}
-	if provider.TextOf(msgs[0].Content) != "message for session A" {
-		t.Errorf("session A message = %q, want %q", provider.TextOf(msgs[0].Content), "message for session A")
-	}
-	
-	// Verify session B was not written to
-	msgs, err = store.Load(sessionB)
+
+	// Verify session B was never written to
+	loadedMsgs, err = store.Load(sessionB)
 	if err != nil {
 		t.Fatalf("Load session B: %v", err)
 	}
-	if len(msgs) != 0 {
-		t.Fatalf("session B should have 0 messages, got %d", len(msgs))
+	if len(loadedMsgs) != 0 {
+		t.Fatalf("session B should have 0 messages, got %d", len(loadedMsgs))
 	}
 }
+

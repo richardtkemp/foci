@@ -38,41 +38,71 @@ func NewStore(dir string) *Store {
 	return &Store{dir: dir}
 }
 
-// BoundAppender restricts appends to a single session, preventing cross-session writes.
-// This enforces the ownership model: a session file can only be written to by its
-// own HandleMessage execution. Cross-session writes are blocked with a clear error.
+// SessionWriter restricts all session write operations to a single session,
+// enforcing the ownership model: a session file can only be modified by its own
+// HandleMessage execution. Any attempt to write to a different session is rejected
+// with a clear error. This is the only way to safely write to sessions.
 //
 // Example usage in tools:
 //
 //	func (t *Tool) Execute(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 //	    currentSession := SessionKeyFromContext(ctx)
-//	    boundAppender := t.sessions.BoundTo(currentSession)
+//	    writer := t.sessions.For(currentSession)
 //	    // This works - writing to own session
-//	    boundAppender.Append(currentSession, msg)
-//	    // This fails - cross-session write blocked
-//	    boundAppender.Append(otherSession, msg)  // ERROR
+//	    writer.Append(currentSession, msg)
+//	    writer.AppendAll(currentSession, msgs)
+//	    writer.Replace(currentSession, msgs)
+//	    // All of these fail - cross-session write blocked
+//	    writer.Append(otherSession, msg)  // ERROR
 //	}
-type BoundAppender struct {
+type SessionWriter struct {
 	store      *Store
 	sessionKey string
 }
 
-// BoundTo creates a BoundAppender that can only append to the specified session.
-// This enforces session ownership: tools can only write to their own session file.
-func (s *Store) BoundTo(sessionKey string) *BoundAppender {
-	return &BoundAppender{
+// For creates a SessionWriter that can only modify the specified session.
+// This enforces session ownership: all write operations are restricted to this session.
+func (s *Store) For(sessionKey string) *SessionWriter {
+	return &SessionWriter{
 		store:      s,
 		sessionKey: sessionKey,
 	}
 }
 
-// Append adds a message to the bound session, rejecting cross-session writes.
-func (b *BoundAppender) Append(key string, msg provider.Message) error {
-	if key != b.sessionKey {
-		return fmt.Errorf("cross-session write blocked: BoundAppender for session %q cannot write to session %q",
-			b.sessionKey, key)
+// Append adds a message to the owned session, rejecting cross-session writes.
+func (w *SessionWriter) Append(key string, msg provider.Message) error {
+	if key != w.sessionKey {
+		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
+			w.sessionKey, key)
 	}
-	return b.store.Append(key, msg)
+	return w.store.Append(key, msg)
+}
+
+// AppendAll adds multiple messages to the owned session, rejecting cross-session writes.
+func (w *SessionWriter) AppendAll(key string, msgs []provider.Message) error {
+	if key != w.sessionKey {
+		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
+			w.sessionKey, key)
+	}
+	return w.store.AppendAll(key, msgs)
+}
+
+// Replace overwrites the owned session with new messages, rejecting cross-session writes.
+func (w *SessionWriter) Replace(key string, msgs []provider.Message) error {
+	if key != w.sessionKey {
+		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
+			w.sessionKey, key)
+	}
+	return w.store.Replace(key, msgs)
+}
+
+// Clear deletes the owned session, rejecting cross-session writes.
+func (w *SessionWriter) Clear(key string) error {
+	if key != w.sessionKey {
+		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
+			w.sessionKey, key)
+	}
+	return w.store.Clear(key)
 }
 
 // SessionPath converts a session key to a file path.
