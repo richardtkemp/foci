@@ -104,6 +104,7 @@ Subcommands:
 	if sec.cleanup != nil {
 		defer sec.cleanup()
 	}
+	warnMissingSecrets(cfg, sec.store)
 
 	// ========== Shared clients ==========
 	ctx, cancel := context.WithCancel(context.Background())

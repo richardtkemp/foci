@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -135,8 +134,8 @@ func startClaudeForRefresh() {
 }
 
 // resolveVoiceAPIKey resolves an API key for a voice provider.
-// If explicit is set, it looks up that secret name. Otherwise it extracts
-// the hostname prefix from the endpoint URL and tries "{prefix}.api_key".
+// If explicit is set, it looks up that secret name. Otherwise it derives the
+// key name from the endpoint URL hostname via config.HostnameSecretKey.
 func resolveVoiceAPIKey(store *secrets.Store, explicit, endpoint string) string {
 	if explicit != "" {
 		if v, ok := store.Get(explicit); ok {
@@ -144,27 +143,10 @@ func resolveVoiceAPIKey(store *secrets.Store, explicit, endpoint string) string 
 		}
 		return ""
 	}
-	if endpoint == "" {
+	key := config.HostnameSecretKey(endpoint)
+	if key == "" {
 		return ""
 	}
-	// Extract hostname prefix: "https://api.groq.com/..." → "groq"
-	host := endpoint
-	if i := strings.Index(host, "://"); i >= 0 {
-		host = host[i+3:]
-	}
-	if i := strings.IndexByte(host, '/'); i >= 0 {
-		host = host[:i]
-	}
-	// Strip "api." prefix: "api.groq.com" → "groq.com"
-	host = strings.TrimPrefix(host, "api.")
-	// Take first segment: "groq.com" → "groq"
-	if i := strings.IndexByte(host, '.'); i > 0 {
-		host = host[:i]
-	}
-	if host == "" {
-		return ""
-	}
-	key := host + ".api_key"
 	if v, ok := store.Get(key); ok {
 		return v
 	}
