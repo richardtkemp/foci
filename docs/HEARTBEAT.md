@@ -136,6 +136,8 @@ prompt = "prompts/keepalive.md"     # path to prompt file
 enabled = true
 interval = "5m"                     # time since last interaction
 prompt = "prompts/background.md"    # path to prompt file
+
+[mana]
 invest_interval = "30m"             # quiet period after mana reset
 ```
 

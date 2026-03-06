@@ -418,7 +418,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Effort:                      acfg.Effort,
 		Thinking:                    acfg.Thinking,
 		Streaming:                   resolveStreamingConfig(acfg, p.cfg),
-		ManaInvestInterval: parseDurationDefault(acfg.Background.InvestInterval, 30*time.Minute),
+		ManaInvestInterval: parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {

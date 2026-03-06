@@ -703,11 +703,18 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 | `enabled` | bool | `false` | Enable background work timer. |
 | `interval` | string | `"5m"` | Time since last interaction before firing. |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
-| `invest_interval` | string | `"30m"` | Quiet period after mana reset to let cache invest before spending. |
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
 - `keepalive.interval > 1h` — Anthropic cache TTL is 1 hour; cache may expire between keepalives.
+
+### Mana (`[mana]`)
+
+Controls mana budget behavior. Global-only (not overridable per-agent).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `invest_interval` | string | `"30m"` | Quiet period after mana reset before spending. The manamometer prevents background work from running during this period to allow cache building. |
 
 See [HEARTBEAT.md](HEARTBEAT.md) for full details on the manamometer and timer logic.
 

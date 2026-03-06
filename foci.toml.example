@@ -129,7 +129,6 @@ system_files = [
 # enabled = true
 # interval = "5m"                         # time since last interaction before firing
 # prompt = "Check your todo list."
-# invest_interval = "30m"                 # quiet period after mana reset
 
 # Per-agent keepalive (cache warming):
 # [agents.keepalive]
@@ -355,7 +354,10 @@ bind = "127.0.0.1"
 # enabled = false
 # interval = "5m"
 # prompt = ""
-# invest_interval = "30m"
+
+# ─── Mana ────────────────────────────────────────────────────────────
+# [mana]
+# invest_interval = "30m"                 # quiet period after mana reset before spending
 
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]

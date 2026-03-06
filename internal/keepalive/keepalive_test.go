@@ -943,12 +943,12 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 	// Test the code path where InvestInterval parsing fails and falls back to 30m
 	var calls int
 	r := &Runner{
-		log:     log.NewComponentLogger("keepalive:test"),
-		agentID: "test",
+		log:                log.NewComponentLogger("keepalive:test"),
+		agentID:            "test",
+		manaInvestInterval: "invalid",
 		bgCfg: config.BackgroundConfig{
-			Enabled:        true,
-			Interval:       "1s",
-			InvestInterval: "invalid",
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {

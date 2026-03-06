@@ -117,6 +117,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"memory":           reflect.TypeOf(MemoryConfig{}),
 		"keepalive":        reflect.TypeOf(KeepaliveConfig{}),
 		"background":       reflect.TypeOf(BackgroundConfig{}),
+		"mana":             reflect.TypeOf(ManaConfig{}),
 		"memory_formation": reflect.TypeOf(MemoryFormationConfig{}),
 		"environment":      reflect.TypeOf(EnvironmentConfig{}),
 		"cache":            reflect.TypeOf(CacheConfig{}),

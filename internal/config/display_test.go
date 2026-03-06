@@ -130,14 +130,14 @@ func TestFormatConfigBackgroundFieldsAlwaysShown(t *testing.T) {
 	agent.Background.Enabled = false
 	agent.Background.Interval = "5m"
 	agent.Background.Prompt = ""
-	agent.Background.InvestInterval = "30m"
+	cfg.Mana.InvestInterval = "30m"
 
 	result := FormatConfig(cfg, agent)
 
 	for _, key := range []string{
 		"background.enabled",
 		"background.interval",
-		"background.invest_interval",
+		"invest_interval",
 	} {
 		if !strings.Contains(result, key) {
 			t.Errorf("missing %q in FormatConfig output when background disabled", key)
@@ -150,7 +150,7 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 	cfg.Agents = []AgentConfig{agent}
 	cfg.Background.Enabled = false
 	cfg.Background.Interval = "5m"
-	cfg.Background.InvestInterval = "30m"
+	cfg.Mana.InvestInterval = "30m"
 	agent.Background = cfg.Background
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -159,7 +159,7 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 	for _, key := range []string{
 		"background.enabled",
 		"background.interval",
-		"background.invest_interval",
+		"invest_interval",
 	} {
 		if !strings.Contains(combined, key) {
 			t.Errorf("missing %q in FormatConfigGrouped output when background disabled", key)
