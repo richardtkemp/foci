@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/display"
 	"foci/internal/compaction"
 	"foci/internal/config"
@@ -51,10 +50,10 @@ type sessionMeta struct {
 	thinking        string          // per-session thinking override (empty = use agent default)
 	model           string          // per-session model override (empty = use agent default)
 	modelEndpoint   string          // per-session endpoint override (empty = use agent default)
-	client          provider.Client // per-session client override (nil = use a.Client)
-	usageClient     *anthropic.UsageClient // per-session usage client (nil = use agent default)
-	noCompact       bool            // per-session no_compact flag (sticky across async operations)
-	systemBlocks    []anthropic.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
+	client          provider.Client      // per-session client override (nil = use a.Client)
+	usageClient     provider.UsageClient // per-session usage client (nil = use agent default)
+	noCompact       bool                 // per-session no_compact flag (sticky across async operations)
+	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
@@ -119,8 +118,8 @@ type Agent struct {
 	OnActivity                  func(string)                    // callback when a session has activity (session key); nil disables
 	Redact                      func(string) string             // redact secrets from tool output; nil disables
 	StateStore                  *state.Store                    // nil disables state persistence
-	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
-	GetUsageClient              func(endpoint string) *anthropic.UsageClient // per-API-key usage client resolution
+	UsageClient                 provider.UsageClient            // nil disables mana metadata
+	GetUsageClient              func(endpoint string) provider.UsageClient // per-API-key usage client resolution
 	MessageTransforms           []CompiledTransform             // compiled regex rules for inbound message transformation
 	CompactionSummaryPromptPath string   // file path; read at compaction time via prompts.ResolvePrompt
 	CompactionHandoffMsg        string   // inline handoff message; empty resolves from search dirs or embedded default
@@ -317,7 +316,7 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 
 // SessionUsageClient returns the usage client for a session's active endpoint,
 // falling back to the agent's default if not overridden.
-func (a *Agent) SessionUsageClient(sessionKey string) *anthropic.UsageClient {
+func (a *Agent) SessionUsageClient(sessionKey string) provider.UsageClient {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()
@@ -462,7 +461,7 @@ func (a *Agent) SeedSessionMeta(key string) {
 		if msgs[i].Role != "user" {
 			continue
 		}
-		text := anthropic.TextOf(msgs[i].Content)
+		text := provider.TextOf(msgs[i].Content)
 		if t, ok := parseMetaTime(text); ok {
 			sm := a.getSessionMeta(key)
 			sm.lastMessageTime = t
@@ -555,7 +554,7 @@ func detectContentExtension(content string) string {
 	return ".txt"
 }
 
-func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName string, tr tools.ToolResult, messages []anthropic.Message) string {
+func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel string, tr tools.ToolResult, messages []provider.Message) string {
 	result := tr.Text
 	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
 		return result
@@ -593,7 +592,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
 	if a.AutoSummarise && client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
-		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, result, messages, fpath); summary != "" {
+		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, turnModel, result, messages, fpath); summary != "" {
 			return summary
 		}
 	}
@@ -604,12 +603,14 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 
 // summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
 // Returns the formatted summary string, or empty string on failure (caller falls back).
-func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, result string, messages []anthropic.Message, savedPath string) string {
-	// Pick cheap model based on which provider the client is.
+func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel, result string, messages []provider.Message, savedPath string) string {
+	// Pick cheap model based on the current session's developer prefix.
 	summaryAlias := "haiku"
-	if a.isProviderClient(client, "gemini") {
+	dev, _ := config.SplitDeveloperModel(turnModel)
+	switch dev {
+	case "google":
 		summaryAlias = "flash"
-	} else if a.isProviderClient(client, "openai") {
+	case "openai":
 		summaryAlias = "gpt4o"
 	}
 	model := summaryAlias
@@ -639,14 +640,14 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 			toolName, summaryInput)
 	}
 
-	req := &anthropic.MessageRequest{
+	req := &provider.MessageRequest{
 		Model:     model,
 		MaxTokens: 4096,
-		System: []anthropic.SystemBlock{
+		System: []provider.SystemBlock{
 			{Type: "text", Text: "You are a tool output summarisation assistant. Your job is to summarise oversized tool output so the reader gets useful visibility without the full content in context.\n\nYour summary must have two parts:\n1. **Overview**: A concise general summary of the content (what it is, how large, key structure).\n2. **Relevant details**: Exact quotes from the parts most relevant to the conversation context, each annotated with its address — line number, section header, JSON path, key name, or other locator. These addresses let the reader jump directly to the source if they need more detail.\n\nBe concise. Preserve exact values (numbers, names, paths, error messages) rather than paraphrasing them."},
 		},
-		Messages: []anthropic.Message{
-			{Role: "user", Content: anthropic.TextContent(userText)},
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent(userText)},
 		},
 	}
 
@@ -665,7 +666,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	a.logger().Infof("auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
 		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
-	summary := anthropic.TextOf(resp.Content)
+	summary := provider.TextOf(resp.Content)
 	if summary == "" {
 		return ""
 	}
@@ -675,7 +676,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 
 // recentContext extracts text from the last N conversation turns,
 // capped at maxChars. Skips tool_use and tool_result blocks.
-func recentContext(messages []anthropic.Message, maxTurns, maxChars int) string {
+func recentContext(messages []provider.Message, maxTurns, maxChars int) string {
 	if maxTurns <= 0 || maxChars <= 0 || len(messages) == 0 {
 		return ""
 	}
@@ -932,7 +933,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	// Track new messages to save. The defer flushes unsaved messages on
 	// shutdown (e.g. SIGTERM during a tool call like "systemctl restart foci").
 	// Normal exits set newMessages=nil after saving, so the defer is a no-op.
-	var newMessages []anthropic.Message
+	var newMessages []provider.Message
 	newMessages = append(newMessages, userMsg)
 	defer func() {
 		if len(newMessages) > 0 {
@@ -964,13 +965,13 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	braindeadWarned := false
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
 	for i := 0; i < maxLoops; i++ {
-		var reqMessages []anthropic.Message
+		var reqMessages []provider.Message
 		if useAutoCache {
 			reqMessages = messages
 		} else {
 			reqMessages = withCacheBreakpoint(messages)
 		}
-		req := &anthropic.MessageRequest{
+		req := &provider.MessageRequest{
 			Model:     turnModel,
 			MaxTokens: maxOutput,
 			System:    system,
@@ -978,33 +979,16 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			Tools:     toolDefs,
 		}
 		if useAutoCache {
-			req.CacheControl = anthropic.Ephemeral()
+			req.CacheControl = provider.Ephemeral()
 		}
-		// Format-level guards: only set effort/thinking for providers that support them.
-		dev, modelID := config.SplitDeveloperModel(turnModel)
-		var turnFormat string
-		if dev != "" {
-			turnFormat = config.InferWireFormat(dev)
-		} else {
-			// Bare model name (no developer prefix) — infer from model ID
-			turnFormat = config.InferFormat(modelID)
-		}
-
+		// Set effort/thinking unconditionally — each provider's SendMessage
+		// handles or ignores unsupported fields. The error-and-retry fallback
+		// below strips them if the model rejects with a 400.
 		if turnEffort != "" && turnEffort != "off" {
-			if turnFormat == "anthropic" {
-				req.Output = &anthropic.OutputConfig{Effort: turnEffort}
-			} else {
-				a.logger().Warnf("effort=%q ignored for %s model %s (Anthropic-only)",
-					turnEffort, turnFormat, turnModel)
-			}
+			req.Output = &provider.OutputConfig{Effort: turnEffort}
 		}
 		if turnThinking == "adaptive" {
-			if turnFormat == "anthropic" || turnFormat == "gemini" {
-				req.Thinking = &anthropic.ThinkingConfig{Type: "adaptive"}
-			} else {
-				a.logger().Warnf("thinking=%q ignored for %s model %s (unsupported)",
-					turnThinking, turnFormat, turnModel)
-			}
+			req.Thinking = &provider.ThinkingConfig{Type: "adaptive"}
 		}
 
 		// Debug: log cache_control placement
@@ -1016,7 +1000,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		start := time.Now()
 		a.logger().Debugf("api_call_start session=%s model=%s streaming=%v", sessionKey, turnModel, a.Streaming)
 
-		var resp *anthropic.MessageResponse
+		var resp *provider.MessageResponse
 		var err error
 
 		// Use streaming if enabled; provider.Send auto-selects streaming
@@ -1094,7 +1078,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		a.processAPIResponse(sessionKey, sm, resp, cost, now, maxOutput)
 
 		// Build assistant message from response
-		assistantMsg := anthropic.Message{
+		assistantMsg := provider.Message{
 			Role:    resp.Role,
 			Content: resp.Content,
 		}
@@ -1125,7 +1109,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 			a.maybeCompact(ctx, turnClient, sessionKey, messages, system, &resp.Usage, sm)
 
-			finalText := anthropic.TextOf(resp.Content)
+			finalText := provider.TextOf(resp.Content)
 			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
 				if finalText != "" {
 					batchedText.WriteString(a.BatchPartialJoiner)
@@ -1137,7 +1121,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		// Handle text in tool_use responses: either send immediately or accumulate for batch delivery.
-		if intermediateText := anthropic.TextOf(resp.Content); intermediateText != "" {
+		if intermediateText := provider.TextOf(resp.Content); intermediateText != "" {
 			if a.BatchPartialAssistantMessages {
 				if batchedText.Len() > 0 {
 					batchedText.WriteString(a.BatchPartialJoiner)
@@ -1152,22 +1136,22 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// instead inject descriptive error results so the session JSONL
 		// ends with a proper tool_use / tool_result pair.
 		if i+1 >= maxLoops {
-			var toolResults []anthropic.ContentBlock
+			var toolResults []provider.ContentBlock
 			errMsg := fmt.Sprintf("Tool call not executed: max tool loop depth reached (limit: %d)", maxLoops)
 			for _, block := range resp.Content {
 				if block.Type != "tool_use" {
 					continue
 				}
-				toolResults = append(toolResults, anthropic.ToolResultBlock(block.ID, errMsg, true))
+				toolResults = append(toolResults, provider.ToolResultBlock(block.ID, errMsg, true))
 			}
-			toolMsg := anthropic.Message{Role: "user", Content: toolResults}
+			toolMsg := provider.Message{Role: "user", Content: toolResults}
 			newMessages = append(newMessages, toolMsg)
 			break
 		}
 
 		// Execute tool calls. server_tool_use blocks are skipped — already
 		// executed by Anthropic's servers.
-		toolResults, err := a.executeToolCalls(ctx, td, turnClient, sessionKey, resp.Content, messages)
+		toolResults, err := a.executeToolCalls(ctx, td, turnClient, sessionKey, turnModel, resp.Content, messages)
 		if err != nil {
 			return "", err
 		}
@@ -1179,7 +1163,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			if prompt == "" {
 				prompt = defaultBraindeadWarningPrompt
 			}
-			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[system] " + prompt})
+			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[system] " + prompt})
 			braindeadWarned = true
 			a.logger().Infof("braindead warning injected at loop %d for session %s", i+1, sessionKey)
 		}
@@ -1187,12 +1171,12 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// Steer check: catch messages that arrive after all tools in a batch
 		// finish but before the next API call. Saves one full round-trip.
 		if steer := steerCheckFromCtx(ctx); steer != "" {
-			toolResults = append(toolResults, anthropic.ContentBlock{Type: "text", Text: "[user] " + steer})
+			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[user] " + steer})
 			a.logger().Infof("steer: injected user message after tool batch for session %s", sessionKey)
 		}
 
 		// Append tool results as user message
-		toolMsg := anthropic.Message{
+		toolMsg := provider.Message{
 			Role:    "user",
 			Content: toolResults,
 		}
@@ -1221,7 +1205,7 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		a.logger().Debugf("api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
 		return ctx.Err()
 	}
-	var apiErr *anthropic.APIError
+	var apiErr *provider.APIError
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("send message: %w", err)
 	}
@@ -1378,7 +1362,7 @@ func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey strin
 }
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.
-func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *anthropic.MessageRequest, resp *anthropic.MessageResponse, msgCount int) float64 {
+func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, resp *provider.MessageResponse, msgCount int) float64 {
 	cost := log.CalculateCost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
@@ -1429,7 +1413,7 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 // environment, and extra blocks, applying the appropriate cache strategy.
 // Results are cached per-session so that a compaction on one session
 // (which calls Bootstrap.Reload) does not bust the cache for other sessions.
-func (a *Agent) buildSystemBlocks(sessionKey string) []anthropic.SystemBlock {
+func (a *Agent) buildSystemBlocks(sessionKey string) []provider.SystemBlock {
 	sm := a.getSessionMeta(sessionKey)
 	if sm.systemBlocks != nil {
 		return sm.systemBlocks
@@ -1437,11 +1421,11 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []anthropic.SystemBlock {
 
 	system := a.Bootstrap.SystemBlocks()
 	if a.EnvironmentBlock != "" {
-		envBlock := anthropic.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
-		system = append([]anthropic.SystemBlock{envBlock}, system...)
+		envBlock := provider.SystemBlock{Type: "text", Text: a.EnvironmentBlock}
+		system = append([]provider.SystemBlock{envBlock}, system...)
 	}
 
-	var result []anthropic.SystemBlock
+	var result []provider.SystemBlock
 
 	if a.CacheStrategy == "auto" {
 		// Auto caching: strip intermediate cache_control, keep an explicit
@@ -1450,19 +1434,19 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []anthropic.SystemBlock {
 		if len(a.ExtraSystemBlocks) > 0 {
 			system = append(system, a.ExtraSystemBlocks...)
 		}
-		clean := make([]anthropic.SystemBlock, len(system))
+		clean := make([]provider.SystemBlock, len(system))
 		copy(clean, system)
 		for i := range clean {
 			clean[i].CacheControl = nil
 		}
 		if len(clean) > 0 {
-			clean[len(clean)-1].CacheControl = anthropic.Ephemeral()
+			clean[len(clean)-1].CacheControl = provider.Ephemeral()
 		}
 		result = clean
 	} else if len(a.ExtraSystemBlocks) > 0 && len(system) > 0 {
 		// Explicit caching: insert extra blocks before the last block
 		// (which has cache_control).
-		combined := make([]anthropic.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
+		combined := make([]provider.SystemBlock, 0, len(system)+len(a.ExtraSystemBlocks))
 		combined = append(combined, system[:len(system)-1]...)
 		combined = append(combined, a.ExtraSystemBlocks...)
 		combined = append(combined, system[len(system)-1])
@@ -1476,7 +1460,7 @@ func (a *Agent) buildSystemBlocks(sessionKey string) []anthropic.SystemBlock {
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.
-func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessionKey string, messages []anthropic.Message, system []anthropic.SystemBlock, usage *anthropic.Usage, sm *sessionMeta) {
+func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
 	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) || !a.Compactor.ShouldCompact(sessionKey, messages, usage) {
 		return
 	}
@@ -1523,23 +1507,23 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 // Deep copy is critical: the originals are saved to session history and must
 // never have cache_control persisted, or it accumulates across turns and
 // mutates the prefix (causing cache misses).
-func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
+func withCacheBreakpoint(messages []provider.Message) []provider.Message {
 	// Deep copy all messages, stripping any existing cache_control
-	result := make([]anthropic.Message, len(messages))
+	result := make([]provider.Message, len(messages))
 	for i, msg := range messages {
-		content := make([]anthropic.ContentBlock, len(msg.Content))
+		content := make([]provider.ContentBlock, len(msg.Content))
 		copy(content, msg.Content)
 		for j := range content {
 			content[j].CacheControl = nil
 		}
-		result[i] = anthropic.Message{Role: msg.Role, Content: content}
+		result[i] = provider.Message{Role: msg.Role, Content: content}
 	}
 
 	// Add the one breakpoint to second-to-last message
 	if len(result) >= 2 {
 		idx := len(result) - 2
 		if len(result[idx].Content) > 0 {
-			result[idx].Content[len(result[idx].Content)-1].CacheControl = anthropic.Ephemeral()
+			result[idx].Content[len(result[idx].Content)-1].CacheControl = provider.Ephemeral()
 		}
 	}
 
@@ -1547,7 +1531,7 @@ func withCacheBreakpoint(messages []anthropic.Message) []anthropic.Message {
 }
 
 // logCacheDebug logs cache_control placement and warns about minimum token thresholds.
-func logCacheDebug(sessionKey string, system []anthropic.SystemBlock, messages []anthropic.Message, model string) {
+func logCacheDebug(sessionKey string, system []provider.SystemBlock, messages []provider.Message, model string) {
 	// Estimate tokens: ~4 chars per token (rough heuristic)
 	const charsPerToken = 4
 
@@ -1591,7 +1575,7 @@ func logCacheDebug(sessionKey string, system []anthropic.SystemBlock, messages [
 // This happens when SIGTERM kills the process during tool execution — the defer
 // flushes the assistant message but no tool_result was ever created.
 // Returns a synthetic tool_result message to append, or nil if no repair needed.
-func repairInterruptedToolCalls(messages []anthropic.Message) *anthropic.Message {
+func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -1610,17 +1594,17 @@ func repairInterruptedToolCalls(messages []anthropic.Message) *anthropic.Message
 		return nil
 	}
 
-	var results []anthropic.ContentBlock
+	var results []provider.ContentBlock
 	for _, id := range toolUseIDs {
-		results = append(results, anthropic.ToolResultBlock(id, "Tool call interrupted by service restart", true))
+		results = append(results, provider.ToolResultBlock(id, "Tool call interrupted by service restart", true))
 	}
-	return &anthropic.Message{Role: "user", Content: results}
+	return &provider.Message{Role: "user", Content: results}
 }
 
 // summarizeServerToolResult extracts a brief text summary from a server tool result block.
 // Server tool result blocks (web_search_tool_result, web_fetch_tool_result) contain
 // structured data in their Raw JSON. We extract a human-readable snippet for observers.
-func summarizeServerToolResult(block anthropic.ContentBlock) string {
+func summarizeServerToolResult(block provider.ContentBlock) string {
 	// Try to extract content from the raw JSON
 	if len(block.Raw) > 0 {
 		var raw map[string]json.RawMessage
@@ -1637,20 +1621,9 @@ func summarizeServerToolResult(block anthropic.ContentBlock) string {
 	return block.Type
 }
 
-// isProviderClient returns true if c matches the registered client for the given provider.
-func (a *Agent) isProviderClient(c provider.Client, name string) bool {
-	if a.PeekClient == nil {
-		return false
-	}
-	if rc := a.PeekClient(name, name); rc != nil && c == rc {
-		return true
-	}
-	return false
-}
-
 // TurnResult holds the result of a single agent turn.
 // (For compaction to use.)
 type TurnResult struct {
 	Text  string
-	Usage anthropic.Usage
+	Usage provider.Usage
 }

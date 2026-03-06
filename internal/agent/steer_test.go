@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -75,14 +74,14 @@ func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
 		},
 	})
 
-	blocks := []anthropic.ContentBlock{
+	blocks := []provider.ContentBlock{
 		{Type: "tool_use", ID: "tu_1", Name: "slow_tool", Input: json.RawMessage(`{}`)},
 		{Type: "tool_use", ID: "tu_2", Name: "slow_tool", Input: json.RawMessage(`{}`)},
 		{Type: "tool_use", ID: "tu_3", Name: "slow_tool", Input: json.RawMessage(`{}`)},
 	}
 
 	td := &TurnDetail{SessionKey: "test/steer"}
-	results, err := ag.executeToolCalls(ctx, td, nil, "test/steer", blocks, nil)
+	results, err := ag.executeToolCalls(ctx, td, nil, "test/steer", "", blocks, nil)
 	if err != nil {
 		t.Fatalf("executeToolCalls: %v", err)
 	}
@@ -143,13 +142,13 @@ func TestExecuteToolCalls_NoSteer(t *testing.T) {
 		SteerCheckFunc: func() string { return "" },
 	})
 
-	blocks := []anthropic.ContentBlock{
+	blocks := []provider.ContentBlock{
 		{Type: "tool_use", ID: "tu_1", Name: "counter", Input: json.RawMessage(`{}`)},
 		{Type: "tool_use", ID: "tu_2", Name: "counter", Input: json.RawMessage(`{}`)},
 	}
 
 	td := &TurnDetail{SessionKey: "test/nosteer"}
-	results, err := ag.executeToolCalls(ctx, td, nil, "test/nosteer", blocks, nil)
+	results, err := ag.executeToolCalls(ctx, td, nil, "test/nosteer", "", blocks, nil)
 	if err != nil {
 		t.Fatalf("executeToolCalls: %v", err)
 	}
@@ -191,13 +190,13 @@ func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
 		SteerCheckFunc: func() string { return "abort" },
 	})
 
-	blocks := []anthropic.ContentBlock{
+	blocks := []provider.ContentBlock{
 		{Type: "tool_use", ID: "tu_1", Name: "noop", Input: json.RawMessage(`{}`)},
 		{Type: "tool_use", ID: "tu_2", Name: "noop", Input: json.RawMessage(`{}`)},
 	}
 
 	td := &TurnDetail{SessionKey: "test/early-steer"}
-	results, err := ag.executeToolCalls(ctx, td, nil, "test/early-steer", blocks, nil)
+	results, err := ag.executeToolCalls(ctx, td, nil, "test/early-steer", "", blocks, nil)
 	if err != nil {
 		t.Fatalf("executeToolCalls: %v", err)
 	}

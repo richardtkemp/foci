@@ -3931,7 +3931,7 @@ func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
 func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 	ag := &Agent{
 		UsageClient:        nil,
-		GetUsageClient:     func(endpoint string) *anthropic.UsageClient { return nil },
+		GetUsageClient:     func(endpoint string) provider.UsageClient { return nil },
 		ManaInvestInterval: 30 * time.Minute,
 	}
 
@@ -3949,11 +3949,11 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 // when ManaInvestInterval is zero (mana tracking disabled).
 func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 	// Mock UsageClient that would fail if called
-	mockClient := &anthropic.UsageClient{}
+	mockClient := anthropic.NewUsageClient("dummy")
 
 	ag := &Agent{
 		UsageClient:        mockClient,
-		GetUsageClient:     func(endpoint string) *anthropic.UsageClient { return mockClient },
+		GetUsageClient:     func(endpoint string) provider.UsageClient { return mockClient },
 		ManaInvestInterval: 0, // disabled
 	}
 
@@ -3982,7 +3982,7 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	// This is the common path for non-Anthropic endpoints
 	ag := &Agent{
 		UsageClient:        nil,
-		GetUsageClient:     func(endpoint string) *anthropic.UsageClient { return nil },
+		GetUsageClient:     func(endpoint string) provider.UsageClient { return nil },
 		ManaInvestInterval: 30 * time.Minute,
 	}
 

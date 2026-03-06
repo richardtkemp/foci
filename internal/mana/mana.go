@@ -1,7 +1,7 @@
 // Package mana provides mana budget logic for background work throttling.
 //
 // Pure math + usage formatting. Caching is handled by UsageClient.
-// No coupling beyond foci/anthropic and foci/log.
+// No coupling beyond foci/provider and foci/log.
 package mana
 
 import (
@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/log"
+	"foci/internal/provider"
 )
 
 const (
@@ -40,7 +40,7 @@ func formatPercentValue(percent float64) string {
 
 // FormatPercent returns a compact mana percentage string from usage data.
 // Returns "" if unavailable.
-func FormatPercent(usage *anthropic.UsageResponse) string {
+func FormatPercent(usage *provider.UsageResponse) string {
 	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
 		return ""
 	}
@@ -50,7 +50,7 @@ func FormatPercent(usage *anthropic.UsageResponse) string {
 
 // FormatReset returns a human-readable reset time string from usage data.
 // Returns "" if no reset time available.
-func FormatReset(usage *anthropic.UsageResponse) string {
+func FormatReset(usage *provider.UsageResponse) string {
 	if usage == nil || usage.FiveHour == nil || usage.FiveHour.ResetsAt == nil {
 		return ""
 	}
@@ -58,7 +58,7 @@ func FormatReset(usage *anthropic.UsageResponse) string {
 }
 
 // FormatUsage returns a human-readable usage summary string.
-func FormatUsage(usage *anthropic.UsageResponse) string {
+func FormatUsage(usage *provider.UsageResponse) string {
 	if usage == nil {
 		return "No usage data"
 	}
@@ -155,12 +155,12 @@ func IsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration
 // Caching is handled by UsageClient; Monitor just calls GetUsage and evaluates.
 type Monitor struct {
 	log         *log.ComponentLogger
-	usageClient *anthropic.UsageClient                        // static client (if not using getClient)
-	getClient   func() *anthropic.UsageClient                // dynamic client getter (for session-aware)
+	usageClient provider.UsageClient                        // static client (if not using getClient)
+	getClient   func() provider.UsageClient                // dynamic client getter (for session-aware)
 }
 
 // NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor always returns true.
-func NewMonitor(usageClient *anthropic.UsageClient) *Monitor {
+func NewMonitor(usageClient provider.UsageClient) *Monitor {
 	return &Monitor{
 		log:         log.NewComponentLogger("mana"),
 		usageClient: usageClient,
@@ -169,7 +169,7 @@ func NewMonitor(usageClient *anthropic.UsageClient) *Monitor {
 
 // NewMonitorWithFunc creates a Monitor that lazily resolves UsageClient on each check.
 // Used by keepalive to track default session's current endpoint.
-func NewMonitorWithFunc(getClient func() *anthropic.UsageClient) *Monitor {
+func NewMonitorWithFunc(getClient func() provider.UsageClient) *Monitor {
 	return &Monitor{
 		log:       log.NewComponentLogger("mana"),
 		getClient: getClient,
@@ -179,7 +179,7 @@ func NewMonitorWithFunc(getClient func() *anthropic.UsageClient) *Monitor {
 // IsGoodFor checks whether we can afford to run background work with the given invest interval.
 // Calls GetUsage (which is cached by UsageClient) and evaluates via IsGood.
 func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) bool {
-	var client *anthropic.UsageClient
+	var client provider.UsageClient
 	if m.getClient != nil {
 		client = m.getClient()  // Lazily resolve
 	} else {
@@ -203,7 +203,7 @@ func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) b
 // ManaAndReset returns mana percentage, reset time strings, and whether
 // mana is "good" (above invest threshold). Returns empty strings and false if
 // UsageClient is nil or on error.
-func ManaAndReset(usageClient *anthropic.UsageClient, investInterval time.Duration) (pct, reset string, good bool) {
+func ManaAndReset(usageClient provider.UsageClient, investInterval time.Duration) (pct, reset string, good bool) {
 	if usageClient == nil {
 		return "", "", false
 	}
@@ -220,7 +220,7 @@ func ManaAndReset(usageClient *anthropic.UsageClient, investInterval time.Durati
 }
 
 // extractManaAndReset extracts mana value and reset time from a usage response.
-func extractManaAndReset(usage *anthropic.UsageResponse) (float64, time.Time) {
+func extractManaAndReset(usage *provider.UsageResponse) (float64, time.Time) {
 	var manaVal float64
 	var resetsAt time.Time
 	if usage != nil && usage.FiveHour != nil {
@@ -235,7 +235,7 @@ func extractManaAndReset(usage *anthropic.UsageResponse) (float64, time.Time) {
 }
 
 // computeManaGood evaluates whether current mana is above the invest threshold.
-func computeManaGood(usage *anthropic.UsageResponse, investInterval time.Duration) bool {
+func computeManaGood(usage *provider.UsageResponse, investInterval time.Duration) bool {
 	if investInterval == 0 {
 		return false
 	}
