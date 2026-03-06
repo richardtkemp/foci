@@ -49,19 +49,20 @@ type BranchFunc func(branchType, promptText string, noCompact bool)
 
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
-	log               *log.ComponentLogger
-	agentID           string
-	kaCfg             config.KeepaliveConfig
-	bgCfg             config.BackgroundConfig
-	mfCfg             config.MemoryFormationConfig
-	promptSearchDirs  []string
-	todoStore         *memory.TodoStore
-	stateStore        *state.Store
-	branchFn          BranchFunc
-	manaMonitor       *mana.Monitor
-	warningDispatcher *warnings.Dispatcher
-	hasActiveWorkFn   func() bool // external check for async work (e.g. tmux watches)
-	drainFn           func() // called each tick to drain rate-limit queues
+	log                *log.ComponentLogger
+	agentID            string
+	kaCfg              config.KeepaliveConfig
+	bgCfg              config.BackgroundConfig
+	mfCfg              config.MemoryFormationConfig
+	manaInvestInterval string // mana invest interval (Go duration string)
+	promptSearchDirs   []string
+	todoStore          *memory.TodoStore
+	stateStore         *state.Store
+	branchFn           BranchFunc
+	manaMonitor        *mana.Monitor
+	warningDispatcher  *warnings.Dispatcher
+	hasActiveWorkFn    func() bool // external check for async work (e.g. tmux watches)
+	drainFn            func() // called each tick to drain rate-limit queues
 
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
@@ -82,41 +83,43 @@ type Runner struct {
 
 // RunnerConfig holds all the dependencies for creating a Runner.
 type RunnerConfig struct {
-	AgentID           string
-	Keepalive         config.KeepaliveConfig
-	Background        config.BackgroundConfig
-	MemoryFormation   config.MemoryFormationConfig
-	PromptSearchDirs  []string // directories to search for prompt files (agent workspace, shared)
-	TodoStore         *memory.TodoStore
-	StateStore        *state.Store
-	BranchFunc        BranchFunc
-	ManaMonitor       *mana.Monitor
-	WarningDispatcher *warnings.Dispatcher
-	HasActiveWorkFn   func() bool // external check for async work (e.g. tmux watches)
-	DrainFn           func() // called each tick to drain rate-limit queues; nil = skip
+	AgentID            string
+	Keepalive          config.KeepaliveConfig
+	Background         config.BackgroundConfig
+	MemoryFormation    config.MemoryFormationConfig
+	ManaInvestInterval string                // mana invest interval (Go duration string, default: "30m")
+	PromptSearchDirs   []string              // directories to search for prompt files (agent workspace, shared)
+	TodoStore          *memory.TodoStore
+	StateStore         *state.Store
+	BranchFunc         BranchFunc
+	ManaMonitor        *mana.Monitor
+	WarningDispatcher  *warnings.Dispatcher
+	HasActiveWorkFn    func() bool // external check for async work (e.g. tmux watches)
+	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
 func New(cfg RunnerConfig) *Runner {
 	now := time.Now()
 	r := &Runner{
-		log:               log.NewComponentLogger("keepalive:" + cfg.AgentID),
-		agentID:           cfg.AgentID,
-		kaCfg:             cfg.Keepalive,
-		bgCfg:             cfg.Background,
-		mfCfg:             cfg.MemoryFormation,
-		promptSearchDirs:  cfg.PromptSearchDirs,
-		todoStore:         cfg.TodoStore,
-		stateStore:        cfg.StateStore,
-		branchFn:          cfg.BranchFunc,
-		manaMonitor:       cfg.ManaMonitor,
-		warningDispatcher: cfg.WarningDispatcher,
-		hasActiveWorkFn:   cfg.HasActiveWorkFn,
-		drainFn:           cfg.DrainFn,
-		lastCacheWarmed:   now,
-		lastInteraction:   now,
+		log:                log.NewComponentLogger("keepalive:" + cfg.AgentID),
+		agentID:            cfg.AgentID,
+		kaCfg:              cfg.Keepalive,
+		bgCfg:              cfg.Background,
+		mfCfg:              cfg.MemoryFormation,
+		manaInvestInterval: cfg.ManaInvestInterval,
+		promptSearchDirs:   cfg.PromptSearchDirs,
+		todoStore:          cfg.TodoStore,
+		stateStore:         cfg.StateStore,
+		branchFn:           cfg.BranchFunc,
+		manaMonitor:        cfg.ManaMonitor,
+		warningDispatcher:  cfg.WarningDispatcher,
+		hasActiveWorkFn:    cfg.HasActiveWorkFn,
+		drainFn:            cfg.DrainFn,
+		lastCacheWarmed:    now,
+		lastInteraction:    now,
 		lastMemoryFormation: now,
-		done:              make(chan struct{}),
+		done:               make(chan struct{}),
 	}
 	// Restore consolidation timestamp from persistent state
 	if cfg.StateStore != nil {
@@ -269,7 +272,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 
 	// Check mana
 	if r.manaMonitor != nil {
-		investInterval, _ := r.parseDuration("invest interval", r.bgCfg.InvestInterval)
+		investInterval, _ := r.parseDuration("invest interval", r.manaInvestInterval)
 		if investInterval == 0 {
 			investInterval = 30 * time.Minute // default fallback
 		}

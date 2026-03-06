@@ -155,7 +155,7 @@ func TestKeepaliveConfigMergeDefaults(t *testing.T) {
 }
 
 func TestBackgroundConfigMergeDefaults(t *testing.T) {
-	global := BackgroundConfig{Interval: "5m", Prompt: "bg.md", InvestInterval: "30m"}
+	global := BackgroundConfig{Interval: "5m", Prompt: "bg.md"}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
 		bg := BackgroundConfig{}
@@ -169,9 +169,6 @@ func TestBackgroundConfigMergeDefaults(t *testing.T) {
 		bg.MergeDefaults(global)
 		if bg.Interval != "10m" {
 			t.Errorf("Interval should be preserved, got %q", bg.Interval)
-		}
-		if bg.InvestInterval != "30m" {
-			t.Errorf("InvestInterval should be filled, got %q", bg.InvestInterval)
 		}
 	})
 }

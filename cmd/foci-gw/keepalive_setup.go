@@ -107,16 +107,17 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	kaCfg := acfg.Keepalive
 	kaCfg.Enabled = kaEnabled
 	runner := keepalive.New(keepalive.RunnerConfig{
-		AgentID:           acfg.ID,
-		Keepalive:         kaCfg,
-		Background:        acfg.Background,
-		MemoryFormation:   acfg.MemoryFormation,
-		PromptSearchDirs:  inst.promptSearchDirs,
-		TodoStore:         p.todoStore,
-		StateStore:        p.stateStore,
-		BranchFunc:        branchFn,
-		ManaMonitor:       manaMonitor,
-		WarningDispatcher: warningDispatcher,
+		AgentID:            acfg.ID,
+		Keepalive:          kaCfg,
+		Background:         acfg.Background,
+		MemoryFormation:    acfg.MemoryFormation,
+		ManaInvestInterval: p.cfg.Mana.InvestInterval,
+		PromptSearchDirs:   inst.promptSearchDirs,
+		TodoStore:          p.todoStore,
+		StateStore:         p.stateStore,
+		BranchFunc:         branchFn,
+		ManaMonitor:        manaMonitor,
+		WarningDispatcher:  warningDispatcher,
 		HasActiveWorkFn: func() bool {
 			return inst.tmuxWatchCount != nil && inst.tmuxWatchCount() > 0
 		},

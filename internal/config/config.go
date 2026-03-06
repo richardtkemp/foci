@@ -563,10 +563,14 @@ type MemoryFormationConfig struct {
 
 // BackgroundConfig controls the mana-gated background work timer.
 type BackgroundConfig struct {
-	Enabled        bool   `toml:"enabled"`         // enable background work timer (default: false)
-	Interval       string `toml:"interval"`        // time since last interaction before firing (default: "15m")
-	Prompt         string `toml:"prompt"`          // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
-	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset to let cache invest (default: "30m")
+	Enabled  bool   `toml:"enabled"`  // enable background work timer (default: false)
+	Interval string `toml:"interval"` // time since last interaction before firing (default: "15m")
+	Prompt   string `toml:"prompt"`   // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
+}
+
+// ManaConfig controls mana budget behavior.
+type ManaConfig struct {
+	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset before spending (default: "30m")
 }
 
 type Config struct {
@@ -589,6 +593,7 @@ type Config struct {
 	STT                []STTConfig               `toml:"stt"`
 	Bitwarden          BitwardenConfig           `toml:"bitwarden"`
 	Cache              CacheConfig               `toml:"cache"`
+	Mana               ManaConfig                `toml:"mana"`
 	ManaWarnings       ManaWarningsConfig        `toml:"usage_warnings"`
 	Environment        EnvironmentConfig         `toml:"environment"`
 	Skills             SkillsConfig              `toml:"skills"`
@@ -1229,7 +1234,9 @@ func Load(path string) (*Config, error) {
 	// Keepalive.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
 	setStringDefault(&cfg.Background.Interval, "15m")
 	// Background.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
-	setStringDefault(&cfg.Background.InvestInterval, "30m")
+
+	// Mana defaults
+	setStringDefault(&cfg.Mana.InvestInterval, "30m")
 
 	// Memory formation defaults
 	setStringDefault(&cfg.MemoryFormation.Interval, "1h")

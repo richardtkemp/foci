@@ -236,6 +236,9 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 	add("anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL)
 
+	// mana
+	add("mana", "invest_interval", cfg.Mana.InvestInterval)
+
 	// message_transforms
 	if len(cfg.MessageTransforms) > 0 {
 		add("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
@@ -343,7 +346,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	add("background.enabled", agent.Background.Enabled)
 	add("background.interval", agent.Background.Interval)
 	add("background.prompt", agent.Background.Prompt)
-	add("background.invest_interval", agent.Background.InvestInterval)
 	add("memory_formation.interval", agent.MemoryFormation.Interval)
 	if agent.MemoryFormation.IntervalEnabled != nil {
 		add("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
@@ -447,7 +449,7 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 	addGlobal("background", "enabled", cfg.Background.Enabled)
 	addGlobal("background", "interval", cfg.Background.Interval)
 	addGlobal("background", "prompt", cfg.Background.Prompt)
-	addGlobal("background", "invest_interval", cfg.Background.InvestInterval)
+	addGlobal("mana", "invest_interval", cfg.Mana.InvestInterval)
 	addGlobal("memory_formation", "interval", cfg.MemoryFormation.Interval)
 	addGlobal("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
 	if cfg.MemoryFormation.IntervalEnabled != nil {

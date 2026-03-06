@@ -185,7 +185,9 @@ var configFields = []ConfigField{
 	// background (global)
 	{"background", "enabled", FieldBool, "enable background work timer"},
 	{"background", "interval", FieldDuration, "time since last interaction before firing"},
-	{"background", "invest_interval", FieldDuration, "quiet period after mana reset"},
+
+	// mana (global)
+	{"mana", "invest_interval", FieldDuration, "quiet period after mana reset"},
 
 	// memory_formation (global)
 	{"memory_formation", "interval", FieldDuration, "time between captures"},
