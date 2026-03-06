@@ -741,6 +741,9 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		return ToolResult{}, fmt.Errorf("tmux list-sessions: %s %w", strings.TrimSpace(out), err)
 	}
 
+	// Get the current session key to filter sessions
+	currentSessionKey := SessionKeyFromContext(ctx)
+
 	inst.mu.Lock()
 	ownedNames := make(map[string]string, len(inst.owned))
 	for k, v := range inst.owned {
@@ -775,10 +778,16 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 			ownedStillExist = true
 		}
 
-		// Owner: extract agent ID from session key.
-		owner := "-"
-		if isOwned {
-			owner = extractOwner(storedKey)
+		// Only show sessions owned by the current agent session
+		// (both empty = backwards compat for context.Background() in tests)
+		if !isOwned || (storedKey != currentSessionKey && !(storedKey == "" && currentSessionKey == "")) {
+			continue
+		}
+
+		// Owner: show the full session ID
+		owner := storedKey
+		if owner == "" {
+			owner = "self"
 		}
 
 		watchInfo := "-"
@@ -811,24 +820,6 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 	return TextResult(display.MarkdownTable(cols, rows)), nil
 }
 
-// extractOwner returns the agent ID from a session key, or "self" if unknown.
-// Handles "agent:<id>:..." and "<id>/..." formats.
-func extractOwner(sessionKey string) string {
-	if sessionKey == "" {
-		return "self"
-	}
-	if strings.HasPrefix(sessionKey, "agent:") {
-		rest := sessionKey[len("agent:"):]
-		if idx := strings.Index(rest, ":"); idx > 0 {
-			return rest[:idx]
-		}
-		return rest
-	}
-	if idx := strings.Index(sessionKey, "/"); idx > 0 {
-		return sessionKey[:idx]
-	}
-	return sessionKey
-}
 
 func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, error) {
 	if name == "" {
