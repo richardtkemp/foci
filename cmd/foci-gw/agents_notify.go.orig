@@ -54,8 +54,7 @@ func newAsyncNotifier(
 					Role:    "user",
 					Content: provider.TextContent(formattedResp),
 				}
-				writer := sessions.For(replyToSession)
-			if err := writer.Append(replyToSession, msg); err != nil {
+				if err := sessions.Append(replyToSession, msg); err != nil {
 					log.Errorf("async_notify", "failed to append to caller %s: %v", replyToSession, err)
 					return
 				}

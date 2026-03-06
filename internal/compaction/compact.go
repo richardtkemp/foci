@@ -425,7 +425,8 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		return summary, nil
 	}
 
-	if err := c.sessions.Replace(sessionKey, compacted); err != nil {
+	writer := c.sessions.For(sessionKey)
+	if err := writer.Replace(sessionKey, compacted); err != nil {
 		return "", fmt.Errorf("replace session after compaction: %w", err)
 	}
 

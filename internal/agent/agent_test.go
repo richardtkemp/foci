@@ -1673,10 +1673,10 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 
 	// Pre-populate session with an interrupted tool call
 	sessionKey := "test/irepair/1000000000"
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role: "user", Content: provider.TextContent("do something"),
 	})
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role: "assistant", Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "tu_interrupted", Name: "some_tool", Input: json.RawMessage(`{}`)},
 		},
@@ -2451,19 +2451,19 @@ func TestSeedSessionMeta(t *testing.T) {
 	}
 
 	// Add some messages with meta headers
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
 	})
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "assistant",
 		Content: provider.TextContent("Hi there!"),
 	})
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("[meta] time=2026-02-23T12:30:00Z gap=2h30m model=claude-haiku-4-5\nHow are you?"),
 	})
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "assistant",
 		Content: provider.TextContent("Good!"),
 	})
@@ -2715,15 +2715,15 @@ func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
 	sessionKey := "test/iseedskip/1000000000"
 
 	// First message has meta, second user message is a restart marker (no meta)
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("[meta] time=2026-02-23T10:00:00Z gap=none model=claude-haiku-4-5\nHello"),
 	})
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "assistant",
 		Content: provider.TextContent("Hi!"),
 	})
-	store.Append(sessionKey, provider.Message{
+	store.TestAppend(sessionKey, provider.Message{
 		Role:    "user",
 		Content: provider.TextContent("[System restarted at 2026-02-23T11:00:00Z]"),
 	})

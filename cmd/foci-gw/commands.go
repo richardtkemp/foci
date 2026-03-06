@@ -280,7 +280,8 @@ func runReset(p cmdRegParams) error {
 	fireSessionEndMemory(p.ag, p.sessions, sk, p.acfg.MemoryFormation, func(bk, pk, bt string) string {
 		return buildBranchOrientation(resetOrientPath, bk, pk, bt, false, p.promptSearchDirs)
 	}, p.promptSearchDirs, p.ctx)
-	if err := p.sessions.Clear(sk); err != nil {
+	writer := p.sessions.For(sk)
+	if err := writer.Clear(sk); err != nil {
 		return err
 	}
 	p.bootstrap.Reload()

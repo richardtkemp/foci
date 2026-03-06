@@ -12,10 +12,10 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	branchKey := "main/imorning/1000000000"
 
 	// Build parent session with 4 messages
-	s.Append(parentKey, msg("user", "hello"))
-	s.Append(parentKey, msg("assistant", "hi"))
-	s.Append(parentKey, msg("user", "how are you"))
-	s.Append(parentKey, msg("assistant", "good"))
+	s.TestAppend(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("assistant", "hi"))
+	s.TestAppend(parentKey, msg("user", "how are you"))
+	s.TestAppend(parentKey, msg("assistant", "good"))
 
 	// Create branch at current point (4 messages)
 	if err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
@@ -23,8 +23,8 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	}
 
 	// Append branch-only messages
-	s.Append(branchKey, msg("user", "branch question"))
-	s.Append(branchKey, msg("assistant", "branch answer"))
+	s.TestAppend(branchKey, msg("user", "branch question"))
+	s.TestAppend(branchKey, msg("assistant", "branch answer"))
 
 	// LoadFull should return parent prefix + branch messages
 	msgs, err := s.LoadFull(branchKey)
@@ -57,18 +57,18 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/itest/1000000000"
 
-	s.Append(parentKey, msg("user", "one"))
-	s.Append(parentKey, msg("assistant", "two"))
+	s.TestAppend(parentKey, msg("user", "one"))
+	s.TestAppend(parentKey, msg("assistant", "two"))
 
 	// Branch at 2 messages
 	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 
 	// Parent grows after branching
-	s.Append(parentKey, msg("user", "three"))
-	s.Append(parentKey, msg("assistant", "four"))
+	s.TestAppend(parentKey, msg("user", "three"))
+	s.TestAppend(parentKey, msg("assistant", "four"))
 
 	// Branch should only see the first 2 parent messages
-	s.Append(branchKey, msg("user", "branch msg"))
+	s.TestAppend(branchKey, msg("user", "branch msg"))
 
 	msgs, _ := s.LoadFull(branchKey)
 	if len(msgs) != 3 {
@@ -94,7 +94,7 @@ func TestBranchFromEmptyParent(t *testing.T) {
 
 	// Don't add any messages to parent — branch from empty
 	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
-	s.Append(branchKey, msg("user", "branch only"))
+	s.TestAppend(branchKey, msg("user", "branch only"))
 
 	msgs, err := s.LoadFull(branchKey)
 	if err != nil {
@@ -112,7 +112,7 @@ func TestLoadFullNonBranch(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "main/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	// LoadFull on a regular session should work like Load
 	msgs, err := s.LoadFull(key)
@@ -140,7 +140,7 @@ func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iopts/1000000000"
 
-	s.Append(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("user", "hello"))
 
 	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{NoResetHook: true})
 	if err != nil {
@@ -167,7 +167,7 @@ func TestCreateBranchWithOptionsDefault(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/idefault/1000000000"
 
-	s.Append(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("user", "hello"))
 
 	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 	if err != nil {
@@ -187,7 +187,7 @@ func TestGetBranchMetaRegularSession(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "main/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	meta, err := s.GetBranchMeta(key)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestBranchMetaBackwardCompat(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iold/1000000000"
 
-	s.Append(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("user", "hello"))
 
 	// CreateBranch (old method) doesn't set NoResetHook
 	if err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
@@ -239,13 +239,13 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/itest/1000000000"
 
-	s.Append(parentKey, msg("user", "parent msg"))
-	s.Append(parentKey, msg("assistant", "parent reply"))
+	s.TestAppend(parentKey, msg("user", "parent msg"))
+	s.TestAppend(parentKey, msg("assistant", "parent reply"))
 	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 
 	// Add messages to branch
-	s.Append(branchKey, msg("user", "branch only"))
-	s.Append(branchKey, msg("assistant", "branch reply"))
+	s.TestAppend(branchKey, msg("user", "branch only"))
+	s.TestAppend(branchKey, msg("assistant", "branch reply"))
 
 	// Parent should still have only 2 messages
 	parentMsgs, _ := s.Load(parentKey)
@@ -259,8 +259,8 @@ func TestCreateBranchWithOrientationMessage(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iorient/1000000000"
 
-	s.Append(parentKey, msg("user", "hello"))
-	s.Append(parentKey, msg("assistant", "hi"))
+	s.TestAppend(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("assistant", "hi"))
 
 	orientText := "You are a cron branch. Do not message Telegram directly."
 	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
@@ -295,7 +295,7 @@ func TestCreateBranchWithoutOrientationMessage(t *testing.T) {
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/inoorient/1000000000"
 
-	s.Append(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("user", "hello"))
 
 	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
 		OrientationMessage: "", // empty — no orientation

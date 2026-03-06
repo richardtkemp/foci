@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // mockSessionAppender captures Append calls.
@@ -17,11 +18,31 @@ type mockSessionAppender struct {
 	appended bool
 }
 
-func (m *mockSessionAppender) Append(key string, msg provider.Message) error {
-	m.key = key
-	m.msg = msg
-	m.appended = true
-	return m.err
+func (m *mockSessionAppender) For(sessionKey string) session.SessionWriter {
+	return &mockSessionWriter{appender: m}
+}
+
+type mockSessionWriter struct {
+	appender *mockSessionAppender
+}
+
+func (w *mockSessionWriter) Append(key string, msg provider.Message) error {
+	w.appender.key = key
+	w.appender.msg = msg
+	w.appender.appended = true
+	return w.appender.err
+}
+
+func (w *mockSessionWriter) AppendAll(key string, msgs []provider.Message) error {
+	return nil
+}
+
+func (w *mockSessionWriter) Replace(key string, msgs []provider.Message) error {
+	return nil
+}
+
+func (w *mockSessionWriter) Clear(key string) error {
+	return nil
 }
 
 func TestSendToSession(t *testing.T) {
