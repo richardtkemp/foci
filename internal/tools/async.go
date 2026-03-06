@@ -64,11 +64,11 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 	return n.pending[sessionKey] > 0
 }
 
-// Notify delivers a message to the specified agent session.
-// If replyToSession is non-empty, the response is routed to that session
+// InjectToAgent delivers a message to the specified agent session for processing.
+// If replyToSession is non-empty, the agent's response is routed to that session
 // instead of being sent to targetSession's Telegram chat.
 // Safe to call on a nil receiver or with a nil fn.
-func (n *AsyncNotifier) Notify(targetSession, message string, replyToSession string) {
+func (n *AsyncNotifier) InjectToAgent(targetSession, message string, replyToSession string) {
 	if n != nil && n.fn != nil {
 		n.fn(targetSession, message, replyToSession)
 	}
