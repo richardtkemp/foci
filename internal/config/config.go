@@ -181,6 +181,8 @@ type AgentConfig struct {
 	SummaryContextTurns   int    `toml:"summary_context_turns"`   // recent turns for auto-summary context (0 = use global)
 	SummaryContextChars   int    `toml:"summary_context_chars"`   // max chars of context for auto-summary (0 = use global)
 	MaxSummaryInputChars  int    `toml:"max_summary_input_chars"` // max chars embedded in summary prompt (0 = use global)
+	SummaryModel          string `toml:"summary_model"`           // model for auto-summarisation: alias or developer/model_id (empty = provider-aware default)
+	SummaryEndpoint       string `toml:"summary_endpoint"`        // endpoint override for summary requests (empty = auto-select)
 	MaxImagePixels        int    `toml:"max_image_pixels"`        // max pixels (w*h) before downscaling images (0 = use global)
 	SearchProvider        string `toml:"search_provider"`         // "anthropic" or "brave" (empty = use global)
 	FetchProvider         string `toml:"fetch_provider"`          // "anthropic" or "builtin" (empty = use global)
@@ -542,6 +544,8 @@ type ToolsConfig struct {
 	SummaryContextTurns     int      `toml:"summary_context_turns"`      // recent turns for auto-summary context (default 5)
 	SummaryContextChars     int      `toml:"summary_context_chars"`      // max chars of context for auto-summary (default 6000)
 	MaxSummaryInputChars    int      `toml:"max_summary_input_chars"`    // max chars of tool result embedded in summary prompt (default 100000)
+	SummaryModel            string   `toml:"summary_model"`              // model for auto-summarisation: alias or developer/model_id (empty = provider-aware default)
+	SummaryEndpoint         string   `toml:"summary_endpoint"`           // endpoint override for summary requests (empty = auto-select)
 	MaxImagePixels          int      `toml:"max_image_pixels"`           // max pixels (w*h) before downscaling images (default 2073600)
 	SearchProvider          string   `toml:"search_provider"`            // "brave" (default) or "anthropic"
 	FetchProvider           string   `toml:"fetch_provider"`             // "anthropic" (default) or "builtin"
@@ -594,11 +598,13 @@ type DefaultsConfig struct {
 
 	MaxResultChars       int   `toml:"max_result_chars"`        // default max_result_chars (default 15000)
 	MaxSummaryChars      int   `toml:"max_summary_chars"`       // default max_summary_chars (default 300000)
-	AutoSummarise        *bool `toml:"auto_summarise"`          // default auto_summarise (nil = use [tools] value)
-	SummaryContextTurns  int   `toml:"summary_context_turns"`   // default summary_context_turns (default 5)
-	SummaryContextChars  int   `toml:"summary_context_chars"`   // default summary_context_chars (default 6000)
-	MaxSummaryInputChars int   `toml:"max_summary_input_chars"` // default max_summary_input_chars (default 100000)
-	MaxImagePixels       int   `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
+	AutoSummarise        *bool  `toml:"auto_summarise"`          // default auto_summarise (nil = use [tools] value)
+	SummaryContextTurns  int    `toml:"summary_context_turns"`   // default summary_context_turns (default 5)
+	SummaryContextChars  int    `toml:"summary_context_chars"`   // default summary_context_chars (default 6000)
+	MaxSummaryInputChars int    `toml:"max_summary_input_chars"` // default max_summary_input_chars (default 100000)
+	SummaryModel         string `toml:"summary_model"`           // default summary model: alias or developer/model_id (empty = provider-aware default)
+	SummaryEndpoint      string `toml:"summary_endpoint"`        // default summary endpoint override (empty = auto-select)
+	MaxImagePixels       int    `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
 
 	SearchProvider        string `toml:"search_provider"`         // default search provider: "brave" (default) or "anthropic"
 	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "anthropic" (default) or "builtin"

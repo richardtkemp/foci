@@ -434,6 +434,8 @@ func setupAgent(p setupParams) *agentInstance {
 		SummaryContextChars:           resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
 		MaxSummaryChars:               resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
 		MaxSummaryInputChars:          resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
+		SummaryModel:                  resolveString(acfg.SummaryModel, p.cfg.Tools.SummaryModel),
+		SummaryEndpoint:               resolveString(acfg.SummaryEndpoint, p.cfg.Tools.SummaryEndpoint),
 		MaxImagePixels:                resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
 		AutoSummarise:                 resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
 		StateStore:                    p.stateStore,

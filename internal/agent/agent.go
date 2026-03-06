@@ -101,6 +101,8 @@ type Agent struct {
 	SummaryContextChars           int                          // max chars of context to send to Haiku
 	MaxSummaryChars               int                          // max chars to auto-summarise (skip Haiku above this)
 	MaxSummaryInputChars          int                          // max chars of tool result embedded in summary prompt (0 = no limit)
+	SummaryModel                  string                       // summary model (alias or developer/model_id, empty = provider-aware default)
+	SummaryEndpoint               string                       // summary endpoint override (empty = auto-select)
 	MaxImagePixels                int                          // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
@@ -616,25 +618,51 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 	return fmt.Sprintf("Result too large (%d chars, limit %d). Full output saved to %s.\n%s", resultLen, a.MaxResultChars, fpath, hint)
 }
 
-// summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
-// Returns the formatted summary string, or empty string on failure (caller falls back).
-func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel, result string, messages []provider.Message, savedPath string) string {
-	// Pick cheap model based on the current session's developer prefix.
-	summaryAlias := "haiku"
+// providerAwareDefaultAlias returns the cheap-model alias based on the turn model's developer.
+func (a *Agent) providerAwareDefaultAlias(turnModel string) string {
 	dev, _ := config.SplitDeveloperModel(turnModel)
 	switch dev {
 	case "google":
-		summaryAlias = "flash"
+		return "flash"
 	case "openai":
-		summaryAlias = "gpt4o"
+		return "gpt4o"
 	}
-	model := summaryAlias
-	if full, ok := a.ModelAliases[summaryAlias]; ok {
-		model = full
+	return "haiku"
+}
+
+// summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
+// Returns the formatted summary string, or empty string on failure (caller falls back).
+func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel, result string, messages []provider.Message, savedPath string) string {
+	// Resolve summary model: config override → provider-aware default
+	summaryModel := a.SummaryModel
+	if summaryModel == "" {
+		summaryModel = a.providerAwareDefaultAlias(turnModel)
 	}
-	// Strip developer prefix — aliases now include developer (e.g. "anthropic/claude-haiku-4-5")
-	// Note: The API client will strip this too, but we strip here for logging and consistency.
-	model = config.StripDeveloperPrefix(model)
+
+	summaryEndpoint := a.SummaryEndpoint
+
+	// Resolve through config system (handles aliases and developer/model_id)
+	resolved, err := config.ResolveModel(summaryModel, summaryEndpoint, a.ModelAliases)
+	if err != nil {
+		a.logger().Warnf("failed to resolve summary model %q: %v, using provider fallback", summaryModel, err)
+		// Try provider-aware fallback
+		summaryModel = a.providerAwareDefaultAlias(turnModel)
+		resolved, err = config.ResolveModel(summaryModel, "", a.ModelAliases)
+		if err != nil {
+			a.logger().Warnf("provider fallback also failed: %v", err)
+			return ""
+		}
+	}
+
+	// Get client for the resolved endpoint
+	summaryClient := client
+	if a.ClientProvider != nil && resolved.Endpoint != "" {
+		if c := a.ClientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+			summaryClient = c
+		}
+	}
+
+	model := resolved.ModelID
 
 	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
 
@@ -667,7 +695,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	}
 
 	start := time.Now()
-	resp, err := provider.Send(ctx, client, req, nil)
+	resp, err := provider.Send(ctx, summaryClient, req, nil)
 	if err != nil {
 		a.logger().Warnf("session=%s auto-summary failed for %s: %v", sessionKey, toolName, err)
 		return ""
