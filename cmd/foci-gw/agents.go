@@ -14,7 +14,7 @@ import (
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
-	"foci/internal/keepalive"
+	"foci/internal/periodic"
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
@@ -44,7 +44,7 @@ type agentInstance struct {
 	promptSearchDirs  []string           // directories to search for prompt files
 	tmuxClearAll      func()             // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount    func() int         // returns number of active tmux watches
-	kaRunner          *keepalive.Runner  // keepalive & background work timer (nil if disabled)
+	kaRunner          *periodic.Runner  // keepalive & background work timer (nil if disabled)
 	mcpManager        *mcpkg.Manager     // nil if no MCP servers configured
 }
 
@@ -880,9 +880,8 @@ func seedDefaultPrompts(dir string) {
 	}
 }
 
-// buildBranchFunc creates a keepalive.BranchFunc that dispatches branch sessions
-// using the provided agent infrastructure. This is the bridge between the keepalive
-// package and the main package's agent/session handling.
+// buildBranchFunc returns a function that creates a branch session from the
+// agent's default session and runs a single turn with the given prompt.
 func buildBranchFunc(
 	agentID string,
 	ag *agent.Agent,
@@ -890,18 +889,17 @@ func buildBranchFunc(
 	defaultSessionKey func() string,
 	buildOrientation func(branchKey, parentKey, branchType string) string,
 	ctx context.Context,
-) keepalive.BranchFunc {
+) periodic.BranchFunc {
 	return func(branchType, promptText string, noCompact bool) {
 		parentKey := defaultSessionKey()
 		if parentKey == "" {
-			log.Warnf("keepalive", "no default session for agent %q, skipping %s", agentID, branchType)
+			log.Warnf(branchType, "[%s] no default session, skipping", agentID)
 			return
 		}
 
-		// Cron tasks are branches from the default session
 		branchKey, branchErr := session.BranchFromSession(parentKey)
 		if branchErr != nil {
-			log.Errorf("keepalive", "%s branch key error (parent=%s): %v", branchType, parentKey, branchErr)
+			log.Errorf(branchType, "[%s] branch key error (parent=%s): %v", agentID, parentKey, branchErr)
 			return
 		}
 
@@ -911,7 +909,7 @@ func buildBranchFunc(
 			OrientationMessage: orientText,
 		})
 		if err != nil {
-			log.Errorf("keepalive", "%s branch error: %v", branchType, err)
+			log.Errorf(branchType, "[%s] branch error: %v", agentID, err)
 			return
 		}
 
@@ -922,10 +920,10 @@ func buildBranchFunc(
 
 		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
 		if err != nil {
-			log.Warnf("keepalive", "%s turn error: %v", branchType, err)
+			log.Warnf(branchType, "[%s] turn error: %v", agentID, err)
 			return
 		}
-		_ = resp // keepalive/background responses are not delivered to user
+		_ = resp
 	}
 }
 

@@ -147,11 +147,11 @@ main
  ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
- ├── keepalive     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
+ ├── periodic     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
  └── telegram      → agent, command, log, sqlite, table, voice
 ```
 
-No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `provider` defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic` and `gemini` both implement `provider.Client`, translating between neutral types and their wire formats. Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `keepalive` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
+No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `provider` defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic` and `gemini` both implement `provider.Client`, translating between neutral types and their wire formats. Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`, `IsValidBotToken`, `IsValidUserID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`).
 
@@ -195,7 +195,7 @@ The core of the system. Two entry points:
 Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
 
 **Error handling by status code:**
-- **429 (rate limit):** Our quota is exhausted. `classifyAPIError` fires `RateLimitFunc` callback (Telegram notification with estimated retry time from `Retry-After` header) and returns `"rate limited — mana exhausted"`. No transport-level retry (retrying won't help until the window resets).
+- **429 (rate limit):** Could be burst rate limit or daily quota exhaustion. `classifyAPIError` fires `RateLimitFunc` callback (Telegram notification with estimated retry time from `Retry-After` header) and returns `"rate limited"`. The rate limit gate closes using the `Retry-After` header duration, or 60s if the header is absent (e.g. streaming SSE errors). No transport-level retry.
 - **529 (overloaded):** Anthropic servers are overloaded (their problem, not ours). Two-phase retry in `SendMessage`: phase 1 retries 3× with exponential backoff (2s→4s→8s, same as other retryable errors); phase 2 (529 only) enters an extended duration-based loop retrying up to ~2 hours with 5s base backoff doubling without cap. A cross-goroutine recovery signal on the `Client` wakes all sleeping retry loops when any `SendMessage` succeeds (proving the server has recovered). If still failing after phase 2, `classifyAPIError` returns `"Anthropic API is overloaded — try again shortly"`.
 - **500/502/503 (server error):** `SendMessage` retries 3× with backoff. If still failing, `classifyAPIError` fires `RateLimitFunc(0)` and returns a temporary unavailability message.
 
@@ -863,7 +863,7 @@ Memory formation and consolidation run in the keepalive timer loop (30s ticks):
 6. Drain warnings, format as `- ...\n- ...`, wrap via `formatFn` (wired to `prompts.FormatInjectedMessage`)
 7. Dispatch in goroutine: `dispatchFn(text)`, clear `dispatching` on return
 
-The `warnings.Dispatcher` is created in `main.go` and injected into `keepalive.RunnerConfig`. The keepalive timer loop calls `dispatcher.MaybeFire()` each tick. Warnings are only delivered via this proactive dispatch path — they always fire as independent agent turns rather than being bundled into user messages.
+The `warnings.Dispatcher` is created in `main.go` and injected into `periodic.RunnerConfig`. The keepalive timer loop calls `dispatcher.MaybeFire()` each tick. Warnings are only delivered via this proactive dispatch path — they always fire as independent agent turns rather than being bundled into user messages.
 
 ## Compaction (`compaction/compact.go`)
 

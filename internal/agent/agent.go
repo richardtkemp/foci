@@ -1225,10 +1225,8 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return fmt.Errorf("send message: %w", err)
 	}
 	if apiErr.IsRateLimit() {
-		resetTime := a.computeRateLimitReset(apiErr.RetryAfterSeconds())
-
-		// Close only this endpoint's gate
 		gate := a.getOrCreateRateLimitGate(endpoint)
+		resetTime := gate.ComputeResetTime(apiErr.RetryAfterSeconds())
 		gate.Close(resetTime)
 
 		a.logger().Infof("rate limit gate (%s) closed until %s", endpoint, resetTime.Format(time.Kitchen))
@@ -1250,16 +1248,6 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	return fmt.Errorf("send message: %w", err)
 }
 
-// computeRateLimitReset determines the best reset time for the rate limit gate.
-// Uses retry-after header if available, otherwise falls back to 5h.
-func (a *Agent) computeRateLimitReset(retryAfterSec int) time.Time {
-	if retryAfterSec > 0 {
-		return time.Now().Add(time.Duration(retryAfterSec) * time.Second)
-	}
-
-	// Fallback: 5 hours (Anthropic's standard window)
-	return time.Now().Add(5 * time.Hour)
-}
 
 // DrainRateLimitQueue checks if any rate limit gates have opened, and replays
 // queued messages through HandleMessage. Called from keepalive tick.
