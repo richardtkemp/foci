@@ -754,6 +754,81 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 	}
 }
 
+func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
+	// Test that sort=created sorts purely by timestamp, ignoring status
+	store := newTestTodoStore(t)
+
+	// Create items with different statuses at different times
+	id1, _ := store.Add("agent1", "First task", "high", "")
+	time.Sleep(50 * time.Millisecond)
+	id2, _ := store.Add("agent1", "Second task", "high", "")
+	store.Transition("agent1", id2, "in_progress", "")
+	time.Sleep(50 * time.Millisecond)
+	id3, _ := store.Add("agent1", "Third task", "high", "")
+	store.Transition("agent1", id3, "done", "completed")
+	time.Sleep(50 * time.Millisecond)
+	id4, _ := store.Add("agent1", "Fourth task", "high", "")
+
+	// List with sort=created should ignore status and sort purely by creation time
+	items, err := store.List("agent1", "", "", "", "created")
+	if err != nil {
+		t.Fatalf("List with sort=created: %v", err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("expected 4 items, got %d", len(items))
+	}
+	// Should be ordered by creation time only, not grouped by status
+	if items[0].ID != id1 {
+		t.Errorf("first item ID = %d (status=%s), want %d", items[0].ID, items[0].Status, id1)
+	}
+	if items[1].ID != id2 {
+		t.Errorf("second item ID = %d (status=%s), want %d", items[1].ID, items[1].Status, id2)
+	}
+	if items[2].ID != id3 {
+		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id3)
+	}
+	if items[3].ID != id4 {
+		t.Errorf("fourth item ID = %d (status=%s), want %d", items[3].ID, items[3].Status, id4)
+	}
+}
+
+func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
+	// Test that sort=updated sorts purely by timestamp, ignoring status
+	store := newTestTodoStore(t)
+
+	// Create items with different statuses and update at different times
+	id1, _ := store.Add("agent1", "Task 1", "medium", "")
+	time.Sleep(1100 * time.Millisecond)
+	id2, _ := store.Add("agent1", "Task 2", "medium", "")
+	store.Transition("agent1", id2, "in_progress", "")
+	time.Sleep(1100 * time.Millisecond)
+	id3, _ := store.Add("agent1", "Task 3", "medium", "")
+	store.Transition("agent1", id3, "done", "completed")
+
+	// Update id1 to make it most recently updated
+	time.Sleep(1100 * time.Millisecond)
+	store.Edit("agent1", id1, "Updated task 1", "", "", false)
+
+	// List with sort=updated should ignore status and sort purely by updated time (newest first)
+	items, err := store.List("agent1", "", "", "", "updated")
+	if err != nil {
+		t.Fatalf("List with sort=updated: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+	// Should be ordered by updated time only (newest first), not grouped by status
+	if items[0].ID != id1 {
+		t.Errorf("first item ID = %d (status=%s), want %d (most recently updated)", items[0].ID, items[0].Status, id1)
+	}
+	if items[1].ID != id3 {
+		t.Errorf("second item ID = %d (status=%s), want %d", items[1].ID, items[1].Status, id3)
+	}
+	if items[2].ID != id2 {
+		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id2)
+	}
+}
+
 func newTestTodoStore(t *testing.T) *TodoStore {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "todo_test.db")

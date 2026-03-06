@@ -744,6 +744,48 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 	}
 }
 
+func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
+	// Verify the generated foci_todo shell function includes --sort parameter handling
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"priority":{"type":"string"},"tag":{"type":"string"},"query":{"type":"string"},"status":{"type":"string"},"id":{"type":"integer"},"reason":{"type":"string"},"sort":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult("ok"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	data, err := os.ReadFile(bridge.FuncsPath())
+	if err != nil {
+		t.Fatalf("read funcs file: %v", err)
+	}
+	content := string(data)
+
+	// Should contain function definition
+	if !strings.Contains(content, "foci_todo()") {
+		t.Error("funcs file should contain foci_todo()")
+	}
+	// Should contain --sort flag handling in the argument parser
+	if !strings.Contains(content, "--sort)") {
+		t.Error("foci_todo should handle --sort flag")
+	}
+	// Should have a sort variable declared
+	if !strings.Contains(content, `local text="" priority="" tag="" query="" status="" id="" reason="" sort=""`) {
+		t.Error("foci_todo should declare sort variable")
+	}
+	// Should pass sort parameter to list action
+	if !strings.Contains(content, `[ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"`) {
+		t.Error("foci_todo list action should pass sort parameter")
+	}
+}
+
 // callBridge connects to a bridge socket and sends a request, returning the result and error.
 func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) {
 	t.Helper()
