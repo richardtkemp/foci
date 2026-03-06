@@ -25,6 +25,8 @@ type CacheManager struct {
 	cacheHash [16]byte   // MD5 of system + tools content
 	expiresAt time.Time  // when the cache expires
 	model     string     // model the cache was created for
+
+	cachingNotSupported bool // true if we've detected free tier (no caching available)
 }
 
 // NewCacheManager creates a new cache manager with the given TTL.
@@ -51,6 +53,11 @@ func (m *CacheManager) EnsureCache(ctx context.Context, model string, system *ge
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Skip cache creation if we've detected free tier
+	if m.cachingNotSupported {
+		return "" // caching not available, already warned
+	}
 
 	// Reuse existing cache if content matches and not expired
 	if m.cacheName != "" && m.cacheHash == hash && m.model == model {
@@ -84,7 +91,10 @@ func (m *CacheManager) EnsureCache(ctx context.Context, model string, system *ge
 
 	cached, err := m.client.Caches.Create(ctx, model, cfg)
 	if err != nil {
-		logCacheCreationError(err)
+		isFreeTier := logCacheCreationError(err)
+		if isFreeTier {
+			m.cachingNotSupported = true // remember to skip future attempts
+		}
 		return ""
 	}
 
@@ -152,18 +162,19 @@ func contentHash(system *genai.Content, tools []*genai.Tool) [16]byte {
 }
 
 // logCacheCreationError logs cache creation errors with context-appropriate messages.
-// Both rate-limiting and free-tier limits result in the same fallback (no cache),
-// but we provide specific diagnostics for each case.
-func logCacheCreationError(err error) {
+// Returns true if the error indicates a free-tier account with no caching available.
+func logCacheCreationError(err error) bool {
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "429") || strings.Contains(msg, "RESOURCE_EXHAUSTED"):
 		if strings.Contains(msg, "TotalCachedContentStorageTokensPerModelFreeTier") && strings.Contains(msg, "limit=0") {
 			log.Warnf("gemini_cache", "caching not available on free tier (limit=0), continuing without cache")
+			return true // free tier detected
 		} else {
 			log.Warnf("gemini_cache", "cache rate limited (429), continuing without cache")
 		}
 	default:
 		log.Warnf("gemini_cache", "create cache failed: %v", err)
 	}
+	return false
 }
