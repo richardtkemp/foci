@@ -93,13 +93,13 @@ func TestShouldCompactWithUsage(t *testing.T) {
 
 	// Under threshold (160k = 200k * 0.8)
 	usage := &provider.Usage{InputTokens: 100_000}
-	if c.ShouldCompact(nil, usage) {
+	if c.ShouldCompact("test/session", nil, usage) {
 		t.Error("should not compact at 100k tokens")
 	}
 
 	// Over threshold
 	usage = &provider.Usage{InputTokens: 170_000}
-	if !c.ShouldCompact(nil, usage) {
+	if !c.ShouldCompact("test/session", nil, usage) {
 		t.Error("should compact at 170k tokens")
 	}
 
@@ -108,7 +108,7 @@ func TestShouldCompactWithUsage(t *testing.T) {
 		InputTokens:          50_000,
 		CacheReadInputTokens: 120_000,
 	}
-	if !c.ShouldCompact(nil, usage) {
+	if !c.ShouldCompact("test/session", nil, usage) {
 		t.Error("should compact when cache_read + input > threshold")
 	}
 }
@@ -121,7 +121,7 @@ func TestShouldCompactWithEstimate(t *testing.T) {
 		{Role: "user", Content: provider.TextContent("hello")},
 		{Role: "assistant", Content: provider.TextContent("hi")},
 	}
-	if c.ShouldCompact(small, nil) {
+	if c.ShouldCompact("test/session", small, nil) {
 		t.Error("should not compact small conversation")
 	}
 }
@@ -131,13 +131,13 @@ func TestShouldCompactExactThreshold(t *testing.T) {
 
 	// Exactly at threshold (200k * 0.8 = 160k)
 	usage := &provider.Usage{InputTokens: 160_000}
-	if c.ShouldCompact(nil, usage) {
+	if c.ShouldCompact("test/session", nil, usage) {
 		t.Error("should not compact at exact threshold (> not >=)")
 	}
 
 	// One over
 	usage = &provider.Usage{InputTokens: 160_001}
-	if !c.ShouldCompact(nil, usage) {
+	if !c.ShouldCompact("test/session", nil, usage) {
 		t.Error("should compact one above threshold")
 	}
 }

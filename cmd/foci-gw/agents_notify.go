@@ -99,7 +99,7 @@ func newSessionNotifyFn(
 
 			resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "session_notify"), targetSessionKey, message)
 			if err != nil {
-				log.Errorf("session_notify", "error: %v", err)
+				log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
 				return
 			}
 			if resp == "" {
@@ -113,7 +113,7 @@ func newSessionNotifyFn(
 			}
 
 			if err := bot.SendToSession(targetSessionKey, resp); err != nil {
-				log.Errorf("session_notify", "telegram delivery: %v", err)
+				log.Errorf("session_notify", "telegram delivery for session %s: %v", targetSessionKey, err)
 			}
 		}()
 	})
