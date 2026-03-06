@@ -1,0 +1,337 @@
+package telegram
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"testing"
+
+	"foci/internal/command"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
+)
+
+// TestAsyncNotifierDeliveryViaSendInjected verifies that async notifier
+// delivery via SendInjected works correctly.
+func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {
+	// Simulates the async notifier delivery path in main.go:
+	// notifier calls HandleMessage → gets response → calls bot.SendInjected()
+	mgr := NewBotManager()
+	bot, mock := testBot([]string{"111"}, command.NewRegistry())
+	bot.SetChatID(12345)
+	mgr.AddPrimary("test-agent", bot)
+
+	// Simulate: notifier got a response from HandleMessage
+	resp := "Four undeployed commits now. Both queues empty."
+
+	// Deliver via primary bot's SendInjected (same as main.go closure)
+	primary := mgr.PrimaryBot("test-agent")
+	if primary == nil {
+		t.Fatal("PrimaryBot returned nil")
+	}
+	if err := primary.SendInjected(resp); err != nil {
+		t.Fatalf("SendInjected error: %v", err)
+	}
+	if mock.sentCount() != 1 {
+		t.Errorf("sentCount = %d, want 1", mock.sentCount())
+	}
+}
+
+// TestAsyncNotifierSkipsEmptyResponse verifies that async notifier skips
+// empty responses.
+func TestAsyncNotifierSkipsEmptyResponse(t *testing.T) {
+	// When HandleMessage returns empty string, notifier should not call SendInjected.
+	// This is checked in the main.go closure before calling SendInjected.
+	bot, mock := testBot([]string{"111"}, command.NewRegistry())
+	bot.SetChatID(12345)
+
+	// Empty response should be silently skipped by SendInjected
+	if err := bot.SendInjected(""); err != nil {
+		t.Fatalf("SendInjected(\"\") error: %v", err)
+	}
+	if mock.sentCount() != 0 {
+		t.Errorf("sentCount = %d, want 0 for empty response", mock.sentCount())
+	}
+}
+
+// TestAsyncNotifierNoPrimaryBot verifies that PrimaryBot returns nil when
+// no primary bot is configured.
+func TestAsyncNotifierNoPrimaryBot(t *testing.T) {
+	// When no primary bot is configured, PrimaryBot returns nil.
+	// The main.go closure logs a warning and skips delivery.
+	mgr := NewBotManager()
+	if bot := mgr.PrimaryBot("nonexistent"); bot != nil {
+		t.Errorf("PrimaryBot(nonexistent) = %v, want nil", bot)
+	}
+}
+
+// TestToolCallObserverResetsAfterReply verifies that toolMsgID is reset
+// after intermediate replies, forcing new messages instead of edits.
+func TestToolCallObserverResetsAfterReply(t *testing.T) {
+	// Simulates the processAgentMessage closure interactions to verify
+	// that intermediate text resets toolMsgID, forcing subsequent tool
+	// calls to create new messages instead of editing stale ones.
+	mock := &mockClient{}
+	b := &Bot{client: mock}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	// Simulate the ReplyFunc closure from processAgentMessage
+	replyFunc := func(text string) {
+		b.client.SendMessage(12345, text, nil)
+		toolMsgMu.Lock()
+		toolMsgID = 0
+		toolMsgMu.Unlock()
+	}
+
+	// Simulate the tool call observer closure from processAgentMessage
+	toolCallObserver := func(toolName string, params json.RawMessage) {
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+
+		text := b.formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, err := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			if err != nil {
+				return
+			}
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId:    12345,
+				MessageId: toolMsgID,
+				ParseMode: "HTML",
+			})
+		}
+	}
+
+	// Step 1: First tool call → sends new message (ID=1)
+	toolCallObserver("shell", json.RawMessage(`{"command":"ls"}`))
+	if mock.sentCount() != 1 {
+		t.Fatalf("after first tool call: sends=%d, want 1", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Fatalf("after first tool call: edits=%d, want 0", mock.editCount())
+	}
+
+	// Step 2: Intermediate reply fires → resets toolMsgID
+	replyFunc("Let me check...")
+	if mock.sentCount() != 2 {
+		t.Fatalf("after reply: sends=%d, want 2", mock.sentCount())
+	}
+
+	// Step 3: Second tool call → should send NEW message (not edit old one)
+	toolCallObserver("read", json.RawMessage(`{"path":"foo.txt"}`))
+	if mock.sentCount() != 3 {
+		t.Errorf("after second tool call: sends=%d, want 3 (new message, not edit)", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("after second tool call: edits=%d, want 0 (should not edit stale message)", mock.editCount())
+	}
+}
+
+// TestShowToolCalls_Preview verifies that tool calls are displayed when
+// showToolCalls is set to "preview".
+func TestShowToolCalls_Preview(t *testing.T) {
+	// When showToolCalls is "preview", tool call observer should send messages.
+	mock := &mockClient{}
+	b := &Bot{client: mock, showToolCalls: "preview"}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	observer := func(toolName string, params json.RawMessage) {
+		if b.showToolCalls == "off" || b.showToolCalls == "" {
+			return
+		}
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+		text := b.formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId: 12345, MessageId: toolMsgID, ParseMode: "HTML",
+			})
+		}
+	}
+
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
+	if mock.sentCount() != 1 {
+		t.Errorf("sends=%d, want 1", mock.sentCount())
+	}
+
+	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
+	if mock.editCount() != 1 {
+		t.Errorf("edits=%d, want 1", mock.editCount())
+	}
+}
+
+// TestShowToolCalls_Off verifies that tool calls are suppressed when
+// showToolCalls is "off".
+func TestShowToolCalls_Off(t *testing.T) {
+	// When showToolCalls is "off", tool call observer should be a no-op.
+	mock := &mockClient{}
+	b := &Bot{client: mock, showToolCalls: "off"}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	observer := func(toolName string, params json.RawMessage) {
+		if b.showToolCalls == "off" || b.showToolCalls == "" {
+			return
+		}
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+		text := b.formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId: 12345, MessageId: toolMsgID, ParseMode: "HTML",
+			})
+		}
+	}
+
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
+	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
+
+	if mock.sentCount() != 0 {
+		t.Errorf("sends=%d, want 0 (tool calls should be suppressed)", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("edits=%d, want 0 (tool calls should be suppressed)", mock.editCount())
+	}
+}
+
+// TestShowToolCalls_Full verifies that tool calls generate individual messages
+// when showToolCalls is "full".
+func TestShowToolCalls_Full(t *testing.T) {
+	// When showToolCalls is "full", every tool call gets its own persistent
+	// message with compact summary. The final response goes via sendReply.
+	mock := &mockClient{}
+	b := &Bot{client: mock, showToolCalls: "full"}
+
+	var toolMsgID int64
+	var toolMsgMu sync.Mutex
+
+	// This mirrors the ToolCallObserver closure in processMessage.
+	observer := func(toolName string, params json.RawMessage) {
+		if b.showToolCalls == "off" || b.showToolCalls == "" {
+			return
+		}
+		toolMsgMu.Lock()
+		defer toolMsgMu.Unlock()
+
+		if b.showToolCalls == "full" {
+			compact := formatToolCallCompact(toolName, params)
+			sent, _ := b.client.SendMessage(12345, compact, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			toolMsgID = sent.MessageId
+			return
+		}
+
+		text := b.formatToolCall(toolName, params)
+		if toolMsgID == 0 {
+			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
+			toolMsgID = sent.MessageId
+		} else {
+			b.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+				ChatId: 12345, MessageId: toolMsgID, ParseMode: "HTML",
+			})
+		}
+	}
+
+	// First tool call: new message with compact summary.
+	observer("shell", json.RawMessage(`{"command":"ls"}`))
+	if mock.sentCount() != 1 {
+		t.Errorf("sends=%d, want 1", mock.sentCount())
+	}
+	if !strings.Contains(mock.lastSendInjected, "shell") {
+		t.Errorf("sent text should contain tool name, got: %s", mock.lastSendInjected)
+	}
+
+	// Second tool call: also a new message (not an edit).
+	observer("read", json.RawMessage(`{"path":"foo.txt"}`))
+	if mock.sentCount() != 2 {
+		t.Errorf("sends=%d, want 2 (full mode sends each tool call as new message)", mock.sentCount())
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("edits=%d, want 0 (full mode should never edit previous tool call)", mock.editCount())
+	}
+
+	// Simulate response delivery: in "full" mode, response should NOT edit the tool message.
+	toolMsgMu.Lock()
+	editID := toolMsgID
+	toolMsgMu.Unlock()
+	if editID != 0 && b.showToolCalls == "preview" {
+		t.Error("should not enter preview branch for full mode")
+	}
+}
+
+// TestFormatToolCall verifies that formatToolCall produces properly formatted
+// tool call messages.
+func TestFormatToolCall(t *testing.T) {
+	b := &Bot{}
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"ls -la"}`))
+	if !strings.Contains(text, "▶️") {
+		t.Error("missing tool emoji")
+	}
+	if !strings.Contains(text, "<b>shell</b>") {
+		t.Errorf("missing tool name in %q", text)
+	}
+	if !strings.Contains(text, "ls -la") {
+		t.Errorf("missing params in %q", text)
+	}
+}
+
+// TestFormatToolCall_HTMLEscape verifies that HTML is properly escaped in
+// tool call messages.
+func TestFormatToolCall_HTMLEscape(t *testing.T) {
+	b := &Bot{}
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo <script>"}`))
+	if strings.Contains(text, "<script>") {
+		t.Errorf("HTML not escaped in %q", text)
+	}
+	if !strings.Contains(text, "&lt;script&gt;") {
+		t.Errorf("expected escaped HTML in %q", text)
+	}
+}
+
+// TestFormatToolCall_LongParams verifies that long parameters are truncated.
+func TestFormatToolCall_LongParams(t *testing.T) {
+	b := &Bot{}
+	longVal := strings.Repeat("x", 500)
+	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
+	// Long params should be truncated and contain "..."
+	if !strings.Contains(text, "...") {
+		t.Errorf("long params should be truncated: %q", text)
+	}
+}
+
+// TestFormatToolCall_UnescapesNewlinesAndTabs verifies that escaped newlines
+// and tabs in JSON are properly displayed.
+func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
+	b := &Bot{}
+	// Simulate a tool call where the JSON string value contains literal \n and \t
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo\nline2"}`))
+	// The unescaping should make newlines visible without the literal \n
+	if strings.Contains(text, "\\n") && !strings.Contains(text, "\n") {
+		t.Errorf("should unescape newlines: %q", text)
+	}
+}
+
+// TestFormatToolCall_UnescapesUnicodeSequences verifies that Unicode escape
+// sequences are properly displayed.
+func TestFormatToolCall_UnescapesUnicodeSequences(t *testing.T) {
+	b := &Bot{}
+	// Emoji or other Unicode escape sequences should be unescaped
+	text := b.formatToolCall("notify", json.RawMessage(`{"msg":"hello \\u2764"}`))
+	// The Unicode escape should be decoded to the actual character
+	if strings.Contains(text, "\\u") {
+		t.Errorf("should unescape unicode: %q", text)
+	}
+}

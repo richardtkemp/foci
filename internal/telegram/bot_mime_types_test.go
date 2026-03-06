@@ -1,0 +1,65 @@
+package telegram
+
+import (
+	"testing"
+)
+
+// TestIsImageMIME verifies that isImageMIME correctly identifies image MIME
+// types.
+func TestIsImageMIME(t *testing.T) {
+	tests := []struct {
+		mime string
+		want bool
+	}{
+		{"image/jpeg", true},
+		{"image/png", true},
+		{"image/gif", true},
+		{"image/webp", true},
+		{"application/pdf", false},
+		{"text/plain", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isImageMIME(tt.mime); got != tt.want {
+			t.Errorf("isImageMIME(%q) = %v, want %v", tt.mime, got, tt.want)
+		}
+	}
+}
+
+// TestExtForMediaType verifies that extForMediaType returns correct file
+// extensions for MIME types.
+func TestExtForMediaType(t *testing.T) {
+	tests := []struct {
+		mt   string
+		want string
+	}{
+		{"image/jpeg", ".jpg"},
+		{"image/png", ".png"},
+		{"image/gif", ".gif"},
+		{"image/webp", ".webp"},
+		{"application/pdf", ".pdf"},
+		{"image/tiff", ".bin"},
+		{"", ".bin"},
+	}
+	for _, tt := range tests {
+		if got := extForMediaType(tt.mt); got != tt.want {
+			t.Errorf("extForMediaType(%q) = %q, want %q", tt.mt, got, tt.want)
+		}
+	}
+}
+
+// TestIsPDFMIME verifies that isPDFMIME correctly identifies PDF MIME types.
+func TestIsPDFMIME(t *testing.T) {
+	if !isPDFMIME("application/pdf") {
+		t.Error("application/pdf should be PDF")
+	}
+	if isPDFMIME("image/jpeg") {
+		t.Error("image/jpeg should not be PDF")
+	}
+	if isPDFMIME("application/json") {
+		t.Error("application/json should not be PDF")
+	}
+	if isPDFMIME("") {
+		t.Error("empty string should not be PDF")
+	}
+}

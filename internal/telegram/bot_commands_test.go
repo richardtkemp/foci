@@ -1,0 +1,137 @@
+package telegram
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"foci/internal/command"
+)
+
+// TestRegisterCommands verifies that RegisterCommands properly registers
+// commands with the Telegram API.
+func TestRegisterCommands(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "help", Description: "List available commands"})
+	cmds.Register(&command.Command{Name: "ping", Description: "Check bot health"})
+	cmds.Register(&command.Command{Name: "status", Description: "Show agent status"})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	b.RegisterCommands()
+
+	if mock.setCmds == nil {
+		t.Fatal("SetMyCommands was not called")
+	}
+
+	// 3 registry commands + 2 special (stop, done)
+	if len(mock.setCmds) != 5 {
+		t.Fatalf("expected 5 commands, got %d", len(mock.setCmds))
+	}
+
+	// Registry commands should come first, sorted by name
+	names := make([]string, len(mock.setCmds))
+	for i, c := range mock.setCmds {
+		names[i] = c.Command
+	}
+	// help, ping, status (sorted), then stop, done
+	wantOrder := []string{"help", "ping", "status", "stop", "done"}
+	for i, want := range wantOrder {
+		if names[i] != want {
+			t.Errorf("command[%d] = %q, want %q", i, names[i], want)
+		}
+	}
+
+	// Verify descriptions
+	for _, c := range mock.setCmds {
+		if c.Description == "" {
+			t.Errorf("command %q has empty description", c.Command)
+		}
+	}
+}
+
+// TestRegisterCommands_EmptyDescription verifies that RegisterCommands falls
+// back to the command name when description is empty.
+func TestRegisterCommands_EmptyDescription(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "test", Description: ""})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	b.RegisterCommands()
+
+	// Should fall back to command name as description
+	for _, c := range mock.setCmds {
+		if c.Command == "test" && c.Description != "test" {
+			t.Errorf("expected description fallback to name, got %q", c.Description)
+		}
+	}
+}
+
+// TestRegisterCommands_APIError verifies that RegisterCommands handles API
+// errors gracefully without panicking.
+func TestRegisterCommands_APIError(t *testing.T) {
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{Name: "help", Description: "List commands"})
+
+	b, mock := testBot([]string{"111"}, cmds)
+	mock.setCmdsErr = fmt.Errorf("telegram API error")
+
+	// Should not panic — just logs a warning
+	b.RegisterCommands()
+}
+
+// TestSendReply_SkipsEmptyText verifies that sendReply skips empty text
+// without sending.
+func TestSendReply_SkipsEmptyText(t *testing.T) {
+	// sendReply trims parts and skips empty text — callers don't need to guard.
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	msg := makeMsg(111, "owner", "hello")
+
+	b.sendReply(msg, "111", "")
+	if mock.sentCount() != 0 {
+		t.Errorf("sends = %d, want 0 (sendReply skips empty text)", mock.sentCount())
+	}
+}
+
+// TestEmptyResponseGuard verifies the logic for detecting empty responses.
+func TestEmptyResponseGuard(t *testing.T) {
+	// Verify the guard logic: empty and whitespace-only strings should be
+	// detected. This mirrors the strings.TrimSpace check in processAgentMessage.
+	cases := []struct {
+		response string
+		isEmpty  bool
+	}{
+		{"", true},
+		{"   ", true},
+		{"\n\t", true},
+		{"hello", false},
+		{" x ", false},
+	}
+	for _, tc := range cases {
+		got := strings.TrimSpace(tc.response) == ""
+		if got != tc.isEmpty {
+			t.Errorf("TrimSpace(%q)==\"\" = %v, want %v", tc.response, got, tc.isEmpty)
+		}
+	}
+}
+
+// TestSendNotification_EmptyTextSkipped verifies that SendNotification skips
+// empty or whitespace-only text.
+func TestSendNotification_EmptyTextSkipped(t *testing.T) {
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	b.SetChatID(12345)
+
+	// Empty text should not send
+	b.SendNotification("")
+	b.SendNotification("   ")
+	b.SendNotification("\n\t")
+
+	if mock.sentCount() != 0 {
+		t.Errorf("sends = %d, want 0 (empty text should be skipped)", mock.sentCount())
+	}
+
+	// Non-empty text should send
+	b.SendNotification("test alert")
+	if mock.sentCount() != 1 {
+		t.Errorf("sends = %d, want 1", mock.sentCount())
+	}
+}
