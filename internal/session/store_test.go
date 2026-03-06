@@ -997,3 +997,55 @@ func TestLastActivity_InvalidKey(t *testing.T) {
 		t.Errorf("LastActivity with invalid key = %q, want 'n/a'", lastActivity)
 	}
 }
+
+// TestBoundAppender verifies that BoundAppender prevents cross-session writes.
+func TestBoundAppender(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	sessionA := "test/imain/1000000000"
+	sessionB := "test/ibranch/1000000001"
+	
+	// Create bound appender for session A
+	boundA := store.BoundTo(sessionA)
+	
+	// Should successfully append to session A
+	msgA := msg("user", "message for session A")
+	if err := boundA.Append(sessionA, msgA); err != nil {
+		t.Fatalf("BoundAppender.Append to own session failed: %v", err)
+	}
+	
+	// Should reject append to session B (cross-session write)
+	msgB := msg("user", "message for session B")
+	err := boundA.Append(sessionB, msgB)
+	if err == nil {
+		t.Fatal("BoundAppender.Append to different session should have failed")
+	}
+	if !strings.Contains(err.Error(), "cross-session write blocked") {
+		t.Errorf("error should mention cross-session write, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), sessionA) || !strings.Contains(err.Error(), sessionB) {
+		t.Errorf("error should include both session keys, got: %v", err)
+	}
+	
+	// Verify session A has the message
+	msgs, err := store.Load(sessionA)
+	if err != nil {
+		t.Fatalf("Load session A: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("session A should have 1 message, got %d", len(msgs))
+	}
+	if provider.TextOf(msgs[0].Content) != "message for session A" {
+		t.Errorf("session A message = %q, want %q", provider.TextOf(msgs[0].Content), "message for session A")
+	}
+	
+	// Verify session B was not written to
+	msgs, err = store.Load(sessionB)
+	if err != nil {
+		t.Fatalf("Load session B: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("session B should have 0 messages, got %d", len(msgs))
+	}
+}

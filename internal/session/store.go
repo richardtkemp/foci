@@ -38,6 +38,43 @@ func NewStore(dir string) *Store {
 	return &Store{dir: dir}
 }
 
+// BoundAppender restricts appends to a single session, preventing cross-session writes.
+// This enforces the ownership model: a session file can only be written to by its
+// own HandleMessage execution. Cross-session writes are blocked with a clear error.
+//
+// Example usage in tools:
+//
+//	func (t *Tool) Execute(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+//	    currentSession := SessionKeyFromContext(ctx)
+//	    boundAppender := t.sessions.BoundTo(currentSession)
+//	    // This works - writing to own session
+//	    boundAppender.Append(currentSession, msg)
+//	    // This fails - cross-session write blocked
+//	    boundAppender.Append(otherSession, msg)  // ERROR
+//	}
+type BoundAppender struct {
+	store      *Store
+	sessionKey string
+}
+
+// BoundTo creates a BoundAppender that can only append to the specified session.
+// This enforces session ownership: tools can only write to their own session file.
+func (s *Store) BoundTo(sessionKey string) *BoundAppender {
+	return &BoundAppender{
+		store:      s,
+		sessionKey: sessionKey,
+	}
+}
+
+// Append adds a message to the bound session, rejecting cross-session writes.
+func (b *BoundAppender) Append(key string, msg provider.Message) error {
+	if key != b.sessionKey {
+		return fmt.Errorf("cross-session write blocked: BoundAppender for session %q cannot write to session %q",
+			b.sessionKey, key)
+	}
+	return b.store.Append(key, msg)
+}
+
 // SessionPath converts a session key to a file path.
 // Key format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]
 // Root path: {dir}/{key}/root.jsonl
