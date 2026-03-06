@@ -760,7 +760,7 @@ func cmdAuth(args []string) error {
 	if _, err := os.Stat(secretsPath); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Secrets file will be created at: %s\nConfirm? [Y/n] ", secretsPath)
 		var answer string
-		fmt.Scanln(&answer)
+		_, _ = fmt.Scanln(&answer) // ignore error if user just presses enter
 		answer = strings.TrimSpace(strings.ToLower(answer))
 		if answer != "" && answer != "y" && answer != "yes" {
 			return fmt.Errorf("aborted")

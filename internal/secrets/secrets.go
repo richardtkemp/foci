@@ -634,7 +634,8 @@ func (s *Store) CheckSecurity() []string {
 		if err == nil {
 			found := false
 			for _, g := range gids {
-				if uint64(g) == expectedGID { // #nosec G115 - GID is always non-negative
+				// #nosec G115 - GID values are always non-negative and within uint64 range
+				if uint64(g) == expectedGID {
 					found = true
 					break
 				}

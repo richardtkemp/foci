@@ -13,7 +13,6 @@ import (
 //
 // Returns a complete WAV file (44-byte header + PCM data).
 func wrapPCMInWAV(pcm []byte, sampleRate, numChannels, bitsPerSample int) []byte {
-	// #nosec G115 - WAV format fields have specific sizes, values are within valid audio parameter ranges
 	byteRate := sampleRate * numChannels * bitsPerSample / 8
 	blockAlign := numChannels * bitsPerSample / 8
 	dataSize := len(pcm)
@@ -23,22 +22,22 @@ func wrapPCMInWAV(pcm []byte, sampleRate, numChannels, bitsPerSample int) []byte
 
 	// RIFF header
 	copy(header[0:4], []byte("RIFF"))
-	binary.LittleEndian.PutUint32(header[4:8], uint32(fileSize))
+	binary.LittleEndian.PutUint32(header[4:8], uint32(fileSize)) // #nosec G115 - WAV header fields, values within valid audio range
 	copy(header[8:12], []byte("WAVE"))
 
 	// fmt chunk
 	copy(header[12:16], []byte("fmt "))
 	binary.LittleEndian.PutUint32(header[16:20], 16) // chunk size
 	binary.LittleEndian.PutUint16(header[20:22], 1)  // audio format (1 = PCM)
-	binary.LittleEndian.PutUint16(header[22:24], uint16(numChannels))
-	binary.LittleEndian.PutUint32(header[24:28], uint32(sampleRate))
-	binary.LittleEndian.PutUint32(header[28:32], uint32(byteRate))
-	binary.LittleEndian.PutUint16(header[32:34], uint16(blockAlign))
-	binary.LittleEndian.PutUint16(header[34:36], uint16(bitsPerSample))
+	binary.LittleEndian.PutUint16(header[22:24], uint16(numChannels))        // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint32(header[24:28], uint32(sampleRate))         // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint32(header[28:32], uint32(byteRate))           // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint16(header[32:34], uint16(blockAlign))         // #nosec G115 - WAV header fields, values within valid audio range
+	binary.LittleEndian.PutUint16(header[34:36], uint16(bitsPerSample))      // #nosec G115 - WAV header fields, values within valid audio range
 
 	// data chunk
 	copy(header[36:40], []byte("data"))
-	binary.LittleEndian.PutUint32(header[40:44], uint32(dataSize))
+	binary.LittleEndian.PutUint32(header[40:44], uint32(dataSize)) // #nosec G115 - WAV header fields, values within valid audio range
 
 	// Combine header and PCM data
 	result := make([]byte, 0, 44+len(pcm))

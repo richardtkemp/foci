@@ -156,7 +156,8 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 	if err != nil {
 		return fmt.Errorf("create decompressed session %s: %w", jsonlPath, err)
 	}
-	if _, err := io.Copy(out, gr); err != nil { // #nosec G110 - legitimate session file decompression
+	// #nosec G110 - legitimate session file decompression, not untrusted input
+	if _, err := io.Copy(out, gr); err != nil {
 		_ = out.Close()
 		_ = os.Remove(jsonlPath)
 		return fmt.Errorf("decompress session %s: %w", gzPath, err)

@@ -1294,7 +1294,7 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 			// Normalize pane content to filter out TUI noise (status bar
 			// clocks, spinners, token counts, etc.) before hashing.
 			normalized := normalizePaneContent(out)
-			hash := md5.Sum([]byte(normalized))
+			hash := md5.Sum([]byte(normalized)) // #nosec G401 - content change detection, not security
 
 			// Check if content changed
 			if hash != ws.lastContent {

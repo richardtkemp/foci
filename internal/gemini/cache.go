@@ -138,13 +138,13 @@ func (m *CacheManager) Close(ctx context.Context) {
 
 // contentHash computes a hash of the system instruction and tools for change detection.
 func contentHash(system *genai.Content, tools []*genai.Tool) [16]byte {
-	h := md5.New()
+	h := md5.New() // #nosec G401 - used for cache key generation, not security
 	enc := json.NewEncoder(h)
 	if system != nil {
-		enc.Encode(system)
+		_ = enc.Encode(system) // encoding to hash, errors are impossible
 	}
 	for _, t := range tools {
-		enc.Encode(t)
+		_ = enc.Encode(t) // encoding to hash, errors are impossible
 	}
 	var result [16]byte
 	copy(result[:], h.Sum(nil))

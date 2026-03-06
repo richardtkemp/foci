@@ -47,15 +47,15 @@ func init() {
 	}
 
 	// Build filtered list: all groups EXCEPT foci-secrets
-	// #nosec G115 - GID/UID conversions are safe, values are always non-negative and within uint32 range
 	var filteredGroups []uint32
 	found := false
 	for _, g := range currentGroups {
+		// #nosec G115 - GID values are always non-negative and within uint64 range
 		if uint64(g) == secretsGID {
 			found = true
 			continue // drop foci-secrets
 		}
-		filteredGroups = append(filteredGroups, uint32(g))
+		filteredGroups = append(filteredGroups, uint32(g)) // #nosec G115 - GID values are always non-negative and within uint32 range
 	}
 
 	if !found {
@@ -65,15 +65,15 @@ func init() {
 	}
 
 	// Look up primary GID
-	primaryGID := uint32(gid)
+	primaryGID := uint32(gid) // #nosec G115 - GID values are always non-negative and within uint32 range
 	if u, err := user.Current(); err == nil {
 		if g, err := strconv.ParseUint(u.Gid, 10, 32); err == nil {
-			primaryGID = uint32(g)
+			primaryGID = uint32(g) // #nosec G115 - GID values are always non-negative and within uint32 range
 		}
 	}
 
 	cred := &syscall.Credential{
-		Uid:    uint32(uid),
+		Uid:    uint32(uid), // #nosec G115 - UID values are always non-negative and within uint32 range
 		Gid:    primaryGID,
 		Groups: filteredGroups, // all groups except foci-secrets
 	}

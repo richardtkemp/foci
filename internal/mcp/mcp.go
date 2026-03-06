@@ -146,7 +146,7 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 		result, err := session.ListTools(ctx, nil)
 		if err != nil {
 			log.Warnf("mcp", "failed to list tools from %q: %v", cfg.Name, err)
-			session.Close()
+			_ = session.Close() // best effort cleanup
 			continue
 		}
 
@@ -269,7 +269,7 @@ func (m *Manager) refreshServers(ctx context.Context) {
 	log.Infof("mcp", "agent %s: mcp.toml changed, reconnecting", m.agentID)
 
 	// Close existing connections.
-	m.Close()
+	_ = m.Close() // best effort cleanup before reconnecting
 
 	if len(servers) == 0 {
 		m.mu.Lock()
@@ -279,7 +279,7 @@ func (m *Manager) refreshServers(ctx context.Context) {
 	}
 
 	// Connect with new config.
-	m.connectWith(ctx, servers, m.tf)
+	_ = m.connectWith(ctx, servers, m.tf) // errors already logged in connectWith
 
 	m.mu.Lock()
 	m.current = servers
