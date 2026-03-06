@@ -110,15 +110,20 @@ Subcommands:
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	anthropicClient, ccSrc, credHolder := resolveCredentials(cfg, sec.store, ctx)
-	anthropicClient.SetUseSDK(cfg.Anthropic.UseSDK)
-	log.Debugf("main", "anthropic client ready (use_sdk=%v, streaming=%v)", cfg.Anthropic.UseSDK, cfg.Anthropic.Streaming)
+	// Initialize credential resolvers
+	if err := initCredentialResolvers(ctx, cfg, sec.store); err != nil {
+		log.Fatalf("main", "init credential resolvers: %v", err)
+	}
 
-	clients := newClientRegistry(cfg, sec.store, anthropicClient, ctx)
-	usageClients := newUsageClientRegistry(cfg, sec.store, ccSrc)
+	clients := newClientRegistry(cfg, sec.store, ctx)
+	usageClients := newUsageClientRegistry(cfg, sec.store)
 
 	// ========== Dynamic model alias resolution ==========
-	resolveAnthropicAliases(anthropicClient, cfg.Models.Aliases)
+	if anthropicClient := clients.GetClient("anthropic", "anthropic"); anthropicClient != nil {
+		if ac, ok := anthropicClient.(*anthropic.Client); ok {
+			resolveAnthropicAliases(ac, cfg.Models.Aliases)
+		}
+	}
 	if openaiKey, _ := sec.store.Get("openai.api_key"); openaiKey != "" {
 		var openaiOpts []oai.Option
 		if cfg.OpenAI.BaseURL != "" {
@@ -290,22 +295,14 @@ Subcommands:
 	// ========== HTTP server ==========
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	var reloadCreds func() error
-	if credHolder != nil {
+	if resolver, ok := formatResolvers["anthropic"]; ok {
+		if ar, ok := resolver.(*anthropic.AnthropicResolver); ok {
+			reloadCreds = ar.GetReloadFunc(secretsPath)
+		}
+	}
+	if reloadCreds == nil {
 		reloadCreds = func() error {
-			st, err := secrets.Load(secretsPath)
-			if err != nil {
-				return fmt.Errorf("reload secrets.toml: %w", err)
-			}
-			token, _ := st.Get("anthropic.setup_token")
-			if token == "" {
-				token, _ = st.Get("anthropic.api_key")
-			}
-			if token == "" {
-				return fmt.Errorf("no setup_token or api_key found in secrets.toml after reload")
-			}
-			credHolder.Set(token)
-			log.Infof("main", "credentials hot-reloaded from secrets.toml")
-			return nil
+			return fmt.Errorf("credential reload not supported")
 		}
 	}
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"sync"
-	"time"
 
 	"foci/internal/anthropic"
 	"foci/internal/config"
@@ -30,7 +29,6 @@ type usageClientRegistry struct {
 
 	cfg   *config.Config
 	store *secrets.Store
-	ccSrc *anthropic.CCTokenSource
 }
 
 type usageClientEntry struct {
@@ -39,12 +37,11 @@ type usageClientEntry struct {
 }
 
 // newUsageClientRegistry creates a registry that lazily initializes UsageClients.
-func newUsageClientRegistry(cfg *config.Config, store *secrets.Store, ccSrc *anthropic.CCTokenSource) *usageClientRegistry {
+func newUsageClientRegistry(cfg *config.Config, store *secrets.Store) *usageClientRegistry {
 	return &usageClientRegistry{
 		entries: make(map[string]*usageClientEntry),
 		cfg:     cfg,
 		store:   store,
-		ccSrc:   ccSrc,
 	}
 }
 
@@ -88,45 +85,20 @@ func (r *usageClientRegistry) GetUsageClient(endpointName string) *anthropic.Usa
 	r.mu.Unlock()
 
 	entry.once.Do(func() {
-		// Priority 1: setup-token (OAuth)
-		if setupToken, ok := r.store.Get("anthropic.setup_token"); ok {
-			holder := &tokenHolder{token: setupToken}
-			entry.client = anthropic.NewUsageClientWithFunc(holder.Get)
-			if ttl, err := time.ParseDuration(r.cfg.Anthropic.UsageCacheTTL); err == nil && ttl > 0 {
-				entry.client.SetCacheTTL(ttl)
+		// Check if format has a custom resolver
+		if resolver, ok := formatResolvers[epCfg.Format]; ok {
+			client, err := resolver.ResolveUsageClient(endpointName, apiKeyName, r.store)
+			if err != nil {
+				log.Debugf("usage_registry", "no usage client for %q: %v", endpointName, err)
+				return
 			}
-			log.Infof("usage_registry", "created client for %s (via setup_token)", key)
+			entry.client = client
 			return
 		}
 
-		// Priority 2: Endpoint-specific API key
-		if apiKey, ok := r.store.Get(apiKeyName); ok {
-			holder := &tokenHolder{token: apiKey}
-			entry.client = anthropic.NewUsageClientWithFunc(holder.Get)
-			if ttl, err := time.ParseDuration(r.cfg.Anthropic.UsageCacheTTL); err == nil && ttl > 0 {
-				entry.client.SetCacheTTL(ttl)
-			}
-			log.Infof("usage_registry", "created client for %s (via %s)", key, apiKeyName)
-			return
-		}
-
-		// Priority 3: Claude Code credentials (fallback)
-		if r.ccSrc != nil {
-			entry.client = anthropic.NewUsageClientWithFunc(r.ccSrc.Token)
-			if ttl, err := time.ParseDuration(r.cfg.Anthropic.UsageCacheTTL); err == nil && ttl > 0 {
-				entry.client.SetCacheTTL(ttl)
-			}
-			log.Infof("usage_registry", "created client for %s (via CC credentials)", key)
-		}
+		// Fallback: simple resolution (shouldn't happen if resolver registered)
+		log.Debugf("usage_registry", "no resolver for format %q", epCfg.Format)
 	})
 
 	return entry.client
-}
-
-// InvalidateAll clears all cached usage clients (for token hot-reload).
-func (r *usageClientRegistry) InvalidateAll() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.entries = make(map[string]*usageClientEntry)
-	log.Infof("usage_registry", "invalidated all clients")
 }
