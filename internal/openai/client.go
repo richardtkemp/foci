@@ -50,6 +50,7 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	sdkOpts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
 		option.WithHTTPClient(&http.Client{Timeout: cfg.httpTimeout}),
+		option.WithMaxRetries(0), // disable SDK retries - provider layer handles retry
 	}
 	if cfg.baseURL != "" {
 		sdkOpts = append(sdkOpts, option.WithBaseURL(cfg.baseURL))

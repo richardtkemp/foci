@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,81 +16,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 )
 
-// retryCallbacksKey is the context key for retry notification callbacks.
-type retryCallbacksKey struct{}
-
-// retryStateKey is the context key for tracking retry notification state.
-type retryStateKey struct{}
-
-// retryState tracks whether we've already notified for this retry sequence.
-type retryState struct {
-	mu       sync.Mutex
-	notified bool
-}
-
-// RetryCallbacks holds callbacks for retry lifecycle events.
-type RetryCallbacks struct {
-	OnFirstRetry func(endpoint string) // called once on first retry in a sequence
-	OnSuccess    func()                // called when a retry succeeds
-}
-
-// WithRetryCallbacks attaches retry callbacks to a context and initializes state.
-func WithRetryCallbacks(ctx context.Context, cb *RetryCallbacks) context.Context {
-	ctx = context.WithValue(ctx, retryCallbacksKey{}, cb)
-	ctx = context.WithValue(ctx, retryStateKey{}, &retryState{})
-	return ctx
-}
-
-// retryCallbacksFromContext extracts RetryCallbacks from context (nil if absent).
-func retryCallbacksFromContext(ctx context.Context) *RetryCallbacks {
-	cb, _ := ctx.Value(retryCallbacksKey{}).(*RetryCallbacks)
-	return cb
-}
-
-// retryStateFromContext extracts retry state from context (nil if absent).
-func retryStateFromContext(ctx context.Context) *retryState {
-	s, _ := ctx.Value(retryStateKey{}).(*retryState)
-	return s
-}
-
-// notifyFirstRetry calls OnFirstRetry callback once per retry sequence.
-func notifyFirstRetry(ctx context.Context, endpoint string) {
-	callbacks := retryCallbacksFromContext(ctx)
-	if callbacks == nil || callbacks.OnFirstRetry == nil {
-		return
-	}
-
-	state := retryStateFromContext(ctx)
-	if state == nil {
-		return
-	}
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if !state.notified {
-		callbacks.OnFirstRetry(endpoint)
-		state.notified = true
-	}
-}
-
-// notifySuccess calls OnSuccess callback if we previously notified a retry.
-func notifySuccess(ctx context.Context) {
-	callbacks := retryCallbacksFromContext(ctx)
-	if callbacks == nil || callbacks.OnSuccess == nil {
-		return
-	}
-
-	state := retryStateFromContext(ctx)
-	if state == nil {
-		return
-	}
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.notified {
-		callbacks.OnSuccess()
-	}
-}
 
 // CountTokensResponse is the response from the /v1/messages/count_tokens endpoint.
 type CountTokensResponse struct {
@@ -213,6 +137,39 @@ func (c *Client) signalRecovery() {
 	}
 }
 
+// OnRetrySuccess signals recovery to wake other waiting goroutines.
+// Called by the provider layer when a request succeeds after retries.
+func (c *Client) OnRetrySuccess() {
+	c.signalRecovery()
+}
+
+// WaitForRecovery returns a channel that closes when another goroutine recovers.
+// Called by the provider layer during extended overload retry.
+func (c *Client) WaitForRecovery() <-chan struct{} {
+	return c.enterOverload()
+}
+
+// RetryBaseDelay returns the base delay for standard retries (phase 1).
+// Returns configured delay if set, otherwise 2s default. Tests can set to 1ms.
+func (c *Client) RetryBaseDelay() time.Duration {
+	if c.retryBaseDelay > 0 {
+		return c.retryBaseDelay
+	}
+	return 2 * time.Second
+}
+
+// OverloadBaseDelay returns the initial backoff for extended overload retries (phase 2).
+// Production: 5s. Test mode (retryBaseDelay < 1s): retryBaseDelay * 5.
+func (c *Client) OverloadBaseDelay() time.Duration {
+	return c.overloadBaseDelay()
+}
+
+// OverloadMaxDuration returns the maximum duration for extended overload retries (phase 2).
+// Production: 2h. Test mode (retryBaseDelay < 1s): retryBaseDelay * 500.
+func (c *Client) OverloadMaxDuration() time.Duration {
+	return c.overloadMaxDuration()
+}
+
 // overloadBaseDelay returns the initial backoff for the extended 529 retry loop.
 // Production: 5s. Test mode (retryBaseDelay < 1s): retryBaseDelay * 5.
 func (c *Client) overloadBaseDelay() time.Duration {
@@ -319,14 +276,7 @@ func (c *Client) sendOnceRaw(ctx context.Context, body []byte) (*MessageResponse
 }
 
 // SendMessage sends a message request and returns the response.
-//
-// Phase 1: Retries up to 3 times on retryable server errors (500, 502, 503, 529)
-// with exponential backoff (2s, 4s, 8s).
-//
-// Phase 2 (529 only): If phase 1 exhausts on a 529, enters an extended
-// duration-based retry loop (~2h production, scaled in tests) with 5s base
-// backoff doubling without cap. A cross-goroutine recovery signal wakes
-// sleeping retriers early when any SendMessage on the same Client succeeds.
+// Retry logic is handled by the provider layer.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	// For raw transport, pre-marshal the body once. SDK transport uses req directly.
 	var body []byte
@@ -338,123 +288,9 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 		}
 	}
 
-	// Phase 1: standard retries for all retryable errors.
-	resp, lastErr := c.retryWithBackoff(ctx, "send", func() (*MessageResponse, error) {
-		return c.sendOnce(ctx, body, req)
-	})
-	if lastErr == nil {
-		return resp, nil
-	}
-
-	// Phase 2: extended overload retries (529 only).
-	var apiErr *APIError
-	if !errors.As(lastErr, &apiErr) || !apiErr.IsOverloaded() {
-		return nil, lastErr
-	}
-
-	return c.retryWithOverload(ctx, "overload", func() (*MessageResponse, error) {
-		return c.sendOnce(ctx, body, req)
-	})
+	return c.sendOnce(ctx, body, req)
 }
 
-// retryWithBackoff performs standard exponential backoff retries for retryable errors.
-// Returns (response, nil) on success, or (nil, lastError) on failure.
-func (c *Client) retryWithBackoff(ctx context.Context, logPrefix string, retryFn func() (*MessageResponse, error)) (*MessageResponse, error) {
-	const maxRetries = 3
-	backoff := c.retryBaseDelay
-	if backoff == 0 {
-		backoff = 2 * time.Second
-	}
-
-	var lastErr error
-	loopStart := time.Now()
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			// Notify on first retry only (across all retry phases)
-			notifyFirstRetry(ctx, c.baseURL)
-
-			slog.Warn("anthropic: "+logPrefix+" retrying after error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-			backoff *= 2
-		}
-
-		slog.Debug("anthropic: "+logPrefix+"_attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
-		attemptStart := time.Now()
-		resp, err := retryFn()
-		attemptDur := time.Since(attemptStart)
-		if err == nil {
-			slog.Debug("anthropic: "+logPrefix+"_attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
-			c.signalRecovery()
-			// Notify success if we retried
-			notifySuccess(ctx)
-			return resp, nil
-		}
-		lastErr = err
-		slog.Debug("anthropic: "+logPrefix+"_attempt_fail", "attempt", attempt, "duration", attemptDur, "error", err, "elapsed_total", time.Since(loopStart))
-
-		var apiErr *APIError
-		if !errors.As(err, &apiErr) {
-			return nil, err
-		}
-
-		if !apiErr.IsRetryable() {
-			return nil, err
-		}
-	}
-
-	slog.Debug("anthropic: "+logPrefix+"_exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
-	return nil, lastErr
-}
-
-// retryWithOverload handles extended overload retry logic for both regular and streaming requests.
-func (c *Client) retryWithOverload(ctx context.Context, logPrefix string, retryFn func() (*MessageResponse, error)) (*MessageResponse, error) {
-	overloadBackoff := c.overloadBaseDelay()
-	maxDuration := c.overloadMaxDuration()
-	overloadStart := time.Now()
-	recoverCh := c.enterOverload()
-	var lastErr error
-
-	for time.Since(overloadStart) < maxDuration {
-		// Notify on first retry only (across all retry phases)
-		notifyFirstRetry(ctx, c.baseURL)
-
-		slog.Warn("anthropic: "+logPrefix+" retry", "backoff", overloadBackoff.String(), "elapsed", time.Since(overloadStart).String(), "max", maxDuration.String())
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(overloadBackoff):
-		case <-recoverCh:
-			slog.Info("anthropic: "+logPrefix+" recovery signal received, retrying immediately")
-			recoverCh = c.enterOverload() // re-acquire for next iteration
-		}
-
-		resp, err := retryFn()
-		if err == nil {
-			slog.Info("anthropic: recovered from "+logPrefix, "elapsed", time.Since(overloadStart).String())
-			c.signalRecovery()
-			// Notify success if we retried
-			notifySuccess(ctx)
-			return resp, nil
-		}
-		lastErr = err
-
-		var retryAPIErr *APIError
-		if !errors.As(err, &retryAPIErr) || !retryAPIErr.IsRetryable() {
-			return nil, err
-		}
-
-		overloadBackoff *= 2
-	}
-
-	slog.Warn("anthropic: "+logPrefix+" retries exhausted", "elapsed", time.Since(overloadStart).String())
-	return nil, lastErr
-}
 
 // CountTokens calls the /v1/messages/count_tokens endpoint to get exact
 // input token counts for a request. The endpoint is free (no tokens billed).
