@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,7 +17,7 @@ import (
 
 func TestHandleMessageEndTurn(t *testing.T) {
 	// Set up mock API server
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
@@ -28,9 +27,6 @@ func TestHandleMessageEndTurn(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -68,7 +64,7 @@ func TestHandleMessageEndTurn(t *testing.T) {
 func TestHandleMessageWithToolUse(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 
 		if n == 1 {
@@ -101,9 +97,6 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 
@@ -151,7 +144,7 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 func TestHandleMessageUnknownTool(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
 			return &provider.MessageResponse{
@@ -179,9 +172,6 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry() // empty — no tools registered
 
@@ -205,7 +195,7 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 }
 
 func TestHandleMessageSessionContinuity(t *testing.T) {
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		// Count messages in request to verify session history is sent
 		msgCount := len(req.Messages)
 		return &provider.MessageResponse{
@@ -217,9 +207,6 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -247,7 +234,7 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 
 func TestHandleMessageCancellation(t *testing.T) {
 	// Verify that a cancelled context causes HandleMessage to return ctx.Err()
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:   "msg_1",
 			Type: "message",
@@ -264,9 +251,6 @@ func TestHandleMessageCancellation(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 
@@ -311,7 +295,7 @@ func TestHandleMessageCancellation(t *testing.T) {
 }
 
 func TestIsProcessing(t *testing.T) {
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
@@ -321,9 +305,6 @@ func TestIsProcessing(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -347,22 +328,21 @@ func TestIsProcessing(t *testing.T) {
 
 func TestProcessingDetails(t *testing.T) {
 	// ProcessingDetails should capture session key, trigger, and timing
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":           "msg_1",
-			"type":         "message",
-			"role":         "assistant",
-			"model":        "claude-haiku-4-5",
-			"content":      []map[string]interface{}{{"type": "text", "text": "ok"}},
-			"stop_reason":  "end_turn",
-			"usage":        map[string]int{"input_tokens": 10, "output_tokens": 5},
-			"cache_read":   0,
-			"cache_create": 0,
-		})
-	}))
-	defer server.Close()
+	started := make(chan struct{})
+	var startedOnce sync.Once
 
-	client := newTestClientWithBase(server.URL)
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		startedOnce.Do(func() { close(started) })
+		time.Sleep(200 * time.Millisecond) // hold the turn open
+		return &provider.MessageResponse{
+			ID:         "msg_1",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}, nil
+	})
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -379,14 +359,6 @@ func TestProcessingDetails(t *testing.T) {
 	}
 
 	// During turn — run HandleMessage in goroutine, check details mid-flight
-	started := make(chan struct{})
-	origHandler := server.Config.Handler
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(started)
-		time.Sleep(200 * time.Millisecond) // hold the turn open
-		origHandler.ServeHTTP(w, r)
-	})
-
 	done := make(chan struct{})
 	go func() {
 		ctx := WithTrigger(context.Background(), "keepalive")
@@ -437,7 +409,7 @@ func TestDeferredReply(t *testing.T) {
 	// Verify that text in tool_use responses is sent via ReplyFunc
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
 			// First response: text + tool_use (deferred reply scenario)
@@ -463,9 +435,6 @@ func TestDeferredReply(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

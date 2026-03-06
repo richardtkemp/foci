@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,12 +14,12 @@ import (
 	"foci/internal/workspace"
 )
 
-// compactionMockServer creates a mock that returns a canned summary for
+// compactionTestClient creates a test client that returns a canned summary for
 // compaction requests (detected by "provide continuity" in the last message)
 // and normal end_turn responses otherwise. Turn highTokenTurn gets
 // InputTokens=170000 to exceed the 160k threshold (0.8 * 200k).
-func compactionMockServer(turnCount *atomic.Int32, highTokenTurn int32) *httptest.Server {
-	return mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+func compactionTestClient(turnCount *atomic.Int32, highTokenTurn int32) *testClient {
+	return newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		lastMsg := req.Messages[len(req.Messages)-1]
 		if strings.Contains(provider.TextOf(lastMsg.Content), "provide continuity") {
 			return &provider.MessageResponse{
@@ -54,18 +53,15 @@ type compactionTestEnv struct {
 	ag        *Agent
 	store     *session.Store
 	compactor *compaction.Compactor
-	server    *httptest.Server
 }
 
-// newCompactionTestEnv creates a test environment with a mock server, client,
+// newCompactionTestEnv creates a test environment with a mock client,
 // session store, bootstrap, and compactor. The turnCount and highTokenTurn
 // parameters control which turn triggers high token usage.
 func newCompactionTestEnv(t *testing.T, turnCount *atomic.Int32, highTokenTurn int32) *compactionTestEnv {
 	t.Helper()
-	server := compactionMockServer(turnCount, highTokenTurn)
-	t.Cleanup(server.Close)
+	client := compactionTestClient(turnCount, highTokenTurn)
 
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -83,7 +79,6 @@ func newCompactionTestEnv(t *testing.T, turnCount *atomic.Int32, highTokenTurn i
 		ag:        ag,
 		store:     store,
 		compactor: compactor,
-		server:    server,
 	}
 }
 

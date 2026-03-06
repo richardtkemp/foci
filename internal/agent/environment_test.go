@@ -13,7 +13,7 @@ import (
 
 func TestEnvironmentBlockPrepended(t *testing.T) {
 	var receivedReq *provider.MessageRequest
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -24,9 +24,6 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -72,7 +69,7 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 
 func TestEnvironmentBlockOmittedWhenEmpty(t *testing.T) {
 	var receivedReq *provider.MessageRequest
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -83,9 +80,6 @@ func TestEnvironmentBlockOmittedWhenEmpty(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})

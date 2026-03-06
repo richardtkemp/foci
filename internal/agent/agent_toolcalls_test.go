@@ -102,7 +102,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 	// HandleMessage repairs it before sending to the API.
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -113,9 +113,6 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 50, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -186,7 +183,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	// tool call notifications in the chat.
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
 			return &provider.MessageResponse{
@@ -210,9 +207,6 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -271,7 +265,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 func TestToolResultRedaction(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
 			return &provider.MessageResponse{
@@ -294,9 +288,6 @@ func TestToolResultRedaction(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -342,7 +333,7 @@ func TestToolResultRedaction(t *testing.T) {
 func TestToolErrorRedaction(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 		if n == 1 {
 			return &provider.MessageResponse{
@@ -365,9 +356,6 @@ func TestToolErrorRedaction(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

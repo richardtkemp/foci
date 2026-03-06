@@ -91,7 +91,7 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 	// Verify that the API request includes cache_control but saved session does not
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -102,9 +102,6 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -150,7 +147,7 @@ func TestCacheBreakpointInRequest(t *testing.T) {
 
 func TestCacheBustDetection(t *testing.T) {
 	callCount := 0
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		resp := &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", callCount),
@@ -168,9 +165,6 @@ func TestCacheBustDetection(t *testing.T) {
 		}
 		return resp
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -203,7 +197,7 @@ func TestCacheBustDetection(t *testing.T) {
 
 func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 	callCount := 0
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		resp := &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", callCount),
@@ -219,9 +213,6 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 		}
 		return resp
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -256,7 +247,7 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 	// A multi-step turn with tool_use iterations should fire at most one cache bust
 	// warning per turn, not one per API call.
 	var callCount atomic.Int32
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		switch n {
 		case 1:
@@ -316,9 +307,6 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 			}
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -358,7 +346,7 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 	// After ResetCacheBaseline (as called by /compact), the next request should
 	// not trigger a false cache bust warning.
 	callCount := 0
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		resp := &provider.MessageResponse{
 			ID:         fmt.Sprintf("msg_%d", callCount),
@@ -375,9 +363,6 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 		}
 		return resp
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
