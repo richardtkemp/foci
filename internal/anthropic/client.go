@@ -301,6 +301,11 @@ func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, err
 	return c.countTokensRaw(ctx, req)
 }
 
+// IsCachingAvailable returns true as Anthropic prompt caching is always available.
+func (c *Client) IsCachingAvailable() bool {
+	return true
+}
+
 // countTokensSDK counts tokens using the SDK.
 func (c *Client) countTokensSDK(ctx context.Context, req *MessageRequest) (int, error) {
 	token, err := c.resolveToken()

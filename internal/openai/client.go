@@ -78,6 +78,11 @@ func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) 
 	return 0, fmt.Errorf("openai: token counting not supported")
 }
 
+// IsCachingAvailable returns false as OpenAI does not support prompt caching.
+func (c *Client) IsCachingAvailable() bool {
+	return false
+}
+
 // ModelInfo holds metadata about an available OpenAI model.
 type ModelInfo struct {
 	ID      string

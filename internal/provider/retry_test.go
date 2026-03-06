@@ -29,6 +29,10 @@ func (m *retryMockClient) CountTokens(ctx context.Context, req *MessageRequest) 
 	return 0, errors.New("not implemented")
 }
 
+func (m *retryMockClient) IsCachingAvailable() bool {
+	return true
+}
+
 func (m *retryMockClient) StreamMessage(ctx context.Context, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
 	m.streamHandler = handler
 	return m.SendMessage(ctx, req)

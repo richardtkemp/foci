@@ -249,13 +249,14 @@ Subcommands:
 		}
 
 		setupKeepalive(inst, acfg, keepaliveParams{
-			cfg:         cfg,
-			sessions:    si.sessions,
-			usageClient: usageClient,
-			botMgr:      botMgr,
-			stateStore:  si.stateStore,
-			todoStore:   mem.todoStores[acfg.ID],
-			ctx:         ctx,
+			cfg:                   cfg,
+			sessions:              si.sessions,
+			usageClient:           usageClient,
+			botMgr:                botMgr,
+			stateStore:            si.stateStore,
+			todoStore:             mem.todoStores[acfg.ID],
+			ctx:                   ctx,
+			resolveEndpointClient: clients.ResolveEndpointClient,
 		})
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)

@@ -23,6 +23,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/mana"
 	"foci/internal/memory"
+	"foci/internal/provider"
 	"foci/prompts"
 	"foci/internal/state"
 	"foci/internal/warnings"
@@ -51,6 +52,7 @@ type BranchFunc func(branchType, promptText string, noCompact bool)
 type Runner struct {
 	log                *log.ComponentLogger
 	agentID            string
+	client             provider.Client // for checking caching availability at runtime
 	kaCfg              config.KeepaliveConfig
 	bgCfg              config.BackgroundConfig
 	mfCfg              config.MemoryFormationConfig
@@ -84,6 +86,7 @@ type Runner struct {
 // RunnerConfig holds all the dependencies for creating a Runner.
 type RunnerConfig struct {
 	AgentID            string
+	Client             provider.Client // for checking caching availability at runtime
 	Keepalive          config.KeepaliveConfig
 	Background         config.BackgroundConfig
 	MemoryFormation    config.MemoryFormationConfig
@@ -104,6 +107,7 @@ func New(cfg RunnerConfig) *Runner {
 	r := &Runner{
 		log:                log.NewComponentLogger("keepalive:" + cfg.AgentID),
 		agentID:            cfg.AgentID,
+		client:             cfg.Client,
 		kaCfg:              cfg.Keepalive,
 		bgCfg:              cfg.Background,
 		mfCfg:              cfg.MemoryFormation,
@@ -186,6 +190,12 @@ func (r *Runner) run(ctx context.Context) {
 
 func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	if !r.kaCfg.Enabled {
+		return
+	}
+
+	// Check if caching is still available (handles dynamic state changes like Gemini free-tier detection)
+	if r.client != nil && !r.client.IsCachingAvailable() {
+		r.log.Debugf("skipping keepalive - caching not available for agent %s", r.agentID)
 		return
 	}
 
