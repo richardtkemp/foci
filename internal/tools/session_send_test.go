@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -49,20 +48,10 @@ func TestSendToSession(t *testing.T) {
 		t.Errorf("result = %q", result.Text)
 	}
 
-	// Check the appended message
-	if store.key != "agent:test:main" {
-		t.Errorf("appended to key = %q, want agent:test:main", store.key)
-	}
-	if store.msg.Role != "user" {
-		t.Errorf("msg role = %q, want user", store.msg.Role)
-	}
-	text := provider.TextOf(store.msg.Content)
-	if !strings.Contains(text, "MESSAGE FROM SESSION agent:test:multiball:mb-111") {
-		t.Errorf("expected origin tag, got %q", text)
-	}
-	if !strings.Contains(text, "Here are the results of my research.") {
-		t.Errorf("expected message body, got %q", text)
-	}
+
+	// The tool no longer appends directly — InjectToAgent triggers
+	// HandleMessage which loads the session and appends the message.
+	// So we only verify the notifier was called correctly.
 
 	// Check notifier was triggered (default reply_to=caller)
 	d := <-delivered
@@ -172,24 +161,6 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 	}
 }
 
-func TestSendToSessionAppendError(t *testing.T) {
-	store := &mockSessionAppender{err: fmt.Errorf("disk full")}
-	tool := NewSendToSessionTool(store, nil, nil)
-
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
-	params, _ := json.Marshal(map[string]string{
-		"session_key": "agent:test:branch",
-		"message":     "hello",
-	})
-
-	_, err := tool.Execute(ctx, params)
-	if err == nil {
-		t.Fatal("expected error from append")
-	}
-	if !strings.Contains(err.Error(), "disk full") {
-		t.Errorf("error = %q", err.Error())
-	}
-}
 
 func TestSendToSessionNilNotifier(t *testing.T) {
 	store := &mockSessionAppender{}
@@ -208,9 +179,9 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 	if !strings.Contains(result.Text, "Message sent") {
 		t.Errorf("result = %q", result.Text)
 	}
-	// Should still have appended
-	if store.key != "agent:test:branch" {
-		t.Errorf("appended to key = %q", store.key)
+	// With nil notifier, no append should happen (no way to trigger HandleMessage)
+	if store.appended {
+		t.Error("Append should not be called when notifier is nil (no way to process message)")
 	}
 }
 
@@ -279,8 +250,6 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	if !strings.Contains(result.Text, "reply_to=caller") {
 		t.Errorf("result = %q", result.Text)
 	}
-	// Verify the message was appended to the target session
-	if store.key != eleniSession {
-		t.Errorf("appended to key = %q, want %s", store.key, eleniSession)
-	}
+	// Note: The tool no longer appends directly for reply_to=caller.
+	// InjectToAgent triggers HandleMessage which does the append.
 }

@@ -90,15 +90,8 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				}
 			} else {
 				// Default: route the response back to the caller.
-				// Append first since the notifier just triggers processing
-				// of the already-appended message.
-				msg := provider.Message{
-					Role:    "user",
-					Content: provider.TextContent(tagged),
-				}
-				if err := sessions.Append(p.SessionKey, msg); err != nil {
-					return ToolResult{}, fmt.Errorf("append to session %s: %w", p.SessionKey, err)
-				}
+				// Don't Append here — InjectToAgent triggers HandleMessage which
+				// loads the session and appends the message itself.
 				if notifier != nil {
 					// Pass originSession so response routes back to caller
 					notifier.InjectToAgent(p.SessionKey, tagged, originSession)
