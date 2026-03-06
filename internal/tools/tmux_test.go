@@ -503,6 +503,7 @@ func TestTmuxUnwatchNotWatched(t *testing.T) {
 }
 
 func TestTmuxWatchWakeCallback(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	var wakeCalled atomic.Int32
@@ -569,6 +570,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 }
 
 func TestTmuxWatchDeadSession(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	var msgs []string
@@ -611,7 +613,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Give the monitor time to detect the dead session (poll interval is 2s)
-	time.Sleep(3 * time.Second)
+	time.Sleep(2500 * time.Millisecond)
 
 	// The watch entry should have been cleaned up — unwatching should fail
 	params, _ = json.Marshal(map[string]interface{}{
@@ -763,6 +765,7 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 }
 
 func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
@@ -2046,6 +2049,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 }
 
 func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	var mu sync.Mutex
@@ -2083,7 +2087,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	}
 
 	// Wait for inactivity notification (threshold=2s, monitor polls every 2s)
-	time.Sleep(6 * time.Second)
+	time.Sleep(3500 * time.Millisecond)
 
 	mu.Lock()
 	gotNotification := len(notifications) > 0
