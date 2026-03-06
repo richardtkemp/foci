@@ -1,0 +1,9 @@
+#!/bin/bash
+# Pre-commit hook that runs tests, linting, and coverage checks
+
+set -e
+
+echo "Running pre-commit checks..."
+make check
+
+echo "✅ All pre-commit checks passed"
