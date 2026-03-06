@@ -1512,6 +1512,249 @@ allowed_hosts = ["api.open.com"]
 	}
 }
 
+// Verifies Load returns an error for non-NotExist read errors (e.g. permission denied).
+func TestLoadReadError(t *testing.T) {
+	path := writeSecrets(t, `[test]
+key = "val"
+`)
+	os.Chmod(path, 0000)
+	t.Cleanup(func() { os.Chmod(path, 0644) })
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for unreadable secrets file")
+	}
+	if !strings.Contains(err.Error(), "read secrets") {
+		t.Errorf("error = %q, want 'read secrets'", err)
+	}
+}
+
+// Verifies Load handles [agents] sub-entries that aren't tables (skips them).
+func TestLoadAgentsNonMapValue(t *testing.T) {
+	path := writeSecrets(t, `[agents]
+not_a_table = "just a string"
+
+[agents.valid.custom]
+key = "val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The non-table value should be silently skipped
+	fs := s.ForAgent("valid")
+	v, ok := fs.Get("custom.key")
+	if !ok || v != "val" {
+		t.Errorf("valid custom.key = %q, ok=%v", v, ok)
+	}
+}
+
+// Verifies Load silently skips unknown value types (e.g. booleans).
+func TestLoadUnknownValueType(t *testing.T) {
+	path := writeSecrets(t, `[section]
+key = "valid"
+flag = true
+ratio = 3.14
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// String key should be loaded
+	v, ok := s.Get("section.key")
+	if !ok || v != "valid" {
+		t.Errorf("section.key = %q, ok=%v", v, ok)
+	}
+	// Bool and float should be silently skipped
+	_, ok = s.Get("section.flag")
+	if ok {
+		t.Error("boolean value should be silently skipped")
+	}
+	_, ok = s.Get("section.ratio")
+	if ok {
+		t.Error("float value should be silently skipped")
+	}
+}
+
+// Verifies flattenInto skips non-table values in agent sub-sections.
+func TestLoadAgentNonTableSubValue(t *testing.T) {
+	// In TOML, [agents.myagent] with scalar values should be skipped
+	path := writeSecrets(t, `[agents.myagent]
+not_a_section = "scalar"
+
+[agents.myagent.valid]
+key = "val"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	fs := s.ForAgent("myagent")
+	v, ok := fs.Get("valid.key")
+	if !ok || v != "val" {
+		t.Errorf("myagent valid.key = %q, ok=%v", v, ok)
+	}
+}
+
+// Verifies flattenInto handles int64 values in agent sub-tables.
+func TestLoadAgentIntValue(t *testing.T) {
+	path := writeSecrets(t, `[agents.myagent.service]
+port = 8080
+token = "secret"
+`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	fs := s.ForAgent("myagent")
+	v, ok := fs.Get("service.port")
+	if !ok || v != "8080" {
+		t.Errorf("myagent service.port = %q, ok=%v", v, ok)
+	}
+}
+
+// Verifies AllowedHosts returns nil for names without a dot separator.
+func TestAllowedHostsNoDot(t *testing.T) {
+	s := &Store{
+		allowedHosts: map[string][]string{"section": {"host.com"}},
+	}
+	hosts := s.AllowedHosts("nodot")
+	if hosts != nil {
+		t.Errorf("AllowedHosts(nodot) = %v, want nil", hosts)
+	}
+}
+
+// Verifies CheckHostAllowed returns an error for unparseable URLs.
+func TestCheckHostAllowedInvalidURL(t *testing.T) {
+	s := &Store{
+		allowedHosts: map[string][]string{"section": {"host.com"}},
+	}
+	err := s.CheckHostAllowed("section.key", "://invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+	if !strings.Contains(err.Error(), "invalid URL") {
+		t.Errorf("error = %q, want 'invalid URL'", err)
+	}
+}
+
+// Verifies CheckSecurity returns warnings for wrong file permissions.
+func TestCheckSecurityWrongMode(t *testing.T) {
+	path := writeSecrets(t, `[test]
+key = "val"
+`)
+	os.Chmod(path, 0644)
+
+	s, _ := Load(path)
+	warnings := s.CheckSecurity()
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "permissions") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected permission warning, got: %v", warnings)
+	}
+}
+
+// Verifies CheckSecurity returns an error message when stat fails with non-NotExist error.
+func TestCheckSecurityStatError(t *testing.T) {
+	// Create a path where the parent is a file, so stat fails with ENOTDIR
+	tmpDir := t.TempDir()
+	blocker := filepath.Join(tmpDir, "blocker")
+	os.WriteFile(blocker, []byte("file"), 0644)
+	badPath := filepath.Join(blocker, "secrets.toml") // can't stat — parent is a file
+
+	s := &Store{
+		path:         badPath,
+		values:       map[string]string{},
+		allowedHosts: map[string][]string{},
+		allowedAgents: map[string][]string{},
+		deniedAgents:  map[string][]string{},
+	}
+	warnings := s.CheckSecurity()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "cannot stat") {
+		t.Errorf("expected 'cannot stat' warning, got: %v", warnings)
+	}
+}
+
+// Verifies CheckSecurity returns a warning when the security group doesn't exist.
+func TestCheckSecurityGroupNotFound(t *testing.T) {
+	orig := securityGroupName
+	securityGroupName = "nonexistent-group-for-test"
+	defer func() { securityGroupName = orig }()
+
+	path := writeSecrets(t, `[test]
+key = "val"
+`)
+	s, _ := Load(path)
+	warnings := s.CheckSecurity()
+	foundGroup := false
+	for _, w := range warnings {
+		if strings.Contains(w, "not found") {
+			foundGroup = true
+		}
+	}
+	if !foundGroup {
+		t.Errorf("expected 'group not found' warning, got: %v", warnings)
+	}
+}
+
+// Verifies writeKeyValues handles an empty map correctly (returns early).
+func TestSaveEmptySection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	s := &Store{
+		path:         path,
+		values:       map[string]string{},
+		allowedHosts: map[string][]string{"orphan": {"host.com"}},
+		allowedAgents: map[string][]string{},
+		deniedAgents:  map[string][]string{},
+	}
+	// Save with only allowedHosts (no values for that section) → writeKeyValues gets nil map
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "orphan") {
+		t.Errorf("saved content should contain orphan section: %s", data)
+	}
+}
+
+// Verifies flatKeysToSections skips keys without a dot separator.
+func TestFlatKeysToSectionsNoDot(t *testing.T) {
+	result := flatKeysToSections(map[string]string{
+		"normal.key": "val1",
+		"nodot":      "val2",
+	})
+	if len(result) != 1 {
+		t.Errorf("expected 1 section, got %d", len(result))
+	}
+	if result["normal"]["key"] != "val1" {
+		t.Errorf("normal.key = %q", result["normal"]["key"])
+	}
+}
+
+// Verifies CheckSecurity covers the "group found in supplementary groups" branch
+// by using a group the process actually belongs to.
+func TestCheckSecurityGroupFound(t *testing.T) {
+	orig := securityGroupName
+	securityGroupName = "foci" // process is in this group
+	defer func() { securityGroupName = orig }()
+
+	path := writeSecrets(t, `[test]
+key = "val"
+`)
+	s, _ := Load(path)
+	warnings := s.CheckSecurity()
+	// Should NOT have "process does not have" warning for the foci group
+	for _, w := range warnings {
+		if strings.Contains(w, "supplementary groups") {
+			t.Errorf("unexpected supplementary groups warning: %s", w)
+		}
+	}
+}
+
 // TestGeneratePassphraseWordCount tests GeneratePassphrase with various word counts
 func TestGeneratePassphraseWordCount(t *testing.T) {
 	tests := []struct {

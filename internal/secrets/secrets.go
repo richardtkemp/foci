@@ -569,7 +569,12 @@ func (s *Store) IsBlockedCommand(cmd string) bool {
 }
 
 // SecurityGroupName is the OS group that protects secrets.toml.
+// Tests may override securityGroupName for isolation.
 const SecurityGroupName = "foci-secrets"
+
+// securityGroupName is the group name used by CheckSecurity.
+// Matches SecurityGroupName by default; tests override for isolation.
+var securityGroupName = SecurityGroupName
 
 // CheckSecurity verifies the OS-level protection of secrets.toml.
 // Returns a list of warning messages for any issues found.
@@ -602,10 +607,10 @@ func (s *Store) CheckSecurity() []string {
 	}
 
 	// Check group is foci-secrets
-	grp, err := user.LookupGroup(SecurityGroupName)
+	grp, err := user.LookupGroup(securityGroupName)
 	if err != nil {
 		warnings = append(warnings,
-			fmt.Sprintf("group %q not found — run: sudo groupadd %s", SecurityGroupName, SecurityGroupName))
+			fmt.Sprintf("group %q not found — run: sudo groupadd %s", securityGroupName, securityGroupName))
 	} else {
 		expectedGID, _ := strconv.ParseUint(grp.Gid, 10, 32)
 		if uint64(stat.Gid) != expectedGID {
