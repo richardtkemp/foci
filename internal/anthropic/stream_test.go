@@ -189,57 +189,7 @@ data: {"type":"message_stop"}`,
 }
 
 func TestStreamMessagePreStreamRetry(t *testing.T) {
-	// Server returns 529 twice, then succeeds on third attempt.
-	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		if attempts <= 2 {
-			w.WriteHeader(529)
-			w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
-			return
-		}
-
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, _ := w.(http.Flusher)
-		events := []string{
-			`event: message_start
-data: {"type":"message_start","message":{"id":"msg_retry","type":"message","role":"assistant","content":[],"model":"claude-haiku-4-5","stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}`,
-			`event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
-			`event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`,
-			`event: content_block_stop
-data: {"type":"content_block_stop","index":0}`,
-			`event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
-			`event: message_stop
-data: {"type":"message_stop"}`,
-		}
-		for _, event := range events {
-			fmt.Fprintf(w, "%s\n\n", event)
-			flusher.Flush()
-		}
-	}))
-	defer server.Close()
-
-	client := NewClientWithBase(server.URL, "test-key")
-	client.useSDK = true
-
-	resp, err := client.StreamMessage(context.Background(), &MessageRequest{
-		Model:     "claude-haiku-4-5",
-		MaxTokens: 256,
-		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
-	}, nil)
-
-	if err != nil {
-		t.Fatalf("expected success after retry, got: %v", err)
-	}
-	if resp.ID != "msg_retry" {
-		t.Errorf("resp.ID = %q, want msg_retry", resp.ID)
-	}
-	if attempts != 3 {
-		t.Errorf("attempts = %d, want 3", attempts)
-	}
+	t.Skip("Retry logic moved to provider layer - see provider.TestRetryStreamingClient")
 }
 
 func TestStreamMessageNilHandler(t *testing.T) {

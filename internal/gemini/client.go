@@ -53,6 +53,10 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 		httpClient = &http.Client{Timeout: cfg.httpTimeout}
 	}
 
+	// Note: The Gemini SDK has a 5-attempt default retry with exponential backoff
+	// (1s initial, 60s max). We rely on the provider layer for retry logic.
+	// TODO: Disable SDK retries if the SDK exposes a retry configuration option
+	// to avoid double-retry behavior.
 	gc, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:     apiKey,
 		Backend:    genai.BackendGeminiAPI,

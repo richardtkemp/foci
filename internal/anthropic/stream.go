@@ -2,7 +2,6 @@ package anthropic
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -18,10 +17,8 @@ var _ provider.StreamingClient = (*Client)(nil)
 // Delta callbacks in handler are invoked as content arrives. The full response is
 // returned once the stream completes.
 //
-// Uses the same two-phase retry logic as SendMessage:
-//   - Phase 1: retries pre-stream errors (connection failures, 5xx before any data).
-//   - Phase 2: extended 529 overload retries with cross-goroutine recovery.
-//   - Mid-stream errors are NOT retried (deltas already emitted to caller).
+// Retry logic is handled by the provider layer. Pre-stream errors (before any deltas)
+// are retryable. Mid-stream errors (after deltas have been emitted) are not retryable.
 //
 // Requires useSDK=true. Returns an error if called with useSDK=false.
 func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler *provider.StreamHandler) (*MessageResponse, error) {
@@ -29,23 +26,7 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler
 		return nil, fmt.Errorf("streaming requires SDK transport (use_sdk = true)")
 	}
 
-	// Phase 1: standard retries for all retryable errors.
-	resp, lastErr := c.retryWithBackoff(ctx, "stream", func() (*MessageResponse, error) {
-		return c.streamOnce(ctx, req, handler)
-	})
-	if lastErr == nil {
-		return resp, nil
-	}
-
-	// Phase 2: extended overload retries (529 only).
-	var apiErr *APIError
-	if !errors.As(lastErr, &apiErr) || !apiErr.IsOverloaded() {
-		return nil, lastErr
-	}
-
-	return c.retryWithOverload(ctx, "stream overload", func() (*MessageResponse, error) {
-		return c.streamOnce(ctx, req, handler)
-	})
+	return c.streamOnce(ctx, req, handler)
 }
 
 // streamOnce performs a single streaming request. Returns the accumulated response.
