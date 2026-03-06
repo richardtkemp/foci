@@ -11,22 +11,10 @@ import (
 func GenerateAgentBlock(spec AgentSpec) string {
 	var sb strings.Builder
 
-	botName := spec.ID
-	tokenSecret := "telegram." + spec.ID
-
 	sb.WriteString("\n")
 	sb.WriteString("[[agents]]\n")
 	fmt.Fprintf(&sb, "id = %q\n", spec.ID)
 	fmt.Fprintf(&sb, "model = %q\n", spec.Model)
-
-	// Only emit telegram_bot when it differs from the agent ID.
-	if botName != spec.ID {
-		fmt.Fprintf(&sb, "telegram_bot = %q\n", botName)
-	}
-	// Only emit bot_secret when it differs from convention.
-	if tokenSecret != "telegram."+botName {
-		fmt.Fprintf(&sb, "bot_secret = %q\n", tokenSecret)
-	}
 
 	workspace := spec.workspacePath()
 	fmt.Fprintf(&sb, "workspace = %q\n", workspace)
