@@ -240,7 +240,7 @@ Subcommands:
 			inst.ag.SeedSessionMeta(sk)
 		}
 
-		setupKeepalive(inst, acfg, keepaliveParams{
+		setupPeriodic(inst, acfg, periodicParams{
 			cfg:                   cfg,
 			sessions:              si.sessions,
 			usageClientReg:        usageClients,

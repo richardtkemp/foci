@@ -1,4 +1,4 @@
-// Package keepalive provides cache keepalive, background work, and memory formation timers.
+// Package periodic provides cache keepalive, background work, and memory formation timers.
 //
 // Four mechanisms run as a single goroutine with ~30s ticks:
 //
@@ -12,7 +12,7 @@
 //   - Memory formation: fires periodically to capture conversation memories to daily files.
 //
 //   - Memory consolidation: fires on a longer interval to curate MEMORY.md from daily files.
-package keepalive
+package periodic
 
 import (
 	"context"

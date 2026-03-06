@@ -1,4 +1,4 @@
-package keepalive
+package periodic
 
 import (
 	"testing"

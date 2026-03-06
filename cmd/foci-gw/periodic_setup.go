@@ -6,18 +6,18 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
-	"foci/internal/keepalive"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/periodic"
 	"foci/internal/provider"
-	"foci/prompts"
 	"foci/internal/session"
 	"foci/internal/state"
 	"foci/internal/telegram"
 	"foci/internal/warnings"
+	"foci/prompts"
 )
 
-type keepaliveParams struct {
+type periodicParams struct {
 	cfg                   *config.Config
 	sessions              *session.Store
 	usageClientReg        *usageClientRegistry
@@ -28,9 +28,9 @@ type keepaliveParams struct {
 	resolveEndpointClient func(endpoint, format string) provider.Client
 }
 
-// setupKeepalive creates and starts a keepalive runner for an agent instance.
+// setupPeriodic creates and starts a periodic runner for an agent instance.
 // Returns the runner (also set on inst.kaRunner), or nil if not needed.
-func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepaliveParams) *keepalive.Runner {
+func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
 	// Resolve model to get endpoint information
 	resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, p.cfg.Models.Aliases)
 	var endpoint string
@@ -73,12 +73,12 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 			DispatchFn: func(warningText string) {
 				sk := inst.defaultSessionKey()
 				if sk == "" {
-					log.Warnf("keepalive", "no default session for proactive warning dispatch on agent %q", agentID)
+					log.Warnf("warning", "[%s] no default session for proactive warning dispatch", agentID)
 					return
 				}
 				resp, err := inst.ag.HandleMessage(agent.WithTrigger(p.ctx, "proactive_warning"), sk, warningText)
 				if err != nil {
-					log.Errorf("keepalive", "proactive warning turn error: %v", err)
+					log.Errorf("warning", "[%s] proactive warning turn error: %v", agentID, err)
 					return
 				}
 				if resp == "" {
@@ -86,7 +86,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 				}
 				if bot := p.botMgr.BotForSessionOrPrimary(sk, agentID); bot != nil {
 					if err := bot.SendToSession(sk, resp); err != nil {
-						log.Errorf("keepalive", "proactive warning telegram delivery: %v", err)
+						log.Errorf("warning", "[%s] proactive warning telegram delivery: %v", agentID, err)
 					}
 				}
 			},
@@ -105,7 +105,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 
 	kaCfg := acfg.Keepalive
 	kaCfg.Enabled = kaEnabled
-	runner := keepalive.New(keepalive.RunnerConfig{
+	runner := periodic.New(periodic.RunnerConfig{
 		AgentID:            acfg.ID,
 		Client:             client,
 		Keepalive:          kaCfg,
@@ -133,7 +133,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
 
-	// Wire Telegram bot callbacks to keepalive runner
+	// Wire Telegram bot callbacks to periodic runner
 	if bot := p.botMgr.PrimaryBot(acfg.ID); bot != nil {
 		bot.OnUserMessage = func() {
 			runner.NotifyInteraction()
@@ -143,6 +143,6 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 		}
 	}
 
-	log.Infof("main", "agent %q keepalive runner started (ka=%v bg=%v)", acfg.ID, acfg.Keepalive.Enabled, acfg.Background.Enabled)
+	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, acfg.Keepalive.Enabled, acfg.Background.Enabled)
 	return runner
 }
