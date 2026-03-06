@@ -1047,24 +1047,38 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Endpoint defaults (built-in endpoints populated if not present)
+	// Endpoint defaults — only create built-in defaults for endpoints that
+	// agents actually resolve to. This avoids spurious "missing secret" warnings
+	// for endpoints the user doesn't use (e.g. openai.api_key when no agent
+	// references OpenAI).
+	usedEndpoints := make(map[string]bool)
+	for _, agent := range cfg.Agents {
+		resolved, err := ResolveModel(agent.Model, agent.Endpoint, cfg.Models.Aliases)
+		if err == nil {
+			usedEndpoints[resolved.Endpoint] = true
+		}
+	}
 	if cfg.Endpoints == nil {
 		cfg.Endpoints = make(map[string]EndpointConfig)
 	}
-	if _, ok := cfg.Endpoints["anthropic"]; !ok {
-		cfg.Endpoints["anthropic"] = EndpointConfig{Format: "anthropic", APIKey: "anthropic.api_key"}
+	type epDefault struct {
+		name string
+		cfg  EndpointConfig
 	}
-	if _, ok := cfg.Endpoints["gemini"]; !ok {
-		cfg.Endpoints["gemini"] = EndpointConfig{Format: "gemini", APIKey: "gemini.api_key"}
-	}
-	if _, ok := cfg.Endpoints["openai"]; !ok {
-		cfg.Endpoints["openai"] = EndpointConfig{Format: "openai", APIKey: "openai.api_key"}
-	}
-	if _, ok := cfg.Endpoints["openrouter"]; !ok {
-		cfg.Endpoints["openrouter"] = EndpointConfig{
+	for _, d := range []epDefault{
+		{"anthropic", EndpointConfig{Format: "anthropic", APIKey: "anthropic.api_key"}},
+		{"gemini", EndpointConfig{Format: "gemini", APIKey: "gemini.api_key"}},
+		{"openai", EndpointConfig{Format: "openai", APIKey: "openai.api_key"}},
+		{"openrouter", EndpointConfig{
 			AnthropicURL: "https://openrouter.ai/api/v1",
 			OpenAIURL:    "https://openrouter.ai/api/v1",
 			APIKey:       "openrouter.api_key",
+		}},
+	} {
+		if usedEndpoints[d.name] {
+			if _, ok := cfg.Endpoints[d.name]; !ok {
+				cfg.Endpoints[d.name] = d.cfg
+			}
 		}
 	}
 
