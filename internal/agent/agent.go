@@ -88,6 +88,7 @@ type Agent struct {
 	Reminders     *memory.ReminderStore // nil disables reminder injection
 	AgentID       string                // unique agent identifier (for per-agent DB queries)
 	Model         string
+	Endpoint      string                // agent's default endpoint (sessions inherit this unless overridden)
 	Log           *log.ComponentLogger  // structured logger for this agent
 
 	EnvironmentBlock            string                          // pre-built environment context block (prepended first in system prompt)
@@ -137,8 +138,9 @@ type Agent struct {
 	ServerTools                 []provider.ToolDef              // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey           func() string                   // returns the main/default session key; reminders only inject into this session
 
-	rateLimitGate   RateLimitGate // blocks all injection when rate-limited
-	processing      int32 // atomic: number of in-flight HandleMessage calls
+	rateLimitGates   map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
+	rateLimitGatesMu sync.RWMutex              // protects rateLimitGates map access
+	processing       int32                     // atomic: number of in-flight HandleMessage calls
 	turnDetailsMu   sync.Mutex
 	turnDetails     map[uint64]*TurnDetail // keyed by unique turn ID
 	turnIDCounter   uint64                 // atomic: monotonic turn ID
@@ -843,12 +845,21 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 
 // HandleMessageWithAttachments processes a user message with optional image/document attachments.
 func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, images []Attachment) (string, error) {
-	// Gate check: if rate-limited, queue the message and return immediately.
-	// No message touches the session while the gate is closed.
-	if limited, until := a.rateLimitGate.IsLimited(); limited {
+	// Gate check: resolve session's endpoint and check its gate.
+	// Only that endpoint's sessions are blocked when rate-limited.
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	endpoint := sm.modelEndpoint
+	if endpoint == "" {
+		endpoint = a.Endpoint // agent default
+	}
+	a.metaMu.Unlock()
+
+	gate := a.getOrCreateRateLimitGate(endpoint)
+	if limited, until := gate.IsLimited(); limited {
 		trigger := TriggerFromContext(ctx)
-		a.rateLimitGate.Enqueue(sessionKey, userMessage, trigger)
-		a.logger().Infof("rate limit gate: queued message for session=%s trigger=%s (resets %s)", sessionKey, trigger, until.Format(time.Kitchen))
+		gate.Enqueue(sessionKey, userMessage, trigger)
+		a.logger().Infof("rate limit gate (%s): queued message for session=%s trigger=%s (resets %s)", endpoint, sessionKey, trigger, until.Format(time.Kitchen))
 		return "", &RateLimitedError{Until: until}
 	}
 
@@ -912,7 +923,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	turnThinking := a.SessionThinking(sessionKey)
 
 	now := time.Now()
-	sm := a.getSessionMeta(sessionKey)
+	sm = a.getSessionMeta(sessionKey)
 
 	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, images)
 	messages = append(messages, userMsg)
@@ -1061,7 +1072,14 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				}
 			}
 			if err != nil {
-				return "", a.classifyAPIError(ctx, err, sessionKey, duration)
+				// Resolve endpoint for error classification
+				a.metaMu.Lock()
+				endpoint := sm.modelEndpoint
+				if endpoint == "" {
+					endpoint = a.Endpoint
+				}
+				a.metaMu.Unlock()
+				return "", a.classifyAPIError(ctx, err, sessionKey, endpoint, duration)
 			}
 		}
 
@@ -1194,7 +1212,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 // classifyAPIError maps API errors to user-friendly messages, notifying
 // rate limit and server error callbacks as appropriate.
-func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey string, duration time.Duration) error {
+func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey string, endpoint string, duration time.Duration) error {
 	if ctx.Err() != nil {
 		a.logger().Debugf("api_call_ctx_cancelled session=%s ctx_err=%v duration=%s", sessionKey, ctx.Err(), duration)
 		return ctx.Err()
@@ -1205,8 +1223,12 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	}
 	if apiErr.IsRateLimit() {
 		resetTime := a.computeRateLimitReset(apiErr.RetryAfterSeconds())
-		a.rateLimitGate.Close(resetTime)
-		a.logger().Infof("rate limit gate closed until %s", resetTime.Format(time.Kitchen))
+
+		// Close only this endpoint's gate
+		gate := a.getOrCreateRateLimitGate(endpoint)
+		gate.Close(resetTime)
+
+		a.logger().Infof("rate limit gate (%s) closed until %s", endpoint, resetTime.Format(time.Kitchen))
 		if a.RateLimitFunc != nil {
 			a.RateLimitFunc(apiErr.RetryAfterSeconds())
 		}
@@ -1236,57 +1258,108 @@ func (a *Agent) computeRateLimitReset(retryAfterSec int) time.Time {
 	return time.Now().Add(5 * time.Hour)
 }
 
-// DrainRateLimitQueue checks if the rate limit gate has opened, and replays
+// DrainRateLimitQueue checks if any rate limit gates have opened, and replays
 // queued messages through HandleMessage. Called from keepalive tick.
 func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
-	items := a.rateLimitGate.DrainQueue()
-	if len(items) == 0 {
-		return
+	a.rateLimitGatesMu.RLock()
+	gates := make(map[string]*RateLimitGate, len(a.rateLimitGates))
+	for endpoint, gate := range a.rateLimitGates {
+		gates[endpoint] = gate
 	}
+	a.rateLimitGatesMu.RUnlock()
 
-	a.logger().Infof("rate limit lifted, replaying %d queued items", len(items))
-	for _, item := range items {
-		itemCtx := WithTrigger(ctx, item.Trigger)
-		resp, err := a.HandleMessage(itemCtx, item.SessionKey, item.Message)
-		if err != nil {
-			a.logger().Errorf("replay queued message session=%s trigger=%s: %v", item.SessionKey, item.Trigger, err)
-			// If we hit another rate limit, stop replaying — gate will be closed again
-			var rlErr *RateLimitedError
-			if errors.As(err, &rlErr) {
-				a.logger().Infof("rate limited again during replay, %d items re-queued", len(items))
-				return
-			}
+	// Drain each endpoint's queue
+	for endpoint, gate := range gates {
+		items := gate.DrainQueue()
+		if len(items) == 0 {
 			continue
 		}
-		if resp != "" {
-			a.logger().Debugf("replayed message session=%s trigger=%s response_len=%d", item.SessionKey, item.Trigger, len(resp))
+
+		a.logger().Infof("rate limit lifted for %s, replaying %d queued items", endpoint, len(items))
+		for i, item := range items {
+			itemCtx := WithTrigger(ctx, item.Trigger)
+			resp, err := a.HandleMessage(itemCtx, item.SessionKey, item.Message)
+			if err != nil {
+				a.logger().Errorf("replay queued message session=%s trigger=%s: %v", item.SessionKey, item.Trigger, err)
+				// If we hit another rate limit on THIS endpoint, stop replaying its queue
+				var rlErr *RateLimitedError
+				if errors.As(err, &rlErr) {
+					a.logger().Infof("rate limited again during replay on %s, %d items re-queued", endpoint, len(items)-i)
+					break // stop replaying THIS endpoint, but continue with others
+				}
+				continue
+			}
+			if resp != "" {
+				a.logger().Debugf("replayed message session=%s trigger=%s response_len=%d", item.SessionKey, item.Trigger, len(resp))
+			}
 		}
 	}
 }
 
-// CanFireBackgroundOperation checks if a background operation can run on the given session.
-// Returns false if:
-//   - The rate limit gate is closed (instance-level check)
-//   - Mana is insufficient (session-aware check using agent's configured invest interval)
-//
-// The sessionKey is used to resolve the session's current endpoint for mana checking.
-// If sessionKey is empty, returns (false, "no session key").
-func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
-	// Check 1: Rate limit gate (instance-level, fails fast)
-	if limited, until := a.rateLimitGate.IsLimited(); limited {
-		resetStr := mana.ParseResetTime(until.Format(time.RFC3339Nano))
-		if resetStr == "" {
-			resetStr = until.Format(time.Kitchen)
-		}
-		return false, fmt.Sprintf("rate limited (resets %s)", resetStr)
+// getOrCreateRateLimitGate returns the rate limit gate for the given endpoint,
+// creating it if it doesn't exist yet. Thread-safe.
+func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
+	if endpoint == "" {
+		endpoint = "anthropic" // default
 	}
 
-	// Check 2: Session key validity
+	// Fast path: read lock
+	a.rateLimitGatesMu.RLock()
+	if gate, ok := a.rateLimitGates[endpoint]; ok {
+		a.rateLimitGatesMu.RUnlock()
+		return gate
+	}
+	a.rateLimitGatesMu.RUnlock()
+
+	// Slow path: write lock
+	a.rateLimitGatesMu.Lock()
+	defer a.rateLimitGatesMu.Unlock()
+
+	// Double-check (another goroutine might have created it)
+	if gate, ok := a.rateLimitGates[endpoint]; ok {
+		return gate
+	}
+
+	// Lazy init map
+	if a.rateLimitGates == nil {
+		a.rateLimitGates = make(map[string]*RateLimitGate)
+	}
+
+	// Create new gate
+	gate := &RateLimitGate{}
+	a.rateLimitGates[endpoint] = gate
+	return gate
+}
+
+// CanFireBackgroundOperation checks if a background operation can run on the given session.
+// Returns false if:
+//   - The rate limit gate for the session's endpoint is closed
+//   - Mana is insufficient (session-aware check using agent's configured invest interval)
+func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
 	if sessionKey == "" {
 		return false, "no session key"
 	}
 
-	// Check 3: Mana availability (session-aware, using agent's configured invest interval)
+	// Resolve session's endpoint
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	endpoint := sm.modelEndpoint
+	if endpoint == "" {
+		endpoint = a.Endpoint
+	}
+	a.metaMu.Unlock()
+
+	// Check 1: Rate limit gate for this endpoint
+	gate := a.getOrCreateRateLimitGate(endpoint)
+	if limited, until := gate.IsLimited(); limited {
+		resetStr := mana.ParseResetTime(until.Format(time.RFC3339Nano))
+		if resetStr == "" {
+			resetStr = until.Format(time.Kitchen)
+		}
+		return false, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, resetStr)
+	}
+
+	// Check 2: Mana availability (session-aware)
 	if a.ManaInvestInterval > 0 {
 		usageClient := a.SessionUsageClient(sessionKey)
 		if usageClient != nil {
@@ -1295,7 +1368,6 @@ func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey strin
 				return false, "mana insufficient"
 			}
 		}
-		// If usageClient is nil, no mana checking (non-Anthropic endpoint)
 	}
 
 	return true, ""

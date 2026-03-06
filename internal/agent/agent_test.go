@@ -3780,9 +3780,10 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Close the gate
+	// Close the gate for anthropic endpoint (default)
 	until := time.Now().Add(1 * time.Hour)
-	ag.rateLimitGate.Close(until)
+	gate := ag.getOrCreateRateLimitGate("anthropic")
+	gate.Close(until)
 
 	ctx := WithTrigger(context.Background(), "telegram")
 	_, err := ag.HandleMessage(ctx, "test/igate/1000000000", "Hello")
@@ -3831,8 +3832,9 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 		t.Fatalf("expected *RateLimitedError, got %T: %v", err, err)
 	}
 
-	// Gate should now be closed
-	limited, _ := ag.rateLimitGate.IsLimited()
+	// Gate should now be closed for anthropic endpoint
+	gate := ag.getOrCreateRateLimitGate("anthropic")
+	limited, _ := gate.IsLimited()
 	if !limited {
 		t.Error("gate should be closed after 429")
 	}
@@ -3876,10 +3878,11 @@ func TestDrainRateLimitQueue(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Queue items as if rate-limited
-	ag.rateLimitGate.Close(time.Now().Add(-1 * time.Second)) // already expired
-	ag.rateLimitGate.Enqueue("test/idrain/1000000000", "msg1", "user")
-	ag.rateLimitGate.Enqueue("test/idrain/1000000000", "msg2", "keepalive")
+	// Queue items as if rate-limited on anthropic endpoint
+	gate := ag.getOrCreateRateLimitGate("anthropic")
+	gate.Close(time.Now().Add(-1 * time.Second)) // already expired
+	gate.Enqueue("test/idrain/1000000000", "msg1", "user")
+	gate.Enqueue("test/idrain/1000000000", "msg2", "keepalive")
 
 	ag.DrainRateLimitQueue(context.Background())
 
@@ -3891,8 +3894,9 @@ func TestDrainRateLimitQueue(t *testing.T) {
 // TestCanFireBackgroundOperation_RateLimited proves that the method returns false
 // when the rate limit gate is closed, with a descriptive reason including reset time.
 func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
-	ag := &Agent{ManaInvestInterval: 30 * time.Minute}
-	ag.rateLimitGate.Close(time.Now().Add(2 * time.Hour))
+	ag := &Agent{ManaInvestInterval: 30 * time.Minute, Endpoint: "anthropic"}
+	gate := ag.getOrCreateRateLimitGate("anthropic")
+	gate.Close(time.Now().Add(2 * time.Hour))
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
 
@@ -3989,5 +3993,132 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	}
 	if reason != "" {
 		t.Errorf("expected empty reason, got: %s", reason)
+	}
+}
+
+// Test getOrCreateRateLimitGate creates gates lazily and returns the same instance.
+func TestGetOrCreateRateLimitGate(t *testing.T) {
+	ag := &Agent{}
+
+	// First call creates gate
+	gate1 := ag.getOrCreateRateLimitGate("anthropic")
+	if gate1 == nil {
+		t.Fatal("expected gate to be created")
+	}
+
+	// Second call returns same gate
+	gate2 := ag.getOrCreateRateLimitGate("anthropic")
+	if gate1 != gate2 {
+		t.Error("expected same gate instance")
+	}
+
+	// Different endpoint gets different gate
+	gate3 := ag.getOrCreateRateLimitGate("gemini")
+	if gate3 == gate1 {
+		t.Error("expected different gate for different endpoint")
+	}
+
+	// Empty endpoint defaults to "anthropic"
+	gate4 := ag.getOrCreateRateLimitGate("")
+	if gate4 != gate1 {
+		t.Error("expected empty endpoint to default to anthropic gate")
+	}
+}
+
+// Test that per-endpoint rate limiting isolates endpoints.
+func TestPerEndpointRateLimiting(t *testing.T) {
+	ag := &Agent{
+		Endpoint:           "anthropic",
+		ManaInvestInterval: 30 * time.Minute,
+	}
+
+	// Create two sessions with different endpoints
+	session1 := "test/c123/1000000000"
+	session2 := "test/c123/2000000000"
+
+	// Set endpoints
+	sm1 := ag.getSessionMeta(session1)
+	ag.metaMu.Lock()
+	sm1.modelEndpoint = "anthropic"
+	ag.metaMu.Unlock()
+
+	sm2 := ag.getSessionMeta(session2)
+	ag.metaMu.Lock()
+	sm2.modelEndpoint = "gemini"
+	ag.metaMu.Unlock()
+
+	// Close anthropic gate
+	anthropicGate := ag.getOrCreateRateLimitGate("anthropic")
+	anthropicGate.Close(time.Now().Add(2 * time.Hour))
+
+	// Session 1 (anthropic) should be blocked
+	canFire1, reason1 := ag.CanFireBackgroundOperation(context.Background(), session1)
+	if canFire1 {
+		t.Error("expected anthropic session to be blocked")
+	}
+	if !strings.Contains(reason1, "anthropic") {
+		t.Errorf("expected reason to mention anthropic, got: %s", reason1)
+	}
+
+	// Session 2 (gemini) should NOT be blocked
+	canFire2, reason2 := ag.CanFireBackgroundOperation(context.Background(), session2)
+	if !canFire2 {
+		t.Errorf("expected gemini session to be available, got: %s", reason2)
+	}
+}
+
+// Test that DrainRateLimitQueue drains all endpoint queues independently.
+func TestDrainRateLimitQueue_MultipleEndpoints(t *testing.T) {
+	ag := &Agent{Endpoint: "anthropic"}
+
+	// Create gates for two endpoints
+	anthropicGate := ag.getOrCreateRateLimitGate("anthropic")
+	geminiGate := ag.getOrCreateRateLimitGate("gemini")
+
+	// Close anthropic gate with already-expired time
+	anthropicGate.Close(time.Now().Add(-1 * time.Second))
+
+	// Close gemini gate with future time
+	geminiGate.Close(time.Now().Add(1 * time.Hour))
+
+	// Verify gates are independent by checking their states
+	limited1, _ := anthropicGate.IsLimited()
+	limited2, _ := geminiGate.IsLimited()
+
+	if limited1 {
+		t.Error("anthropic gate should be open (expired)")
+	}
+	if !limited2 {
+		t.Error("gemini gate should still be closed")
+	}
+}
+
+// Test concurrent gate creation doesn't create duplicates.
+func TestGetOrCreateRateLimitGate_Concurrent(t *testing.T) {
+	ag := &Agent{}
+
+	const goroutines = 100
+	const endpoint = "anthropic"
+
+	var wg sync.WaitGroup
+	gates := make([]*RateLimitGate, goroutines)
+
+	// Launch many goroutines trying to create the same gate
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			gates[idx] = ag.getOrCreateRateLimitGate(endpoint)
+		}(i)
+	}
+
+	wg.Wait()
+
+	// All goroutines should have received the same gate instance
+	firstGate := gates[0]
+	for i, gate := range gates {
+		if gate != firstGate {
+			t.Errorf("gate %d is different from gate 0", i)
+		}
 	}
 }

@@ -395,6 +395,7 @@ func setupAgent(p setupParams) *agentInstance {
 		DefaultSessionKey:           defaultSessionKey,
 		AgentID:                     acfg.ID,
 		Model:                       bareModelID,
+		Endpoint:                    defaultEndpoint,
 		ExtraSystemBlocks:           extraSystemBlocks,
 		CacheStrategy:               p.cfg.Cache.Strategy,
 		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
