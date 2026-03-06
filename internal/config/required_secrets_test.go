@@ -273,6 +273,36 @@ func TestContextPathsUseIDs(t *testing.T) {
 	t.Error("groq.api_key ref not found")
 }
 
+// TestUnusedEndpointSecretNotRequired verifies that default endpoints are only
+// created for developers agents actually reference. An anthropic-only config
+// should NOT produce openai.api_key, gemini.api_key, or openrouter.api_key
+// requirements, while TTS/STT secrets (hostname convention + explicit) still
+// appear correctly.
+func TestUnusedEndpointSecretNotRequired(t *testing.T) {
+	cfg := Config{
+		Agents: []AgentConfig{
+			{ID: "main", Model: "anthropic/claude-sonnet-4-5-20250929"},
+		},
+		TTS: []TTSConfig{
+			{ID: "groq-tts", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/speech"},
+		},
+		STT: []STTConfig{
+			{ID: "groq-stt", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/transcriptions", Secret: "groq.api_key"},
+		},
+	}
+
+	refs := RequiredSecrets(&cfg)
+
+	// Unused endpoint defaults should NOT be created, so their api_keys
+	// should not appear in required secrets.
+	assertMissingKey(t, refs, "openai.api_key")
+	assertMissingKey(t, refs, "gemini.api_key")
+	assertMissingKey(t, refs, "openrouter.api_key")
+
+	// TTS hostname convention and STT explicit secret should still work.
+	assertHasKey(t, refs, "groq.api_key")
+}
+
 func assertHasKey(t *testing.T, refs []SecretRef, key string) {
 	t.Helper()
 	for _, ref := range refs {
