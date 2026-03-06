@@ -229,7 +229,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Async notifier: delivers results from auto-backgrounded exec commands
 	// and tmux watch inactivity alerts to the agent session.
-	notifier := newAsyncNotifier(func() *agent.Agent { return ag }, defaultSessionKey, p.botMgr, acfg.ID, p.ctx)
+	notifier := newAsyncNotifier(func() *agent.Agent { return ag }, defaultSessionKey, p.botMgr, acfg.ID, p.ctx, p.sessions)
 	// Per-agent secrets view: agent-specific values overlay globals
 	agentStore := p.store.ForAgent(acfg.ID)
 
