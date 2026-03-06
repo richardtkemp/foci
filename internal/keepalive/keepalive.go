@@ -66,6 +66,10 @@ type Runner struct {
 	hasActiveWorkFn    func() bool // external check for async work (e.g. tmux watches)
 	drainFn            func() // called each tick to drain rate-limit queues
 
+	// Session-aware availability checking
+	sessionKeyFn func() string                                                   // returns the session key these operations will run on
+	canFireFn    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
+
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
 	lastInteraction       time.Time
@@ -99,6 +103,10 @@ type RunnerConfig struct {
 	WarningDispatcher  *warnings.Dispatcher
 	HasActiveWorkFn    func() bool // external check for async work (e.g. tmux watches)
 	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
+
+	// Session-aware availability checking
+	SessionKeyFunc func() string                                                   // returns the session key these operations will run on
+	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -120,6 +128,8 @@ func New(cfg RunnerConfig) *Runner {
 		warningDispatcher:  cfg.WarningDispatcher,
 		hasActiveWorkFn:    cfg.HasActiveWorkFn,
 		drainFn:            cfg.DrainFn,
+		sessionKeyFn:       cfg.SessionKeyFunc,
+		canFireFn:          cfg.CanFireFunc,
 		lastCacheWarmed:    now,
 		lastInteraction:    now,
 		lastMemoryFormation: now,
@@ -280,13 +290,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}
 
-	// Check mana
-	if r.manaMonitor != nil {
-		investInterval, _ := r.parseDuration("invest interval", r.manaInvestInterval)
-		if investInterval == 0 {
-			investInterval = 30 * time.Minute // default fallback
-		}
-		if !r.manaMonitor.IsGoodFor(ctx, investInterval) {
+	// Check availability (rate limit + mana)
+	if r.sessionKeyFn != nil && r.canFireFn != nil {
+		sessionKey := r.sessionKeyFn()
+		canFire, reason := r.canFireFn(ctx, sessionKey)
+		if !canFire {
+			r.log.Debugf("skipping background work for agent %s: %s", r.agentID, reason)
 			return
 		}
 	}
@@ -339,6 +348,16 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
+	// Check availability (rate limit + mana)
+	if r.sessionKeyFn != nil && r.canFireFn != nil {
+		sessionKey := r.sessionKeyFn()
+		canFire, reason := r.canFireFn(context.Background(), sessionKey)
+		if !canFire {
+			r.log.Debugf("skipping memory formation for agent %s: %s", r.agentID, reason)
+			return
+		}
+	}
+
 	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
@@ -386,6 +405,16 @@ func (r *Runner) maybeConsolidation() {
 
 	if sinceLastInteraction > time.Hour {
 		return
+	}
+
+	// Check availability (rate limit + mana)
+	if r.sessionKeyFn != nil && r.canFireFn != nil {
+		sessionKey := r.sessionKeyFn()
+		canFire, reason := r.canFireFn(context.Background(), sessionKey)
+		if !canFire {
+			r.log.Debugf("skipping consolidation for agent %s: %s", r.agentID, reason)
+			return
+		}
 	}
 
 	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)

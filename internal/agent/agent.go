@@ -19,6 +19,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/prompts"
 	"foci/internal/provider"
@@ -1261,6 +1262,43 @@ func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
 			a.logger().Debugf("replayed message session=%s trigger=%s response_len=%d", item.SessionKey, item.Trigger, len(resp))
 		}
 	}
+}
+
+// CanFireBackgroundOperation checks if a background operation can run on the given session.
+// Returns false if:
+//   - The rate limit gate is closed (instance-level check)
+//   - Mana is insufficient (session-aware check using agent's configured invest interval)
+//
+// The sessionKey is used to resolve the session's current endpoint for mana checking.
+// If sessionKey is empty, returns (false, "no session key").
+func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
+	// Check 1: Rate limit gate (instance-level, fails fast)
+	if limited, until := a.rateLimitGate.IsLimited(); limited {
+		resetStr := mana.ParseResetTime(until.Format(time.RFC3339Nano))
+		if resetStr == "" {
+			resetStr = until.Format(time.Kitchen)
+		}
+		return false, fmt.Sprintf("rate limited (resets %s)", resetStr)
+	}
+
+	// Check 2: Session key validity
+	if sessionKey == "" {
+		return false, "no session key"
+	}
+
+	// Check 3: Mana availability (session-aware, using agent's configured invest interval)
+	if a.ManaInvestInterval > 0 {
+		usageClient := a.SessionUsageClient(sessionKey)
+		if usageClient != nil {
+			monitor := mana.NewMonitor(usageClient)
+			if !monitor.IsGoodFor(ctx, a.ManaInvestInterval) {
+				return false, "mana insufficient"
+			}
+		}
+		// If usageClient is nil, no mana checking (non-Anthropic endpoint)
+	}
+
+	return true, ""
 }
 
 // logAPIResponse logs usage, cost, and optionally the full request/response payload.

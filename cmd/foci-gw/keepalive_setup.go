@@ -5,11 +5,9 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/keepalive"
 	"foci/internal/log"
-	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/provider"
 	"foci/prompts"
@@ -58,17 +56,6 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 		},
 		p.ctx,
 	)
-
-	// Mana monitor for background work throttling
-	// Keepalive should use default session's current model, not agent's configured default
-	getDefaultSessionUsageClient := func() *anthropic.UsageClient {
-		sk := inst.defaultSessionKey()
-		if sk == "" || inst.ag == nil {
-			return nil
-		}
-		return inst.ag.SessionUsageClient(sk)
-	}
-	manaMonitor := mana.NewMonitorWithFunc(getDefaultSessionUsageClient)
 
 	// Proactive warning dispatcher
 	var warningDispatcher *warnings.Dispatcher
@@ -129,13 +116,18 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 		TodoStore:          p.todoStore,
 		StateStore:         p.stateStore,
 		BranchFunc:         branchFn,
-		ManaMonitor:        manaMonitor,
+		ManaMonitor:        nil, // DEPRECATED: no longer used
 		WarningDispatcher:  warningDispatcher,
 		HasActiveWorkFn: func() bool {
 			return inst.tmuxWatchCount != nil && inst.tmuxWatchCount() > 0
 		},
 		DrainFn: func() {
 			inst.ag.DrainRateLimitQueue(p.ctx)
+		},
+		// Session-aware availability checking
+		SessionKeyFunc: inst.defaultSessionKey,
+		CanFireFunc: func(ctx context.Context, sessionKey string) (bool, string) {
+			return inst.ag.CanFireBackgroundOperation(ctx, sessionKey)
 		},
 	})
 	runner.Start(p.ctx)

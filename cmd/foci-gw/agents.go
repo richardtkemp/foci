@@ -971,7 +971,7 @@ func buildBranchFunc(
 
 		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
 		if err != nil {
-			log.Errorf("keepalive", "%s turn error: %v", branchType, err)
+			log.Warnf("keepalive", "%s turn error: %v", branchType, err)
 			return
 		}
 		_ = resp // keepalive/background responses are not delivered to user
@@ -1049,6 +1049,13 @@ func inlinePromptInfo(label, value, embeddedDefault string) command.PromptInfo {
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context) {
 	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
+		return
+	}
+
+	// Check availability before doing any work
+	canFire, reason := ag.CanFireBackgroundOperation(parentCtx, sessionKey)
+	if !canFire {
+		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
 		return
 	}
 

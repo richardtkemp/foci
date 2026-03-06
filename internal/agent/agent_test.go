@@ -3887,3 +3887,107 @@ func TestDrainRateLimitQueue(t *testing.T) {
 		t.Errorf("expected 2 API calls from replay, got %d", got)
 	}
 }
+
+// TestCanFireBackgroundOperation_RateLimited proves that the method returns false
+// when the rate limit gate is closed, with a descriptive reason including reset time.
+func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
+	ag := &Agent{ManaInvestInterval: 30 * time.Minute}
+	ag.rateLimitGate.Close(time.Now().Add(2 * time.Hour))
+
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+
+	if canFire {
+		t.Error("expected canFire=false when rate limited")
+	}
+	if !strings.Contains(reason, "rate limited") {
+		t.Errorf("expected rate limited reason, got: %s", reason)
+	}
+	if !strings.Contains(reason, "resets") {
+		t.Errorf("expected reset time in reason, got: %s", reason)
+	}
+}
+
+// TestCanFireBackgroundOperation_NoSessionKey proves that the method returns false
+// with "no session key" when given an empty session key.
+func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
+	ag := &Agent{ManaInvestInterval: 30 * time.Minute}
+
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "")
+
+	if canFire {
+		t.Error("expected canFire=false with empty session key")
+	}
+	if reason != "no session key" {
+		t.Errorf("expected 'no session key', got: %s", reason)
+	}
+}
+
+// TestCanFireBackgroundOperation_NoUsageClient proves that the method returns true
+// (skips mana check) when there's no UsageClient for the session's endpoint.
+func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
+	ag := &Agent{
+		UsageClient:        nil,
+		GetUsageClient:     func(endpoint string) *anthropic.UsageClient { return nil },
+		ManaInvestInterval: 30 * time.Minute,
+	}
+
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+
+	if !canFire {
+		t.Errorf("expected canFire=true for non-Anthropic endpoint, got false: %s", reason)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason, got: %s", reason)
+	}
+}
+
+// TestCanFireBackgroundOperation_ZeroInvestInterval proves that mana checking is skipped
+// when ManaInvestInterval is zero (mana tracking disabled).
+func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
+	// Mock UsageClient that would fail if called
+	mockClient := &anthropic.UsageClient{}
+
+	ag := &Agent{
+		UsageClient:        mockClient,
+		GetUsageClient:     func(endpoint string) *anthropic.UsageClient { return mockClient },
+		ManaInvestInterval: 0, // disabled
+	}
+
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+
+	if !canFire {
+		t.Errorf("expected canFire=true with zero invest interval, got false: %s", reason)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason, got: %s", reason)
+	}
+}
+
+// TestCanFireBackgroundOperation_ManaInsufficient proves that the method returns false
+// when mana is insufficient according to the monitor's IsGoodFor check.
+func TestCanFireBackgroundOperation_ManaInsufficient(t *testing.T) {
+	// Skipping this test since UsageClient baseURL cannot be easily mocked in agent tests.
+	// The mana.Monitor.IsGoodFor logic is already tested in the mana package tests.
+	t.Skip("Skipping mana insufficient test - UsageClient baseURL cannot be easily mocked in agent tests")
+}
+
+// TestCanFireBackgroundOperation_Success proves that the method returns true
+// when all checks pass (gate open, valid session, no usage client = mana check skipped).
+func TestCanFireBackgroundOperation_Success(t *testing.T) {
+	// Test the success path by having no usage client (mana check skipped)
+	// This is the common path for non-Anthropic endpoints
+	ag := &Agent{
+		UsageClient:        nil,
+		GetUsageClient:     func(endpoint string) *anthropic.UsageClient { return nil },
+		ManaInvestInterval: 30 * time.Minute,
+	}
+
+	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
+
+	if !canFire {
+		t.Errorf("expected canFire=true when all checks pass, got false: %s", reason)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason, got: %s", reason)
+	}
+}

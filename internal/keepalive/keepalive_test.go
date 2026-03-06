@@ -963,3 +963,94 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 	// Even with bad InvestInterval, it should attempt background work
 	// (it just falls back to 30m for mana check)
 }
+
+// TestMaybeMemoryFormation_SkipsWhenRateLimited proves that memory formation
+// respects the canFireFn check and skips when it returns false.
+func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
+	called := false
+	now := time.Now()
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		mfCfg: config.MemoryFormationConfig{
+			Interval: "1h",
+		},
+		sessionKeyFn: func() string { return "test/c123/1000000000" },
+		canFireFn: func(ctx context.Context, sk string) (bool, string) {
+			return false, "rate limited"
+		},
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			called = true
+		},
+		lastMemoryFormation: now.Add(-2 * time.Hour),
+		lastInteraction:     now.Add(-30 * time.Minute),
+		done:                make(chan struct{}),
+	}
+
+	r.maybeMemoryFormation()
+
+	if called {
+		t.Error("expected memory formation to skip when canFireFn returns false")
+	}
+}
+
+// TestMaybeConsolidation_SkipsWhenRateLimited proves that consolidation
+// respects the canFireFn check and skips when it returns false.
+func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
+	called := false
+	now := time.Now()
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		mfCfg: config.MemoryFormationConfig{
+			ConsolidationInterval: "1h",
+		},
+		sessionKeyFn: func() string { return "test/c123/1000000000" },
+		canFireFn: func(ctx context.Context, sk string) (bool, string) {
+			return false, "rate limited"
+		},
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			called = true
+		},
+		lastConsolidation: now.Add(-2 * time.Hour),
+		lastInteraction:   now.Add(-30 * time.Minute),
+		done:              make(chan struct{}),
+	}
+
+	r.maybeConsolidation()
+
+	if called {
+		t.Error("expected consolidation to skip when canFireFn returns false")
+	}
+}
+
+// TestMaybeBackgroundWork_SkipsWhenRateLimited proves that background work
+// respects the canFireFn check and skips when it returns false.
+func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
+	called := false
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		bgCfg: config.BackgroundConfig{
+			Enabled:  true,
+			Interval: "1s",
+		},
+		sessionKeyFn: func() string { return "test/c123/1000000000" },
+		canFireFn: func(ctx context.Context, sk string) (bool, string) {
+			return false, "mana insufficient"
+		},
+		branchFn: func(branchType, promptText string, noCompact bool) {
+			called = true
+		},
+		lastInteraction: time.Now().Add(-2 * time.Second),
+		todoStore:       nil, // skip todo check
+		done:            make(chan struct{}),
+	}
+
+	r.maybeBackgroundWork(context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	if called {
+		t.Error("expected background work to skip when canFireFn returns false")
+	}
+}
