@@ -280,9 +280,6 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	// Ensure we still have at least minMessages to summarize
 	if len(messages)-preserveN < c.minMessages {
 		preserveN = len(messages) - c.minMessages
-		if preserveN < 0 {
-			preserveN = 0
-		}
 	}
 
 	toSummarise := messages
@@ -292,9 +289,6 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 
 		// Walk the split backward (bounded) to avoid breaking tool_use/tool_result pairs.
 		maxWalkBack := c.preserveMessages
-		if maxWalkBack <= 0 {
-			maxWalkBack = 25
-		}
 		safeSplit := safeSplitPoint(messages, splitIdx, maxWalkBack)
 		if safeSplit != splitIdx {
 			c.log.Infof("split adjusted from %d to %d to preserve tool_use pairs", splitIdx, safeSplit)
