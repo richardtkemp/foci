@@ -62,15 +62,23 @@ func NewToolsCommand(listFn func() []ToolInfo) *Command {
 	}
 }
 
-// NewConfigCommand returns a /config command dumping the running config.
-// configFn receives the context (for display width) and the subcommand args
-
-func NewConfigCommand(configFn func(ctx context.Context, args string) (string, error)) *Command {
+// NewConfigCommand returns a /config command for viewing and editing the running config.
+// configFn handles the read-only subcommands (toml, table, available).
+// registry and setDeps enable the interactive /config set wizard; pass nil to disable.
+func NewConfigCommand(configFn func(ctx context.Context, args string) (string, error), registry *Registry, setDeps *ConfigSetDeps) *Command {
 	return &Command{
 		Name:        "config",
-		Description: "Show running config. Subcommands: toml, table, available",
+		Description: "Show or edit config. Subcommands: toml, table, available, set",
 		Category:    "diagnostics",
 		Execute: func(ctx context.Context, args string) (string, error) {
+			parts := strings.Fields(args)
+			if len(parts) > 0 && strings.ToLower(parts[0]) == "set" {
+				if setDeps == nil {
+					return "Config set is not available.", nil
+				}
+				setArgs := strings.TrimSpace(strings.TrimPrefix(args, parts[0]))
+				return configSet(registry, setDeps, setArgs)
+			}
 			return configFn(ctx, args)
 		},
 		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
@@ -78,9 +86,29 @@ func NewConfigCommand(configFn func(ctx context.Context, args string) (string, e
 				{Label: "toml", Data: "toml"},
 				{Label: "table", Data: "table"},
 				{Label: "available", Data: "available"},
+				{Label: "set", Data: "set"},
 			}
 		},
 	}
+}
+
+// configSet handles /config set — either starts a wizard (bare) or does a direct set.
+func configSet(registry *Registry, deps *ConfigSetDeps, args string) (string, error) {
+	// Direct mode: /config set section.key=value
+	if args != "" && strings.Contains(args, "=") {
+		return ConfigSetDirect(*deps, args)
+	}
+
+	// Interactive mode: start wizard.
+	if registry == nil {
+		return "Config set wizard is not available.", nil
+	}
+
+	w := newConfigSetWizard(*deps)
+	registry.SetWizard(w)
+
+	sections := deps.SectionsFn()
+	return fmt.Sprintf("Which section?\n%s", strings.Join(sections, ", ")), nil
 }
 
 

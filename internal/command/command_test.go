@@ -285,13 +285,13 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 	})
 
 	t.Run("config", func(t *testing.T) {
-		cmd := NewConfigCommand(func(ctx context.Context, args string) (string, error) { return args, nil })
+		cmd := NewConfigCommand(func(ctx context.Context, args string) (string, error) { return args, nil }, nil, nil)
 		if cmd.KeyboardOptions == nil {
 			t.Fatal("config command should have KeyboardOptions")
 		}
 		opts := cmd.KeyboardOptions(context.Background())
-		if len(opts) != 3 {
-			t.Fatalf("got %d options, want 3", len(opts))
+		if len(opts) != 4 {
+			t.Fatalf("got %d options, want 4", len(opts))
 		}
 	})
 

@@ -136,9 +136,17 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		}
 		return infos
 	}))
+	configSetDeps := &command.ConfigSetDeps{
+		ConfigPath:      p.configPath,
+		AgentID:         p.acfg.ID,
+		SectionsFn:      config.FieldSections,
+		FieldsInSection: config.FieldsInSection,
+		LookupFn:        config.LookupField,
+		SetInFileFn:     config.SetInFile,
+	}
 	cmds.Register(command.NewConfigCommand(func(ctx context.Context, args string) (string, error) {
 		return runConfig(p, ctx, args)
-	}))
+	}, cmds, configSetDeps))
 	cmds.Register(command.NewPromptsCommand(command.PromptsCmdDeps{
 		DataFn:    func() command.PromptsData { return buildPromptsData(p) },
 		SendDocFn: buildSendDocFn(p),
@@ -291,7 +299,7 @@ func runConfig(p cmdRegParams, _ context.Context, args string) (string, error) {
 	case "available":
 		return config.FormatAvailable(p.cfg, p.acfg), nil
 	default:
-		return "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults", nil
+		return "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults\n/config set [section.key=value] — edit config file", nil
 	}
 }
 
