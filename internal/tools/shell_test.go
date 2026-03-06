@@ -345,6 +345,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 }
 
 func TestExecAutoBackgroundSlowCommand(t *testing.T) {
+	t.Parallel()
 	// A slow command should auto-background after 1 second
 	completeCh := make(chan string, 1)
 	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg string) {
@@ -352,7 +353,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	}), "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "timeout 3 tail -f /dev/null",
+		"command": "timeout 1.5 tail -f /dev/null",
 		"timeout": 10,
 	})
 
@@ -378,6 +379,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 }
 
 func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
+	t.Parallel()
 	// Verify the session key from context reaches the notifier callback
 	type result struct {
 		sk, msg string
@@ -388,7 +390,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 	}), "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "timeout 3 tail -f /dev/null",
+		"command": "timeout 1.5 tail -f /dev/null",
 		"timeout": 10,
 	})
 
@@ -774,6 +776,7 @@ func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
 }
 
 func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
+	t.Parallel()
 	// When the parent context is cancelled mid-execution (turn cancelled),
 	// results should still be delivered via the notifier — not silently lost.
 	completeCh := make(chan string, 1)
@@ -784,7 +787,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	tool := NewExecTool(nil, nil, 10, notifier, "", nil, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo ctx-cancel-result; timeout 3 tail -f /dev/null",
+		"command": "echo ctx-cancel-result; timeout 1.5 tail -f /dev/null",
 		"timeout": 10,
 	})
 

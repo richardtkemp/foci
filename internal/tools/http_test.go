@@ -622,9 +622,10 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 }
 
 func TestHTTPRequestTimeoutCap(t *testing.T) {
-	// A slow server that takes 2 seconds
+	t.Parallel()
+	// A slow server that takes 1.5 seconds
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2 * time.Second)
+		time.Sleep(1500 * time.Millisecond)
 		fmt.Fprint(w, "slow")
 	}))
 	defer srv.Close()
@@ -764,9 +765,10 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 }
 
 func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
+	t.Parallel()
 	// A slow request should auto-background after 1 second
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(3 * time.Second)
+		time.Sleep(1500 * time.Millisecond)
 		fmt.Fprint(w, "slow response")
 	}))
 	defer srv.Close()
@@ -806,9 +808,10 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 }
 
 func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
+	t.Parallel()
 	// Verify the session key from context reaches the notifier callback
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(3 * time.Second)
+		time.Sleep(1500 * time.Millisecond)
 		fmt.Fprint(w, "done")
 	}))
 	defer srv.Close()
