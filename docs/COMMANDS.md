@@ -90,7 +90,7 @@ Bitwarden vault integration. **CLI-only**.
 
 ### `/tmux <operation>`
 Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivalent).
-- `/tmux list` — list active sessions
+- `/tmux list` — list active sessions owned by the current agent (shows session ID in OWNER column)
 - `/tmux start [name] [command]` — start a session (auto-watches by default; `--no-watch` to disable)
 - `/tmux send <name> <keys>` — send keystrokes to a pane
 - `/tmux read <name> [lines]` — read pane output
