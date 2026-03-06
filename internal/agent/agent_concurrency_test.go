@@ -24,7 +24,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 	var mu sync.Mutex
 	var apiCallOrder []string // tracks which turn's messages were seen by API
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		// Identify which turn this is by looking at the last user message
 		lastMsg := req.Messages[len(req.Messages)-1]
 		text := provider.TextOf(lastMsg.Content)
@@ -47,9 +47,6 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -146,7 +143,7 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 	var activeConcurrent int32
 	var maxConcurrent int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		cur := atomic.AddInt32(&activeConcurrent, 1)
 		defer atomic.AddInt32(&activeConcurrent, -1)
 
@@ -167,9 +164,6 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -206,7 +200,7 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 func TestConcurrentTurnCancellation(t *testing.T) {
 	// Verify that a cancelled context while waiting for the turn lock
 	// returns immediately without processing.
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		time.Sleep(200 * time.Millisecond) // slow turn
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -217,9 +211,6 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 

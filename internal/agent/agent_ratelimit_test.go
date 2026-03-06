@@ -3,20 +3,26 @@ package agent
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
+
+// mockUsageClient is a minimal mock for provider.UsageClient in tests.
+type mockUsageClient struct{}
+
+func (m *mockUsageClient) GetUsage(_ context.Context) (*provider.UsageResponse, error) {
+	return nil, nil
+}
+func (m *mockUsageClient) Invalidate()                {}
+func (m *mockUsageClient) SetCacheTTL(_ time.Duration) {}
 
 // usageClientProviderFunc adapts a function to the provider.UsageClientProvider interface.
 type usageClientProviderFunc func(endpoint string) provider.UsageClient
@@ -28,13 +34,10 @@ func (f usageClientProviderFunc) GetUsageClient(endpoint string) provider.UsageC
 func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 	// When the gate is closed, HandleMessage should queue the message
 	// and return RateLimitedError without touching the session.
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		t.Fatal("API should not be called when gate is closed")
 		return nil
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -70,14 +73,9 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 
 func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	// A 429 from the API should close the gate so subsequent calls are blocked.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "300")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "300", Body: "rate limited"}
+	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -121,7 +119,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 func TestDrainRateLimitQueue(t *testing.T) {
 	// When the gate opens, DrainRateLimitQueue should replay messages.
 	var apiCalls atomic.Int32
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		apiCalls.Add(1)
 		return &provider.MessageResponse{
 			ID:         "msg_drain",
@@ -132,9 +130,6 @@ func TestDrainRateLimitQueue(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -224,7 +219,7 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 // when ManaInvestInterval is zero (mana tracking disabled).
 func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 	// Mock UsageClient that would fail if called
-	mockClient := anthropic.NewUsageClient("dummy")
+	mockClient := &mockUsageClient{}
 
 	ag := &Agent{
 		UsageClient:        mockClient,

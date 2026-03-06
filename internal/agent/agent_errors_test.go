@@ -2,26 +2,20 @@ package agent
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
 
 func TestHandleMessageRateLimit(t *testing.T) {
-	// Server returns 429 with Retry-After header.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Retry-After", "120")
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
+	// Client returns 429 with Retry-After header.
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "120", Body: "rate limited"}
+	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -58,14 +52,10 @@ func TestHandleMessageRateLimit(t *testing.T) {
 }
 
 func TestHandleMessageOverloaded(t *testing.T) {
-	// Server returns 529 Overloaded — should get overloaded message, not rate limit.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(529)
-		w.Write([]byte(`{"error":{"type":"overloaded_error","message":"overloaded"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
+	// Client returns 529 Overloaded — should get overloaded message, not rate limit.
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 529, Body: "overloaded"}
+	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -101,13 +91,9 @@ func TestHandleMessageOverloaded(t *testing.T) {
 
 func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 	// 429 without RateLimitFunc — should still return friendly error, not crash.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"error":{"type":"rate_limit_error","message":"rate limited"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 429, Body: "rate limited"}
+	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -131,14 +117,10 @@ func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 }
 
 func TestHandleMessageServerError(t *testing.T) {
-	// Server returns 500 Internal Server Error.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
+	// Client returns 500 Internal Server Error.
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 500, Body: "Internal server error"}
+	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -178,13 +160,9 @@ func TestHandleMessageServerError(t *testing.T) {
 
 func TestHandleMessageServerErrorNoCallback(t *testing.T) {
 	// 500 without RateLimitFunc — should still return friendly error, not crash.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"Internal server error"}}`))
-	}))
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
+	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return nil, &provider.APIError{StatusCode: 500, Body: "Internal server error"}
+	})
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -206,4 +184,3 @@ func TestHandleMessageServerErrorNoCallback(t *testing.T) {
 		t.Errorf("error = %q, want friendly server error message", err.Error())
 	}
 }
-

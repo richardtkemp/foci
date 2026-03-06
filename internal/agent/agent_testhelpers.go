@@ -1,105 +1,60 @@
 package agent
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+	"context"
+	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 )
 
-// mockServer returns a test HTTP server that returns canned Anthropic responses.
-// responseFunc is called for each request and should return the MessageResponse.
-// Handles both non-streaming (JSON) and streaming (SSE) requests automatically.
-func mockServer(responseFunc func(req *provider.MessageRequest) *provider.MessageResponse) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Read raw body to check for stream flag before decoding.
-		var raw json.RawMessage
-		_ = json.NewDecoder(r.Body).Decode(&raw)
-
-		var req provider.MessageRequest
-		_ = json.Unmarshal(raw, &req)
-
-		resp := responseFunc(&req)
-
-		// Check if this is a streaming request.
-		var envelope struct{ Stream bool }
-		_ = json.Unmarshal(raw, &envelope)
-		if envelope.Stream {
-			serveSSE(w, resp)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
+// testClient is a mock provider.Client for unit tests.
+// It implements Client, StreamingClient, and retryableClient (via RetryBaseDelay)
+// so that provider.Send works with fast retries.
+type testClient struct {
+	handler func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error)
 }
 
-// serveSSE writes a MessageResponse as an SSE event stream.
-func serveSSE(w http.ResponseWriter, resp *provider.MessageResponse) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "flushing not supported", http.StatusInternalServerError)
-		return
+func (c *testClient) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+	return c.handler(ctx, req)
+}
+
+func (c *testClient) StreamMessage(ctx context.Context, req *provider.MessageRequest, sh *provider.StreamHandler) (*provider.MessageResponse, error) {
+	resp, err := c.handler(ctx, req)
+	if err != nil {
+		return nil, err
 	}
-
-	text := provider.TextOf(resp.Content)
-
-	_, _ = fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", mustJSON(map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id": resp.ID, "type": "message", "role": "assistant",
-			"content": []any{}, "model": "claude-haiku-4-5",
-			"stop_reason": nil, "stop_sequence": nil,
-			"usage": map[string]any{
-				"input_tokens": resp.Usage.InputTokens, "output_tokens": 0,
-				"cache_creation_input_tokens": resp.Usage.CacheCreationInputTokens,
-				"cache_read_input_tokens":     resp.Usage.CacheReadInputTokens,
-			},
-		},
-	}))
-	flusher.Flush()
-
-	_, _ = fmt.Fprintf(w, "event: content_block_start\ndata: %s\n\n", mustJSON(map[string]any{
-		"type": "content_block_start", "index": 0,
-		"content_block": map[string]any{"type": "text", "text": ""},
-	}))
-	flusher.Flush()
-
-	_, _ = fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", mustJSON(map[string]any{
-		"type": "content_block_delta", "index": 0,
-		"delta": map[string]any{"type": "text_delta", "text": text},
-	}))
-	flusher.Flush()
-
-	_, _ = fmt.Fprintf(w, "event: content_block_stop\ndata: %s\n\n", mustJSON(map[string]any{
-		"type": "content_block_stop", "index": 0,
-	}))
-	flusher.Flush()
-
-	_, _ = fmt.Fprintf(w, "event: message_delta\ndata: %s\n\n", mustJSON(map[string]any{
-		"type": "message_delta",
-		"delta": map[string]any{"stop_reason": resp.StopReason, "stop_sequence": nil},
-		"usage": map[string]any{"output_tokens": resp.Usage.OutputTokens},
-	}))
-	flusher.Flush()
-
-	_, _ = fmt.Fprintf(w, "event: message_stop\ndata: %s\n\n", mustJSON(map[string]any{
-		"type": "message_stop",
-	}))
-	flusher.Flush()
+	if sh != nil {
+		text := provider.TextOf(resp.Content)
+		if text != "" && sh.OnTextDelta != nil {
+			sh.OnTextDelta(text)
+		}
+		for _, block := range resp.Content {
+			if block.Type == "thinking" && block.Thinking != "" && sh.OnThinkingDelta != nil {
+				sh.OnThinkingDelta(block.Thinking)
+			}
+		}
+	}
+	return resp, nil
 }
 
-func mustJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+func (c *testClient) CountTokens(_ context.Context, _ *provider.MessageRequest) (int, error) {
+	return 0, nil
 }
 
-func newTestClientWithBase(baseURL string) *anthropic.Client {
-	c := anthropic.NewClientWithBase(baseURL, "test-token")
-	c.SetUseSDK(true)
-	return c
+func (c *testClient) IsCachingAvailable() bool { return true }
+
+// RetryBaseDelay satisfies the provider.retryableClient interface (structural typing)
+// so that provider.Send uses 1ms backoff instead of 2s.
+func (c *testClient) RetryBaseDelay() time.Duration { return time.Millisecond }
+
+// newTestClient creates a test client from a response handler (success path).
+func newTestClient(handler func(req *provider.MessageRequest) *provider.MessageResponse) *testClient {
+	return &testClient{handler: func(_ context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+		return handler(req), nil
+	}}
+}
+
+// newTestClientWithError creates a test client that can return errors.
+func newTestClientWithError(handler func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error)) *testClient {
+	return &testClient{handler: handler}
 }

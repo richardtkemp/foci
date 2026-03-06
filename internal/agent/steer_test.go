@@ -221,7 +221,7 @@ func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
 func TestSteerInjectedAfterToolBatch(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := callCount.Add(1)
 
 		if n == 1 {
@@ -268,9 +268,6 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

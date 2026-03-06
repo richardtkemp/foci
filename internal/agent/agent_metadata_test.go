@@ -57,7 +57,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 func TestMetadataInjectedInMessage(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -68,9 +68,6 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -135,7 +132,7 @@ func TestBuildMetaPrefix_Mana(t *testing.T) {
 func TestDuplicateMessages(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -146,9 +143,6 @@ func TestDuplicateMessages(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -185,7 +179,7 @@ func TestDuplicateMessages(t *testing.T) {
 func TestDuplicateMessagesDisabled(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -196,9 +190,6 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -222,7 +213,7 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -233,9 +224,6 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{

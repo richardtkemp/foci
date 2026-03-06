@@ -15,7 +15,7 @@ import (
 )
 
 func TestMaxTokensWarning(t *testing.T) {
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
@@ -25,9 +25,6 @@ func TestMaxTokensWarning(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 8192},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -66,7 +63,7 @@ func TestMaxTokensWarning(t *testing.T) {
 }
 
 func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
@@ -76,9 +73,6 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
@@ -105,7 +99,7 @@ func TestBraindeadWarningInjected(t *testing.T) {
 	var callCount atomic.Int32
 	threshold := 3
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= threshold+1 {
 			// Return tool_use to keep the loop going
@@ -127,9 +121,6 @@ func TestBraindeadWarningInjected(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -176,7 +167,7 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 	totalLoops := 6
 	threshold := 2
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= totalLoops {
 			return &provider.MessageResponse{
@@ -197,9 +188,6 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -243,7 +231,7 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 func TestBraindeadDisabledWhenZero(t *testing.T) {
 	var callCount atomic.Int32
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= 5 {
 			return &provider.MessageResponse{
@@ -264,9 +252,6 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

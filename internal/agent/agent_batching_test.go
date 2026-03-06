@@ -13,7 +13,7 @@ import (
 
 func TestThinkingAdaptiveInRequest(t *testing.T) {
 	var capturedReq *provider.MessageRequest
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		capturedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_think",
@@ -24,9 +24,6 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -55,7 +52,7 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 
 func TestThinkingOffOmitsField(t *testing.T) {
 	var capturedReq *provider.MessageRequest
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		capturedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_nothink",
@@ -66,9 +63,6 @@ func TestThinkingOffOmitsField(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -93,7 +87,7 @@ func TestThinkingOffOmitsField(t *testing.T) {
 }
 
 func TestThinkingBlocksPreservedInSession(t *testing.T) {
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:   "msg_think_blocks",
 			Type: "message",
@@ -106,9 +100,6 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 15},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	sessionStore := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -154,7 +145,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	// and the final response text returned from HandleMessage.
 	// This also covers the bug where final response has empty content.
 	callCount := 0
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
 			// First response: text + tool_use (intermediate text)
@@ -180,9 +171,6 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 1},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -229,7 +217,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	// When batch=true, intermediate text should be accumulated and returned
 	// concatenated from HandleMessage. No ReplyFunc calls.
 	callCount := 0
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
 			return &provider.MessageResponse{
@@ -254,9 +242,6 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 1},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{
@@ -303,7 +288,7 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 	// When batch=true with multiple intermediate text blocks and a final text,
 	// all text should be concatenated with double newlines.
 	callCount := 0
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
 		if callCount == 1 {
 			return &provider.MessageResponse{
@@ -341,9 +326,6 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 40, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	registry := tools.NewRegistry()
 	registry.Register(&tools.Tool{

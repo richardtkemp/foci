@@ -14,7 +14,7 @@ import (
 func TestHandleMessageWithAttachments(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -25,9 +25,6 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -85,7 +82,7 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 func TestHandleMessageWithPDFAttachment(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -96,9 +93,6 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -145,7 +139,7 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -156,9 +150,6 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -186,7 +177,7 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
 			Type:       "message",
@@ -196,9 +187,6 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -226,7 +214,7 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 	// Verify HandleMessage (text-only) still works correctly
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -237,9 +225,6 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -265,7 +250,7 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -276,9 +261,6 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
@@ -314,7 +296,7 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	var receivedReq *provider.MessageRequest
 
-	server := mockServer(func(req *provider.MessageRequest) *provider.MessageResponse {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -325,9 +307,6 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 10},
 		}
 	})
-	defer server.Close()
-
-	client := newTestClientWithBase(server.URL)
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	ag := &Agent{
