@@ -45,6 +45,8 @@ type TurnCallbacks struct {
 	TextDeltaObserver    func(delta string)
 	ThinkingDeltaObserver func(delta string)
 	SteerCheckFunc       func() string // non-blocking; returns "" if no pending steer
+	RetryNotifyFunc      func(endpoint string) // called on first API retry; endpoint is the base URL being retried
+	RetrySuccessFunc     func() // called when a retry succeeds (to clear/overwrite retry message)
 }
 
 // WithTurnCallbacks attaches TurnCallbacks to a context.
@@ -114,5 +116,19 @@ func steerCheckFromCtx(ctx context.Context) string {
 		return cb.SteerCheckFunc()
 	}
 	return ""
+}
+
+// notifyRetryCtx calls the retry notification callback via context.
+func notifyRetryCtx(ctx context.Context, endpoint string) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.RetryNotifyFunc != nil {
+		cb.RetryNotifyFunc(endpoint)
+	}
+}
+
+// notifyRetrySuccessCtx calls the retry success callback via context.
+func notifyRetrySuccessCtx(ctx context.Context) {
+	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.RetrySuccessFunc != nil {
+		cb.RetrySuccessFunc()
+	}
 }
 

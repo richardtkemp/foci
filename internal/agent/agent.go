@@ -994,6 +994,17 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				},
 			}
 		}
+
+		// Attach retry notification callbacks to context
+		ctx = anthropic.WithRetryCallbacks(ctx, &anthropic.RetryCallbacks{
+			OnFirstRetry: func(endpoint string) {
+				notifyRetryCtx(ctx, endpoint)
+			},
+			OnSuccess: func() {
+				notifyRetrySuccessCtx(ctx)
+			},
+		})
+
 		resp, err = provider.Send(ctx, turnClient, req, handler)
 
 		duration := time.Since(start)

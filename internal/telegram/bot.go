@@ -1130,6 +1130,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		},
 		// Steer: drain buffered user messages for injection between tool calls.
 		SteerCheckFunc: b.drainSteer,
+		// Retry notifications: inform user when API is retrying.
+		RetryNotifyFunc: tracker.notifyRetry,
+		RetrySuccessFunc: tracker.clearRetryNotification,
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
