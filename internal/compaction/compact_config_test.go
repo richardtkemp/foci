@@ -1,0 +1,190 @@
+package compaction
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"foci/internal/anthropic"
+	"foci/internal/provider"
+	"foci/internal/session"
+)
+
+// TestWithConfigOverrides verifies config override method.
+func TestWithConfigOverrides(t *testing.T) {
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	c.WithConfig(2048, 8, 10)
+
+	// Model stays as initialized (always uses agent's model)
+	if c.model != "claude-haiku-4-5" {
+		t.Errorf("model = %q", c.model)
+	}
+	if c.maxTokens != 2048 {
+		t.Errorf("maxTokens = %d", c.maxTokens)
+	}
+	if c.minMessages != 8 {
+		t.Errorf("minMessages = %d", c.minMessages)
+	}
+	if c.preserveMessages != 10 {
+		t.Errorf("preserveMessages = %d", c.preserveMessages)
+	}
+}
+
+// TestWithConfigEmptyValues verifies that zero values are handled correctly.
+func TestWithConfigEmptyValues(t *testing.T) {
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	original := *c
+	c.WithConfig(0, 0, 0)
+
+	// Zero values should not override maxTokens/minMessages but preserveMessages=0 is valid
+	if c.maxTokens != original.maxTokens {
+		t.Errorf("maxTokens changed to %d", c.maxTokens)
+	}
+	if c.minMessages != original.minMessages {
+		t.Errorf("minMessages changed to %d", c.minMessages)
+	}
+	if c.preserveMessages != 0 {
+		t.Errorf("preserveMessages = %d, want 0", c.preserveMessages)
+	}
+}
+
+// TestWithEffort verifies effort configuration setting.
+func TestWithEffort(t *testing.T) {
+	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	if c.effort != "" {
+		t.Errorf("initial effort = %q, want empty", c.effort)
+	}
+
+	c.WithEffort("high")
+	if c.effort != "high" {
+		t.Errorf("after WithEffort, effort = %q, want high", c.effort)
+	}
+
+	c.WithEffort("")
+	if c.effort != "" {
+		t.Errorf("after clearing, effort = %q, want empty", c.effort)
+	}
+}
+
+// TestCompactCustomPrompts verifies custom summary and handoff prompts.
+func TestCompactCustomPrompts(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(provider.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain/1000000000"
+
+	for i := 0; i < 3; i++ {
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+	}
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "custom summary prompt", "custom handoff msg", false)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Verify the custom summary prompt was sent to the API
+	if !strings.Contains(string(capturedBody), "custom summary prompt") {
+		t.Errorf("API request body should contain custom summary prompt")
+	}
+
+	// Verify custom handoff message in resulting messages
+	msgs, _ := store.Load(sessionKey)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %d, want 3", len(msgs))
+	}
+	handoff := provider.TextOf(msgs[2].Content)
+	if !strings.Contains(handoff, "custom handoff msg") {
+		t.Errorf("handoff = %q, want custom handoff msg", handoff)
+	}
+}
+
+// TestCompactDefaultPrompts verifies default prompts are used when empty.
+func TestCompactDefaultPrompts(t *testing.T) {
+	var capturedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(provider.MessageResponse{
+			ID:         "msg_compact",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("Summary."),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	store := session.NewStore(t.TempDir())
+	sessionKey := "test/imain/1000000000"
+
+	for i := 0; i < 3; i++ {
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+	}
+
+	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	// Empty strings should fall back to defaults
+	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	// Verify a fallback summary prompt was sent
+	if !strings.Contains(string(capturedBody), "provide continuity") {
+		t.Errorf("API request body should contain fallback summary prompt")
+	}
+
+	// Verify default handoff message
+	msgs, _ := store.Load(sessionKey)
+	handoff := provider.TextOf(msgs[2].Content)
+	if !strings.Contains(handoff, DefaultHandoffMessage) {
+		t.Errorf("handoff = %q, want default handoff", handoff)
+	}
+}
+
+// TestCheckConfig_Safe verifies checkConfig when configuration is safe.
+func TestCheckConfig_Safe(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	// With Claude (200k context) and 80% threshold, 160k is trigger point
+	// maxTokens=5000, so 160k + 5k < 200k → should not warn
+	c := NewCompactor(store, "claude-3-opus", 0.8)
+	c.maxTokens = 5000
+
+	// Should not warn - no assertion needed, just verify it doesn't panic
+	c.checkConfig()
+}
+
+// TestCheckConfig_Unsafe verifies checkConfig when configuration may exceed window.
+func TestCheckConfig_Unsafe(t *testing.T) {
+	store := session.NewStore(t.TempDir())
+	// With Claude (200k context) and 80% threshold, 160k is trigger point
+	// maxTokens=50000, so 160k + 50k > 200k → should warn
+	c := NewCompactor(store, "claude-3-opus", 0.8)
+	c.maxTokens = 50000
+
+	// Capture any warnings (they go to the logger)
+	// Just verify it doesn't panic when config is unsafe
+	c.checkConfig()
+}
