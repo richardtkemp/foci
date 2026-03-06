@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"foci/internal/anthropic"
+	"foci/internal/config"
 	"foci/internal/log"
 	oai "foci/internal/openai"
 )
@@ -13,6 +14,41 @@ import (
 // modelLister is an interface for listing models, enabling test mocking.
 type modelLister interface {
 	ListModels() ([]anthropic.ModelInfo, error)
+}
+
+// resolveAllAliases inspects the aliases map, determines which providers are in use,
+// and resolves the latest models for each provider.
+func resolveAllAliases(ctx context.Context, clients *clientRegistry, openaiKey string, openaiCfg config.OpenAIConfig, aliases map[string]string) {
+	if aliases == nil {
+		return
+	}
+
+	// Determine which providers are referenced in aliases
+	providers := make(map[string]bool)
+	for _, aliasValue := range aliases {
+		// Extract provider prefix (e.g., "anthropic/" from "anthropic/claude-opus-4-6")
+		if idx := strings.Index(aliasValue, "/"); idx > 0 {
+			provider := aliasValue[:idx]
+			providers[provider] = true
+		}
+	}
+
+	// Resolve models for each provider in use
+	if providers["anthropic"] {
+		if client := clients.GetClient("anthropic", "anthropic"); client != nil {
+			if ml, ok := client.(modelLister); ok {
+				resolveAnthropicAliases(ml, aliases)
+			}
+		}
+	}
+
+	if providers["openai"] && openaiKey != "" {
+		var openaiOpts []oai.Option
+		if openaiCfg.BaseURL != "" {
+			openaiOpts = append(openaiOpts, oai.WithBaseURL(openaiCfg.BaseURL))
+		}
+		resolveOpenAIAliases(ctx, oai.NewClient(openaiKey, openaiOpts...), aliases)
+	}
 }
 
 // resolveAnthropicAliases queries the Anthropic API for available models and
