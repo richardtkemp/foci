@@ -104,6 +104,52 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 	}
 }
 
+func TestArchiveSweep_SkipsCurrentChatSession(t *testing.T) {
+	// Verifies that a session registered as the current chat session (via
+	// chat_metadata) is never archived, even when it exceeds the maxAge threshold.
+	dir := t.TempDir()
+	store := NewStore(dir)
+	idx := tempIndex(t)
+
+	// Create two chat sessions for the same agent+chat (different version timestamps)
+	store.TestAppend("bot/c100/1000000000", msg("user", "old"))
+	store.TestAppend("bot/c100/2000000000", msg("user", "current"))
+	idx.Rebuild(store)
+
+	// Mark the newer one as the current session via chat_metadata
+	idx.SetChatMetadata("bot", 100, "session_key", "bot/c100/2000000000")
+
+	// Set both to old activity so they'd normally both qualify
+	past := time.Now().UTC().Add(-48 * time.Hour)
+	idx.UpdateActivity("bot/c100/1000000000", past)
+	idx.UpdateActivity("bot/c100/2000000000", past)
+
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ArchiveSweep: %v", err)
+	}
+
+	// Only the old session should be archived; the current one is protected
+	if archived != 1 {
+		t.Fatalf("expected 1 archived, got %d", archived)
+	}
+
+	// Verify the current session file still exists uncompressed
+	currentPath := mustSessionPath(t, store, "bot/c100/2000000000")
+	if _, err := os.Stat(currentPath); err != nil {
+		t.Errorf("current session should still exist: %v", err)
+	}
+
+	// Verify the old session was archived
+	oldPath := mustSessionPath(t, store, "bot/c100/1000000000")
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("old session should be removed")
+	}
+	if _, err := os.Stat(oldPath + ".gz"); err != nil {
+		t.Errorf("old session .gz should exist: %v", err)
+	}
+}
+
 func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
