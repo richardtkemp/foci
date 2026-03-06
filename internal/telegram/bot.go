@@ -1437,20 +1437,12 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	}
 }
 
-// SendInjected sends a system/injected text message to the default chat.
-// Prepends the configured InjectedMessageHeader (if non-empty) so users can
-// distinguish system messages from agent replies. Returns an error if no chat
-// ID is available. Silently skips empty or whitespace-only messages.
-//
-// Prefer SendToSession when a session key is available — it routes to the
-// correct chat for chat-based sessions.
-func (b *Bot) SendInjected(text string) error {
+// SendText sends a text message to the default chat without any header.
+// Returns an error if no chat ID is available.
+// Silently skips empty or whitespace-only messages.
+func (b *Bot) SendText(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
-	}
-
-	if b.injectedMessageHeader != "" {
-		text = b.injectedMessageHeader + "\n" + text
 	}
 
 	chatID := b.defaultChatID()
@@ -1468,17 +1460,36 @@ func (b *Bot) SendInjected(text string) error {
 	return nil
 }
 
+// SendInjected sends a system/injected text message to the default chat.
+// Prepends the configured InjectedMessageHeader (if non-empty) so users can
+// distinguish system messages from agent replies.
+//
+// Prefer SendToSession when a session key is available — it routes to the
+// correct chat for chat-based sessions.
+func (b *Bot) SendInjected(text string) error {
+	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
+		text = b.injectedMessageHeader + "\n" + text
+	}
+	return b.SendText(text)
+}
+
 // SendToSession sends a system/injected text message to the chat associated
 // with the given session key. Falls back to the bot's default chat if the
 // session key doesn't contain a chat ID (e.g. independent sessions).
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendToSession(sessionKey, text string) error {
+	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
+		text = b.injectedMessageHeader + "\n" + text
+	}
+	return b.SendTextToSession(sessionKey, text)
+}
+
+// SendTextToSession sends a text message (without header) to the chat
+// associated with the given session key. Falls back to the bot's default chat
+// if the session key doesn't contain a chat ID.
+func (b *Bot) SendTextToSession(sessionKey, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
-	}
-
-	if b.injectedMessageHeader != "" {
-		text = b.injectedMessageHeader + "\n" + text
 	}
 
 	chatID := session.ChatIDFromKey(sessionKey)
