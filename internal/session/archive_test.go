@@ -17,8 +17,8 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create two sessions
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
-	store.Append("bot/c200/1000000000", msg("user", "world"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c200/1000000000", msg("user", "world"))
 
 	// Rebuild index
 	n, err := idx.Rebuild(store)
@@ -68,7 +68,7 @@ func TestArchiveSweep_SkipsRecentSessions(t *testing.T) {
 	store := NewStore(dir)
 	idx := tempIndex(t)
 
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
 	idx.Rebuild(store)
 
 	// Last activity is now (recent), so it should not be archived
@@ -87,7 +87,7 @@ func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create parent and branch
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
 	store.CreateBranchWithOptions("bot/c100/1000000000", "bot/c100/1000000000/b1000000001", BranchOptions{})
 	idx.Rebuild(store)
 
@@ -110,8 +110,8 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Create a session and compact it (creates numbered archive)
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
-	store.Replace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
 	idx.Rebuild(store)
 
 	// Set last activity to past
@@ -164,7 +164,7 @@ func TestDecompressIfGzipped(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session, then manually gzip it
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
 	path := mustSessionPath(t, store, "bot/c100/1000000000")
 
 	// Read original content
@@ -216,8 +216,8 @@ func TestScanAllSessions_IncludesArchivesAndGzipped(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session with an archive
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
-	store.Replace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
 
 	entries, err := store.ScanAllSessions()
 	if err != nil {
@@ -251,9 +251,9 @@ func TestScanAllSessions_CurrentFileAlwaysActive(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a session with archives — current file should still be active
-	store.Append("bot/c100/1000000000", msg("user", "v1"))
-	store.Replace("bot/c100/1000000000", []provider.Message{msg("user", "v2")})
-	store.Replace("bot/c100/1000000000", []provider.Message{msg("user", "v3")})
+	store.TestAppend("bot/c100/1000000000", msg("user", "v1"))
+	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "v2")})
+	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "v3")})
 
 	entries, err := store.ScanAllSessions()
 	if err != nil {

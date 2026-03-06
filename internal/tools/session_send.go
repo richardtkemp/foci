@@ -6,18 +6,18 @@ import (
 	"fmt"
 	"time"
 
-	"foci/internal/provider"
 	"foci/internal/log"
+	"foci/internal/session"
 	"foci/prompts"
 )
 
-// SessionAppender appends a message to a session.
-// IMPORTANT: Tools must use session.Store.For(sessionKey) to get a SessionWriter
-// that prevents cross-session writes. All write operations on SessionWriter check
-// that the target session matches the bound session. Attempting to write to a
-// different session will fail with an error.
+// SessionAppender is the interface for session write operations.
+// IMPORTANT: Tools must use For(sessionKey) to get a SessionWriter that prevents
+// cross-session writes. All write operations on SessionWriter check that the target
+// session matches the bound session. Attempting to write to a different session
+// will fail with an error.
 type SessionAppender interface {
-	Append(key string, msg provider.Message) error
+	For(sessionKey string) session.SessionWriter
 }
 
 // SessionNotifyFn handles routing a response back to the target session's

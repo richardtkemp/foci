@@ -910,7 +910,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	// inject synthetic error results so the API accepts the message history.
 	if repair := repairInterruptedToolCalls(messages); repair != nil {
 		messages = append(messages, *repair)
-		if err := a.Sessions.Append(sessionKey, *repair); err != nil {
+		writer := a.Sessions.For(sessionKey)
+		if err := writer.Append(sessionKey, *repair); err != nil {
 			a.logger().Errorf("session=%s persist tool call repair: %v", sessionKey, err)
 		} else {
 			a.logger().Infof("repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
@@ -935,7 +936,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	newMessages = append(newMessages, userMsg)
 	defer func() {
 		if len(newMessages) > 0 {
-			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
+			writer := a.Sessions.For(sessionKey)
+			if err := writer.AppendAll(sessionKey, newMessages); err != nil {
 				a.logger().Errorf("session=%s flush in-flight messages: %v", sessionKey, err)
 			} else {
 				a.logger().Infof("flushed %d in-flight messages for %s", len(newMessages), sessionKey)
@@ -1108,7 +1110,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 		if resp.StopReason != "tool_use" {
 			// Done — save all new messages and return text
-			if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
+			writer := a.Sessions.For(sessionKey)
+			if err := writer.AppendAll(sessionKey, newMessages); err != nil {
 				return "", fmt.Errorf("save session: %w", err)
 			}
 			newMessages = nil // saved — defer won't double-save
@@ -1203,7 +1206,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		sessionFile = p
 	}
 	a.logger().Warnf("max tool call depth reached for session %s", sessionFile)
-	if err := a.Sessions.AppendAll(sessionKey, newMessages); err != nil {
+	writer := a.Sessions.For(sessionKey)
+	if err := writer.AppendAll(sessionKey, newMessages); err != nil {
 		return "", fmt.Errorf("save session: %w", err)
 	}
 	newMessages = nil // saved — defer won't double-save

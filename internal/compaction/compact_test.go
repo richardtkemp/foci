@@ -167,8 +167,8 @@ func TestCompactBasic(t *testing.T) {
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -221,8 +221,8 @@ func TestCompactDryRun(t *testing.T) {
 
 	// Add 6 messages (above default minMessages=4)
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -252,8 +252,8 @@ func TestCompactTooFewMessages(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	// Add only 2 messages (below default minMessages=4)
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	summary, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
@@ -292,8 +292,8 @@ func TestCompactWithScratchpad(t *testing.T) {
 
 	// Add enough messages
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -340,8 +340,8 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	defer sp.Close()
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -373,8 +373,8 @@ func TestCompactAPIError(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -450,8 +450,8 @@ func TestCompactCustomPrompts(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -497,8 +497,8 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -531,8 +531,8 @@ func TestCompactPreserveMessages(t *testing.T) {
 
 	// Add 10 messages (5 user + 5 assistant)
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("user msg %d", i))})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("assistant reply %d", i))})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("user msg %d", i))})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("assistant reply %d", i))})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -603,8 +603,8 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -637,8 +637,8 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 
 	// 10 messages, minMessages=4, preserve=100
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -669,8 +669,8 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 		store := session.NewStore(t.TempDir())
 		key := "test/imain/1000000000"
 		for i := 0; i < 5; i++ {
-			store.Append(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
-			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
+			store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
+			store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
 		c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -702,8 +702,8 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 		store := session.NewStore(t.TempDir())
 		key := "test/imain/1000000000"
 		for i := 0; i < 5; i++ {
-			store.Append(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
-			store.Append(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
+			store.TestAppend(key, provider.Message{Role: "user", Content: provider.TextContent("u")})
+			store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
 		c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -982,13 +982,13 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 
 	// Build session: 5 text pairs + 1 tool pair + 1 text pair = 14 messages
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("u%d", i))})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("a%d", i))})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("u%d", i))})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("a%d", i))})
 	}
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("run tool")})
-	store.Append(sessionKey, toolUseMsg("toolu_SPLIT"))
-	store.Append(sessionKey, toolResultMsg("toolu_SPLIT"))
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("tool done")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("run tool")})
+	store.TestAppend(sessionKey, toolUseMsg("toolu_SPLIT"))
+	store.TestAppend(sessionKey, toolResultMsg("toolu_SPLIT"))
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("tool done")})
 
 	// preserve=3 would split between tool_use[11] and tool_result[12].
 	// safeSplitPoint should adjust to 11, making preserve=3.
@@ -1041,13 +1041,13 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	// Build session with an orphaned tool_use deep in history.
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
-	store.Append(sessionKey, toolUseMsg("toolu_ORPHAN"))
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
+	store.TestAppend(sessionKey, toolUseMsg("toolu_ORPHAN"))
 	// Missing tool_result — simulate data corruption.
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a1")})
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u2")})
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a2")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a1")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u2")})
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a2")})
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 0) // no preservation — all messages summarized
@@ -1077,8 +1077,8 @@ func TestCompactPreserveWithScratchpad(t *testing.T) {
 	sp.Write("test", "plan", "my plan")
 
 	for i := 0; i < 5; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -1133,8 +1133,8 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -1174,8 +1174,8 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
@@ -1254,8 +1254,8 @@ func TestCompactStreaming(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("user message")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("assistant reply")})
 	}
 
 	c := NewCompactor(store, "anthropic/claude-haiku-4-5", 0.8)
@@ -1403,10 +1403,10 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	// Add exactly 4 messages (equals minMessages)
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a1")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a1")})
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	// preserveMessages=3 with only 4 messages and minMessages=4:
@@ -1438,14 +1438,14 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
-	store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
-	store.Append(sessionKey, toolUseMsg("toolu_A"))
-	store.Append(sessionKey, toolResultMsg("toolu_A"))
-	store.Append(sessionKey, toolUseMsg("toolu_B"))
-	store.Append(sessionKey, toolResultMsg("toolu_B"))
-	store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("done")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
+	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
+	store.TestAppend(sessionKey, toolUseMsg("toolu_A"))
+	store.TestAppend(sessionKey, toolResultMsg("toolu_A"))
+	store.TestAppend(sessionKey, toolUseMsg("toolu_B"))
+	store.TestAppend(sessionKey, toolResultMsg("toolu_B"))
+	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("done")})
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 6, 3) // minMessages=6, preserve=3
@@ -1472,8 +1472,8 @@ func TestCompactScratchpadError(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	// Create a scratchpad backed by a closed database to trigger All() error.
@@ -1506,8 +1506,8 @@ func TestCompactReplaceError(t *testing.T) {
 	sessionKey := "test/imain/1000000000"
 
 	for i := 0; i < 3; i++ {
-		store.Append(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
-		store.Append(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+		store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
 	// Make the session directory read-only so Replace can't write.

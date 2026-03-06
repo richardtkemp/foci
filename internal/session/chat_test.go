@@ -24,9 +24,9 @@ func TestListChatSessions_WithSessions(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create two chat sessions
-	store.Append("test/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.Append("test/c111/1000000000", provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
-	store.Append("test/c222/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hey")})
+	store.TestAppend("test/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("test/c111/1000000000", provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
+	store.TestAppend("test/c222/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hey")})
 
 	sessions, err := store.ListChatSessions("test")
 	if err != nil {
@@ -61,8 +61,8 @@ func TestListChatSessions_IgnoresNonChat(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a main session and a chat session
-	store.Append("test/imain/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.Append("test/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("test/imain/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("test/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
 
 	sessions, err := store.ListChatSessions("test")
 	if err != nil {
@@ -80,8 +80,8 @@ func TestListChatSessions_DifferentAgents(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	store.Append("alice/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
-	store.Append("bob/c222/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hey")})
+	store.TestAppend("alice/c111/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hi")})
+	store.TestAppend("bob/c222/1000000000", provider.Message{Role: "user", Content: provider.TextContent("hey")})
 
 	// Should only list alice's sessions
 	sessions, err := store.ListChatSessions("alice")

@@ -262,8 +262,8 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 	store := NewStore(dir)
 
 	// Create a few sessions
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
-	store.Append("bot/c200/1000000000", msg("user", "world"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c200/1000000000", msg("user", "world"))
 	branchKey := "bot/c100/1000000000/b1000000001"
 	store.CreateBranchWithOptions("bot/c100/1000000000", branchKey, BranchOptions{})
 
@@ -322,7 +322,7 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 	})
 
 	// Create a session via Append (new file triggers event)
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
 count, _ := idx.Count()
 	if count != 1 {
 count, _ := idx.Count()
@@ -338,21 +338,21 @@ count, _ := idx.Count()
 	}
 
 	// Append again should NOT fire another create event
-	store.Append("bot/c100/1000000000", msg("assistant", "hi"))
+	store.TestAppend("bot/c100/1000000000", msg("assistant", "hi"))
 	if count != 1 {
 count, _ := idx.Count()
 		t.Fatalf("expected still 1 after second append, got %d", count)
 	}
 
 	// Replace should fire compacted event
-	store.Replace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCompacted {
 		t.Errorf("expected compacted after Replace, got %s", entries[0].Status)
 	}
 
 	// Clear should fire cleared event
-	store.Clear("bot/c100/1000000000")
+	store.TestClear("bot/c100/1000000000")
 	entries, _ = idx.Query(QueryOptions{})
 	if entries[0].Status != SessionStatusCleared {
 		t.Errorf("expected cleared after Clear, got %s", entries[0].Status)
@@ -378,7 +378,7 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 	})
 
 	// Create parent
-	store.Append("bot/c100/1000000000", msg("user", "hello"))
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
 
 	// Create branch
 	store.CreateBranchWithOptions("bot/c100/1000000000", "bot/c100/1000000000/b1000000001", BranchOptions{})

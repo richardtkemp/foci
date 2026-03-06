@@ -19,6 +19,14 @@ import (
 	"foci/internal/provider"
 )
 
+// SessionWriter is the interface for writing to a specific session.
+type SessionWriter interface {
+	Append(key string, msg provider.Message) error
+	AppendAll(key string, msgs []provider.Message) error
+	Replace(key string, msgs []provider.Message) error
+	Clear(key string) error
+}
+
 // SessionMeta is stored as the first line in a session file to preserve metadata
 // like the original creation time (important for compaction continuity).
 type SessionMeta struct {
@@ -55,54 +63,65 @@ func NewStore(dir string) *Store {
 //	    // All of these fail - cross-session write blocked
 //	    writer.Append(otherSession, msg)  // ERROR
 //	}
-type SessionWriter struct {
+type sessionWriter struct {
 	store      *Store
 	sessionKey string
 }
 
 // For creates a SessionWriter that can only modify the specified session.
 // This enforces session ownership: all write operations are restricted to this session.
-func (s *Store) For(sessionKey string) *SessionWriter {
-	return &SessionWriter{
+func (s *Store) For(sessionKey string) SessionWriter {
+	return &sessionWriter{
 		store:      s,
 		sessionKey: sessionKey,
 	}
 }
 
 // Append adds a message to the owned session, rejecting cross-session writes.
-func (w *SessionWriter) Append(key string, msg provider.Message) error {
+func (w *sessionWriter) Append(key string, msg provider.Message) error {
 	if key != w.sessionKey {
 		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
 			w.sessionKey, key)
 	}
-	return w.store.Append(key, msg)
+	w.store.mu.Lock()
+	defer w.store.mu.Unlock()
+	return w.store.appendUnlocked(key, msg)
 }
 
 // AppendAll adds multiple messages to the owned session, rejecting cross-session writes.
-func (w *SessionWriter) AppendAll(key string, msgs []provider.Message) error {
+func (w *sessionWriter) AppendAll(key string, msgs []provider.Message) error {
 	if key != w.sessionKey {
 		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
 			w.sessionKey, key)
 	}
-	return w.store.AppendAll(key, msgs)
+	w.store.mu.Lock()
+	defer w.store.mu.Unlock()
+	for _, msg := range msgs {
+		if err := w.store.appendUnlocked(key, msg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Replace overwrites the owned session with new messages, rejecting cross-session writes.
-func (w *SessionWriter) Replace(key string, msgs []provider.Message) error {
+func (w *sessionWriter) Replace(key string, msgs []provider.Message) error {
 	if key != w.sessionKey {
 		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
 			w.sessionKey, key)
 	}
-	return w.store.Replace(key, msgs)
+	return w.store.replaceInternal(key, msgs)
 }
 
 // Clear deletes the owned session, rejecting cross-session writes.
-func (w *SessionWriter) Clear(key string) error {
+func (w *sessionWriter) Clear(key string) error {
 	if key != w.sessionKey {
 		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
 			w.sessionKey, key)
 	}
-	return w.store.Clear(key)
+	w.store.mu.Lock()
+	defer w.store.mu.Unlock()
+	return w.store.clearUnlocked(key)
 }
 
 // SessionPath converts a session key to a file path.
@@ -131,6 +150,41 @@ func (s *Store) SessionPath(key string) (string, error) {
 
 	// Otherwise it's a child session
 	return filepath.Join(s.dir, key+".jsonl"), nil
+}
+
+// TestAppend is for testing only - appends without SessionWriter guard.
+// Tests should use this when setting up state, not For().Append().
+func (s *Store) TestAppend(key string, msg provider.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appendUnlocked(key, msg)
+}
+
+// TestAppendAll is for testing only - appends multiple messages without SessionWriter guard.
+// Tests should use this when setting up state, not For().AppendAll().
+func (s *Store) TestAppendAll(key string, msgs []provider.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, msg := range msgs {
+		if err := s.appendUnlocked(key, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestClear is for testing only - clears a session without SessionWriter guard.
+// Tests should use this when setting up state, not For().Clear().
+func (s *Store) TestClear(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clearUnlocked(key)
+}
+
+// TestReplace is for testing only - replaces without SessionWriter guard.
+// Tests should use this when setting up state, not For().Replace().
+func (s *Store) TestReplace(key string, msgs []provider.Message) error {
+	return s.replaceInternal(key, msgs)
 }
 
 // Load reads all messages from a session file.
@@ -238,14 +292,6 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 	return nil
 }
 
-// Append adds a message to the session file, creating it if needed.
-func (s *Store) Append(key string, msg provider.Message) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.appendUnlocked(key, msg)
-}
-
 func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 	path, err := s.SessionPath(key)
 	if err != nil {
@@ -304,24 +350,8 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 	return nil
 }
 
-// AppendAll adds multiple messages to the session file.
-func (s *Store) AppendAll(key string, msgs []provider.Message) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, msg := range msgs {
-		if err := s.appendUnlocked(key, msg); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Clear removes a session file.
-func (s *Store) Clear(key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+// clearUnlocked removes a session file (internal use only - must hold mutex).
+func (s *Store) clearUnlocked(key string) error {
 	path, err := s.SessionPath(key)
 	if err != nil {
 		return err
@@ -407,9 +437,10 @@ func isArchiveFile(name string) bool {
 	return false
 }
 
-// Replace overwrites a session with the given messages, rotating the old file
+// replaceInternal overwrites a session with the given messages, rotating the old file
 // to a numbered archive (e.g. 5970082313.1.jsonl) for audit/history.
-func (s *Store) Replace(key string, msgs []provider.Message) error {
+// This is internal and must be called through SessionWriter only.
+func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -1,0 +1,13 @@
+--- cmd/foci-gw/agents_notify.go
++++ cmd/foci-gw/agents_notify.go
+@@ -54,7 +54,9 @@ func newAsyncNotifier(
+ 				Role:    "user",
+ 				Content: provider.TextContent(formattedResp),
+ 			}
+-			if err := sessions.Append(replyToSession, msg); err != nil {
++			// Must use SessionWriter to enforce we're only writing to the reply session
++			writer := sessions.For(replyToSession)
++			if err := writer.Append(replyToSession, msg); err != nil {
+ 				log.Errorf("async_notify", "failed to append to caller %s: %v", replyToSession, err)
+ 				return
+ 			}

@@ -67,10 +67,10 @@ func TestAppendAndLoad(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	if err := s.Append(key, msg("user", "hello")); err != nil {
+	if err := s.TestAppend(key, msg("user", "hello")); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	if err := s.Append(key, msg("assistant", "hi there")); err != nil {
+	if err := s.TestAppend(key, msg("assistant", "hi there")); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -99,7 +99,7 @@ func TestAppendAll(t *testing.T) {
 		msg("assistant", "two"),
 		msg("user", "three"),
 	}
-	if err := s.AppendAll(key, batch); err != nil {
+	if err := s.TestAppendAll(key, batch); err != nil {
 		t.Fatalf("AppendAll: %v", err)
 	}
 
@@ -116,9 +116,9 @@ func TestClear(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
-	if err := s.Clear(key); err != nil {
+	if err := s.TestClear(key); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestClear(t *testing.T) {
 
 func TestClearNonexistent(t *testing.T) {
 	s := NewStore(t.TempDir())
-	if err := s.Clear("ghost/imain/1000000000"); err != nil {
+	if err := s.TestClear("ghost/imain/1000000000"); err != nil {
 		t.Fatalf("Clear nonexistent: %v", err)
 	}
 }
@@ -143,16 +143,16 @@ func TestReplace(t *testing.T) {
 	key := "test/imain/1000000000"
 
 	// Write initial messages
-	s.Append(key, msg("user", "old1"))
-	s.Append(key, msg("assistant", "old2"))
-	s.Append(key, msg("user", "old3"))
+	s.TestAppend(key, msg("user", "old1"))
+	s.TestAppend(key, msg("assistant", "old2"))
+	s.TestAppend(key, msg("user", "old3"))
 
 	// Replace
 	replacement := []provider.Message{
 		msg("user", "summary"),
 		msg("assistant", "acknowledged"),
 	}
-	if err := s.Replace(key, replacement); err != nil {
+	if err := s.TestReplace(key, replacement); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 
@@ -177,8 +177,8 @@ func TestMessageCount(t *testing.T) {
 		t.Errorf("empty count = %d", n)
 	}
 
-	s.Append(key, msg("user", "a"))
-	s.Append(key, msg("assistant", "b"))
+	s.TestAppend(key, msg("user", "a"))
+	s.TestAppend(key, msg("assistant", "b"))
 
 	n, _ = s.MessageCount(key)
 	if n != 2 {
@@ -190,8 +190,8 @@ func TestLoadFullRegularSession(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
-	s.Append(key, msg("assistant", "world"))
+	s.TestAppend(key, msg("user", "hello"))
+	s.TestAppend(key, msg("assistant", "world"))
 
 	msgs, err := s.LoadFull(key)
 	if err != nil {
@@ -207,7 +207,7 @@ func TestAppendCreatesDirectories(t *testing.T) {
 	s := NewStore(dir)
 	// Deep key that requires nested directories
 	key := "mybot/idaily/1000000000"
-	if err := s.Append(key, msg("user", "wake up")); err != nil {
+	if err := s.TestAppend(key, msg("user", "wake up")); err != nil {
 		t.Fatalf("Append deep key: %v", err)
 	}
 
@@ -227,7 +227,7 @@ func TestCreatedAtNewSession(t *testing.T) {
 	}
 
 	// Append first message - should create session with creation time
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	createdAt = s.CreatedAt(key)
 	if createdAt == "n/a" {
@@ -244,7 +244,7 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 	key := "test/imain/1000000000"
 
 	// Create session
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	originalCreatedAt := s.CreatedAt(key)
 	if originalCreatedAt == "n/a" {
@@ -255,7 +255,7 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 	replacement := []provider.Message{
 		msg("user", "summary"),
 	}
-	s.Replace(key, replacement)
+	s.TestReplace(key, replacement)
 
 	// Creation time should be preserved
 	newCreatedAt := s.CreatedAt(key)
@@ -269,7 +269,7 @@ func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
 	s := NewStore(dir)
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	// Verify session_meta is written by reading raw file
 	path, _ := s.SessionPath(key)
@@ -300,7 +300,7 @@ func TestCreatedAtPreservedAfterRestart(t *testing.T) {
 
 	// Create session with first store instance
 	s1 := NewStore(dir)
-	s1.Append(key, msg("user", "hello"))
+	s1.TestAppend(key, msg("user", "hello"))
 	originalCreatedAt := s1.CreatedAt(key)
 	if originalCreatedAt == "n/a" {
 		t.Fatal("expected creation time after append")
@@ -319,7 +319,7 @@ func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
 	key := "test/imain/1000000000"
 
 	s := NewStore(dir)
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 	originalCreatedAt := s.CreatedAt(key)
 	if originalCreatedAt == "n/a" {
 		t.Fatal("expected creation time after append")
@@ -358,8 +358,8 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
-	s.Append(key, toolUseMsg("toolu_123"))
+	s.TestAppend(key, msg("user", "hello"))
+	s.TestAppend(key, toolUseMsg("toolu_123"))
 
 	n, err := s.RepairOrphans()
 	if err != nil {
@@ -403,9 +403,9 @@ func TestRepairOrphansNoOpWhenClean(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
-	s.Append(key, msg("assistant", "hi"))
-	s.Append(key, msg("user", "bye"))
+	s.TestAppend(key, msg("user", "hello"))
+	s.TestAppend(key, msg("assistant", "hi"))
+	s.TestAppend(key, msg("user", "bye"))
 
 	n, err := s.RepairOrphans()
 	if err != nil {
@@ -426,13 +426,13 @@ func TestRepairOrphansMultipleSessions(t *testing.T) {
 
 	// Broken session
 	broken := "test/imain/1000000000"
-	s.Append(broken, msg("user", "hello"))
-	s.Append(broken, toolUseMsg("toolu_aaa"))
+	s.TestAppend(broken, msg("user", "hello"))
+	s.TestAppend(broken, toolUseMsg("toolu_aaa"))
 
 	// Clean session
 	clean := "test/idaily/1000000000"
-	s.Append(clean, msg("user", "wake"))
-	s.Append(clean, msg("assistant", "done"))
+	s.TestAppend(clean, msg("user", "wake"))
+	s.TestAppend(clean, msg("assistant", "done"))
 
 	n, err := s.RepairOrphans()
 	if err != nil {
@@ -459,8 +459,8 @@ func TestRepairOrphansMultipleToolUse(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "do things"))
-	s.Append(key, toolUseMsg("toolu_one", "toolu_two"))
+	s.TestAppend(key, msg("user", "do things"))
+	s.TestAppend(key, toolUseMsg("toolu_one", "toolu_two"))
 
 	n, err := s.RepairOrphans()
 	if err != nil {
@@ -506,8 +506,8 @@ func TestInjectRestartMarkersRecentFile(t *testing.T) {
 	key := "test/imain/1000000000"
 
 	// Create a session (file will have recent mtime)
-	s.Append(key, msg("user", "hello"))
-	s.Append(key, msg("assistant", "hi"))
+	s.TestAppend(key, msg("user", "hello"))
+	s.TestAppend(key, msg("assistant", "hi"))
 
 	n, err := s.InjectRestartMarkers(1 * time.Hour)
 	if err != nil {
@@ -539,7 +539,7 @@ func TestInjectRestartMarkersOldFile(t *testing.T) {
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	// Set mtime to 2 hours ago
 	path, _ := s.SessionPath(key)
@@ -579,11 +579,11 @@ func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
 
 	// Recent session
 	recent := "test/imain/1000000000"
-	s.Append(recent, msg("user", "hello"))
+	s.TestAppend(recent, msg("user", "hello"))
 
 	// Old session
 	old := "test/idaily/1000000000"
-	s.Append(old, msg("user", "wake"))
+	s.TestAppend(old, msg("user", "wake"))
 	oldPath, _ := s.SessionPath(old)
 	oldTime := time.Now().Add(-2 * time.Hour)
 	os.Chtimes(oldPath, oldTime, oldTime)
@@ -615,17 +615,17 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 	branchKey := "test/iwake-999/1000000000"
 
 	// Build parent with 4 messages
-	s.Append(parentKey, msg("user", "parent1"))
-	s.Append(parentKey, msg("assistant", "parent2"))
-	s.Append(parentKey, msg("user", "parent3"))
-	s.Append(parentKey, msg("assistant", "parent4"))
+	s.TestAppend(parentKey, msg("user", "parent1"))
+	s.TestAppend(parentKey, msg("assistant", "parent2"))
+	s.TestAppend(parentKey, msg("user", "parent3"))
+	s.TestAppend(parentKey, msg("assistant", "parent4"))
 
 	// Create branch at point 4
 	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{NoResetHook: true})
 
 	// Add branch messages
-	s.Append(branchKey, msg("user", "branch q"))
-	s.Append(branchKey, msg("assistant", "branch a"))
+	s.TestAppend(branchKey, msg("user", "branch q"))
+	s.TestAppend(branchKey, msg("assistant", "branch a"))
 
 	// Verify branch_meta before Replace
 	meta, err := s.GetBranchMeta(branchKey)
@@ -644,7 +644,7 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 		msg("user", "[Session compacted]"),
 		msg("assistant", "summary of parent + branch"),
 	}
-	if err := s.Replace(branchKey, compacted); err != nil {
+	if err := s.TestReplace(branchKey, compacted); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 
@@ -691,16 +691,16 @@ func TestReplaceRotatesFile(t *testing.T) {
 	key := "test/c999/1000000000"
 
 	// Write initial messages
-	s.Append(key, msg("user", "old1"))
-	s.Append(key, msg("assistant", "old2"))
-	s.Append(key, msg("user", "old3"))
+	s.TestAppend(key, msg("user", "old1"))
+	s.TestAppend(key, msg("assistant", "old2"))
+	s.TestAppend(key, msg("user", "old3"))
 
 	// Replace (simulating compaction)
 	compacted := []provider.Message{
 		msg("user", "summary"),
 		msg("assistant", "acknowledged"),
 	}
-	if err := s.Replace(key, compacted); err != nil {
+	if err := s.TestReplace(key, compacted); err != nil {
 		t.Fatalf("Replace: %v", err)
 	}
 
@@ -745,13 +745,13 @@ func TestReplaceMultipleRotations(t *testing.T) {
 	key := "test/c888/1000000000"
 
 	for round := 1; round <= 3; round++ {
-		s.Append(key, msg("user", fmt.Sprintf("round %d", round)))
-		s.Append(key, msg("assistant", fmt.Sprintf("reply %d", round)))
+		s.TestAppend(key, msg("user", fmt.Sprintf("round %d", round)))
+		s.TestAppend(key, msg("assistant", fmt.Sprintf("reply %d", round)))
 
 		compacted := []provider.Message{
 			msg("user", fmt.Sprintf("summary %d", round)),
 		}
-		if err := s.Replace(key, compacted); err != nil {
+		if err := s.TestReplace(key, compacted); err != nil {
 			t.Fatalf("Replace round %d: %v", round, err)
 		}
 	}
@@ -788,17 +788,17 @@ func TestReplaceBranchRotation(t *testing.T) {
 	parentKey := "test/c777/1000000000"
 	branchKey := "test/iwake-111/1000000000"
 
-	s.Append(parentKey, msg("user", "parent"))
-	s.Append(parentKey, msg("assistant", "reply"))
+	s.TestAppend(parentKey, msg("user", "parent"))
+	s.TestAppend(parentKey, msg("assistant", "reply"))
 	s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
-	s.Append(branchKey, msg("user", "branch q"))
-	s.Append(branchKey, msg("assistant", "branch a"))
+	s.TestAppend(branchKey, msg("user", "branch q"))
+	s.TestAppend(branchKey, msg("assistant", "branch a"))
 
 	compacted := []provider.Message{
 		msg("user", "[compacted]"),
 		msg("assistant", "summary"),
 	}
-	if err := s.Replace(branchKey, compacted); err != nil {
+	if err := s.TestReplace(branchKey, compacted); err != nil {
 		t.Fatalf("Replace branch: %v", err)
 	}
 
@@ -849,7 +849,7 @@ func TestListChatSessionsSkipsArchives(t *testing.T) {
 
 	// Create a real chat session
 	key := "test/c555/1000000000"
-	s.Append(key, msg("user", "hello"))
+	s.TestAppend(key, msg("user", "hello"))
 
 	// Simulate an archive file by creating it directly (using timestamp pattern)
 	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
@@ -877,8 +877,8 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 
 	// Create a session with an orphaned tool_use
 	key := "test/c444/1000000000"
-	s.Append(key, msg("user", "hello"))
-	s.Append(key, provider.Message{
+	s.TestAppend(key, msg("user", "hello"))
+	s.TestAppend(key, provider.Message{
 		Role: "assistant",
 		Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "tool_1", Name: "exec", Input: json.RawMessage(`{}`)},
@@ -912,7 +912,7 @@ func TestReplaceNonexistentFile(t *testing.T) {
 	compacted := []provider.Message{
 		msg("user", "fresh"),
 	}
-	if err := s.Replace(key, compacted); err != nil {
+	if err := s.TestReplace(key, compacted); err != nil {
 		t.Fatalf("Replace nonexistent: %v", err)
 	}
 
@@ -957,7 +957,7 @@ func TestLastActivity(t *testing.T) {
 	key := "test/c123/1000000000"
 
 	// Write a message to create the file
-	s.Append(key, msg("user", "test message"))
+	s.TestAppend(key, msg("user", "test message"))
 
 	// Get the last activity time
 	lastActivity := s.LastActivity(key)
