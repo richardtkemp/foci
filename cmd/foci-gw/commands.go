@@ -54,7 +54,7 @@ type cmdRegParams struct {
 	sessionIndex          *session.SessionIndex
 	client                provider.Client
 	resolveEndpointClient func(endpoint, modelID string) provider.Client
-	usageClient           *anthropic.UsageClient
+	usageClientReg        *usageClientRegistry
 	botMgr                *telegram.BotManager
 	store                 *secrets.Store
 	bwStore               *bitwarden.Store
@@ -490,8 +490,15 @@ func manaCheck(p cmdRegParams, manaName string, ctx context.Context) (string, er
 	emoji := emojis[rand.IntN(len(emojis))] // #nosec G404 - non-security use (emoji selection)
 	displayName := strings.ToUpper(manaName[:1]) + manaName[1:]
 
-	p.usageClient.Invalidate() // force fresh fetch for explicit user query
-	usage, err := p.usageClient.GetUsage(ctx)
+	// Get session-aware usage client
+	sessionKey := p.sessionKeyFromCtx(ctx)
+	usageClient := p.ag.SessionUsageClient(sessionKey)
+	if usageClient == nil {
+		return fmt.Sprintf("%s %s: No usage data (provider does not support usage API)", emoji, displayName), nil
+	}
+
+	usageClient.Invalidate() // force fresh fetch for explicit user query
+	usage, err := usageClient.GetUsage(ctx)
 	if err != nil {
 		return fmt.Sprintf("%s Error fetching %s: %v", emoji, displayName, err), nil
 	}

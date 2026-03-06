@@ -38,15 +38,15 @@ func (h *tokenHolder) Set(token string) {
 	h.token = token
 }
 
-// resolveCredentials resolves the Anthropic API client and usage client.
+// resolveCredentials resolves the Anthropic API client and CC token source.
 //
 // API client priority: (1) setup-token, (2) API key, (3) Claude Code credentials.
-// Usage client: always from CC credentials (polls ~/.claude/.credentials.json).
+// CC token source: returned for use by UsageClient registry (per-API-key).
 //
 // For static tokens, the client uses a tokenFunc backed by a tokenHolder,
 // enabling hot-reload via /-/reload-credentials.
 // Returns the tokenHolder (nil for CC-backed client, which polls the file).
-func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Context) (*anthropic.Client, *anthropic.UsageClient, *tokenHolder) {
+func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Context) (*anthropic.Client, *anthropic.CCTokenSource, *tokenHolder) {
 	setupToken, _ := store.Get("anthropic.setup_token")
 	apiKey, _ := store.Get("anthropic.api_key")
 	httpTimeout, err := time.ParseDuration(cfg.Anthropic.HTTPTimeout)
@@ -75,22 +75,12 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 		log.Infof("main", "CC token source configured (%s, poll %s)", ccCredsFile, ccPollInterval)
 	}
 
-	// Usage client — always from CC credentials (required for /api/oauth/usage).
-	var usageClient *anthropic.UsageClient
-	if ccSrc != nil {
-		usageClient = anthropic.NewUsageClientWithFunc(ccSrc.Token)
-		if ttl, err := time.ParseDuration(cfg.Anthropic.UsageCacheTTL); err == nil && ttl > 0 {
-			usageClient.SetCacheTTL(ttl)
-		}
-		log.Infof("main", "usage client configured (CC credentials, cache_ttl=%s)", cfg.Anthropic.UsageCacheTTL)
-	}
-
 	// Source 1: setup-token (from `foci auth` / `claude setup-token`)
 	if setupToken != "" {
 		log.Infof("main", "using setup-token from secrets.toml")
 		holder := &tokenHolder{token: setupToken}
 		return anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout),
-			usageClient, holder
+			ccSrc, holder
 	}
 
 	// Source 2: Anthropic API key
@@ -98,14 +88,14 @@ func resolveCredentials(cfg *config.Config, store *secrets.Store, ctx context.Co
 		log.Infof("main", "using API key from secrets.toml")
 		holder := &tokenHolder{token: apiKey}
 		return anthropic.NewClientWithTokenFunc(holder.Get, httpTimeout),
-			usageClient, holder
+			ccSrc, holder
 	}
 
 	// Source 3: Claude Code credentials (passive — poll file, never refresh)
 	if ccSrc != nil {
 		log.Infof("main", "using CC credentials from %s (passive, poll-based)", ccCredsFile)
 		return anthropic.NewClientWithTokenFunc(ccSrc.Token, httpTimeout),
-			usageClient, nil
+			ccSrc, nil
 	}
 
 	log.Errorf("main", "no Anthropic token found — run: foci auth")

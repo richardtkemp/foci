@@ -15,7 +15,7 @@ import (
 func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []Attachment) anthropic.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
-	manaStr, manaReset, manaGood := mana.ManaAndReset(a.UsageClient, a.ManaInvestInterval)
+	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
 
 	// Check mana thresholds and notify user for active conversations only
 	var manaRestoreNote string

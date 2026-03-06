@@ -51,6 +51,7 @@ type sessionMeta struct {
 	model           string          // per-session model override (empty = use agent default)
 	modelEndpoint   string          // per-session endpoint override (empty = use agent default)
 	client          provider.Client // per-session client override (nil = use a.Client)
+	usageClient     *anthropic.UsageClient // per-session usage client (nil = use agent default)
 	noCompact       bool            // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []anthropic.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 }
@@ -117,6 +118,7 @@ type Agent struct {
 	Redact                      func(string) string             // redact secrets from tool output; nil disables
 	StateStore                  *state.Store                    // nil disables state persistence
 	UsageClient                 *anthropic.UsageClient          // nil disables mana metadata
+	GetUsageClient              func(endpoint string) *anthropic.UsageClient // per-API-key usage client resolution
 	MessageTransforms           []CompiledTransform             // compiled regex rules for inbound message transformation
 	CompactionSummaryPromptPath string   // file path; read at compaction time via prompts.ResolvePrompt
 	CompactionHandoffMsg        string   // inline handoff message; empty resolves from search dirs or embedded default
@@ -275,6 +277,10 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint string, client provi
 	sm.model = value
 	sm.modelEndpoint = endpoint
 	sm.client = client
+	// Update usage client for new endpoint
+	if a.GetUsageClient != nil {
+		sm.usageClient = a.GetUsageClient(endpoint)
+	}
 	a.metaMu.Unlock()
 
 	if a.StateStore != nil {
@@ -304,6 +310,18 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 		return sm.client
 	}
 	return a.Client
+}
+
+// SessionUsageClient returns the usage client for a session's active endpoint,
+// falling back to the agent's default if not overridden.
+func (a *Agent) SessionUsageClient(sessionKey string) *anthropic.UsageClient {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	if sm.usageClient != nil {
+		return sm.usageClient
+	}
+	return a.UsageClient
 }
 
 // SessionNoCompact returns the effective no_compact setting for the session.
@@ -362,6 +380,13 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 				if c := a.GetClient(ep, format); c != nil {
 					a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 				}
+			}
+
+			// Restore usage client for the endpoint
+			if a.GetUsageClient != nil {
+				a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
+					sm.usageClient = a.GetUsageClient(ep)
+				})
 			}
 		}
 	}

@@ -110,11 +110,12 @@ Subcommands:
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	anthropicClient, usageClient, credHolder := resolveCredentials(cfg, sec.store, ctx)
+	anthropicClient, ccSrc, credHolder := resolveCredentials(cfg, sec.store, ctx)
 	anthropicClient.SetUseSDK(cfg.Anthropic.UseSDK)
 	log.Debugf("main", "anthropic client ready (use_sdk=%v, streaming=%v)", cfg.Anthropic.UseSDK, cfg.Anthropic.Streaming)
 
 	clients := newClientRegistry(cfg, sec.store, anthropicClient, ctx)
+	usageClients := newUsageClientRegistry(cfg, sec.store, ccSrc)
 
 	// ========== Dynamic model alias resolution ==========
 	resolveAnthropicAliases(anthropicClient, cfg.Models.Aliases)
@@ -231,7 +232,7 @@ Subcommands:
 			ttsMap:                ttsMap,
 			sttMap:                sttMap,
 			braveKey:              braveKey,
-			usageClient:           usageClient,
+			usageClientReg:        usageClients,
 			botMgr:                botMgr,
 			startTime:             startTime,
 			ctx:                   ctx,
@@ -251,7 +252,7 @@ Subcommands:
 		setupKeepalive(inst, acfg, keepaliveParams{
 			cfg:                   cfg,
 			sessions:              si.sessions,
-			usageClient:           usageClient,
+			usageClientReg:        usageClients,
 			botMgr:                botMgr,
 			stateStore:            si.stateStore,
 			todoStore:             mem.todoStores[acfg.ID],

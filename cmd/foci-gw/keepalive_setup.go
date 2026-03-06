@@ -22,7 +22,7 @@ import (
 type keepaliveParams struct {
 	cfg                   *config.Config
 	sessions              *session.Store
-	usageClient           *anthropic.UsageClient
+	usageClientReg        *usageClientRegistry
 	botMgr                *telegram.BotManager
 	stateStore            *state.Store
 	todoStore             *memory.TodoStore
@@ -60,7 +60,15 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	)
 
 	// Mana monitor for background work throttling
-	manaMonitor := mana.NewMonitor(p.usageClient)
+	// Keepalive should use default session's current model, not agent's configured default
+	getDefaultSessionUsageClient := func() *anthropic.UsageClient {
+		sk := inst.defaultSessionKey()
+		if sk == "" || inst.ag == nil {
+			return nil
+		}
+		return inst.ag.SessionUsageClient(sk)
+	}
+	manaMonitor := mana.NewMonitorWithFunc(getDefaultSessionUsageClient)
 
 	// Proactive warning dispatcher
 	var warningDispatcher *warnings.Dispatcher

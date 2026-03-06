@@ -155,7 +155,8 @@ func IsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration
 // Caching is handled by UsageClient; Monitor just calls GetUsage and evaluates.
 type Monitor struct {
 	log         *log.ComponentLogger
-	usageClient *anthropic.UsageClient
+	usageClient *anthropic.UsageClient                        // static client (if not using getClient)
+	getClient   func() *anthropic.UsageClient                // dynamic client getter (for session-aware)
 }
 
 // NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor always returns true.
@@ -166,14 +167,30 @@ func NewMonitor(usageClient *anthropic.UsageClient) *Monitor {
 	}
 }
 
+// NewMonitorWithFunc creates a Monitor that lazily resolves UsageClient on each check.
+// Used by keepalive to track default session's current endpoint.
+func NewMonitorWithFunc(getClient func() *anthropic.UsageClient) *Monitor {
+	return &Monitor{
+		log:       log.NewComponentLogger("mana"),
+		getClient: getClient,
+	}
+}
+
 // IsGoodFor checks whether we can afford to run background work with the given invest interval.
 // Calls GetUsage (which is cached by UsageClient) and evaluates via IsGood.
 func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) bool {
-	if m.usageClient == nil {
+	var client *anthropic.UsageClient
+	if m.getClient != nil {
+		client = m.getClient()  // Lazily resolve
+	} else {
+		client = m.usageClient  // Static
+	}
+
+	if client == nil {
 		return true // no usage client = no rate limiting
 	}
 
-	usage, err := m.usageClient.GetUsage(ctx)
+	usage, err := client.GetUsage(ctx)
 	if err != nil {
 		m.log.Warnf("usage API: %v", err)
 		return false
