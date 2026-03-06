@@ -57,8 +57,8 @@ config.Load(path)                                        ← validates values; l
     → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
-    → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store
-    → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
+  → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
+  → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
   → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
   → setupSharedMultiball(...)                              ← post_agent_setup.go

@@ -241,6 +241,13 @@ Subcommands:
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
 
+		// Restore per-session state and seed session meta for default session (if any).
+		// Must happen AFTER setupAgent returns so the deferred defaultSessionKeyFn wiring has executed.
+		if sk := inst.defaultSessionKey(); sk != "" {
+			inst.ag.RestoreSessionOverrides(sk)
+			inst.ag.SeedSessionMeta(sk)
+		}
+
 		setupKeepalive(inst, acfg, keepaliveParams{
 			cfg:         cfg,
 			sessions:    si.sessions,
