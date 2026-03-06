@@ -9,6 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	oai "foci/internal/openai"
+	"foci/internal/secrets"
 )
 
 // modelLister is an interface for listing models, enabling test mocking.
@@ -17,8 +18,9 @@ type modelLister interface {
 }
 
 // resolveAllAliases inspects the aliases map, determines which providers are in use,
-// and resolves the latest models for each provider.
-func resolveAllAliases(ctx context.Context, clients *clientRegistry, openaiKey string, openaiCfg config.OpenAIConfig, aliases map[string]string) {
+// and resolves the latest models for each provider. It gets credentials and config
+// directly without requiring main.go to know about specific providers.
+func resolveAllAliases(ctx context.Context, clients *clientRegistry, store *secrets.Store, cfg *config.Config, aliases map[string]string) {
 	if aliases == nil {
 		return
 	}
@@ -42,12 +44,15 @@ func resolveAllAliases(ctx context.Context, clients *clientRegistry, openaiKey s
 		}
 	}
 
-	if providers["openai"] && openaiKey != "" {
-		var openaiOpts []oai.Option
-		if openaiCfg.BaseURL != "" {
-			openaiOpts = append(openaiOpts, oai.WithBaseURL(openaiCfg.BaseURL))
+	if providers["openai"] {
+		openaiKey, _ := store.Get("openai.api_key")
+		if openaiKey != "" {
+			var openaiOpts []oai.Option
+			if cfg.OpenAI.BaseURL != "" {
+				openaiOpts = append(openaiOpts, oai.WithBaseURL(cfg.OpenAI.BaseURL))
+			}
+			resolveOpenAIAliases(ctx, oai.NewClient(openaiKey, openaiOpts...), aliases)
 		}
-		resolveOpenAIAliases(ctx, oai.NewClient(openaiKey, openaiOpts...), aliases)
 	}
 }
 
