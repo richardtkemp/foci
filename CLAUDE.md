@@ -61,6 +61,11 @@ gh codeql query run query.ql --database=codeql-db
 - **Explore agent** - Systematic multi-step investigations
 - **Quick go/ast script** - Custom one-off analysis
 
+**Recommendation (based on empirical testing):**
+- **Use gopls for 90% of investigations** - Faster (5min vs 35min), simpler, zero false positives
+- **Use CodeQL for formal verification** - Proves NO instances of a pattern exist (structural soundness)
+- **Use grep for quick pattern checks** - When you just need to see if something exists
+
 **Note:** Always use gopls via `$(go env GOPATH)/bin/gopls` since it's not in PATH.
 
 ## When You Make Changes
