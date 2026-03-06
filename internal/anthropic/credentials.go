@@ -160,27 +160,11 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName stri
 }
 
 // ResolveUsageClient implements CredentialResolver.ResolveUsageClient.
-// Priority: (1) setup-token, (2) api_key, (3) Claude Code credentials.
+// The usage API requires OAuth credentials with user:profile scope, so only
+// Claude Code credentials are supported. Setup-tokens and API keys don't have
+// OAuth scopes and will be rejected by the usage endpoint.
 func (r *AnthropicResolver) ResolveUsageClient(endpointName string, apiKeyName string, store SecretsStore) (*UsageClient, error) {
-	// Priority 1: setup-token (OAuth)
-	if setupToken, ok := store.Get("anthropic.setup_token"); ok && setupToken != "" {
-		holder := NewTokenHolder(setupToken)
-		client := NewUsageClientWithFunc(holder.Get)
-		client.SetCacheTTL(r.usageCacheTTL)
-		log.Infof("anthropic", "created usage client for %q (via setup_token)", endpointName)
-		return client, nil
-	}
-
-	// Priority 2: API key
-	if apiKey, ok := store.Get(apiKeyName); ok && apiKey != "" {
-		holder := NewTokenHolder(apiKey)
-		client := NewUsageClientWithFunc(holder.Get)
-		client.SetCacheTTL(r.usageCacheTTL)
-		log.Infof("anthropic", "created usage client for %q (via %s)", endpointName, apiKeyName)
-		return client, nil
-	}
-
-	// Priority 3: Claude Code credentials
+	// Usage API requires OAuth with user:profile scope — only CC credentials work.
 	if r.ccSrc != nil {
 		client := NewUsageClientWithFunc(r.ccSrc.Token)
 		client.SetCacheTTL(r.usageCacheTTL)
@@ -188,7 +172,9 @@ func (r *AnthropicResolver) ResolveUsageClient(endpointName string, apiKeyName s
 		return client, nil
 	}
 
-	return nil, fmt.Errorf("no Anthropic credentials found for usage client (endpoint %q)", endpointName)
+	// No CC credentials available — usage API not supported.
+	log.Debugf("anthropic", "no usage client for %q: requires Claude Code credentials with OAuth scopes", endpointName)
+	return nil, fmt.Errorf("usage API requires Claude Code credentials (OAuth with user:profile scope)")
 }
 
 // GetReloadFunc implements CredentialResolver.GetReloadFunc.
