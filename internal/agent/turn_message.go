@@ -5,14 +5,14 @@ import (
 	"encoding/base64"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/provider"
 )
 
 // prepareUserMessage builds the annotated user message with mana warnings,
 // attachment path annotations, metadata prefix, reminders, and content blocks.
-func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []Attachment) anthropic.Message {
+func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []Attachment) provider.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
@@ -54,7 +54,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 
 	// Build content blocks: attachments first, then text
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
-	var contentBlocks []anthropic.ContentBlock
+	var contentBlocks []provider.ContentBlock
 	for _, img := range images {
 		data, mediaType := img.Data, img.MediaType
 		if mediaType == "application/pdf" {
@@ -62,16 +62,16 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 				continue // over-size PDFs already have save-to-disk annotation
 			}
 			encoded := base64.StdEncoding.EncodeToString(data)
-			contentBlocks = append(contentBlocks, anthropic.DocumentBlock(mediaType, encoded))
+			contentBlocks = append(contentBlocks, provider.DocumentBlock(mediaType, encoded))
 		} else {
 			data, mediaType = maybeDownscaleImage(data, mediaType, a.MaxImagePixels)
 			encoded := base64.StdEncoding.EncodeToString(data)
-			contentBlocks = append(contentBlocks, anthropic.ImageBlock(mediaType, encoded))
+			contentBlocks = append(contentBlocks, provider.ImageBlock(mediaType, encoded))
 		}
 	}
-	contentBlocks = append(contentBlocks, anthropic.ContentBlock{Type: "text", Text: annotatedMessage})
+	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: annotatedMessage})
 
-	return anthropic.Message{
+	return provider.Message{
 		Role:    "user",
 		Content: contentBlocks,
 	}

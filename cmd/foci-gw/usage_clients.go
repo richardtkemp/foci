@@ -6,6 +6,7 @@ import (
 	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/provider"
 	"foci/internal/secrets"
 )
 
@@ -47,7 +48,7 @@ func newUsageClientRegistry(cfg *config.Config, store *secrets.Store) *usageClie
 
 // GetUsageClient returns a UsageClient for the given endpoint, or nil if unavailable.
 // Creates and caches by format:api_key pair.
-func (r *usageClientRegistry) GetUsageClient(endpointName string) *anthropic.UsageClient {
+func (r *usageClientRegistry) GetUsageClient(endpointName string) provider.UsageClient {
 	if endpointName == "" {
 		endpointName = "anthropic"
 	}

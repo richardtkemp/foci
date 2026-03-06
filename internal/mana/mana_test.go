@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/anthropic"
+	"foci/internal/provider"
 )
 
 func TestIsGood_InCredit(t *testing.T) {
@@ -151,7 +152,7 @@ func TestFormatPercentNil(t *testing.T) {
 }
 
 func TestFormatPercentNoFiveHour(t *testing.T) {
-	if got := FormatPercent(&anthropic.UsageResponse{}); got != "" {
+	if got := FormatPercent(&provider.UsageResponse{}); got != "" {
 		t.Errorf("FormatPercent(empty) = %q, want empty", got)
 	}
 }
@@ -170,8 +171,8 @@ func TestFormatPercentValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		util := tt.util
-		got := FormatPercent(&anthropic.UsageResponse{
-			FiveHour: &anthropic.UsageWindow{Utilization: &util},
+		got := FormatPercent(&provider.UsageResponse{
+			FiveHour: &provider.UsageWindow{Utilization: &util},
 		})
 		if got != tt.want {
 			t.Errorf("FormatPercent(util=%.1f) = %q, want %q", tt.util, got, tt.want)
@@ -186,14 +187,14 @@ func TestFormatResetNil(t *testing.T) {
 }
 
 func TestFormatResetNoFiveHour(t *testing.T) {
-	if got := FormatReset(&anthropic.UsageResponse{}); got != "" {
+	if got := FormatReset(&provider.UsageResponse{}); got != "" {
 		t.Errorf("FormatReset(empty) = %q, want empty", got)
 	}
 }
 
 func TestFormatResetNoResetsAt(t *testing.T) {
 	util := 50.0
-	if got := FormatReset(&anthropic.UsageResponse{FiveHour: &anthropic.UsageWindow{Utilization: &util}}); got != "" {
+	if got := FormatReset(&provider.UsageResponse{FiveHour: &provider.UsageWindow{Utilization: &util}}); got != "" {
 		t.Errorf("FormatReset(no ResetsAt) = %q, want empty", got)
 	}
 }
@@ -201,8 +202,8 @@ func TestFormatResetNoResetsAt(t *testing.T) {
 func TestFormatResetWithTime(t *testing.T) {
 	util := 50.0
 	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
-	got := FormatReset(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{
+	got := FormatReset(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{
 			Utilization: &util,
 			ResetsAt:    &future,
 		},
@@ -215,8 +216,8 @@ func TestFormatResetWithTime(t *testing.T) {
 func TestFormatResetPast(t *testing.T) {
 	util := 50.0
 	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339Nano)
-	got := FormatReset(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{
+	got := FormatReset(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{
 			Utilization: &util,
 			ResetsAt:    &past,
 		},
@@ -229,8 +230,8 @@ func TestFormatResetPast(t *testing.T) {
 func TestFormatResetMinutes(t *testing.T) {
 	util := 50.0
 	future := time.Now().Add(45 * time.Minute).UTC().Format(time.RFC3339Nano)
-	got := FormatReset(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{
+	got := FormatReset(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{
 			Utilization: &util,
 			ResetsAt:    &future,
 		},
@@ -298,7 +299,7 @@ func TestFormatUsageNil(t *testing.T) {
 }
 
 func TestFormatUsageEmpty(t *testing.T) {
-	result := FormatUsage(&anthropic.UsageResponse{})
+	result := FormatUsage(&provider.UsageResponse{})
 	if result != "No active usage limits" {
 		t.Errorf("FormatUsage(empty) = %q", result)
 	}
@@ -306,16 +307,16 @@ func TestFormatUsageEmpty(t *testing.T) {
 
 func TestFormatUsagePercentage(t *testing.T) {
 	util := 42.0
-	result := FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{Utilization: &util},
+	result := FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{Utilization: &util},
 	})
 	if !strings.Contains(result, "42% used") {
 		t.Errorf("result = %q, want '42%% used'", result)
 	}
 
 	util = 0.3
-	result = FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{Utilization: &util},
+	result = FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{Utilization: &util},
 	})
 	if !strings.Contains(result, "0.3% used") {
 		t.Errorf("result = %q, want '0.3%% used'", result)
@@ -325,8 +326,8 @@ func TestFormatUsagePercentage(t *testing.T) {
 func TestFormatUsageResetTime(t *testing.T) {
 	util := 50.0
 	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
-	result := FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{
+	result := FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{
 			Utilization: &util,
 			ResetsAt:    &future,
 		},
@@ -338,9 +339,9 @@ func TestFormatUsageResetTime(t *testing.T) {
 
 func TestFormatUsageOverage(t *testing.T) {
 	util := 80.0
-	result := FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{Utilization: &util},
-		ExtraUsage: &anthropic.ExtraUsage{
+	result := FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{Utilization: &util},
+		ExtraUsage: &provider.ExtraUsage{
 			IsEnabled:   true,
 			UsedCredits: 1.50,
 		},
@@ -352,9 +353,9 @@ func TestFormatUsageOverage(t *testing.T) {
 
 func TestFormatUsageOverageDisabled(t *testing.T) {
 	util := 80.0
-	result := FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{Utilization: &util},
-		ExtraUsage: &anthropic.ExtraUsage{
+	result := FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{Utilization: &util},
+		ExtraUsage: &provider.ExtraUsage{
 			IsEnabled:   false,
 			UsedCredits: 5.0,
 		},
@@ -366,9 +367,9 @@ func TestFormatUsageOverageDisabled(t *testing.T) {
 
 func TestFormatUsageOverageZero(t *testing.T) {
 	util := 80.0
-	result := FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{Utilization: &util},
-		ExtraUsage: &anthropic.ExtraUsage{
+	result := FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{Utilization: &util},
+		ExtraUsage: &provider.ExtraUsage{
 			IsEnabled:   true,
 			UsedCredits: 0.0,
 		},
@@ -381,12 +382,12 @@ func TestFormatUsageOverageZero(t *testing.T) {
 func TestFormatUsageAllFields(t *testing.T) {
 	util := 75.0
 	future := time.Now().Add(30 * time.Minute).UTC().Format(time.RFC3339Nano)
-	result := FormatUsage(&anthropic.UsageResponse{
-		FiveHour: &anthropic.UsageWindow{
+	result := FormatUsage(&provider.UsageResponse{
+		FiveHour: &provider.UsageWindow{
 			Utilization: &util,
 			ResetsAt:    &future,
 		},
-		ExtraUsage: &anthropic.ExtraUsage{
+		ExtraUsage: &provider.ExtraUsage{
 			IsEnabled:   true,
 			UsedCredits: 2.75,
 		},
@@ -520,8 +521,8 @@ func TestFormatPercent_EdgeCasesNearZero(t *testing.T) {
 	}
 	for _, tt := range tests {
 		util := tt.util
-		got := FormatPercent(&anthropic.UsageResponse{
-			FiveHour: &anthropic.UsageWindow{Utilization: &util},
+		got := FormatPercent(&provider.UsageResponse{
+			FiveHour: &provider.UsageWindow{Utilization: &util},
 		})
 		if got != tt.want {
 			t.Errorf("FormatPercent(%.2f) = %q, want %q", tt.util, got, tt.want)
@@ -530,8 +531,8 @@ func TestFormatPercent_EdgeCasesNearZero(t *testing.T) {
 }
 
 func TestFormatUsage_ExtraUsagePresent(t *testing.T) {
-	result := FormatUsage(&anthropic.UsageResponse{
-		ExtraUsage: &anthropic.ExtraUsage{
+	result := FormatUsage(&provider.UsageResponse{
+		ExtraUsage: &provider.ExtraUsage{
 			IsEnabled:   true,
 			UsedCredits: 0.01,
 		},
@@ -654,8 +655,8 @@ func TestMonitor_IsGoodFor_WithServer(t *testing.T) {
 	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.UsageResponse{
-			FiveHour: &anthropic.UsageWindow{
+		json.NewEncoder(w).Encode(provider.UsageResponse{
+			FiveHour: &provider.UsageWindow{
 				Utilization: &util,
 				ResetsAt:    &future,
 			},
@@ -690,8 +691,8 @@ func TestManaAndReset_WithServer(t *testing.T) {
 	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(anthropic.UsageResponse{
-			FiveHour: &anthropic.UsageWindow{
+		json.NewEncoder(w).Encode(provider.UsageResponse{
+			FiveHour: &provider.UsageWindow{
 				Utilization: &util,
 				ResetsAt:    &future,
 			},
