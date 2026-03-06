@@ -16,6 +16,7 @@ import (
 // It queries the index for active sessions whose last activity is older than
 // maxAge, skips sessions with active branches, compresses the JSONL files to
 // .jsonl.gz, removes the originals, and updates the index status to archived.
+// Each agent's current chat session (per chat_metadata) is never archived.
 // Any numbered archive files (.N.jsonl) in the same directory are also gzipped.
 // Returns the number of archived sessions.
 func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int, error) {
@@ -31,10 +32,23 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 		return 0, fmt.Errorf("query active sessions: %w", err)
 	}
 
+	// Get the set of current session keys (the active session per agent+chat).
+	// These must never be archived.
+	currentKeys, err := index.CurrentSessionKeys()
+	if err != nil {
+		log.Warnf("session", "archive sweep: query current session keys: %v (skipping protection)", err)
+		currentKeys = nil
+	}
+
 	cutoff := time.Now().UTC().Add(-maxAge)
 	archived := 0
 
 	for _, entry := range candidates {
+		// Never archive an agent's current chat session.
+		if currentKeys[entry.SessionKey] {
+			continue
+		}
+
 		// Only archive sessions whose last activity is older than the cutoff
 		lastActivity := entry.LastActivityAt
 		if lastActivity.IsZero() {

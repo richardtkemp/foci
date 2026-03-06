@@ -410,6 +410,31 @@ func (idx *SessionIndex) GetChatMetadata(agentID string, chatID int64, key strin
 	return value, err
 }
 
+// CurrentSessionKeys returns the set of session keys that are the active/current
+// session for any agent+chat combination (i.e. all "session_key" values in chat_metadata).
+func (idx *SessionIndex) CurrentSessionKeys() (map[string]bool, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT value FROM chat_metadata WHERE key = 'session_key'`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() // nolint:errcheck
+
+	keys := make(map[string]bool)
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		keys[v] = true
+	}
+	return keys, rows.Err()
+}
+
 // DeleteChatMetadata removes a metadata key for a chat.
 func (idx *SessionIndex) DeleteChatMetadata(agentID string, chatID int64, key string) error {
 	idx.mu.Lock()

@@ -201,7 +201,7 @@ compaction_threshold = 0.8
 # branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
 # branch_orientation_multiball_prompt = ""                        # prompt for user-attached multiball branches
 # branch_orientation_headless_prompt = ""                         # prompt for headless branches (cron, spawn, keepalive)
-# archive_after = "168h"                  # gzip idle sessions after 7 days
+# archive_after = "24h"                   # gzip idle sessions after 24 hours
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]
