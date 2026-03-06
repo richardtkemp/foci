@@ -9,7 +9,7 @@ func TestAsyncNotifierDelivers(t *testing.T) {
 		gotMsg = msg
 		gotReplyTo = replyTo
 	})
-	n.Notify("sess-1", "hello", "")
+	n.InjectToAgent("sess-1", "hello", "")
 	if gotKey != "sess-1" {
 		t.Errorf("key = %q, want %q", gotKey, "sess-1")
 	}
@@ -23,12 +23,12 @@ func TestAsyncNotifierDelivers(t *testing.T) {
 
 func TestAsyncNotifierNilReceiver(t *testing.T) {
 	var n *AsyncNotifier
-	n.Notify("sess", "should not panic", "") // must not panic
+	n.InjectToAgent("sess", "should not panic", "") // must not panic
 }
 
 func TestAsyncNotifierNilFunc(t *testing.T) {
 	n := &AsyncNotifier{}
-	n.Notify("sess", "should not panic", "") // must not panic
+	n.InjectToAgent("sess", "should not panic", "") // must not panic
 }
 
 func TestAsyncNotifierPendingCounter(t *testing.T) {

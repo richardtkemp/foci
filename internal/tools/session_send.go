@@ -101,7 +101,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				}
 				if notifier != nil {
 					// Pass originSession so response routes back to caller
-					notifier.Notify(p.SessionKey, tagged, originSession)
+					notifier.InjectToAgent(p.SessionKey, tagged, originSession)
 				}
 			}
 
