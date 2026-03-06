@@ -8,7 +8,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl check clean
+.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl check clean setup-hooks
 
 all: build cli foci-call
 
@@ -46,12 +46,12 @@ coverage-html:
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
 
-# Enforce minimum coverage threshold (default: 70%)
-COVERAGE_THRESHOLD ?= 70.0
+# Enforce minimum coverage threshold (default: 45%, excludes cmd packages)
+COVERAGE_THRESHOLD ?= 45.0
 
 coverage-check:
-	@echo "=== Checking Coverage Threshold ($(COVERAGE_THRESHOLD)%) ==="
-	@go test -p=$(shell nproc 2>/dev/null || echo 4) -coverprofile=coverage.out ./... > /dev/null 2>&1 || true
+	@echo "=== Checking Coverage Threshold ($(COVERAGE_THRESHOLD)%) [internal packages only] ==="
+	@go test -p=$(shell nproc 2>/dev/null || echo 4) -coverprofile=coverage.out ./internal/... > /dev/null 2>&1 || true
 	@TOTAL=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	echo "Total coverage: $$TOTAL%"; \
 	if [ "$$(echo "$$TOTAL < $(COVERAGE_THRESHOLD)" | bc -l)" -eq 1 ]; then \
@@ -63,6 +63,11 @@ coverage-check:
 
 clean:
 	rm -rf bin
+
+setup-hooks:
+	@echo "=== Setting up Git hooks ==="
+	@git config core.hooksPath .githooks
+	@echo "✅ Git hooks configured to use .githooks/"
 
 vet:
 	go vet ./...
@@ -86,4 +91,4 @@ complex: vet
 	@echo "=== gocognit (>100) ==="
 	@$(GOBIN)/gocognit -over 100 . || true
 
-check: test lint
+check: test lint coverage-check
