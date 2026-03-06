@@ -146,6 +146,14 @@ func (m *CacheManager) Close(ctx context.Context) {
 	m.deleteLocked(ctx)
 }
 
+// IsCachingNotSupported returns true if caching was detected as unavailable (e.g., free tier).
+// Thread-safe: uses mutex to protect access to cachingNotSupported field.
+func (m *CacheManager) IsCachingNotSupported() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cachingNotSupported
+}
+
 // contentHash computes a hash of the system instruction and tools for change detection.
 func contentHash(system *genai.Content, tools []*genai.Tool) [16]byte {
 	h := md5.New() // #nosec G401 - used for cache key generation, not security

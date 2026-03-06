@@ -21,6 +21,10 @@ func (m *mockClient) CountTokens(ctx context.Context, req *MessageRequest) (int,
 	return 0, nil
 }
 
+func (m *mockClient) IsCachingAvailable() bool {
+	return true
+}
+
 // mockStreamingClient implements both Client and StreamingClient
 type mockStreamingClient struct {
 	sendCalled   bool
@@ -41,6 +45,10 @@ func (m *mockStreamingClient) StreamMessage(ctx context.Context, req *MessageReq
 
 func (m *mockStreamingClient) CountTokens(ctx context.Context, req *MessageRequest) (int, error) {
 	return 0, nil
+}
+
+func (m *mockStreamingClient) IsCachingAvailable() bool {
+	return true
 }
 
 func TestSendWithNilHandlerUsesNonStreaming(t *testing.T) {

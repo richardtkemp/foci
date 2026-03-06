@@ -9,6 +9,7 @@ import (
 type Client interface {
 	SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error)
 	CountTokens(ctx context.Context, req *MessageRequest) (int, error)
+	IsCachingAvailable() bool // true if provider supports and has caching available
 }
 
 // StreamHandler receives delta events during a streaming response.

@@ -11,6 +11,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/mana"
 	"foci/internal/memory"
+	"foci/internal/provider"
 	"foci/prompts"
 	"foci/internal/session"
 	"foci/internal/state"
@@ -19,13 +20,14 @@ import (
 )
 
 type keepaliveParams struct {
-	cfg         *config.Config
-	sessions    *session.Store
-	usageClient *anthropic.UsageClient
-	botMgr      *telegram.BotManager
-	stateStore  *state.Store
-	todoStore   *memory.TodoStore
-	ctx         context.Context
+	cfg                   *config.Config
+	sessions              *session.Store
+	usageClient           *anthropic.UsageClient
+	botMgr                *telegram.BotManager
+	stateStore            *state.Store
+	todoStore             *memory.TodoStore
+	ctx                   context.Context
+	resolveEndpointClient func(endpoint, modelID string) provider.Client
 }
 
 // setupKeepalive creates and starts a keepalive runner for an agent instance.
@@ -34,13 +36,15 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	// Resolve model to get endpoint information
 	resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, p.cfg.Models.Aliases)
 	var endpoint string
+	var client provider.Client
 	if err == nil {
 		endpoint = resolved.Endpoint
+		client = p.resolveEndpointClient(endpoint, acfg.Model)
 	}
 
-	// Anthropic agents use keepalive for ephemeral cache warming;
-	// Gemini CacheManager handles its own TTL; OpenAI has no cache.
-	kaEnabled := acfg.Keepalive.Enabled && endpoint == "anthropic"
+	// Check if provider supports caching
+	cachingAvailable := client != nil && client.IsCachingAvailable()
+	kaEnabled := acfg.Keepalive.Enabled && cachingAvailable
 
 	if !kaEnabled && !acfg.Background.Enabled && !hasMemoryFormation(acfg.MemoryFormation) && !acfg.InjectAgentWarnings {
 		return nil
@@ -108,6 +112,7 @@ func setupKeepalive(inst *agentInstance, acfg config.AgentConfig, p keepalivePar
 	kaCfg.Enabled = kaEnabled
 	runner := keepalive.New(keepalive.RunnerConfig{
 		AgentID:            acfg.ID,
+		Client:             client,
 		Keepalive:          kaCfg,
 		Background:         acfg.Background,
 		MemoryFormation:    acfg.MemoryFormation,

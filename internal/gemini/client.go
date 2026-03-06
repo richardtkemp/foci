@@ -139,6 +139,15 @@ func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) 
 	return int(resp.TotalTokens), nil
 }
 
+// IsCachingAvailable returns true if caching is supported and available.
+// Returns false if: (1) CacheManager is nil, or (2) free tier was detected.
+func (c *Client) IsCachingAvailable() bool {
+	if c.cache == nil {
+		return false
+	}
+	return !c.cache.IsCachingNotSupported()
+}
+
 // buildConfig translates a provider.MessageRequest into genai.GenerateContentConfig.
 func buildConfig(req *provider.MessageRequest) *genai.GenerateContentConfig {
 	config := &genai.GenerateContentConfig{
