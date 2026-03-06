@@ -3,32 +3,36 @@ package tools
 import "testing"
 
 func TestAsyncNotifierDelivers(t *testing.T) {
-	var gotKey, gotMsg string
-	n := NewAsyncNotifier(func(sk, msg string) {
+	var gotKey, gotMsg, gotReplyTo string
+	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		gotKey = sk
 		gotMsg = msg
+		gotReplyTo = replyTo
 	})
-	n.Notify("sess-1", "hello")
+	n.Notify("sess-1", "hello", "")
 	if gotKey != "sess-1" {
 		t.Errorf("key = %q, want %q", gotKey, "sess-1")
 	}
 	if gotMsg != "hello" {
 		t.Errorf("msg = %q, want %q", gotMsg, "hello")
 	}
+	if gotReplyTo != "" {
+		t.Errorf("replyTo = %q, want %q", gotReplyTo, "")
+	}
 }
 
 func TestAsyncNotifierNilReceiver(t *testing.T) {
 	var n *AsyncNotifier
-	n.Notify("sess", "should not panic") // must not panic
+	n.Notify("sess", "should not panic", "") // must not panic
 }
 
 func TestAsyncNotifierNilFunc(t *testing.T) {
 	n := &AsyncNotifier{}
-	n.Notify("sess", "should not panic") // must not panic
+	n.Notify("sess", "should not panic", "") // must not panic
 }
 
 func TestAsyncNotifierPendingCounter(t *testing.T) {
-	n := NewAsyncNotifier(func(sk, msg string) {})
+	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 
 	if n.HasPending("sess-1") {
 		t.Error("should not have pending before MarkPending")
@@ -51,7 +55,7 @@ func TestAsyncNotifierPendingCounter(t *testing.T) {
 }
 
 func TestAsyncNotifierMultiplePending(t *testing.T) {
-	n := NewAsyncNotifier(func(sk, msg string) {})
+	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 
 	n.MarkPending("sess-1")
 	n.MarkPending("sess-1")
@@ -70,7 +74,7 @@ func TestAsyncNotifierMultiplePending(t *testing.T) {
 }
 
 func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
-	n := NewAsyncNotifier(func(sk, msg string) {})
+	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 
 	// MarkDone without MarkPending should not panic or go negative
 	n.MarkDone("sess-1")

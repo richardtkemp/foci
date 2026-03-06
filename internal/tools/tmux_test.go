@@ -508,7 +508,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 
 	var wakeCalled atomic.Int32
 	var wakeMsg string
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		wakeCalled.Add(1)
 		wakeMsg = msg
 	})
@@ -575,7 +575,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 
 	var msgs []string
 	var mu sync.Mutex
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		mu.Lock()
 		msgs = append(msgs, msg)
 		mu.Unlock()
@@ -769,10 +769,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
-	_, toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
+	_, toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		wakeA.Add(1)
 	}), nil, "", false, 30, 0)
-	_, toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string) {
+	_, toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		wakeB.Add(1)
 	}), nil, "", false, 30, 0)
 
@@ -1604,7 +1604,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist-watch"
@@ -1681,7 +1681,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	_, _, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Verify the watch was restored by checking the state is still persisted
@@ -1718,7 +1718,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Stale watch should have been cleaned from state
@@ -1740,7 +1740,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-unwatch-persist"
@@ -1800,7 +1800,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	_, tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-clearall-watch"
@@ -1854,7 +1854,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	_, tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 	defer cleanup1()
 
@@ -1928,7 +1928,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 func TestTmuxStartAutoWatch(t *testing.T) {
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
@@ -1983,7 +1983,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 func TestTmuxStartWatchFalse(t *testing.T) {
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
@@ -2054,7 +2054,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 
 	var mu sync.Mutex
 	var notifications []string
-	notifier := NewAsyncNotifier(func(sk, msg string) {
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		mu.Lock()
 		notifications = append(notifications, msg)
 		mu.Unlock()
@@ -2113,7 +2113,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
@@ -2179,7 +2179,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 func TestTmuxAutopilotDisabled(t *testing.T) {
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string) {})
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {

@@ -418,7 +418,7 @@ func bgDeliverResult(notifier *AsyncNotifier, sessionKey string, done <-chan err
 			result = formatResult(combinedSpill.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
 		}
 		msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
-		notifier.Notify(sessionKey, msg)
+		notifier.Notify(sessionKey, msg, "")
 	}()
 }
 
