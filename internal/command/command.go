@@ -17,20 +17,17 @@ type KeyboardOption struct {
 
 // Command is a slash command that executes outside the agent pipeline.
 type Command struct {
-	Name           string
-	Description    string
-	Category       string // grouping for /help (e.g. "observability", "operations")
+	Name        string
+	Description string
+	Category    string
+	Hidden      bool
+
 	Execute func(ctx context.Context, args string) (string, error)
-	Hidden  bool // if true, excluded from /help and BotFather registration
 
-	// KeyboardOptions returns inline keyboard buttons to show when the command
-	// is invoked bare (no arguments). nil means no keyboard — execute normally.
+	ExecuteV2 func(ctx context.Context, req Request, deps Deps) (Response, error)
+
 	KeyboardOptions func(ctx context.Context) []KeyboardOption
-
-	// ChainKeyboard returns a second set of keyboard options when a subcommand
-	// needs a parameter (e.g. /tmux kill → which session?). The subcommand arg
-	// is the first argument (e.g. "kill"). nil means no chaining.
-	ChainKeyboard func(ctx context.Context, subcommand string) []KeyboardOption
+	ChainKeyboard   func(ctx context.Context, subcommand string) []KeyboardOption
 }
 
 // WizardHandler is implemented by interactive wizards that take over message routing.
@@ -149,8 +146,7 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 		return "", false
 	}
 
-	// Parse "/command args"
-	text = text[1:] // strip leading /
+	text = text[1:]
 	name, args, _ := strings.Cut(text, " ")
 	name = strings.ToLower(name)
 	args = strings.TrimSpace(args)
@@ -165,6 +161,33 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 		return "Error: " + err.Error(), true
 	}
 	return result, true
+}
+
+// DispatchV2 executes a command using the platform-agnostic Request/Response pattern.
+// Returns (Response, true) if the command was found, or (Response{}, false) if not.
+func (r *Registry) DispatchV2(ctx context.Context, req Request, deps Deps) (Response, bool, error) {
+	cmd := r.commands[req.Name]
+	if cmd == nil {
+		return Response{Text: r.suggestCommand(req.Name)}, true, nil
+	}
+
+	if cmd.ExecuteV2 != nil {
+		resp, err := cmd.ExecuteV2(ctx, req, deps)
+		if err != nil {
+			return Response{Text: "Error: " + err.Error()}, true, nil
+		}
+		return resp, true, nil
+	}
+
+	if cmd.Execute != nil {
+		result, err := cmd.Execute(ctx, req.Args)
+		if err != nil {
+			return Response{Text: "Error: " + err.Error()}, true, nil
+		}
+		return Response{Text: result}, true, nil
+	}
+
+	return Response{}, false, fmt.Errorf("command /%s has no Execute or ExecuteV2 function", req.Name)
 }
 
 // suggestCommand returns a helpful message when a command isn't found,
