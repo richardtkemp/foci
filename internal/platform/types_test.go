@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"foci/internal/warnings"
 )
 
 // TestSenderInterface verifies that mockSender implements the Sender interface.
@@ -101,8 +103,12 @@ func (m *mockPlatform) Stop() error                            { return nil }
 
 type mockHandler struct{}
 
-func (m *mockHandler) HandleMessage(ctx context.Context, sessionKey, userID, text string, attachments []Attachment, callbacks TurnCallbacks) (string, error) {
+func (m *mockHandler) HandleMessage(ctx context.Context, sessionKey, text string) (string, error) {
+	return "", nil
+}
+func (m *mockHandler) HandleMessageWithAttachments(ctx context.Context, sessionKey, text string, attachments []Attachment) (string, error) {
 	return "", nil
 }
 func (m *mockHandler) IsProcessing() bool                  { return false }
 func (m *mockHandler) TransformMessage(text string) string { return text }
+func (m *mockHandler) Warnings() *warnings.Queue           { return nil }

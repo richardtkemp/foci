@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"foci/internal/provider"
 	"foci/internal/memory"
+	"foci/internal/provider"
 	"foci/internal/tools"
 	"foci/internal/warnings"
 )
@@ -217,7 +217,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 
 		var notified []string
 		warnQ := warnings.NewQueue(0, 0)
-		env.ag.Warnings = warnQ
+		env.ag.WarningQueue = warnQ
 		env.ag.CompactionNotifyFunc = func(session string, msg string) {
 			notified = append(notified, msg)
 		}
@@ -323,4 +323,3 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 	})
 }
-

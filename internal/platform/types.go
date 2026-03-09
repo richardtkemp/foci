@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"time"
+
+	"foci/internal/warnings"
 )
 
 type Message struct {
@@ -70,7 +72,9 @@ type TurnCallbacks struct {
 }
 
 type MessageHandler interface {
-	HandleMessage(ctx context.Context, sessionKey, userID, text string, attachments []Attachment, callbacks TurnCallbacks) (string, error)
+	HandleMessage(ctx context.Context, sessionKey, text string) (string, error)
+	HandleMessageWithAttachments(ctx context.Context, sessionKey, text string, attachments []Attachment) (string, error)
 	IsProcessing() bool
 	TransformMessage(text string) string
+	Warnings() *warnings.Queue
 }
