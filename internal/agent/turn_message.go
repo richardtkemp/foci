@@ -7,12 +7,13 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/platform"
 	"foci/internal/provider"
 )
 
 // prepareUserMessage builds the annotated user message with mana warnings,
 // attachment path annotations, metadata prefix, reminders, and content blocks.
-func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []Attachment) provider.Message {
+func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []platform.Attachment) provider.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
@@ -36,7 +37,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	for _, img := range images {
 		if img.SavedPath != "" {
 			label := "Image"
-			if img.MediaType == "application/pdf" {
+			if img.MimeType == "application/pdf" {
 				label = "PDF"
 			}
 			imagePaths += "[" + label + " saved to: " + img.SavedPath + "]\n"
@@ -56,7 +57,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
 	var contentBlocks []provider.ContentBlock
 	for _, img := range images {
-		data, mediaType := img.Data, img.MediaType
+		data, mediaType := img.Data, img.MimeType
 		if mediaType == "application/pdf" {
 			if len(data) > maxPDFSize {
 				continue // over-size PDFs already have save-to-disk annotation

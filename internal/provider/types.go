@@ -28,7 +28,7 @@ type CacheControl struct {
 // ContentSource holds base64-encoded data for image and document content blocks.
 type ContentSource struct {
 	Type      string `json:"type"`       // "base64"
-	MediaType string `json:"media_type"` // "image/jpeg", "image/png", "application/pdf", etc.
+	MimeType  string `json:"media_type"` // "image/jpeg", "image/png", "application/pdf", etc.
 	Data      string `json:"data"`       // base64-encoded data
 }
 
@@ -269,25 +269,25 @@ func CachedTextContent(text string) []ContentBlock {
 }
 
 // mediaContentBlock creates a media content block (image/document) from base64-encoded data.
-func mediaContentBlock(blockType, mediaType, base64Data string) ContentBlock {
+func mediaContentBlock(blockType, mimeType, base64Data string) ContentBlock {
 	return ContentBlock{
 		Type: blockType,
 		Source: &ContentSource{
 			Type:      "base64",
-			MediaType: mediaType,
+			MimeType:  mimeType,
 			Data:      base64Data,
 		},
 	}
 }
 
 // ImageBlock creates an image content block from base64-encoded data.
-func ImageBlock(mediaType, base64Data string) ContentBlock {
-	return mediaContentBlock("image", mediaType, base64Data)
+func ImageBlock(mimeType, base64Data string) ContentBlock {
+	return mediaContentBlock("image", mimeType, base64Data)
 }
 
 // DocumentBlock creates a document content block from base64-encoded data.
-func DocumentBlock(mediaType, base64Data string) ContentBlock {
-	return mediaContentBlock("document", mediaType, base64Data)
+func DocumentBlock(mimeType, base64Data string) ContentBlock {
+	return mediaContentBlock("document", mimeType, base64Data)
 }
 
 // ToolResultBlock creates a tool_result content block.

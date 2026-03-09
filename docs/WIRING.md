@@ -38,24 +38,27 @@ config.Load(path)                                        ← validates values; l
   → memory: ReminderStore + Scratchpad + TodoStores       ← ReminderStore/Scratchpad shared; TodoStore per-agent (todo-{agentID}.db)
   → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
 
-  Shared resources (created once in main.go):
-  → telegram.NewToolDetailStore(tool_details.db)           ← shared; persists inline keyboard expansion data across restarts
-  → voice STT/TTS providers                              ← shared across agents
-  → telegram.NewBotManager()
+   Shared resources (created once in main.go):
+   → telegram.NewToolDetailStore(tool_details.db)           ← shared; persists inline keyboard expansion data across restarts
+   → voice STT/TTS providers                              ← shared across agents
+   → telegram.NewBotManager()
 
-  Per-agent loop (for each cfg.Agents[i]):
-  → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
-    → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
-    → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
-    → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
-    → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
-    → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
-    → skills.Load(cfg.Skills.Dirs)
-    → compaction.NewCompactor(sessions, model, threshold)
-    → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
-    → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
-    → telegram.NewBot → botMgr.AddPrimary(agentID, bot)
-    → bot.SetSessionIndex(sessionIndex)                   ← persists chat→session key mapping for continuity across restarts
+   Per-agent loop (for each cfg.Agents[i]):
+   → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
+     → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
+     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
+     → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
+     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
+     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
+     → skills.Load(cfg.Skills.Dirs)
+     → compaction.NewCompactor(sessions, model, threshold)
+     → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
+     → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
+     → telegram.NewBot(agentID, agent, ...) → botMgr.AddPrimary(agentID, bot)
+       Bot holds platform.MessageHandler interface (not concrete *agent.Agent)
+ enabling future multi-platform support
+     → bot.SetHandlerAndCommands(agent, cmdRegistry)  ← injects agent via MessageHandler interface
+     → bot.SetSessionIndex(sessionIndex)                   ← persists chat→session key mapping for continuity across restarts
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
     → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
@@ -161,8 +164,6 @@ No circular dependencies. `provider`, `platform`, `table`, `log`, `secrets`, `me
 Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`, `IsValidBotToken`, `IsValidUserID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`).
-
-**`platform` package:** Platform-agnostic messaging types and interfaces for multi-platform support. Defines `Sender` interface (outbound messaging methods), `Platform` interface (full platform implementation), `Request` and `Response` types for command dispatch, and `Message/Attachment` types. This abstraction enables Foci to support multiple messaging platforms (Telegram, Discord, Matrix, etc.) by having each platform implement these interfaces.
 
 ## Command Dispatch Architecture
 

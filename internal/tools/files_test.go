@@ -469,8 +469,8 @@ func TestReadPDF(t *testing.T) {
 	if block.Source == nil {
 		t.Fatal("block.Source is nil")
 	}
-	if block.Source.MediaType != "application/pdf" {
-		t.Errorf("block.Source.MediaType = %q", block.Source.MediaType)
+	if block.Source.MimeType != "application/pdf" {
+		t.Errorf("block.Source.MimeType = %q", block.Source.MimeType)
 	}
 	if block.Source.Data == "" {
 		t.Error("block.Source.Data is empty")

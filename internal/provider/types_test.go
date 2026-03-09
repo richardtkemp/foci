@@ -81,7 +81,7 @@ func TestImageBlock(t *testing.T) {
 	if block.Type != "image" {
 		t.Errorf("ImageBlock type = %q, want 'image'", block.Type)
 	}
-	if block.Source == nil || block.Source.Type != "base64" || block.Source.MediaType != "image/jpeg" {
+	if block.Source == nil || block.Source.Type != "base64" || block.Source.MimeType != "image/jpeg" {
 		t.Errorf("ImageBlock source = %+v", block.Source)
 	}
 }
@@ -91,7 +91,7 @@ func TestDocumentBlock(t *testing.T) {
 	if block.Type != "document" {
 		t.Errorf("DocumentBlock type = %q, want 'document'", block.Type)
 	}
-	if block.Source == nil || block.Source.Type != "base64" || block.Source.MediaType != "application/pdf" {
+	if block.Source == nil || block.Source.Type != "base64" || block.Source.MimeType != "application/pdf" {
 		t.Errorf("DocumentBlock source = %+v", block.Source)
 	}
 }
@@ -378,7 +378,7 @@ func TestContentBlockUnmarshalJSON_ImageBlock(t *testing.T) {
 	if err := json.Unmarshal(data, &cb); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if cb.Type != "image" || cb.Source == nil || cb.Source.MediaType != "image/jpeg" {
+	if cb.Type != "image" || cb.Source == nil || cb.Source.MimeType != "image/jpeg" {
 		t.Errorf("decoded = %+v", cb)
 	}
 }
@@ -389,7 +389,7 @@ func TestContentBlockUnmarshalJSON_DocumentBlock(t *testing.T) {
 	if err := json.Unmarshal(data, &cb); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if cb.Type != "document" || cb.Source == nil || cb.Source.MediaType != "application/pdf" {
+	if cb.Type != "document" || cb.Source == nil || cb.Source.MimeType != "application/pdf" {
 		t.Errorf("decoded = %+v", cb)
 	}
 }

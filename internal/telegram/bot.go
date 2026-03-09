@@ -68,7 +68,7 @@ type Bot struct {
 	log                *log.ComponentLogger
 	api                *gotgbot.Bot // for receiving updates (Run)
 	client             botClient    // for sending messages and files (mockable in tests)
-	agent              *agent.Agent
+	handler            platform.MessageHandler
 	commands           *command.Registry
 	dispatcher         *Dispatcher               // platform-aware command dispatch (nil = use legacy dispatch)
 	lastMsgStore       *command.LastMessageStore // for // repeat command
@@ -137,7 +137,7 @@ func (b *Bot) logger() *log.ComponentLogger {
 // NewBot creates a new Telegram bot.
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (multiball) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
-func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) (*Bot, error) {
+func NewBot(token string, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) (*Bot, error) {
 	// Use a transport with enough connections for concurrent API calls.
 	// The default http.Transport has MaxIdleConnsPerHost=2 which is too low:
 	// GetUpdates long-poll holds 1 connection, the agent worker sends typing
@@ -165,7 +165,7 @@ func NewBot(token string, allowedUsers []string, ag *agent.Agent, cmds *command.
 		log:             log.NewComponentLogger("telegram:" + agentID),
 		api:             api,
 		client:          api,
-		agent:           ag,
+		handler:         handler,
 		commands:        cmds,
 		lastMsgStore:    lastMsgStore,
 		allowedUsers:    allowed,
@@ -357,8 +357,8 @@ func (b *Bot) SetSecondary(pool *Pool) {
 // SetAgentAndCommands re-wires the bot to a different agent and command registry.
 // Only safe to call on idle secondary bots (no active session key) between
 // pool acquisition and setting the session key.
-func (b *Bot) SetAgentAndCommands(ag *agent.Agent, cmds *command.Registry) {
-	b.agent = ag
+func (b *Bot) SetHandlerAndCommands(handler platform.MessageHandler, cmds *command.Registry) {
+	b.handler = handler
 	b.commands = cmds
 }
 
@@ -775,7 +775,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
-			if b.agent == nil || b.agent.Warnings() == nil {
+			if b.handler == nil || b.handler.Warnings() == nil {
 				b.sendReply(msg, userID, "Could not download voice note — please try again.")
 			}
 		} else {
@@ -902,8 +902,8 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 
 	// Apply message transforms to non-command messages.
 	// Transforms may produce a command (e.g. "m" → "/mana").
-	if b.agent != nil {
-		if transformed := b.agent.TransformMessage(text); transformed != text {
+	if b.handler != nil {
+		if transformed := b.handler.TransformMessage(text); transformed != text {
 			text = transformed
 			if b.tryDispatchCommand(ctx, msg, userID, text) {
 				return
@@ -1187,14 +1187,14 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	var response string
 	var err error
 	if len(qm.images) > 0 {
-		// Convert telegram images to agent image data
-		agentImages := make([]agent.Attachment, len(qm.images))
+		// Convert telegram images to platform image data
+		platformImages := make([]platform.Attachment, len(qm.images))
 		for i, img := range qm.images {
-			agentImages[i] = agent.Attachment{MediaType: img.mediaType, Data: img.data, SavedPath: img.savedPath}
+			platformImages[i] = platform.Attachment{MimeType: img.mediaType, Data: img.data, SavedPath: img.savedPath}
 		}
-		response, err = b.agent.HandleMessageWithAttachments(turnCtx, sk, qm.text, agentImages)
+		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, qm.text, platformImages)
 	} else {
-		response, err = b.agent.HandleMessage(turnCtx, sk, qm.text)
+		response, err = b.handler.HandleMessage(turnCtx, sk, qm.text)
 	}
 	if err != nil {
 		if turnCtx.Err() != nil {
