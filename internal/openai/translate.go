@@ -76,7 +76,7 @@ func userMessageToOpenAI(blocks []provider.ContentBlock) []openai.ChatCompletion
 
 		case "image":
 			if b.Source != nil {
-				dataURL := fmt.Sprintf("data:%s;base64,%s", b.Source.MediaType, b.Source.Data)
+				dataURL := fmt.Sprintf("data:%s;base64,%s", b.Source.MimeType, b.Source.Data)
 				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
 					URL: dataURL,
 				}))

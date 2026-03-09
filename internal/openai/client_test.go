@@ -543,7 +543,7 @@ func TestUserMessage_WithImage(t *testing.T) {
 		{Type: "text", Text: "what is this?"},
 		{Type: "image", Source: &provider.ContentSource{
 			Type:      "base64",
-			MediaType: "image/png",
+			MimeType: "image/png",
 			Data:      "iVBORw0KGgo=",
 		}},
 	}

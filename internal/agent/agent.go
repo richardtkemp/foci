@@ -20,6 +20,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/mana"
 	"foci/internal/memory"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/state"
@@ -30,13 +31,6 @@ import (
 )
 
 const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
-
-// Attachment holds a raw image or document for inclusion in a message.
-type Attachment struct {
-	MediaType string // "image/jpeg", "image/png", "application/pdf", etc.
-	Data      []byte // raw bytes (base64-encoded when building content blocks)
-	SavedPath string // non-empty if attachment was persisted to disk
-}
 
 // sessionMeta tracks per-session state for metadata injection.
 type sessionMeta struct {
@@ -863,7 +857,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 }
 
 // HandleMessageWithAttachments processes a user message with optional image/document attachments.
-func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, images []Attachment) (string, error) {
+func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, images []platform.Attachment) (string, error) {
 	// Gate check: resolve session's endpoint and check its gate.
 	// Only that endpoint's sessions are blocked when rate-limited.
 	sm := a.getSessionMeta(sessionKey)

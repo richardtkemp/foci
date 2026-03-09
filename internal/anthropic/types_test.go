@@ -209,8 +209,8 @@ func TestImageBlock(t *testing.T) {
 	if block.Source.Type != "base64" {
 		t.Errorf("Source.Type = %q, want %q", block.Source.Type, "base64")
 	}
-	if block.Source.MediaType != "image/jpeg" {
-		t.Errorf("Source.MediaType = %q", block.Source.MediaType)
+	if block.Source.MimeType != "image/jpeg" {
+		t.Errorf("Source.MimeType = %q", block.Source.MimeType)
 	}
 	if block.Source.Data != "dGVzdGRhdGE=" {
 		t.Errorf("Source.Data = %q", block.Source.Data)
@@ -231,7 +231,7 @@ func TestImageBlockJSON(t *testing.T) {
 	if decoded.Type != "image" {
 		t.Errorf("decoded.Type = %q", decoded.Type)
 	}
-	if decoded.Source == nil || decoded.Source.MediaType != "image/png" {
+	if decoded.Source == nil || decoded.Source.MimeType != "image/png" {
 		t.Errorf("decoded.Source = %+v", decoded.Source)
 	}
 }
@@ -247,8 +247,8 @@ func TestDocumentBlock(t *testing.T) {
 	if block.Source.Type != "base64" {
 		t.Errorf("Source.Type = %q, want %q", block.Source.Type, "base64")
 	}
-	if block.Source.MediaType != "application/pdf" {
-		t.Errorf("Source.MediaType = %q", block.Source.MediaType)
+	if block.Source.MimeType != "application/pdf" {
+		t.Errorf("Source.MimeType = %q", block.Source.MimeType)
 	}
 	if block.Source.Data != "JVBER..." {
 		t.Errorf("Source.Data = %q", block.Source.Data)
@@ -269,7 +269,7 @@ func TestDocumentBlockJSON(t *testing.T) {
 	if decoded.Type != "document" {
 		t.Errorf("decoded.Type = %q", decoded.Type)
 	}
-	if decoded.Source == nil || decoded.Source.MediaType != "application/pdf" {
+	if decoded.Source == nil || decoded.Source.MimeType != "application/pdf" {
 		t.Errorf("decoded.Source = %+v", decoded.Source)
 	}
 }

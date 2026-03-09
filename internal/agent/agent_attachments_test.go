@@ -8,6 +8,7 @@ import (
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
+	"foci/internal/platform"
 	"foci/internal/workspace"
 )
 
@@ -35,8 +36,8 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []Attachment{
-		{MediaType: "image/jpeg", Data: []byte("fake-jpeg-data")},
+	images := []platform.Attachment{
+		{MimeType: "image/jpeg", Data: []byte("fake-jpeg-data")},
 	}
 	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimg/1000000000", "What is this?", images)
 	if err != nil {
@@ -63,8 +64,8 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 	if userMsg.Content[0].Source == nil {
 		t.Fatal("content[0].Source is nil")
 	}
-	if userMsg.Content[0].Source.MediaType != "image/jpeg" {
-		t.Errorf("content[0].Source.MediaType = %q", userMsg.Content[0].Source.MediaType)
+	if userMsg.Content[0].Source.MimeType != "image/jpeg" {
+		t.Errorf("content[0].Source.MimeType = %q", userMsg.Content[0].Source.MimeType)
 	}
 
 	// Second block should be text with metadata + user text
@@ -103,8 +104,8 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	attachments := []Attachment{
-		{MediaType: "application/pdf", Data: []byte("%PDF-1.4 fake")},
+	attachments := []platform.Attachment{
+		{MimeType: "application/pdf", Data: []byte("%PDF-1.4 fake")},
 	}
 	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdf/1000000000", "Read this PDF", attachments)
 	if err != nil {
@@ -131,8 +132,8 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 	if userMsg.Content[0].Source == nil {
 		t.Fatal("content[0].Source is nil")
 	}
-	if userMsg.Content[0].Source.MediaType != "application/pdf" {
-		t.Errorf("content[0].Source.MediaType = %q", userMsg.Content[0].Source.MediaType)
+	if userMsg.Content[0].Source.MimeType != "application/pdf" {
+		t.Errorf("content[0].Source.MimeType = %q", userMsg.Content[0].Source.MimeType)
 	}
 }
 
@@ -160,8 +161,8 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	attachments := []Attachment{
-		{MediaType: "application/pdf", Data: []byte("%PDF-1.4"), SavedPath: "/tmp/docs/report.pdf"},
+	attachments := []platform.Attachment{
+		{MimeType: "application/pdf", Data: []byte("%PDF-1.4"), SavedPath: "/tmp/docs/report.pdf"},
 	}
 	_, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdfsaved/1000000000", "Check this", attachments)
 	if err != nil {
@@ -197,8 +198,8 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []Attachment{
-		{MediaType: "image/png", Data: []byte("fake-png-data")},
+	images := []platform.Attachment{
+		{MimeType: "image/png", Data: []byte("fake-png-data")},
 	}
 	// Empty text — image only
 	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimgonly/1000000000", "", images)
@@ -271,8 +272,8 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []Attachment{
-		{MediaType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
+	images := []platform.Attachment{
+		{MimeType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
 	}
 	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/isavepath/1000000000", "What is this?", images)
 	if err != nil {
@@ -317,8 +318,8 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	images := []Attachment{
-		{MediaType: "image/jpeg", Data: []byte("fake")},
+	images := []platform.Attachment{
+		{MimeType: "image/jpeg", Data: []byte("fake")},
 	}
 	ag.HandleMessageWithAttachments(context.Background(), "test/inosaved/1000000000", "Look", images)
 

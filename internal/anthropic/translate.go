@@ -259,7 +259,7 @@ func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
 
 	case "image":
 		if b.Source != nil {
-			block := sdk.NewImageBlockBase64(b.Source.MediaType, b.Source.Data)
+			block := sdk.NewImageBlockBase64(b.Source.MimeType, b.Source.Data)
 			if b.CacheControl != nil {
 				block.OfImage.CacheControl = sdk.NewCacheControlEphemeralParam()
 			}

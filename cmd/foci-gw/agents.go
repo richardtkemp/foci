@@ -1119,7 +1119,7 @@ func restoreMultiballSessions(
 			// Re-wire agent if we can identify it from the session key
 			agentID := extractAgentID(savedKey)
 			if inst, ok := agents[agentID]; ok {
-				bot.SetAgentAndCommands(inst.ag, inst.cmds)
+				bot.SetHandlerAndCommands(inst.ag, inst.cmds)
 				applyAgentDisplaySettings(bot, inst.agentCfg, cfg)
 			}
 

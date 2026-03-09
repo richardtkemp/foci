@@ -82,7 +82,7 @@ func messagesToGenai(msgs []provider.Message) []*genai.Content {
 				if block.Source != nil {
 					parts = append(parts, &genai.Part{
 						InlineData: &genai.Blob{
-							MIMEType: block.Source.MediaType,
+							MIMEType: block.Source.MimeType,
 							Data:     []byte(block.Source.Data),
 						},
 					})

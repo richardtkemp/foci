@@ -541,7 +541,7 @@ func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) 
 		return "", fmt.Errorf("all multiball bots are busy")
 	}
 
-	secBot.SetAgentAndCommands(p.ag, cmds)
+	secBot.SetHandlerAndCommands(p.ag, cmds)
 	applyAgentDisplaySettings(secBot, p.acfg, p.cfg)
 
 	parentKey := p.defaultSessionKey()

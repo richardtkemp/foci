@@ -152,7 +152,7 @@ func TestContentBlockToSDKImage(t *testing.T) {
 		Type: "image",
 		Source: &ContentSource{
 			Type:      "base64",
-			MediaType: "image/jpeg",
+			MimeType: "image/jpeg",
 			Data:      "abc123",
 		},
 	}
