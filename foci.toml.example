@@ -44,6 +44,28 @@ model = "claude-sonnet-4-20250514"
 
 # ─── Agent ────────────────────────────────────────────────────────────
 # Define one or more agents. Each gets its own sessions, memory, and bot.
+#
+# Platform configuration (NEW - preferred):
+#   [agents.platforms.telegram]
+#   bot = "myagent"               # bot name; token via "telegram.<bot>" secret
+#   bot_secret = "custom.key"     # override secret key (default: "telegram.<bot>")
+#   multiball_bots = ["bot2", "bot3"]  # additional bots for multiball
+#   allowed_users = ["12345"]     # per-agent Telegram user filter
+#   show_tool_calls = "preview"   # off, preview, full
+#   show_thinking = "off"         # off, compact, true
+#   display_width = 44
+#   stream_output = false
+#   stream_interval = "250ms"
+#   received_files_dir = "received"
+#   startup_notify = true
+#
+# Legacy format (still works, deprecated):
+#   telegram_bot = "myagent"
+#   bot_secret = "custom.key"
+#   multiball_bots = ["bot2", "bot3"]
+#   allowed_users = ["12345"]
+#
+# At config load time, legacy fields are migrated to the new platform config.
 
 [[agents]]
 id = "myagent"
@@ -62,19 +84,10 @@ id = "myagent"
 # duplicate_messages = false
 # inject_agent_warnings = false
 # tts_rate = 0.0
-# show_tool_calls = "preview"             # off, preview, full
-# show_thinking = "off"                   # off, compact, true
-# display_width = 44
 # messages_in_log = false                 # log user message content (privacy)
-# startup_notification = true             # send Telegram notification on startup
-# telegram_bot = "myagent"               # bot name; token via "telegram.<bot>" secret
-# bot_secret = "custom.key"              # override secret key (default: "telegram.<telegram_bot>")
-# multiball_bots = ["bot2", "bot3"]       # additional bots for multiball
 # branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
 # branch_orientation_multiball_prompt = "prompts/orient-multiball.md"  # prompt for user-attached multiball branches
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"   # prompt for headless branches (cron, spawn, keepalive)
-# received_files_dir = "received"         # save received Telegram files here
-# allowed_users = ["12345"]               # per-agent Telegram user filter
 # skills_dirs = ["skills"]                # per-agent skill directories
 # compaction_effort = "high"              # effort for compaction API calls
 # exec_auto_background = 10              # seconds before auto-backgrounding exec
@@ -94,6 +107,41 @@ system_files = [
   "character/SOUL.md",
   "character/CRAFT.md",
 ]
+
+# ─── Agent: Telegram Platform (NEW - preferred) ─────────────────────────
+# Configure Telegram platform for this agent. All display/visibility settings
+# can be set here, or fall back to [defaults] / [telegram] global sections.
+#
+# [agents.platforms.telegram]
+# bot = "myagent"                         # bot name (token from "telegram.myagent" secret)
+# bot_secret = ""                         # override secret key
+# multiball_bots = []                     # additional bot names for multiball
+# allowed_users = []                      # per-agent allowed users (empty = use global)
+# show_tool_calls = "preview"             # off, preview, full
+# show_thinking = "off"                   # off, compact, true
+# display_width = 44
+# table_wrap_lines = 5
+# table_style = "pretty"
+# stream_output = false
+# stream_interval = "250ms"
+# received_files_dir = ""
+# startup_notify = true
+
+# ─── Agent: Legacy Telegram fields (DEPRECATED) ─────────────────────────
+# These fields are migrated to [agents.platforms.telegram] at load time.
+# Use the platform config above for new configurations.
+#
+# telegram_bot = "myagent"               # DEPRECATED: use platforms.telegram.bot
+# bot_secret = "custom.key"              # DEPRECATED: use platforms.telegram.bot_secret
+# multiball_bots = ["bot2", "bot3"]      # DEPRECATED: use platforms.telegram.multiball_bots
+# allowed_users = ["12345"]              # DEPRECATED: use platforms.telegram.allowed_users
+# show_tool_calls = "preview"            # DEPRECATED: use platforms.telegram.show_tool_calls
+# show_thinking = "off"                  # DEPRECATED: use platforms.telegram.show_thinking
+# display_width = 44                     # DEPRECATED: use platforms.telegram.display_width
+# stream_output = false                  # DEPRECATED: use platforms.telegram.stream_output
+# stream_update_interval = "250ms"       # DEPRECATED: use platforms.telegram.stream_interval
+# received_files_dir = "received"        # DEPRECATED: use platforms.telegram.received_files_dir
+# startup_notification = true            # DEPRECATED: use platforms.telegram.startup_notify
 
 # Per-agent compaction overrides:
 # compaction_threshold = 0.8

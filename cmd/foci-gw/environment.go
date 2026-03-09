@@ -312,7 +312,9 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	if cfg.Environment.DocsPath != "" {
 		fmt.Fprintf(&b, "- Platform docs: %s\n", cfg.Environment.DocsPath)
 	}
-	if acfg.TelegramBot != "" {
+	// Prefer new platform config, fall back to deprecated field
+	tg := acfg.GetTelegramPlatform()
+	if tg != nil && tg.Bot != "" || acfg.TelegramBot != "" {
 		b.WriteString("- Messaging: Telegram\n")
 	}
 	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
@@ -346,16 +348,23 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
 	// Visibility: resolve effective show_tool_calls and show_thinking
+	// Prefer new platform config, fall back to deprecated fields, then defaults
 	toolCalls := config.ToolCallOff
-	if acfg.ShowToolCalls != nil {
+	switch {
+	case tg != nil && tg.ShowToolCalls != nil:
+		toolCalls = *tg.ShowToolCalls
+	case acfg.ShowToolCalls != nil:
 		toolCalls = *acfg.ShowToolCalls
-	} else if cfg.Defaults.ShowToolCalls != nil {
+	case cfg.Defaults.ShowToolCalls != nil:
 		toolCalls = *cfg.Defaults.ShowToolCalls
 	}
 	thinking := config.ShowThinkingOff
-	if acfg.ShowThinking != nil {
+	switch {
+	case tg != nil && tg.ShowThinking != nil:
+		thinking = *tg.ShowThinking
+	case acfg.ShowThinking != nil:
 		thinking = *acfg.ShowThinking
-	} else if cfg.Defaults.ShowThinking != nil {
+	case cfg.Defaults.ShowThinking != nil:
 		thinking = *cfg.Defaults.ShowThinking
 	}
 	var toolDesc, thinkDesc string

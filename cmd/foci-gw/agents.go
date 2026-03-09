@@ -53,31 +53,44 @@ type agentInstance struct {
 // Used for primary bots, per-agent multiball bots, and shared pool bots
 // acquired or restored for a specific agent.
 func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *config.Config) {
+	// Prefer new platform config, fall back to deprecated fields
+	tg := acfg.GetTelegramPlatform()
+
 	switch {
+	case tg != nil && tg.ShowToolCalls != nil:
+		bot.SetShowToolCalls(string(*tg.ShowToolCalls))
 	case acfg.ShowToolCalls != nil:
 		bot.SetShowToolCalls(string(*acfg.ShowToolCalls))
 	case cfg.Defaults.ShowToolCalls != nil:
 		bot.SetShowToolCalls(string(*cfg.Defaults.ShowToolCalls))
 	}
 	switch {
+	case tg != nil && tg.ShowThinking != nil:
+		bot.SetShowThinking(string(*tg.ShowThinking))
 	case acfg.ShowThinking != nil:
 		bot.SetShowThinking(string(*acfg.ShowThinking))
 	case cfg.Defaults.ShowThinking != nil:
 		bot.SetShowThinking(string(*cfg.Defaults.ShowThinking))
 	}
 	switch {
+	case tg != nil && tg.DisplayWidth != nil:
+		bot.SetDisplayWidth(*tg.DisplayWidth)
 	case acfg.DisplayWidth != nil:
 		bot.SetDisplayWidth(*acfg.DisplayWidth)
 	case cfg.Telegram.DisplayWidth != nil:
 		bot.SetDisplayWidth(*cfg.Telegram.DisplayWidth)
 	}
 	switch {
+	case tg != nil && tg.TableWrapLines != nil:
+		bot.SetTableWrapLines(*tg.TableWrapLines)
 	case acfg.TableWrapLines != nil:
 		bot.SetTableWrapLines(*acfg.TableWrapLines)
 	case cfg.Telegram.TableWrapLines != nil:
 		bot.SetTableWrapLines(*cfg.Telegram.TableWrapLines)
 	}
 	switch {
+	case tg != nil && tg.TableStyle != nil:
+		bot.SetTableStyle(*tg.TableStyle)
 	case acfg.TableStyle != nil:
 		bot.SetTableStyle(*acfg.TableStyle)
 	case cfg.Telegram.TableStyle != nil:
@@ -88,9 +101,12 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 	} else {
 		bot.SetMessagesInLog(cfg.Logging.MessagesInLog)
 	}
-	if acfg.ReceivedFilesDir != "" {
+	switch {
+	case tg != nil && tg.ReceivedFilesDir != "":
+		bot.SetReceivedFilesDir(tg.ReceivedFilesDir)
+	case acfg.ReceivedFilesDir != "":
 		bot.SetReceivedFilesDir(acfg.ReceivedFilesDir)
-	} else if cfg.Telegram.ReceivedFilesDir != "" {
+	case cfg.Telegram.ReceivedFilesDir != "":
 		bot.SetReceivedFilesDir(cfg.Telegram.ReceivedFilesDir)
 	}
 	if acfg.InjectedMessageHeader != "" {
@@ -99,8 +115,19 @@ func applyAgentDisplaySettings(bot *telegram.Bot, acfg config.AgentConfig, cfg *
 		bot.SetInjectedMessageHeader(cfg.Defaults.InjectedMessageHeader)
 	}
 	bot.SetSteerMode(acfg.SteerMode)
-	bot.SetStreamOutput(acfg.StreamOutput)
-	if d, err := time.ParseDuration(acfg.StreamUpdateInterval); err == nil && d > 0 {
+	switch {
+	case tg != nil && tg.StreamOutput != nil:
+		bot.SetStreamOutput(*tg.StreamOutput)
+	default:
+		bot.SetStreamOutput(acfg.StreamOutput)
+	}
+	streamInterval := ""
+	if tg != nil && tg.StreamInterval != "" {
+		streamInterval = tg.StreamInterval
+	} else {
+		streamInterval = acfg.StreamUpdateInterval
+	}
+	if d, err := time.ParseDuration(streamInterval); err == nil && d > 0 {
 		bot.SetStreamUpdateInterval(d)
 	}
 }
@@ -537,8 +564,15 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Resolve per-agent allowed users (falls back to global)
-	allowedUsers := acfg.AllowedUsers
-	if len(allowedUsers) == 0 {
+	// Prefer new platform config, fall back to deprecated fields
+	tg := acfg.GetTelegramPlatform()
+	var allowedUsers []string
+	switch {
+	case tg != nil && len(tg.AllowedUsers) > 0:
+		allowedUsers = tg.AllowedUsers
+	case len(acfg.AllowedUsers) > 0:
+		allowedUsers = acfg.AllowedUsers
+	default:
 		allowedUsers = p.cfg.Telegram.AllowedUsers
 	}
 
@@ -572,7 +606,19 @@ func setupAgent(p setupParams) *agentInstance {
 // setupTelegram creates and registers Telegram bots for an agent.
 // If the primary bot fails to initialize, the agent continues without Telegram.
 func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds *command.Registry, allowedUsers []string, lastMsgStore *command.LastMessageStore) {
-	telegramToken := config.ResolveBotToken(acfg.TelegramBot, acfg.BotSecret, p.store)
+	// Prefer new platform config, fall back to deprecated fields
+	tg := acfg.GetTelegramPlatform()
+	var botName, botSecret string
+	switch {
+	case tg != nil && tg.Bot != "":
+		botName = tg.Bot
+		botSecret = tg.BotSecret
+	default:
+		botName = acfg.TelegramBot
+		botSecret = acfg.BotSecret
+	}
+
+	telegramToken := config.ResolveBotToken(botName, botSecret, p.store)
 	if telegramToken == "" {
 		return
 	}
@@ -584,7 +630,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 	}
 
 	if p.stateStore != nil {
-		botKey := "bot:" + acfg.TelegramBot
+		botKey := "bot:" + botName
 		if botKey == "bot:" {
 			botKey = "bot:" + acfg.ID
 		}
@@ -695,7 +741,14 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 	p.botMgr.AddPrimary(acfg.ID, primaryBot)
 
 	// Per-agent multiball bots (if configured)
-	for _, botName := range acfg.MultiballBots {
+	// Prefer new platform config, fall back to deprecated field
+	var multiballBots []string
+	if tg != nil && len(tg.MultiballBots) > 0 {
+		multiballBots = tg.MultiballBots
+	} else {
+		multiballBots = acfg.MultiballBots
+	}
+	for _, botName := range multiballBots {
 		mbToken := config.ResolveBotToken(botName, "", p.store)
 		if mbToken == "" {
 			log.Errorf("main", "agent %q: multiball bot %q: token not found", acfg.ID, botName)

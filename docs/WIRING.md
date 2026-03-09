@@ -649,31 +649,45 @@ Single `foci.toml` parsed with BurntSushi/toml. Defaults applied for missing fie
 **Multi-agent config:** Two formats supported:
 
 1. **Legacy (single agent):** `[agent]` table — backward compatible, auto-promoted to single-element `Agents` slice.
-2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `model`, `workspace`, `telegram_bot`, `multiball_bots`.
+2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `model`, `workspace`, and platform config.
 
 When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
 
 `cfg.Agent` always mirrors `cfg.Agents[0]` so legacy code paths work unchanged.
 
-**Telegram bot token resolution:** Bot tokens are resolved by convention: `config.ResolveBotToken(botName, botSecret, secrets)` looks up `"telegram.<botName>"` in the secrets store (or uses `botSecret` as the key if non-empty). No explicit `[telegram.bots]` map is needed. Agents set `telegram_bot` (defaults to agent ID) and optionally `bot_secret` for override.
+**Platform configuration (NEW):** Per-agent platform settings are now in `[agents.platforms.telegram]`. The old top-level fields (`telegram_bot`, `allowed_users`, etc.) are deprecated but still work — they're migrated to the new structure at load time by `migrateAgentTelegramFields()`.
 
-**Example multi-agent config:**
+**Telegram bot token resolution:** Bot tokens are resolved by convention: `config.ResolveBotToken(botName, botSecret, secrets)` looks up `"telegram.<botName>"` in the secrets store (or uses `botSecret` as the key if non-empty). No explicit `[telegram.bots]` map is needed.
+
+**Example multi-agent config (new format):**
 ```toml
 [[agents]]
 id = "clutch"
-model = "claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
-telegram_bot = "primary"
+
+[agents.platforms.telegram]
+bot = "primary"
 multiball_bots = ["clutchling"]       # per-agent pool
 
 [[agents]]
 id = "scout"
 workspace = "/home/rich/workspace2"
-telegram_bot = "scout"
+
+[agents.platforms.telegram]
+bot = "scout"
 
 [telegram]
 allowed_users = ["5970082313"]
 multiball_bots = ["spare1"]           # shared pool (any agent)
+```
+
+**Legacy format (still works):**
+```toml
+[[agents]]
+id = "clutch"
+telegram_bot = "primary"
+multiball_bots = ["clutchling"]
 ```
 
 With `secrets.toml`:
