@@ -562,6 +562,19 @@ func (b *Bot) RegisterCommands() {
 	b.logger().Infof("registered %d commands with BotFather", len(cmds))
 }
 
+// Start spawns the bot's Run loop as a goroutine. Implements platform.Platform.
+// Non-blocking; use Stop() to wait for shutdown.
+func (b *Bot) Start(ctx context.Context) error {
+	go b.Run(ctx)
+	return nil
+}
+
+// Stop is a no-op for telegram.Bot (shutdown is ctx-cancellation based).
+// Implements platform.Platform.
+func (b *Bot) Stop() error {
+	return nil
+}
+
 // Run starts the receiver and agent worker goroutines. Blocks until ctx is cancelled.
 // If polling fails, it recovers and retries with backoff.
 func (b *Bot) Run(ctx context.Context) {

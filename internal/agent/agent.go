@@ -132,6 +132,9 @@ type Agent struct {
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey             func() string                // returns the main/default session key; reminders only inject into this session
 
+	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
+	platformMu sync.RWMutex               // protects platforms map access
+
 	rateLimitGates   map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu sync.RWMutex              // protects rateLimitGates map access
 	processing       int32                     // atomic: number of in-flight HandleMessage calls

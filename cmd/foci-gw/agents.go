@@ -739,6 +739,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 	}
 
 	p.botMgr.AddPrimary(acfg.ID, primaryBot)
+	ag.AddPlatform("telegram", primaryBot)
 
 	// Per-agent multiball bots (if configured)
 	// Prefer new platform config, fall back to deprecated field
