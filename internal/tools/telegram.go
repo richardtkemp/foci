@@ -6,43 +6,13 @@ import (
 	"fmt"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/voice"
 )
 
-// TelegramSender abstracts the telegram bot methods needed by the send_telegram tool.
-type TelegramSender interface {
-	// SessionKey returns the session key the bot is currently attached to.
-	SessionKey() string
+type TelegramSender = platform.Sender
 
-	// Default-chat methods (send to bot's last known chat).
-	SendText(text string) error
-	SendDocument(filePath string) error
-	SendVoice(filePath string) error
-	SendVideo(filePath string) error
-	SendPhoto(filePath string) error
-	SendAudio(filePath string) error
-	SendAnimation(filePath string) error
-	SendVoiceData(audioData []byte) error
-
-	// Chat-targeted methods (send to a specific chat ID).
-	SendTextToChat(chatID int64, text string) error
-	SendDocumentToChat(chatID int64, filePath string) error
-	SendVoiceToChat(chatID int64, filePath string) error
-	SendVideoToChat(chatID int64, filePath string) error
-	SendPhotoToChat(chatID int64, filePath string) error
-	SendAudioToChat(chatID int64, filePath string) error
-	SendAnimationToChat(chatID int64, filePath string) error
-	SendVoiceDataToChat(chatID int64, audioData []byte) error
-}
-
-// NewSendTelegramTool creates a tool that sends proactive messages, documents,
-// or voice notes via Telegram. The getSender callback returns the current bot
-// (nil if telegram is not configured).
-//
-// The tool extracts the chat ID from the session key (format agent:X:chat:CHATID)
-// and sends to that specific chat. Falls back to the bot's default chat when the
-// session key doesn't contain a chat ID (e.g. spawn branches, cron sessions).
 func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts voice.TTS) *Tool {
 	return &Tool{
 		Name:        "send_telegram",
