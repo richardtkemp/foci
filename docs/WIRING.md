@@ -129,6 +129,7 @@ main
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
+ ├── platform      (no deps — platform-agnostic messaging types and interfaces)
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
@@ -138,7 +139,7 @@ main
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
  ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → provider, log, memory, secrets, voice
+ ├── tools         → provider, platform, log, memory, secrets, voice
  ├── workspace     → provider
  ├── prompts       (no deps — embedded .md files)
  ├── compaction    → provider, prompts, session, log
@@ -148,12 +149,53 @@ main
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
  ├── periodic     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
- └── telegram      → agent, command, log, sqlite, table, voice
+ └── telegram      → agent, command, platform, log, sqlite, table, voice
 ```
 
-No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `provider` defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic` and `gemini` both implement `provider.Client`, translating between neutral types and their wire formats. Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
+No circular dependencies. `provider`, `platform`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. 
+
+**`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
+
+**`platform` package:** Defines platform-agnostic messaging types (`Message`, `Attachment`, `Request`, `Response`) and the `Sender` interface for outbound messaging. Enables multi-platform support by abstracting messaging operations. `telegram.Bot` implements `platform.Sender`.
+
+Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`, `IsValidBotToken`, `IsValidUserID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`).
+
+**`platform` package:** Platform-agnostic messaging types and interfaces for multi-platform support. Defines `Sender` interface (outbound messaging methods), `Platform` interface (full platform implementation), `Request` and `Response` types for command dispatch, and `Message/Attachment` types. This abstraction enables Foci to support multiple messaging platforms (Telegram, Discord, Matrix, etc.) by having each platform implement these interfaces.
+
+## Command Dispatch Architecture
+
+Slash commands (`/ping`, `/model`, etc.) are dispatched through a two-layer architecture:
+
+1. **Platform layer** (`telegram/dispatch.go`): Parses platform-specific command syntax (e.g., `/cmd args` for Telegram, `!cmd args` for Discord) and builds a platform-agnostic `Request` struct with `Name`, `Args`, `SessionID`, and `UserID`.
+
+2. **Command layer** (`command/registry.go`): Receives `Request` and `Deps` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
+
+**Dispatch flow:**
+```
+Telegram message "/model haiku"
+    ↓
+telegram.Dispatcher.Dispatch()
+    ↓ parses "/model" + "haiku"
+command.Request{Name: "model", Args: "haiku", SessionID: "...", UserID: "..."}
+    ↓
+command.Registry.DispatchV2()
+    ↓ executes with command.Deps
+command.Response{Text: "Model set to haiku"}
+    ↓
+Telegram renders response (markdown, keyboards, etc.)
+```
+
+**Backward compatibility:** Commands can use either `Execute(ctx, args) (string, error)` (legacy) or `ExecuteV2(ctx, Request, Deps) (Response, error)` (new). The registry supports both patterns, falling back from ExecuteV2 to Execute when needed.
+
+**Key types:**
+- `command.Request`: Platform-agnostic command invocation (`Name`, `Args`, `SessionID`, `UserID`)
+- `command.Response`: Platform-agnostic result (`Text`, `DocPath`)
+- `command.Deps`: Platform-agnostic dependencies (Agent, Sessions, Config, callbacks)
+- `command.Registry.DispatchV2()`: Executes commands using the new pattern
+
+**Why this split:** Telegram owns the parsing of `/cmd args` format. The command layer owns what commands do. This enables other platforms (Discord, Matrix) to use the same command logic with different syntax.
 
 ## The Agent Loop (`agent/agent.go`)
 
