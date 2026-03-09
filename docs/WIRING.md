@@ -54,9 +54,10 @@ config.Load(path)                                        ← validates values; l
      → compaction.NewCompactor(sessions, model, threshold)
      → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
      → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
-     → telegram.NewBot(agentID, agent, ...) → botMgr.AddPrimary(agentID, bot)
-       Bot holds platform.MessageHandler interface (not concrete *agent.Agent)
- enabling future multi-platform support
+      → telegram.NewBot(agentID, agent, ...) → botMgr.AddPrimary(agentID, bot)
+        Bot holds platform.MessageHandler interface (not concrete *agent.Agent)
+        Agent registers platform via ag.AddPlatform("telegram", bot)
+        Bot implements platform.Platform (Start/Stop for lifecycle, Sender for messaging)
      → bot.SetHandlerAndCommands(agent, cmdRegistry)  ← injects agent via MessageHandler interface
      → bot.SetSessionIndex(sessionIndex)                   ← persists chat→session key mapping for continuity across restarts
     → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
