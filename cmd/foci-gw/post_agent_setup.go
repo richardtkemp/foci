@@ -103,8 +103,8 @@ func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 	}
 	log.SetWarnHook(func(level log.Level, component string, msg string) {
 		for _, inst := range agents {
-			if inst.ag.Warnings != nil {
-				inst.ag.Warnings.Push(level.String(), component, msg)
+			if w := inst.ag.Warnings(); w != nil {
+				w.Push(level.String(), component, msg)
 			}
 		}
 	})
@@ -178,8 +178,8 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 		},
 		func(msg string) {
 			for _, inst := range agents {
-				if inst.ag.Warnings != nil {
-					inst.ag.Warnings.Push("WARN", "memory_guard", msg)
+				if w := inst.ag.Warnings(); w != nil {
+					w.Push("WARN", "memory_guard", msg)
 				}
 			}
 		},

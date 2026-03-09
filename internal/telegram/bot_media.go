@@ -14,6 +14,7 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
+
 func (b *Bot) SendDocument(filePath string) error {
 	chatID, err := b.lastChatID()
 	if err != nil {
@@ -369,7 +370,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachm
 	data, err := b.downloadFile(fileID)
 	if err != nil {
 		b.logger().Errorf("download image: %s", b.sanitizeError(err))
-		if b.agent == nil || b.agent.Warnings == nil {
+		if b.agent == nil || b.agent.Warnings() == nil {
 			b.sendHTMLChunks(chatID, "Could not download image — please try again.", "", "")
 		}
 		return attachment{}, false
@@ -396,7 +397,7 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 			return fmt.Sprintf("[%s too large to download (%d MB)]\n\n%s", label, fileSize/(1024*1024), text)
 		}
 		b.logger().Errorf("download %s: %s", mediaType, b.sanitizeError(err))
-		if b.agent == nil || b.agent.Warnings == nil {
+		if b.agent == nil || b.agent.Warnings() == nil {
 			b.sendHTMLChunks(chatID, fmt.Sprintf("Could not download %s — please try again.", label), "", "")
 		}
 		return text
@@ -404,4 +405,3 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 	b.logger().Infof("saved %s to %s", mediaType, path)
 	return fmt.Sprintf("[%s saved to: %s]\n\n%s", label, path, text)
 }
-

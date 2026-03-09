@@ -775,7 +775,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if msg.Voice != nil && b.transcriber != nil {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
-			if b.agent == nil || b.agent.Warnings == nil {
+			if b.agent == nil || b.agent.Warnings() == nil {
 				b.sendReply(msg, userID, "Could not download voice note — please try again.")
 			}
 		} else {

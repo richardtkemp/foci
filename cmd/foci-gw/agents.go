@@ -14,11 +14,10 @@ import (
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
-	"foci/internal/periodic"
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
-	"foci/prompts"
+	"foci/internal/periodic"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
@@ -30,6 +29,7 @@ import (
 	"foci/internal/voice"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
+	"foci/prompts"
 )
 
 // agentInstance holds all per-agent state.
@@ -41,11 +41,11 @@ type agentInstance struct {
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
-	promptSearchDirs  []string           // directories to search for prompt files
-	tmuxClearAll      func()             // clears tmux tool state (watches, owned sessions)
-	tmuxWatchCount    func() int         // returns number of active tmux watches
-	kaRunner          *periodic.Runner  // keepalive & background work timer (nil if disabled)
-	mcpManager        *mcpkg.Manager     // nil if no MCP servers configured
+	promptSearchDirs  []string         // directories to search for prompt files
+	tmuxClearAll      func()           // clears tmux tool state (watches, owned sessions)
+	tmuxWatchCount    func() int       // returns number of active tmux watches
+	kaRunner          *periodic.Runner // keepalive & background work timer (nil if disabled)
+	mcpManager        *mcpkg.Manager   // nil if no MCP servers configured
 }
 
 // applyAgentDisplaySettings sets per-agent display settings on a bot,
@@ -377,54 +377,54 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
-		Log:            log.NewComponentLogger("agent:" + acfg.ID),
-		Client:         p.client,
-		ClientProvider: p.clientProvider,
-		Sessions:       p.sessions,
-		Tools:                       registry,
-		ServerTools:                 serverTools,
-		EnvironmentBlock:            envBlock,
-		Bootstrap:                   bootstrap,
-		Compactor:                   compactor,
-		AsyncNotifier:               notifier,
-		Reminders:                   p.reminderStore,
-		DefaultSessionKey:           defaultSessionKey,
-		AgentID:                     acfg.ID,
-		Model:                       acfg.Model,
-		Format:                      defaultFormat,
-		Endpoint:                    defaultEndpoint,
-		ExtraSystemBlocks:           extraSystemBlocks,
-		CacheStrategy:               p.cfg.Cache.Strategy,
-		CacheBustDetect:             p.cfg.Logging.CacheBustDetect,
-		CacheBustIdleThreshold:      time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
-		DuplicateMessages:              acfg.DuplicateMessages,
-		BatchPartialAssistantMessages:  acfg.BatchPartialAssistantMessages,
-		BatchPartialJoiner:             acfg.BatchPartialJoiner,
-		MaxResultChars:              resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
-		ToolResultTempDir:           p.cfg.Tools.TempDir,
-		ModelAliases:                p.cfg.Models.Aliases,
-		SummaryContextTurns:         resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
-		SummaryContextChars:         resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
-		MaxSummaryChars:             resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
-		MaxSummaryInputChars:        resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
-		MaxImagePixels:              resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
-		AutoSummarise:       resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
-		StateStore:          p.stateStore,
-		UsageClient:         p.usageClientProvider.GetUsageClient(defaultEndpoint),
-		UsageClientProvider: p.usageClientProvider,
-		MessageTransforms:   agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
-		CompactionSummaryPromptPath: resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
-		CompactionHandoffMsg:        resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
-		PromptSearchDirs:            promptSearchDirs,
-		MaxToolLoops:                acfg.MaxToolLoops,
-		MaxOutputTokens:             acfg.MaxOutputTokens,
-		BraindeadWarningThreshold:   acfg.BraindeadThreshold,
-		BraindeadWarningPrompt:      acfg.BraindeadPrompt,
-		TurnLockWarnThreshold:       parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
-		Effort:                      acfg.Effort,
-		Thinking:                    acfg.Thinking,
-		Streaming:                   resolveStreamingConfig(acfg, p.cfg),
-		ManaInvestInterval: parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
+		Log:                           log.NewComponentLogger("agent:" + acfg.ID),
+		Client:                        p.client,
+		ClientProvider:                p.clientProvider,
+		Sessions:                      p.sessions,
+		Tools:                         registry,
+		ServerTools:                   serverTools,
+		EnvironmentBlock:              envBlock,
+		Bootstrap:                     bootstrap,
+		Compactor:                     compactor,
+		AsyncNotifier:                 notifier,
+		Reminders:                     p.reminderStore,
+		DefaultSessionKey:             defaultSessionKey,
+		AgentID:                       acfg.ID,
+		Model:                         acfg.Model,
+		Format:                        defaultFormat,
+		Endpoint:                      defaultEndpoint,
+		ExtraSystemBlocks:             extraSystemBlocks,
+		CacheStrategy:                 p.cfg.Cache.Strategy,
+		CacheBustDetect:               p.cfg.Logging.CacheBustDetect,
+		CacheBustIdleThreshold:        time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
+		DuplicateMessages:             acfg.DuplicateMessages,
+		BatchPartialAssistantMessages: acfg.BatchPartialAssistantMessages,
+		BatchPartialJoiner:            acfg.BatchPartialJoiner,
+		MaxResultChars:                resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
+		ToolResultTempDir:             p.cfg.Tools.TempDir,
+		ModelAliases:                  p.cfg.Models.Aliases,
+		SummaryContextTurns:           resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
+		SummaryContextChars:           resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
+		MaxSummaryChars:               resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
+		MaxSummaryInputChars:          resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
+		MaxImagePixels:                resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
+		AutoSummarise:                 resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
+		StateStore:                    p.stateStore,
+		UsageClient:                   p.usageClientProvider.GetUsageClient(defaultEndpoint),
+		UsageClientProvider:           p.usageClientProvider,
+		MessageTransforms:             agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
+		CompactionSummaryPromptPath:   resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
+		CompactionHandoffMsg:          resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
+		PromptSearchDirs:              promptSearchDirs,
+		MaxToolLoops:                  acfg.MaxToolLoops,
+		MaxOutputTokens:               acfg.MaxOutputTokens,
+		BraindeadWarningThreshold:     acfg.BraindeadThreshold,
+		BraindeadWarningPrompt:        acfg.BraindeadPrompt,
+		TurnLockWarnThreshold:         parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
+		Effort:                        acfg.Effort,
+		Thinking:                      acfg.Thinking,
+		Streaming:                     resolveStreamingConfig(acfg, p.cfg),
+		ManaInvestInterval:            parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
@@ -443,7 +443,7 @@ func setupAgent(p setupParams) *agentInstance {
 		if err != nil {
 			warningWindow = 5 * time.Minute
 		}
-		ag.Warnings = warnings.NewQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
+		ag.WarningQueue = warnings.NewQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
 	}
 
 	// Mana threshold warnings (per-agent thresholds override global)
@@ -467,10 +467,10 @@ func setupAgent(p setupParams) *agentInstance {
 	// Uses lazy getter for agent since ag is assigned later in this function.
 	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
-		Client:         p.client,
-		ClientProvider: p.clientProvider,
-		Bootstrap:      bootstrap,
-		Registry:       registry,
+		Client:          p.client,
+		ClientProvider:  p.clientProvider,
+		Bootstrap:       bootstrap,
+		Registry:        registry,
 		Sessions:        &sessionBranchAdapter{store: p.sessions},
 		AgentID:         acfg.ID,
 		Model:           acfg.Model,
@@ -792,12 +792,6 @@ func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder
 	return content
 }
 
-
-
-
-
-
-
 // buildServerTool constructs an anthropic server tool config map with optional
 // max_uses, allowed_domains, and blocked_domains fields.
 func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []string) provider.ToolDef {
@@ -816,11 +810,6 @@ func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []
 	}
 	return provider.NewServerTool(cfg)
 }
-
-
-
-
-
 
 // resolveMessageTransforms returns per-agent message transforms if set, otherwise global.
 func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []config.MessageTransform {
