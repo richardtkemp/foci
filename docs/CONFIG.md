@@ -773,9 +773,48 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
-| `telegram_bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"telegram.<bot>"`. Defaults to agent ID. |
-| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"telegram.<telegram_bot>"`. |
-| `multiball_bots` | string[] | `[]` | Per-agent multiball bot pool. Tokens resolved via `"telegram.<name>"` secret convention. Tried before the shared `[telegram] multiball_bots` pool. |
+
+### Platform Configuration (`[agents.platforms.telegram]`) — NEW
+
+Per-agent platform settings are now configured in the `[agents.platforms.telegram]` section. This is the preferred way to configure Telegram-specific settings; the old top-level `telegram_bot`, `allowed_users`, etc. fields are deprecated and will be migrated at load time.
+
+```toml
+[[agents]]
+id = "myagent"
+
+[agents.platforms.telegram]
+bot = "myagent"                 # bot name; token via "telegram.<bot>" secret
+bot_secret = ""                 # override secret key (default: "telegram.<bot>")
+multiball_bots = []             # additional bot names for multiball
+allowed_users = []              # per-agent allowed users (empty = use global)
+show_tool_calls = "preview"     # off, preview, full
+show_thinking = "off"           # off, compact, true
+display_width = 44
+table_wrap_lines = 5
+table_style = "pretty"
+stream_output = false
+stream_interval = "250ms"
+received_files_dir = ""
+startup_notify = true
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"telegram.<bot>"`. |
+| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"telegram.<bot>"`. |
+| `multiball_bots` | string[] | `[]` | Per-agent multiball bot pool. Tokens resolved via `"telegram.<name>"` secret. |
+| `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. Empty uses global `[telegram] allowed_users`. |
+| `show_tool_calls` | string | `[defaults]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
+| `show_thinking` | string | `[defaults]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
+| `display_width` | int | `[telegram]` | Display width for dividers in Telegram messages. |
+| `table_wrap_lines` | int | `[telegram]` | Max wrapped lines per table cell. |
+| `table_style` | string | `[telegram]` | Table style: `pretty` or `markdown`. |
+| `stream_output` | bool | `[defaults]` | Stream model output to Telegram in real-time. |
+| `stream_interval` | duration | `[defaults]` | Duration between message edits during streaming. |
+| `received_files_dir` | string | `[telegram]` | Save received files to this directory. |
+| `startup_notify` | bool | `[telegram]` | Send startup notification to default chat. |
+
+**Backward compatibility:** The old top-level fields (`telegram_bot`, `bot_secret`, `multiball_bots`, `allowed_users`, `show_tool_calls`, `show_thinking`, `display_width`, `stream_output`, `stream_update_interval`, `received_files_dir`, `startup_notification`) are deprecated but still work. At config load time, they are migrated to the new platform config structure.
 
 ### Memory (`[[agents.memory.sources]]`)
 
@@ -812,9 +851,11 @@ multiball_bots = ["spare1"]
 
 [[agents]]
 id = "main"
-model = "anthropic:claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/foci/character"
-telegram_bot = "primary"
+
+[agents.platforms.telegram]
+bot = "primary"
 multiball_bots = ["mainling"]  # per-agent multiball pool
 
 [[agents.memory.sources]]
@@ -824,9 +865,11 @@ weight = 1.0    # effective weight: 2.0 (1.0 + 1.0 boost)
 
 [[agents]]
 id = "research"
-model = "gemini:gemini-2.5-flash"
+model = "google/gemini-2.5-flash"
 workspace = "/home/foci/character"
-telegram_bot = "secondary"
+
+[agents.platforms.telegram]
+bot = "secondary"
 # no multiball_bots — uses shared pool only
 
 [[agents.memory.sources]]

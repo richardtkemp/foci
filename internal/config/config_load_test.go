@@ -432,3 +432,126 @@ func TestLoadInvalidTOML(t *testing.T) {
 		t.Fatal("expected error for invalid TOML")
 	}
 }
+
+// TestLoadPlatformConfigMigration verifies that old telegram_* fields are
+// migrated to the new [agents.platforms.telegram] structure at load time.
+func TestLoadPlatformConfigMigration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+
+	// Old-style config with telegram fields at agent level
+	toml := `
+[[agents]]
+id = "testbot"
+telegram_bot = "my_bot"
+bot_secret = "custom.secret"
+multiball_bots = ["extra1", "extra2"]
+allowed_users = ["123", "456"]
+show_tool_calls = "preview"
+stream_output = true
+stream_update_interval = "500ms"
+
+[telegram]
+allowed_users = ["789"]
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(cfg.Agents))
+	}
+
+	agent := cfg.Agents[0]
+
+	// Old fields should still be accessible (backward compat)
+	if agent.TelegramBot != "my_bot" {
+		t.Errorf("TelegramBot = %q, want %q", agent.TelegramBot, "my_bot")
+	}
+
+	// New Platforms structure should be populated via migration
+	if agent.Platforms == nil {
+		t.Fatal("Platforms is nil after migration")
+	}
+	if agent.Platforms.Telegram == nil {
+		t.Fatal("Platforms.Telegram is nil after migration")
+	}
+
+	tg := agent.Platforms.Telegram
+	if tg.Bot != "my_bot" {
+		t.Errorf("Platforms.Telegram.Bot = %q, want %q", tg.Bot, "my_bot")
+	}
+	if tg.BotSecret != "custom.secret" {
+		t.Errorf("Platforms.Telegram.BotSecret = %q, want %q", tg.BotSecret, "custom.secret")
+	}
+	if len(tg.MultiballBots) != 2 || tg.MultiballBots[0] != "extra1" {
+		t.Errorf("Platforms.Telegram.MultiballBots = %v, want [extra1 extra2]", tg.MultiballBots)
+	}
+	if len(tg.AllowedUsers) != 2 || tg.AllowedUsers[0] != "123" {
+		t.Errorf("Platforms.Telegram.AllowedUsers = %v, want [123 456]", tg.AllowedUsers)
+	}
+	if tg.ShowToolCalls == nil || *tg.ShowToolCalls != ToolCallPreview {
+		t.Errorf("Platforms.Telegram.ShowToolCalls = %v, want preview", tg.ShowToolCalls)
+	}
+	if tg.StreamOutput == nil || *tg.StreamOutput != true {
+		t.Errorf("Platforms.Telegram.StreamOutput = %v, want true", tg.StreamOutput)
+	}
+	if tg.StreamInterval != "500ms" {
+		t.Errorf("Platforms.Telegram.StreamInterval = %q, want %q", tg.StreamInterval, "500ms")
+	}
+}
+
+// TestLoadPlatformConfigNewStyle verifies that new-style [agents.platforms.telegram]
+// config is loaded correctly without migration.
+func TestLoadPlatformConfigNewStyle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+
+	// New-style config with platforms section
+	toml := `
+[[agents]]
+id = "newbot"
+
+[agents.platforms.telegram]
+bot = "new_bot"
+bot_secret = "new.secret"
+allowed_users = ["999"]
+stream_output = false
+`
+	os.WriteFile(path, []byte(toml), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(cfg.Agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(cfg.Agents))
+	}
+
+	agent := cfg.Agents[0]
+
+	if agent.Platforms == nil {
+		t.Fatal("Platforms is nil")
+	}
+	if agent.Platforms.Telegram == nil {
+		t.Fatal("Platforms.Telegram is nil")
+	}
+
+	tg := agent.Platforms.Telegram
+	if tg.Bot != "new_bot" {
+		t.Errorf("Platforms.Telegram.Bot = %q, want %q", tg.Bot, "new_bot")
+	}
+	if tg.BotSecret != "new.secret" {
+		t.Errorf("Platforms.Telegram.BotSecret = %q, want %q", tg.BotSecret, "new.secret")
+	}
+	if len(tg.AllowedUsers) != 1 || tg.AllowedUsers[0] != "999" {
+		t.Errorf("Platforms.Telegram.AllowedUsers = %v, want [999]", tg.AllowedUsers)
+	}
+	if tg.StreamOutput == nil || *tg.StreamOutput != false {
+		t.Errorf("Platforms.Telegram.StreamOutput = %v, want false", tg.StreamOutput)
+	}
+}
