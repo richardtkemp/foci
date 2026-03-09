@@ -6,18 +6,25 @@ import (
 	"time"
 )
 
+// TestSenderInterface verifies that mockSender implements the Sender interface.
+// This is a compile-time check that catches interface drift.
 func TestSenderInterface(t *testing.T) {
 	var _ Sender = (*mockSender)(nil)
 }
 
+// TestPlatformInterface verifies that mockPlatform implements the Platform interface.
+// This is a compile-time check that catches interface drift.
 func TestPlatformInterface(t *testing.T) {
 	var _ Platform = (*mockPlatform)(nil)
 }
 
+// TestMessageHandlerInterface verifies that mockHandler implements the MessageHandler interface.
+// This is a compile-time check that catches interface drift.
 func TestMessageHandlerInterface(t *testing.T) {
 	var _ MessageHandler = (*mockHandler)(nil)
 }
 
+// TestMessageStruct verifies that Message struct fields are correctly assigned and accessible.
 func TestMessageStruct(t *testing.T) {
 	m := Message{
 		ID:        "msg-123",
