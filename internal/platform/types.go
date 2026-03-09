@@ -28,25 +28,25 @@ type SendOptions struct {
 }
 
 type Sender interface {
-	SendText(chatID, text string) error
-	SendDocument(chatID, path string) error
-	SendVoice(chatID, path string) error
-	SendVideo(chatID, path string) error
-	SendPhoto(chatID, path string) error
-	SendAudio(chatID, path string) error
-	SendAnimation(chatID, path string) error
+	SessionKey() string
+
+	SendText(text string) error
+	SendDocument(filePath string) error
+	SendVoice(filePath string) error
+	SendVideo(filePath string) error
+	SendPhoto(filePath string) error
+	SendAudio(filePath string) error
+	SendAnimation(filePath string) error
 	SendVoiceData(audioData []byte) error
 
 	SendTextToChat(chatID int64, text string) error
-	SendDocumentToChat(chatID int64, path string) error
-	SendVoiceToChat(chatID int64, path string) error
-	SendVideoToChat(chatID int64, path string) error
-	SendPhotoToChat(chatID int64, path string) error
-	SendAudioToChat(chatID int64, path string) error
-	SendAnimationToChat(chatID int64, path string) error
+	SendDocumentToChat(chatID int64, filePath string) error
+	SendVoiceToChat(chatID int64, filePath string) error
+	SendVideoToChat(chatID int64, filePath string) error
+	SendPhotoToChat(chatID int64, filePath string) error
+	SendAudioToChat(chatID int64, filePath string) error
+	SendAnimationToChat(chatID int64, filePath string) error
 	SendVoiceDataToChat(chatID int64, audioData []byte) error
-
-	SessionKey() string
 }
 
 type Platform interface {
