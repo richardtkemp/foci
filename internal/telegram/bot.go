@@ -14,12 +14,15 @@ import (
 	"foci/internal/command"
 	"foci/internal/display"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/state"
 	"foci/internal/voice"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
+
+var _ platform.Sender = (*Bot)(nil)
 
 // botClient abstracts Telegram API methods for testability.
 type botClient interface {
