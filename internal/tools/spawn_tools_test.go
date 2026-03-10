@@ -104,7 +104,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 		"web_fetch", "web_search", "http_request",
 		"memory_search", "scratchpad", "todo",
 		"bitwarden_search", "bitwarden_unlock",
-		"send_telegram", "send_to_session",
+		"send_message_to_user", "send_to_session",
 		"remind", "spawn",
 	}
 	for _, name := range allTools {
@@ -198,7 +198,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	for _, name := range []string{"web_search", "send_telegram", "send_to_session", "shell"} {
+	for _, name := range []string{"web_search", "send_message_to_user", "send_to_session", "shell"} {
 		reg.Register(&Tool{
 			Name:       name,
 			Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
@@ -224,7 +224,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 		toolNames[td.Name()] = true
 	}
 
-	if !toolNames["send_telegram"] {
+	if !toolNames["send_message_to_user"] {
 		t.Error("send_telegram should be included in character mode")
 	}
 	if !toolNames["send_to_session"] {

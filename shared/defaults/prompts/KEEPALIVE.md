@@ -3,7 +3,7 @@
 ## Autonomy Rule
 Do whatever you think is useful or fun. You have judgment. Use it.
 
-**Message your user (via send_telegram) if:**
+**Message your user (via send_message_to_user) if:**
 - Something interesting comes up (cool finding, insight, opportunity)
 - You want to do something that might need approval (external action, system change, etc.)
 - Something broke or needs attention

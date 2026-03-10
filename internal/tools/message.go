@@ -11,13 +11,13 @@ import (
 	"foci/internal/voice"
 )
 
-type TelegramSender = platform.Sender
+type MessageSender = platform.Sender
 
-func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts voice.TTS) *Tool {
+func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, tts voice.TTS) *Tool {
 	return &Tool{
-		Name:        "send_telegram",
+		Name:        "send_message_to_user",
 		ExecExport:  true,
-		Description: "Send a proactive Telegram message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use send_as=\"voice\" with text (no file_path) to synthesize speech and send as a voice note. Use for alerts, sharing files, or sending media.",
+		Description: "Send a proactive message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use send_as=\"voice\" with text (no file_path) to synthesize speech and send as a voice note. Use for alerts, sharing files, or sending media.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -55,7 +55,7 @@ func NewSendTelegramTool(getSender func(sessionKey string) TelegramSender, tts v
 			sessionKey := SessionKeyFromContext(ctx)
 			bot := getSender(sessionKey)
 			if bot == nil {
-				return ToolResult{}, fmt.Errorf("telegram not configured")
+				return ToolResult{}, fmt.Errorf("messaging not configured")
 			}
 
 			// If the message originates from a different session than the bot's

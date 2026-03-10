@@ -381,9 +381,9 @@ func setupAgent(p setupParams) *agentInstance {
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.AgentID = acfg.ID
 
-	// Per-agent send_telegram tool (closure captures this agent's bot)
+	// Per-agent send_message_to_user tool (closure captures this agent's bot)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate)
-	registry.Register(tools.NewSendTelegramTool(func(sessionKey string) tools.TelegramSender {
+	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) tools.MessageSender {
 		bot := telegram.DefaultManager().BotForSessionOrPrimary(sessionKey, acfg.ID)
 		if bot == nil {
 			return nil

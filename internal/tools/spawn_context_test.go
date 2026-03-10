@@ -308,7 +308,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 		"web_fetch", "web_search", "http_request",
 		"memory_search", "scratchpad", "todo",
 		"bitwarden_search", "bitwarden_unlock",
-		"send_telegram", "send_to_session",
+		"send_message_to_user", "send_to_session",
 		"remind", "spawn",
 	}
 	for _, name := range allRegistryTools {
@@ -353,7 +353,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 
 	// Must exclude: dangerous tools
 	excluded := []string{
-		"shell", "write", "edit", "spawn", "send_telegram",
+		"shell", "write", "edit", "spawn", "send_message_to_user",
 		"send_to_session", "scratchpad", "todo", "remind",
 		"http_request", "tmux", "bitwarden_search", "bitwarden_unlock",
 	}
@@ -394,7 +394,7 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 		"write":            true,
 		"edit":             true,
 		"http_request":     true,
-		"send_telegram":    true,
+		"send_message_to_user":    true,
 		"send_to_session":  true,
 		"scratchpad":       true,
 		"todo":             true,
@@ -411,7 +411,7 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 		"web_fetch", "web_search", "http_request",
 		"memory_search", "scratchpad", "todo",
 		"bitwarden_search", "bitwarden_unlock",
-		"send_telegram", "send_to_session",
+		"send_message_to_user", "send_to_session",
 		"remind", "spawn",
 	}
 

@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// TestSendTelegramSendAsVideo verifies that send_as=video routes to SendVideo.
-func TestSendTelegramSendAsVideo(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserSendAsVideo verifies that send_as=video routes to SendVideo.
+func TestSendMessageToUserSendAsVideo(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/clip.mp4",
@@ -33,10 +33,10 @@ func TestSendTelegramSendAsVideo(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSendAsVoice verifies that send_as=voice routes to SendVoice for files.
-func TestSendTelegramSendAsVoice(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserSendAsVoice verifies that send_as=voice routes to SendVoice for files.
+func TestSendMessageToUserSendAsVoice(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
@@ -55,10 +55,10 @@ func TestSendTelegramSendAsVoice(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSendAsDocument verifies that send_as=document routes to SendDocument.
-func TestSendTelegramSendAsDocument(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserSendAsDocument verifies that send_as=document routes to SendDocument.
+func TestSendMessageToUserSendAsDocument(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
@@ -77,11 +77,11 @@ func TestSendTelegramSendAsDocument(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSendAsDefaultIsDocument verifies that files default to document when send_as is omitted.
-func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
+// TestSendMessageToUserSendAsDefaultIsDocument verifies that files default to document when send_as is omitted.
+func TestSendMessageToUserSendAsDefaultIsDocument(t *testing.T) {
 	// No send_as — should default to document
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/file.bin",
@@ -99,10 +99,10 @@ func TestSendTelegramSendAsDefaultIsDocument(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVideoError verifies that send errors for video are propagated.
-func TestSendTelegramVideoError(t *testing.T) {
-	mock := &mockTelegramSender{videoErr: fmt.Errorf("video too large")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserVideoError verifies that send errors for video are propagated.
+func TestSendMessageToUserVideoError(t *testing.T) {
+	mock := &mockMessageSender{videoErr: fmt.Errorf("video too large")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/big.mp4",
@@ -118,10 +118,10 @@ func TestSendTelegramVideoError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVideoChatRouting verifies that videos are routed to chat-targeted method.
-func TestSendTelegramVideoChatRouting(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserVideoChatRouting verifies that videos are routed to chat-targeted method.
+func TestSendMessageToUserVideoChatRouting(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -145,10 +145,10 @@ func TestSendTelegramVideoChatRouting(t *testing.T) {
 	}
 }
 
-// TestSendTelegramTextAndVideo verifies that text and video can be sent together.
-func TestSendTelegramTextAndVideo(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserTextAndVideo verifies that text and video can be sent together.
+func TestSendMessageToUserTextAndVideo(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "check this out",
@@ -171,10 +171,10 @@ func TestSendTelegramTextAndVideo(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSendAsPhoto verifies that send_as=photo routes to SendPhoto.
-func TestSendTelegramSendAsPhoto(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserSendAsPhoto verifies that send_as=photo routes to SendPhoto.
+func TestSendMessageToUserSendAsPhoto(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/image.jpg",
@@ -193,10 +193,10 @@ func TestSendTelegramSendAsPhoto(t *testing.T) {
 	}
 }
 
-// TestSendTelegramPhotoError verifies that send errors for photos are propagated.
-func TestSendTelegramPhotoError(t *testing.T) {
-	mock := &mockTelegramSender{photoErr: fmt.Errorf("image too large")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserPhotoError verifies that send errors for photos are propagated.
+func TestSendMessageToUserPhotoError(t *testing.T) {
+	mock := &mockMessageSender{photoErr: fmt.Errorf("image too large")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/huge.jpg",
@@ -212,10 +212,10 @@ func TestSendTelegramPhotoError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramPhotoChatRouting verifies that photos are routed to chat-targeted method.
-func TestSendTelegramPhotoChatRouting(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserPhotoChatRouting verifies that photos are routed to chat-targeted method.
+func TestSendMessageToUserPhotoChatRouting(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -235,10 +235,10 @@ func TestSendTelegramPhotoChatRouting(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSendAsAudio verifies that send_as=audio routes to SendAudio.
-func TestSendTelegramSendAsAudio(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserSendAsAudio verifies that send_as=audio routes to SendAudio.
+func TestSendMessageToUserSendAsAudio(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/song.mp3",
@@ -257,10 +257,10 @@ func TestSendTelegramSendAsAudio(t *testing.T) {
 	}
 }
 
-// TestSendTelegramAudioError verifies that send errors for audio are propagated.
-func TestSendTelegramAudioError(t *testing.T) {
-	mock := &mockTelegramSender{audioErr: fmt.Errorf("bad format")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserAudioError verifies that send errors for audio are propagated.
+func TestSendMessageToUserAudioError(t *testing.T) {
+	mock := &mockMessageSender{audioErr: fmt.Errorf("bad format")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/bad.mp3",
@@ -276,10 +276,10 @@ func TestSendTelegramAudioError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramAudioChatRouting verifies that audio is routed to chat-targeted method.
-func TestSendTelegramAudioChatRouting(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserAudioChatRouting verifies that audio is routed to chat-targeted method.
+func TestSendMessageToUserAudioChatRouting(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -299,10 +299,10 @@ func TestSendTelegramAudioChatRouting(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSendAsAnimation verifies that send_as=animation routes to SendAnimation.
-func TestSendTelegramSendAsAnimation(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserSendAsAnimation verifies that send_as=animation routes to SendAnimation.
+func TestSendMessageToUserSendAsAnimation(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/funny.gif",
@@ -321,10 +321,10 @@ func TestSendTelegramSendAsAnimation(t *testing.T) {
 	}
 }
 
-// TestSendTelegramAnimationError verifies that send errors for animations are propagated.
-func TestSendTelegramAnimationError(t *testing.T) {
-	mock := &mockTelegramSender{animationErr: fmt.Errorf("gif corrupted")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserAnimationError verifies that send errors for animations are propagated.
+func TestSendMessageToUserAnimationError(t *testing.T) {
+	mock := &mockMessageSender{animationErr: fmt.Errorf("gif corrupted")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/bad.gif",
@@ -340,10 +340,10 @@ func TestSendTelegramAnimationError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramAnimationChatRouting verifies that animations are routed to chat-targeted method.
-func TestSendTelegramAnimationChatRouting(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserAnimationChatRouting verifies that animations are routed to chat-targeted method.
+func TestSendMessageToUserAnimationChatRouting(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{

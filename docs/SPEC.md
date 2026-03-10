@@ -45,7 +45,7 @@ messages: [only messages after branch point]
 API payload assembly: system prompt + parent.messages[:branch_point] + branch.messages
 
 **Branch orientation:** All branches (multiball, cron/wake, spawn) receive an orientation message as their first user message. The orientation tells the branch its type, keys, and communication rules:
-- **Headless** (cron, spawn, keepalive — `direct_chat=false`): must NEVER use `send_telegram`; reports significant work or errors to parent via `send_to_session`; stays silent when nothing happened.
+- **Headless** (cron, spawn, keepalive — `direct_chat=false`): must NEVER use `send_message_to_user`; reports significant work or errors to parent via `send_to_session`; stays silent when nothing happened.
 - **Multiball** (`direct_chat=true`): has its own Telegram bot for direct user replies; keeps the main session informed of visible work via `send_to_session`; sends a completion summary before going idle.
 
 Default orientation text is embedded in `prompts/branch-orientation-headless.md` and `prompts/branch-orientation-multiball.md`. Config override via `branch_orientation_prompt` (per-agent or global) takes precedence. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.
@@ -103,7 +103,7 @@ Per-agent multiball pools are configured in the agent's `multiball_bots` list. A
 
 **Inbound:** Receive Telegram voice notes → transcribe via STT provider (OpenAI-compatible, e.g. Groq Whisper) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
 
-**Outbound:** Agent can send voice replies via `send_telegram(text="...", send_as="voice")`. Text → TTS engine (Edge TTS, OpenAI, or similar) → send as Telegram voice note. Good for when the human is mobile/driving.
+**Outbound:** Agent can send voice replies via `send_message_to_user(text="...", send_as="voice")`. Text → TTS engine (Edge TTS, OpenAI, or similar) → send as Telegram voice note. Good for when the human is mobile/driving.
 
 ### WebSocket Voice Endpoint (`/voice`)
 
@@ -257,7 +257,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 - `remind` — defer a thought for later (delay, tomorrow, specific date); wake=true actively wakes the session
 - `scratchpad` — working notes that survive compaction (write/read/clear/list)
 - `spawn` — sub-call to a model (raw/character: one-shot, clone: branch session with full tools, explore: read-only codebase research)
-- `send_telegram` — send proactive Telegram messages and media. `send_as` parameter controls file type: `"document"` (default), `"voice"`, `"video"`, `"photo"`, `"audio"`, `"animation"` (GIF). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS and sends as a voice note.
+- `send_message_to_user` — send proactive Telegram messages and media. `send_as` parameter controls file type: `"document"` (default), `"voice"`, `"video"`, `"photo"`, `"audio"`, `"animation"` (GIF). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS and sends as a voice note.
 - `send_to_session` — inject a message into another session (cross-session communication). `reply_to` param: `"caller"` (default) routes response back to calling session, `"session"` sends response to the target session's own Telegram chat
 - `todo` — manage a per-agent task list (add, list, complete, remove) with priority ordering
 - `bitwarden_search` — search Bitwarden vault items by name/URI/folder (metadata only, no passwords)
@@ -279,10 +279,10 @@ Selected tools are exposed as shell functions inside `shell` commands. A per-she
 - `foci_web_search <query>`
 - `foci_memory_search <query>`
 - `foci_todo <action> [args...]`
-- `foci_send_telegram <text>` (also reads stdin when no args)
+- `foci_send_message_to_user <text>` (also reads stdin when no args)
 - `foci_spawn <prompt> [--model M] [--context C]`
 
-**Example:** `foci_web_search "golang generics" | head -3 | foci_send_telegram`
+**Example:** `foci_web_search "golang generics" | head -3 | foci_send_message_to_user`
 
 **Dependencies:** `jq` (for JSON construction in shell functions), `foci-call` binary (installed to `/usr/local/bin` by setup.sh).
 
