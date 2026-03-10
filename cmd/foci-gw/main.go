@@ -340,8 +340,8 @@ Subcommands:
 	for _, id := range agentOrder {
 		inst := agents[id]
 		enabled := cfg.Defaults.EnableStartupNotify
-		if inst.agentCfg.StartupNotification != nil {
-			enabled = *inst.agentCfg.StartupNotification
+		if inst.agentCfg.StartupNotify != nil {
+			enabled = *inst.agentCfg.StartupNotify
 		}
 		if enabled {
 			for _, conn := range connMgr.AllForAgent(id) {

@@ -23,7 +23,7 @@ func TriggerFromContext(ctx context.Context) string {
 }
 
 // isUserTrigger returns true if the trigger represents a human-initiated message
-// (typed in Telegram, spoken via voice, or sent via HTTP /send).
+// (typed via a messaging platform, spoken via voice, or sent via HTTP /send).
 // Returns false for system-initiated triggers (keepalive, wake, cron, warnings, etc.).
 func isUserTrigger(trigger string) bool {
 	switch trigger {

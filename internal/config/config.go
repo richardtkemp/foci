@@ -143,11 +143,11 @@ type AgentConfig struct {
 	STT     string  `toml:"stt"`      // per-agent STT provider id (empty = default [[stt]] entry)
 	TTSRate float64 `toml:"tts_rate"` // per-agent TTS speech rate multiplier (0 = use entry rate only)
 
-	InjectAgentWarnings bool `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
+	InjectAgentWarnings bool  `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
+	StartupNotify       *bool `toml:"startup_notify"`        // send startup notification (nil = use global defaults.enable_startup_notify)
 	// DEPRECATED: The following Telegram-related fields will be removed.
 	// Use [agents.platforms.telegram] instead. Migration happens at load time.
-	StartupNotification *bool            `toml:"startup_notification"` // DEPRECATED: use [agents.platforms.telegram.startup_notify]
-	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"`      // DEPRECATED: use [agents.platforms.telegram.show_tool_calls]
+	ShowToolCalls *ToolCallDisplay `toml:"show_tool_calls"` // DEPRECATED: use [agents.platforms.telegram.show_tool_calls]
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`        // DEPRECATED: use [agents.platforms.telegram.show_thinking]
 	DisplayWidth        *int             `toml:"display_width"`        // DEPRECATED: use [agents.platforms.telegram.display_width]
 	TableWrapLines      *int             `toml:"table_wrap_lines"`     // DEPRECATED: use [agents.platforms.telegram.table_wrap_lines]
@@ -256,7 +256,6 @@ type TelegramPlatformConfig struct {
 	TableWrapLines   *int             `toml:"table_wrap_lines"`   // max wrapped lines per table cell (nil = use global)
 	TableStyle       *string          `toml:"table_style"`        // table style: "pretty" or "markdown" (nil = use global)
 	ReceivedFilesDir string           `toml:"received_files_dir"` // save received files to this directory (empty = disabled)
-	StartupNotify    *bool            `toml:"startup_notify"`     // send startup notification (nil = use global)
 	StreamOutput     *bool            `toml:"stream_output"`      // stream model output to Telegram in real-time (nil = use default)
 	StreamInterval   string           `toml:"stream_interval"`    // duration between Telegram message edits during streaming
 }
@@ -875,7 +874,7 @@ var boolKeyLineRe = regexp.MustCompile(`(?m)^(\s*(\w+)\s*=\s*)"(?i)(on|off|true|
 var boolKeys = map[string]bool{
 	"duplicate_messages":    true,
 	"inject_agent_warnings": true,
-	"startup_notification":  true,
+	"startup_notify":        true,
 	"messages_in_log":       true,
 	"compaction_notify":     true,
 	"compaction_debug":      true,
@@ -1013,9 +1012,6 @@ func migrateAgentTelegramFields(acfg *AgentConfig) {
 	if acfg.ReceivedFilesDir != "" && tg.ReceivedFilesDir == "" {
 		tg.ReceivedFilesDir = acfg.ReceivedFilesDir
 	}
-	if acfg.StartupNotification != nil && tg.StartupNotify == nil {
-		tg.StartupNotify = acfg.StartupNotification
-	}
 	if acfg.StreamOutput && tg.StreamOutput == nil {
 		tg.StreamOutput = &acfg.StreamOutput
 	}
@@ -1024,11 +1020,7 @@ func migrateAgentTelegramFields(acfg *AgentConfig) {
 	}
 
 	// Reverse normalization: copy telegram platform values back to agent-level
-	// fields so generic code (environment block, startup notifications) can
-	// access them without importing telegram config.
-	if tg.StartupNotify != nil && acfg.StartupNotification == nil {
-		acfg.StartupNotification = tg.StartupNotify
-	}
+	// fields so generic code (environment block) can access them without importing telegram config.
 	if tg.ShowToolCalls != nil && acfg.ShowToolCalls == nil {
 		acfg.ShowToolCalls = tg.ShowToolCalls
 	}
