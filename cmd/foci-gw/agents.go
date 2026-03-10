@@ -423,6 +423,7 @@ func setupAgent(p setupParams) *agentInstance {
 		skillsDirs:          skillsDirs,
 		skillRegistry:       skillRegistry,
 		agentListFn:         p.agentListFn,
+		plat:                p.plat,
 		connMgr:             connMgr,
 		configureMultiball: func(conn platform.Connection) {
 			if configureMultiball != nil {

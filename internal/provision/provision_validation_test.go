@@ -21,47 +21,6 @@ func TestIsValidAgentID(t *testing.T) {
 	}
 }
 
-// TestIsValidBotToken verifies bot token format: numeric ID colon alphanumeric+_-+ token.
-func TestIsValidBotToken(t *testing.T) {
-	tests := []struct {
-		token string
-		want  bool
-	}{
-		{"123456789:AAF-abcdefghijklmnopqrstuv", true},
-		{"7894561230:ABCdefGHIjklMNOpqrSTUvwxyz_-12345", true},
-		{"12345:short", false},
-		{"notanumber:AAF-abcdefghijklmnopqrstuv", false},
-		{"", false},
-		{"just-a-string", false},
-	}
-	for _, tt := range tests {
-		got := IsValidBotToken(tt.token)
-		if got != tt.want {
-			t.Errorf("IsValidBotToken(%q) = %v, want %v", tt.token, got, tt.want)
-		}
-	}
-}
-
-// TestIsValidUserID verifies user ID validation: numeric, at least 3 digits.
-func TestIsValidUserID(t *testing.T) {
-	tests := []struct {
-		id   string
-		want bool
-	}{
-		{"12345678", true},
-		{"123", true},
-		{"12", false},
-		{"", false},
-		{"abc", false},
-	}
-	for _, tt := range tests {
-		got := IsValidUserID(tt.id)
-		if got != tt.want {
-			t.Errorf("IsValidUserID(%q) = %v, want %v", tt.id, got, tt.want)
-		}
-	}
-}
-
 // TestResolveModelAlias verifies model alias resolution for opus, sonnet, haiku shorthands.
 func TestResolveModelAlias(t *testing.T) {
 	tests := []struct {

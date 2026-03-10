@@ -11,10 +11,11 @@ import (
 
 	"foci/internal/anthropic"
 	"foci/internal/config"
+	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/secrets"
 
-	"github.com/PaulSonOfLars/gotgbot/v2"
+	_ "foci/internal/telegram" // register telegram messaging provider
 )
 
 // setupFlags holds parsed flags for the setup command.
@@ -22,20 +23,18 @@ type setupFlags struct {
 	configDir      string // directory for foci.toml and secrets.toml
 	homeDir        string // foci user home (workspace parent)
 	nonInteractive bool
-	botToken       string
-	userID         string
 	agentID        string
 	displayName    string // display name for agent
 	model          string // model alias or full ID
 	setupToken     string // setup token from 'claude setup-token'
 	apiKey         string // API key (auth credential)
+	// Provider-contributed flags are stored here by name.
+	providerFlags map[string]string
 }
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
-	botToken    string
 	authMethod  string // "setup-token", "apikey", "skip"
-	userID      string
 	agentID     string
 	displayName string
 	model       string
@@ -52,14 +51,22 @@ Flags:
   -h, --help             Show this help
   --config-dir <path>    Directory for config files (default: ~/config)
   --non-interactive      Non-interactive mode (all required flags must be set)
-  --bot-token <token>    Telegram bot token
-  --user-id <id>         Telegram user ID
   --agent-id <id>        Agent identifier (default: main)
   --display-name <name>  Display name for agent (default: titlecased agent ID)
   --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
   --setup-token <token>  Setup token from 'claude setup-token'
   --api-key <key>        API key (direct Anthropic API key)
 `)
+	// Print provider-contributed flags
+	for _, w := range platform.SetupProviders() {
+		for _, f := range w.SetupFlags() {
+			req := ""
+			if f.Required {
+				req = " (required for non-interactive)"
+			}
+			fmt.Fprintf(os.Stderr, "  --%-20s %s%s\n", f.Name+" <value>", f.Usage, req)
+		}
+	}
 }
 
 func cmdSetup(args []string) error {
@@ -87,6 +94,16 @@ func cmdSetup(args []string) error {
 
 func parseSetupFlags(args []string) setupFlags {
 	var f setupFlags
+	f.providerFlags = make(map[string]string)
+
+	// Collect all known provider flag names for dynamic parsing.
+	providerFlagNames := map[string]bool{}
+	for _, w := range platform.SetupProviders() {
+		for _, pf := range w.SetupFlags() {
+			providerFlagNames[pf.Name] = true
+		}
+	}
+
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--config-dir":
@@ -96,16 +113,6 @@ func parseSetupFlags(args []string) setupFlags {
 			}
 		case "--non-interactive":
 			f.nonInteractive = true
-		case "--bot-token":
-			if i+1 < len(args) {
-				f.botToken = args[i+1]
-				i++
-			}
-		case "--user-id":
-			if i+1 < len(args) {
-				f.userID = args[i+1]
-				i++
-			}
 		case "--agent-id":
 			if i+1 < len(args) {
 				f.agentID = args[i+1]
@@ -130,6 +137,15 @@ func parseSetupFlags(args []string) setupFlags {
 			if i+1 < len(args) {
 				f.apiKey = args[i+1]
 				i++
+			}
+		default:
+			// Check if this is a provider-contributed flag (--bot-token, --user-id, etc.)
+			if strings.HasPrefix(args[i], "--") && i+1 < len(args) {
+				name := strings.TrimPrefix(args[i], "--")
+				if providerFlagNames[name] {
+					f.providerFlags[name] = args[i+1]
+					i++
+				}
 			}
 		}
 	}
@@ -181,21 +197,6 @@ func findRepoDefaults() string {
 }
 
 func runSetupNonInteractive(f setupFlags) error {
-	var missing []string
-	if f.botToken == "" {
-		missing = append(missing, "--bot-token")
-	}
-	if f.userID == "" {
-		missing = append(missing, "--user-id")
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("non-interactive mode requires: %s", strings.Join(missing, ", "))
-	}
-
-	if !provision.IsValidBotToken(f.botToken) {
-		return fmt.Errorf("invalid bot token format")
-	}
-
 	// Resolve model
 	model := provision.ResolveModelAlias(f.model)
 
@@ -205,17 +206,13 @@ func runSetupNonInteractive(f setupFlags) error {
 		displayName = provision.TitleCase(f.agentID)
 	}
 
-	// Build secrets
-	secretsOpts := config.SecretsOptions{
-		AgentID:  f.agentID,
-		BotToken: f.botToken,
-	}
-
 	secretsPath := filepath.Join(f.configDir, "secrets.toml")
 	store, err := secrets.Load(secretsPath)
 	if err != nil {
 		return fmt.Errorf("load secrets: %w", err)
 	}
+
+	secretsOpts := config.SecretsOptions{}
 
 	// Auth: setup-token takes precedence, then api-key, then skip.
 	if f.setupToken != "" {
@@ -224,6 +221,26 @@ func runSetupNonInteractive(f setupFlags) error {
 	} else if f.apiKey != "" {
 		store.Set("anthropic.api_key", f.apiKey)
 		secretsOpts.SetupToken = f.apiKey
+	}
+
+	// Run provider setup (non-interactive)
+	// Pass agent-id through so providers can use it for secret naming.
+	provFlags := copyMap(f.providerFlags)
+	provFlags["agent-id"] = f.agentID
+
+	var providerConfigFragments []string
+	providerSecrets := map[string]string{}
+	for _, w := range platform.SetupProviders() {
+		result, err := w.RunSetup(nil, provFlags, true)
+		if err != nil {
+			return err
+		}
+		if result.ConfigTOML != "" {
+			providerConfigFragments = append(providerConfigFragments, result.ConfigTOML)
+		}
+		for k, v := range result.Secrets {
+			providerSecrets[k] = v
+		}
 	}
 
 	// Provision the agent workspace
@@ -243,17 +260,17 @@ func runSetupNonInteractive(f setupFlags) error {
 	}
 
 	configOpts := config.SetupOptions{
-		AgentBlock:   result.ConfigBlock,
-		Model:        model,
-		AllowedUsers: []string{f.userID},
+		AgentBlock: result.ConfigBlock,
+		Model:      model,
 	}
 
-	return writeSetupFiles(f, configOpts, secretsOpts, store, result)
+	return writeSetupFiles(f, configOpts, secretsOpts, store, result, providerConfigFragments, providerSecrets)
 }
 
 func runSetupInteractive(f setupFlags) error {
 	reader := bufio.NewReader(os.Stdin)
 	state := setupState{agentID: f.agentID}
+	ui := &consoleUI{reader: reader}
 
 	fmt.Println()
 	fmt.Println("──────────────────────────────────────────")
@@ -261,7 +278,7 @@ func runSetupInteractive(f setupFlags) error {
 	fmt.Println("  (Enter 'back' at any prompt to return to the previous step)")
 	fmt.Println("──────────────────────────────────────────")
 
-	// Load secrets store early — needed by RunSetupTokenFlow in step 3.
+	// Load secrets store early — needed by RunSetupTokenFlow in step 2.
 	secretsPath := filepath.Join(f.configDir, "secrets.toml")
 	store, err := secrets.Load(secretsPath)
 	if err != nil {
@@ -270,30 +287,21 @@ func runSetupInteractive(f setupFlags) error {
 
 	secretsOpts := config.SecretsOptions{}
 
-	totalSteps := 8
+	// Generic steps
+	totalSteps := 7
 	step := 1
 	for step <= totalSteps {
 		switch step {
 		case 1:
-			result, back := stepBotToken(reader, state.botToken, totalSteps)
-			if back {
-				fmt.Println("  Already at the first step.")
-				continue
-			}
-			state.botToken = result
-			step++
-
-		case 2:
 			method, back := stepAuth(reader, state.authMethod, totalSteps)
 			if back {
-				step--
+				fmt.Println("  Already at the first step.")
 				continue
 			}
 			state.authMethod = method
 			step++
 
-		case 3:
-			// Collect the actual credential for the chosen auth method.
+		case 2:
 			back, err := stepCredential(reader, state.authMethod, store, &secretsOpts, totalSteps)
 			if err != nil {
 				return err
@@ -304,16 +312,7 @@ func runSetupInteractive(f setupFlags) error {
 			}
 			step++
 
-		case 4:
-			userID, back := stepUserID(reader, state.botToken, state.userID, totalSteps)
-			if back {
-				step--
-				continue
-			}
-			state.userID = userID
-			step++
-
-		case 5:
+		case 3:
 			agentID, back := stepAgentID(reader, state.agentID, totalSteps)
 			if back {
 				step--
@@ -322,7 +321,7 @@ func runSetupInteractive(f setupFlags) error {
 			state.agentID = agentID
 			step++
 
-		case 6:
+		case 4:
 			displayName, back := stepDisplayName(reader, state.agentID, state.displayName, totalSteps)
 			if back {
 				step--
@@ -331,7 +330,7 @@ func runSetupInteractive(f setupFlags) error {
 			state.displayName = displayName
 			step++
 
-		case 7:
+		case 5:
 			model, back := stepModel(reader, state.model, store, totalSteps)
 			if back {
 				step--
@@ -340,7 +339,7 @@ func runSetupInteractive(f setupFlags) error {
 			state.model = model
 			step++
 
-		case 8:
+		case 6:
 			charMode, back := stepCharacterMode(reader, f, totalSteps)
 			if back {
 				step--
@@ -348,82 +347,91 @@ func runSetupInteractive(f setupFlags) error {
 			}
 			state.charMode = charMode
 			step++
+
+		case 7:
+			// Platform provider steps (e.g. telegram bot token + user ID)
+			provFlags := map[string]string{"agent-id": state.agentID}
+			providerConfigFragments, providerSecrets, back, err := runProviderSetups(ui, provFlags, totalSteps)
+			if err != nil {
+				return err
+			}
+			if back {
+				step--
+				continue
+			}
+
+			// We have everything — finalize.
+			// Provision the agent workspace
+			defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
+			spec := provision.AgentSpec{
+				ID:          state.agentID,
+				Model:       state.model,
+				DisplayName: state.displayName,
+				HomeDir:     f.homeDir,
+				DefaultsDir: defaultsDir,
+				CharMode:    state.charMode,
+			}
+
+			provResult, err := provision.Provision(spec)
+			if err != nil {
+				return fmt.Errorf("provision agent: %w", err)
+			}
+
+			configOpts := config.SetupOptions{
+				AgentBlock: provResult.ConfigBlock,
+				Model:      state.model,
+			}
+
+			fmt.Println()
+			fmt.Println("Creating config...")
+
+			if err := writeSetupFiles(f, configOpts, secretsOpts, store, provResult, providerConfigFragments, providerSecrets); err != nil {
+				return err
+			}
+
+			fmt.Println("  Setup complete.")
+			fmt.Println()
+			fmt.Println("──────────────────────────────────────────")
+			step++
 		}
 	}
 
-	secretsOpts.AgentID = state.agentID
-	secretsOpts.BotToken = state.botToken
-
-	// Provision the agent workspace
-	defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
-	spec := provision.AgentSpec{
-		ID:          state.agentID,
-		Model:       state.model,
-		DisplayName: state.displayName,
-		HomeDir:     f.homeDir,
-		DefaultsDir: defaultsDir,
-		CharMode:    state.charMode,
-	}
-
-	provResult, err := provision.Provision(spec)
-	if err != nil {
-		return fmt.Errorf("provision agent: %w", err)
-	}
-
-	configOpts := config.SetupOptions{
-		AgentBlock:   provResult.ConfigBlock,
-		Model:        state.model,
-		AllowedUsers: []string{state.userID},
-	}
-
-	fmt.Println()
-	fmt.Println("Creating config...")
-
-	if err := writeSetupFiles(f, configOpts, secretsOpts, store, provResult); err != nil {
-		return err
-	}
-
-	fmt.Println("✓ Setup complete.")
-	fmt.Println()
-	fmt.Println("──────────────────────────────────────────")
 	return nil
 }
 
-// stepBotToken prompts for a Telegram bot token.
-func stepBotToken(reader *bufio.Reader, current string, total int) (token string, back bool) {
-	fmt.Println()
-	fmt.Printf("Step 1/%d: Telegram Bot\n", total)
-	fmt.Println("  Create a bot via @BotFather on Telegram (https://t.me/BotFather)")
-	fmt.Println("  Send /newbot, follow the prompts, and paste the token here.")
-	fmt.Println()
-
-	for {
-		prompt := "Bot token: "
-		if current != "" {
-			prompt = fmt.Sprintf("Bot token [%s...]: ", current[:min(15, len(current))])
-		}
-		fmt.Print(prompt)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		if input == "back" {
-			return "", true
-		}
-		if input == "" && current != "" {
-			return current, false
-		}
-		if provision.IsValidBotToken(input) {
-			fmt.Println("✓ Bot token validated.")
-			return input, false
-		}
-		fmt.Println("  Invalid token format. Expected: 123456789:AAF-... (get it from @BotFather)")
+// runProviderSetups runs each provider's interactive setup and collects results.
+func runProviderSetups(ui platform.SetupUI, flags map[string]string, total int) (configFragments []string, providerSecrets map[string]string, back bool, err error) {
+	wizards := platform.SetupProviders()
+	if len(wizards) == 0 {
+		return nil, nil, false, nil
 	}
+
+	fmt.Println()
+	fmt.Printf("Step %d/%d: Platform Configuration\n", total, total)
+
+	providerSecrets = map[string]string{}
+	for _, w := range wizards {
+		result, err := w.RunSetup(ui, flags, false)
+		if err == platform.ErrSetupBack {
+			return nil, nil, true, nil
+		}
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if result.ConfigTOML != "" {
+			configFragments = append(configFragments, result.ConfigTOML)
+		}
+		for k, v := range result.Secrets {
+			providerSecrets[k] = v
+		}
+	}
+	return configFragments, providerSecrets, false, nil
 }
 
 // stepAuth prompts for authentication method.
 func stepAuth(reader *bufio.Reader, current string, total int) (method string, back bool) { // nolint:unparam
 	fmt.Println()
-	fmt.Printf("Step 2/%d: Anthropic Authentication\n", total)
+	fmt.Printf("Step 1/%d: Anthropic Authentication\n", total)
 	fmt.Println("  Foci needs access to Claude. Choose one:")
 	fmt.Println("  [1] Setup token (recommended — uses Claude Code subscription)")
 	fmt.Println("  [2] API key")
@@ -455,7 +463,7 @@ func stepAuth(reader *bufio.Reader, current string, total int) (method string, b
 // stepCredential collects the actual auth credential based on the chosen method.
 func stepCredential(reader *bufio.Reader, authMethod string, store *secrets.Store, opts *config.SecretsOptions, total int) (back bool, err error) {
 	fmt.Println()
-	fmt.Printf("Step 3/%d: Credential\n", total)
+	fmt.Printf("Step 2/%d: Credential\n", total)
 
 	switch authMethod {
 	case "setup-token":
@@ -471,7 +479,7 @@ func stepCredential(reader *bufio.Reader, authMethod string, store *secrets.Stor
 		if err := anthropic.RunSetupTokenFlow(store); err != nil {
 			return false, fmt.Errorf("auth: %w", err)
 		}
-		fmt.Println("✓ Setup token saved.")
+		fmt.Println("  Setup token saved.")
 		if v, ok := store.Get("anthropic.setup_token"); ok {
 			opts.SetupToken = v
 		}
@@ -489,185 +497,21 @@ func stepCredential(reader *bufio.Reader, authMethod string, store *secrets.Stor
 				continue
 			}
 			opts.SetupToken = input
-			fmt.Println("✓ API key saved.")
+			fmt.Println("  API key saved.")
 			break
 		}
 
 	case "skip":
-		fmt.Println("✓ Skipping auth (will use Claude Code credentials if available).")
+		fmt.Println("  Skipping auth (will use Claude Code credentials if available).")
 	}
 
 	return false, nil
 }
 
-// stepUserID prompts for user ID via auto-detect or manual entry.
-func stepUserID(reader *bufio.Reader, botToken string, current string, total int) (userID string, back bool) {
-	fmt.Println()
-	fmt.Printf("Step 4/%d: Your Telegram User ID\n", total)
-	fmt.Println("  How would you like to identify yourself?")
-	fmt.Println("  [1] Auto-detect (send a message to your bot)")
-	fmt.Println("  [2] Enter manually")
-	fmt.Println()
-
-	for {
-		fmt.Print("> ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		if input == "back" {
-			return "", true
-		}
-
-		switch input {
-		case "1":
-			uid, err := autoDetectUserID(reader, botToken)
-			if err != nil {
-				fmt.Printf("  Auto-detect failed: %v\n", err)
-				fmt.Println("  Falling back to manual entry.")
-				uid, back = manualUserID(reader, current)
-				if back {
-					return "", true
-				}
-			}
-			return uid, false
-		case "2":
-			uid, back := manualUserID(reader, current)
-			if back {
-				return "", true
-			}
-			return uid, false
-		default:
-			fmt.Println("  Enter 1 or 2.")
-		}
-	}
-}
-
-// autoDetectUserID starts the bot temporarily and captures sender info.
-func autoDetectUserID(reader *bufio.Reader, botToken string) (string, error) {
-	bot, err := gotgbot.NewBot(botToken, nil)
-	if err != nil {
-		return "", fmt.Errorf("connect to Telegram: %w", err)
-	}
-
-	fmt.Printf("  Bot connected as @%s\n", bot.Username)
-	fmt.Println("  Send a message to your bot on Telegram, then press Enter here.")
-	fmt.Print("  ")
-	_, _ = reader.ReadString('\n')
-
-	// Poll for messages with a short timeout
-	updates, err := bot.GetUpdates(&gotgbot.GetUpdatesOpts{
-		RequestOpts: &gotgbot.RequestOpts{
-			Timeout: 5 * time.Second,
-		},
-		AllowedUpdates: []string{"message"},
-	})
-	if err != nil {
-		return "", fmt.Errorf("poll for messages: %w", err)
-	}
-
-	if len(updates) == 0 {
-		// Try again with a wait
-		fmt.Println("  No messages yet. Waiting up to 30 seconds...")
-		updates, err = bot.GetUpdates(&gotgbot.GetUpdatesOpts{
-			RequestOpts: &gotgbot.RequestOpts{
-				Timeout: 35 * time.Second,
-			},
-			Timeout:        30,
-			AllowedUpdates: []string{"message"},
-		})
-		if err != nil {
-			return "", fmt.Errorf("poll for messages: %w", err)
-		}
-	}
-
-	if len(updates) == 0 {
-		return "", fmt.Errorf("no messages received within timeout")
-	}
-
-	// Collect unique senders
-	type sender struct {
-		ID   int64
-		Name string
-	}
-	seen := map[int64]bool{}
-	var senders []sender
-	for _, u := range updates {
-		if u.Message == nil || u.Message.From == nil {
-			continue
-		}
-		from := u.Message.From
-		if seen[from.Id] {
-			continue
-		}
-		seen[from.Id] = true
-		name := from.FirstName
-		if from.LastName != "" {
-			name += " " + from.LastName
-		}
-		senders = append(senders, sender{ID: from.Id, Name: name})
-	}
-
-	if len(senders) == 0 {
-		return "", fmt.Errorf("no user messages found in updates")
-	}
-
-	if len(senders) == 1 {
-		s := senders[0]
-		fmt.Printf("✓ User ID: %d (%s)\n", s.ID, s.Name)
-		return fmt.Sprintf("%d", s.ID), nil
-	}
-
-	// Multiple senders — ask which one
-	fmt.Printf("\n  Received messages from %d senders:\n", len(senders))
-	for i, s := range senders {
-		fmt.Printf("    %d. %s (ID: %d)\n", i+1, s.Name, s.ID)
-	}
-	fmt.Println()
-	for {
-		fmt.Print("  Which one is you? Enter number: ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		var idx int
-		if _, err := fmt.Sscanf(input, "%d", &idx); err == nil && idx >= 1 && idx <= len(senders) {
-			s := senders[idx-1]
-			fmt.Printf("✓ User ID: %d (%s)\n", s.ID, s.Name)
-			return fmt.Sprintf("%d", s.ID), nil
-		}
-		fmt.Printf("  Enter a number between 1 and %d.\n", len(senders))
-	}
-}
-
-// manualUserID prompts the user to enter their Telegram user ID.
-func manualUserID(reader *bufio.Reader, current string) (string, bool) {
-	fmt.Println("  Message @userinfobot on Telegram to find your user ID.")
-	for {
-		prompt := "  User ID: "
-		if current != "" {
-			prompt = fmt.Sprintf("  User ID [%s]: ", current)
-		}
-		fmt.Print(prompt)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		if input == "back" {
-			return "", true
-		}
-		if input == "" && current != "" {
-			fmt.Printf("✓ User ID: %s\n", current)
-			return current, false
-		}
-		if provision.IsValidUserID(input) {
-			fmt.Printf("✓ User ID: %s\n", input)
-			return input, false
-		}
-		fmt.Println("  Invalid user ID. Expected a numeric ID (e.g. 12345678).")
-	}
-}
-
 // stepAgentID prompts for an agent identifier.
 func stepAgentID(reader *bufio.Reader, current string, total int) (agentID string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 5/%d: Agent ID\n", total)
+	fmt.Printf("Step 3/%d: Agent ID\n", total)
 	fmt.Println("  Pick a short lowercase name for your agent (letters, numbers, hyphens).")
 	fmt.Println("  This becomes the agent's workspace directory and session key prefix.")
 	fmt.Println()
@@ -682,11 +526,11 @@ func stepAgentID(reader *bufio.Reader, current string, total int) (agentID strin
 			return "", true
 		}
 		if input == "" {
-			fmt.Printf("✓ Agent ID: %s\n", current)
+			fmt.Printf("  Agent ID: %s\n", current)
 			return current, false
 		}
 		if provision.IsValidAgentID(input) {
-			fmt.Printf("✓ Agent ID: %s\n", input)
+			fmt.Printf("  Agent ID: %s\n", input)
 			return input, false
 		}
 		fmt.Println("  Invalid ID. Use lowercase letters, numbers, and hyphens only.")
@@ -696,7 +540,7 @@ func stepAgentID(reader *bufio.Reader, current string, total int) (agentID strin
 // stepDisplayName prompts for a display name.
 func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (displayName string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 6/%d: Display Name\n", total)
+	fmt.Printf("Step 4/%d: Display Name\n", total)
 	fmt.Println("  A human-readable name for your agent (used in SOUL.md).")
 	fmt.Println()
 
@@ -714,17 +558,17 @@ func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (
 		return "", true
 	}
 	if input == "" {
-		fmt.Printf("✓ Display name: %s\n", defaultName)
+		fmt.Printf("  Display name: %s\n", defaultName)
 		return defaultName, false
 	}
-	fmt.Printf("✓ Display name: %s\n", input)
+	fmt.Printf("  Display name: %s\n", input)
 	return input, false
 }
 
 // stepModel prompts for a model selection.
 func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total int) (model string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 7/%d: Model\n", total)
+	fmt.Printf("Step 5/%d: Model\n", total)
 	fmt.Println("  Choose a model: opus, sonnet, haiku, or enter a full model ID.")
 	fmt.Println()
 
@@ -747,14 +591,14 @@ func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total
 
 	// Try to discover exact model from API
 	resolved := discoverModelFamily(store, input)
-	fmt.Printf("✓ Model: %s\n", resolved)
+	fmt.Printf("  Model: %s\n", resolved)
 	return resolved, false
 }
 
 // stepCharacterMode prompts for character file sourcing.
 func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode string, back bool) { // nolint:unparam
 	fmt.Println()
-	fmt.Printf("Step 8/%d: Character Files\n", total)
+	fmt.Printf("Step 6/%d: Character Files\n", total)
 	fmt.Println("  How should we set up the character files?")
 	fmt.Println("  [1] Defaults (recommended for new users)")
 	fmt.Println("  [2] OpenClaw templates")
@@ -772,13 +616,13 @@ func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode 
 
 		switch input {
 		case "1", "":
-			fmt.Println("✓ Character files: defaults")
+			fmt.Println("  Character files: defaults")
 			return "defaults", false
 		case "2":
-			fmt.Println("✓ Character files: openclaw")
+			fmt.Println("  Character files: openclaw")
 			return "openclaw", false
 		case "3":
-			fmt.Println("✓ Character files: blank")
+			fmt.Println("  Character files: blank")
 			return "blank", false
 		default:
 			fmt.Println("  Enter 1, 2, or 3.")
@@ -787,26 +631,39 @@ func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode 
 }
 
 // writeSetupFiles writes foci.toml, secrets.toml, and ensures workspace directories exist.
-func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts config.SecretsOptions, store *secrets.Store, provResult *provision.Result) error {
+func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts config.SecretsOptions, store *secrets.Store, provResult *provision.Result, providerConfigFragments []string, providerSecrets map[string]string) error {
 	// Ensure config directory exists
 	if err := os.MkdirAll(f.configDir, 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	// Write foci.toml
+	// Write foci.toml — generic config + provider fragments
 	configPath := filepath.Join(f.configDir, "foci.toml")
 	configContent := config.GenerateConfig(configOpts)
+	for _, fragment := range providerConfigFragments {
+		configContent += fragment
+		if !strings.HasSuffix(fragment, "\n") {
+			configContent += "\n"
+		}
+	}
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 		return fmt.Errorf("write foci.toml: %w", err)
 	}
 	fmt.Printf("  → %s\n", configPath)
 
 	// Write secrets via the store (so it handles formatting + existing values)
-	if secretsOpts.BotToken != "" {
-		store.Set(fmt.Sprintf("telegram.%s", secretsOpts.AgentID), secretsOpts.BotToken)
-	}
 	if secretsOpts.SetupToken != "" {
 		store.Set("anthropic.setup_token", secretsOpts.SetupToken)
+	}
+	// Store provider-contributed secrets
+	// Sort keys for deterministic output.
+	provSecretKeys := make([]string, 0, len(providerSecrets))
+	for k := range providerSecrets {
+		provSecretKeys = append(provSecretKeys, k)
+	}
+	sort.Strings(provSecretKeys)
+	for _, k := range provSecretKeys {
+		store.Set(k, providerSecrets[k])
 	}
 	if err := store.Save(); err != nil {
 		return fmt.Errorf("write secrets.toml: %w", err)
@@ -819,7 +676,7 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts c
 	// Install crontab entries
 	if len(provResult.CrontabLines) > 0 {
 		if err := provision.AppendCrontab(provResult.CrontabLines); err != nil {
-			fmt.Printf("  ⚠️  Could not install crontab entries automatically.\n")
+			fmt.Printf("  Could not install crontab entries automatically.\n")
 			fmt.Printf("     Add these entries manually with `crontab -e`:\n")
 			for _, line := range provResult.CrontabLines {
 				fmt.Printf("     %s\n", line)
@@ -885,7 +742,7 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 		return fallback
 	}
 
-	fmt.Printf("✓ %s\n", bestID)
+	fmt.Printf("  %s\n", bestID)
 	return bestID
 }
 
@@ -1019,7 +876,7 @@ func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 		}
 		count++
 	}
-	fmt.Printf("✓ Imported %d files to %s/\n", count, destDir)
+	fmt.Printf("  Imported %d files to %s/\n", count, destDir)
 	return nil
 }
 
@@ -1029,4 +886,70 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// --- consoleUI implements platform.SetupUI ---
+
+// consoleUI wraps a bufio.Reader for interactive console prompts.
+type consoleUI struct {
+	reader *bufio.Reader
+}
+
+func (c *consoleUI) Prompt(prompt string, current string) (input string, back bool) {
+	p := prompt
+	if current != "" {
+		p = fmt.Sprintf("%s [%s]", prompt, current)
+	}
+	if p != "" {
+		fmt.Printf("%s: ", p)
+	} else {
+		// Empty prompt — just wait for Enter
+		fmt.Print("  ")
+	}
+	line, _ := c.reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "back" {
+		return "", true
+	}
+	if line == "" && current != "" {
+		return current, false
+	}
+	return line, false
+}
+
+func (c *consoleUI) Menu(prompt string, options []string) (index int, back bool) {
+	if prompt != "" {
+		fmt.Printf("  %s\n", prompt)
+	}
+	for i, opt := range options {
+		fmt.Printf("  [%d] %s\n", i+1, opt)
+	}
+	fmt.Println()
+
+	for {
+		fmt.Print("> ")
+		line, _ := c.reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "back" {
+			return 0, true
+		}
+		var idx int
+		if _, err := fmt.Sscanf(line, "%d", &idx); err == nil && idx >= 1 && idx <= len(options) {
+			return idx - 1, false
+		}
+		fmt.Printf("  Enter a number between 1 and %d.\n", len(options))
+	}
+}
+
+func (c *consoleUI) Print(text string) {
+	fmt.Println(text)
+}
+
+// copyMap returns a shallow copy of a string map.
+func copyMap(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }

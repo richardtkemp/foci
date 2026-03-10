@@ -69,6 +69,7 @@ type cmdRegParams struct {
 	agentListFn func() []command.AgentInfo
 
 	// Platform
+	plat               *platform.Messaging
 	connMgr            platform.ConnectionManager
 	configureMultiball func(platform.Connection)
 }
@@ -209,13 +210,17 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		Execute: func(ctx context.Context, args string) (string, error) { return forkFn(ctx) },
 	})
 
-	agentStore := p.store.ForAgent(p.acfg.ID)
 	agentNewDeps := &command.AgentNewDeps{
 		ConfigPath:  p.configPath,
 		DefaultsDir: filepath.Join(filepath.Dir(p.acfg.Workspace), "shared", "defaults"),
 		HomeDir:     filepath.Dir(p.acfg.Workspace),
 		ListFn:      p.agentListFn,
-		SecretNames: func() []string { return agentStore.Names() },
+		PreFlightFn: func(agentID string) []string {
+			if p.plat == nil {
+				return nil
+			}
+			return p.plat.AgentPreFlight(agentID)
+		},
 		ResolveModel: func(input string) string {
 			// Use new ResolveModel for resolution
 			resolved, err := config.ResolveModel(input, "", aliases)

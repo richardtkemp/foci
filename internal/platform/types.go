@@ -2,7 +2,9 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -142,6 +144,7 @@ type MessagingProvider interface {
 	RestoreMultiballSessions(params RestoreParams)
 	SetLifecycleCallback(agentID string, event LifecycleEvent, fn func())
 	ToolDetailStore() ToolDetailStore // may return nil
+	AgentPreFlight(agentID string) []string // warnings for /agents new wizard
 	Close() error
 }
 
@@ -193,6 +196,64 @@ type RestoreParams struct {
 	// Used to reconfigure multiball bots with the correct agent after restart.
 	// handler: platform.MessageHandler, commands: any (*command.Registry), config: config.AgentConfig
 	Resolver func(agentID string) (handler MessageHandler, commands any, agentCfg config.AgentConfig, ok bool)
+}
+
+// --- Setup Wizard ---
+
+// ErrSetupBack is returned by RunSetup when the user navigated back.
+var ErrSetupBack = errors.New("setup: navigated back")
+
+// SetupWizard is optionally implemented by MessagingProvider to contribute
+// interactive setup steps to `foci setup`.
+type SetupWizard interface {
+	// SetupFlags returns CLI flag definitions for non-interactive mode.
+	SetupFlags() []SetupFlag
+
+	// RunSetup runs the provider's setup flow (interactive or non-interactive).
+	// Returns config/secrets fragments, or ErrSetupBack if user went back.
+	RunSetup(ui SetupUI, flags map[string]string, nonInteractive bool) (*WizardResult, error)
+}
+
+// SetupFlag describes a CLI flag contributed by a provider.
+type SetupFlag struct {
+	Name     string // CLI flag name, e.g. "bot-token"
+	Usage    string // help text
+	Required bool   // required in non-interactive mode
+}
+
+// WizardResult holds the outputs from a provider's setup flow.
+type WizardResult struct {
+	ConfigTOML string            // TOML fragment appended to foci.toml
+	Secrets    map[string]string // key→value pairs to store in secrets.toml
+}
+
+// SetupUI provides console interaction primitives to providers.
+type SetupUI interface {
+	Prompt(prompt string, current string) (input string, back bool)
+	Menu(prompt string, options []string) (index int, back bool)
+	Print(text string)
+}
+
+// SetupProviders returns all registered providers that implement SetupWizard,
+// sorted by provider name for deterministic ordering.
+func SetupProviders() []SetupWizard {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	// Collect names for sorted iteration.
+	names := make([]string, 0, len(providers))
+	for name := range providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var wizards []SetupWizard
+	for _, name := range names {
+		if w, ok := providers[name].(SetupWizard); ok {
+			wizards = append(wizards, w)
+		}
+	}
+	return wizards
 }
 
 // --- Registry ---
@@ -324,6 +385,18 @@ func (m *Messaging) NotifyAgentDoc(agentID string, path string) {
 	for _, conn := range m.connMgr.AllForAgent(agentID) {
 		_ = conn.SendDocument(path)
 	}
+}
+
+// AgentPreFlight collects pre-flight warnings from all providers for a new agent.
+func (m *Messaging) AgentPreFlight(agentID string) []string {
+	if m == nil {
+		return nil
+	}
+	var warnings []string
+	for _, p := range m.providers {
+		warnings = append(warnings, p.AgentPreFlight(agentID)...)
+	}
+	return warnings
 }
 
 // ToolDetailStore returns the first non-nil ToolDetailStore from providers.

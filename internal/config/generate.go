@@ -7,22 +7,16 @@ import (
 
 // SetupOptions holds the inputs collected by the setup wizard.
 type SetupOptions struct {
-	AgentID      string   // agent identifier (e.g. "fotini")
-	Model        string   // model ID (e.g. "claude-sonnet-4-6")
-	AgentBlock   string   // pre-built [[agents]] TOML from provision.GenerateAgentBlock (if set, overrides AgentID/SystemFiles)
-	SystemFiles  []string // workspace-relative character file paths (used when AgentBlock is empty)
-	AllowedUsers []string // Telegram user IDs
+	AgentID     string   // agent identifier (e.g. "fotini")
+	Model       string   // model ID (e.g. "claude-sonnet-4-6")
+	AgentBlock  string   // pre-built [[agents]] TOML from provision.GenerateAgentBlock (if set, overrides AgentID/SystemFiles)
+	SystemFiles []string // workspace-relative character file paths (used when AgentBlock is empty)
 }
 
 // SecretsOptions holds credentials for secrets.toml generation.
 type SecretsOptions struct {
-	AgentID string // agent identifier (token stored as "telegram.<id>" in secrets)
-
 	// Anthropic auth
 	SetupToken string // setup-token from `claude setup-token` or API key
-
-	// Telegram
-	BotToken string
 }
 
 // GenerateConfig produces a minimal foci.toml containing only the values
@@ -54,17 +48,6 @@ func GenerateConfig(opts SetupOptions) string {
 		b.WriteString("\n")
 	}
 
-	// [telegram]
-	if len(opts.AllowedUsers) > 0 {
-		b.WriteString("[telegram]\n")
-		quoted := make([]string, len(opts.AllowedUsers))
-		for i, u := range opts.AllowedUsers {
-			quoted[i] = fmt.Sprintf("%q", u)
-		}
-		b.WriteString(fmt.Sprintf("allowed_users = [%s]\n", strings.Join(quoted, ", ")))
-		b.WriteString("\n")
-	}
-
 	return b.String()
 }
 
@@ -78,12 +61,6 @@ func GenerateSecrets(opts SecretsOptions) string {
 		b.WriteString("[anthropic]\n")
 		b.WriteString(fmt.Sprintf("setup_token = %q\n", opts.SetupToken))
 		b.WriteString("\n")
-	}
-
-	// [telegram] — bot token stored as "telegram.<agentID>"
-	if opts.BotToken != "" && opts.AgentID != "" {
-		b.WriteString("[telegram]\n")
-		b.WriteString(fmt.Sprintf("%s = %q\n", opts.AgentID, opts.BotToken))
 	}
 
 	return b.String()
