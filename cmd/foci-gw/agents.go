@@ -964,7 +964,7 @@ func buildBranchFunc(
 
 		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
 		if err != nil {
-			log.Warnf(branchType, "[%s] turn error: %v", agentID, err)
+			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, branchKey, err)
 			return
 		}
 		_ = resp
