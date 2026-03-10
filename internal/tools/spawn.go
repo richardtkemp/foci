@@ -363,7 +363,8 @@ func spawnOneShot(ctx context.Context, client provider.Client, model string, sys
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	log.Infof("spawn", "one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", model, len(system), len(toolDefs), len(prompt))
+	sessionKey := SessionKeyFromContext(ctx)
+	log.Infof("spawn", "session=%s one-shot model=%s system_blocks=%d tools=%d prompt=%d chars", sessionKey, model, len(system), len(toolDefs), len(prompt))
 
 	messages := []provider.Message{
 		{Role: "user", Content: provider.TextContent(prompt)},
@@ -389,10 +390,8 @@ func spawnOneShot(ctx context.Context, client provider.Client, model string, sys
 			resp.Usage.InputTokens, resp.Usage.OutputTokens,
 			resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-		log.Infof("spawn", "model=%s input=%d output=%d cost=$%.4f stop=%s",
-			model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
-
-		sessionKey := SessionKeyFromContext(ctx)
+		log.Infof("spawn", "session=%s model=%s input=%d output=%d cost=$%.4f stop=%s",
+			sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, resp.StopReason)
 		var sessionFile string
 		if sessions != nil {
 			if p, err := sessions.SessionPath(sessionKey); err == nil {
@@ -445,7 +444,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model string, sys
 				))
 				continue
 			}
-			log.Debugf("spawn", "tool_use: %s", block.Name)
+			log.Debugf("spawn", "session=%s tool_use: %s", sessionKey, block.Name)
 			result, err := tool.Execute(callCtx, block.Input)
 			if err != nil {
 				toolResults = append(toolResults, provider.ToolResultBlock(

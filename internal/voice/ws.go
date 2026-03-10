@@ -316,7 +316,7 @@ func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string)
 	// Call agent.
 	resp, err := c.cfg.HandleMessage(ctx, c.agentID, c.sessionKey, text)
 	if err != nil {
-		log.Errorf("voice-ws", "agent error (conn=%s): %v", connID, err)
+		log.Errorf("voice-ws", "agent error (session=%s, conn=%s): %v", c.sessionKey, connID, err)
 		c.sendError(fmt.Sprintf("agent error: %v", err))
 		_ = c.sendJSON(ResponseEndMsg{Type: "response_end"})
 		return
@@ -330,7 +330,7 @@ func (c *conn) runAgentPipeline(ctx context.Context, connID string, text string)
 	if tts != nil && resp != "" {
 		audioData, err := tts.Synthesize(ctx, resp)
 		if err != nil {
-			log.Warnf("voice-ws", "TTS error (conn=%s): %v", connID, err)
+			log.Warnf("voice-ws", "TTS error (session=%s, conn=%s): %v", c.sessionKey, connID, err)
 		} else if len(audioData) > 0 {
 			_ = c.sendJSON(AudioStartOutMsg{Type: "audio_start", Format: "mp3"})
 			c.sendAudioChunks(audioData)
