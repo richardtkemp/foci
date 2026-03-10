@@ -603,7 +603,7 @@ func setupAgent(p setupParams) *agentInstance {
 }
 
 // setupTelegram creates and registers Telegram bots for an agent.
-// If the primary bot fails to initialize, the agent continues without Telegram.
+// If the primary bot fails to initialize, the agent continues without a platform.
 func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds *command.Registry, allowedUsers []string, lastMsgStore *command.LastMessageStore) {
 	// Prefer new platform config, fall back to deprecated fields
 	tg := acfg.GetTelegramPlatform()
@@ -624,7 +624,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 
 	primaryBot, err := telegram.NewBot(telegramToken, allowedUsers, ag, cmds, lastMsgStore, acfg.ID)
 	if err != nil {
-		log.Errorf("main", "agent %q: create telegram bot: %v (agent will run without Telegram)", acfg.ID, err)
+		log.Errorf("main", "agent %q: create telegram bot: %v (agent will run without platform)", acfg.ID, err)
 		return
 	}
 
@@ -663,7 +663,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		}
 	}
 
-	// Wire mana threshold warnings to Telegram
+	// Wire mana threshold warnings to platform
 	if ag.ManaWatcher != nil {
 		ag.ManaWarnFunc = func(warn string) {
 			log.Infof("mana", "%s", warn)
@@ -671,7 +671,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		}
 	}
 
-	// Wire rate limit notifications to Telegram
+	// Wire rate limit notifications to platform
 	ag.RateLimitFunc = func(retryAfter int) {
 		msg := "I've run out of mana, it will reset in ~5 hours."
 		if retryAfter > 0 {
@@ -685,12 +685,12 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		primaryBot.SendNotification("⚡ " + msg)
 	}
 
-	// Wire max_tokens warnings to Telegram
+	// Wire max_tokens warnings to platform
 	ag.MaxTokensWarnFunc = func(warn string) {
 		primaryBot.SendNotification("⚠️ " + warn)
 	}
 
-	// Wire compaction notifications to Telegram (default on)
+	// Wire compaction notifications to platform (default on)
 	// Per-agent compaction_notify overrides global
 	compactNotify := p.cfg.Sessions.CompactionNotify
 	if acfg.CompactionNotify != nil {

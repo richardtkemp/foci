@@ -119,7 +119,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 }
 
 // asyncDispatch handles async fire-and-forget requests: sends the agent message
-// in a goroutine, writes a 202 response, and optionally delivers the result via Telegram.
+// in a goroutine, writes a 202 response, and optionally delivers the result via platform.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Context,
 	sessionKey, text, logTag string, silent bool) {
 	go func() {
@@ -131,7 +131,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Conte
 		if resp != "" && !silent {
 			if bot := telegram.DefaultManager().BotForSessionOrPrimary(sessionKey, inst.id); bot != nil {
 				if err := bot.SendToSession(sessionKey, resp); err != nil {
-					log.Errorf(logTag, "async telegram delivery: %v", err)
+					log.Errorf(logTag, "async platform delivery: %v", err)
 				}
 			}
 		}

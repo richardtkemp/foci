@@ -179,7 +179,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	// Verify the agent calls sendIntermediate before notifyToolCall when the
 	// API response contains both text and tool_use blocks. This ordering is
-	// critical for Telegram message display: thinking text must appear above
+	// critical for platform message display: thinking text must appear above
 	// tool call notifications in the chat.
 	var callCount atomic.Int32
 

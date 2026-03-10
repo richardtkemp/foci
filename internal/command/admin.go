@@ -651,7 +651,7 @@ func NewCompactCommand(compactFn func(ctx context.Context, dryRun bool) (int, er
 }
 
 // NewRestartCommand creates a /restart command that restarts the foci service.
-// notifyFn is called before the restart to send a notification (e.g., Telegram).
+// notifyFn is called before the restart to send a notification (e.g., platform message).
 func NewRestartCommand(notifyFn func(string)) *Command {
 	return &Command{
 		Name:        "restart",

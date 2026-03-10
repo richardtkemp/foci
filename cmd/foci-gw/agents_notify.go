@@ -61,12 +61,12 @@ func newAsyncNotifier(
 					return
 				}
 
-				// STEP 2: Display to user in calling session's Telegram chat
+				// STEP 2: Display to user in calling session's chat
 				// Note: SendToSession() displays to the user, doesn't append to session
 				callerBot := botMgr.BotForSession(replyToSession)
 				if callerBot != nil {
 					if err := callerBot.SendToSession(replyToSession, formattedResp); err != nil {
-						log.Errorf("async_notify", "telegram delivery to caller %s: %v", replyToSession, err)
+						log.Errorf("async_notify", "platform delivery to caller %s: %v", replyToSession, err)
 					}
 				} else {
 					log.Debugf("async_notify", "no bot for caller session %s, response recorded but not displayed", replyToSession)
@@ -74,11 +74,11 @@ func newAsyncNotifier(
 				return
 			}
 
-			// Otherwise use existing behavior (display to target's Telegram)
+			// Otherwise use existing behavior (display to target's chat)
 			bot := botMgr.BotForSessionOrPrimary(target, agentID)
 
 			// Branch sessions without their own multiball bot should not
-			// deliver replies to Telegram — they'd leak into the parent's chat.
+			// deliver replies to chat — they'd leak into the parent's chat.
 			// The response still gets written to the branch JSONL via HandleMessage.
 			sk, parseErr := session.ParseSessionKey(target)
 			isBranchWithoutBot := parseErr == nil && !sk.IsRoot() && botMgr.BotForSession(target) == nil
@@ -88,7 +88,7 @@ func newAsyncNotifier(
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
 						if err := bot.SendToSession(target, text); err != nil {
-							log.Errorf("async_notify", "intermediate telegram delivery: %v", err)
+							log.Errorf("async_notify", "intermediate platform delivery: %v", err)
 						}
 					},
 				})
@@ -105,14 +105,14 @@ func newAsyncNotifier(
 			}
 			if bot == nil || isBranchWithoutBot {
 				if isBranchWithoutBot {
-					log.Debugf("async_notify", "branch session %s has no dedicated bot, skipping telegram delivery", target)
+					log.Debugf("async_notify", "branch session %s has no dedicated bot, skipping platform delivery", target)
 				} else {
 					log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", agentID, target)
 				}
 				return
 			}
 			if err := bot.SendToSession(target, resp); err != nil {
-				log.Errorf("async_notify", "telegram delivery: %v", err)
+				log.Errorf("async_notify", "platform delivery: %v", err)
 			}
 		}()
 	})
@@ -157,7 +157,7 @@ func newSessionNotifyFn(
 			}
 
 			if err := bot.SendToSession(targetSessionKey, resp); err != nil {
-				log.Errorf("session_notify", "telegram delivery for session %s: %v", targetSessionKey, err)
+				log.Errorf("session_notify", "platform delivery for session %s: %v", targetSessionKey, err)
 			}
 		}()
 	})

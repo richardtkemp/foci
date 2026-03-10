@@ -14,8 +14,8 @@ import (
 // AgentDeps bundles the per-agent references that slash commands need.
 // Constructed once per agent in the main package and passed to RegisterAgentCommands.
 //
-// Telegram operations use callback functions to avoid importing the telegram
-// package (which imports command — that would create a circular dependency).
+// Platform operations use callback functions to avoid importing platform
+// packages (which import command — that would create a circular dependency).
 type AgentDeps struct {
 	// Core agent references
 	Agent        *agent.Agent
@@ -36,9 +36,9 @@ type AgentDeps struct {
 	GetClient             func(endpoint, format string) provider.Client
 	PeekClient            func(endpoint, format string) provider.Client
 
-	// Callbacks (avoids importing telegram)
+	// Callbacks (avoids importing platform packages)
 	OnSessionEnd func(sessionKey string) // fires session-end memory, then clears
-	SendDocFn    func(path string) error // sends a document via Telegram
+	SendDocFn    func(path string) error // sends a document to the user
 
 	// Config-derived values
 	PromptSearchDirs []string

@@ -152,7 +152,7 @@ func (m *ManaWatcher) CheckAndWarn(manaStr, resetTime string, warnFunc func(stri
 // CheckRestore checks if mana has restored to 100% after being below the
 // restore threshold. Returns a notification message if so, empty string otherwise.
 // This is separate from CheckAndWarn so it can be injected into the session
-// rather than sent to Telegram.
+// rather than sent to the user.
 func (m *ManaWatcher) CheckRestore(manaStr string) string {
 	if m == nil || manaStr == "" || m.restoreThreshold == 0 {
 		return ""

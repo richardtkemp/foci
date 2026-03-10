@@ -21,7 +21,7 @@ type SessionAppender interface {
 }
 
 // SessionNotifyFn handles routing a response back to the target session's
-// own Telegram chat, rather than the calling session.
+// own chat, rather than the calling session.
 type SessionNotifyFn func(sessionKey, message string)
 
 // NewSendToSessionTool creates a tool that injects a user-role message into
@@ -32,7 +32,7 @@ type SessionNotifyFn func(sessionKey, message string)
 func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn) *Tool {
 	return &Tool{
 		Name:        "send_to_session",
-		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own Telegram chat instead.",
+		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own chat instead.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -47,7 +47,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				"reply_to": {
 					"type": "string",
 					"enum": ["caller", "session"],
-					"description": "Where the target's reply goes: 'caller' (back to this session, default) or 'session' (to the target session's own Telegram chat)"
+					"description": "Where the target's reply goes: 'caller' (back to this session, default) or 'session' (to the target session's own chat)"
 				}
 			},
 			"required": ["session_key", "message"]

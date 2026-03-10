@@ -1,10 +1,10 @@
 // Package bitwarden provides a dynamic secret store backed by the Bitwarden CLI.
 // It caches vault metadata (names, URIs, folders) locally and fetches individual
-// passwords on demand via aisudo, which routes through Telegram approval.
+// passwords on demand via aisudo, which routes through user approval.
 //
 // Two-tier security model:
 //   - "bw list items" runs as the bitwarden system user via aisudo (allowlisted, auto-approved)
-//   - "bw get password <id>" runs as the bitwarden system user via aisudo (requires Telegram approval)
+//   - "bw get password <id>" runs as the bitwarden system user via aisudo (requires user approval)
 //
 // Secrets are cached with a configurable TTL and automatically cleaned up.
 package bitwarden
@@ -56,7 +56,7 @@ type Executor interface {
 
 // DefaultExecutor runs bw commands via aisudo as the bitwarden system user.
 //   - "list" subcommand → `sudo -u bitwarden bw list items ...` (allowlisted, auto-approved)
-//   - "get" subcommand → `sudo -u bitwarden bw get password ...` (requires Telegram approval)
+//   - "get" subcommand → `sudo -u bitwarden bw get password ...` (requires user approval)
 //
 // The bitwarden user reads its own session file — foci never sees the session token.
 type DefaultExecutor struct {
@@ -219,7 +219,7 @@ func matchesItem(item Item, query string) bool {
 
 // GetPassword returns the cached password for an item, fetching it via the
 // executor if not cached or expired. This call may block waiting for aisudo
-// approval (Telegram). On denial, returns an error.
+// approval. On denial, returns an error.
 func (s *Store) GetPassword(id string) (string, error) {
 	s.mu.RLock()
 	if cv, ok := s.values[id]; ok && time.Now().Before(cv.expires) {
@@ -228,7 +228,7 @@ func (s *Store) GetPassword(id string) (string, error) {
 	}
 	s.mu.RUnlock()
 
-	// Fetch via executor — may block for Telegram approval
+	// Fetch via executor — may block for user approval
 	log.Infof("bitwarden", "fetching password for %s (requires approval)", id)
 	val, err := s.exec.Run("get", "password", id)
 	if err != nil {

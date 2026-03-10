@@ -86,7 +86,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 				}
 				if bot := p.botMgr.BotForSessionOrPrimary(sk, agentID); bot != nil {
 					if err := bot.SendToSession(sk, resp); err != nil {
-						log.Errorf("warning", "[%s] proactive warning telegram delivery: %v", agentID, err)
+						log.Errorf("warning", "[%s] proactive warning platform delivery: %v", agentID, err)
 					}
 				}
 			},
@@ -133,7 +133,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
 
-	// Wire Telegram bot callbacks to periodic runner
+	// Wire platform bot callbacks to periodic runner
 	if bot := p.botMgr.PrimaryBot(acfg.ID); bot != nil {
 		bot.OnUserMessage = func() {
 			runner.NotifyInteraction()

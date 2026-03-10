@@ -64,10 +64,10 @@ func runShutdown(
 		}
 	}
 
-	// Cancel context — stops Telegram bots and cleans up goroutines
+	// Cancel context — stops platform bots and cleans up goroutines
 	cancel()
 
-	// Wait for Telegram bots to finish cleanup
+	// Wait for platform bots to finish cleanup
 	botMgr.Wait()
 }
 
