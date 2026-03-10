@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"time"
 
 	"foci/internal/command"
@@ -145,6 +146,17 @@ func (p *telegramProvider) ToolDetailStore() platform.ToolDetailStore {
 		return nil
 	}
 	return p.toolDetailStore
+}
+
+func (p *telegramProvider) AgentPreFlight(agentID string) []string {
+	tokenSecret := "telegram." + agentID
+	if _, ok := p.deps.SecretStore.Get(tokenSecret); !ok {
+		return []string{fmt.Sprintf(
+			"Secret `%s` not found — add it with `/secrets set %s <token>` before starting.",
+			tokenSecret, tokenSecret,
+		)}
+	}
+	return nil
 }
 
 func (p *telegramProvider) Close() error {

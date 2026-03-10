@@ -9,13 +9,13 @@ import (
 	"foci/internal/provision"
 )
 
-func testDeps(agents []AgentInfo, secrets []string) AgentNewDeps {
+func testDeps(agents []AgentInfo, preFlightFn func(string) []string) AgentNewDeps {
 	return AgentNewDeps{
 		ConfigPath:  filepath.Join(os.TempDir(), "test-foci.toml"),
 		DefaultsDir: "",
 		HomeDir:     os.TempDir(),
 		ListFn:      func() []AgentInfo { return agents },
-		SecretNames: func() []string { return secrets },
+		PreFlightFn: preFlightFn,
 	}
 }
 
@@ -23,7 +23,7 @@ func testDeps(agents []AgentInfo, secrets []string) AgentNewDeps {
 func TestAgentWizardHappyPath(t *testing.T) {
 	deps := testDeps(
 		[]AgentInfo{{ID: "existing"}},
-		[]string{"telegram.greek-tutor"},
+		nil, // no pre-flight warnings
 	)
 
 	var captured *agentWizard
@@ -72,7 +72,7 @@ func TestAgentWizardHappyPath(t *testing.T) {
 
 // Verifies that empty or unparseable names are rejected.
 func TestAgentWizardInvalidName(t *testing.T) {
-	deps := testDeps(nil, nil)
+	deps := testDeps(nil, nil) // no agents, no pre-flight
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
@@ -100,7 +100,7 @@ func TestAgentWizardInvalidName(t *testing.T) {
 
 // Verifies that a name matching an existing agent's ID is rejected.
 func TestAgentWizardDuplicateName(t *testing.T) {
-	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)
+	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil) // no pre-flight
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
@@ -115,7 +115,7 @@ func TestAgentWizardDuplicateName(t *testing.T) {
 
 // Verifies that the ID is correctly slugified from the display name.
 func TestAgentWizardSlugFromName(t *testing.T) {
-	deps := testDeps(nil, nil)
+	deps := testDeps(nil, nil) // no pre-flight
 	w := newAgentWizard(deps)
 	var captured *agentWizard
 	w.createFn = func(wiz *agentWizard) (string, error) {
@@ -135,30 +135,32 @@ func TestAgentWizardSlugFromName(t *testing.T) {
 	}
 }
 
-// Verifies the missing token secret warning appears after the model step.
-func TestAgentWizardTokenWarning(t *testing.T) {
-	deps := testDeps(nil, []string{"telegram.existing"})
+// Verifies that pre-flight warnings appear after the model step.
+func TestAgentWizardPreFlightWarning(t *testing.T) {
+	deps := testDeps(nil, func(agentID string) []string {
+		return []string{"Secret `platform." + agentID + "` not found"}
+	})
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
 	w.Handle("New Agent") // name → id="new-agent"
 
-	// Model step — token secret telegram.new-agent doesn't exist
+	// Model step — pre-flight returns a warning
 	resp, done := w.Handle("sonnet")
 	if done {
 		t.Error("should not be done after model step")
 	}
 	if !strings.Contains(resp, "not found") {
-		t.Errorf("expected warning about missing secret, got %q", resp)
+		t.Errorf("expected pre-flight warning, got %q", resp)
 	}
 	if !strings.Contains(resp, "Character files") {
 		t.Errorf("should still prompt for next step, got %q", resp)
 	}
 }
 
-// Verifies no warning when the token secret exists.
-func TestAgentWizardExistingSecret(t *testing.T) {
-	deps := testDeps(nil, []string{"telegram.myagent"})
+// Verifies no warning when pre-flight returns nothing.
+func TestAgentWizardNoPreFlightWarning(t *testing.T) {
+	deps := testDeps(nil, func(agentID string) []string { return nil })
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
@@ -168,8 +170,8 @@ func TestAgentWizardExistingSecret(t *testing.T) {
 	if done {
 		t.Error("should not be done after model step")
 	}
-	if strings.Contains(resp, "not found") {
-		t.Errorf("should NOT warn for existing secret, got %q", resp)
+	if strings.Contains(resp, "⚠️") {
+		t.Errorf("should NOT show warnings, got %q", resp)
 	}
 }
 
@@ -197,7 +199,7 @@ func TestAgentWizardModelResolution(t *testing.T) {
 
 // Verifies copying character files from an existing agent.
 func TestAgentWizardCharModeCopy(t *testing.T) {
-	deps := testDeps([]AgentInfo{{ID: "clutch"}}, []string{"telegram.newagent"})
+	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)
 	w := newAgentWizard(deps)
 	var captured *agentWizard
 	w.createFn = func(wiz *agentWizard) (string, error) {
@@ -220,7 +222,7 @@ func TestAgentWizardCharModeCopy(t *testing.T) {
 
 // Verifies that copying from a nonexistent agent is rejected.
 func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
-	deps := testDeps([]AgentInfo{{ID: "clutch"}}, []string{"telegram.newagent"})
+	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
 
@@ -238,7 +240,7 @@ func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
 
 // Verifies the openclaw character mode.
 func TestAgentWizardCharModeOpenclaw(t *testing.T) {
-	deps := testDeps(nil, []string{"telegram.oc-agent"})
+	deps := testDeps(nil, nil)
 	w := newAgentWizard(deps)
 	var mode string
 	w.createFn = func(wiz *agentWizard) (string, error) {
@@ -256,7 +258,7 @@ func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 
 // Verifies blank, defaults (empty input), and invalid character modes.
 func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
-	deps := testDeps(nil, []string{"telegram.agent1", "telegram.agent2", "telegram.agent3"})
+	deps := testDeps(nil, nil)
 
 	// Test "blank"
 	w := newAgentWizard(deps)
@@ -324,7 +326,6 @@ func TestCreateWorkspace(t *testing.T) {
 		DefaultsDir: defaultsDir,
 		HomeDir:     tmpDir,
 		ListFn:      func() []AgentInfo { return nil },
-		SecretNames: func() []string { return nil },
 	}
 
 	w := &agentWizard{
@@ -408,7 +409,6 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 		DefaultsDir: filepath.Join(tmpDir, "nonexistent-defaults"),
 		HomeDir:     tmpDir,
 		ListFn:      func() []AgentInfo { return nil },
-		SecretNames: func() []string { return nil },
 	}
 
 	w := &agentWizard{
@@ -523,7 +523,6 @@ func TestAgentsNewSubcommand(t *testing.T) {
 		DefaultsDir: "/tmp/defaults",
 		HomeDir:     "/tmp",
 		ListFn:      func() []AgentInfo { return nil },
-		SecretNames: func() []string { return nil },
 	}
 	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, reg, deps)
 

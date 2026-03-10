@@ -1,7 +1,7 @@
 package provision
 
 // Tests for provision package are split into 5 focused test files:
-// - provision_validation_test.go: IsValidAgentID, IsValidBotToken, IsValidUserID, ResolveModelAlias
+// - provision_validation_test.go: IsValidAgentID, ResolveModelAlias
 // - provision_config_test.go: GenerateAgentBlock, GenerateCrontab, template rendering
 // - provision_files_test.go: File operations (copyDir, copyFile, templateSoulFile)
 // - provision_integration_test.go: Full Provision workflows (defaults, openclaw, blank, copy modes)
@@ -17,8 +17,6 @@ package provision
 
 // Validation tests (provision_validation_test.go):
 // - TestIsValidAgentID: Validates agent ID rules (lowercase, hyphens only)
-// - TestIsValidBotToken: Validates Telegram bot token format
-// - TestIsValidUserID: Validates numeric user ID constraints
 // - TestResolveModelAlias: Tests opus/sonnet/haiku alias resolution
 
 // Configuration generation tests (provision_config_test.go):

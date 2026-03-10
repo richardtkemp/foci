@@ -15,7 +15,7 @@ type AgentNewDeps struct {
 	DefaultsDir  string // path to shared/defaults/
 	HomeDir      string // base dir for workspaces (e.g. /home/foci)
 	ListFn       func() []AgentInfo
-	SecretNames  func() []string // current secret names
+	PreFlightFn  func(agentID string) []string // platform pre-flight warnings
 	ResolveModel func(string) string
 }
 
@@ -84,20 +84,12 @@ func (w *agentWizard) handleModel(text string) (string, bool) {
 	}
 	w.model = resolve(text)
 
-	// Derive token secret and check if it exists
-	tokenSecret := "telegram." + w.id
+	// Run platform pre-flight checks
 	var warning string
-	found := false
-	if w.deps.SecretNames != nil {
-		for _, name := range w.deps.SecretNames() {
-			if name == tokenSecret {
-				found = true
-				break
-			}
+	if w.deps.PreFlightFn != nil {
+		if warnings := w.deps.PreFlightFn(w.id); len(warnings) > 0 {
+			warning = "\n⚠️  " + strings.Join(warnings, "\n⚠️  ")
 		}
-	}
-	if !found {
-		warning = fmt.Sprintf("\n⚠️  Secret `%s` not found — you'll need to add it with `/secrets set %s <token>` before starting.", tokenSecret, tokenSecret)
 	}
 
 	w.step = 2

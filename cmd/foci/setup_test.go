@@ -6,8 +6,11 @@ import (
 	"testing"
 
 	"foci/internal/provision"
+
+	_ "foci/internal/telegram" // register provider for SetupProviders
 )
 
+// Verifies parseSetupFlags correctly parses all supported flags.
 func TestParseSetupFlags(t *testing.T) {
 	args := []string{
 		"--config-dir", "/home/foci/config",
@@ -29,11 +32,11 @@ func TestParseSetupFlags(t *testing.T) {
 	if !f.nonInteractive {
 		t.Error("nonInteractive should be true")
 	}
-	if f.botToken != "123:ABC-test" {
-		t.Errorf("botToken = %q, want 123:ABC-test", f.botToken)
+	if f.providerFlags["bot-token"] != "123:ABC-test" {
+		t.Errorf("providerFlags[bot-token] = %q, want 123:ABC-test", f.providerFlags["bot-token"])
 	}
-	if f.userID != "12345678" {
-		t.Errorf("userID = %q, want 12345678", f.userID)
+	if f.providerFlags["user-id"] != "12345678" {
+		t.Errorf("providerFlags[user-id] = %q, want 12345678", f.providerFlags["user-id"])
 	}
 	if f.agentID != "fotini" {
 		t.Errorf("agentID = %q, want fotini", f.agentID)
@@ -52,6 +55,7 @@ func TestParseSetupFlags(t *testing.T) {
 	}
 }
 
+// Verifies parseSetupFlags applies sensible defaults when no flags are given.
 func TestParseSetupFlagsDefaults(t *testing.T) {
 	f := parseSetupFlags(nil)
 
@@ -71,22 +75,8 @@ func TestParseSetupFlagsDefaults(t *testing.T) {
 	}
 }
 
+// Verifies provision.IsValidAgentID works correctly through the setup code path.
 func TestValidationFunctions(t *testing.T) {
-	// These now delegate to provision package — verify they work through the setup code path
-	if !provision.IsValidBotToken("123456789:AAF-abcdefghijklmnopqrstuv") {
-		t.Error("expected valid bot token")
-	}
-	if provision.IsValidBotToken("invalid") {
-		t.Error("expected invalid bot token")
-	}
-
-	if !provision.IsValidUserID("12345678") {
-		t.Error("expected valid user ID")
-	}
-	if provision.IsValidUserID("ab") {
-		t.Error("expected invalid user ID")
-	}
-
 	if !provision.IsValidAgentID("my-agent") {
 		t.Error("expected valid agent ID")
 	}
@@ -95,8 +85,7 @@ func TestValidationFunctions(t *testing.T) {
 	}
 }
 
+// Verifies findRepoDefaults doesn't panic regardless of working directory.
 func TestFindRepoDefaults(t *testing.T) {
-	// This test just verifies the function doesn't panic
-	// The actual result depends on where tests are run from
 	_ = findRepoDefaults()
 }
