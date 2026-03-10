@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -108,4 +110,119 @@ func (g *RateLimitGate) DrainQueue() []QueuedItem {
 	g.until = time.Time{}
 	g.noHeaderStreak = 0
 	return items
+}
+
+// DrainRateLimitQueue checks if any rate limit gates have opened, and replays
+// queued messages through HandleMessage. Called from keepalive tick.
+func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
+	a.rateLimitGatesMu.RLock()
+	gates := make(map[string]*RateLimitGate, len(a.rateLimitGates))
+	for endpoint, gate := range a.rateLimitGates {
+		gates[endpoint] = gate
+	}
+	a.rateLimitGatesMu.RUnlock()
+
+	// Drain each endpoint's queue
+	for endpoint, gate := range gates {
+		items := gate.DrainQueue()
+		if len(items) == 0 {
+			continue
+		}
+
+		a.logger().Infof("rate limit lifted for %s, replaying %d queued items", endpoint, len(items))
+		for i, item := range items {
+			itemCtx := WithTrigger(ctx, item.Trigger)
+			resp, err := a.HandleMessage(itemCtx, item.SessionKey, item.Message)
+			if err != nil {
+				a.logger().Errorf("replay queued message session=%s trigger=%s: %v", item.SessionKey, item.Trigger, err)
+				// If we hit another rate limit on THIS endpoint, stop replaying its queue
+				var rlErr *RateLimitedError
+				if errors.As(err, &rlErr) {
+					a.logger().Infof("rate limited again during replay on %s, %d items re-queued", endpoint, len(items)-i)
+					break // stop replaying THIS endpoint, but continue with others
+				}
+				continue
+			}
+			if resp != "" {
+				a.logger().Debugf("replayed message session=%s trigger=%s response_len=%d", item.SessionKey, item.Trigger, len(resp))
+			}
+		}
+	}
+}
+
+// getOrCreateRateLimitGate returns the rate limit gate for the given endpoint,
+// creating it if it doesn't exist yet. Thread-safe.
+func (a *Agent) getOrCreateRateLimitGate(endpoint string) *RateLimitGate {
+	if endpoint == "" {
+		endpoint = a.Endpoint
+	}
+
+	// Fast path: read lock
+	a.rateLimitGatesMu.RLock()
+	if gate, ok := a.rateLimitGates[endpoint]; ok {
+		a.rateLimitGatesMu.RUnlock()
+		return gate
+	}
+	a.rateLimitGatesMu.RUnlock()
+
+	// Slow path: write lock
+	a.rateLimitGatesMu.Lock()
+	defer a.rateLimitGatesMu.Unlock()
+
+	// Double-check (another goroutine might have created it)
+	if gate, ok := a.rateLimitGates[endpoint]; ok {
+		return gate
+	}
+
+	// Lazy init map
+	if a.rateLimitGates == nil {
+		a.rateLimitGates = make(map[string]*RateLimitGate)
+	}
+
+	// Create new gate
+	gate := &RateLimitGate{}
+	a.rateLimitGates[endpoint] = gate
+	return gate
+}
+
+// CanFireBackgroundOperation checks if a background operation can run on the given session.
+// Returns false if:
+//   - The rate limit gate for the session's endpoint is closed
+//   - Mana is insufficient (session-aware check using agent's configured invest interval)
+func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey string) (bool, string) {
+	if sessionKey == "" {
+		return false, "no session key"
+	}
+
+	// Resolve session's endpoint
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	endpoint := sm.modelEndpoint
+	if endpoint == "" {
+		endpoint = a.Endpoint
+	}
+	a.metaMu.Unlock()
+
+	// Check 1: Rate limit gate for this endpoint
+	gate := a.getOrCreateRateLimitGate(endpoint)
+	if limited, until := gate.IsLimited(); limited {
+		resetStr := mana.ParseResetTime(until.Format(time.RFC3339Nano))
+		if resetStr == "" {
+			resetStr = until.Format(time.Kitchen)
+		}
+		return false, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, resetStr)
+	}
+
+	// Check 2: Mana availability (session-aware)
+	if a.ManaInvestInterval > 0 {
+		usageClient := a.SessionUsageClient(sessionKey)
+		if usageClient != nil {
+			monitor := mana.NewMonitor(usageClient)
+			if !monitor.IsGoodFor(ctx, a.ManaInvestInterval) {
+				return false, "mana insufficient"
+			}
+		}
+	}
+
+	return true, ""
 }
