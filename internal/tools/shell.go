@@ -252,7 +252,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		var err error
 		bridge, err = NewExecBridge(registry, bridgeCtx)
 		if err != nil {
-			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
+			log.Debugf("exec", "session=%s exec bridge creation failed (continuing without): %v", sessionKey, err)
 		} else {
 			cmd = fmt.Sprintf("%s; source %s; %s", execPreamble(), bridge.FuncsPath(), cmd)
 		}
@@ -318,7 +318,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 
 	case <-time.After(threshold):
 		// Threshold exceeded — auto-background
-		log.Infof("exec", "auto-backgrounding after %v: %s", threshold, truncateCmd(displayCmd, 100))
+		log.Infof("exec", "session=%s auto-backgrounding after %v: %s", sessionKey, threshold, truncateCmd(displayCmd, 100))
 		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
 			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 
@@ -330,7 +330,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		// NOTE: async results live only in goroutine memory and are lost
 		// on process restart. Persisting them (e.g. to a spool file)
 		// would require plumbing a workspace path here; left as future work.
-		log.Infof("exec", "turn cancelled, backgrounding: %s", truncateCmd(displayCmd, 100))
+		log.Infof("exec", "session=%s turn cancelled, backgrounding: %s", sessionKey, truncateCmd(displayCmd, 100))
 		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
 			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 		return ToolResult{}, ctx.Err()
