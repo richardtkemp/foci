@@ -67,9 +67,8 @@ func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (ToolResult,
 		return ToolResult{}, fmt.Errorf("name is required for unwatch")
 	}
 
-	log.Debugf("tmux", "unwatch: name=%s", name)
-
 	sessionKey := SessionKeyFromContext(ctx)
+	log.Debugf("tmux", "unwatch: session=%s name=%s", sessionKey, name)
 
 	inst.mu.Lock()
 	// Collect watches matching this session name and session key

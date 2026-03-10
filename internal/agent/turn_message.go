@@ -28,7 +28,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 		})
 		if msg := a.ManaWatcher.CheckRestore(manaStr); msg != "" {
 			manaRestoreNote = "[" + msg + "]\n"
-			log.Infof("mana", "restore: %s", msg)
+			log.Infof("mana", "session=%s restore: %s", sessionKey, msg)
 		}
 	}
 

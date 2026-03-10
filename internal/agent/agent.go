@@ -1585,8 +1585,8 @@ func logCacheDebug(sessionKey string, system []provider.SystemBlock, messages []
 		}
 	}
 
-	log.Debugf("agent", "cache: system=%d blocks, ~%d tokens, breakpoint=%d; messages=%d, breakpoint=%d",
-		len(system), systemTokensEst, systemCacheIdx, len(messages), msgCacheIdx)
+	log.Debugf("agent", "cache: session=%s system=%d blocks, ~%d tokens, breakpoint=%d; messages=%d, breakpoint=%d",
+		sessionKey, len(system), systemTokensEst, systemCacheIdx, len(messages), msgCacheIdx)
 
 	// Warn about minimum token thresholds
 	minTokens := 2048 // Haiku default
