@@ -14,20 +14,30 @@ import (
 	"foci/internal/secrets"
 )
 
+const readToolSchema = `{
+	"type": "object",
+	"properties": {
+		"path": {
+			"type": "string",
+			"description": "Path to the file to read"
+		},
+		"offset": {
+			"type": "integer",
+			"description": "Line number to start reading from (1-based, default: 1)"
+		},
+		"limit": {
+			"type": "integer",
+			"description": "Maximum number of lines to return (default: 2000)"
+		}
+	},
+	"required": ["path"]
+}`
+
 func NewReadTool(store *secrets.Store) *Tool {
 	return &Tool{
 		Name:        "read",
-		Description: "Read the contents of a file (line-numbered) or list a directory.",
-		Parameters: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"path": {
-					"type": "string",
-					"description": "Path to the file to read"
-				}
-			},
-			"required": ["path"]
-		}`),
+		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
+		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return readFile(ctx, params, store, "")
 		},
@@ -89,17 +99,8 @@ func NewEditTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool 
 func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 	return &Tool{
 		Name:        "read",
-		Description: "Read the contents of a file (line-numbered) or list a directory.",
-		Parameters: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"path": {
-					"type": "string",
-					"description": "Path to the file to read"
-				}
-			},
-			"required": ["path"]
-		}`),
+		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
+		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return readFile(ctx, params, store, baseDir)
 		},
@@ -251,7 +252,9 @@ func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) 
 
 func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (ToolResult, error) {
 	var p struct {
-		Path string `json:"path"`
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
@@ -310,16 +313,48 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 
 	content := string(data)
 	lines := strings.Split(content, "\n")
+	totalLines := len(lines)
 
-	const maxLines = 2000
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
-		lines = append(lines, fmt.Sprintf("... (%d lines truncated)", len(strings.Split(content, "\n"))-maxLines))
+	// Apply offset (1-based; 0 or unset means start from line 1)
+	startLine := 1
+	if p.Offset > 0 {
+		startLine = p.Offset
+	}
+	if startLine > totalLines {
+		return TextResult(fmt.Sprintf("(file has %d lines, offset %d is past end)", totalLines, startLine)), nil
 	}
 
+	// Apply limit (0 or unset means default 2000)
+	limit := 2000
+	if p.Limit > 0 {
+		limit = p.Limit
+	}
+
+	endLine := startLine - 1 + limit // inclusive index into 0-based slice
+	truncated := false
+	if endLine > totalLines {
+		endLine = totalLines
+	} else if endLine < totalLines {
+		truncated = true
+	}
+
+	selected := lines[startLine-1 : endLine]
+
+	// Determine line-number width for alignment
+	maxNum := endLine
+	width := len(fmt.Sprintf("%d", maxNum))
+	if width < 4 {
+		width = 4
+	}
+	fmtStr := fmt.Sprintf("%%%dd\t%%s\n", width)
+
 	var out strings.Builder
-	for i, line := range lines {
-		fmt.Fprintf(&out, "%4d\t%s\n", i+1, line)
+	for i, line := range selected {
+		fmt.Fprintf(&out, fmtStr, startLine+i, line)
+	}
+	if truncated {
+		remaining := totalLines - endLine
+		fmt.Fprintf(&out, "... (%d lines remaining)\n", remaining)
 	}
 	return TextResult(out.String()), nil
 }
