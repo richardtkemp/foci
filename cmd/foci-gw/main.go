@@ -224,11 +224,10 @@ Subcommands:
 			ttsMap:              ttsMap,
 			sttMap:              sttMap,
 			braveKey:            braveKey,
-			botMgr:              botMgr,
-			startTime:             startTime,
-			ctx:                   ctx,
-			agentListFn:           agentListFn,
-			agentResolverFn:       agentResolverFn,
+			startTime:           startTime,
+			ctx:                 ctx,
+			agentListFn:         agentListFn,
+			agentResolverFn:     agentResolverFn,
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
@@ -271,12 +270,12 @@ Subcommands:
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	if si.stateStore != nil {
-		restoreMultiballSessions(botMgr, si.stateStore, si.sessions, agents, agentOrder, cfg)
+		restoreMultiballSessions(si.stateStore, si.sessions, agents, agentOrder, cfg)
 	}
-	botMgr.StartAll(ctx)
+	telegram.DefaultManager().StartAll(ctx)
 
 	// ========== Startup notifications ==========
-	sendStartupNotifications(agents, agentOrder, botMgr, si.stateStore, cfg, startTime)
+	sendStartupNotifications(agents, agentOrder, telegram.DefaultManager(), si.stateStore, cfg, startTime)
 
 	// ========== HTTP server ==========
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
@@ -296,7 +295,6 @@ Subcommands:
 		agentOrder:        agentOrder,
 		stateStore:        si.stateStore,
 		sessions:          si.sessions,
-		botMgr:            botMgr,
 		cfg:               cfg,
 		ctx:               ctx,
 		ttsMap:            ttsMap,

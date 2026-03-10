@@ -22,7 +22,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/mana"
-	"foci/prompts"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
@@ -32,17 +31,18 @@ import (
 	"foci/internal/telegram"
 	"foci/internal/tools"
 	"foci/internal/workspace"
+	"foci/prompts"
 )
 
 // cmdRegParams holds all dependencies needed for slash command registration.
 type cmdRegParams struct {
 	// Per-agent state
-	ag                *agent.Agent
-	acfg              config.AgentConfig
-	defaultSessionKey func() string
-	sessionKeyFromCtx func(context.Context) string
-	bootstrap         *workspace.Bootstrap
-	promptSearchDirs  []string
+	ag                  *agent.Agent
+	acfg                config.AgentConfig
+	defaultSessionKey   func() string
+	sessionKeyFromCtx   func(context.Context) string
+	bootstrap           *workspace.Bootstrap
+	promptSearchDirs    []string
 	compactionThreshold float64
 
 	// Shared infrastructure
@@ -54,7 +54,6 @@ type cmdRegParams struct {
 	client              provider.Client
 	clientProvider      provider.ClientProvider
 	usageClientProvider provider.UsageClientProvider
-	botMgr              *telegram.BotManager
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
 	startTime           time.Time
@@ -285,7 +284,6 @@ func runReset(p cmdRegParams) error {
 	return nil
 }
 
-
 // runConfig handles the /config command.
 func runConfig(p cmdRegParams, _ context.Context, args string) (string, error) {
 	switch strings.TrimSpace(strings.ToLower(args)) {
@@ -437,7 +435,7 @@ func buildPromptsData(p cmdRegParams) command.PromptsData {
 // buildSendDocFn returns a function that sends a document via the agent's primary bot.
 func buildSendDocFn(p cmdRegParams) func(path string) error {
 	return func(path string) error {
-		bot := p.botMgr.PrimaryBot(p.acfg.ID)
+		bot := telegram.DefaultManager().PrimaryBot(p.acfg.ID)
 		if bot == nil {
 			return fmt.Errorf("no bot available")
 		}
@@ -533,10 +531,10 @@ func runReload(p cmdRegParams) (string, error) {
 
 // forkMultiball forks the current session to a secondary multiball bot.
 func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) (string, error) {
-	if !p.botMgr.HasMultiball(p.acfg.ID) {
+	if !telegram.DefaultManager().HasMultiball(p.acfg.ID) {
 		return "", fmt.Errorf("no multiball bots configured")
 	}
-	secBot, ok := p.botMgr.AcquireMultiball(p.acfg.ID)
+	secBot, ok := telegram.DefaultManager().AcquireMultiball(p.acfg.ID)
 	if !ok {
 		return "", fmt.Errorf("all multiball bots are busy")
 	}
@@ -546,7 +544,7 @@ func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) 
 
 	parentKey := p.defaultSessionKey()
 	if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-		if bot := p.botMgr.PrimaryBot(p.acfg.ID); bot != nil {
+		if bot := telegram.DefaultManager().PrimaryBot(p.acfg.ID); bot != nil {
 			parentKey = bot.SessionKeyForChat(chatID)
 		} else {
 			parentKey = telegram.NewSessionKeyForChat(p.acfg.ID, chatID)
@@ -577,7 +575,7 @@ func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) 
 	}
 
 	secBot.SetSessionKey(branchKey)
-	if primaryBot := p.botMgr.PrimaryBot(p.acfg.ID); primaryBot != nil {
+	if primaryBot := telegram.DefaultManager().PrimaryBot(p.acfg.ID); primaryBot != nil {
 		secBot.SetChatID(primaryBot.ChatID())
 	}
 	secBot.SendNotification("🎱 Forked from main. What do you need?")
@@ -622,7 +620,7 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 		if p.ag.CompactionDebugFunc != nil && summary != "" {
 			p.ag.CompactionDebugFunc(sk, summary)
 		} else if summary != "" {
-			if bot := p.botMgr.PrimaryBot(p.acfg.ID); bot != nil {
+			if bot := telegram.DefaultManager().PrimaryBot(p.acfg.ID); bot != nil {
 				f, tmpErr := os.CreateTemp("", "compaction-dryrun-*.md")
 				if tmpErr == nil {
 					if _, writeErr := f.WriteString(summary); writeErr == nil {

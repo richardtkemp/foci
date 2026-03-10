@@ -11,9 +11,9 @@ import (
 	"foci/internal/memory"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/prompts"
 	"foci/internal/telegram"
 	"foci/internal/tools"
+	"foci/prompts"
 )
 
 // newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.
@@ -21,7 +21,6 @@ import (
 func newAsyncNotifier(
 	getAgent func() *agent.Agent,
 	defaultSessionKey func() string,
-	botMgr *telegram.BotManager,
 	agentID string,
 	ctx context.Context,
 	sessions tools.SessionAppender,
@@ -32,6 +31,8 @@ func newAsyncNotifier(
 			if target == "" {
 				target = defaultSessionKey()
 			}
+
+			botMgr := telegram.DefaultManager()
 
 			// If replyToSession is set, route response back to caller
 			if replyToSession != "" {
@@ -55,7 +56,7 @@ func newAsyncNotifier(
 					Content: provider.TextContent(formattedResp),
 				}
 				writer := sessions.For(replyToSession)
-			if err := writer.Append(replyToSession, msg); err != nil {
+				if err := writer.Append(replyToSession, msg); err != nil {
 					log.Errorf("async_notify", "failed to append to caller %s: %v", replyToSession, err)
 					return
 				}
@@ -122,7 +123,6 @@ func newAsyncNotifier(
 // dispatching the message to the target agent and delivering the response.
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
-	botMgr *telegram.BotManager,
 	ctx context.Context,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
@@ -149,6 +149,7 @@ func newSessionNotifyFn(
 				return
 			}
 
+			botMgr := telegram.DefaultManager()
 			bot := botMgr.BotForSessionOrPrimary(targetSessionKey, targetAgentID)
 			if bot == nil {
 				log.Warnf("session_notify", "no bot for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)

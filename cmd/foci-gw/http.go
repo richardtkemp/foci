@@ -19,16 +19,15 @@ import (
 
 // httpHandlerDeps holds shared state needed by HTTP endpoint handlers.
 type httpHandlerDeps struct {
-	agents             map[string]*agentInstance
-	agentOrder         []string
-	stateStore         *state.Store
-	sessions           *session.Store
-	botMgr             *telegram.BotManager
-	cfg                *config.Config
-	ctx                context.Context
-	ttsMap             map[string]voice.TTS
-	sttMap             map[string]voice.STT
-	reloadCredentials  func() error // hot-reload credentials from secrets.toml (nil if not supported)
+	agents            map[string]*agentInstance
+	agentOrder        []string
+	stateStore        *state.Store
+	sessions          *session.Store
+	cfg               *config.Config
+	ctx               context.Context
+	ttsMap            map[string]voice.TTS
+	sttMap            map[string]voice.STT
+	reloadCredentials func() error
 }
 
 // checkActivityGate checks activity conditions (if_active/if_inactive) and returns false if the request should be skipped.
@@ -122,7 +121,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 // asyncDispatch handles async fire-and-forget requests: sends the agent message
 // in a goroutine, writes a 202 response, and optionally delivers the result via Telegram.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Context,
-	sessionKey, text, logTag string, botMgr *telegram.BotManager, silent bool) {
+	sessionKey, text, logTag string, silent bool) {
 	go func() {
 		resp, err := inst.ag.HandleMessage(ctx, sessionKey, text)
 		if err != nil {
@@ -130,7 +129,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Conte
 			return
 		}
 		if resp != "" && !silent {
-			if bot := botMgr.BotForSessionOrPrimary(sessionKey, inst.id); bot != nil {
+			if bot := telegram.DefaultManager().BotForSessionOrPrimary(sessionKey, inst.id); bot != nil {
 				if err := bot.SendToSession(sessionKey, resp); err != nil {
 					log.Errorf(logTag, "async telegram delivery: %v", err)
 				}
