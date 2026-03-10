@@ -86,7 +86,7 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 - Send: text messages, markdown formatting, voice notes, file attachments (beta)
 - Route incoming messages to the correct agent session
 - DM only for alpha; group chat support in beta
-- Startup notification: sends "botname restarted at HH:MM:SS" to the last active chat. Controlled by global `enable_startup_notify` (default true) with per-agent override via `startup_notification`. Set to `false` for silent bots (e.g., cron-only agents).
+- Startup notification: sends "botname restarted at HH:MM:SS" to the last active chat. Controlled by global `[defaults] enable_startup_notify` (default true) with per-agent override via `startup_notify`. Set to `false` for silent bots (e.g., cron-only agents).
 - Crash/reboot detection: on startup, classifies restart as clean/crash/reboot by comparing last shutdown timestamp with system uptime. Unexpected restarts include diagnostic findings (ERROR/FATAL lines from logs) in the notification. Clean shutdown timestamp recorded on graceful exit via signal handler.
 
 ### Multi-Bot Sessions (/multiball)

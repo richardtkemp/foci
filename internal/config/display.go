@@ -301,8 +301,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.StreamUpdateInterval != "" {
 		add("stream_update_interval", agent.StreamUpdateInterval)
 	}
-	if agent.StartupNotification != nil {
-		add("startup_notification", *agent.StartupNotification)
+	if agent.StartupNotify != nil {
+		add("startup_notify", *agent.StartupNotify)
 	}
 	if agent.ShowToolCalls != nil {
 		add("show_tool_calls", string(*agent.ShowToolCalls))
@@ -801,8 +801,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
 	}
 	// Only show agent override options when the global fallback isn't covering them.
-	if agent.StartupNotification == nil && !cfg.Telegram.EnableStartupNotify {
-		opts = append(opts, availableOption{"agent", "startup_notification", "(global)", "send startup notification (nil = use global)"})
+	if agent.StartupNotify == nil && !cfg.Defaults.EnableStartupNotify {
+		opts = append(opts, availableOption{"agent", "startup_notify", "(global)", "send startup notification (nil = use global)"})
 	}
 	if agent.ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil && *cfg.Defaults.ShowToolCalls == ToolCallOff {
 		opts = append(opts, availableOption{"agent", "show_tool_calls", "(defaults)", "tool call display mode: off, preview, full (nil = use defaults)"})

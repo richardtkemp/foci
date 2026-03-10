@@ -22,7 +22,7 @@ type ConversationEntry struct {
 	Error     string // non-empty if send failed
 }
 
-// ConversationLog writes Telegram messages to a SQLite database.
+// ConversationLog writes platform messages to a SQLite database.
 type ConversationLog struct {
 	db *sql.DB
 	mu sync.Mutex

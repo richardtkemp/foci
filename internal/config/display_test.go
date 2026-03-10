@@ -219,7 +219,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.MultiballBots = []string{"mb1"}
 	agent.TTSRate = 1.3
 	boolTrue := true
-	agent.StartupNotification = &boolTrue
+	agent.StartupNotify = &boolTrue
 	showPreview := ToolCallPreview
 	agent.ShowToolCalls = &showPreview
 	showCompact := ShowThinkingCompact

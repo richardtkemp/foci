@@ -57,7 +57,6 @@ model = "claude-sonnet-4-20250514"
 #   stream_output = false
 #   stream_interval = "250ms"
 #   received_files_dir = "received"
-#   startup_notify = true
 #
 # Legacy format (still works, deprecated):
 #   telegram_bot = "myagent"
@@ -83,6 +82,7 @@ id = "myagent"
 # turn_lock_warn_threshold = "3m"
 # duplicate_messages = false
 # inject_agent_warnings = false
+# startup_notify = true                   # send startup notification (nil = use global)
 # tts_rate = 0.0
 # messages_in_log = false                 # log user message content (privacy)
 # branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
@@ -125,7 +125,6 @@ system_files = [
 # stream_output = false
 # stream_interval = "250ms"
 # received_files_dir = ""
-# startup_notify = true
 
 # ─── Agent: Legacy Telegram fields (DEPRECATED) ─────────────────────────
 # These fields are migrated to [agents.platforms.telegram] at load time.
@@ -141,7 +140,6 @@ system_files = [
 # stream_output = false                  # DEPRECATED: use platforms.telegram.stream_output
 # stream_update_interval = "250ms"       # DEPRECATED: use platforms.telegram.stream_interval
 # received_files_dir = "received"        # DEPRECATED: use platforms.telegram.received_files_dir
-# startup_notification = true            # DEPRECATED: use platforms.telegram.startup_notify
 
 # Per-agent compaction overrides:
 # compaction_threshold = 0.8

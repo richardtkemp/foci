@@ -71,8 +71,8 @@ id = "test"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].StartupNotification != nil {
-			t.Error("StartupNotification should default to nil (use global)")
+		if cfg.Agents[0].StartupNotify != nil {
+			t.Error("StartupNotify should default to nil (use global)")
 		}
 	})
 
@@ -82,7 +82,7 @@ id = "test"
 		toml := `
 [[agents]]
 id = "test"
-startup_notification = true
+startup_notify = true
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
@@ -90,8 +90,8 @@ startup_notification = true
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].StartupNotification == nil || !*cfg.Agents[0].StartupNotification {
-			t.Error("StartupNotification should be true")
+		if cfg.Agents[0].StartupNotify == nil || !*cfg.Agents[0].StartupNotify {
+			t.Error("StartupNotify should be true")
 		}
 	})
 
@@ -101,7 +101,7 @@ startup_notification = true
 		toml := `
 [[agents]]
 id = "test"
-startup_notification = false
+startup_notify = false
 `
 		os.WriteFile(path, []byte(toml), 0644)
 
@@ -109,8 +109,8 @@ startup_notification = false
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].StartupNotification == nil || *cfg.Agents[0].StartupNotification {
-			t.Error("StartupNotification should be false")
+		if cfg.Agents[0].StartupNotify == nil || *cfg.Agents[0].StartupNotify {
+			t.Error("StartupNotify should be false")
 		}
 	})
 }
