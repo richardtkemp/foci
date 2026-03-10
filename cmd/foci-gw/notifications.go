@@ -2,25 +2,22 @@ package main
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/state"
 	"foci/prompts"
 )
 
 // handleWelcomeAndFirstRun injects welcome file content and first-run onboarding prompts.
-func handleWelcomeAndFirstRun( // nolint:unparam
+func handleWelcomeAndFirstRun(
 	agents map[string]*agentInstance,
 	agentOrder []string,
 	sessions *session.Store,
 	stateStore *state.Store,
-	connMgr platform.ConnectionManager,
 	cfg *config.Config,
 	ctx context.Context,
 ) {
@@ -44,7 +41,10 @@ func handleWelcomeAndFirstRun( // nolint:unparam
 		}
 	}
 
-	// First-run onboarding — inject prompt for new agents
+	// First-run onboarding — inject prompt for new agents.
+	// The default session key becomes available after the first inbound
+	// platform message. If no message has been received yet, first-run
+	// is skipped and will fire on the next restart.
 	for _, agentID := range agentOrder {
 		inst := agents[agentID]
 		if msg := checkFirstRun(stateStore, inst.agentCfg); msg != "" {
@@ -52,26 +52,7 @@ func handleWelcomeAndFirstRun( // nolint:unparam
 			go func() {
 				sk := inst.defaultSessionKey()
 				if sk == "" {
-					// On first run, no Telegram message has arrived yet.
-					// Construct session key from first allowed user ID.
-					// Route through the bot's cache so the key is stable
-					// when the first real message arrives from this chat.
-					users := inst.agentCfg.AllowedUsers
-					if len(users) == 0 {
-						users = cfg.Telegram.AllowedUsers
-					}
-					if len(users) > 0 {
-						if chatID, err := strconv.ParseInt(users[0], 10, 64); err == nil {
-							if conn := connMgr.Primary(agentID); conn != nil {
-								sk = conn.SessionKeyForChat(chatID)
-							} else {
-								sk = session.NewChatSessionKey(agentID, chatID)
-							}
-						}
-					}
-				}
-				if sk == "" {
-					log.Warnf("main", "no default session for first-run injection on %s, skipping", agentID)
+					log.Warnf("main", "no default session for first-run on %s, skipping", agentID)
 					return
 				}
 				firstRunCtx := agent.WithTrigger(ctx, "first_run")

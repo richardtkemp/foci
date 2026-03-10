@@ -526,6 +526,7 @@ type DefaultsConfig struct {
 	SteerMode            bool    `toml:"steer_mode"`             // default steer_mode (default: true)
 	StreamOutput         bool    `toml:"stream_output"`          // default stream_output (default: false)
 	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")
+	EnableStartupNotify  bool    `toml:"enable_startup_notify"`  // send notification on startup (default true)
 }
 
 // ModelsConfig holds model-related configuration.
@@ -1021,6 +1022,19 @@ func migrateAgentTelegramFields(acfg *AgentConfig) {
 	if acfg.StreamUpdateInterval != "" && tg.StreamInterval == "" {
 		tg.StreamInterval = acfg.StreamUpdateInterval
 	}
+
+	// Reverse normalization: copy telegram platform values back to agent-level
+	// fields so generic code (environment block, startup notifications) can
+	// access them without importing telegram config.
+	if tg.StartupNotify != nil && acfg.StartupNotification == nil {
+		acfg.StartupNotification = tg.StartupNotify
+	}
+	if tg.ShowToolCalls != nil && acfg.ShowToolCalls == nil {
+		acfg.ShowToolCalls = tg.ShowToolCalls
+	}
+	if tg.ShowThinking != nil && acfg.ShowThinking == nil {
+		acfg.ShowThinking = tg.ShowThinking
+	}
 }
 
 // applyDefaultsToAgent copies fields from defaults to agent where the agent
@@ -1133,6 +1147,7 @@ func Load(path string) (*Config, error) {
 	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
+	setBoolDefaultDefined(&cfg.Defaults.EnableStartupNotify, true, md.IsDefined("defaults", "enable_startup_notify"))
 	setStringDefault(&cfg.Defaults.StreamUpdateInterval, "250ms")
 
 	// Backward compat: [agent] (singular) → single-element Agents array
@@ -1360,6 +1375,10 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
 	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
+	// Migrate: if user set enable_startup_notify in [telegram] but not [defaults], copy it.
+	if md.IsDefined("telegram", "enable_startup_notify") && !md.IsDefined("defaults", "enable_startup_notify") {
+		cfg.Defaults.EnableStartupNotify = cfg.Telegram.EnableStartupNotify
+	}
 
 	// Keepalive/background defaults
 	setStringDefault(&cfg.Keepalive.Interval, "55m")
