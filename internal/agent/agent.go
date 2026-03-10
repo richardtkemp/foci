@@ -52,16 +52,16 @@ type sessionMeta struct {
 }
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
-// Used by the Telegram bot to send early/deferred replies while
+// Used by the platform to send early/deferred replies while
 // the agent continues working (e.g., "Looking into this...").
 type ReplyFunc func(text string)
 
 // ToolCallObserver is called before each tool execution.
-// Used by the Telegram bot to show which tools the agent is calling.
+// Used by the platform to show which tools the agent is calling.
 type ToolCallObserver func(toolName string, params json.RawMessage)
 
 // ToolResultObserver is called after each tool execution with the result.
-// Used by the Telegram bot to store tool results for inline keyboard expansion.
+// Used by the platform to store tool results for inline keyboard expansion.
 type ToolResultObserver func(toolName string, result string, isError bool)
 
 // CacheBustFunc is called when a cache bust is detected (cache_read drops
@@ -105,7 +105,7 @@ type Agent struct {
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
 	ManaWatcher                   *ManaWatcher                 // nil disables mana threshold warnings
-	ManaWarnFunc                  func(string)                 // callback for mana threshold warnings (e.g. Telegram notification)
+	ManaWarnFunc                  func(string)                 // callback for mana threshold warnings (e.g. platform notification)
 	MaxTokensWarnFunc             func(string)                 // callback when stop_reason=max_tokens (response truncated)
 	RateLimitFunc                 func(retryAfter int)         // callback when API returns 429 (rate limit exhausted)
 	CompactionNotifyFunc          func(string, string)         // callback for compaction notifications (session key, message)

@@ -61,13 +61,13 @@ func NewBitwardenSearchTool(store *bitwarden.Store) *Tool {
 }
 
 // NewBitwardenUnlockTool creates a tool that unlocks a Bitwarden vault item.
-// The unlock call goes through aisudo, which requires Telegram approval.
+// The unlock call goes through aisudo, which requires user approval.
 // On success, the password is cached for the configured TTL.
 // The tool NEVER returns the actual password value.
 func NewBitwardenUnlockTool(store *bitwarden.Store) *Tool {
 	return &Tool{
 		Name:        "bitwarden_unlock",
-		Description: "Unlock a Bitwarden vault item by ID. Requires administrator approval via Telegram. Once unlocked, use {{secret:bw.ID}} in http_request headers/body. The password value is never returned — only a confirmation that it's available.",
+		Description: "Unlock a Bitwarden vault item by ID. Requires administrator approval. Once unlocked, use {{secret:bw.ID}} in http_request headers/body. The password value is never returned — only a confirmation that it's available.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {

@@ -225,7 +225,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	}
 
 	if !toolNames["send_message_to_user"] {
-		t.Error("send_telegram should be included in character mode")
+		t.Error("send_message_to_user should be included in character mode")
 	}
 	if !toolNames["send_to_session"] {
 		t.Error("send_to_session should be included in character mode")

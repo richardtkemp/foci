@@ -226,7 +226,7 @@ func setupToolDetailCleanup(
 	}()
 }
 
-// sendStartupNotifications diagnoses restart type and sends notifications via Telegram.
+// sendStartupNotifications diagnoses restart type and sends notifications via platform.
 func sendStartupNotifications(
 	agents map[string]*agentInstance,
 	agentOrder []string,

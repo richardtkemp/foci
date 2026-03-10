@@ -411,7 +411,7 @@ func sendUsage() {
 Send a message to the agent's session.
 
 By default, send is asynchronous (fire-and-forget): the CLI returns immediately
-and the agent's response is delivered to Telegram. Use --sync/--wait to block
+and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
 Flags:
@@ -469,7 +469,7 @@ func branchUsage() {
 Fork a branch session from the agent's main chat.
 
 By default, branch is asynchronous (fire-and-forget): the CLI returns immediately
-and the agent's response is delivered to Telegram. Use --sync/--wait to block
+and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
 Flags:

@@ -262,7 +262,7 @@ func (r *Registry) ClearWizard() {
 	r.wizard = nil
 }
 
-// ChatIDKey is the context key for storing the Telegram chat ID.
+// ChatIDKey is the context key for storing the platform chat ID.
 // Used by commands that need to know which chat issued the command (e.g. /sessions info).
 type ChatIDKey struct{}
 

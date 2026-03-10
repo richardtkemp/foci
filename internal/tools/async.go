@@ -18,7 +18,7 @@ type AsyncNotifier struct {
 // NewAsyncNotifier creates an AsyncNotifier that calls fn with each message.
 // The targetSession identifies which session should process the message.
 // If replyToSession is non-empty, the response is routed to that session
-// instead of being sent to targetSession's Telegram chat.
+// instead of being sent to targetSession's chat.
 func NewAsyncNotifier(fn func(targetSession, message string, replyToSession string)) *AsyncNotifier {
 	return &AsyncNotifier{
 		fn:      fn,
@@ -66,7 +66,7 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 
 // InjectToAgent delivers a message to the specified agent session for processing.
 // If replyToSession is non-empty, the agent's response is routed to that session
-// instead of being sent to targetSession's Telegram chat.
+// instead of being sent to targetSession's chat.
 // Safe to call on a nil receiver or with a nil fn.
 func (n *AsyncNotifier) InjectToAgent(targetSession, message string, replyToSession string) {
 	if n != nil && n.fn != nil {

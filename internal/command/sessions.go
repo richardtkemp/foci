@@ -259,7 +259,7 @@ func sessionsDefaultCmd(deps SessionsDeps, chatID int64) (string, error) {
 
 func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 	if chatID == 0 {
-		return "Not in a chat context (use from Telegram).", nil
+		return "Not in a chat context.", nil
 	}
 
 	defaultChat := deps.DefaultChatFn()

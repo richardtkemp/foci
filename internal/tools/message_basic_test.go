@@ -116,7 +116,7 @@ func TestSendMessageToUserNoInput(t *testing.T) {
 	}
 }
 
-// TestSendMessageToUserNilSender verifies that an error is returned when telegram is not configured.
+// TestSendMessageToUserNilSender verifies that an error is returned when no platform is configured.
 func TestSendMessageToUserNilSender(t *testing.T) {
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return nil }, nil)
 

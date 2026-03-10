@@ -26,7 +26,7 @@ type TmuxMemoryConfig struct {
 // exceeded. Thresholds are resolved against physical RAM at check time.
 type TmuxMemoryMonitor struct {
 	cfg       TmuxMemoryConfig
-	notifyFn  func(string) // send Telegram notification
+	notifyFn  func(string) // send notification to user
 	cleanupFn func()       // called after tmux kill-server
 
 	mu            sync.Mutex
@@ -42,7 +42,7 @@ type TmuxMemoryMonitor struct {
 	killTmuxFn   func() ([]string, error)
 }
 
-// NewTmuxMemoryMonitor creates a monitor. notifyFn is called for Telegram
+// NewTmuxMemoryMonitor creates a monitor. notifyFn is called for user
 // alerts, cleanupFn is called after tmux kill-server so tool instances can
 // clear their state.
 func NewTmuxMemoryMonitor(cfg TmuxMemoryConfig, notifyFn func(string), cleanupFn func()) *TmuxMemoryMonitor {
