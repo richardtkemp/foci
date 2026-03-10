@@ -78,7 +78,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 				}
 				resp, err := inst.ag.HandleMessage(agent.WithTrigger(p.ctx, "proactive_warning"), sk, warningText)
 				if err != nil {
-					log.Errorf("warning", "[%s] proactive warning turn error: %v", agentID, err)
+					log.Errorf("warning", "[%s] session=%s proactive warning turn error: %v", agentID, sk, err)
 					return
 				}
 				if resp == "" {
