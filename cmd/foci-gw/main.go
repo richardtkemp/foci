@@ -282,13 +282,11 @@ Subcommands:
 	// ========== Post-agent setup ==========
 	if len(agentOrder) > 0 {
 		firstInst := agents[agentOrder[0]]
-		sessionTTL, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
 		plat.SetupSharedMultiball(platform.SharedMultiballParams{
 			FirstHandler:     firstInst.ag,
 			FirstCommands:    firstInst.cmds,
 			FirstAgentConfig: firstInst.agentCfg,
 			AgentOrder:       agentOrder,
-			SessionTTL:       sessionTTL,
 			ReclaimHook: func(sessionKey string) {
 				for _, id := range agentOrder {
 					inst := agents[id]
@@ -341,7 +339,7 @@ Subcommands:
 	}
 	for _, id := range agentOrder {
 		inst := agents[id]
-		enabled := cfg.Telegram.EnableStartupNotify
+		enabled := cfg.Defaults.EnableStartupNotify
 		if inst.agentCfg.StartupNotification != nil {
 			enabled = *inst.agentCfg.StartupNotification
 		}
@@ -424,7 +422,7 @@ Subcommands:
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// ========== Welcome & first-run ==========
-	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, connMgr, cfg, ctx)
+	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, cfg, ctx)
 
 	// ========== Wait for signal & shutdown ==========
 	<-sigCh

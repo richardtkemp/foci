@@ -258,7 +258,7 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 				},
 			}
 
-			block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 0)
+			block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 0, nil)
 
 			if !strings.Contains(block, "## Visibility") {
 				t.Error("expected Visibility section")
@@ -290,7 +290,7 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 		},
 	}
 
-	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 0)
+	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 0, nil)
 
 	// Agent overrides should win
 	if !strings.Contains(block, "fully visible") {
@@ -316,13 +316,13 @@ func TestBuildEnvironmentBlock_CrontabInfo(t *testing.T) {
 	}
 
 	// Test with 0 cron jobs
-	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 0)
+	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 0, nil)
 	if !strings.Contains(block, "You may schedule recurring tasks using crontab. You have 0 jobs scheduled.") {
 		t.Error("expected crontab info with 0 jobs")
 	}
 
 	// Test with 3 cron jobs
-	block = buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 3)
+	block = buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, 3, nil)
 	if !strings.Contains(block, "You may schedule recurring tasks using crontab. You have 3 jobs scheduled.") {
 		t.Error("expected crontab info with 3 jobs")
 	}

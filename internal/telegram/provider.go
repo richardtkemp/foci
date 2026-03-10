@@ -1,6 +1,8 @@
 package telegram
 
 import (
+	"time"
+
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -54,7 +56,6 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 		LastMsgStore:    lastMsgStore,
 		AgentConfig:     params.AgentConfig,
 		GlobalConfig:    p.deps.Config,
-		AllowedUsers:    params.AllowedUsers,
 		SecretStore:     p.deps.SecretStore,
 		Sessions:        p.deps.Sessions,
 		StateStore:      p.deps.StateStore,
@@ -108,8 +109,9 @@ func (p *telegramProvider) SetupSharedMultiball(params platform.SharedMultiballP
 	}
 
 	if pool := p.mgr.SharedPool(); pool != nil && pool.Size() > 0 {
-		if params.SessionTTL > 0 {
-			pool.SetSessionTTL(params.SessionTTL, p.deps.Sessions)
+		sessionTTL, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
+		if sessionTTL > 0 {
+			pool.SetSessionTTL(sessionTTL, p.deps.Sessions)
 		}
 		if params.ReclaimHook != nil {
 			pool.ReclaimHook = params.ReclaimHook

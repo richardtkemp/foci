@@ -162,25 +162,27 @@ type ProviderDeps struct {
 // AgentConnectionParams holds the per-agent parameters for setting up platform connections.
 // Commands and LastMsgStore are typed as any to avoid importing command (which
 // imports agent, which imports platform — circular). Providers type-assert.
+//
+// AllowedUsers is resolved by each provider from its own config section
+// (e.g. telegram reads from [telegram] and [agents.platforms.telegram]).
 type AgentConnectionParams struct {
 	AgentID      string
 	Handler      MessageHandler
 	Commands     any // *command.Registry
 	LastMsgStore any // *command.LastMessageStore
 	AgentConfig  config.AgentConfig
-	AllowedUsers []string
 	STT          voice.STT
 	TTS          voice.TTS
 	ReclaimHook  func(sessionKey string)
 }
 
 // SharedMultiballParams holds parameters for setting up shared multiball bots.
+// SessionTTL is resolved by each provider from its own config section.
 type SharedMultiballParams struct {
 	FirstHandler     MessageHandler
 	FirstCommands    any // *command.Registry
 	FirstAgentConfig config.AgentConfig
 	AgentOrder       []string
-	SessionTTL       time.Duration
 	ReclaimHook      func(sessionKey string)
 }
 
@@ -250,6 +252,18 @@ func (m *Messaging) ConnectionManager() ConnectionManager {
 		return &noopConnMgr{}
 	}
 	return m.connMgr
+}
+
+// ActivePlatformNames returns the names of all active messaging providers.
+func (m *Messaging) ActivePlatformNames() []string {
+	if m == nil {
+		return nil
+	}
+	names := make([]string, len(m.providers))
+	for i, p := range m.providers {
+		names[i] = p.Name()
+	}
+	return names
 }
 
 func (m *Messaging) SetupAgentConnection(params AgentConnectionParams) []*SetupResult {

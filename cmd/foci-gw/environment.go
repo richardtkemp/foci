@@ -297,7 +297,7 @@ func countCrontabJobs() int {
 
 // buildEnvironmentBlock generates the environment system block content
 // from config values known at startup.
-func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config, crontabCount int) string {
+func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config, crontabCount int, activePlatforms []string) string {
 	logDir := filepath.Dir(cfg.Logging.EventFile)
 
 	var b strings.Builder
@@ -312,10 +312,8 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	if cfg.Environment.DocsPath != "" {
 		fmt.Fprintf(&b, "- Platform docs: %s\n", cfg.Environment.DocsPath)
 	}
-	// Prefer new platform config, fall back to deprecated field
-	tg := acfg.GetTelegramPlatform()
-	if tg != nil && tg.Bot != "" || acfg.TelegramBot != "" {
-		b.WriteString("- Messaging: Telegram\n")
+	if len(activePlatforms) > 0 {
+		fmt.Fprintf(&b, "- Messaging: %s\n", strings.Join(activePlatforms, ", "))
 	}
 	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
@@ -347,12 +345,12 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
-	// Visibility: resolve effective show_tool_calls and show_thinking
-	// Prefer new platform config, fall back to deprecated fields, then defaults
+	// Visibility: resolve effective show_tool_calls and show_thinking.
+	// Agent-level fields are populated by config migration from platform-specific
+	// settings, so they always reflect the effective value without needing
+	// platform-specific access here.
 	toolCalls := config.ToolCallOff
 	switch {
-	case tg != nil && tg.ShowToolCalls != nil:
-		toolCalls = *tg.ShowToolCalls
 	case acfg.ShowToolCalls != nil:
 		toolCalls = *acfg.ShowToolCalls
 	case cfg.Defaults.ShowToolCalls != nil:
@@ -360,8 +358,6 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	}
 	thinking := config.ShowThinkingOff
 	switch {
-	case tg != nil && tg.ShowThinking != nil:
-		thinking = *tg.ShowThinking
 	case acfg.ShowThinking != nil:
 		thinking = *acfg.ShowThinking
 	case cfg.Defaults.ShowThinking != nil:

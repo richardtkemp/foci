@@ -97,9 +97,9 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Default session key resolver — returns the session key for the agent's default chat.
-	// Before any Telegram message arrives, this returns "" (no default set).
+	// Before any platform message arrives, this returns "" (no default set).
 	// After the first message, it returns agent:<id>:chat:<chatID>.
-	// The resolver is set to use the primary bot's DefaultSessionKey once wired.
+	// The resolver is set to use the primary connection's DefaultSessionKey once wired.
 	var defaultSessionKeyFn func() string
 
 	defaultSessionKey := func() string {
@@ -274,7 +274,7 @@ func setupAgent(p setupParams) *agentInstance {
 	var envBlock string
 	if p.cfg.Environment.Enabled {
 		crontabCount := countCrontabJobs()
-		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, crontabCount)
+		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, crontabCount, p.plat.ActivePlatformNames())
 	}
 
 	// Per-agent agent struct
@@ -449,20 +449,7 @@ func setupAgent(p setupParams) *agentInstance {
 		log.Infof("main", "agent %q: server tools: [%s]", acfg.ID, strings.Join(stNames, ", "))
 	}
 
-	// Resolve per-agent allowed users (falls back to global)
-	// Prefer new platform config, fall back to deprecated fields
-	tg := acfg.GetTelegramPlatform()
-	var allowedUsers []string
-	switch {
-	case tg != nil && len(tg.AllowedUsers) > 0:
-		allowedUsers = tg.AllowedUsers
-	case len(acfg.AllowedUsers) > 0:
-		allowedUsers = acfg.AllowedUsers
-	default:
-		allowedUsers = p.cfg.Telegram.AllowedUsers
-	}
-
-	// Create and register platform connections
+	// Create and register platform connections (allowed users resolved by each provider)
 	if p.plat != nil {
 		reclaimOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		reclaimMfCfg := acfg.MemoryFormation
@@ -474,7 +461,6 @@ func setupAgent(p setupParams) *agentInstance {
 			Commands:     cmds,
 			LastMsgStore: lastMsgStore,
 			AgentConfig:  acfg,
-			AllowedUsers: allowedUsers,
 			STT:          resolveSTT(p.sttMap, acfg.STT),
 			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate),
 			ReclaimHook: func(sessionKey string) {

@@ -21,7 +21,6 @@ type AgentSetupParams struct {
 	LastMsgStore    *command.LastMessageStore
 	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
-	AllowedUsers    []string
 	SecretStore     *secrets.Store
 	Sessions        *session.Store
 	StateStore      *state.Store
@@ -73,6 +72,19 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	}
 }
 
+// resolveAllowedUsers returns the effective allowed user list for an agent.
+// Priority: per-agent platform config > per-agent deprecated field > global.
+func resolveAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
+	tg := acfg.GetTelegramPlatform()
+	if tg != nil && len(tg.AllowedUsers) > 0 {
+		return tg.AllowedUsers
+	}
+	if len(acfg.AllowedUsers) > 0 {
+		return acfg.AllowedUsers
+	}
+	return cfg.Telegram.AllowedUsers
+}
+
 // setupTelegramBots creates and registers Telegram bots for an agent.
 func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	acfg := p.AgentConfig
@@ -94,7 +106,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		return
 	}
 
-	primaryBot, err := NewBot(telegramToken, p.AllowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
+	allowedUsers := resolveAllowedUsers(acfg, cfg)
+	primaryBot, err := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
 	if err != nil {
 		log.Errorf("telegram", "agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
 		return
@@ -139,7 +152,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			log.Errorf("telegram", "agent %q: multiball bot %q: token not found", acfg.ID, mbName)
 			continue
 		}
-		mbBot, err := NewBot(mbToken, p.AllowedUsers, p.Agent, p.Commands, p.LastMsgStore, "")
+		mbBot, err := NewBot(mbToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "")
 		if err != nil {
 			log.Errorf("telegram", "agent %q: create multiball bot %q: %v", acfg.ID, mbName, err)
 			continue
