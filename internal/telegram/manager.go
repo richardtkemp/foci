@@ -7,16 +7,28 @@ import (
 	"foci/internal/log"
 )
 
-// BotManager owns all Telegram bots and provides lookups by agent ID.
-// Each agent has one primary bot and optionally a per-agent multiball pool.
-// A shared multiball pool provides fallback bots for any agent.
+var defaultManager *BotManager
+var defaultManagerOnce sync.Once
+
+func DefaultManager() *BotManager {
+	defaultManagerOnce.Do(func() {
+		defaultManager = NewBotManager()
+	})
+	return defaultManager
+}
+
+func ResetDefaultManager() {
+	defaultManager = nil
+	defaultManagerOnce = sync.Once{}
+}
+
 type BotManager struct {
 	primary map[string]*Bot  // agentID → primary bot
 	pools   map[string]*Pool // agentID → per-agent multiball pool
 	shared  *Pool            // shared multiball pool (fallback for any agent)
 	all     []*Bot           // all bots for iteration
 	mu      sync.RWMutex
-	wg      sync.WaitGroup   // tracks running bot goroutines for graceful shutdown
+	wg      sync.WaitGroup // tracks running bot goroutines for graceful shutdown
 }
 
 // NewBotManager creates an empty BotManager.
