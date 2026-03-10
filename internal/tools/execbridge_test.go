@@ -633,7 +633,7 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	exportedTools := []string{
 		"http_request",
 		"memory_search",
-		"send_telegram",
+		"send_message_to_user",
 		"spawn",
 		"summary",
 		"tmux",
@@ -690,7 +690,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 		"write",
 		"edit",
 		"summary",
-		"send_telegram",
+		"send_message_to_user",
 		"send_to_session",
 		"spawn",
 		"tmux",
@@ -707,7 +707,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 	exportedTools := map[string]bool{
 		"http_request":  true,
 		"memory_search": true,
-		"send_telegram": true,
+		"send_message_to_user": true,
 		"spawn":         true,
 		"summary":       true,
 		"tmux":          true,
@@ -815,7 +815,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 			validFlags: []string{"--method", "--body", "--header", "--save-to", "--include-headers"},
 		},
 		{
-			name:       "send_telegram",
+			name:       "send_message_to_user",
 			params:     json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
 			validFlags: []string{"--file", "--send-as"},
 		},

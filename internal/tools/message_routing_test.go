@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// TestSendTelegramChatRouting verifies that messages are routed to specific chats when chat ID is in session key.
-func TestSendTelegramChatRouting(t *testing.T) {
+// TestSendMessageToUserChatRouting verifies that messages are routed to specific chats when chat ID is in session key.
+func TestSendMessageToUserChatRouting(t *testing.T) {
 	// When session key contains a chat ID, send to that specific chat.
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:99887766")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -41,10 +41,10 @@ func TestSendTelegramChatRouting(t *testing.T) {
 	}
 }
 
-// TestSendTelegramChatRoutingDocument verifies that documents are routed to specific chats.
-func TestSendTelegramChatRoutingDocument(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserChatRoutingDocument verifies that documents are routed to specific chats.
+func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -67,10 +67,10 @@ func TestSendTelegramChatRoutingDocument(t *testing.T) {
 	}
 }
 
-// TestSendTelegramChatRoutingVoice verifies that voice notes are routed to specific chats.
-func TestSendTelegramChatRoutingVoice(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserChatRoutingVoice verifies that voice notes are routed to specific chats.
+func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -94,11 +94,11 @@ func TestSendTelegramChatRoutingVoice(t *testing.T) {
 	}
 }
 
-// TestSendTelegramFallbackNoChat verifies that default routing is used when no chat ID is in session key.
-func TestSendTelegramFallbackNoChat(t *testing.T) {
+// TestSendMessageToUserFallbackNoChat verifies that default routing is used when no chat ID is in session key.
+func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 	// When session key doesn't contain a chat ID, fall back to default.
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	// Spawn branch session — no chat ID
 	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
@@ -120,11 +120,11 @@ func TestSendTelegramFallbackNoChat(t *testing.T) {
 	}
 }
 
-// TestSendTelegramFallbackNoContext verifies that default routing is used when no session key is present.
-func TestSendTelegramFallbackNoContext(t *testing.T) {
+// TestSendMessageToUserFallbackNoContext verifies that default routing is used when no session key is present.
+func TestSendMessageToUserFallbackNoContext(t *testing.T) {
 	// No session key in context at all — fall back to default.
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -177,13 +177,13 @@ func TestChatIDFromSessionKey(t *testing.T) {
 	}
 }
 
-// TestSendTelegramChatSessionUsesPrimary verifies that chat sessions use primary bot even with multiball callbacks.
-func TestSendTelegramChatSessionUsesPrimary(t *testing.T) {
+// TestSendMessageToUserChatSessionUsesPrimary verifies that chat sessions use primary bot even with multiball callbacks.
+func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 	// Regular chat sessions should still use the primary bot.
-	multiballMock := &mockTelegramSender{}
-	primaryMock := &mockTelegramSender{}
+	multiballMock := &mockMessageSender{}
+	primaryMock := &mockMessageSender{}
 
-	tool := NewSendTelegramTool(func(sessionKey string) TelegramSender {
+	tool := NewSendMessageToUserTool(func(sessionKey string) MessageSender {
 		if strings.Contains(sessionKey, ":multiball:") {
 			return multiballMock
 		}
@@ -207,12 +207,12 @@ func TestSendTelegramChatSessionUsesPrimary(t *testing.T) {
 	}
 }
 
-// TestSendTelegramCrossSessionHeader verifies that messages from different sessions are prepended with a header.
-func TestSendTelegramCrossSessionHeader(t *testing.T) {
+// TestSendMessageToUserCrossSessionHeader verifies that messages from different sessions are prepended with a header.
+func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 	// Message from a different session than the bot's own session
 	// should be prepended with a header.
-	mock := &mockTelegramSender{sessionKey: "agent:fotini:chat:99887766"}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{sessionKey: "agent:fotini:chat:99887766"}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -233,11 +233,11 @@ func TestSendTelegramCrossSessionHeader(t *testing.T) {
 	}
 }
 
-// TestSendTelegramSameSessionNoHeader verifies that messages from the same session are not prepended with a header.
-func TestSendTelegramSameSessionNoHeader(t *testing.T) {
+// TestSendMessageToUserSameSessionNoHeader verifies that messages from the same session are not prepended with a header.
+func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 	// Message from the bot's own session should NOT get a header.
-	mock := &mockTelegramSender{sessionKey: "agent:fotini:chat:99887766"}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{sessionKey: "agent:fotini:chat:99887766"}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:99887766")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -257,11 +257,11 @@ func TestSendTelegramSameSessionNoHeader(t *testing.T) {
 	}
 }
 
-// TestSendTelegramCrossSessionNoHeaderWhenBotSessionEmpty verifies no header when bot session is empty.
-func TestSendTelegramCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) {
+// TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty verifies no header when bot session is empty.
+func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) {
 	// When bot has no session key (not yet attached), don't add header.
-	mock := &mockTelegramSender{sessionKey: ""}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+	mock := &mockMessageSender{sessionKey: ""}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -281,14 +281,14 @@ func TestSendTelegramCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) {
 	}
 }
 
-// TestSendTelegramMultiballRouting verifies that multiball sessions are routed to the correct sender.
-func TestSendTelegramMultiballRouting(t *testing.T) {
+// TestSendMessageToUserMultiballRouting verifies that multiball sessions are routed to the correct sender.
+func TestSendMessageToUserMultiballRouting(t *testing.T) {
 	// When session key contains :multiball:, the getSender callback receives
 	// the session key so it can resolve the correct bot.
-	multiballMock := &mockTelegramSender{}
-	primaryMock := &mockTelegramSender{}
+	multiballMock := &mockMessageSender{}
+	primaryMock := &mockMessageSender{}
 
-	tool := NewSendTelegramTool(func(sessionKey string) TelegramSender {
+	tool := NewSendMessageToUserTool(func(sessionKey string) MessageSender {
 		if strings.Contains(sessionKey, ":multiball:") {
 			return multiballMock
 		}

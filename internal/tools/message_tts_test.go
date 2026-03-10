@@ -22,11 +22,11 @@ func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	return m.data, nil
 }
 
-// TestSendTelegramVoiceTTS verifies that text with send_as=voice synthesizes audio.
-func TestSendTelegramVoiceTTS(t *testing.T) {
-	mock := &mockTelegramSender{}
+// TestSendMessageToUserVoiceTTS verifies that text with send_as=voice synthesizes audio.
+func TestSendMessageToUserVoiceTTS(t *testing.T) {
+	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -52,11 +52,11 @@ func TestSendTelegramVoiceTTS(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVoiceTTSChatRouting verifies that TTS audio is routed to chat-targeted method.
-func TestSendTelegramVoiceTTSChatRouting(t *testing.T) {
-	mock := &mockTelegramSender{}
+// TestSendMessageToUserVoiceTTSChatRouting verifies that TTS audio is routed to chat-targeted method.
+func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
+	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
 
 	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -82,10 +82,10 @@ func TestSendTelegramVoiceTTSChatRouting(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVoiceTTSNoProvider verifies that error is returned when TTS is not configured.
-func TestSendTelegramVoiceTTSNoProvider(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserVoiceTTSNoProvider verifies that error is returned when TTS is not configured.
+func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -101,11 +101,11 @@ func TestSendTelegramVoiceTTSNoProvider(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVoiceTTSSynthesizeError verifies that TTS synthesis errors are propagated.
-func TestSendTelegramVoiceTTSSynthesizeError(t *testing.T) {
-	mock := &mockTelegramSender{}
+// TestSendMessageToUserVoiceTTSSynthesizeError verifies that TTS synthesis errors are propagated.
+func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
+	mock := &mockMessageSender{}
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello",
@@ -121,12 +121,12 @@ func TestSendTelegramVoiceTTSSynthesizeError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVoiceFilePathStillWorks verifies that file_path takes precedence over TTS synthesis.
-func TestSendTelegramVoiceFilePathStillWorks(t *testing.T) {
+// TestSendMessageToUserVoiceFilePathStillWorks verifies that file_path takes precedence over TTS synthesis.
+func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	// When file_path is provided with send_as=voice, it should use the file-based path
-	mock := &mockTelegramSender{}
+	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("should-not-be-used")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",

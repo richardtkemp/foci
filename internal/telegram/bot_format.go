@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 )
+
 func isPDFMIME(mime string) bool {
 	return mime == "application/pdf"
 }
@@ -154,21 +155,21 @@ func closingHTMLTag(openTag string) string {
 
 // toolEmoji maps tool names to per-tool display emoji.
 var toolEmoji = map[string]string{
-	"shell":           "▶️",
-	"web_fetch":       "🔗",
-	"web_search":      "🔍",
-	"http_request":    "🌍",
-	"read":            "📖",
-	"write":           "✏️",
-	"edit":            "✂️",
-	"tmux":            "🪟",
-	"todo":            "☑️",
-	"send_telegram":   "📨",
-	"memory_search":   "🧠",
-	"spawn":           "🐣",
-	"scratchpad":      "📋",
-	"send_to_session": "💬",
-	"remind":          "💭",
+	"shell":                "▶️",
+	"web_fetch":            "🔗",
+	"web_search":           "🔍",
+	"http_request":         "🌍",
+	"read":                 "📖",
+	"write":                "✏️",
+	"edit":                 "✂️",
+	"tmux":                 "🪟",
+	"todo":                 "☑️",
+	"send_message_to_user": "📨",
+	"memory_search":        "🧠",
+	"spawn":                "🐣",
+	"scratchpad":           "📋",
+	"send_to_session":      "💬",
+	"remind":               "💭",
 }
 
 // emojiForTool returns the per-tool emoji, falling back to 🔧 for unknown tools.
@@ -262,7 +263,7 @@ func compactSummary(toolName string, m map[string]json.RawMessage) string {
 		return str("action")
 	case "remind":
 		return truncate(str("text"), 40)
-	case "send_telegram":
+	case "send_message_to_user":
 		return truncate(str("text"), 40)
 	case "spawn":
 		return truncate(str("prompt"), 40)
@@ -351,5 +352,3 @@ func truncate(s string, max int) string {
 	}
 	return s[:max] + "..."
 }
-
-

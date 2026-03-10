@@ -21,7 +21,6 @@ type SystemBlocksProvider interface {
 	SystemBlocks() []provider.SystemBlock
 }
 
-
 // BranchOptions configures optional behavior for a new branch session (tools-side mirror).
 type BranchOptions struct {
 	NoResetHook        bool
@@ -45,12 +44,12 @@ type SpawnAgent interface {
 // the isolated file tools enforce path containment, but shell access
 // allows arbitrary filesystem access and symlink creation.
 var spawnRawBlacklist = map[string]bool{
-	"shell":           true,
-	"tmux":            true,
-	"send_telegram":   true,
-	"send_to_session": true,
-	"scratchpad":      true,
-	"todo":            true,
+	"shell":                true,
+	"tmux":                 true,
+	"send_message_to_user": true,
+	"send_to_session":      true,
+	"scratchpad":           true,
+	"todo":                 true,
 }
 
 // exploreSystemPrompt is the system prompt for explore spawn mode.
@@ -79,17 +78,17 @@ var spawnExploreAllowed = map[string]bool{
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
 type SpawnDeps struct {
 	Client             provider.Client
-	ClientProvider     provider.ClientProvider                  // provides access to clients for different endpoint:format pairs
+	ClientProvider     provider.ClientProvider // provides access to clients for different endpoint:format pairs
 	Bootstrap          SystemBlocksProvider
 	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
-	Model              string            // parent's default model (endpoint:model format)
-	ModelAliases       map[string]string // model aliases (e.g. "haiku" → "anthropic:claude-haiku-4-5")
-	MaxInherit         int               // semaphore size (from config)
-	MaxToolLoops       int               // max tool loops for raw/character spawns
-	ExploreMaxDepth    int               // max tool loops for explore spawns
-	Notifier           *AsyncNotifier    // async result delivery for inherit mode
+	Model              string                                   // parent's default model (endpoint:model format)
+	ModelAliases       map[string]string                        // model aliases (e.g. "haiku" → "anthropic:claude-haiku-4-5")
+	MaxInherit         int                                      // semaphore size (from config)
+	MaxToolLoops       int                                      // max tool loops for raw/character spawns
+	ExploreMaxDepth    int                                      // max tool loops for explore spawns
+	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
 	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
 }
 
@@ -103,7 +102,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
-		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_telegram and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (safe exploration — ls, find, grep, read, memory_search, web_search, web_fetch only — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
+		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_message_to_user and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (safe exploration — ls, find, grep, read, memory_search, web_search, web_fetch only — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -330,7 +329,6 @@ func listCreatedFiles(dir string) string {
 	}
 	return out.String()
 }
-
 
 // spawnMaxResultChars is the threshold for writing oversize tool results
 // to a temp file instead of including them inline. Applied in spawnOneShot

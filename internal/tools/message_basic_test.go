@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// TestSendTelegramTextOnly verifies that sending text alone works correctly.
-func TestSendTelegramTextOnly(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserTextOnly verifies that sending text alone works correctly.
+func TestSendMessageToUserTextOnly(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello user",
@@ -32,10 +32,10 @@ func TestSendTelegramTextOnly(t *testing.T) {
 	}
 }
 
-// TestSendTelegramDocumentOnly verifies that sending a document alone works correctly.
-func TestSendTelegramDocumentOnly(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserDocumentOnly verifies that sending a document alone works correctly.
+func TestSendMessageToUserDocumentOnly(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
@@ -53,10 +53,10 @@ func TestSendTelegramDocumentOnly(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVoice verifies that sending voice notes works correctly.
-func TestSendTelegramVoice(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserVoice verifies that sending voice notes works correctly.
+func TestSendMessageToUserVoice(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
@@ -75,10 +75,10 @@ func TestSendTelegramVoice(t *testing.T) {
 	}
 }
 
-// TestSendTelegramTextAndDocument verifies that sending text and document together works.
-func TestSendTelegramTextAndDocument(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserTextAndDocument verifies that sending text and document together works.
+func TestSendMessageToUserTextAndDocument(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "here's the file",
@@ -100,10 +100,10 @@ func TestSendTelegramTextAndDocument(t *testing.T) {
 	}
 }
 
-// TestSendTelegramNoInput verifies that an error is returned when no text or file is provided.
-func TestSendTelegramNoInput(t *testing.T) {
-	mock := &mockTelegramSender{}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserNoInput verifies that an error is returned when no text or file is provided.
+func TestSendMessageToUserNoInput(t *testing.T) {
+	mock := &mockMessageSender{}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{})
 
@@ -116,9 +116,9 @@ func TestSendTelegramNoInput(t *testing.T) {
 	}
 }
 
-// TestSendTelegramNilSender verifies that an error is returned when telegram is not configured.
-func TestSendTelegramNilSender(t *testing.T) {
-	tool := NewSendTelegramTool(func(string) TelegramSender { return nil }, nil)
+// TestSendMessageToUserNilSender verifies that an error is returned when telegram is not configured.
+func TestSendMessageToUserNilSender(t *testing.T) {
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return nil }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -128,15 +128,15 @@ func TestSendTelegramNilSender(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil sender")
 	}
-	if !strings.Contains(err.Error(), "telegram not configured") {
+	if !strings.Contains(err.Error(), "messaging not configured") {
 		t.Errorf("error = %q", err.Error())
 	}
 }
 
-// TestSendTelegramTextError verifies that send errors are propagated for text.
-func TestSendTelegramTextError(t *testing.T) {
-	mock := &mockTelegramSender{textErr: fmt.Errorf("network down")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserTextError verifies that send errors are propagated for text.
+func TestSendMessageToUserTextError(t *testing.T) {
+	mock := &mockMessageSender{textErr: fmt.Errorf("network down")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -151,10 +151,10 @@ func TestSendTelegramTextError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramDocumentError verifies that send errors are propagated for documents.
-func TestSendTelegramDocumentError(t *testing.T) {
-	mock := &mockTelegramSender{documentErr: fmt.Errorf("file too large")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserDocumentError verifies that send errors are propagated for documents.
+func TestSendMessageToUserDocumentError(t *testing.T) {
+	mock := &mockMessageSender{documentErr: fmt.Errorf("file too large")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/huge.bin",
@@ -169,10 +169,10 @@ func TestSendTelegramDocumentError(t *testing.T) {
 	}
 }
 
-// TestSendTelegramVoiceError verifies that send errors are propagated for voice notes.
-func TestSendTelegramVoiceError(t *testing.T) {
-	mock := &mockTelegramSender{voiceErr: fmt.Errorf("codec error")}
-	tool := NewSendTelegramTool(func(string) TelegramSender { return mock }, nil)
+// TestSendMessageToUserVoiceError verifies that send errors are propagated for voice notes.
+func TestSendMessageToUserVoiceError(t *testing.T) {
+	mock := &mockMessageSender{voiceErr: fmt.Errorf("codec error")}
+	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/voice.ogg",

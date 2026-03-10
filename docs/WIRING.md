@@ -570,11 +570,11 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `memory_search` | memory.go | Full-text search over memory files (+ conversation history for FTS5). Pluggable backends: FTS5 (default) and bleve. Porter stemming, weighted ranking, sort by relevance or recency. Optional `backend` parameter when multiple backends are active. |
 | `remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
 | `scratchpad` | scratchpad.go | Working notes that survive compaction (write/read/clear/list via `action` parameter) |
-| `spawn` | spawn.go | Unified sub-call: four context modes. All modes have tool access with a tool-call loop. `raw`: one-shot, no system prompt (`send_telegram` and `send_to_session` blacklisted — no character context means no communication awareness). `character`: one-shot with character files (all tools). `clone` (default): branch session — a headless self-fork. `explore`: one-shot safe exploration with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch` only — no file mutation, no shell exec, no messaging, always haiku. clone creates branch `agent:ID:spawn:spawn-TIMESTAMP`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive clone blocked via context key. Concurrent clone limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. |
+| `spawn` | spawn.go | Unified sub-call: four context modes. All modes have tool access with a tool-call loop. `raw`: one-shot, no system prompt (`send_message_to_user` and `send_to_session` blacklisted — no character context means no communication awareness). `character`: one-shot with character files (all tools). `clone` (default): branch session — a headless self-fork. `explore`: one-shot safe exploration with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch` only — no file mutation, no shell exec, no messaging, always haiku. clone creates branch `agent:ID:spawn:spawn-TIMESTAMP`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive clone blocked via context key. Concurrent clone limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. |
 | `ls` | explore.go | List directory contents. Internal to `explore` spawn mode — not registered in the main tool registry. |
 | `find` | explore.go | Search for files in a directory hierarchy. Dangerous predicates (`-exec`, `-delete`, etc.) blocked. Internal to `explore` spawn mode. |
 | `grep` | explore.go | Search file contents using the best available binary (rg > ack > ag > grep). Flags are validated and translated to the active binary's dialect. Internal to `explore` spawn mode. |
-| `send_telegram` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`agent:X:chat:CHATID`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
+| `send_message_to_user` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`agent:X:chat:CHATID`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
 | `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. multiball branches talking to main). |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
@@ -607,7 +607,7 @@ exec subprocess                       foci process
 
 **For auto-background:** bridge context uses `context.Background()` + session key so it survives agent turn end.
 
-**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_telegram`, `spawn`, `tmux`.
+**Tools with `ExecExport: true`:** `http_request`, `web_fetch`, `web_search`, `memory_search`, `todo`, `send_message_to_user`, `spawn`, `tmux`.
 
 **`foci-call` binary** (`cmd/foci-call/`): Reads `FOCI_SOCK`, connects to unix socket, sends JSON request (newline-terminated), prints result to stdout or error to stderr, exits 0/1. 1MB scanner buffer.
 
@@ -757,7 +757,7 @@ Telegram voice note → downloadFile(voice.FileID) → voice.Transcriber.Transcr
 API key resolved via `secret` field in `[[stt]]` config or auto-detected from endpoint hostname.
 
 **Outbound (TTS):**
-TTS via send_telegram — the agent can call `send_telegram(text="...", send_as="voice")` to synthesize speech and send a voice note.
+TTS via send_message_to_user — the agent can call `send_message_to_user(text="...", send_as="voice")` to synthesize speech and send a voice note.
 
 ```
 voice.TTS.Synthesize(text) → Edge TTS CLI or OpenRouter TTS API

@@ -16,7 +16,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `todo` | Per-agent task list — add, list, complete, remove, search. SQLite backend with priority ordering (high/medium/low) and status tracking (open/in_progress/done/dropped). Tag support for filtering. Items tagged `background` are automatically picked up and worked on in background branch sessions when the user is idle and mana is available — see [HEARTBEAT.md](HEARTBEAT.md). |
 | `remind` | Defer a thought for later (delay, tomorrow, specific date/time). Stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
 | `scratchpad` | Working notes that survive compaction — write, read, clear, list via `action` parameter. |
-| `send_telegram` | Send proactive Telegram messages and media. `send_as` controls file type: document (default), voice, video, photo, audio, animation. With `send_as="voice"` and text (no file), synthesizes speech via TTS. |
+| `send_message_to_user` | Send proactive Telegram messages and media. `send_as` controls file type: document (default), voice, video, photo, audio, animation. With `send_as="voice"` and text (no file), synthesizes speech via TTS. |
 | `send_to_session` | Inject a message into another session for cross-session communication. `reply_to` param controls where the response goes: `"caller"` (default) or `"session"`. |
 | `bitwarden_search` | Search Bitwarden vault items by name/URI/folder/username (metadata only, no passwords). Only available when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | Unlock a vault item by ID — requires admin approval via aisudo/Telegram. Caches value for `secret_ttl`. Never returns the actual password. |
@@ -64,7 +64,7 @@ Unified sub-call to a model with four context modes, all with tool access:
 
 | Mode | System prompt | Tools | Behaviour |
 |------|--------------|-------|-----------|
-| `raw` | None | Most (no `send_telegram`, `send_to_session`) | One-shot. No character context means no communication awareness. |
+| `raw` | None | Most (no `send_message_to_user`, `send_to_session`) | One-shot. No character context means no communication awareness. |
 | `character` | Character files only | All | One-shot with identity. |
 | `clone` (default) | Full clone | All | Branch session — a headless self-fork. Runs async, delivers result on completion. |
 | `explore` | Code explorer | Read-only (`ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch`) | One-shot. Safe exploration — no file mutation, no shell exec, no messaging. Always haiku. |
@@ -123,11 +123,11 @@ Search memory files and conversation history.
 foci_memory_search "database migration"
 ```
 
-#### `foci_send_telegram <text>`
+#### `foci_send_message_to_user <text>`
 Send a Telegram message. Reads from stdin when no arguments (pipe-friendly).
 ```bash
-foci_send_telegram "Build completed successfully"
-echo "Pipeline results: all green" | foci_send_telegram
+foci_send_message_to_user "Build completed successfully"
+echo "Pipeline results: all green" | foci_send_message_to_user
 ```
 
 #### `foci_todo <action> [args...]`
@@ -150,14 +150,14 @@ foci_spawn "Summarize this data" --model haiku --context none
 
 Search the web and send the top results via Telegram:
 ```bash
-foci_web_search "latest golang release" | head -5 | foci_send_telegram
+foci_web_search "latest golang release" | head -5 | foci_send_message_to_user
 ```
 
 Fetch an API, filter with jq, and send a notification:
 ```bash
 foci_http_request https://api.github.com/repos/golang/go/releases/latest \
   | jq -r '.tag_name + ": " + .name' \
-  | foci_send_telegram
+  | foci_send_message_to_user
 ```
 
 Search memory for context, then ask a model to summarize:

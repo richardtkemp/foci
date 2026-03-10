@@ -349,7 +349,7 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, guard, name)
 
-	case "send_telegram":
+	case "send_message_to_user":
 		// Text as args or stdin; optional --file flag
 		return fmt.Sprintf(`%s() {
 %s
@@ -388,7 +388,7 @@ func generateShellFunc(t *Tool) string {
   if [ -n "$send_as" ]; then
     params="$(echo "$params" | jq --arg s "$send_as" '. + {send_as: $s}')"
   fi
-  foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_telegram","params":$p}')"
+  foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_message_to_user","params":$p}')"
 }
 `, name, guard, name, name, name)
 
