@@ -13,12 +13,13 @@ import (
 )
 
 func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, keys string, watch bool) (ToolResult, error) {
+	sessionKey := SessionKeyFromContext(ctx)
 	if name == "" {
 		n := atomic.AddUint64(&tmuxCounter, 1)
 		name = fmt.Sprintf("foci-%d", n)
 	}
 
-	log.Debugf("tmux", "start: name=%s command=%q workdir=%q keys=%q cols=%d rows=%d watch=%v", name, command, workdir, keys, inst.cols, inst.rows, watch)
+	log.Debugf("tmux", "start: session=%s name=%s command=%q workdir=%q keys=%q cols=%d rows=%d watch=%v", sessionKey, name, command, workdir, keys, inst.cols, inst.rows, watch)
 
 	// Cancel any stale watches for this session name (e.g. from a prior
 	// session that exited naturally before the monitor noticed).
@@ -48,11 +49,10 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	if inst.cols > 0 && inst.rows > 0 {
 		out, err = runTmux(ctx, "resize-window", "-t", name, "-x", fmt.Sprintf("%d", inst.cols), "-y", fmt.Sprintf("%d", inst.rows))
 		if err != nil {
-			log.Warnf("tmux", "resize-window: %s %v", strings.TrimSpace(out), err)
+			log.Warnf("tmux", "resize-window: session=%s %s %v", sessionKey, strings.TrimSpace(out), err)
 		}
 	}
 
-	sessionKey := SessionKeyFromContext(ctx)
 	inst.mu.Lock()
 	inst.owned[name] = sessionKey
 	inst.lastAccess[name] = time.Now()
@@ -65,7 +65,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 	if watch && inst.notifier != nil {
 		watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
 		if watchErr != nil {
-			log.Warnf("tmux", "auto-watch failed for %s: %v", name, watchErr)
+			log.Warnf("tmux", "auto-watch failed for %s: session=%s %v", name, sessionKey, watchErr)
 		} else {
 			result += "\n" + watchRes.Text
 		}
@@ -90,7 +90,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	inst.lastAccess[name] = time.Now()
 	inst.mu.Unlock()
 
-	log.Debugf("tmux", "send: name=%s keys=%q enter=%v", name, keys, enter)
+	log.Debugf("tmux", "send: session=%s name=%s keys=%q enter=%v", sessionKey, name, keys, enter)
 	LogSendEntry(name, len(keys), enter)
 
 	// Rate-limit: enforce minimum gap between consecutive sends to the same session.
@@ -98,7 +98,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	if last, ok := inst.lastSend[name]; ok {
 		if gap := time.Since(last); gap < sendMinGap {
 			wait := sendMinGap - gap
-			log.Debugf("tmux", "send: rate-limiting %s, sleeping %v", name, wait)
+			log.Debugf("tmux", "send: session=%s rate-limiting %s, sleeping %v", sessionKey, name, wait)
 			LogSendRateLimiting(gap, wait)
 			time.Sleep(wait)
 		}
@@ -157,9 +157,9 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 		if !alreadyWatched {
 			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
 			if watchErr != nil {
-				log.Warnf("tmux", "autopilot: auto-watch failed for %s: %v", name, watchErr)
+				log.Warnf("tmux", "autopilot: session=%s auto-watch failed for %s: %v", sessionKey, name, watchErr)
 			} else {
-				log.Debugf("tmux", "autopilot: auto-watching %s after send", name)
+				log.Debugf("tmux", "autopilot: session=%s auto-watching %s after send", sessionKey, name)
 				result += "\n" + watchRes.Text
 			}
 		}
@@ -238,7 +238,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 	inst.lastAccess[name] = time.Now()
 	inst.mu.Unlock()
 
-	log.Debugf("tmux", "read: name=%s lines=%d raw=%v", name, lines, raw)
+	log.Debugf("tmux", "read: session=%s name=%s lines=%d raw=%v", sessionKey, name, lines, raw)
 
 	out, err := runTmux(ctx, "capture-pane", "-t", name, "-p", fmt.Sprintf("-S-%d", lines))
 	if err != nil {
@@ -355,7 +355,7 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 		return ToolResult{}, fmt.Errorf("session %q not owned by this session", name)
 	}
 
-	log.Debugf("tmux", "kill: name=%s", name)
+	log.Debugf("tmux", "kill: session=%s name=%s", sessionKey, name)
 
 	// Stop any watches first so the monitor goroutine doesn't fire during cleanup
 	inst.cancelWatchesForSession(name)
@@ -383,10 +383,10 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 	result := fmt.Sprintf("Session killed: %s", name)
 	if killed > 0 {
 		result += fmt.Sprintf(" (%d child process(es) terminated)", killed)
-		log.Infof("tmux", "kill %s: terminated %d orphaned child process(es)", name, killed)
+		log.Infof("tmux", "kill %s: session=%s terminated %d orphaned child process(es)", name, sessionKey, killed)
 	}
 	if serverKilled {
-		log.Infof("tmux", "kill %s: no sessions remain, killed tmux server", name)
+		log.Infof("tmux", "kill %s: session=%s no sessions remain, killed tmux server", name, sessionKey)
 	}
 
 	return TextResult(result), nil
