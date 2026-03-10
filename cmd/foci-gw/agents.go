@@ -196,11 +196,11 @@ type setupParams struct {
 	ttsMap              map[string]voice.TTS
 	sttMap              map[string]voice.STT
 	braveKey            string
-	botMgr              *telegram.BotManager
-	startTime           time.Time
-	ctx                 context.Context
-	agentListFn         func() []command.AgentInfo
-	agentResolverFn     func(agentID string) *agentInstance
+
+	startTime       time.Time
+	ctx             context.Context
+	agentListFn     func() []command.AgentInfo
+	agentResolverFn func(agentID string) *agentInstance
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
@@ -244,7 +244,7 @@ func setupAgent(p setupParams) *agentInstance {
 			return sk
 		}
 		if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-			if bot := p.botMgr.PrimaryBot(acfg.ID); bot != nil {
+			if bot := telegram.DefaultManager().PrimaryBot(acfg.ID); bot != nil {
 				return bot.SessionKeyForChat(chatID)
 			}
 			return telegram.NewSessionKeyForChat(acfg.ID, chatID)
@@ -261,7 +261,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Async notifier: delivers results from auto-backgrounded exec commands
 	// and tmux watch inactivity alerts to the agent session.
-	notifier := newAsyncNotifier(func() *agent.Agent { return ag }, defaultSessionKey, p.botMgr, acfg.ID, p.ctx, p.sessions)
+	notifier := newAsyncNotifier(func() *agent.Agent { return ag }, defaultSessionKey, acfg.ID, p.ctx, p.sessions)
 	// Per-agent secrets view: agent-specific values overlay globals
 	agentStore := p.store.ForAgent(acfg.ID)
 
@@ -384,7 +384,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent send_telegram tool (closure captures this agent's bot)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate)
 	registry.Register(tools.NewSendTelegramTool(func(sessionKey string) tools.TelegramSender {
-		bot := p.botMgr.BotForSessionOrPrimary(sessionKey, acfg.ID)
+		bot := telegram.DefaultManager().BotForSessionOrPrimary(sessionKey, acfg.ID)
 		if bot == nil {
 			return nil
 		}
@@ -392,7 +392,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}, agentTTS))
 
 	// send_to_session tool — inject messages into other sessions.
-	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.botMgr, p.ctx)
+	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx)
 	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn))
 
 	// Per-agent environment block
@@ -533,7 +533,6 @@ func setupAgent(p setupParams) *agentInstance {
 		client:              p.client,
 		clientProvider:      p.clientProvider,
 		usageClientProvider: p.usageClientProvider,
-		botMgr:              p.botMgr,
 		store:               p.store,
 		bwStore:             p.bwStore,
 		startTime:           p.startTime,
@@ -582,7 +581,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Wire the default session key function after bot creation.
 	// Must be deferred because primaryBot may not exist yet.
 	defer func() {
-		bot := p.botMgr.PrimaryBot(acfg.ID)
+		bot := telegram.DefaultManager().PrimaryBot(acfg.ID)
 		if bot != nil {
 			defaultSessionKeyFn = bot.DefaultSessionKey
 		}
@@ -738,7 +737,7 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 		}
 	}
 
-	p.botMgr.AddPrimary(acfg.ID, primaryBot)
+	telegram.DefaultManager().AddPrimary(acfg.ID, primaryBot)
 	ag.AddPlatform("telegram", primaryBot)
 
 	// Per-agent multiball bots (if configured)
@@ -770,14 +769,14 @@ func setupTelegram(p setupParams, acfg config.AgentConfig, ag *agent.Agent, cmds
 			toolDetailStore: p.toolDetailStore,
 			stateStore:      p.stateStore,
 		})
-		p.botMgr.AddMultiball(acfg.ID, mbBot)
+		telegram.DefaultManager().AddMultiball(acfg.ID, mbBot)
 	}
-	if pool := p.botMgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
+	if pool := telegram.DefaultManager().Pool(acfg.ID); pool != nil && pool.Size() > 0 {
 		log.Infof("main", "agent %q: %d per-agent multiball bots ready", acfg.ID, pool.Size())
 	}
 
 	// Configure session TTL for per-agent multiball pool
-	if pool := p.botMgr.Pool(acfg.ID); pool != nil {
+	if pool := telegram.DefaultManager().Pool(acfg.ID); pool != nil {
 		ttl, _ := time.ParseDuration(p.cfg.Telegram.MultiballSessionTTL) // validated earlier
 		if ttl > 0 {
 			pool.SetSessionTTL(ttl, p.sessions)
@@ -1126,13 +1125,13 @@ func extractAgentID(sessionKey string) string {
 // For each secondary bot in all pools, it looks up "multiball:<username>" in stateStore.
 // If a saved session key exists and the session file is still active, the bot is restored.
 func restoreMultiballSessions(
-	botMgr *telegram.BotManager,
 	stateStore *state.Store,
 	sessions *session.Store,
 	agents map[string]*agentInstance,
 	agentOrder []string,
 	cfg *config.Config,
 ) {
+	botMgr := telegram.DefaultManager()
 	// Collect all pools to iterate
 	type poolInfo struct {
 		pool *telegram.Pool

@@ -193,14 +193,21 @@ main calls agent.StartPlatforms()
 
 ## Summary
 
-| Phase | Goal | Effort |
-|-------|------|--------|
-| 1 | Align MessageHandler interface | 0.5 day ✓ DONE |
-| 2 | Telegram uses interface | 0.5 day ✓ DONE |
-| 3 | Agent creates platforms | 1 day ✓ DONE |
-| 4 | Platform-aware session keys | 0.5 day — SKIPPED (current format better) |
-| 5 | Config structure | 0.5 day ✓ DONE |
-| 6 | Main simplification | 1 day |
-| 7 | Tool integration | 0.5 day |
-| 8 | Testing | 1 day |
+| Phase | Goal | Effort | Status |
+|-------|------|--------|--------|
+| 1 | Align MessageHandler interface | 0.5 day | ✓ DONE |
+| 2 | Telegram uses interface | 0.5 day | ✓ DONE |
+| 3 | Agent creates platforms | 1 day | ✓ DONE |
+| 4 | Platform-aware session keys | 0.5 day | — SKIPPED (current format better) |
+| 5 | Config structure | 0.5 day | ✓ DONE |
+| 6 | Main simplification + BotManager singleton | 1 day | ✓ DONE |
+| 7 | Tool integration | 0.5 day | pending |
+| 8 | Testing | 1 day | pending |
 | **Total** | | **5.5 days** |
+
+### Phase 6 Complete
+- BotManager is now a singleton (`telegram.DefaultManager()`)
+- Removed botMgr parameter passing from ~15 function signatures
+- Main.go simplified: uses singleton instead of passing botMgr around
+- All multiball logic stays in telegram package (internal detail)
+- Agent owns its platforms via `AddPlatform()`

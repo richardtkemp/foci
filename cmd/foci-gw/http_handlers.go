@@ -78,7 +78,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		sessionKey := inst.defaultSessionKey()
 		if req.Session != "" {
 			// HTTP sessions are independent sessions
-		sessionKey = session.IndependentSessionKey(inst.id)
+			sessionKey = session.IndependentSessionKey(inst.id)
 		}
 		if sessionKey == "" {
 			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
@@ -100,7 +100,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
 		if req.Async {
-			asyncDispatch(w, inst, sendCtx, sessionKey, req.Text, "http", d.botMgr, false)
+			asyncDispatch(w, inst, sendCtx, sessionKey, req.Text, "http", false)
 			return
 		}
 
@@ -223,11 +223,11 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 		branchKey, err := session.BranchFromSession(parentKey)
-	if err != nil {
-		log.Warnf("http", "POST /run-cron-hook create branch key: %v", err)
-		http.Error(w, fmt.Sprintf("create branch key: %v", err), http.StatusInternalServerError)
-		return
-	}
+		if err != nil {
+			log.Warnf("http", "POST /run-cron-hook create branch key: %v", err)
+			http.Error(w, fmt.Sprintf("create branch key: %v", err), http.StatusInternalServerError)
+			return
+		}
 
 		orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, d.cfg.Sessions.BranchOrientationPrompt)
 		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
@@ -249,7 +249,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		if req.Async {
-			asyncDispatch(w, inst, wakeCtx, branchKey, req.Text, "wake", d.botMgr, req.Silent)
+			asyncDispatch(w, inst, wakeCtx, branchKey, req.Text, "wake", req.Silent)
 			return
 		}
 
