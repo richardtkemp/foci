@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -89,6 +90,8 @@ func (w *sessionWriter) Append(key string, msg provider.Message) error {
 }
 
 // AppendAll adds multiple messages to the owned session, rejecting cross-session writes.
+// All messages are marshaled and written in a single file operation to prevent
+// partial writes that could cause duplicate tool_use IDs on retry.
 func (w *sessionWriter) AppendAll(key string, msgs []provider.Message) error {
 	if key != w.sessionKey {
 		return fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
@@ -96,12 +99,7 @@ func (w *sessionWriter) AppendAll(key string, msgs []provider.Message) error {
 	}
 	w.store.mu.Lock()
 	defer w.store.mu.Unlock()
-	for _, msg := range msgs {
-		if err := w.store.appendUnlocked(key, msg); err != nil {
-			return err
-		}
-	}
-	return nil
+	return w.store.appendAllUnlocked(key, msgs)
 }
 
 // Replace overwrites the owned session with new messages, rejecting cross-session writes.
@@ -165,12 +163,7 @@ func (s *Store) TestAppend(key string, msg provider.Message) error {
 func (s *Store) TestAppendAll(key string, msgs []provider.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, msg := range msgs {
-		if err := s.appendUnlocked(key, msg); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.appendAllUnlocked(key, msgs)
 }
 
 // TestClear is for testing only - clears a session without SessionWriter guard.
@@ -345,6 +338,79 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 
 	if _, err := f.Write(append(data, '\n')); err != nil {
 		return fmt.Errorf("write message: %w", err)
+	}
+
+	return nil
+}
+
+// appendAllUnlocked writes multiple messages in a single file operation.
+// All messages are marshaled to a buffer first — if any marshal fails, nothing
+// is written to disk. This prevents partial writes that cause duplicate tool_use
+// IDs when a defer safety-net re-writes the same messages.
+func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	path, err := s.SessionPath(key)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create session dir: %w", err)
+	}
+
+	// Check if file exists — if not, we need to write session metadata first
+	exists := false
+	if _, err := os.Stat(path); err == nil {
+		exists = true
+	}
+
+	// Marshal everything into a buffer first so a marshal failure writes nothing
+	var buf bytes.Buffer
+
+	if !exists {
+		now := time.Now().UTC()
+		log.Infof("session", "session created key=%s", key)
+		meta := SessionMeta{
+			Type:      "session_meta",
+			CreatedAt: now.Format(time.RFC3339),
+		}
+		metaData, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("marshal session meta: %w", err)
+		}
+		buf.Write(metaData)
+		buf.WriteByte('\n')
+
+		// Defer event firing until after successful write
+		defer s.fireEvent(SessionEvent{
+			Key:       key,
+			Type:      ClassifySessionKey(key),
+			Status:    SessionStatusActive,
+			FilePath:  path,
+			CreatedAt: now,
+		})
+	}
+
+	for _, msg := range msgs {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("marshal message: %w", err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - session file
+	if err != nil {
+		return fmt.Errorf("open session file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("write messages: %w", err)
 	}
 
 	return nil

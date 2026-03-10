@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"testing"
 
 	"foci/internal/provider"
@@ -186,6 +187,49 @@ func TestLoadFullRegularSession(t *testing.T) {
 	}
 	if len(msgs) != 2 {
 		t.Fatalf("len = %d, want 2", len(msgs))
+	}
+}
+
+func TestAppendAllAtomicOnMarshalError(t *testing.T) {
+	// Verify that if one message in a batch fails to marshal, NO messages
+	// are written to disk. This prevents partial writes that cause duplicate
+	// tool_use IDs when a defer safety-net re-writes the same messages.
+	s := NewStore(t.TempDir())
+	key := "test/imain/1000000000"
+
+	// Pre-populate with one message
+	if err := s.TestAppend(key, msg("user", "existing")); err != nil {
+		t.Fatalf("setup Append: %v", err)
+	}
+
+	// Create a batch where the second message fails to marshal.
+	// Invalid json.RawMessage in a tool_use Input field causes json.Marshal to error.
+	good := msg("assistant", "should not appear")
+	bad := provider.Message{
+		Role: "assistant",
+		Content: []provider.ContentBlock{{
+			Type:  "tool_use",
+			ID:    "toolu_01",
+			Name:  "test",
+			Input: json.RawMessage("!!!invalid"),
+		}},
+	}
+
+	err := s.TestAppendAll(key, []provider.Message{good, bad})
+	if err == nil {
+		t.Fatal("expected marshal error, got nil")
+	}
+
+	// Verify only the original message is on disk — the batch wrote nothing
+	msgs, err := s.Load(key)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message on disk, got %d", len(msgs))
+	}
+	if provider.TextOf(msgs[0].Content) != "existing" {
+		t.Errorf("unexpected message content: %q", provider.TextOf(msgs[0].Content))
 	}
 }
 
