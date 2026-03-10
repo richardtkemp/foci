@@ -340,8 +340,103 @@ func TestReadLargeFile(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text, "truncated") {
+	if !strings.Contains(result.Text, "remaining") {
 		t.Error("expected truncation notice for large file")
+	}
+}
+
+// Verify offset returns lines starting from the given line number.
+func TestReadFileOffset(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]interface{}{"path": path, "offset": 3})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if strings.Contains(result.Text, "aaa") || strings.Contains(result.Text, "bbb") {
+		t.Errorf("offset=3 should skip first 2 lines: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "ccc") {
+		t.Errorf("offset=3 should include line 3: %q", result.Text)
+	}
+	// Line numbers should reflect the original file
+	if !strings.Contains(result.Text, "3\tccc") {
+		t.Errorf("line numbers should match original file positions: %q", result.Text)
+	}
+}
+
+// Verify limit caps the number of lines returned.
+func TestReadFileLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]interface{}{"path": path, "limit": 2})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "aaa") || !strings.Contains(result.Text, "bbb") {
+		t.Errorf("limit=2 should include first 2 lines: %q", result.Text)
+	}
+	if strings.Contains(result.Text, "ccc") {
+		t.Errorf("limit=2 should not include line 3: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "remaining") {
+		t.Errorf("should show remaining lines notice: %q", result.Text)
+	}
+}
+
+// Verify offset and limit work together to return a window of lines.
+func TestReadFileOffsetAndLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]interface{}{"path": path, "offset": 2, "limit": 2})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if strings.Contains(result.Text, "aaa") {
+		t.Errorf("should not include line before offset: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "bbb") || !strings.Contains(result.Text, "ccc") {
+		t.Errorf("should include lines 2-3: %q", result.Text)
+	}
+	if strings.Contains(result.Text, "ddd") {
+		t.Errorf("should not include lines beyond limit: %q", result.Text)
+	}
+}
+
+// Verify offset past end of file returns informative message.
+func TestReadFileOffsetPastEnd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	os.WriteFile(path, []byte("aaa\nbbb\n"), 0644)
+
+	tool := NewReadTool(nil)
+	params, _ := json.Marshal(map[string]interface{}{"path": path, "offset": 100})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "past end") {
+		t.Errorf("expected past-end message: %q", result.Text)
 	}
 }
 
