@@ -14,7 +14,7 @@ import (
 type Request struct {
 	Name      string
 	Args      string
-	SessionID string
+	SessionKey string
 	UserID    string
 }
 
@@ -41,7 +41,7 @@ type Deps struct {
 	PeekClient            func(endpoint, format string) provider.Client
 
 	OnSessionEnd func(sessionKey string) error
-	SendDocument func(sessionID, path string) error
+	SendDocument func(sessionKey, path string) error
 
 	PromptSearchDirs []string
 	APILogPath       string

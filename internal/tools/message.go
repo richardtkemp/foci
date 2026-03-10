@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -58,15 +59,6 @@ func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, t
 				return ToolResult{}, fmt.Errorf("messaging not configured")
 			}
 
-			// If the message originates from a different session than the bot's
-			// own session, prepend a header so the user knows which session sent it.
-			if p.Text != "" && sessionKey != "" {
-				botSession := bot.SessionKey()
-				if botSession != "" && sessionKey != botSession {
-					p.Text = "[[ message from " + sessionKey + " ]]\n" + p.Text
-				}
-			}
-
 			// Extract chat ID from session key for targeted delivery.
 			chatID := ChatIDFromSessionKey(sessionKey)
 
@@ -91,6 +83,16 @@ func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, t
 					return ToolResult{}, fmt.Errorf("send voice note: %w", err)
 				}
 				return TextResult("Sent: voice note"), nil
+			}
+
+			// If the message originates from a different session than the bot's
+			// own session, prepend a header so the user knows which session sent it.
+			// Placed after TTS early-return so the header isn't synthesized as speech.
+			if p.Text != "" && sessionKey != "" {
+				botSession := bot.SessionKey()
+				if botSession != "" && sessionKey != botSession {
+					p.Text = "[[ message from " + sessionKey + " ]]\n" + p.Text
+				}
 			}
 
 			if p.Text != "" {
@@ -177,6 +179,6 @@ func joinWords(words []string) string {
 	case 1:
 		return words[0]
 	default:
-		return words[0] + " + " + words[1]
+		return strings.Join(words, " + ")
 	}
 }

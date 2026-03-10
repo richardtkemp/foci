@@ -10,9 +10,9 @@ import (
 
 	"foci/internal/gemini"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/startup"
 	"foci/internal/state"
-	"foci/internal/telegram"
 )
 
 // runShutdown performs the graceful shutdown sequence after a signal is received.
@@ -20,7 +20,7 @@ func runShutdown(
 	agents map[string]*agentInstance,
 	httpServer *http.Server,
 	httpMu *sync.Mutex,
-	botMgr *telegram.BotManager,
+	connMgr platform.ConnectionManager,
 	clients *clientRegistry,
 	stateStore *state.Store,
 	cfg shutdownConfig,
@@ -67,8 +67,8 @@ func runShutdown(
 	// Cancel context — stops platform bots and cleans up goroutines
 	cancel()
 
-	// Wait for platform bots to finish cleanup
-	botMgr.Wait()
+	// Wait for platform connections to finish cleanup
+	connMgr.Wait()
 }
 
 type shutdownConfig struct {

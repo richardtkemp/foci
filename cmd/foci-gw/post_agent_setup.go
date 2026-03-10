@@ -3,91 +3,14 @@ package main
 import (
 	"context"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
-	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/resources"
-	"foci/internal/secrets"
-	"foci/internal/session"
-	"foci/internal/startup"
-	"foci/internal/state"
-	"foci/internal/telegram"
 	"foci/internal/tools"
-	"foci/internal/voice"
 )
-
-// setupSharedMultiball creates shared multiball bots available to any agent.
-func setupSharedMultiball(
-	botMgr *telegram.BotManager,
-	agents map[string]*agentInstance,
-	agentOrder []string,
-	cfg *config.Config,
-	store *secrets.Store,
-	sessions *session.Store,
-	ttsMap map[string]voice.TTS,
-	sttMap map[string]voice.STT,
-	toolDetailStore *telegram.ToolDetailStore,
-	stateStore *state.Store,
-	ctx context.Context,
-) {
-	if len(cfg.Telegram.MultiballBots) == 0 || len(agentOrder) == 0 {
-		return
-	}
-
-	firstInst := agents[agentOrder[0]]
-	firstACfg := firstInst.agentCfg
-	sharedSTT := resolveSTT(sttMap, firstACfg.STT)
-	sharedTTS := resolveTTS(ttsMap, cfg.TTS, firstACfg.TTS, firstACfg.TTSRate)
-	for _, botName := range cfg.Telegram.MultiballBots {
-		mbToken := config.ResolveBotToken(botName, "", store)
-		if mbToken == "" {
-			log.Errorf("main", "shared multiball bot %q: token not found", botName)
-			continue
-		}
-		mbBot, err := telegram.NewBot(mbToken, cfg.Telegram.AllowedUsers,
-			firstInst.ag, firstInst.cmds, command.NewLastMessageStore(), "")
-		if err != nil {
-			log.Errorf("main", "shared multiball bot %q: create: %v", botName, err)
-			continue
-		}
-		configureMultiballBot(mbBot, multiballBotConfig{
-			sttProvider:     sharedSTT,
-			ttsProvider:     sharedTTS,
-			stopAliases:     cfg.Telegram.StopAliases,
-			enableStopAlias: cfg.Telegram.EnableStopAliases,
-			acfg:            firstACfg,
-			cfg:             cfg,
-			toolDetailStore: toolDetailStore,
-			stateStore:      stateStore,
-		})
-		botMgr.AddSharedMultiball(mbBot)
-	}
-
-	if pool := botMgr.SharedPool(); pool != nil && pool.Size() > 0 {
-		ttl, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
-		if ttl > 0 {
-			pool.SetSessionTTL(ttl, sessions)
-		}
-		pool.ReclaimHook = func(sessionKey string) {
-			for _, id := range agentOrder {
-				inst := agents[id]
-				prefix := "agent:" + id + ":"
-				if strings.HasPrefix(sessionKey, prefix) {
-					orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
-					fireSessionEndMemory(inst.ag, sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
-						return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
-					}, inst.promptSearchDirs, ctx)
-					return
-				}
-			}
-		}
-		log.Infof("main", "%d shared multiball bots ready", pool.Size())
-	}
-}
 
 // setupWarningHooks wires log warnings into agent sessions for agents with inject_agent_warnings.
 func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
@@ -117,7 +40,7 @@ func setupTmuxMemoryMonitor(
 	agents map[string]*agentInstance,
 	agentOrder []string,
 	cfg *config.Config,
-	botMgr *telegram.BotManager,
+	connMgr platform.ConnectionManager,
 	ctx context.Context,
 ) func() {
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -143,8 +66,8 @@ func setupTmuxMemoryMonitor(
 				if inst.agentCfg.InjectAgentWarnings {
 					continue
 				}
-				if bot := botMgr.PrimaryBot(id); bot != nil {
-					bot.SendNotification(msg)
+				if conn := connMgr.Primary(id); conn != nil {
+					conn.SendNotification(msg)
 				}
 			}
 		},
@@ -190,7 +113,7 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 
 // setupToolDetailCleanup starts periodic tool detail expiry when all users are idle.
 func setupToolDetailCleanup(
-	toolDetailStore *telegram.ToolDetailStore,
+	toolDetailStore platform.ToolDetailStore,
 	agents map[string]*agentInstance,
 	agentOrder []string,
 	ctx context.Context,
@@ -224,37 +147,4 @@ func setupToolDetailCleanup(
 			}
 		}
 	}()
-}
-
-// sendStartupNotifications diagnoses restart type and sends notifications via platform.
-func sendStartupNotifications(
-	agents map[string]*agentInstance,
-	agentOrder []string,
-	botMgr *telegram.BotManager,
-	stateStore *state.Store,
-	cfg *config.Config,
-	startTime time.Time,
-) *startup.DiagnosisResult {
-	logsDir := filepath.Dir(cfg.Logging.EventFile)
-	if logsDir == "" || logsDir == "." {
-		logsDir = ""
-	}
-	diagnosis := startup.DiagnoseRestart(stateStore, startTime, logsDir)
-	if diagnosis.Class != startup.ClassClean && diagnosis.Class != startup.ClassUnknown {
-		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
-	}
-
-	for _, id := range agentOrder {
-		inst := agents[id]
-		enabled := cfg.Telegram.EnableStartupNotify
-		if inst.agentCfg.StartupNotification != nil {
-			enabled = *inst.agentCfg.StartupNotification
-		}
-		if enabled {
-			if bot := botMgr.PrimaryBot(id); bot != nil {
-				bot.SendStartupNotificationWithDiagnosis(id, diagnosis)
-			}
-		}
-	}
-	return diagnosis
 }

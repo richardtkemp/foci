@@ -9,9 +9,9 @@ import (
 	"foci/internal/agent"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/telegram"
 	"foci/internal/tools"
 	"foci/prompts"
 )
@@ -24,6 +24,7 @@ func newAsyncNotifier(
 	agentID string,
 	ctx context.Context,
 	sessions tools.SessionAppender,
+	connMgr platform.ConnectionManager,
 ) *tools.AsyncNotifier {
 	return tools.NewAsyncNotifier(func(targetSession, message string, replyToSession string) {
 		go func() {
@@ -31,8 +32,6 @@ func newAsyncNotifier(
 			if target == "" {
 				target = defaultSessionKey()
 			}
-
-			botMgr := telegram.DefaultManager()
 
 			// If replyToSession is set, route response back to caller
 			if replyToSession != "" {
@@ -63,31 +62,31 @@ func newAsyncNotifier(
 
 				// STEP 2: Display to user in calling session's chat
 				// Note: SendToSession() displays to the user, doesn't append to session
-				callerBot := botMgr.BotForSession(replyToSession)
-				if callerBot != nil {
-					if err := callerBot.SendToSession(replyToSession, formattedResp); err != nil {
+				callerConn := connMgr.ForSession(replyToSession)
+				if callerConn != nil {
+					if err := callerConn.SendToSession(replyToSession, formattedResp); err != nil {
 						log.Errorf("async_notify", "platform delivery to caller %s: %v", replyToSession, err)
 					}
 				} else {
-					log.Debugf("async_notify", "no bot for caller session %s, response recorded but not displayed", replyToSession)
+					log.Debugf("async_notify", "no connection for caller session %s, response recorded but not displayed", replyToSession)
 				}
 				return
 			}
 
 			// Otherwise use existing behavior (display to target's chat)
-			bot := botMgr.BotForSessionOrPrimary(target, agentID)
+			conn := connMgr.ForSessionOrPrimary(target, agentID)
 
-			// Branch sessions without their own multiball bot should not
+			// Branch sessions without their own multiball connection should not
 			// deliver replies to chat — they'd leak into the parent's chat.
 			// The response still gets written to the branch JSONL via HandleMessage.
 			sk, parseErr := session.ParseSessionKey(target)
-			isBranchWithoutBot := parseErr == nil && !sk.IsRoot() && botMgr.BotForSession(target) == nil
+			isBranchWithoutConn := parseErr == nil && !sk.IsRoot() && connMgr.ForSession(target) == nil
 
 			notifyCtx := agent.WithTrigger(ctx, "async_notify")
-			if bot != nil && !isBranchWithoutBot {
+			if conn != nil && !isBranchWithoutConn {
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
-						if err := bot.SendToSession(target, text); err != nil {
+						if err := conn.SendToSession(target, text); err != nil {
 							log.Errorf("async_notify", "intermediate platform delivery: %v", err)
 						}
 					},
@@ -103,15 +102,15 @@ func newAsyncNotifier(
 			if resp == "" {
 				return
 			}
-			if bot == nil || isBranchWithoutBot {
-				if isBranchWithoutBot {
-					log.Debugf("async_notify", "branch session %s has no dedicated bot, skipping platform delivery", target)
+			if conn == nil || isBranchWithoutConn {
+				if isBranchWithoutConn {
+					log.Debugf("async_notify", "branch session %s has no dedicated connection, skipping platform delivery", target)
 				} else {
-					log.Warnf("async_notify", "no bot for agent %s session %s, response not delivered", agentID, target)
+					log.Warnf("async_notify", "no connection for agent %s session %s, response not delivered", agentID, target)
 				}
 				return
 			}
-			if err := bot.SendToSession(target, resp); err != nil {
+			if err := conn.SendToSession(target, resp); err != nil {
 				log.Errorf("async_notify", "platform delivery: %v", err)
 			}
 		}()
@@ -124,6 +123,7 @@ func newAsyncNotifier(
 func newSessionNotifyFn(
 	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
+	connMgr platform.ConnectionManager,
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
 		go func() {
@@ -149,14 +149,13 @@ func newSessionNotifyFn(
 				return
 			}
 
-			botMgr := telegram.DefaultManager()
-			bot := botMgr.BotForSessionOrPrimary(targetSessionKey, targetAgentID)
-			if bot == nil {
-				log.Warnf("session_notify", "no bot for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
+			conn := connMgr.ForSessionOrPrimary(targetSessionKey, targetAgentID)
+			if conn == nil {
+				log.Warnf("session_notify", "no connection for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
 				return
 			}
 
-			if err := bot.SendToSession(targetSessionKey, resp); err != nil {
+			if err := conn.SendToSession(targetSessionKey, resp); err != nil {
 				log.Errorf("session_notify", "platform delivery for session %s: %v", targetSessionKey, err)
 			}
 		}()

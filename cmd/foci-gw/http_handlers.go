@@ -77,8 +77,8 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 
 		sessionKey := inst.defaultSessionKey()
 		if req.Session != "" {
-			// HTTP sessions are independent sessions
-			sessionKey = session.IndependentSessionKey(inst.id)
+			// HTTP named sessions are deterministic — same name yields same session
+			sessionKey = session.NamedIndependentSessionKey(inst.id, req.Session)
 		}
 		if sessionKey == "" {
 			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
@@ -100,7 +100,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 
 		sendCtx := agent.WithTrigger(d.ctx, "user")
 		if req.Async {
-			asyncDispatch(w, inst, sendCtx, sessionKey, req.Text, "http", false)
+			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, req.Text, "http", false)
 			return
 		}
 
@@ -249,7 +249,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		if req.Async {
-			asyncDispatch(w, inst, wakeCtx, branchKey, req.Text, "wake", req.Silent)
+			asyncDispatch(w, inst, d.connMgr, wakeCtx, branchKey, req.Text, "wake", req.Silent)
 			return
 		}
 

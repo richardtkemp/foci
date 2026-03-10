@@ -39,9 +39,10 @@ config.Load(path)                                        ← validates values; l
   → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
 
    Shared resources (created once in main.go):
-   → telegram.NewToolDetailStore(tool_details.db)           ← shared; persists inline keyboard expansion data across restarts
+   → platform.InitMessaging(cfg, deps)                      ← initialises all registered providers (e.g. telegram via blank import)
+     → each provider.Init(deps) creates its own bot manager, tool detail store, etc.
+     → returns *platform.Messaging facade wrapping all active providers
    → voice STT/TTS providers                              ← shared across agents
-   → telegram.NewBotManager()
 
    Per-agent loop (for each cfg.Agents[i]):
    → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
@@ -54,33 +55,30 @@ config.Load(path)                                        ← validates values; l
      → compaction.NewCompactor(sessions, model, threshold)
      → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
      → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
-      → telegram.NewBot(agentID, agent, ...) → botMgr.AddPrimary(agentID, bot)
-        Bot holds platform.MessageHandler interface (not concrete *agent.Agent)
-        Agent registers platform via ag.AddPlatform("telegram", bot)
-        Bot implements platform.Platform (Start/Stop for lifecycle, Sender for messaging)
-     → bot.SetHandlerAndCommands(agent, cmdRegistry)  ← injects agent via MessageHandler interface
-     → bot.SetSessionIndex(sessionIndex)                   ← persists chat→session key mapping for continuity across restarts
-    → optional: multiball bot → botMgr.AddMultiball(agentID, mbBot)
-    → bot.SetReceivedFilesDir(acfg.ReceivedFilesDir || cfg.Telegram.ReceivedFilesDir)
+     → plat.SetupAgentConnection(AgentConnectionParams)     ← creates platform connections (bots) for all active providers
+       → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureMultiballConn
+     → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
+       → ag.AddPlatform() for each connection
+       → wires CacheBustAlert, ManaWarnFunc, RateLimitFunc, etc. using plat.NotifyAgent()
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
   → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
-  → setupSharedMultiball(...)                              ← post_agent_setup.go
+  → plat.SetupSharedMultiball(...)                         ← shared multiball bots (via messaging facade)
   → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
   → setupTmuxMemoryMonitor(...)                            ← post_agent_setup.go
   → setupMemoryGuard(...)                                  ← post_agent_setup.go
 
   → signal.Notify(SIGINT, SIGTERM)
-  → restoreMultiballSessions()                             ← restore bot→session mappings from state store
-  → botMgr.StartAll(ctx)
-  → sendStartupNotifications(...)                          ← post_agent_setup.go
+  → plat.RestoreMultiballSessions(...)                     ← restore bot→session mappings from state store
+  → plat.StartAll(ctx)                                     ← starts all provider connections
+  → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
   → handleWelcomeAndFirstRun(...)                          ← notifications.go
   → block on signal → runShutdown(...)                     ← shutdown.go
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and Telegram bot(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
 **Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). Reminder and scratchpad stores are always shared. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
 
@@ -96,8 +94,8 @@ SIGTERM/SIGINT received
     → gracefulShutdown(agents, timeout)             ← wait for in-flight agent turns
     → startup.RecordCleanShutdown()                 ← record timestamp for crash detection
     → close MCP managers                            ← disconnect from MCP servers
-    → cancel context                                ← stops Telegram poll loops, triggers update ack
-    → botMgr.Wait()                                 ← block until all bots finish ack
+    → cancel context                                ← stops platform poll loops, triggers update ack
+    → connMgr.Wait()                                ← block until all platform connections finish
   → deferred closes run (SQLite DBs, log files)
 ```
 
@@ -118,7 +116,7 @@ DiagnoseRestart(stateStore, startTime, logsDir)
   → return DiagnosisResult{Class, Diagnostics, Summary}
 ```
 
-**Telegram notification:** `SendStartupNotificationWithDiagnosis` appends the formatted diagnosis to the standard restart message. Clean restarts get no extra text. Crashes show "⚠️ Unexpected restart" with error lines. Reboots show "🔄 System reboot detected".
+**Platform notification:** Startup notifications fan out to all connections via `connMgr.AllForAgent()`. The diagnosis text is appended to the restart message. Clean restarts get no extra text. Crashes show "⚠️ Unexpected restart" with error lines. Reboots show "🔄 System reboot detected".
 
 **State key:** `system:last_clean_shutdown` holds Unix timestamp of last graceful shutdown.
 
@@ -133,7 +131,8 @@ main
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
- ├── platform      (no deps — platform-agnostic messaging types and interfaces)
+ ├── platform      → config, secrets, session, state, voice, warnings
+ │                  (messaging types, interfaces, provider registry, Messaging facade)
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
@@ -154,13 +153,14 @@ main
  ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
  ├── periodic     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
  └── telegram      → agent, command, platform, log, sqlite, table, voice
+                    (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `platform`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. 
+No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `mana`, `warnings` are leaf packages. `platform` depends on leaf packages only (config, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
-**`platform` package:** Defines platform-agnostic messaging types (`Message`, `Attachment`, `Request`, `Response`) and the `Sender` interface for outbound messaging. Enables multi-platform support by abstracting messaging operations. `telegram.Bot` implements `platform.Sender`.
+**`platform` package:** Defines platform-agnostic messaging types (`Message`, `Attachment`), the `Connection`/`ConnectionManager` interfaces, the `MessagingProvider` interface for platform implementations, and the `Messaging` facade that manages all active providers. Providers register via `RegisterMessagingProvider()` (called from `init()`) and are activated at startup via `InitMessaging()`. An aggregating `ConnectionManager` merges connections from all providers — `AllForAgent()` returns connections across all platforms, enabling multi-platform fan-out for notifications. `cmd/foci-gw/` uses only the facade; zero platform-specific type references.
 
 Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 

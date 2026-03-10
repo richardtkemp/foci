@@ -9,10 +9,10 @@ import (
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/periodic"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/state"
-	"foci/internal/telegram"
 	"foci/internal/warnings"
 	"foci/prompts"
 )
@@ -21,7 +21,7 @@ type periodicParams struct {
 	cfg                   *config.Config
 	sessions              *session.Store
 	usageClientReg        *usageClientRegistry
-	botMgr                *telegram.BotManager
+	connMgr               platform.ConnectionManager
 	stateStore            *state.Store
 	todoStore             *memory.TodoStore
 	ctx                   context.Context
@@ -84,8 +84,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 				if resp == "" {
 					return
 				}
-				if bot := p.botMgr.BotForSessionOrPrimary(sk, agentID); bot != nil {
-					if err := bot.SendToSession(sk, resp); err != nil {
+				if conn := p.connMgr.ForSessionOrPrimary(sk, agentID); conn != nil {
+					if err := conn.SendToSession(sk, resp); err != nil {
 						log.Errorf("warning", "[%s] proactive warning platform delivery: %v", agentID, err)
 					}
 				}
@@ -132,16 +132,6 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	})
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
-
-	// Wire platform bot callbacks to periodic runner
-	if bot := p.botMgr.PrimaryBot(acfg.ID); bot != nil {
-		bot.OnUserMessage = func() {
-			runner.NotifyInteraction()
-		}
-		bot.OnTurnComplete = func() {
-			runner.NotifyCacheWarmed()
-		}
-	}
 
 	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, acfg.Keepalive.Enabled, acfg.Background.Enabled)
 	return runner

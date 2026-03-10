@@ -11,9 +11,9 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/state"
-	"foci/internal/telegram"
 	"foci/internal/voice"
 )
 
@@ -27,6 +27,7 @@ type httpHandlerDeps struct {
 	ctx               context.Context
 	ttsMap            map[string]voice.TTS
 	sttMap            map[string]voice.STT
+	connMgr           platform.ConnectionManager
 	reloadCredentials func() error
 }
 
@@ -120,8 +121,8 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 
 // asyncDispatch handles async fire-and-forget requests: sends the agent message
 // in a goroutine, writes a 202 response, and optionally delivers the result via platform.
-func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Context,
-	sessionKey, text, logTag string, silent bool) {
+func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
+	ctx context.Context, sessionKey, text, logTag string, silent bool) {
 	go func() {
 		resp, err := inst.ag.HandleMessage(ctx, sessionKey, text)
 		if err != nil {
@@ -129,8 +130,8 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, ctx context.Conte
 			return
 		}
 		if resp != "" && !silent {
-			if bot := telegram.DefaultManager().BotForSessionOrPrimary(sessionKey, inst.id); bot != nil {
-				if err := bot.SendToSession(sessionKey, resp); err != nil {
+			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
+				if err := conn.SendToSession(sessionKey, resp); err != nil {
 					log.Errorf(logTag, "async platform delivery: %v", err)
 				}
 			}

@@ -8,10 +8,10 @@ import (
 	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/prompts"
+	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/state"
-	"foci/internal/telegram"
+	"foci/prompts"
 )
 
 // handleWelcomeAndFirstRun injects welcome file content and first-run onboarding prompts.
@@ -20,7 +20,7 @@ func handleWelcomeAndFirstRun( // nolint:unparam
 	agentOrder []string,
 	sessions *session.Store,
 	stateStore *state.Store,
-	botMgr *telegram.BotManager,
+	connMgr platform.ConnectionManager,
 	cfg *config.Config,
 	ctx context.Context,
 ) {
@@ -62,10 +62,10 @@ func handleWelcomeAndFirstRun( // nolint:unparam
 					}
 					if len(users) > 0 {
 						if chatID, err := strconv.ParseInt(users[0], 10, 64); err == nil {
-							if bot := botMgr.PrimaryBot(agentID); bot != nil {
-								sk = bot.SessionKeyForChat(chatID)
+							if conn := connMgr.Primary(agentID); conn != nil {
+								sk = conn.SessionKeyForChat(chatID)
 							} else {
-								sk = telegram.NewSessionKeyForChat(agentID, chatID)
+								sk = session.NewChatSessionKey(agentID, chatID)
 							}
 						}
 					}
