@@ -7,21 +7,6 @@ import (
 	"foci/internal/log"
 )
 
-var defaultManager *BotManager
-var defaultManagerOnce sync.Once
-
-func DefaultManager() *BotManager {
-	defaultManagerOnce.Do(func() {
-		defaultManager = NewBotManager()
-	})
-	return defaultManager
-}
-
-func ResetDefaultManager() {
-	defaultManager = nil
-	defaultManagerOnce = sync.Once{}
-}
-
 type BotManager struct {
 	primary map[string]*Bot  // agentID → primary bot
 	pools   map[string]*Pool // agentID → per-agent multiball pool
@@ -195,16 +180,6 @@ func (m *BotManager) StartAll(ctx context.Context) {
 // cleanup such as acknowledging processed Telegram updates.
 func (m *BotManager) Wait() {
 	m.wg.Wait()
-}
-
-// SendStartupNotifications sends a startup notification to all primary bots.
-// Called after bots have started to notify users of service restart.
-func (m *BotManager) SendStartupNotifications() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for agentID, bot := range m.primary {
-		bot.SendStartupNotification(agentID)
-	}
 }
 
 // AgentIDs returns the IDs of all agents with primary bots.

@@ -222,6 +222,19 @@ func IndependentSessionKey(agentID string) string {
 	return NewIndependentSession(agentID).String()
 }
 
+// NamedIndependentSessionKey constructs a deterministic independent session key
+// for a given name. The name is used as the ID field so that repeated calls with
+// the same agentID and name return the same key. The version timestamp is fixed
+// at 0 to ensure stability.
+func NamedIndependentSessionKey(agentID, name string) string {
+	return SessionKey{
+		AgentID:   agentID,
+		Type:      'i',
+		ID:        name,
+		VersionTS: 0,
+	}.String()
+}
+
 // ChatIDFromKey extracts the chat ID from a session key string.
 // Supports the current format "{agentID}/c{chatID}/{versionTS}" (and branches
 // since root type 'c' is preserved) and legacy colon-separated formats

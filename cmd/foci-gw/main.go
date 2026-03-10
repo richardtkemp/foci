@@ -14,13 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	_ "foci/internal/telegram" // register telegram messaging provider
+
 	"foci/internal/anthropic"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/platform"
 	"foci/internal/secrets"
-	"foci/internal/telegram"
+	"foci/internal/startup"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
@@ -128,12 +131,31 @@ Subcommands:
 	mem := initMemorySystem(cfg)
 	defer mem.cleanup()
 
-	// ========== Tool detail store ==========
-	toolDetailDbPath := cfg.DataPath("tool_details.db")
-	toolDetailStore, err := telegram.NewToolDetailStore(toolDetailDbPath)
+	// ========== Voice providers ==========
+	braveKey, _ := sec.store.Get("brave.api_key")
+	ttsMap, sttMap := initVoice(cfg, sec.store)
+
+	// ========== Platform messaging ==========
+	plat, err := platform.InitMessaging(cfg, platform.ProviderDeps{
+		Config:       cfg,
+		SecretStore:  sec.store,
+		Sessions:     si.sessions,
+		StateStore:   si.stateStore,
+		SessionIndex: si.sessionIndex,
+		STTMap:       sttMap,
+		TTSMap:       ttsMap,
+		Ctx:          ctx,
+		ResolveSTT:   resolveSTT,
+		ResolveTTS:   resolveTTS,
+	})
 	if err != nil {
-		log.Errorf("main", "create tool detail store: %v (inline keyboard expansion will not persist)", err)
-	} else {
+		log.Fatalf("main", "init messaging: %v", err)
+	}
+	defer func() { _ = plat.Close() }()
+
+	connMgr := plat.ConnectionManager()
+	toolDetailStore := plat.ToolDetailStore()
+	if toolDetailStore != nil {
 		toolDetailStore.ExpireAndVacuum()
 		defer func() {
 			toolDetailStore.ExpireAndVacuum()
@@ -141,12 +163,7 @@ Subcommands:
 		}()
 	}
 
-	// ========== Voice providers ==========
-	braveKey, _ := sec.store.Get("brave.api_key")
-	ttsMap, sttMap := initVoice(cfg, sec.store)
-
 	startTime := time.Now()
-	botMgr := telegram.NewBotManager()
 
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
@@ -219,7 +236,6 @@ Subcommands:
 			reminderStore:       mem.reminderStore,
 			scratchpadStore:     mem.scratchpadStore,
 			todoStore:           mem.todoStores[acfg.ID],
-			toolDetailStore:     toolDetailStore,
 			sessionIndex:        si.sessionIndex,
 			ttsMap:              ttsMap,
 			sttMap:              sttMap,
@@ -228,6 +244,8 @@ Subcommands:
 			ctx:                 ctx,
 			agentListFn:         agentListFn,
 			agentResolverFn:     agentResolverFn,
+			connMgr:             connMgr,
+			plat:                plat,
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
@@ -243,21 +261,52 @@ Subcommands:
 			cfg:                   cfg,
 			sessions:              si.sessions,
 			usageClientReg:        usageClients,
-			botMgr:                botMgr,
+			connMgr:               connMgr,
 			stateStore:            si.stateStore,
 			todoStore:             mem.todoStores[acfg.ID],
 			ctx:                   ctx,
 			resolveEndpointClient: clients.ResolveEndpointClient,
 		})
 
+		// Wire platform lifecycle callbacks to periodic runner
+		if inst.kaRunner != nil {
+			plat.SetLifecycleCallback(acfg.ID, platform.OnUserMessage,
+				func() { inst.kaRunner.NotifyInteraction() })
+			plat.SetLifecycleCallback(acfg.ID, platform.OnTurnComplete,
+				func() { inst.kaRunner.NotifyCacheWarmed() })
+		}
+
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
 	}
 
 	// ========== Post-agent setup ==========
-	setupSharedMultiball(botMgr, agents, agentOrder, cfg, sec.store, si.sessions,
-		ttsMap, sttMap, toolDetailStore, si.stateStore, ctx)
+	if len(agentOrder) > 0 {
+		firstInst := agents[agentOrder[0]]
+		sessionTTL, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
+		plat.SetupSharedMultiball(platform.SharedMultiballParams{
+			FirstHandler:     firstInst.ag,
+			FirstCommands:    firstInst.cmds,
+			FirstAgentConfig: firstInst.agentCfg,
+			AgentOrder:       agentOrder,
+			SessionTTL:       sessionTTL,
+			ReclaimHook: func(sessionKey string) {
+				for _, id := range agentOrder {
+					inst := agents[id]
+					prefix := "agent:" + id + ":"
+					if strings.HasPrefix(sessionKey, prefix) {
+						orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+						fireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
+							return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
+						}, inst.promptSearchDirs, ctx)
+						return
+					}
+				}
+			},
+		})
+	}
+
 	setupWarningHooks(agents, cfg)
-	if stop := setupTmuxMemoryMonitor(agents, agentOrder, cfg, botMgr, ctx); stop != nil {
+	if stop := setupTmuxMemoryMonitor(agents, agentOrder, cfg, connMgr, ctx); stop != nil {
 		defer stop()
 	}
 	if stop := setupMemoryGuard(agents, cfg, ctx); stop != nil {
@@ -269,13 +318,47 @@ Subcommands:
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	if si.stateStore != nil {
-		restoreMultiballSessions(si.stateStore, si.sessions, agents, agentOrder, cfg)
-	}
-	telegram.DefaultManager().StartAll(ctx)
+	plat.RestoreMultiballSessions(platform.RestoreParams{
+		AgentOrder: agentOrder,
+		Resolver: func(agentID string) (platform.MessageHandler, any, config.AgentConfig, bool) {
+			inst, found := agents[agentID]
+			if !found {
+				return nil, nil, config.AgentConfig{}, false
+			}
+			return inst.ag, inst.cmds, inst.agentCfg, true
+		},
+	})
+	plat.StartAll(ctx)
 
 	// ========== Startup notifications ==========
-	sendStartupNotifications(agents, agentOrder, telegram.DefaultManager(), si.stateStore, cfg, startTime)
+	logsDir := filepath.Dir(cfg.Logging.EventFile)
+	if logsDir == "" || logsDir == "." {
+		logsDir = ""
+	}
+	diagnosis := startup.DiagnoseRestart(si.stateStore, startTime, logsDir)
+	if diagnosis.Class != startup.ClassClean && diagnosis.Class != startup.ClassUnknown {
+		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
+	}
+	for _, id := range agentOrder {
+		inst := agents[id]
+		enabled := cfg.Telegram.EnableStartupNotify
+		if inst.agentCfg.StartupNotification != nil {
+			enabled = *inst.agentCfg.StartupNotification
+		}
+		if enabled {
+			for _, conn := range connMgr.AllForAgent(id) {
+				name := conn.Username()
+				if name == "" {
+					name = "foci"
+				}
+				text := fmt.Sprintf("%s restarted at %s", name, time.Now().Format("15:04:05"))
+				if extra := diagnosis.FormatNotification(); extra != "" {
+					text += "\n\n" + extra
+				}
+				conn.SendNotification(text)
+			}
+		}
+	}
 
 	// ========== HTTP server ==========
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
@@ -299,6 +382,7 @@ Subcommands:
 		ctx:               ctx,
 		ttsMap:            ttsMap,
 		sttMap:            sttMap,
+		connMgr:           connMgr,
 		reloadCredentials: reloadCreds,
 	})
 
@@ -340,7 +424,7 @@ Subcommands:
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// ========== Welcome & first-run ==========
-	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, botMgr, cfg, ctx)
+	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, connMgr, cfg, ctx)
 
 	// ========== Wait for signal & shutdown ==========
 	<-sigCh
@@ -349,6 +433,6 @@ Subcommands:
 	if shutdownTimeout == 0 {
 		shutdownTimeout = 30 * time.Second
 	}
-	runShutdown(agents, httpServer, &httpMu, botMgr, clients, si.stateStore,
+	runShutdown(agents, httpServer, &httpMu, connMgr, clients, si.stateStore,
 		shutdownConfig{gracefulTimeout: shutdownTimeout, ctx: ctx}, cancel)
 }

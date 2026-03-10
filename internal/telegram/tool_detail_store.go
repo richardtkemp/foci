@@ -7,8 +7,12 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/sqlite"
 )
+
+// Compile-time check: ToolDetailStore satisfies platform.ToolDetailStore.
+var _ platform.ToolDetailStore = (*ToolDetailStore)(nil)
 
 const (
 	toolDetailTTL     = 48 * time.Hour

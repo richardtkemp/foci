@@ -28,7 +28,7 @@ import (
 	"foci/internal/session"
 	"foci/internal/skills"
 	"foci/internal/state"
-	"foci/internal/telegram"
+	"foci/internal/platform"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 	"foci/prompts"
@@ -67,6 +67,10 @@ type cmdRegParams struct {
 
 	// Cross-agent
 	agentListFn func() []command.AgentInfo
+
+	// Platform
+	connMgr            platform.ConnectionManager
+	configureMultiball func(platform.Connection)
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
@@ -196,7 +200,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// /multiball and /mb — per-agent pool first, shared pool fallback.
 	forkFn := func(ctx context.Context) (string, error) {
-		return forkMultiball(p, cmds, ctx)
+		return forkMultiball(p, ctx)
 	}
 	cmds.Register(command.NewMultiballCommand(forkFn))
 	cmds.Register(&command.Command{
@@ -432,14 +436,14 @@ func buildPromptsData(p cmdRegParams) command.PromptsData {
 	}
 }
 
-// buildSendDocFn returns a function that sends a document via the agent's primary bot.
+// buildSendDocFn returns a function that sends a document via the agent's primary connection.
 func buildSendDocFn(p cmdRegParams) func(path string) error {
 	return func(path string) error {
-		bot := telegram.DefaultManager().PrimaryBot(p.acfg.ID)
-		if bot == nil {
-			return fmt.Errorf("no bot available")
+		conn := p.connMgr.Primary(p.acfg.ID)
+		if conn == nil {
+			return fmt.Errorf("no connection available")
 		}
-		return bot.SendDocument(path)
+		return conn.SendDocument(path)
 	}
 }
 
@@ -529,36 +533,37 @@ func runReload(p cmdRegParams) (string, error) {
 	return fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: foci.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", newSkillRegistry.Len()), nil
 }
 
-// forkMultiball forks the current session to a secondary multiball bot.
-func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) (string, error) {
-	if !telegram.DefaultManager().HasMultiball(p.acfg.ID) {
+// forkMultiball forks the current session to a secondary multiball connection.
+func forkMultiball(p cmdRegParams, ctx context.Context) (string, error) {
+	if !p.connMgr.HasMultiball(p.acfg.ID) {
 		return "", fmt.Errorf("no multiball bots configured")
 	}
-	secBot, ok := telegram.DefaultManager().AcquireMultiball(p.acfg.ID)
+	secConn, ok := p.connMgr.AcquireMultiball(p.acfg.ID)
 	if !ok {
 		return "", fmt.Errorf("all multiball bots are busy")
 	}
 
-	secBot.SetHandlerAndCommands(p.ag, cmds)
-	applyAgentDisplaySettings(secBot, p.acfg, p.cfg)
+	if p.configureMultiball != nil {
+		p.configureMultiball(secConn)
+	}
 
 	parentKey := p.defaultSessionKey()
 	if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-		if bot := telegram.DefaultManager().PrimaryBot(p.acfg.ID); bot != nil {
-			parentKey = bot.SessionKeyForChat(chatID)
+		if conn := p.connMgr.Primary(p.acfg.ID); conn != nil {
+			parentKey = conn.SessionKeyForChat(chatID)
 		} else {
-			parentKey = telegram.NewSessionKeyForChat(p.acfg.ID, chatID)
+			parentKey = session.NewChatSessionKey(p.acfg.ID, chatID)
 		}
 	}
 	if parentKey == "" {
-		secBot.SetSessionKey("")
+		secConn.SetSessionKey("")
 		return "", fmt.Errorf("no active session to fork from")
 	}
 
 	// Multiball is a branch from the parent session
 	branchKey, err := session.BranchFromSession(parentKey)
 	if err != nil {
-		secBot.SetSessionKey("")
+		secConn.SetSessionKey("")
 		return "", fmt.Errorf("create multiball key: %w", err)
 	}
 
@@ -570,17 +575,17 @@ func forkMultiball(p cmdRegParams, cmds *command.Registry, ctx context.Context) 
 	if err := p.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		OrientationMessage: orientText,
 	}); err != nil {
-		secBot.SetSessionKey("")
+		secConn.SetSessionKey("")
 		return "", fmt.Errorf("create branch: %w", err)
 	}
 
-	secBot.SetSessionKey(branchKey)
-	if primaryBot := telegram.DefaultManager().PrimaryBot(p.acfg.ID); primaryBot != nil {
-		secBot.SetChatID(primaryBot.ChatID())
+	secConn.SetSessionKey(branchKey)
+	if primary := p.connMgr.Primary(p.acfg.ID); primary != nil {
+		secConn.SetChatID(primary.ChatID())
 	}
-	secBot.SendNotification("🎱 Forked from main. What do you need?")
+	secConn.SendNotification("🎱 Forked from main. What do you need?")
 
-	return fmt.Sprintf("Forked to @%s (session: %s)", secBot.Username(), branchKey), nil
+	return fmt.Sprintf("Forked to @%s (session: %s)", secConn.Username(), branchKey), nil
 }
 
 // runCompaction executes manual context compaction.
@@ -620,12 +625,12 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 		if p.ag.CompactionDebugFunc != nil && summary != "" {
 			p.ag.CompactionDebugFunc(sk, summary)
 		} else if summary != "" {
-			if bot := telegram.DefaultManager().PrimaryBot(p.acfg.ID); bot != nil {
+			if conn := p.connMgr.Primary(p.acfg.ID); conn != nil {
 				f, tmpErr := os.CreateTemp("", "compaction-dryrun-*.md")
 				if tmpErr == nil {
 					if _, writeErr := f.WriteString(summary); writeErr == nil {
 						_ = f.Close()
-						if sendErr := bot.SendDocument(f.Name()); sendErr != nil {
+						if sendErr := conn.SendDocument(f.Name()); sendErr != nil {
 							log.Warnf("agent", "dry-run: send document: %v", sendErr)
 						}
 					} else {

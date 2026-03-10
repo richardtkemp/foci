@@ -156,11 +156,24 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 		return r.suggestCommand(name), true
 	}
 
-	result, err := cmd.Execute(ctx, args)
-	if err != nil {
-		return "Error: " + err.Error(), true
+	if cmd.Execute != nil {
+		result, err := cmd.Execute(ctx, args)
+		if err != nil {
+			return "Error: " + err.Error(), true
+		}
+		return result, true
 	}
-	return result, true
+
+	// Fall back to ExecuteV2 with a minimal Request if Execute is nil.
+	if cmd.ExecuteV2 != nil {
+		resp, err := cmd.ExecuteV2(ctx, Request{Name: name, Args: args}, Deps{})
+		if err != nil {
+			return "Error: " + err.Error(), true
+		}
+		return resp.Text, true
+	}
+
+	return fmt.Sprintf("Error: command /%s has no handler", name), true
 }
 
 // DispatchV2 executes a command using the platform-agnostic Request/Response pattern.

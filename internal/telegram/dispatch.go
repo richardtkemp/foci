@@ -12,9 +12,10 @@ import (
 )
 
 type Dispatcher struct {
-	registry *command.Registry
-	deps     command.Deps
-	agentID  string
+	registry     *command.Registry
+	deps         command.Deps
+	agentID      string
+	sessionKeyFn func(chatID int64) string // stable session key resolver; falls back to NewChatSessionKey
 }
 
 func NewDispatcher(registry *command.Registry, deps command.Deps, agentID string) *Dispatcher {
@@ -25,10 +26,15 @@ func NewDispatcher(registry *command.Registry, deps command.Deps, agentID string
 	}
 }
 
+// SetSessionKeyFunc sets the function used to resolve stable session keys for a chat ID.
+func (d *Dispatcher) SetSessionKeyFunc(fn func(chatID int64) string) {
+	d.sessionKeyFn = fn
+}
+
 type DispatchResult struct {
 	Handled   bool
 	Response  command.Response
-	SessionID string
+	SessionKey string
 	UserID    string
 }
 
@@ -41,23 +47,23 @@ func (d *Dispatcher) Dispatch(ctx context.Context, msg *gotgbot.Message) Dispatc
 		return DispatchResult{}
 	}
 
-	sessionID := d.sessionKeyForChat(msg.Chat.Id)
+	sessionKey := d.sessionKeyForChat(msg.Chat.Id)
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
 	if strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
-		if result := d.dispatchDotCommand(ctx, msg, text, sessionID, userID); result.Handled {
+		if result := d.dispatchDotCommand(ctx, msg, text, sessionKey, userID); result.Handled {
 			return result
 		}
 	}
 
 	if strings.HasPrefix(text, "/") {
-		return d.dispatchSlashCommand(ctx, msg, text, sessionID, userID)
+		return d.dispatchSlashCommand(ctx, msg, text, sessionKey, userID)
 	}
 
 	return DispatchResult{}
 }
 
-func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message, text, sessionID, userID string) DispatchResult {
+func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
 	dotText := strings.TrimSpace(text)[1:]
 	cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
 
@@ -68,7 +74,7 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message,
 	req := command.Request{
 		Name:      cmdName,
 		Args:      extractArgs(dotText),
-		SessionID: sessionID,
+		SessionKey: sessionKey,
 		UserID:    userID,
 	}
 
@@ -76,10 +82,10 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message,
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
-	return DispatchResult{Handled: handled, Response: resp, SessionID: sessionID, UserID: userID}
+	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
 }
 
-func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Message, text, sessionID, userID string) DispatchResult {
+func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
 	cmd := strings.ToLower(strings.TrimSpace(text))
 
 	if cmd == "/stop" || cmd == "/done" {
@@ -94,7 +100,7 @@ func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Messag
 	req := command.Request{
 		Name:      name,
 		Args:      args,
-		SessionID: sessionID,
+		SessionKey: sessionKey,
 		UserID:    userID,
 	}
 
@@ -102,7 +108,7 @@ func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Messag
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
-	return DispatchResult{Handled: handled, Response: resp, SessionID: sessionID, UserID: userID}
+	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
 }
 
 func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText string) DispatchResult {
@@ -111,12 +117,12 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 	name = strings.ToLower(strings.TrimSpace(name))
 	args = strings.TrimSpace(args)
 
-	sessionID := d.sessionKeyForChat(chatID)
+	sessionKey := d.sessionKeyForChat(chatID)
 
 	req := command.Request{
 		Name:      name,
 		Args:      args,
-		SessionID: sessionID,
+		SessionKey: sessionKey,
 		UserID:    "",
 	}
 
@@ -124,10 +130,13 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
-	return DispatchResult{Handled: handled, Response: resp, SessionID: sessionID}
+	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey}
 }
 
 func (d *Dispatcher) sessionKeyForChat(chatID int64) string {
+	if d.sessionKeyFn != nil {
+		return d.sessionKeyFn(chatID)
+	}
 	return session.NewChatSessionKey(d.agentID, chatID)
 }
 

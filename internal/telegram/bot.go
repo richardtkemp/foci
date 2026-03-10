@@ -303,6 +303,7 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 // When set, the bot uses DispatchV2 for command execution.
 func (b *Bot) SetDeps(deps command.Deps) {
 	b.dispatcher = NewDispatcher(b.commands, deps, b.agentID)
+	b.dispatcher.SetSessionKeyFunc(b.sessionKeyForMsg)
 }
 
 // DisplaySettings returns the current display settings for inspection/testing.
@@ -562,7 +563,7 @@ func (b *Bot) RegisterCommands() {
 	b.logger().Infof("registered %d commands with BotFather", len(cmds))
 }
 
-// Start spawns the bot's Run loop as a goroutine. Implements platform.Platform.
+// Start spawns the bot's Run loop as a goroutine.
 // Non-blocking; use Stop() to wait for shutdown.
 func (b *Bot) Start(ctx context.Context) error {
 	go b.Run(ctx)
@@ -570,7 +571,6 @@ func (b *Bot) Start(ctx context.Context) error {
 }
 
 // Stop is a no-op for telegram.Bot (shutdown is ctx-cancellation based).
-// Implements platform.Platform.
 func (b *Bot) Stop() error {
 	return nil
 }

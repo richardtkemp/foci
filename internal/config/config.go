@@ -197,8 +197,6 @@ type AgentConfig struct {
 	StreamOutput         bool                     `toml:"stream_output"`          // DEPRECATED: use [agents.platforms.telegram.stream_output]
 	StreamUpdateInterval string                   `toml:"stream_update_interval"` // DEPRECATED: use [agents.platforms.telegram.stream_interval]
 
-	// Internal fields (not parsed from TOML)
-	resolvedBotToken string `toml:"-"` // resolved at runtime from secrets store
 }
 
 type GeminiConfig struct {
@@ -284,94 +282,6 @@ func (a *AgentConfig) GetTelegramPlatform() *TelegramPlatformConfig {
 		return nil
 	}
 	return a.Platforms.Telegram
-}
-
-func (a AgentConfig) TelegramBotToken() string { return a.resolvedBotToken }
-
-func (a AgentConfig) TelegramAllowedUsers() []string {
-	if tg := a.GetTelegramPlatform(); tg != nil && len(tg.AllowedUsers) > 0 {
-		return tg.AllowedUsers
-	}
-	return a.AllowedUsers
-}
-
-func (a AgentConfig) TelegramMultiballBots() []string {
-	if tg := a.GetTelegramPlatform(); tg != nil && len(tg.MultiballBots) > 0 {
-		return tg.MultiballBots
-	}
-	return a.MultiballBots
-}
-
-func (a AgentConfig) TelegramShowToolCalls() ToolCallDisplay {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.ShowToolCalls != nil {
-		return *tg.ShowToolCalls
-	}
-	if a.ShowToolCalls != nil {
-		return *a.ShowToolCalls
-	}
-	return ToolCallOff
-}
-
-func (a AgentConfig) TelegramShowThinking() ShowThinking {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.ShowThinking != nil {
-		return *tg.ShowThinking
-	}
-	if a.ShowThinking != nil {
-		return *a.ShowThinking
-	}
-	return ShowThinkingOff
-}
-
-func (a AgentConfig) TelegramDisplayWidth() *int {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.DisplayWidth != nil {
-		return tg.DisplayWidth
-	}
-	return a.DisplayWidth
-}
-
-func (a AgentConfig) TelegramTableWrapLines() *int {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.TableWrapLines != nil {
-		return tg.TableWrapLines
-	}
-	return a.TableWrapLines
-}
-
-func (a AgentConfig) TelegramTableStyle() *string {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.TableStyle != nil {
-		return tg.TableStyle
-	}
-	return a.TableStyle
-}
-
-func (a AgentConfig) TelegramStartupNotify() *bool {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.StartupNotify != nil {
-		return tg.StartupNotify
-	}
-	return a.StartupNotification
-}
-
-func (a AgentConfig) TelegramStreamOutput() *bool {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.StreamOutput != nil {
-		return tg.StreamOutput
-	}
-	if a.StreamOutput {
-		return &a.StreamOutput
-	}
-	return nil
-}
-
-func (a AgentConfig) TelegramStreamInterval() string {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.StreamInterval != "" {
-		return tg.StreamInterval
-	}
-	return a.StreamUpdateInterval
-}
-
-func (a AgentConfig) TelegramReceivedFilesDir() string {
-	if tg := a.GetTelegramPlatform(); tg != nil && tg.ReceivedFilesDir != "" {
-		return tg.ReceivedFilesDir
-	}
-	return a.ReceivedFilesDir
 }
 
 type SessionsConfig struct {
@@ -1559,21 +1469,6 @@ func ResolveBotToken(botName, botSecret string, secrets SecretGetter) string {
 		return ""
 	}
 	return v
-}
-
-func (c *Config) ResolveBotTokens(secrets SecretGetter) {
-	for i := range c.Agents {
-		acfg := &c.Agents[i]
-		tg := acfg.GetTelegramPlatform()
-		if tg == nil {
-			continue
-		}
-		botName := tg.Bot
-		if botName == "" {
-			botName = acfg.ID
-		}
-		acfg.resolvedBotToken = ResolveBotToken(botName, tg.BotSecret, secrets)
-	}
 }
 
 // ResolvePath resolves a path. Absolute paths are returned as-is.
