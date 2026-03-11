@@ -31,34 +31,34 @@ func wireAgentPlatformCallbacks(
 
 	// Cache bust — notify all connections
 	if ag.CacheBustDetect {
-		ag.CacheBustAlert = func(sess string, prev, cur int) {
+		ag.CacheBustAlert.Add(func(sess string, prev, cur int) {
 			msg := fmt.Sprintf("⚠️ Cache bust: cache_read dropped %d → %d on %s", prev, cur, sess)
 			log.Warnf("agent", "%s", msg)
 			plat.NotifyAgent(acfg.ID, msg)
-		}
+		})
 	}
 
 	// Mana warnings — notify all
 	if ag.ManaWatcher != nil {
-		ag.ManaWarnFunc = func(warn string) {
+		ag.ManaWarnFunc.Add(func(warn string) {
 			log.Infof("mana", "%s", warn)
 			plat.NotifyAgent(acfg.ID, "⚠️ "+warn)
-		}
+		})
 	}
 
 	// Rate limit — notify all
-	ag.RateLimitFunc = func(resetTime time.Time) {
+	ag.RateLimitFunc.Add(func(resetTime time.Time) {
 		resetStr := mana.ParseResetTime(resetTime.Format(time.RFC3339Nano))
 		if resetStr == "" {
 			resetStr = resetTime.Format(time.Kitchen)
 		}
 		plat.NotifyAgent(acfg.ID, fmt.Sprintf("⚡ Rate limited (resets %s).", resetStr))
-	}
+	})
 
 	// Max tokens — notify all
-	ag.MaxTokensWarnFunc = func(warn string) {
+	ag.MaxTokensWarnFunc.Add(func(warn string) {
 		plat.NotifyAgent(acfg.ID, "⚠️ "+warn)
-	}
+	})
 
 	// Compaction notify — session-specific connection, falls back to all
 	compactNotify := cfg.Sessions.CompactionNotify
@@ -66,13 +66,13 @@ func wireAgentPlatformCallbacks(
 		compactNotify = acfg.CompactionNotify
 	}
 	if compactNotify == nil || *compactNotify {
-		ag.CompactionNotifyFunc = func(sk, msg string) {
+		ag.CompactionNotifyFunc.Add(func(sk, msg string) {
 			if c := connMgr.ForSession(sk); c != nil {
 				c.SendNotification(msg)
 			} else {
 				plat.NotifyAgent(acfg.ID, msg)
 			}
-		}
+		})
 	}
 
 	// Compaction debug — session-specific connection for document
@@ -81,7 +81,7 @@ func wireAgentPlatformCallbacks(
 		compactDebug = *acfg.CompactionDebug
 	}
 	if compactDebug {
-		ag.CompactionDebugFunc = func(sk, summary string) {
+		ag.CompactionDebugFunc.Add(func(sk, summary string) {
 			c := connMgr.ForSession(sk)
 			if c == nil {
 				c = connMgr.Primary(acfg.ID)
@@ -105,12 +105,12 @@ func wireAgentPlatformCallbacks(
 				log.Warnf("agent", "compaction debug: send document: %v", err)
 			}
 			_ = os.Remove(f.Name())
-		}
+		})
 	}
 
 	// Session activity tracking
 	if sessionIndex != nil {
-		ag.OnActivity = func(sk string) { sessionIndex.TouchActivity(sk) }
+		ag.OnActivity.Add(func(sk string) { sessionIndex.TouchActivity(sk) })
 	}
 }
 

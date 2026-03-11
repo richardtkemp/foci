@@ -30,10 +30,10 @@ func TestHandleMessageRateLimit(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(resetTime time.Time) {
+		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) {
 			rateLimitCalled = true
 			rateLimitResetTime = resetTime
-		},
+		}},
 	}
 
 	ctx := WithTrigger(context.Background(), "keepalive")
@@ -72,9 +72,9 @@ func TestHandleMessageRateLimitUserTrigger(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(resetTime time.Time) {
+		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) {
 			rateLimitCalled = true
-		},
+		}},
 	}
 
 	for _, trigger := range []string{"telegram", "user", "voice", ""} {
@@ -107,9 +107,9 @@ func TestHandleMessageOverloaded(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(resetTime time.Time) {
+		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) {
 			rateLimitCalled = true
-		},
+		}},
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
@@ -172,9 +172,9 @@ func TestHandleMessageServerError(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(resetTime time.Time) {
+		RateLimitFunc: HookList[func(time.Time)]{func(resetTime time.Time) {
 			rateLimitCalled = true
-		},
+		}},
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
