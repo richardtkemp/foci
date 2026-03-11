@@ -26,10 +26,13 @@ func TestRepairDuplicateToolUseIDs_NoDuplicates(t *testing.T) {
 	}
 
 	var warnings []string
-	result := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
 		warnings = append(warnings, format)
 	})
 
+	if repaired {
+		t.Error("expected repaired=false when no duplicates")
+	}
 	if len(warnings) > 0 {
 		t.Errorf("expected no warnings, got %d", len(warnings))
 	}
@@ -62,10 +65,13 @@ func TestRepairDuplicateToolUseIDs_WithDuplicates(t *testing.T) {
 	}
 
 	var warnings []string
-	result := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
 		warnings = append(warnings, format)
 	})
 
+	if !repaired {
+		t.Error("expected repaired=true when duplicates exist")
+	}
 	if len(warnings) != 1 {
 		t.Fatalf("expected 1 warning, got %d", len(warnings))
 	}
@@ -107,9 +113,12 @@ func TestRepairDuplicateToolUseIDs_WithDuplicates(t *testing.T) {
 
 func TestRepairDuplicateToolUseIDs_EmptyMessages(t *testing.T) {
 	// Empty messages should be handled gracefully.
-	result := repairDuplicateToolUseIDs(nil, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolUseIDs(nil, func(format string, args ...any) {
 		t.Error("unexpected warning")
 	})
+	if repaired {
+		t.Error("expected repaired=false for nil input")
+	}
 	if result != nil {
 		t.Error("expected nil for nil input")
 	}

@@ -83,9 +83,9 @@ func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 
 // repairDuplicateToolUseIDs scans all messages for tool_use blocks with duplicate IDs.
 // When found, later occurrences get their ID rewritten to a unique suffix variant,
-// and a warning is logged. Returns (messages, true) if repairs were made.
+// and a warning is logged. Returns (repairedMessages, true) if repairs were made.
 // The Anthropic API rejects requests with duplicate tool_use IDs (400 error).
-func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, ...any)) []provider.Message {
+func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, ...any)) ([]provider.Message, bool) {
 	// First pass: collect all tool_use IDs and find duplicates
 	seen := make(map[string]bool)
 	hasDuplicates := false
@@ -108,7 +108,7 @@ func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, 
 		}
 	}
 	if !hasDuplicates {
-		return messages
+		return messages, false
 	}
 
 	// Second pass: rewrite duplicates. We rebuild tool_result references too
@@ -156,7 +156,7 @@ func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, 
 		}
 	}
 
-	return result
+	return result, true
 }
 
 // summarizeServerToolResult extracts a brief text summary from a server tool result block.
