@@ -383,11 +383,13 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 	if mc < 5 {
 		return 0, fmt.Errorf("too few messages to compact (%d)", mc)
 	}
-	if p.ag.CompactionNotifyFunc != nil {
-		if dryRun {
-			p.ag.CompactionNotifyFunc(sk, "⏳ Running compaction dry-run...")
-		} else {
-			p.ag.CompactionNotifyFunc(sk, "⏳ Compacting context...")
+	if dryRun {
+		for _, fn := range p.ag.CompactionNotifyFunc {
+			fn(sk, "⏳ Running compaction dry-run...")
+		}
+	} else {
+		for _, fn := range p.ag.CompactionNotifyFunc {
+			fn(sk, "⏳ Compacting context...")
 		}
 	}
 
@@ -404,8 +406,10 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 	}
 
 	if dryRun {
-		if p.ag.CompactionDebugFunc != nil && summary != "" {
-			p.ag.CompactionDebugFunc(sk, summary)
+		if len(p.ag.CompactionDebugFunc) > 0 && summary != "" {
+			for _, fn := range p.ag.CompactionDebugFunc {
+				fn(sk, summary)
+			}
 		} else if summary != "" {
 			if conn := p.connMgr.Primary(p.acfg.ID); conn != nil {
 				f, tmpErr := os.CreateTemp("", "compaction-dryrun-*.md")
@@ -422,15 +426,17 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 				}
 			}
 		}
-		if p.ag.CompactionNotifyFunc != nil {
-			p.ag.CompactionNotifyFunc(sk, "✅ Dry-run complete — summary sent.")
+		for _, fn := range p.ag.CompactionNotifyFunc {
+			fn(sk, "✅ Dry-run complete — summary sent.")
 		}
 	} else {
-		if p.ag.CompactionNotifyFunc != nil {
-			p.ag.CompactionNotifyFunc(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
+		for _, fn := range p.ag.CompactionNotifyFunc {
+			fn(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
 		}
-		if p.ag.CompactionDebugFunc != nil && summary != "" {
-			p.ag.CompactionDebugFunc(sk, summary)
+		if summary != "" {
+			for _, fn := range p.ag.CompactionDebugFunc {
+				fn(sk, summary)
+			}
 		}
 		p.bootstrap.Reload()
 		p.ag.InvalidateSystemCaches()

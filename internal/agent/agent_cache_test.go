@@ -93,9 +93,9 @@ func TestCacheBustDetection(t *testing.T) {
 		Bootstrap:       bootstrap,
 		Model:           "claude-haiku-4-5",
 		CacheBustDetect: true,
-		CacheBustAlert: func(session string, prevRead, curRead int) {
+		CacheBustAlert: HookList[CacheBustFunc]{func(session string, prevRead, curRead int) {
 			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
-		},
+		}},
 	}
 
 	// First request — establishes baseline (prevCacheRead=15000)
@@ -142,9 +142,9 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 		Model:                  "claude-haiku-4-5",
 		CacheBustDetect:        true,
 		CacheBustIdleThreshold: 1 * time.Millisecond, // very short threshold for test
-		CacheBustAlert: func(session string, prevRead, curRead int) {
+		CacheBustAlert: HookList[CacheBustFunc]{func(session string, prevRead, curRead int) {
 			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
-		},
+		}},
 	}
 
 	// First request — establishes baseline
@@ -243,9 +243,9 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 		Bootstrap:       bootstrap,
 		Model:           "claude-haiku-4-5",
 		CacheBustDetect: true,
-		CacheBustAlert: func(session string, prevRead, curRead int) {
+		CacheBustAlert: HookList[CacheBustFunc]{func(session string, prevRead, curRead int) {
 			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
-		},
+		}},
 	}
 
 	// First turn — establishes baseline (prevCacheRead=15000)
@@ -291,9 +291,9 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 		Bootstrap:       bootstrap,
 		Model:           "claude-haiku-4-5",
 		CacheBustDetect: true,
-		CacheBustAlert: func(session string, prevRead, curRead int) {
+		CacheBustAlert: HookList[CacheBustFunc]{func(session string, prevRead, curRead int) {
 			alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
-		},
+		}},
 	}
 
 	// First request — establishes baseline (prevCacheRead=15000)

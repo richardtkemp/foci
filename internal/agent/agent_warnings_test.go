@@ -35,9 +35,9 @@ func TestMaxTokensWarning(t *testing.T) {
 		Tools:     tools.NewRegistry(),
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		MaxTokensWarnFunc: func(warn string) {
+		MaxTokensWarnFunc: HookList[func(string)]{func(warn string) {
 			warnings = append(warnings, warn)
-		},
+		}},
 	}
 
 	resp, err := ag.HandleMessage(context.Background(), "test/imaxtkn/1000000000", "Write a very long essay")
@@ -83,9 +83,9 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 		Tools:     tools.NewRegistry(),
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		MaxTokensWarnFunc: func(warn string) {
+		MaxTokensWarnFunc: HookList[func(string)]{func(warn string) {
 			warnings = append(warnings, warn)
-		},
+		}},
 	}
 
 	ag.HandleMessage(context.Background(), "test/inomax/1000000000", "Hello")

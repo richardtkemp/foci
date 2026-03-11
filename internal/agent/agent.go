@@ -64,7 +64,7 @@ type Agent struct {
 	CacheStrategy                 string                       // "auto" (top-level) or "explicit" (manual breakpoints)
 	CacheBustDetect               bool                         // detect cache busts (cache_read drop >50%)
 	CacheBustIdleThreshold        time.Duration                // suppress cache bust alert if session idle > this (default 10m)
-	CacheBustAlert                CacheBustFunc                // callback for cache bust alerts
+	CacheBustAlert                HookList[CacheBustFunc]      // callbacks for cache bust alerts
 	DuplicateMessages             bool                         // send user text twice per API call (improves instruction following)
 	BatchPartialAssistantMessages bool                         // accumulate mid-turn text; send concatenated on turn end (default false = send immediately)
 	BatchPartialJoiner            string                       // separator between batched partial messages (default "")
@@ -81,12 +81,12 @@ type Agent struct {
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
 	ManaWatcher                   *ManaWatcher                 // nil disables mana threshold warnings
-	ManaWarnFunc                  func(string)                 // callback for mana threshold warnings (e.g. platform notification)
-	MaxTokensWarnFunc             func(string)                 // callback when stop_reason=max_tokens (response truncated)
-	RateLimitFunc                 func(resetTime time.Time)    // callback when API returns 429 (rate limited)
-	CompactionNotifyFunc          func(string, string)         // callback for compaction notifications (session key, message)
-	CompactionDebugFunc           func(string, string)         // callback for compaction debug (session key, summary text)
-	OnActivity                    func(string)                 // callback when a session has activity (session key); nil disables
+	ManaWarnFunc                  HookList[func(string)]                 // callbacks for mana threshold warnings (e.g. platform notification)
+	MaxTokensWarnFunc             HookList[func(string)]                 // callbacks when stop_reason=max_tokens (response truncated)
+	RateLimitFunc                 HookList[func(resetTime time.Time)]    // callbacks when API returns 429 (rate limited)
+	CompactionNotifyFunc          HookList[func(string, string)]         // callbacks for compaction notifications (session key, message)
+	CompactionDebugFunc           HookList[func(string, string)]         // callbacks for compaction debug (session key, summary text)
+	OnActivity                    HookList[func(string)]                 // callbacks when a session has activity (session key)
 	Redact                        func(string) string          // redact secrets from tool output; nil disables
 	StateStore                    *state.Store                 // nil disables state persistence
 	UsageClient                   provider.UsageClient         // nil disables mana metadata
@@ -280,8 +280,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 
 	// Touch session activity for index tracking.
-	if a.OnActivity != nil {
-		a.OnActivity(sessionKey)
+	for _, fn := range a.OnActivity {
+		fn(sessionKey)
 	}
 
 	// Load existing messages
