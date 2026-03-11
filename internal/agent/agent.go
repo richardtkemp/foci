@@ -52,8 +52,11 @@ type Agent struct {
 	Bootstrap      *workspace.Bootstrap
 	Compactor      *compaction.Compactor // nil disables auto-compaction
 	AsyncNotifier  *tools.AsyncNotifier  // nil disables async-pending compaction guard
-	Reminders      *memory.ReminderStore // nil disables reminder injection
-	AgentID        string                // unique agent identifier (for per-agent DB queries)
+	Reminders       *memory.ReminderStore  // nil disables reminder injection
+	TaskListStore   *memory.TaskListStore  // nil disables task list in state dashboard
+	TodoStore       *memory.TodoStore      // nil disables todo count in state dashboard
+	ScratchpadStore *memory.Scratchpad     // nil disables scratchpad count in state dashboard
+	AgentID         string                 // unique agent identifier (for per-agent DB queries)
 	Model          string                // "developer/model_id" format (e.g. "anthropic/claude-opus-4-6")
 	Format         string                // wire format resolved at startup (e.g. "anthropic", "gemini", "openai")
 	Endpoint       string                // agent's default endpoint (sessions inherit this unless overridden)

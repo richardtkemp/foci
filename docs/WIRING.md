@@ -35,7 +35,7 @@ config.Load(path)                                        ← validates values; l
   → returns sessionInfra{sessions, sessionIndex, stateStore, cleanup}
 
 → initMemorySystem(cfg)                                  ← memory_init.go
-  → memory: ReminderStore + Scratchpad + TodoStores       ← ReminderStore/Scratchpad shared; TodoStore per-agent (todo-{agentID}.db)
+  → memory: ReminderStore + Scratchpad + TodoStore + TaskListStore   ← always created; all per-agent (e.g. reminders-main.db)
   → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
 
    Shared resources (created once in main.go):
@@ -80,7 +80,7 @@ config.Load(path)                                        ← validates values; l
 
 **Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
-**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). Reminder and scratchpad stores are always shared. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
+**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). All standalone stores (reminder, scratchpad, todo, task list) use per-agent database files. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
 
 **Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
 
@@ -346,6 +346,7 @@ The agent can defer thoughts for later via the `remind` tool. Reminders are stor
 [meta] time=2026-02-21T05:30:00Z gap=45m0s
 [reminders]
 - Look into FTS5 phrase boosting (set 2h, due: 2026-02-21 05:00)
+[state] task: 3/7 "Boil an egg" → Bring water to rolling boil | todos: 2 open (1 high) | scratchpad: 1 entry
 Hello, what should I work on?
 ```
 
@@ -353,7 +354,7 @@ Hello, what should I work on?
 
 Working state that survives compaction but isn't permanent memory. The agent writes notes during investigations and clears them when done.
 
-**Storage:** `Scratchpad` in `memory/scratchpad.go`. SQLite table `scratchpad` with columns: `agent_id`, `key` (composite primary key), `content`, `updated`. Stored in `scratchpad.db`. Scoped per-agent — each agent sees only its own entries.
+**Storage:** `Scratchpad` in `memory/scratchpad.go`. SQLite table `scratchpad` with columns: `agent_id`, `key` (composite primary key), `content`, `updated`. Per-agent database file (`scratchpad-{agentID}.db`).
 
 **Tool:** `scratchpad(action, key, content)` — single tool with action parameter (write/read/clear/list). Agent ID injected at tool creation time.
 
@@ -368,6 +369,30 @@ Working state that survives compaction but isn't permanent memory. The agent wri
 Checking whether FTS5 supports phrase boosting — preliminary answer is yes via NEAR queries.
 --- debug_notes ---
 The cache miss on branch sessions was caused by a trailing newline difference.
+```
+
+## Task List
+
+Ephemeral step tracker for the current task. One active list per agent (not per-session). The agent decomposes work into ordered steps and advances through them.
+
+**Storage:** `TaskListStore` in `memory/tasklist.go`. SQLite table `task_list` with columns: `agent_id` (primary key), `goal`, `steps` (JSON array), `updated`. Stored in `tasklist.db`. Scoped per-agent.
+
+**Tool:** `task_list(action, ...)` — actions: create, advance, add_step, remove_step, revise, status, clear. Display format uses `→` for current step, `✓` for done, `~` for skipped.
+
+**Compaction survival:** When compaction fires, the active task list is serialized and appended to the handoff message as a `[task list]` block, similar to scratchpad.
+
+**State dashboard:** A `[state]` line is injected into every user message (in `prepareUserMessage`, after `[reminders]`) showing a one-line summary of active stores. Components shown only when non-empty: task progress, open todo count, scratchpad entry count. Queries `TaskListStore`, `TodoStore`, and `ScratchpadStore` on the Agent struct.
+
+**Example task list display:**
+```
+Task: Boil an egg [2/7]
+  1. ✓ Fill pot with water
+  2. ✓ Place pot on stove
+  3. → Bring water to rolling boil
+  4.   Gently lower egg into water
+  5.   Set timer
+  6.   Transfer to ice bath
+  7.   Peel and serve
 ```
 
 ## Session Storage

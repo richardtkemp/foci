@@ -2,10 +2,12 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/internal/tools"
 )
 
 // InvalidateSystemCaches clears per-session system prompt caches so the
@@ -54,6 +56,64 @@ func (a *Agent) collectReminders(sessionKey string) string {
 	}
 
 	return block
+}
+
+// collectStateDashboard builds a one-line state summary from all active stores.
+// Returns empty string if all stores are empty/nil.
+func (a *Agent) collectStateDashboard() string {
+	var parts []string
+
+	// Task list: "3/7 "goal" → current step"
+	if a.TaskListStore != nil {
+		if tl, err := a.TaskListStore.Get(a.AgentID); err != nil {
+			a.logger().Warnf("state dashboard: task list: %v", err)
+		} else if tl != nil {
+			done, total := 0, len(tl.Steps)
+			for _, s := range tl.Steps {
+				if s.Status == "done" || s.Status == "skipped" {
+					done++
+				}
+			}
+			part := fmt.Sprintf("%d/%d %q", done, total, tl.Goal)
+			if cur := tools.CurrentStepSummary(tl); cur != "" {
+				part += " → " + cur
+			}
+			parts = append(parts, "task: "+part)
+		}
+	}
+
+	// Todos: "2 open (1 high)"
+	if a.TodoStore != nil {
+		if items, err := a.TodoStore.List(a.AgentID, "open", "", "", ""); err != nil {
+			a.logger().Warnf("state dashboard: todos: %v", err)
+		} else if len(items) > 0 {
+			highCount := 0
+			for _, item := range items {
+				if item.Priority == "high" {
+					highCount++
+				}
+			}
+			part := fmt.Sprintf("%d open", len(items))
+			if highCount > 0 {
+				part += fmt.Sprintf(" (%d high)", highCount)
+			}
+			parts = append(parts, "todos: "+part)
+		}
+	}
+
+	// Scratchpad: "N entries"
+	if a.ScratchpadStore != nil {
+		if entries, err := a.ScratchpadStore.List(a.AgentID); err != nil {
+			a.logger().Warnf("state dashboard: scratchpad: %v", err)
+		} else if len(entries) > 0 {
+			parts = append(parts, fmt.Sprintf("scratchpad: %d entries", len(entries)))
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n[state] " + strings.Join(parts, " | ")
 }
 
 // buildSystemBlocks assembles the system prompt blocks from bootstrap,

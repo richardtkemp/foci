@@ -64,6 +64,7 @@ type setupParams struct {
 	reminderStore       *memory.ReminderStore
 	scratchpadStore     *memory.Scratchpad
 	todoStore           *memory.TodoStore
+	taskListStore       *memory.TaskListStore
 	sessionIndex        *session.SessionIndex
 	ttsMap              map[string]voice.TTS
 	sttMap              map[string]voice.STT
@@ -205,6 +206,9 @@ func setupAgent(p setupParams) *agentInstance {
 	if p.todoStore != nil {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
 	}
+	if p.taskListStore != nil {
+		registry.Register(tools.NewTaskListTool(p.taskListStore, acfg.ID))
+	}
 
 	// Bitwarden tools (if enabled)
 	if p.bwStore != nil {
@@ -254,6 +258,7 @@ func setupAgent(p setupParams) *agentInstance {
 		compactor.WithEffort(acfg.CompactionEffort)
 	}
 	compactor.Scratchpad = p.scratchpadStore
+	compactor.TaskListStore = p.taskListStore
 	compactor.AgentID = acfg.ID
 
 	// Per-agent send_message_to_user tool (closure captures this agent's bot)
@@ -290,6 +295,9 @@ func setupAgent(p setupParams) *agentInstance {
 		Compactor:                     compactor,
 		AsyncNotifier:                 notifier,
 		Reminders:                     p.reminderStore,
+		TaskListStore:                 p.taskListStore,
+		TodoStore:                     p.todoStore,
+		ScratchpadStore:               p.scratchpadStore,
 		DefaultSessionKey:             defaultSessionKey,
 		AgentID:                       acfg.ID,
 		Model:                         acfg.Model,
