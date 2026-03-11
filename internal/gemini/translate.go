@@ -38,6 +38,9 @@ func messagesToGenai(msgs []provider.Message) []*genai.Content {
 		for _, block := range msg.Content {
 			switch block.Type {
 			case "text":
+				if block.Text == "" {
+					continue // skip empty text blocks — Gemini rejects them
+				}
 				parts = append(parts, &genai.Part{Text: block.Text})
 
 			case "thinking":
@@ -293,9 +296,10 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 		}
 	}
 
-	// If no content blocks, add empty text
+	// If no content blocks, add placeholder text.
+	// An empty text block ("") is rejected by both Gemini and Anthropic APIs.
 	if len(result.Content) == 0 {
-		result.Content = provider.TextContent("")
+		result.Content = provider.TextContent("(empty response)")
 	}
 
 	// Override stop reason to "tool_use" when response contains function calls.
