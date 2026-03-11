@@ -37,47 +37,52 @@ func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 	return &provider.Message{Role: "user", Content: results}
 }
 
-// repairDuplicateToolUseIDs scans all messages for tool_use blocks with duplicate IDs.
-// When found, later occurrences get their ID rewritten to a unique suffix variant,
-// and a warning is logged. Returns (repairedMessages, true) if repairs were made.
-// The Anthropic API rejects requests with duplicate tool_use IDs (400 error).
-func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, ...any)) ([]provider.Message, bool) {
-	// First pass: collect all tool_use IDs and find duplicates
-	seen := make(map[string]bool)
-	hasDuplicates := false
+// repairDuplicateToolIDs fixes two classes of session corruption:
+//
+//  1. Duplicate tool_use IDs: multiple tool_use blocks share the same ID
+//     (e.g. Gemini synthesised IDs like "toolu_gemini_todo" for every call
+//     to the same tool). Later occurrences get rewritten to unique suffixed IDs,
+//     and their corresponding tool_results are updated to match.
+//
+//  2. Duplicate tool_results: multiple tool_result blocks reference the same
+//     tool_use_id (e.g. from a defer safety-net replay after a partial write).
+//     Only the first tool_result for each tool_use_id is kept; extras are dropped.
+//
+// Returns (repairedMessages, true) if any repairs were made.
+func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...any)) ([]provider.Message, bool) {
+	// Quick scan: anything to repair?
+	seenUse := make(map[string]bool)
+	seenResult := make(map[string]bool)
+	hasDupUse, hasDupResult := false, false
 	for _, msg := range messages {
-		if msg.Role != "assistant" {
-			continue
-		}
 		for _, block := range msg.Content {
-			if block.Type != "tool_use" {
-				continue
+			switch block.Type {
+			case "tool_use":
+				if seenUse[block.ID] {
+					hasDupUse = true
+				}
+				seenUse[block.ID] = true
+			case "tool_result":
+				if seenResult[block.ToolUseID] {
+					hasDupResult = true
+				}
+				seenResult[block.ToolUseID] = true
 			}
-			if seen[block.ID] {
-				hasDuplicates = true
-				break
-			}
-			seen[block.ID] = true
 		}
-		if hasDuplicates {
+		if hasDupUse && hasDupResult {
 			break
 		}
 	}
-	if !hasDuplicates {
+	if !hasDupUse && !hasDupResult {
 		return messages, false
 	}
 
-	// Two sub-passes: first rewrite all tool_use IDs in assistant messages,
-	// then rewrite all tool_result IDs in user messages using the complete
-	// rewrite map. This handles both cross-message duplicates (where the
-	// original tool_result precedes the duplicate tool_use) and same-message
-	// duplicates (Gemini emitting all tool_use blocks with the same ID).
-	seen = make(map[string]bool)
-	rewrites := make(map[string][]string) // oldID → queue of newIDs
-	suffix := 0
 	result := make([]provider.Message, len(messages))
 
-	// Sub-pass 1: rewrite duplicate tool_use IDs in assistant messages.
+	// --- Phase 1: deduplicate tool_use IDs ---
+	seenUse = make(map[string]bool)
+	rewrites := make(map[string][]string) // oldID → queue of newIDs
+	suffix := 0
 	for i, msg := range messages {
 		if msg.Role != "assistant" {
 			result[i] = msg
@@ -89,58 +94,62 @@ func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, 
 			if block.Type != "tool_use" {
 				continue
 			}
-			if seen[block.ID] {
+			if seenUse[block.ID] {
 				suffix++
 				newID := fmt.Sprintf("%s_dedup%d", block.ID, suffix)
 				logger("repaired duplicate tool_use ID %s → %s at message %d", block.ID, newID, i)
 				rewrites[block.ID] = append(rewrites[block.ID], newID)
 				newContent[j].ID = newID
 			} else {
-				seen[block.ID] = true
+				seenUse[block.ID] = true
 			}
 		}
 		result[i] = provider.Message{Role: msg.Role, Content: newContent}
 	}
 
-	// Sub-pass 2: rewrite tool_result IDs in user messages.
-	// For each original ID, one tool_use kept the original ID — the first
-	// tool_result we encounter (across all messages) keeps it too.
-	// Subsequent tool_results pop dedup IDs from the queue.
-	originalPaired := make(map[string]bool)
+	// --- Phase 2: rewrite + deduplicate tool_results ---
+	// First tool_result for each original ID keeps it; subsequent ones either
+	// get a dedup ID from the queue (if a matching tool_use was renamed) or
+	// are dropped (if they're pure duplicates with no corresponding tool_use).
+	pairedResult := make(map[string]bool) // tool_use_id → already has a tool_result
 	for i, msg := range result {
 		if msg.Role != "user" {
 			continue
 		}
-		needsCopy := false
+		var filtered []provider.ContentBlock
+		changed := false
 		for _, block := range msg.Content {
-			if block.Type == "tool_result" {
-				if queue, ok := rewrites[block.ToolUseID]; ok && len(queue) > 0 {
-					needsCopy = true
-					break
-				}
-			}
-		}
-		if !needsCopy {
-			continue
-		}
-		newContent := make([]provider.ContentBlock, len(msg.Content))
-		copy(newContent, msg.Content)
-		for j, block := range newContent {
 			if block.Type != "tool_result" {
+				filtered = append(filtered, block)
 				continue
 			}
-			queue, ok := rewrites[block.ToolUseID]
-			if !ok || len(queue) == 0 {
+			if !pairedResult[block.ToolUseID] {
+				// First tool_result for this tool_use_id — keep as-is.
+				pairedResult[block.ToolUseID] = true
+				filtered = append(filtered, block)
 				continue
 			}
-			if !originalPaired[block.ToolUseID] {
-				originalPaired[block.ToolUseID] = true
-				continue
+			// Duplicate tool_result. If there's a renamed tool_use waiting,
+			// rewrite the ID to match it; otherwise drop entirely.
+			origID := block.ToolUseID
+			queue := rewrites[origID]
+			if len(queue) > 0 {
+				block.ToolUseID = queue[0]
+				rewrites[origID] = queue[1:]
+				pairedResult[block.ToolUseID] = true
+				filtered = append(filtered, block)
+				changed = true
+			} else {
+				logger("dropped duplicate tool_result for tool_use_id %s at message %d", origID, i)
+				changed = true
 			}
-			newContent[j].ToolUseID = queue[0]
-			rewrites[block.ToolUseID] = queue[1:]
 		}
-		result[i] = provider.Message{Role: msg.Role, Content: newContent}
+		if changed {
+			if len(filtered) == 0 {
+				filtered = provider.TextContent("(removed duplicate tool results)")
+			}
+			result[i] = provider.Message{Role: msg.Role, Content: filtered}
+		}
 	}
 
 	return result, true
