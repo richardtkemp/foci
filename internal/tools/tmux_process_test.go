@@ -14,6 +14,7 @@ import (
 
 // TestTmuxKillCleansUpChildProcesses verifies that killing a session terminates all descendants.
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -74,6 +75,7 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 // TestCollectDescendants verifies that descendant processes are found.
 func TestCollectDescendants(t *testing.T) {
 	// Spawn a process with a known child
+	t.Parallel()
 	cmd := exec.Command("bash", "-c", "sleep 300 & echo $!; wait")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -112,6 +114,7 @@ func TestCollectDescendants(t *testing.T) {
 // TestTerminateProcesses verifies that stubborn processes are killed.
 func TestTerminateProcesses(t *testing.T) {
 	// Spawn a process that ignores SIGHUP and SIGTERM (like OpenCode does).
+	t.Parallel()
 	// terminateProcesses should escalate to SIGKILL.
 	cmd := exec.Command("bash", "-c", "trap '' HUP TERM; sleep 300")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -146,6 +149,7 @@ func TestTerminateProcesses(t *testing.T) {
 
 // TestMaybeKillTmuxServer_WithSessions verifies server stays alive when sessions exist.
 func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	name := "foci-test-maybekill"
@@ -174,6 +178,7 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 
 // TestMaybeKillTmuxServer_NoSessions verifies server is killed when no sessions.
 func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
+	// NOT parallel: kills the shared tmux server.
 	tmuxAvailable(t)
 
 	// Start a session and immediately kill it so the server has no sessions.
@@ -205,6 +210,7 @@ func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 
 // TestTmuxKillCleansUpServer verifies that last session kill also kills server.
 func TestTmuxKillCleansUpServer(t *testing.T) {
+	// NOT parallel: kills the shared tmux server.
 	tmuxAvailable(t)
 
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -247,6 +253,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 
 // TestTmuxSessionPIDs verifies that session pane PIDs can be extracted.
 func TestTmuxSessionPIDs(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	name := "foci-test-pids"

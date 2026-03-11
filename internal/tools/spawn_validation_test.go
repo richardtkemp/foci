@@ -14,6 +14,7 @@ import (
 )
 
 func TestSpawnEmptyPrompt(t *testing.T) {
+	t.Parallel()
 	deps := SpawnDeps{Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
 	tool := NewSpawnTool(deps, nil)
 
@@ -32,6 +33,7 @@ func TestSpawnEmptyPrompt(t *testing.T) {
 }
 
 func TestSpawnInvalidContext(t *testing.T) {
+	t.Parallel()
 	server := mockModelServer(okResponse("ok"))
 	defer server.Close()
 
@@ -54,6 +56,7 @@ func TestSpawnInvalidContext(t *testing.T) {
 }
 
 func TestSpawnInheritNoParentSession(t *testing.T) {
+	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "ok"}
 	mockSessions := &mockSessionBrancher{}
 
@@ -81,6 +84,7 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 }
 
 func TestSpawnNoRecursiveInherit(t *testing.T) {
+	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "ok"}
 	mockSessions := &mockSessionBrancher{}
 
@@ -143,6 +147,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 }
 
 func TestSpawnInheritOrientationBuilder(t *testing.T) {
+	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
 
@@ -186,6 +191,7 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 }
 
 func TestSpawnModelShortNames(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		short string
 		full  string
@@ -226,6 +232,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 }
 
 func TestSpawnModelDefault(t *testing.T) {
+	t.Parallel()
 	var receivedModel string
 	var receivedReq *provider.MessageRequest
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {

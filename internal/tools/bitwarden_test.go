@@ -50,6 +50,7 @@ func newTestBWStore(t *testing.T, mock *testBWExecutor) *bitwarden.Store {
 }
 
 func TestBitwardenSearchTool(t *testing.T) {
+	t.Parallel()
 	mock := &testBWExecutor{listJSON: testBWListJSON}
 	store := newTestBWStore(t, mock)
 	tool := NewBitwardenSearchTool(store)
@@ -72,6 +73,7 @@ func TestBitwardenSearchTool(t *testing.T) {
 }
 
 func TestBitwardenSearchEmpty(t *testing.T) {
+	t.Parallel()
 	mock := &testBWExecutor{listJSON: testBWListJSON}
 	store := newTestBWStore(t, mock)
 	tool := NewBitwardenSearchTool(store)
@@ -88,6 +90,7 @@ func TestBitwardenSearchEmpty(t *testing.T) {
 }
 
 func TestBitwardenUnlockTool(t *testing.T) {
+	t.Parallel()
 	mock := &testBWExecutor{
 		listJSON: testBWListJSON,
 		getMap:   map[string]string{"aaaa-1111": "ghp_supersecret123"},
@@ -110,6 +113,7 @@ func TestBitwardenUnlockTool(t *testing.T) {
 }
 
 func TestBitwardenUnlockDenied(t *testing.T) {
+	t.Parallel()
 	mock := &testBWExecutor{
 		listJSON: testBWListJSON,
 		getErr:   fmt.Errorf("denied by aisudo"),
@@ -128,6 +132,7 @@ func TestBitwardenUnlockDenied(t *testing.T) {
 }
 
 func TestBitwardenUnlockNeverReturnsValue(t *testing.T) {
+	t.Parallel()
 	mock := &testBWExecutor{
 		listJSON: testBWListJSON,
 		getMap:   map[string]string{"aaaa-1111": "ghp_supersecret123"},

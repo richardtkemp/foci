@@ -43,6 +43,7 @@ func testRegistry() *Registry {
 }
 
 func TestExecBridgeLifecycle(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -69,6 +70,7 @@ func TestExecBridgeLifecycle(t *testing.T) {
 }
 
 func TestExecBridgeCallTool(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -86,6 +88,7 @@ func TestExecBridgeCallTool(t *testing.T) {
 }
 
 func TestExecBridgeToolError(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -103,6 +106,7 @@ func TestExecBridgeToolError(t *testing.T) {
 }
 
 func TestExecBridgePrivateToolRejected(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -120,6 +124,7 @@ func TestExecBridgePrivateToolRejected(t *testing.T) {
 }
 
 func TestExecBridgeUnknownTool(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -137,6 +142,7 @@ func TestExecBridgeUnknownTool(t *testing.T) {
 }
 
 func TestExecBridgeInvalidJSON(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -154,6 +160,7 @@ func TestExecBridgeInvalidJSON(t *testing.T) {
 }
 
 func TestExecBridgeShellFuncsContent(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -179,6 +186,7 @@ func TestExecBridgeShellFuncsContent(t *testing.T) {
 
 func TestExecBridgeSessionKeyPropagated(t *testing.T) {
 	// Verify that the session key from the bridge context reaches tool execution
+	t.Parallel()
 	var capturedKey string
 	r := NewRegistry()
 	r.Register(&Tool{
@@ -211,6 +219,7 @@ func TestExecBridgeSessionKeyPropagated(t *testing.T) {
 }
 
 func TestExecBridgeConcurrentCalls(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -242,6 +251,7 @@ func TestExecBridgeConcurrentCalls(t *testing.T) {
 }
 
 func TestExecBridgeUniquePaths(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	b1, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -261,6 +271,7 @@ func TestExecBridgeUniquePaths(t *testing.T) {
 }
 
 func TestStripHTTPHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		input string
@@ -308,6 +319,7 @@ func TestStripHTTPHeaders(t *testing.T) {
 }
 
 func TestToolParamKeys(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		params json.RawMessage
@@ -346,6 +358,7 @@ func TestToolParamKeys(t *testing.T) {
 }
 
 func TestShellFuncsContainJSONGuard(t *testing.T) {
+	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
 	if err != nil {
@@ -375,6 +388,7 @@ func TestShellFuncsContainJSONGuard(t *testing.T) {
 
 func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 	// Register a fake http_request tool that returns headers + body
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
@@ -406,6 +420,7 @@ func TestExecBridgeHTTPRequestHeadersStripped(t *testing.T) {
 
 func TestExecBridgeHTTPRequestIncludeHeaders(t *testing.T) {
 	// When include_headers is true, the full response (status + headers + body) is returned
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
@@ -449,6 +464,7 @@ func TestExecBridgeHTTPRequestIncludeHeaders(t *testing.T) {
 
 func TestExecBridgeHTTPRequestIncludeHeadersFalse(t *testing.T) {
 	// Explicitly passing include_headers: false should strip headers (same as default)
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
@@ -476,6 +492,7 @@ func TestExecBridgeHTTPRequestIncludeHeadersFalse(t *testing.T) {
 
 func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 	// Verify the generated shell function contains --include-headers handling
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "http_request",
@@ -510,6 +527,7 @@ func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 }
 
 func TestExecBridgeTmuxShellFunc(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "tmux",
@@ -553,6 +571,7 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 }
 
 func TestFinalizeExecDescription(t *testing.T) {
+	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{
 		Name:        "shell",
@@ -607,6 +626,7 @@ func TestFinalizeExecDescription(t *testing.T) {
 }
 
 func TestExportedNamesAlphabetical(t *testing.T) {
+	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{Name: "zebra", ExecExport: true, Parameters: json.RawMessage(`{}`)})
 	reg.Register(&Tool{Name: "alpha", ExecExport: true, Parameters: json.RawMessage(`{}`)})
@@ -629,6 +649,7 @@ func TestExportedNamesAlphabetical(t *testing.T) {
 // produces a non-empty shell function via generateShellFunc.
 func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	// All tools that set ExecExport:true in production code.
+	t.Parallel()
 	// When you add a new ExecExport tool, add it here.
 	exportedTools := []string{
 		"http_request",
@@ -666,6 +687,7 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 // the developer either exports it or adds it to the skip list.
 func TestAllToolsExportedOrSkipped(t *testing.T) {
 	// Tools that intentionally do NOT have ExecExport:true.
+	t.Parallel()
 	// Each entry documents why the tool is skipped from the exec bridge.
 	skippedTools := map[string]string{
 		"shell":             "recursive — shell is the bridge host itself",
@@ -746,6 +768,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 
 func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 	// Verify the generated foci_todo shell function includes --sort parameter handling
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:       "todo",
@@ -788,6 +811,7 @@ func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 
 func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 	// Verify that all generated shell functions reject unrecognized flags
+	t.Parallel()
 	r := NewRegistry()
 	tools := []struct {
 		name       string

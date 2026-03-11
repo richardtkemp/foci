@@ -33,6 +33,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 }
 
 func TestMemorySearch(t *testing.T) {
+	t.Parallel()
 	_, memDir := testMemoryTool(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Remember to buy milk\nThe sky is blue\n"), 0644)
@@ -66,6 +67,7 @@ func TestMemorySearch(t *testing.T) {
 }
 
 func TestMemorySearchNoMatches(t *testing.T) {
+	t.Parallel()
 	_, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "test.md"), []byte("nothing relevant here\n"), 0644)
 
@@ -91,6 +93,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 }
 
 func TestMemorySearchEmpty(t *testing.T) {
+	t.Parallel()
 	tool, _ := testMemoryTool(t)
 	params, _ := json.Marshal(map[string]string{"query": "anything"})
 
@@ -104,6 +107,7 @@ func TestMemorySearchEmpty(t *testing.T) {
 }
 
 func TestMemorySearchShowsSource(t *testing.T) {
+	t.Parallel()
 	_, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The weather is sunny today"), 0644)
 
@@ -134,6 +138,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 }
 
 func TestMemorySearchSortParam(t *testing.T) {
+	t.Parallel()
 	_, memDir := testMemoryTool(t)
 
 	os.WriteFile(filepath.Join(memDir, "recent.md"), []byte("Recently added content about sorting"), 0644)
@@ -190,6 +195,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 }
 
 func TestMemorySearchBackendParam(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -259,6 +265,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 }
 
 func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -284,6 +291,7 @@ func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
 
 func TestMemorySearchDateRange(t *testing.T) {
 	// Tests date_from and date_to filtering functionality.
+	t.Parallel()
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -351,6 +359,7 @@ func TestMemorySearchDateRange(t *testing.T) {
 
 func TestMemorySearchDateRangeInvalid(t *testing.T) {
 	// Tests that invalid date format returns a clear error.
+	t.Parallel()
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)

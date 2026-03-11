@@ -13,6 +13,7 @@ import (
 
 // TestHTTPRequestWithSecretHeaders verifies secrets are resolved in headers
 func TestHTTPRequestWithSecretHeaders(t *testing.T) {
+	t.Parallel()
 	var receivedAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAuth = r.Header.Get("Authorization")
@@ -51,6 +52,7 @@ allowed_hosts = ["%s"]
 
 // TestHTTPRequestBlockedHost verifies secrets cannot be sent to unauthorized hosts
 func TestHTTPRequestBlockedHost(t *testing.T) {
+	t.Parallel()
 	store := writeTestSecrets(t, `
 [custom]
 api_key = "sk-secret-123"
@@ -76,6 +78,7 @@ allowed_hosts = ["api.allowed.com"]
 
 // TestHTTPRequestUserinfoAttack verifies URL userinfo spoofing is blocked
 func TestHTTPRequestUserinfoAttack(t *testing.T) {
+	t.Parallel()
 	store := writeTestSecrets(t, `
 [custom]
 api_key = "sk-secret-123"
@@ -101,6 +104,7 @@ allowed_hosts = ["api.example.com"]
 
 // TestHTTPRequestNoAllowedHosts verifies secrets without allowed_hosts are rejected
 func TestHTTPRequestNoAllowedHosts(t *testing.T) {
+	t.Parallel()
 	store := writeTestSecrets(t, `
 [legacy]
 token = "sk-legacy-token"
@@ -125,6 +129,7 @@ token = "sk-legacy-token"
 
 // TestHTTPRequestNoSecretsNoRestriction verifies public requests work without secrets
 func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "public data")
 	}))
@@ -148,6 +153,7 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 
 // TestHTTPRequestRedactResponse verifies secrets are redacted from response bodies
 func TestHTTPRequestRedactResponse(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Echo back the Authorization header (simulating an API that leaks tokens)
 		fmt.Fprintf(w, "your token is: %s", r.Header.Get("Authorization"))
@@ -183,6 +189,7 @@ allowed_hosts = ["%s"]
 
 // TestHTTPRequestMultipleSecretsAllChecked verifies all referenced secrets are validated
 func TestHTTPRequestMultipleSecretsAllChecked(t *testing.T) {
+	t.Parallel()
 	store := writeTestSecrets(t, `
 [apiA]
 key = "key-a"

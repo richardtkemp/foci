@@ -15,6 +15,7 @@ import (
 
 // TestHTTPRequestSaveToText verifies response body is saved to file with save_to parameter
 func TestHTTPRequestSaveToText(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"result":"hello world"}`)
@@ -56,6 +57,7 @@ func TestHTTPRequestSaveToText(t *testing.T) {
 
 // TestHTTPRequestSaveToParentDirs verifies parent directories are created as needed
 func TestHTTPRequestSaveToParentDirs(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "data")
 	}))
@@ -84,6 +86,7 @@ func TestHTTPRequestSaveToParentDirs(t *testing.T) {
 
 // TestHTTPRequestBinaryAutoSave verifies binary responses are auto-saved without save_to
 func TestHTTPRequestBinaryAutoSave(t *testing.T) {
+	t.Parallel()
 	pngData := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
@@ -129,6 +132,7 @@ func TestHTTPRequestBinaryAutoSave(t *testing.T) {
 
 // TestHTTPRequestTextNotAutoSaved verifies text responses are returned inline, not saved
 func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
@@ -156,6 +160,7 @@ func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
 
 // TestHTTPRequestSaveFromJSONPath verifies response data can be extracted via JSON path
 func TestHTTPRequestSaveFromJSONPath(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"data":[{"url":"extracted-value"}]}`)
@@ -191,6 +196,7 @@ func TestHTTPRequestSaveFromJSONPath(t *testing.T) {
 // TestHTTPRequestSaveFromJSONPathDataURI verifies data URIs can be extracted and saved
 func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 	// Simulate an image generation API returning base64 data URI
+	t.Parallel()
 	pngBytes := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a}
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	dataURI := "data:image/png;base64," + b64
@@ -241,6 +247,7 @@ func TestHTTPRequestSaveFromJSONPathDataURI(t *testing.T) {
 
 // TestHTTPRequestSaveFromJSONPathRequiresSaveTo verifies save_from_json_path requires save_to
 func TestHTTPRequestSaveFromJSONPathRequiresSaveTo(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":                 "http://example.com",
@@ -259,6 +266,7 @@ func TestHTTPRequestSaveFromJSONPathRequiresSaveTo(t *testing.T) {
 // TestHTTPRequestSaveToLargeBody verifies large responses can be saved to file
 func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 	// 2MB response — exceeds 1MB inline limit but within 10MB save_to limit
+	t.Parallel()
 	bigBody := strings.Repeat("x", 2*1024*1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -293,6 +301,7 @@ func TestHTTPRequestSaveToLargeBody(t *testing.T) {
 // TestHTTPRequestMaxResponseBytesOverride verifies response truncation respects max_response_bytes
 func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
 	// 500KB response, override limit to 256KB — should truncate
+	t.Parallel()
 	bigBody := strings.Repeat("A", 500*1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -319,6 +328,7 @@ func TestHTTPRequestMaxResponseBytesOverride(t *testing.T) {
 // TestHTTPRequestMaxResponseBytesLargeOverride verifies larger max_response_bytes override
 func TestHTTPRequestMaxResponseBytesLargeOverride(t *testing.T) {
 	// 3MB response with save_to, override limit to 5MB
+	t.Parallel()
 	bigBody := strings.Repeat("B", 3*1024*1024)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")

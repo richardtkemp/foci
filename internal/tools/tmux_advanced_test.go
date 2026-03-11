@@ -10,6 +10,7 @@ import (
 
 // TestTmuxSendRateLimit verifies that sends are rate-limited to ~2s apart.
 func TestTmuxSendRateLimit(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -63,6 +64,7 @@ func TestTmuxSendRateLimit(t *testing.T) {
 
 // TestTmuxSessionKeyIsolation verifies that different session keys can't access each other's sessions.
 func TestTmuxSessionKeyIsolation(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	// Single tool instance, two different session keys
@@ -152,6 +154,7 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 
 // TestTmuxReapExpiredSessions verifies that expired sessions are cleaned up.
 func TestTmuxReapExpiredSessions(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	name := "foci-test-reap"
@@ -195,6 +198,7 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 
 // TestTmuxReapPreservesActiveSession verifies that recently-accessed sessions survive reap.
 func TestTmuxReapPreservesActiveSession(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	name := "foci-test-reap-active"

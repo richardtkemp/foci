@@ -11,6 +11,7 @@ import (
 
 func TestSpawnOneShotWithTools(t *testing.T) {
 	// Verify one-shot modes get tool definitions and can execute tools.
+	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
@@ -73,6 +74,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 
 func TestSpawnRawToolAllowlist(t *testing.T) {
 	// This test ensures every tool registered in the system is explicitly
+	t.Parallel()
 	// classified as either allowed or blocked for raw-mode spawns.
 	// If you add a new tool and this test fails, you MUST decide:
 	//   - Is the tool safe in an isolated sandbox (no shell access, no
@@ -186,6 +188,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 
 func TestSpawnCharacterAllTools(t *testing.T) {
 	// Verify character mode includes all tools (no blacklist).
+	t.Parallel()
 	var receivedReq *provider.MessageRequest
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
@@ -233,6 +236,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 }
 
 func TestSpawnToolSetExcludesSpawn(t *testing.T) {
+	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{
 		Name:       "spawn",

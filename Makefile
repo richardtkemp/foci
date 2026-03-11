@@ -3,6 +3,7 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
 GOBIN ?= $(shell go env GOPATH)/bin
+NPROC := $(shell nproc 2>/dev/null || echo 4)
 
 LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
@@ -26,15 +27,15 @@ foci-call:
 	go build -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
 
 test:
-	go test -p=$(shell nproc 2>/dev/null || echo 4) ./...
+	go test -p=$(NPROC) ./...
 
 coverage:
 	@echo "=== Test Coverage ==="
-	@go test -p=$(shell nproc 2>/dev/null || echo 4) -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)'
+	@go test -p=$(NPROC) -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)'
 
 coverage-report:
 	@echo "=== Generating Coverage Report ==="
-	@go test -p=$(shell nproc 2>/dev/null || echo 4) -coverprofile=coverage.out ./...
+	@go test -p=$(NPROC) -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | tail -20
 	@echo ""
 	@echo "Total coverage:"
@@ -42,7 +43,7 @@ coverage-report:
 
 coverage-html:
 	@echo "=== Generating HTML Coverage Report ==="
-	@go test -p=$(shell nproc 2>/dev/null || echo 4) -coverprofile=coverage.out ./...
+	@go test -p=$(NPROC) -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
 
@@ -51,9 +52,14 @@ COVERAGE_TOTAL_MIN ?= 75.0
 COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
-	@echo "=== Checking Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) [internal only] ==="
-	@go test -p=$(shell nproc 2>/dev/null || echo 4) -coverprofile=coverage.out ./internal/... > /dev/null 2>&1 || true
+	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
+	@go test -p=$(NPROC) -cover -coverprofile=coverage.out ./internal/... ./prompts/... 2>&1 | tee .test-output.tmp
+	@if grep -q '^FAIL' .test-output.tmp; then \
+		rm -f .test-output.tmp; \
+		exit 1; \
+	fi
 	@TOTAL=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	echo ""; \
 	echo "Total coverage: $$TOTAL%"; \
 	FAILED=0; \
 	if [ "$$(echo "$$TOTAL < $(COVERAGE_TOTAL_MIN)" | bc -l)" -eq 1 ]; then \
@@ -63,8 +69,8 @@ coverage-check:
 		echo "✅ Total coverage $$TOTAL% meets $(COVERAGE_TOTAL_MIN)%"; \
 	fi; \
 	echo ""; \
-	echo "Per-package coverage:"; \
-	go test -p=$(shell nproc 2>/dev/null || echo 4) -cover ./internal/... 2>&1 | grep "^ok" | while read -r line; do \
+	echo "Per-package coverage (internal only):"; \
+	grep "^ok" .test-output.tmp | grep "foci/internal/" | while read -r line; do \
 		PKG=$$(echo "$$line" | awk '{print $$2}'); \
 		COV=$$(echo "$$line" | grep -oP 'coverage: \K[0-9.]+' || echo "0"); \
 		if [ "$$(echo "$$COV < $(COVERAGE_PKG_MIN)" | bc -l)" -eq 1 ]; then \
@@ -74,6 +80,7 @@ coverage-check:
 			echo "  ✅ $$PKG: $$COV%"; \
 		fi; \
 	done; \
+	rm -f .test-output.tmp; \
 	if [ "$$FAILED" -eq 1 ]; then \
 		exit 1; \
 	fi
@@ -112,4 +119,4 @@ verify-persistence:
 	@echo "=== CodeQL Persistence Verification ==="
 	@./scripts/verify-persistence.sh
 
-check: test lint coverage-check verify-persistence
+check: lint coverage-check verify-persistence

@@ -12,6 +12,7 @@ import (
 )
 
 func TestSpawnRawCreatesTempDir(t *testing.T) {
+	t.Parallel()
 	var spawnTempDir string
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
@@ -43,6 +44,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 }
 
 func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	var spawnTempDir string
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -105,6 +107,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 }
 
 func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
@@ -149,6 +152,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 }
 
 func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
@@ -193,6 +197,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 }
 
 func TestSpawnRawFileListMultiple(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++

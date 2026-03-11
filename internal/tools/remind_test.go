@@ -37,6 +37,7 @@ func testRemindToolWithWake(t *testing.T, fn ScheduleWakeFn) *Tool {
 // --- Passive reminder tests (wake=false, default) ---
 
 func TestRemind(t *testing.T) {
+	t.Parallel()
 	tool := testRemindTool(t)
 	params, _ := json.Marshal(map[string]string{
 		"text": "check FTS5 phrase boosting",
@@ -56,6 +57,7 @@ func TestRemind(t *testing.T) {
 }
 
 func TestRemindTomorrow(t *testing.T) {
+	t.Parallel()
 	tool := testRemindTool(t)
 	params, _ := json.Marshal(map[string]string{
 		"text": "ask about Greece",
@@ -72,6 +74,7 @@ func TestRemindTomorrow(t *testing.T) {
 }
 
 func TestRemindMissingText(t *testing.T) {
+	t.Parallel()
 	tool := testRemindTool(t)
 	params, _ := json.Marshal(map[string]string{
 		"text": "",
@@ -85,6 +88,7 @@ func TestRemindMissingText(t *testing.T) {
 }
 
 func TestRemindMissingWhen(t *testing.T) {
+	t.Parallel()
 	tool := testRemindTool(t)
 	params, _ := json.Marshal(map[string]string{
 		"text": "something",
@@ -100,6 +104,7 @@ func TestRemindMissingWhen(t *testing.T) {
 // --- Wake tests (wake=true) ---
 
 func TestRemindWakeDelay(t *testing.T) {
+	t.Parallel()
 	var gotDur time.Duration
 	var gotMsg string
 	fn := func(id int64, d time.Duration, msg string) error {
@@ -132,6 +137,7 @@ func TestRemindWakeDelay(t *testing.T) {
 }
 
 func TestRemindWakeDelaySeconds(t *testing.T) {
+	t.Parallel()
 	var gotDur time.Duration
 	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d
@@ -154,6 +160,7 @@ func TestRemindWakeDelaySeconds(t *testing.T) {
 }
 
 func TestRemindWakeAtTimestamp(t *testing.T) {
+	t.Parallel()
 	var gotDur time.Duration
 	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d
@@ -178,6 +185,7 @@ func TestRemindWakeAtTimestamp(t *testing.T) {
 }
 
 func TestRemindWakePastTimestamp(t *testing.T) {
+	t.Parallel()
 	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
@@ -198,6 +206,7 @@ func TestRemindWakePastTimestamp(t *testing.T) {
 }
 
 func TestRemindWakeEmptyText(t *testing.T) {
+	t.Parallel()
 	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
@@ -217,6 +226,7 @@ func TestRemindWakeEmptyText(t *testing.T) {
 }
 
 func TestRemindWakeNilFunction(t *testing.T) {
+	t.Parallel()
 	tool := testRemindTool(t) // nil wake fn
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -234,6 +244,7 @@ func TestRemindWakeNilFunction(t *testing.T) {
 }
 
 func TestRemindWakeInvalidDuration(t *testing.T) {
+	t.Parallel()
 	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
@@ -253,6 +264,7 @@ func TestRemindWakeInvalidDuration(t *testing.T) {
 }
 
 func TestRemindWakeNegativeDelay(t *testing.T) {
+	t.Parallel()
 	fn := func(id int64, d time.Duration, msg string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
@@ -272,6 +284,7 @@ func TestRemindWakeNegativeDelay(t *testing.T) {
 }
 
 func TestRemindWakeCallbackError(t *testing.T) {
+	t.Parallel()
 	fn := func(id int64, d time.Duration, msg string) error {
 		return fmt.Errorf("scheduler full")
 	}
@@ -293,6 +306,7 @@ func TestRemindWakeCallbackError(t *testing.T) {
 }
 
 func TestRemindWakeTomorrow(t *testing.T) {
+	t.Parallel()
 	var gotDur time.Duration
 	fn := func(id int64, d time.Duration, msg string) error {
 		gotDur = d

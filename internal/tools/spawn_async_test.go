@@ -11,6 +11,7 @@ import (
 )
 
 func TestSpawnInheritSemaphore(t *testing.T) {
+	t.Parallel()
 	var concurrentCount int32
 	var maxConcurrent int32
 
@@ -73,6 +74,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 
 func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	// Verify the notifier receives [SPAWN RESULT] with correct session and content.
+	t.Parallel()
 	delivered := make(chan struct{ sk, msg string }, 1)
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		delivered <- struct{ sk, msg string }{sk, msg}
@@ -125,6 +127,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 
 func TestSpawnInheritAsyncError(t *testing.T) {
 	// Verify errors are delivered via notifier with "failed:" tag.
+	t.Parallel()
 	delivered := make(chan string, 1)
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		delivered <- msg
@@ -177,6 +180,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 
 func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	// Nil notifier = synchronous fallback (existing behavior preserved).
+	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Sync result."}
 	mockSessions := &mockSessionBrancher{}
 

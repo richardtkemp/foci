@@ -22,6 +22,7 @@ func testScratchpadTool(t *testing.T) *Tool {
 }
 
 func TestScratchpadToolWriteRead(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	ctx := context.Background()
 
@@ -47,6 +48,7 @@ func TestScratchpadToolWriteRead(t *testing.T) {
 }
 
 func TestScratchpadToolReadEmpty(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "read", "key": "missing"})
 
@@ -60,6 +62,7 @@ func TestScratchpadToolReadEmpty(t *testing.T) {
 }
 
 func TestScratchpadToolClear(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	ctx := context.Background()
 
@@ -85,6 +88,7 @@ func TestScratchpadToolClear(t *testing.T) {
 }
 
 func TestScratchpadToolWriteMissingKey(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "write", "key": "", "content": "data"})
 
@@ -95,6 +99,7 @@ func TestScratchpadToolWriteMissingKey(t *testing.T) {
 }
 
 func TestScratchpadToolListEmpty(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "list"})
 
@@ -108,6 +113,7 @@ func TestScratchpadToolListEmpty(t *testing.T) {
 }
 
 func TestScratchpadToolListWithEntries(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	ctx := context.Background()
 
@@ -132,6 +138,7 @@ func TestScratchpadToolListWithEntries(t *testing.T) {
 }
 
 func TestScratchpadToolUnknownAction(t *testing.T) {
+	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "delete"})
 

@@ -142,6 +142,7 @@ func extractTempDir(result string) string {
 
 func TestSpawnGuardResult(t *testing.T) {
 	// Small result — returned as-is
+	t.Parallel()
 	small := strings.Repeat("x", 100)
 	if got := spawnGuardResult("test", small, spawnMaxResultChars); got != small {
 		t.Errorf("small result should pass through, got %q", got[:50])

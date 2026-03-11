@@ -11,6 +11,7 @@ import (
 
 // TestTmuxStartAndList verifies that sessions can be started and listed correctly.
 func TestTmuxStartAndList(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -54,6 +55,7 @@ func TestTmuxStartAndList(t *testing.T) {
 
 // TestTmuxSendAndRead verifies that text can be sent to a session and read back.
 func TestTmuxSendAndRead(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -100,6 +102,7 @@ func TestTmuxSendAndRead(t *testing.T) {
 
 // TestTmuxReadDefault verifies that read works with default line count.
 func TestTmuxReadDefault(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -129,6 +132,7 @@ func TestTmuxReadDefault(t *testing.T) {
 
 // TestTmuxKill verifies that sessions can be killed.
 func TestTmuxKill(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -173,6 +177,7 @@ func TestTmuxKill(t *testing.T) {
 
 // TestTmuxStartWithWorkdir verifies that sessions can be started with a working directory.
 func TestTmuxStartWithWorkdir(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 

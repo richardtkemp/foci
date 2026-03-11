@@ -10,6 +10,7 @@ import (
 )
 
 func TestWebFetchSuccess(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") != "Foci/1.0" {
 			t.Errorf("User-Agent = %q, want %q", r.Header.Get("User-Agent"), "Foci/1.0")
@@ -37,6 +38,7 @@ func TestWebFetchSuccess(t *testing.T) {
 }
 
 func TestWebFetchRaw(t *testing.T) {
+	t.Parallel()
 	html := "<html><body><h1>Title</h1><p>Content</p></body></html>"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(html))
@@ -64,6 +66,7 @@ func TestWebFetchRaw(t *testing.T) {
 
 func TestWebFetchReadabilityFallback(t *testing.T) {
 	// Non-article HTML — readability will likely fail to extract an article
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("<div>Just some text</div>"))
 	}))
@@ -85,6 +88,7 @@ func TestWebFetchReadabilityFallback(t *testing.T) {
 }
 
 func TestWebFetchMarkdownStructure(t *testing.T) {
+	t.Parallel()
 	articleHTML := `<html><head><title>Test</title></head><body>
 		<article>
 			<h1>Main Heading</h1>
@@ -122,6 +126,7 @@ func TestWebFetchMarkdownStructure(t *testing.T) {
 
 func TestWebFetchNoTruncation(t *testing.T) {
 	// Build a response larger than 50k chars — web_fetch no longer truncates (guardToolResult handles it)
+	t.Parallel()
 	big := strings.Repeat("x", 60_000)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(big))
@@ -143,6 +148,7 @@ func TestWebFetchNoTruncation(t *testing.T) {
 }
 
 func TestWebFetchServerError(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("server error"))
@@ -165,6 +171,7 @@ func TestWebFetchServerError(t *testing.T) {
 }
 
 func TestWebSearchSuccess(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify headers
 		if r.Header.Get("X-Subscription-Token") != "test-key" {
@@ -197,6 +204,7 @@ func TestWebSearchSuccess(t *testing.T) {
 }
 
 func TestWebSearchNoAPIKey(t *testing.T) {
+	t.Parallel()
 	tool := NewWebSearchTool("")
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -213,6 +221,7 @@ func TestWebSearchNoAPIKey(t *testing.T) {
 }
 
 func TestWebSearchEmptyResults(t *testing.T) {
+	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"web": map[string]interface{}{
@@ -237,6 +246,7 @@ func TestWebSearchEmptyResults(t *testing.T) {
 
 func TestWebSearchAPIError(t *testing.T) {
 	// Test with invalid URL to force connection error through the tool
+	t.Parallel()
 	tool := NewWebSearchTool("test-key")
 	params, _ := json.Marshal(map[string]interface{}{
 		"query": "test",
@@ -249,6 +259,7 @@ func TestWebSearchAPIError(t *testing.T) {
 }
 
 func TestWebFetchInvalidURL(t *testing.T) {
+	t.Parallel()
 	tool := NewWebFetchTool()
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": "not-a-valid-url",
@@ -261,6 +272,7 @@ func TestWebFetchInvalidURL(t *testing.T) {
 }
 
 func TestWebFetchToolName(t *testing.T) {
+	t.Parallel()
 	tool := NewWebFetchTool()
 	if tool.Name != "web_fetch" {
 		t.Errorf("name = %q, want %q", tool.Name, "web_fetch")

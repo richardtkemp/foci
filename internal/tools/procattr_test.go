@@ -11,6 +11,7 @@ import (
 )
 
 func TestChildSysProcAttr(t *testing.T) {
+	t.Parallel()
 	attr := ChildSysProcAttr()
 	if attr == nil {
 		t.Fatal("ChildSysProcAttr returned nil")
@@ -21,6 +22,7 @@ func TestChildSysProcAttr(t *testing.T) {
 }
 
 func TestChildSysProcAttrSetsid(t *testing.T) {
+	t.Parallel()
 	attr := ChildSysProcAttrSetsid()
 	if attr == nil {
 		t.Fatal("ChildSysProcAttrSetsid returned nil")
@@ -31,6 +33,7 @@ func TestChildSysProcAttrSetsid(t *testing.T) {
 }
 
 func TestChildCredentialPreservesOtherGroups(t *testing.T) {
+	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root user")
 	}
@@ -71,6 +74,7 @@ func mustParseUint(s string) uint64 {
 
 func TestExecStillWorks(t *testing.T) {
 	// Verify that exec commands still work with the SysProcAttr
+	t.Parallel()
 	// (regardless of whether credential is set or nil).
 	proc := exec.Command("echo", "hello")
 	proc.SysProcAttr = ChildSysProcAttr()
@@ -85,6 +89,7 @@ func TestExecStillWorks(t *testing.T) {
 }
 
 func TestExecSetsidStillWorks(t *testing.T) {
+	t.Parallel()
 	proc := exec.Command("echo", "hello")
 	proc.SysProcAttr = ChildSysProcAttrSetsid()
 
@@ -99,6 +104,7 @@ func TestExecSetsidStillWorks(t *testing.T) {
 
 func TestNoCredentialWithoutSecretsGroup(t *testing.T) {
 	// If foci-secrets group doesn't exist on this system,
+	t.Parallel()
 	// credential should be nil (no group to drop).
 	_, err := user.LookupGroup(secrets.SecurityGroupName)
 	if err != nil {

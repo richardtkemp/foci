@@ -14,6 +14,7 @@ import (
 
 // TestTmuxStartAutoWatch verifies that sessions auto-watch by default.
 func TestTmuxStartAutoWatch(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
@@ -70,6 +71,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 
 // TestTmuxStartWatchFalse verifies that watch=false prevents auto-watch.
 func TestTmuxStartWatchFalse(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
@@ -111,6 +113,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 
 // TestTmuxStartAutoWatchNoNotifier verifies auto-watch is skipped without notifier.
 func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	// No notifier — auto-watch should be silently skipped
@@ -203,6 +206,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 
 // TestTmuxAutopilotAutoWatchOnSend verifies autopilot re-watches on send.
 func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
@@ -270,6 +274,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 
 // TestTmuxAutopilotDisabled verifies autopilot doesn't auto-watch when disabled.
 func TestTmuxAutopilotDisabled(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})

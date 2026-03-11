@@ -15,6 +15,7 @@ import (
 
 // TestTmuxPersistOwnedSessions verifies that owned sessions are persisted.
 func TestTmuxPersistOwnedSessions(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	// Create a temp file for state persistence
@@ -54,6 +55,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 
 // TestTmuxRestoreOwnedSessions verifies that owned sessions are restored.
 func TestTmuxRestoreOwnedSessions(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -89,6 +91,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 
 // TestTmuxPersistOnKill verifies that sessions are removed from state when killed.
 func TestTmuxPersistOnKill(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -142,6 +145,8 @@ func TestTmuxPersistOnKill(t *testing.T) {
 
 // TestTmuxPersistClearedOnStaleSessions verifies stale sessions are cleaned from state.
 func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
+	// NOT parallel: lists sessions on the shared tmux server which
+	// other parallel tests may create/destroy concurrently.
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -181,6 +186,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 
 // TestTmuxNoStateStore verifies that tool works without state store.
 func TestTmuxNoStateStore(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	// Create tool without state store (nil)
@@ -214,6 +220,7 @@ func TestTmuxNoStateStore(t *testing.T) {
 
 // TestTmuxStateFileRoundTrip verifies state persistence and restoration end-to-end.
 func TestTmuxStateFileRoundTrip(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -271,6 +278,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 
 // TestTmuxPersistWatches verifies that watches are persisted to state.
 func TestTmuxPersistWatches(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -332,6 +340,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 
 // TestTmuxRestoreWatches verifies that watches are restored from state.
 func TestTmuxRestoreWatches(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -379,6 +388,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 
 // TestTmuxRestoreWatchesStaleSessions verifies stale watched sessions are cleaned.
 func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -410,6 +420,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 
 // TestTmuxUnwatchPersists verifies that unwatch updates persisted state.
 func TestTmuxUnwatchPersists(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -471,6 +482,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 
 // TestTmuxClearAllPersistsWatches verifies that ClearAll removes watches from state.
 func TestTmuxClearAllPersistsWatches(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -526,6 +538,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 
 // TestTmuxUnwatchNotRestoredOnRestart verifies unwatched sessions don't restore.
 func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")

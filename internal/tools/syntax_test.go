@@ -6,6 +6,7 @@ import (
 )
 
 func TestCheckJSON(t *testing.T) {
+	t.Parallel()
 	if err := checkJSON([]byte(`{"key": "value"}`)); err != nil {
 		t.Errorf("valid JSON rejected: %v", err)
 	}
@@ -15,6 +16,7 @@ func TestCheckJSON(t *testing.T) {
 }
 
 func TestCheckTOML(t *testing.T) {
+	t.Parallel()
 	if err := checkTOML([]byte("[section]\nkey = \"val\"\n")); err != nil {
 		t.Errorf("valid TOML rejected: %v", err)
 	}
@@ -24,6 +26,7 @@ func TestCheckTOML(t *testing.T) {
 }
 
 func TestCheckGo(t *testing.T) {
+	t.Parallel()
 	if err := checkGo([]byte("package main\n\nfunc main() {}\n")); err != nil {
 		t.Errorf("valid Go rejected: %v", err)
 	}
@@ -34,12 +37,14 @@ func TestCheckGo(t *testing.T) {
 
 func TestCheckSyntaxUnknownExtension(t *testing.T) {
 	// Unknown extensions should pass (no checker)
+	t.Parallel()
 	if err := checkSyntax("file.txt", []byte("anything")); err != nil {
 		t.Errorf("unknown extension should pass: %v", err)
 	}
 }
 
 func TestCheckYAML(t *testing.T) {
+	t.Parallel()
 	valid := []byte("name: test\nitems:\n  - one\n  - two\n")
 	if err := checkYAML(valid); err != nil {
 		t.Errorf("valid YAML rejected: %v", err)
@@ -52,6 +57,7 @@ func TestCheckYAML(t *testing.T) {
 }
 
 func TestCheckYAMLExtensions(t *testing.T) {
+	t.Parallel()
 	content := []byte("key: value\n")
 	if err := checkSyntax("config.yaml", content); err != nil {
 		t.Errorf(".yaml extension rejected: %v", err)
@@ -62,6 +68,7 @@ func TestCheckYAMLExtensions(t *testing.T) {
 }
 
 func TestCheckXML(t *testing.T) {
+	t.Parallel()
 	valid := []byte(`<?xml version="1.0"?><root><item>hello</item></root>`)
 	if err := checkXML(valid); err != nil {
 		t.Errorf("valid XML rejected: %v", err)
@@ -74,6 +81,7 @@ func TestCheckXML(t *testing.T) {
 }
 
 func TestCheckPython(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
 	}
@@ -91,6 +99,7 @@ func TestCheckPython(t *testing.T) {
 
 func TestCheckPythonSkipsWhenUnavailable(t *testing.T) {
 	// This tests the graceful skip logic — if python3 is missing, checkPython returns nil
+	t.Parallel()
 	// We can't easily simulate a missing python3, but we verify the function signature works
 	content := []byte("x = 1\n")
 	err := checkPython(content)
@@ -101,6 +110,7 @@ func TestCheckPythonSkipsWhenUnavailable(t *testing.T) {
 }
 
 func TestCheckShell(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}
@@ -117,6 +127,7 @@ func TestCheckShell(t *testing.T) {
 }
 
 func TestCheckShellExtensions(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
 	}

@@ -10,6 +10,7 @@ import (
 
 // TestSendMessageToUserTextOnly verifies that sending text alone works correctly.
 func TestSendMessageToUserTextOnly(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -34,6 +35,7 @@ func TestSendMessageToUserTextOnly(t *testing.T) {
 
 // TestSendMessageToUserDocumentOnly verifies that sending a document alone works correctly.
 func TestSendMessageToUserDocumentOnly(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -55,6 +57,7 @@ func TestSendMessageToUserDocumentOnly(t *testing.T) {
 
 // TestSendMessageToUserVoice verifies that sending voice notes works correctly.
 func TestSendMessageToUserVoice(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -77,6 +80,7 @@ func TestSendMessageToUserVoice(t *testing.T) {
 
 // TestSendMessageToUserTextAndDocument verifies that sending text and document together works.
 func TestSendMessageToUserTextAndDocument(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -102,6 +106,7 @@ func TestSendMessageToUserTextAndDocument(t *testing.T) {
 
 // TestSendMessageToUserNoInput verifies that an error is returned when no text or file is provided.
 func TestSendMessageToUserNoInput(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -118,6 +123,7 @@ func TestSendMessageToUserNoInput(t *testing.T) {
 
 // TestSendMessageToUserNilSender verifies that an error is returned when no platform is configured.
 func TestSendMessageToUserNilSender(t *testing.T) {
+	t.Parallel()
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return nil }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -135,6 +141,7 @@ func TestSendMessageToUserNilSender(t *testing.T) {
 
 // TestSendMessageToUserTextError verifies that send errors are propagated for text.
 func TestSendMessageToUserTextError(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{textErr: fmt.Errorf("network down")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -153,6 +160,7 @@ func TestSendMessageToUserTextError(t *testing.T) {
 
 // TestSendMessageToUserDocumentError verifies that send errors are propagated for documents.
 func TestSendMessageToUserDocumentError(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{documentErr: fmt.Errorf("file too large")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -171,6 +179,7 @@ func TestSendMessageToUserDocumentError(t *testing.T) {
 
 // TestSendMessageToUserVoiceError verifies that send errors are propagated for voice notes.
 func TestSendMessageToUserVoiceError(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{voiceErr: fmt.Errorf("codec error")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -190,6 +199,7 @@ func TestSendMessageToUserVoiceError(t *testing.T) {
 
 // TestJoinWords verifies the joinWords helper function for various combinations.
 func TestJoinWords(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		words []string
 		want  string

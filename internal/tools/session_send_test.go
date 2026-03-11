@@ -46,6 +46,7 @@ func (w *mockSessionWriter) Clear(key string) error {
 }
 
 func TestSendToSession(t *testing.T) {
+	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
@@ -85,6 +86,7 @@ func TestSendToSession(t *testing.T) {
 }
 
 func TestSendToSessionReplyToSession(t *testing.T) {
+	t.Parallel()
 	store := &mockSessionAppender{}
 	callerNotified := false
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
@@ -132,6 +134,7 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 }
 
 func TestSendToSessionInvalidReplyTo(t *testing.T) {
+	t.Parallel()
 	store := &mockSessionAppender{}
 	tool := NewSendToSessionTool(store, nil, nil)
 
@@ -152,6 +155,7 @@ func TestSendToSessionInvalidReplyTo(t *testing.T) {
 }
 
 func TestSendToSessionEmptyParams(t *testing.T) {
+	t.Parallel()
 	store := &mockSessionAppender{}
 	tool := NewSendToSessionTool(store, nil, nil)
 
@@ -184,6 +188,7 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 
 
 func TestSendToSessionNilNotifier(t *testing.T) {
+	t.Parallel()
 	store := &mockSessionAppender{}
 	tool := NewSendToSessionTool(store, nil, nil)
 
@@ -208,6 +213,7 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 
 func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	// Bug #218: verify that cross-session communication between per-user
+	t.Parallel()
 	// chat sessions routes to the correct target session key, enabling
 	// chat ID extraction for Telegram delivery.
 	store := &mockSessionAppender{}

@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseThreshold(t *testing.T) {
+	t.Parallel()
 	memTotalKB := int64(16 * 1024 * 1024) // 16 GB in kB
 
 	tests := []struct {
@@ -72,6 +73,7 @@ func TestParseThreshold(t *testing.T) {
 }
 
 func TestCheckOnce_WarnThreshold(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
 
@@ -107,6 +109,7 @@ func TestCheckOnce_WarnThreshold(t *testing.T) {
 }
 
 func TestCheckOnce_CriticalThreshold(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
 
@@ -142,6 +145,7 @@ func TestCheckOnce_CriticalThreshold(t *testing.T) {
 }
 
 func TestCheckOnce_KillThreshold(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	cleanupCalled := false
 	var mu sync.Mutex
@@ -188,6 +192,7 @@ func TestCheckOnce_KillThreshold(t *testing.T) {
 }
 
 func TestDedup_SameThresholdDoesNotReNotify(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
 
@@ -224,6 +229,7 @@ func TestDedup_SameThresholdDoesNotReNotify(t *testing.T) {
 }
 
 func TestDedup_EscalatesToCritical(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
 
@@ -266,6 +272,7 @@ func TestDedup_EscalatesToCritical(t *testing.T) {
 }
 
 func TestDedup_DropBelowResetsState(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
 
@@ -306,6 +313,7 @@ func TestDedup_DropBelowResetsState(t *testing.T) {
 }
 
 func TestKillCleansUp(t *testing.T) {
+	t.Parallel()
 	cleanupCalled := false
 	killCalled := false
 	var notifications []string
@@ -363,6 +371,7 @@ func TestKillCleansUp(t *testing.T) {
 }
 
 func TestCheckOnce_TmuxNotRunning(t *testing.T) {
+	t.Parallel()
 	notifyCalled := false
 
 	m := NewTmuxMemoryMonitor(
@@ -386,6 +395,7 @@ func TestCheckOnce_TmuxNotRunning(t *testing.T) {
 }
 
 func TestCheckOnce_KillFails(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	cleanupCalled := false
 	var mu sync.Mutex
@@ -431,6 +441,7 @@ func TestCheckOnce_KillFails(t *testing.T) {
 }
 
 func TestDedup_CriticalDropsToWarn(t *testing.T) {
+	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
 

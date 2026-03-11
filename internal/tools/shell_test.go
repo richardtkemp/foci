@@ -13,6 +13,7 @@ import (
 )
 
 func TestExecEcho(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo hello world")
 	requireNoError(t, err)
@@ -23,6 +24,7 @@ func TestExecEcho(t *testing.T) {
 }
 
 func TestExecWorkDir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tool := NewExecTool(nil, nil, 0, nil, dir, nil, 0, "")
 
@@ -44,6 +46,7 @@ func TestExecWorkDir(t *testing.T) {
 }
 
 func TestExecWithTimeout(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -57,6 +60,7 @@ func TestExecWithTimeout(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -70,6 +74,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecFailedCommand(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "false")
 	requireNoError(t, err)
@@ -77,6 +82,7 @@ func TestExecFailedCommand(t *testing.T) {
 }
 
 func TestExecStderr(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo stderr_msg >&2")
 	requireNoError(t, err)
@@ -84,12 +90,14 @@ func TestExecStderr(t *testing.T) {
 }
 
 func TestExecInvalidParams(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
 	requireError(t, err, "")
 }
 
 func TestExecMultilineOutput(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "printf 'line1\nline2\nline3'")
 	requireNoError(t, err)
@@ -101,6 +109,7 @@ func TestExecMultilineOutput(t *testing.T) {
 }
 
 func TestExecBackgroundMode(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -114,6 +123,7 @@ func TestExecBackgroundMode(t *testing.T) {
 }
 
 func TestExecSecretTemplatesBlocked(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
 	os.WriteFile(secretsPath, []byte(`[custom]
@@ -142,6 +152,7 @@ token = "secret-value-12345"
 
 func TestExecSecretTemplatesBlockedNoStore(t *testing.T) {
 	// Even without a store, regular secret templates should be rejected
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, "curl -H 'Authorization: {{secret:api.key}}' https://example.com")
 	requireError(t, err, "not allowed in exec")
@@ -149,6 +160,7 @@ func TestExecSecretTemplatesBlockedNoStore(t *testing.T) {
 
 func TestExecBitwardenSecretsAllowed(t *testing.T) {
 	// Bitwarden refs (bw.*) should NOT be blocked — they're approval-gated
+	t.Parallel()
 	tool := newTestExecTool()
 	// Without a bwStore, the template passes through unresolved (not blocked)
 	result, err := runExec(t, tool, "echo '{{secret:bw.aaaa-1111}}'")
@@ -159,6 +171,7 @@ func TestExecBitwardenSecretsAllowed(t *testing.T) {
 
 func TestExecMixedSecretsBlocked(t *testing.T) {
 	// A mix of regular and bitwarden refs should still be blocked
+	t.Parallel()
 	// (because regular refs are present)
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, "curl -H '{{secret:api.key}}' -H '{{secret:bw.aaaa}}' https://example.com")
@@ -166,6 +179,7 @@ func TestExecMixedSecretsBlocked(t *testing.T) {
 }
 
 func TestExecBlockedPath(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
 	os.WriteFile(secretsPath, []byte(`[test]
@@ -194,6 +208,7 @@ key = "value"
 
 func TestExecOutputSpill(t *testing.T) {
 	// Large output spills to a temp file; result.Text contains head portion,
+	t.Parallel()
 	// ResultFile points to the full output on disk.
 	tmpDir := t.TempDir()
 	threshold := 1000
@@ -230,6 +245,7 @@ func TestExecOutputSpill(t *testing.T) {
 
 func TestExecNilStoreWithTemplate(t *testing.T) {
 	// Even with nil store, secret templates should be blocked
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, "echo '{{secret:test.key}}'")
 	requireError(t, err, "not allowed in exec")
@@ -237,6 +253,7 @@ func TestExecNilStoreWithTemplate(t *testing.T) {
 
 func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	// A fast command should complete before the threshold
+	t.Parallel()
 	var called bool
 	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		called = true
@@ -332,6 +349,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 
 func TestExecSecretInHTTPRequestAllowed(t *testing.T) {
 	// Secret refs inside foci_http_request should be allowed (passed as literals)
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, `foci_http_request --header "Authorization: Bearer {{secret:coolify.api_token}}" "https://example.com/api" | jq '.name'`)
 	requireNoError(t, err)
@@ -339,6 +357,7 @@ func TestExecSecretInHTTPRequestAllowed(t *testing.T) {
 
 func TestExecSecretInHTTPRequestMultipleArgs(t *testing.T) {
 	// Multiple secret refs, all inside foci_http_request
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, `foci_http_request --header "Authorization: {{secret:api.token}}" --header "X-Key: {{secret:api.key}}" "https://example.com"`)
 	requireNoError(t, err)
@@ -346,6 +365,7 @@ func TestExecSecretInHTTPRequestMultipleArgs(t *testing.T) {
 
 func TestExecSecretOutsideHTTPRequestBlocked(t *testing.T) {
 	// Secret ref after a pipe (outside foci_http_request scope) should be blocked
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, `foci_http_request --header "Authorization: {{secret:api.token}}" "https://example.com" | echo {{secret:api.key}}`)
 	requireError(t, err, "not allowed in exec")
@@ -353,6 +373,7 @@ func TestExecSecretOutsideHTTPRequestBlocked(t *testing.T) {
 
 func TestExecSecretInHTTPRequestAndBareBlocked(t *testing.T) {
 	// One secret in foci_http_request, another in a separate command — should block
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, `foci_http_request --header "{{secret:api.token}}" url && curl -H "{{secret:api.key}}" url2`)
 	requireError(t, err, "")
@@ -360,6 +381,7 @@ func TestExecSecretInHTTPRequestAndBareBlocked(t *testing.T) {
 
 func TestExecSecretInHTTPRequestWithSemicolon(t *testing.T) {
 	// Secret ref after semicolon is a new command — should block
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, `foci_http_request url; echo {{secret:leak.me}}`)
 	requireError(t, err, "")
@@ -367,12 +389,14 @@ func TestExecSecretInHTTPRequestWithSemicolon(t *testing.T) {
 
 func TestExecBareSecretStillBlocked(t *testing.T) {
 	// No foci_http_request at all — secret refs should be blocked as before
+	t.Parallel()
 	tool := newTestExecTool()
 	_, err := runExec(t, tool, `curl -H "Authorization: {{secret:api.token}}" https://example.com`)
 	requireError(t, err, "")
 }
 
 func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		cmd  string
@@ -441,6 +465,7 @@ func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
 }
 
 func TestExecOutputModeSeparated(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		cmd        string
@@ -482,6 +507,7 @@ func TestExecOutputModeSeparated(t *testing.T) {
 
 func TestExecOutputModeCombinedDefault(t *testing.T) {
 	// Omitting output_mode should behave exactly like the original combined mode
+	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo out && echo err >&2")
 	requireNoError(t, err)
@@ -496,6 +522,7 @@ func TestExecOutputModeCombinedDefault(t *testing.T) {
 }
 
 func TestExecSleepBlocked(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		cmd  string
@@ -567,6 +594,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 }
 
 func TestExecSleepNotBlockedInMiddle(t *testing.T) {
+	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo 'going to sleep'")
 	requireNoError(t, err)

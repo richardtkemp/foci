@@ -13,6 +13,7 @@ import (
 )
 
 func TestReadFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("line one\nline two\nline three\n"), 0644)
@@ -35,6 +36,7 @@ func TestReadFile(t *testing.T) {
 }
 
 func TestReadDirectory(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("x"), 0644)
 	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
@@ -55,6 +57,7 @@ func TestReadDirectory(t *testing.T) {
 }
 
 func TestReadDirectoryEmpty(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	tool := NewReadTool(nil)
@@ -70,6 +73,7 @@ func TestReadDirectoryEmpty(t *testing.T) {
 }
 
 func TestReadFileMissing(t *testing.T) {
+	t.Parallel()
 	tool := NewReadTool(nil)
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/file.txt"})
 
@@ -80,6 +84,7 @@ func TestReadFileMissing(t *testing.T) {
 }
 
 func TestWriteFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "output.txt")
 
@@ -104,6 +109,7 @@ func TestWriteFile(t *testing.T) {
 }
 
 func TestWriteFileOverwrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
 	os.WriteFile(path, []byte("old content"), 0644)
@@ -123,6 +129,7 @@ func TestWriteFileOverwrite(t *testing.T) {
 }
 
 func TestEditFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("hello world, hello"), 0644)
@@ -151,6 +158,7 @@ func TestEditFile(t *testing.T) {
 }
 
 func TestEditFileNotFound(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("foo bar baz"), 0644)
@@ -167,6 +175,7 @@ func TestEditFileNotFound(t *testing.T) {
 }
 
 func TestEditFileNonUnique(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("aaa bbb aaa"), 0644)
@@ -183,6 +192,7 @@ func TestEditFileNonUnique(t *testing.T) {
 }
 
 func TestEditFileMissing(t *testing.T) {
+	t.Parallel()
 	tool := NewEditTool(nil, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       "/nonexistent/file.txt",
@@ -197,6 +207,7 @@ func TestEditFileMissing(t *testing.T) {
 }
 
 func TestEditFileSyntaxValidToValid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "old"}`), 0644)
@@ -223,6 +234,7 @@ func TestEditFileSyntaxValidToValid(t *testing.T) {
 }
 
 func TestEditFileSyntaxValidToInvalid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"}`), 0644)
@@ -250,6 +262,7 @@ func TestEditFileSyntaxValidToInvalid(t *testing.T) {
 }
 
 func TestEditFileSyntaxInvalidToValid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"`), 0644)  // missing closing brace
@@ -271,6 +284,7 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 }
 
 func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": bad}`), 0644)  // already invalid
@@ -292,6 +306,7 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 }
 
 func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("hello"), 0644)
@@ -313,6 +328,7 @@ func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
 }
 
 func TestReadLargeFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.txt")
 
@@ -337,6 +353,7 @@ func TestReadLargeFile(t *testing.T) {
 
 // Verify offset returns lines starting from the given line number.
 func TestReadFileOffset(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
@@ -363,6 +380,7 @@ func TestReadFileOffset(t *testing.T) {
 
 // Verify limit caps the number of lines returned.
 func TestReadFileLimit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
@@ -388,6 +406,7 @@ func TestReadFileLimit(t *testing.T) {
 
 // Verify offset and limit work together to return a window of lines.
 func TestReadFileOffsetAndLimit(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
@@ -413,6 +432,7 @@ func TestReadFileOffsetAndLimit(t *testing.T) {
 
 // Verify offset past end of file returns informative message.
 func TestReadFileOffsetPastEnd(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\n"), 0644)
@@ -445,6 +465,7 @@ func loadTestStore(t *testing.T) *secrets.Store {
 
 func TestBlockedPathsAccessDenied(t *testing.T) {
 	// All operations on blocked paths should return "access denied".
+	t.Parallel()
 	store := loadTestStore(t)
 	tests := []struct {
 		name   string
@@ -467,6 +488,7 @@ func TestBlockedPathsAccessDenied(t *testing.T) {
 }
 
 func TestReadPDF(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.pdf")
 	// Write a small fake PDF (doesn't need to be valid PDF for this test)
@@ -509,6 +531,7 @@ func TestReadPDF(t *testing.T) {
 }
 
 func TestReadPDFCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "report.PDF")
 	os.WriteFile(path, []byte("%PDF-1.4"), 0644)
@@ -531,6 +554,7 @@ func TestReadPDFCaseInsensitive(t *testing.T) {
 // --- resolveAndValidatePath tests ---
 
 func TestResolveAndValidatePath_RelativeInside(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	got, err := resolveAndValidatePath("sub/file.txt", dir)
 	if err != nil {
@@ -543,6 +567,7 @@ func TestResolveAndValidatePath_RelativeInside(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_Rejected(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tests := []struct {
 		name    string
@@ -562,6 +587,7 @@ func TestResolveAndValidatePath_Rejected(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_SymlinkEscape(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Create a symlink inside baseDir that points outside
 	outside := t.TempDir()
@@ -578,6 +604,7 @@ func TestResolveAndValidatePath_SymlinkEscape(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_SymlinkEscapeNewFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Symlink to outside dir — target file doesn't exist yet
 	outside := t.TempDir()
@@ -593,6 +620,7 @@ func TestResolveAndValidatePath_SymlinkEscapeNewFile(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_SymlinkInsideOK(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Symlink within baseDir is fine
 	sub := filepath.Join(dir, "sub")
@@ -611,6 +639,7 @@ func TestResolveAndValidatePath_SymlinkInsideOK(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_EmptyBaseDir(t *testing.T) {
+	t.Parallel()
 	got, err := resolveAndValidatePath("/any/path", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -623,6 +652,7 @@ func TestResolveAndValidatePath_EmptyBaseDir(t *testing.T) {
 // --- Isolated tool end-to-end tests ---
 
 func TestIsolatedReadInside(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("hello\n"), 0644)
 
@@ -638,6 +668,7 @@ func TestIsolatedReadInside(t *testing.T) {
 }
 
 func TestIsolatedReadEscapeBlocked(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tool := NewIsolatedReadTool(nil, dir)
 	params, _ := json.Marshal(map[string]string{"path": "../../../etc/hostname"})
@@ -648,6 +679,7 @@ func TestIsolatedReadEscapeBlocked(t *testing.T) {
 }
 
 func TestIsolatedWriteInside(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tool := NewIsolatedWriteTool(nil, dir)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -665,6 +697,7 @@ func TestIsolatedWriteInside(t *testing.T) {
 }
 
 func TestIsolatedWriteEscapeBlocked(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tool := NewIsolatedWriteTool(nil, dir)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -678,6 +711,7 @@ func TestIsolatedWriteEscapeBlocked(t *testing.T) {
 }
 
 func TestIsolatedEditEscapeBlocked(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Create a file outside the base dir
 	outside := t.TempDir()
@@ -703,6 +737,7 @@ func TestIsolatedEditEscapeBlocked(t *testing.T) {
 }
 
 func TestReadAllowedWithStore(t *testing.T) {
+	t.Parallel()
 	store := loadTestStore(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "allowed.txt")
@@ -723,6 +758,7 @@ func TestReadAllowedWithStore(t *testing.T) {
 // --- Config blocked paths tests ---
 
 func TestWriteBlockedByConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	blocked := []config.BlockedPath{
 		{Path: dir, Rebuke: "Don't write here, use tmux instead."},
@@ -748,6 +784,7 @@ func TestWriteBlockedByConfig(t *testing.T) {
 }
 
 func TestWriteNotBlockedByConfig(t *testing.T) {
+	t.Parallel()
 	blockedDir := t.TempDir()
 	writeDir := t.TempDir()
 	blocked := []config.BlockedPath{
@@ -774,6 +811,7 @@ func TestWriteNotBlockedByConfig(t *testing.T) {
 }
 
 func TestEditBlockedByConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.go")
 	os.WriteFile(path, []byte("old content"), 0644)
@@ -804,6 +842,7 @@ func TestEditBlockedByConfig(t *testing.T) {
 
 func TestBlockedPathPrefixMatching(t *testing.T) {
 	// /naughty blocks /naughty/sub/file.go but not /not-naughty/file.go
+	t.Parallel()
 	naughty := t.TempDir() // e.g. /tmp/xxx
 	notNaughty := t.TempDir()
 
@@ -842,6 +881,7 @@ func TestBlockedPathPrefixMatching(t *testing.T) {
 }
 
 func TestWriteNoBlockedPaths(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	tool := NewWriteTool(nil, nil)
 	path := filepath.Join(dir, "file.txt")

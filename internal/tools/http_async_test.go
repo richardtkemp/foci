@@ -14,6 +14,7 @@ import (
 // TestHTTPRequestAutoBackgroundFast verifies fast requests don't trigger background mode
 func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	// A fast request should complete before the threshold — no notification
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "fast response")
 	}))
@@ -132,6 +133,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 // TestHTTPRequestExplicitBackground verifies background=true returns immediately
 func TestHTTPRequestExplicitBackground(t *testing.T) {
 	// background=true should return immediately and deliver via notifier
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "bg response")
 	}))
@@ -171,6 +173,7 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 // TestHTTPRequestBackgroundNoNotifier verifies background=true runs sync without notifier
 func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	// background=true but no notifier — should run synchronously
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "sync response")
 	}))
