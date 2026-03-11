@@ -284,25 +284,40 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		return "", fmt.Errorf("load session: %w", err)
 	}
 
+	// Repair session data issues and persist fixes to disk.
+	// Both repairs modify the in-memory messages AND write corrections back
+	// to the session file so the fix is permanent (not repeated every load).
+	needsReplace := false
+
 	// Repair interrupted tool calls (e.g. SIGTERM during tool execution).
 	// If the last message is assistant with tool_use but no tool_result follows,
 	// inject synthetic error results so the API accepts the message history.
 	if repair := repairInterruptedToolCalls(messages); repair != nil {
 		messages = append(messages, *repair)
-		writer := a.Sessions.For(sessionKey)
-		if err := writer.Append(sessionKey, *repair); err != nil {
-			a.logger().Errorf("session=%s persist tool call repair: %v", sessionKey, err)
-		} else {
-			a.logger().Infof("repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
-		}
+		needsReplace = true
+		a.logger().Infof("session=%s repaired %d interrupted tool calls", sessionKey, len(repair.Content))
 	}
 
 	// Repair duplicate tool_use IDs. The Anthropic API rejects requests
 	// containing duplicate IDs with a 400 error. This can happen due to
 	// session corruption (e.g., partial write + defer safety-net replay).
-	messages = repairDuplicateToolUseIDs(messages, func(format string, args ...any) {
+	var dupRepaired bool
+	messages, dupRepaired = repairDuplicateToolUseIDs(messages, func(format string, args ...any) {
 		a.logger().Warnf("session=%s "+format, append([]any{sessionKey}, args...)...)
 	})
+	if dupRepaired {
+		needsReplace = true
+	}
+
+	// Persist all repairs in one Replace call.
+	if needsReplace {
+		writer := a.Sessions.For(sessionKey)
+		if err := writer.Replace(sessionKey, messages); err != nil {
+			a.logger().Errorf("session=%s persist repair: %v", sessionKey, err)
+		} else {
+			a.logger().Infof("session=%s repairs persisted to disk", sessionKey)
+		}
+	}
 
 	turnModel := a.SessionModel(sessionKey)
 	turnClient := a.SessionClient(sessionKey)
