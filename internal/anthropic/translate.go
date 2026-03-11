@@ -17,19 +17,31 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 )
 
+// cacheControlWithTTL returns an SDK CacheControlEphemeralParam with the given TTL.
+// If ttl is empty, returns the default (no TTL field, SDK defaults to 5m).
+func cacheControlWithTTL(ttl string) sdk.CacheControlEphemeralParam {
+	cc := sdk.NewCacheControlEphemeralParam()
+	if ttl != "" {
+		cc.TTL = sdk.CacheControlEphemeralTTL(ttl)
+	}
+	return cc
+}
+
 // buildSDKParams translates a provider.MessageRequest into SDK MessageNewParams.
 func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
+	cacheTTL := req.CacheTTL
+
 	params := sdk.MessageNewParams{
 		Model:     sdk.Model(modelID),
 		MaxTokens: int64(req.MaxTokens),
-		Messages:  messagesToSDK(req.Messages),
+		Messages:  messagesToSDK(req.Messages, cacheTTL),
 	}
 
 	if len(req.System) > 0 {
-		params.System = systemToSDK(req.System)
+		params.System = systemToSDK(req.System, cacheTTL)
 	}
 
 	if len(req.Tools) > 0 {
@@ -58,7 +70,7 @@ func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 	}
 
 	if req.CacheControl != nil {
-		params.CacheControl = sdk.NewCacheControlEphemeralParam()
+		params.CacheControl = cacheControlWithTTL(cacheTTL)
 	}
 
 	return params
@@ -69,14 +81,16 @@ func buildSDKCountParams(req *MessageRequest) sdk.MessageCountTokensParams {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
+	cacheTTL := req.CacheTTL
+
 	params := sdk.MessageCountTokensParams{
 		Model:    sdk.Model(modelID),
-		Messages: messagesToSDK(req.Messages),
+		Messages: messagesToSDK(req.Messages, cacheTTL),
 	}
 
 	if len(req.System) > 0 {
 		params.System = sdk.MessageCountTokensParamsSystemUnion{
-			OfTextBlockArray: systemToSDK(req.System),
+			OfTextBlockArray: systemToSDK(req.System, cacheTTL),
 		}
 	}
 
@@ -227,33 +241,34 @@ func classifySDKError(err error) error {
 }
 
 // messagesToSDK translates provider messages to SDK message params.
-func messagesToSDK(msgs []Message) []sdk.MessageParam {
+func messagesToSDK(msgs []Message, cacheTTL string) []sdk.MessageParam {
 	result := make([]sdk.MessageParam, 0, len(msgs))
 	for _, msg := range msgs {
 		result = append(result, sdk.MessageParam{
 			Role:    sdk.MessageParamRole(msg.Role),
-			Content: contentBlocksToSDK(msg.Content),
+			Content: contentBlocksToSDK(msg.Content, cacheTTL),
 		})
 	}
 	return result
 }
 
 // contentBlocksToSDK translates provider content blocks to SDK content block params.
-func contentBlocksToSDK(blocks []ContentBlock) []sdk.ContentBlockParamUnion {
+func contentBlocksToSDK(blocks []ContentBlock, cacheTTL string) []sdk.ContentBlockParamUnion {
 	result := make([]sdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {
-		result = append(result, contentBlockToSDK(b))
+		result = append(result, contentBlockToSDK(b, cacheTTL))
 	}
 	return result
 }
 
 // contentBlockToSDK translates a single provider content block to SDK param.
-func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
+// cacheTTL is applied to any block with cache_control set.
+func contentBlockToSDK(b ContentBlock, cacheTTL string) sdk.ContentBlockParamUnion {
 	switch b.Type {
 	case "text":
 		block := sdk.NewTextBlock(b.Text)
 		if b.CacheControl != nil {
-			block.OfText.CacheControl = sdk.NewCacheControlEphemeralParam()
+			block.OfText.CacheControl = cacheControlWithTTL(cacheTTL)
 		}
 		return block
 
@@ -261,7 +276,7 @@ func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
 		if b.Source != nil {
 			block := sdk.NewImageBlockBase64(b.Source.MimeType, b.Source.Data)
 			if b.CacheControl != nil {
-				block.OfImage.CacheControl = sdk.NewCacheControlEphemeralParam()
+				block.OfImage.CacheControl = cacheControlWithTTL(cacheTTL)
 			}
 			return block
 		}
@@ -280,7 +295,7 @@ func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
 	case "tool_result":
 		block := sdk.NewToolResultBlock(b.ToolUseID, b.Content, b.IsError)
 		if b.CacheControl != nil {
-			block.OfToolResult.CacheControl = sdk.NewCacheControlEphemeralParam()
+			block.OfToolResult.CacheControl = cacheControlWithTTL(cacheTTL)
 		}
 		return block
 
@@ -307,12 +322,12 @@ func rawToSDKContentBlock(raw json.RawMessage) sdk.ContentBlockParamUnion {
 }
 
 // systemToSDK translates provider system blocks to SDK text block params.
-func systemToSDK(blocks []SystemBlock) []sdk.TextBlockParam {
+func systemToSDK(blocks []SystemBlock, cacheTTL string) []sdk.TextBlockParam {
 	result := make([]sdk.TextBlockParam, 0, len(blocks))
 	for _, b := range blocks {
 		tb := sdk.TextBlockParam{Text: b.Text}
 		if b.CacheControl != nil {
-			tb.CacheControl = sdk.NewCacheControlEphemeralParam()
+			tb.CacheControl = cacheControlWithTTL(cacheTTL)
 		}
 		result = append(result, tb)
 	}

@@ -232,6 +232,7 @@ type MessageRequest struct {
 	Tools        []ToolDef      `json:"tools,omitempty"`
 	Output       *OutputConfig  `json:"output_config,omitempty"`
 	Thinking     *ThinkingConfig `json:"thinking,omitempty"`
+	CacheTTL     string         `json:"cache_ttl,omitempty"` // Anthropic prompt cache TTL: "5m" or "1h" (read by Anthropic translate layer)
 }
 
 // Usage contains token usage information from a response.

@@ -101,6 +101,18 @@ func validate(cfg *Config) error {
 	if !validStrategies[cfg.Cache.Strategy] {
 		return fmt.Errorf("[cache] strategy = %q: must be \"auto\" or \"explicit\"", cfg.Cache.Strategy)
 	}
+	validCacheTTLs := map[string]bool{"5m": true, "1h": true}
+	if !validCacheTTLs[cfg.Cache.TTL] {
+		return fmt.Errorf("[cache] ttl = %q: must be \"5m\" or \"1h\"", cfg.Cache.TTL)
+	}
+	for _, a := range cfg.Agents {
+		if a.CacheTTL != "" && !validCacheTTLs[a.CacheTTL] {
+			return fmt.Errorf("agent %q cache_ttl = %q: must be \"5m\" or \"1h\"", a.ID, a.CacheTTL)
+		}
+	}
+	if cfg.Defaults.CacheTTL != "" && !validCacheTTLs[cfg.Defaults.CacheTTL] {
+		return fmt.Errorf("[defaults] cache_ttl = %q: must be \"5m\" or \"1h\"", cfg.Defaults.CacheTTL)
+	}
 
 	// Memory sources
 	for i, src := range cfg.Memory.Sources {

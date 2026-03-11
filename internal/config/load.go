@@ -429,6 +429,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Bitwarden.CleanupInterval, "1m")
 
 	setStringDefault(&cfg.Cache.Strategy, "auto")
+	setStringDefault(&cfg.Cache.TTL, "1h")
 	setStringDefault(&cfg.ManaWarnings.Name, "mana")
 	setIntDefault(&cfg.Tools.MaxResultChars, 15000)
 	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci-tool-results")

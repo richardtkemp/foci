@@ -199,6 +199,7 @@ var configFields = []ConfigField{
 
 	// cache
 	{"cache", "strategy", FieldString, "cache strategy: auto or explicit"},
+	{"cache", "ttl", FieldString, "Anthropic prompt cache TTL: 5m or 1h"},
 
 	// usage_warnings
 	{"usage_warnings", "name", FieldString, "what to call quota (e.g. mana)"},

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +124,37 @@ func TestValidateCacheStrategy(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid") {
 		t.Errorf("error = %q, want mention of invalid", err.Error())
+	}
+}
+
+func TestValidateCacheTTL(t *testing.T) {
+	// Verify that invalid cache TTL values are rejected during config validation.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid cache TTL")
+	}
+	if !strings.Contains(err.Error(), "ttl") {
+		t.Errorf("error = %q, want mention of ttl", err.Error())
+	}
+}
+
+func TestValidateCacheTTLValid(t *testing.T) {
+	// Verify valid cache TTL values are accepted.
+	dir := t.TempDir()
+	for _, ttl := range []string{"5m", "1h"} {
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = \"test\"\n[cache]\nttl = %q", ttl)), 0644)
+		cfg, err := Load(path)
+		if err != nil {
+			t.Errorf("ttl=%q: unexpected error: %v", ttl, err)
+		}
+		if cfg.Cache.TTL != ttl {
+			t.Errorf("ttl=%q: got %q", ttl, cfg.Cache.TTL)
+		}
 	}
 }
 
