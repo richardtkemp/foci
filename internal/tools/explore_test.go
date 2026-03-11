@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -435,5 +436,338 @@ func TestSplitShellArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTailValidate(t *testing.T) {
+	// Verify that -f, --follow, and -F are rejected by tailValidate.
+	t.Parallel()
+	for _, flag := range []string{"-f", "--follow", "-F"} {
+		err := tailValidate([]string{flag})
+		if err == nil {
+			t.Errorf("tailValidate(%q) should have returned an error", flag)
+		}
+		if !strings.Contains(err.Error(), "blocked") {
+			t.Errorf("tailValidate(%q) error = %q, want 'blocked'", flag, err.Error())
+		}
+	}
+	// Valid flags should pass.
+	if err := tailValidate([]string{"-n", "20"}); err != nil {
+		t.Errorf("tailValidate(-n 20) should pass: %v", err)
+	}
+}
+
+func TestNewPathToolBasic(t *testing.T) {
+	// Test newPathTool with the 'file' command on a known file.
+	t.Parallel()
+	binPath, err := exec.LookPath("file")
+	if err != nil {
+		t.Skip("file binary not in PATH")
+	}
+
+	tool := newPathTool("file", binPath, "Identify file type.", true, nil)
+	dir := t.TempDir()
+	f := filepath.Join(dir, "test.txt")
+	os.WriteFile(f, []byte("hello world"), 0644)
+
+	params, _ := json.Marshal(map[string]string{"path": f})
+	result, execErr := tool.Execute(context.Background(), params)
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	if !strings.Contains(result.Text, "text") {
+		t.Errorf("expected 'text' in file output, got %q", result.Text)
+	}
+}
+
+func TestNewPathToolRequiredPath(t *testing.T) {
+	// Test that pathRequired=true rejects empty path.
+	t.Parallel()
+	tool := newPathTool("test", "/bin/echo", "Test.", true, nil)
+	params, _ := json.Marshal(map[string]string{})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for missing required path")
+	}
+}
+
+func TestNewPathToolOptionalPath(t *testing.T) {
+	// Test that pathRequired=false defaults to '.'.
+	t.Parallel()
+	tool := newPathTool("test", "/bin/echo", "Test.", false, nil)
+	params, _ := json.Marshal(map[string]string{})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// echo prints its args — should contain '.'
+	if !strings.Contains(result.Text, ".") {
+		t.Errorf("expected '.' in output, got %q", result.Text)
+	}
+}
+
+func TestNewPathToolWithValidation(t *testing.T) {
+	// Test that a validator rejecting flags causes an error.
+	t.Parallel()
+	binPath, err := exec.LookPath("tail")
+	if err != nil {
+		t.Skip("tail binary not in PATH")
+	}
+
+	tool := newPathTool("tail", binPath, "Tail.", true, tailValidate)
+	dir := t.TempDir()
+	f := filepath.Join(dir, "test.txt")
+	os.WriteFile(f, []byte("line1\nline2\nline3\n"), 0644)
+
+	// Blocked flag
+	params, _ := json.Marshal(map[string]string{"path": f, "params": "-f"})
+	_, execErr := tool.Execute(context.Background(), params)
+	if execErr == nil {
+		t.Error("expected error for -f flag on tail")
+	}
+
+	// Valid usage
+	params, _ = json.Marshal(map[string]string{"path": f, "params": "-n 2"})
+	result, execErr := tool.Execute(context.Background(), params)
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	if !strings.Contains(result.Text, "line") {
+		t.Errorf("expected line output, got %q", result.Text)
+	}
+}
+
+func TestNewFilterToolJQ(t *testing.T) {
+	// Test newFilterTool with jq on a JSON file.
+	t.Parallel()
+	binPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq binary not in PATH")
+	}
+
+	tool := newFilterTool("jq", binPath, "Query JSON.", "filter")
+	dir := t.TempDir()
+	f := filepath.Join(dir, "test.json")
+	os.WriteFile(f, []byte(`{"name": "alice", "age": 30}`), 0644)
+
+	params, _ := json.Marshal(map[string]string{"filter": ".name", "path": f})
+	result, execErr := tool.Execute(context.Background(), params)
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	if !strings.Contains(result.Text, "alice") {
+		t.Errorf("expected 'alice' in output, got %q", result.Text)
+	}
+}
+
+func TestNewFilterToolMissing(t *testing.T) {
+	// Test that missing filter/path params produce errors.
+	t.Parallel()
+	tool := newFilterTool("jq", "/usr/bin/jq", "Query JSON.", "filter")
+
+	// Missing filter
+	params, _ := json.Marshal(map[string]string{"path": "/tmp/test.json"})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for missing filter")
+	}
+
+	// Missing path
+	params, _ = json.Marshal(map[string]string{"filter": ".name"})
+	_, err = tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for missing path")
+	}
+}
+
+func TestNewSubcmdToolAllowed(t *testing.T) {
+	// Test newSubcmdTool allows permitted subcommands.
+	t.Parallel()
+	allowed := map[string]bool{"status": true, "version": true}
+	tool := newSubcmdTool("test-cmd", "/bin/echo", "Test tool.", allowed)
+
+	params, _ := json.Marshal(map[string]string{"command": "status --all"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "status") {
+		t.Errorf("expected 'status' in output, got %q", result.Text)
+	}
+}
+
+func TestNewSubcmdToolBlocked(t *testing.T) {
+	// Test newSubcmdTool blocks non-permitted subcommands.
+	t.Parallel()
+	allowed := map[string]bool{"status": true}
+	tool := newSubcmdTool("test-cmd", "/bin/echo", "Test tool.", allowed)
+
+	params, _ := json.Marshal(map[string]string{"command": "delete --all"})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for blocked subcommand")
+	}
+	if !strings.Contains(err.Error(), "not allowed") {
+		t.Errorf("error = %q, want 'not allowed'", err.Error())
+	}
+}
+
+func TestCheckSQLiteDotCommand(t *testing.T) {
+	// Verify dangerous dot-commands are blocked.
+	t.Parallel()
+	blocked := []string{
+		".shell ls", ".system rm -rf /", ".import data.csv table",
+		".open other.db", ".output out.txt", ".log debug.txt", ".once output.txt",
+	}
+	for _, cmd := range blocked {
+		err := checkSQLiteDotCommand(cmd)
+		if err == nil {
+			t.Errorf("checkSQLiteDotCommand(%q) should have returned an error", cmd)
+		}
+	}
+	// Safe dot-commands and regular queries should pass.
+	safe := []string{".tables", ".schema", ".headers on", "SELECT 1"}
+	for _, cmd := range safe {
+		err := checkSQLiteDotCommand(cmd)
+		if err != nil {
+			t.Errorf("checkSQLiteDotCommand(%q) should pass: %v", cmd, err)
+		}
+	}
+}
+
+func TestCheckSQLiteDDLDML(t *testing.T) {
+	// Verify DDL/DML statements are blocked.
+	t.Parallel()
+	blocked := []string{
+		"CREATE TABLE t(id int)",
+		"DROP TABLE t",
+		"INSERT INTO t VALUES(1)",
+		"UPDATE t SET id=2",
+		"DELETE FROM t",
+		"ALTER TABLE t ADD COLUMN name TEXT",
+		"ATTACH DATABASE 'other.db' AS other",
+	}
+	for _, q := range blocked {
+		err := checkSQLiteDDLDML(q)
+		if err == nil {
+			t.Errorf("checkSQLiteDDLDML(%q) should have returned an error", q)
+		}
+	}
+	// Read-only statements should pass.
+	safe := []string{
+		"SELECT * FROM t",
+		"EXPLAIN QUERY PLAN SELECT 1",
+		"PRAGMA table_info(t)",
+	}
+	for _, q := range safe {
+		err := checkSQLiteDDLDML(q)
+		if err != nil {
+			t.Errorf("checkSQLiteDDLDML(%q) should pass: %v", q, err)
+		}
+	}
+}
+
+func TestCheckSQLiteDDLDMLMultiStatement(t *testing.T) {
+	// Verify DDL/DML blocked even in multi-statement queries.
+	t.Parallel()
+	err := checkSQLiteDDLDML("SELECT 1; DROP TABLE t")
+	if err == nil {
+		t.Error("multi-statement with DROP should be blocked")
+	}
+}
+
+func TestSQLiteReadOnly(t *testing.T) {
+	// Test SQLite tool with a read-only query against a temp database.
+	t.Parallel()
+	binPath, err := exec.LookPath("sqlite3")
+	if err != nil {
+		t.Skip("sqlite3 binary not in PATH")
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	// Create the database with sqlite3.
+	cmd := exec.CommandContext(context.Background(), binPath, dbPath,
+		"CREATE TABLE t(id INTEGER, name TEXT); INSERT INTO t VALUES(1, 'alice'); INSERT INTO t VALUES(2, 'bob');")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create test db: %s: %v", out, err)
+	}
+
+	tool := NewSQLiteTool(binPath)
+	params, _ := json.Marshal(map[string]string{
+		"database": dbPath,
+		"query":    "SELECT name FROM t WHERE id = 1",
+	})
+	result, execErr := tool.Execute(context.Background(), params)
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	if !strings.Contains(result.Text, "alice") {
+		t.Errorf("expected 'alice' in output, got %q", result.Text)
+	}
+}
+
+func TestSQLiteBlocksDotCommands(t *testing.T) {
+	// Test that the SQLite tool rejects dangerous dot-commands at the tool level.
+	t.Parallel()
+	tool := NewSQLiteTool("/usr/bin/sqlite3")
+	params, _ := json.Marshal(map[string]string{
+		"database": "/tmp/test.db",
+		"query":    ".shell ls",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for .shell dot-command")
+	}
+}
+
+func TestSQLiteBlocksDDL(t *testing.T) {
+	// Test that the SQLite tool rejects DDL at the tool level.
+	t.Parallel()
+	tool := NewSQLiteTool("/usr/bin/sqlite3")
+	params, _ := json.Marshal(map[string]string{
+		"database": "/tmp/test.db",
+		"query":    "DROP TABLE users",
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for DROP statement")
+	}
+}
+
+func TestIDTool(t *testing.T) {
+	// Test id tool returns user identity info.
+	t.Parallel()
+	binPath, err := exec.LookPath("id")
+	if err != nil {
+		t.Skip("id binary not in PATH")
+	}
+
+	tool := NewIDTool(binPath)
+	result, execErr := tool.Execute(context.Background(), nil)
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	if !strings.Contains(result.Text, "uid=") {
+		t.Errorf("expected 'uid=' in output, got %q", result.Text)
+	}
+}
+
+func TestCrontabTool(t *testing.T) {
+	// Test crontab tool runs without crashing (may have no crontab).
+	t.Parallel()
+	binPath, err := exec.LookPath("crontab")
+	if err != nil {
+		t.Skip("crontab binary not in PATH")
+	}
+
+	tool := NewCrontabTool(binPath)
+	result, execErr := tool.Execute(context.Background(), nil)
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	// crontab -l may return "no crontab for user" — that's fine, it ran.
+	if result.Text == "" {
+		t.Error("expected non-empty output from crontab -l")
 	}
 }

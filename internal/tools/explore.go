@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"syscall"
 	"unicode"
@@ -488,4 +489,320 @@ func splitShellArgs(s string) ([]string, error) {
 		return args, fmt.Errorf("unclosed quote")
 	}
 	return args, nil
+}
+
+// tailBlockedFlags are flags that would cause tail to block indefinitely.
+var tailBlockedFlags = map[string]bool{
+	"-f":       true,
+	"--follow": true,
+	"-F":       true,
+}
+
+// tailValidate rejects flags that would cause tail to block indefinitely.
+func tailValidate(args []string) error {
+	for _, a := range args {
+		if tailBlockedFlags[a] {
+			return fmt.Errorf("flag %q is blocked (would block indefinitely)", a)
+		}
+	}
+	return nil
+}
+
+// newPathTool creates a tool that runs: binary [params...] path.
+// Used for stat, file, wc, head, tail, tree, du.
+func newPathTool(name, binPath, description string, pathRequired bool, validate func([]string) error) *Tool {
+	pathDesc := "File or directory path."
+	if !pathRequired {
+		pathDesc = "File or directory path (default '.')."
+	}
+	required := `["path"]`
+	if !pathRequired {
+		required = `[]`
+	}
+	schema := fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"path": {
+				"type": "string",
+				"description": %q
+			},
+			"params": {
+				"type": "string",
+				"description": "Optional flags passed to %s."
+			}
+		},
+		"required": %s
+	}`, pathDesc, name, required)
+
+	return &Tool{
+		Name:        name,
+		Description: description,
+		Parameters:  json.RawMessage(schema),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Path   string `json:"path"`
+				Params string `json:"params"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}
+			if pathRequired && p.Path == "" {
+				return ToolResult{}, fmt.Errorf("path is required")
+			}
+			if p.Path == "" {
+				p.Path = "."
+			}
+
+			var args []string
+			if p.Params != "" {
+				parts, _ := splitShellArgs(p.Params)
+				if validate != nil {
+					if err := validate(parts); err != nil {
+						return ToolResult{}, err
+					}
+				}
+				args = append(args, parts...)
+			}
+			args = append(args, p.Path)
+
+			out, err := runCmd(ctx, binPath, args...)
+			return handleCmdOutput(out, err)
+		},
+	}
+}
+
+// newFilterTool creates a tool that runs: binary <filter> <path>.
+// Used for jq, yq, mdq.
+func newFilterTool(name, binPath, description, filterParam string) *Tool {
+	schema := fmt.Sprintf(`{
+		"type": "object",
+		"properties": {
+			"%s": {
+				"type": "string",
+				"description": "The %s %s."
+			},
+			"path": {
+				"type": "string",
+				"description": "File path to process."
+			}
+		},
+		"required": ["%s", "path"]
+	}`, filterParam, name, filterParam, filterParam)
+
+	return &Tool{
+		Name:        name,
+		Description: description,
+		Parameters:  json.RawMessage(schema),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var raw map[string]string
+			if err := json.Unmarshal(params, &raw); err != nil {
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}
+			filter := raw[filterParam]
+			path := raw["path"]
+			if filter == "" {
+				return ToolResult{}, fmt.Errorf("%s is required", filterParam)
+			}
+			if path == "" {
+				return ToolResult{}, fmt.Errorf("path is required")
+			}
+
+			out, err := runCmd(ctx, binPath, filter, path)
+			return handleCmdOutput(out, err)
+		},
+	}
+}
+
+// dockerAllowedSubcommands are the read-only docker subcommands allowed in explore mode.
+var dockerAllowedSubcommands = map[string]bool{
+	"ps":      true,
+	"inspect": true,
+	"images":  true,
+	"logs":    true,
+	"stats":   true,
+	"network": true,
+	"volume":  true,
+}
+
+// systemctlAllowedSubcommands are the read-only systemctl subcommands allowed in explore mode.
+var systemctlAllowedSubcommands = map[string]bool{
+	"status":      true,
+	"list-units":  true,
+	"list-timers": true,
+	"is-active":   true,
+	"is-enabled":  true,
+}
+
+// newSubcmdTool creates a tool that runs: binary <subcommand> [args...].
+// Only subcommands in the allowed map are permitted. Mirrors the git tool pattern.
+// Used for docker, systemctl.
+func newSubcmdTool(name, binPath, description string, allowed map[string]bool) *Tool {
+	sorted := make([]string, 0, len(allowed))
+	for k := range allowed {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	allowedStr := strings.Join(sorted, ", ")
+
+	return &Tool{
+		Name:        name,
+		Description: description,
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"command": {
+					"type": "string",
+					"description": "Subcommand and arguments."
+				}
+			},
+			"required": ["command"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Command string `json:"command"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}
+			if p.Command == "" {
+				return ToolResult{}, fmt.Errorf("command is required")
+			}
+
+			args, err := splitShellArgs(p.Command)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("parse command: %w", err)
+			}
+			if len(args) == 0 {
+				return ToolResult{}, fmt.Errorf("command is required")
+			}
+
+			subcmd := args[0]
+			if !allowed[subcmd] {
+				return ToolResult{}, fmt.Errorf("%s subcommand %q is not allowed in explore mode (allowed: %s)", name, subcmd, allowedStr)
+			}
+
+			out, err := runCmd(ctx, binPath, args...)
+			return handleCmdOutput(out, err)
+		},
+	}
+}
+
+// sqliteBlockedDotCommands are sqlite3 dot-commands that are blocked in explore mode.
+var sqliteBlockedDotCommands = map[string]bool{
+	".shell":  true,
+	".system": true,
+	".import": true,
+	".open":   true,
+	".output": true,
+	".log":    true,
+	".once":   true,
+}
+
+// sqliteBlockedStatements are SQL statement types blocked in explore mode (DDL/DML).
+var sqliteBlockedStatements = []string{
+	"CREATE", "DROP", "INSERT", "UPDATE", "DELETE", "ALTER", "ATTACH",
+}
+
+// checkSQLiteDotCommand rejects dangerous sqlite3 dot-commands.
+func checkSQLiteDotCommand(query string) error {
+	for _, line := range strings.Split(query, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, ".") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 0 && sqliteBlockedDotCommands[fields[0]] {
+			return fmt.Errorf("dot-command %q is blocked (dangerous — not allowed in explore mode)", fields[0])
+		}
+	}
+	return nil
+}
+
+// checkSQLiteDDLDML rejects DDL/DML statements (CREATE, DROP, INSERT, etc.).
+func checkSQLiteDDLDML(query string) error {
+	for _, part := range strings.Split(query, ";") {
+		trimmed := strings.ToUpper(strings.TrimSpace(part))
+		if trimmed == "" {
+			continue
+		}
+		for _, stmt := range sqliteBlockedStatements {
+			if strings.HasPrefix(trimmed, stmt) {
+				return fmt.Errorf("statement type %q is blocked (read-only mode)", stmt)
+			}
+		}
+	}
+	return nil
+}
+
+// NewSQLiteTool creates a read-only SQLite query tool.
+func NewSQLiteTool(binPath string) *Tool {
+	return &Tool{
+		Name:        "sqlite",
+		Description: "Run read-only SQL queries against a SQLite database.",
+		Parameters: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"database": {
+					"type": "string",
+					"description": "Path to SQLite database file."
+				},
+				"query": {
+					"type": "string",
+					"description": "SQL query. DDL/DML (CREATE, DROP, INSERT, UPDATE, DELETE, ALTER, ATTACH) and dangerous dot-commands (.shell, .system, etc.) are blocked."
+				}
+			},
+			"required": ["database", "query"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Database string `json:"database"`
+				Query    string `json:"query"`
+			}
+			if err := json.Unmarshal(params, &p); err != nil {
+				return ToolResult{}, fmt.Errorf("parse params: %w", err)
+			}
+			if p.Database == "" {
+				return ToolResult{}, fmt.Errorf("database is required")
+			}
+			if p.Query == "" {
+				return ToolResult{}, fmt.Errorf("query is required")
+			}
+
+			if err := checkSQLiteDotCommand(p.Query); err != nil {
+				return ToolResult{}, err
+			}
+			if err := checkSQLiteDDLDML(p.Query); err != nil {
+				return ToolResult{}, err
+			}
+
+			out, err := runCmd(ctx, binPath, "-readonly", p.Database, p.Query)
+			return handleCmdOutput(out, err)
+		},
+	}
+}
+
+// NewCrontabTool creates a tool that lists cron jobs.
+func NewCrontabTool(binPath string) *Tool {
+	return &Tool{
+		Name:        "crontab",
+		Description: "List cron jobs (crontab -l).",
+		Parameters:  json.RawMessage(`{"type": "object", "properties": {}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			out, err := runCmd(ctx, binPath, "-l")
+			return handleCmdOutput(out, err)
+		},
+	}
+}
+
+// NewIDTool creates a tool that displays the current user/group identity.
+func NewIDTool(binPath string) *Tool {
+	return &Tool{
+		Name:        "id",
+		Description: "Display current user/group identity.",
+		Parameters:  json.RawMessage(`{"type": "object", "properties": {}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			out, err := runCmd(ctx, binPath)
+			return handleCmdOutput(out, err)
+		},
+	}
 }
