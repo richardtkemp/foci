@@ -14,14 +14,16 @@ import (
 func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *provider.MessageResponse, cost float64, now time.Time, maxOutput int) { // nolint:unparam
 
 	// Cache bust detection: cache_read dropped significantly vs previous request.
-	if a.CacheBustDetect && a.CacheBustAlert != nil && sm.prevCacheRead > 0 {
+	if a.CacheBustDetect && len(a.CacheBustAlert) > 0 && sm.prevCacheRead > 0 {
 		idleThresh := a.CacheBustIdleThreshold
 		if idleThresh == 0 {
 			idleThresh = 10 * time.Minute
 		}
 		idle := !sm.lastMessageTime.IsZero() && now.Sub(sm.lastMessageTime) > idleThresh
 		if !idle && resp.Usage.CacheReadInputTokens < sm.prevCacheRead {
-			a.CacheBustAlert(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
+			for _, fn := range a.CacheBustAlert {
+				fn(sessionKey, sm.prevCacheRead, resp.Usage.CacheReadInputTokens)
+			}
 		}
 	}
 	// Update cache baseline after every API call so subsequent iterations
@@ -32,8 +34,8 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 	if resp.StopReason == "max_tokens" {
 		warn := fmt.Sprintf("stop_reason=max_tokens on %s (output=%d, limit=%d)", sessionKey, resp.Usage.OutputTokens, maxOutput)
 		a.logger().Warnf("%s", warn)
-		if a.MaxTokensWarnFunc != nil {
-			a.MaxTokensWarnFunc(warn)
+		for _, fn := range a.MaxTokensWarnFunc {
+			fn(warn)
 		}
 	}
 }

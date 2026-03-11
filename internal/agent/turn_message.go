@@ -22,8 +22,8 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	var manaRestoreNote string
 	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
 		a.ManaWatcher.CheckAndWarn(manaStr, manaReset, func(warn string) {
-			if a.ManaWarnFunc != nil {
-				a.ManaWarnFunc(warn)
+			for _, fn := range a.ManaWarnFunc {
+				fn(warn)
 			}
 		})
 		if msg := a.ManaWatcher.CheckRestore(manaStr); msg != "" {
