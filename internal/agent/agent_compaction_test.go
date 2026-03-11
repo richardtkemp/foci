@@ -191,9 +191,9 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
 		var notified []string
-		env.ag.CompactionNotifyFunc = func(session string, msg string) {
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
 			notified = append(notified, msg)
-		}
+		})
 
 		sessionKey := "test/icompactnotify/1000000000"
 
@@ -218,9 +218,9 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		var notified []string
 		warnQ := warnings.NewQueue(0, 0)
 		env.ag.WarningQueue = warnQ
-		env.ag.CompactionNotifyFunc = func(session string, msg string) {
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
 			notified = append(notified, msg)
-		}
+		})
 
 		sessionKey := "test/inocompact/1000000000"
 
@@ -268,9 +268,9 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 		env.ag.AsyncNotifier = notifier
 		var notified []string
-		env.ag.CompactionNotifyFunc = func(session string, msg string) {
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
 			notified = append(notified, msg)
-		}
+		})
 
 		sessionKey := "test/iasyncpending/1000000000"
 

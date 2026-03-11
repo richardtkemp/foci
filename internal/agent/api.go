@@ -76,8 +76,10 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		gate.Close(resetTime)
 
 		a.logger().Infof("rate limit gate (%s) closed until %s", endpoint, resetTime.Format(time.Kitchen))
-		if a.RateLimitFunc != nil && !isUserTrigger(TriggerFromContext(ctx)) {
-			a.RateLimitFunc(resetTime)
+		if !isUserTrigger(TriggerFromContext(ctx)) {
+			for _, fn := range a.RateLimitFunc {
+				fn(resetTime)
+			}
 		}
 		return &RateLimitedError{Until: resetTime}
 	}

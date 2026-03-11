@@ -23,8 +23,8 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 		return
 	}
 	oldCount := len(messages)
-	if a.CompactionNotifyFunc != nil {
-		a.CompactionNotifyFunc(sessionKey, "⏳ Compacting context...")
+	for _, fn := range a.CompactionNotifyFunc {
+		fn(sessionKey, "⏳ Compacting context...")
 	}
 	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
 	handoffMsg := a.CompactionHandoffMsg
@@ -34,11 +34,13 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	if summary, err := a.Compactor.Compact(ctx, client, sessionKey, system, summaryPrompt, handoffMsg, false); err != nil {
 		a.logger().Errorf("session=%s compaction failed: %v", sessionKey, err)
 	} else {
-		if a.CompactionNotifyFunc != nil {
-			a.CompactionNotifyFunc(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+		for _, fn := range a.CompactionNotifyFunc {
+			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
 		}
-		if a.CompactionDebugFunc != nil && summary != "" {
-			a.CompactionDebugFunc(sessionKey, summary)
+		if summary != "" {
+			for _, fn := range a.CompactionDebugFunc {
+				fn(sessionKey, summary)
+			}
 		}
 	}
 	// Reload system prompt — compaction may have changed memory files.
