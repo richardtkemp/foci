@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ var spawnRawBlacklist = map[string]bool{
 const exploreSystemPrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
 
 Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read and update the todo list.
+Use stat, file, wc, head, tail, tree, du for filesystem inspection. Use jq/yq/mdq for structured data queries. Use sqlite for read-only database queries. Use docker, systemctl, crontab, id for system inspection. Not all tools are available in every environment.
 
 Match your response to the question type:
 - "Where is X defined?" → file paths and line numbers only
@@ -103,7 +105,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
-		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_message_to_user and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (safe exploration — ls, find, grep, read, todo, memory_search, web_search, web_fetch only — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
+		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_message_to_user and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (read-only exploration — ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional tools like stat, file, head, tail, jq, sqlite when available — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -118,7 +120,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				"context": {
 					"type": "string",
 					"enum": ["raw", "character", "clone", "explore"],
-					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': safe exploration agent with ls, find, grep, read, todo, memory_search, web_search, web_fetch (sync, no mutation, always haiku — model param ignored)."
+					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': read-only exploration agent with ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional filesystem/data/system inspection tools (sync, no mutation, always haiku — model param ignored)."
 				},
 				"timeout": {
 					"type": "integer",
@@ -279,14 +281,46 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 	return defs, tools
 }
 
-// spawnExploreToolSet builds a tool set for explore spawn mode.
-// It creates ls/find/grep tools fresh (not in the registry) and pulls
-// allowed tools from the registry via the explicit allowlist.
-func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
-	defs := make([]provider.ToolDef, 0, 8)
-	tools := make(map[string]*Tool, 8)
+// optionalExploreTool maps a binary name to a tool constructor for conditional explore tools.
+type optionalExploreTool struct {
+	binary string
+	create func(binPath string) *Tool
+}
 
-	// Create exploration tools (not in the main registry).
+// optionalExploreTools lists tools conditionally added to explore mode if their binary exists.
+var optionalExploreTools = []optionalExploreTool{
+	{"file", func(p string) *Tool { return newPathTool("file", p, "Identify file type.", true, nil) }},
+	{"stat", func(p string) *Tool { return newPathTool("stat", p, "Display file status/metadata.", true, nil) }},
+	{"wc", func(p string) *Tool { return newPathTool("wc", p, "Count lines, words, and characters.", true, nil) }},
+	{"head", func(p string) *Tool { return newPathTool("head", p, "Display first lines of a file.", true, nil) }},
+	{"tail", func(p string) *Tool {
+		return newPathTool("tail", p, "Display last lines of a file. --follow/-f/-F is blocked.", true, tailValidate)
+	}},
+	{"tree", func(p string) *Tool { return newPathTool("tree", p, "Display directory tree structure.", false, nil) }},
+	{"du", func(p string) *Tool { return newPathTool("du", p, "Estimate disk usage.", false, nil) }},
+	{"jq", func(p string) *Tool { return newFilterTool("jq", p, "Query and filter JSON data.", "filter") }},
+	{"yq", func(p string) *Tool { return newFilterTool("yq", p, "Query and filter YAML data.", "expression") }},
+	{"mdq", func(p string) *Tool { return newFilterTool("mdq", p, "Query and filter Markdown.", "query") }},
+	{"docker", func(p string) *Tool {
+		return newSubcmdTool("docker", p, "Run read-only docker commands. Allowed: images, inspect, logs, network, ps, stats, volume.", dockerAllowedSubcommands)
+	}},
+	{"systemctl", func(p string) *Tool {
+		return newSubcmdTool("systemctl", p, "Run read-only systemctl commands. Allowed: is-active, is-enabled, list-timers, list-units, status.", systemctlAllowedSubcommands)
+	}},
+	{"sqlite3", NewSQLiteTool},
+	{"crontab", NewCrontabTool},
+	{"id", NewIDTool},
+}
+
+// spawnExploreToolSet builds a tool set for explore spawn mode.
+// It creates ls/find/grep/git tools fresh (not in the registry), adds
+// conditional tools if their binary is in PATH, and pulls allowed tools
+// from the registry via the explicit allowlist.
+func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
+	defs := make([]provider.ToolDef, 0, 16)
+	tools := make(map[string]*Tool, 16)
+
+	// Create core exploration tools (not in the main registry).
 	lsTool := NewLsTool()
 	findTool := NewFindTool()
 	grepBin, grepName := resolveGrepBinary()
@@ -296,6 +330,15 @@ func spawnExploreToolSet(reg *Registry) ([]provider.ToolDef, map[string]*Tool) {
 	for _, t := range []*Tool{lsTool, findTool, grepTool, gitTool} {
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 		tools[t.Name] = t
+	}
+
+	// Add conditional tools if their binary is available.
+	for _, opt := range optionalExploreTools {
+		if binPath, err := exec.LookPath(opt.binary); err == nil {
+			t := opt.create(binPath)
+			defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
+			tools[t.Name] = t
+		}
 	}
 
 	// Pull allowed tools from the registry.

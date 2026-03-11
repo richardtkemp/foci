@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -369,6 +370,19 @@ func TestSpawnExploreToolSet(t *testing.T) {
 		}
 		if defNames[name] {
 			t.Errorf("tool %q should not appear in explore defs", name)
+		}
+	}
+
+	// Verify conditional tools appear iff binary is in PATH.
+	for _, opt := range optionalExploreTools {
+		_, lookupErr := exec.LookPath(opt.binary)
+		available := lookupErr == nil
+		tool := opt.create("/dummy")
+		if available && !toolNames[tool.Name] {
+			t.Errorf("conditional tool %q should be present (binary %q found in PATH)", tool.Name, opt.binary)
+		}
+		if !available && toolNames[tool.Name] {
+			t.Errorf("conditional tool %q should NOT be present (binary %q not in PATH)", tool.Name, opt.binary)
 		}
 	}
 
