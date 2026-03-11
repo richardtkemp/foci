@@ -41,6 +41,14 @@ Use your judgment on trigger type and frequency. High-priority rules that addres
 common failure modes should trigger more often (lower N). Rules about edge cases
 can have higher N or more specific triggers.
 
+For "match" triggers: the regex is tested against the user's message with
+re.MatchString (substring match, not full-string match). Be careful that what
+you write will actually do what you intend:
+- Use \b word boundaries to avoid matching substrings (e.g. \bcc\b not cc)
+- Avoid overly broad patterns that fire on routine messages
+- Test mentally: what common messages would this match? Would the nudge be useful there?
+- If a rule can't be meaningfully scoped by regex, use a different trigger type
+
 Return a JSON array. If no extractable rules exist, return [].`
 
 // Extractor handles LLM-based rule extraction from character files.
