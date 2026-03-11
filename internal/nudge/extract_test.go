@@ -1,0 +1,184 @@
+package nudge
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// TestParseExtractionResponse verifies JSON array parsing from model output.
+func TestParseExtractionResponse(t *testing.T) {
+	t.Parallel()
+
+	input := `[
+		{
+			"text": "Verify facts before answering",
+			"source_file": "CRAFT.md",
+			"source_text": "Always verify",
+			"trigger": {"type": "pre_answer"},
+			"priority": "high"
+		},
+		{
+			"text": "Check tool output",
+			"source_file": "SOUL.md",
+			"source_text": "Read carefully",
+			"trigger": {"type": "periodic", "n": 5},
+			"priority": "medium"
+		}
+	]`
+
+	rules, err := ParseExtractionResponse(input)
+	if err != nil {
+		t.Fatalf("ParseExtractionResponse: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(rules))
+	}
+	if rules[0].Text != "Verify facts before answering" {
+		t.Errorf("rule 0 text: %q", rules[0].Text)
+	}
+	if rules[0].Trigger.Type != "pre_answer" {
+		t.Errorf("rule 0 trigger: %q", rules[0].Trigger.Type)
+	}
+	if rules[1].Trigger.N != 5 {
+		t.Errorf("rule 1 trigger N: %d", rules[1].Trigger.N)
+	}
+}
+
+// TestParseExtractionResponseCodeFence handles markdown-wrapped JSON.
+func TestParseExtractionResponseCodeFence(t *testing.T) {
+	t.Parallel()
+
+	input := "```json\n" + `[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]` + "\n```"
+
+	rules, err := ParseExtractionResponse(input)
+	if err != nil {
+		t.Fatalf("ParseExtractionResponse: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Text != "test" {
+		t.Errorf("rule text: %q", rules[0].Text)
+	}
+}
+
+// TestParseExtractionResponseEmpty handles empty array.
+func TestParseExtractionResponseEmpty(t *testing.T) {
+	t.Parallel()
+
+	rules, err := ParseExtractionResponse("[]")
+	if err != nil {
+		t.Fatalf("ParseExtractionResponse: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules, got %d", len(rules))
+	}
+}
+
+// TestNeedsExtraction verifies hash comparison logic.
+func TestNeedsExtraction(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Write a character file
+	if err := os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be careful"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewExtractor(dir, []string{"SOUL.md"})
+
+	// First time: no rules file → needs extraction
+	hash1, needed := e.NeedsExtraction()
+	if !needed {
+		t.Error("expected NeedsExtraction=true on first run")
+	}
+	if hash1 == "" {
+		t.Error("expected non-empty hash")
+	}
+
+	// Save rules with the current hash → should NOT need extraction
+	rs := &RuleSet{ContentHash: hash1, Rules: nil}
+	if err := SaveRules(RulesPath(dir), rs); err != nil {
+		t.Fatal(err)
+	}
+	_, needed = e.NeedsExtraction()
+	if needed {
+		t.Error("expected NeedsExtraction=false when hash matches")
+	}
+
+	// Change file → should need extraction
+	if err := os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be very careful"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash2, needed := e.NeedsExtraction()
+	if !needed {
+		t.Error("expected NeedsExtraction=true after file change")
+	}
+	if hash2 == hash1 {
+		t.Error("hash should change after file modification")
+	}
+}
+
+// TestNeedsExtractionNoFiles returns false when no character files exist.
+func TestNeedsExtractionNoFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	e := NewExtractor(dir, []string{"NONEXISTENT.md"})
+
+	_, needed := e.NeedsExtraction()
+	if needed {
+		t.Error("expected NeedsExtraction=false with no files")
+	}
+}
+
+// mockHandler implements BranchHandler for testing.
+type mockHandler struct {
+	response string
+	err      error
+}
+
+func (m *mockHandler) HandleMessage(_ context.Context, _ string, _ string) (string, error) {
+	return m.response, m.err
+}
+
+// TestExtractEndToEnd verifies extraction writes rules to disk.
+func TestExtractEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Always verify"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewExtractor(dir, []string{"SOUL.md"})
+	handler := &mockHandler{
+		response: `[{"text": "Verify first", "source_file": "SOUL.md", "source_text": "Always verify", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
+	}
+
+	if err := e.Extract(context.Background(), handler, "test/session"); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+
+	// Verify rules were saved
+	rs, err := LoadRules(RulesPath(dir))
+	if err != nil {
+		t.Fatalf("LoadRules: %v", err)
+	}
+	if rs == nil {
+		t.Fatal("expected non-nil RuleSet")
+	}
+	if len(rs.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rs.Rules))
+	}
+	if rs.Rules[0].Text != "Verify first" {
+		t.Errorf("rule text: %q", rs.Rules[0].Text)
+	}
+
+	// Second extraction: hash matches → should skip
+	if err := e.Extract(context.Background(), handler, "test/session"); err != nil {
+		t.Fatalf("second Extract: %v", err)
+	}
+}

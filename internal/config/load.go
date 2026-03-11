@@ -44,6 +44,8 @@ var boolKeys = map[string]bool{
 	"consolidation_enabled": true,
 	"session_end_enabled":   true,
 	"steer_mode":            true,
+	"nudge_enable":           true,
+	"nudge_pre_answer_gate":  true,
 	"stream_output":         true,
 }
 
@@ -278,6 +280,9 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
+	setIntDefaultDefined(&cfg.Defaults.NudgeCooldown, 5, md.IsDefined("defaults", "nudge_cooldown"))
+	setIntDefaultDefined(&cfg.Defaults.NudgeMaxPerBatch, 1, md.IsDefined("defaults", "nudge_max_per_batch"))
+	setIntDefaultDefined(&cfg.Defaults.NudgePreAnswerMinTools, 2, md.IsDefined("defaults", "nudge_pre_answer_min_tools"))
 	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
 	if cfg.Defaults.ShowToolCalls == nil {
 		v := ToolCallOff

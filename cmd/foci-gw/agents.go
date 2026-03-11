@@ -13,6 +13,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/nudge"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
 	"foci/internal/periodic"
@@ -329,6 +330,77 @@ func setupAgent(p setupParams) *agentInstance {
 		Streaming:                     resolveStreamingConfig(acfg, p.cfg),
 		ManaInvestInterval:            parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}
+	// Nudge system: load rules and create scheduler
+	if acfg.NudgeEnable {
+		rulesPath := nudge.RulesPath(acfg.Workspace)
+		rs, err := nudge.LoadRules(rulesPath)
+		if err != nil {
+			log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
+		}
+		if rs != nil && len(rs.Rules) > 0 {
+			ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
+			log.Infof("main", "agent %s: loaded %d nudge rules", acfg.ID, len(rs.Rules))
+		}
+		ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
+		ag.NudgePreAnswerMinTools = acfg.NudgePreAnswerMinTools
+		if ag.NudgePreAnswerMinTools <= 0 {
+			ag.NudgePreAnswerMinTools = 2
+		}
+
+		// NudgeReloadFunc: on bootstrap reload, check if character files
+		// changed and spawn async extraction if needed, then refresh the scheduler.
+		fileOrder := acfg.SystemFiles
+		if len(fileOrder) == 0 {
+			fileOrder = workspace.DefaultFileOrder
+		}
+		nudgeCooldown := acfg.NudgeCooldown
+		nudgeMaxPerBatch := acfg.NudgeMaxPerBatch
+		ag.NudgeReloadFunc = func() {
+			extractor := nudge.NewExtractor(acfg.Workspace, fileOrder)
+			_, needed := extractor.NeedsExtraction()
+			if needed {
+				// Spawn extraction in a background goroutine using the agent's own model
+				go func() {
+					ctx := context.Background()
+					parentKey := defaultSessionKey()
+					if parentKey == "" {
+						log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
+						return
+					}
+					branchKey, err := session.BranchFromSession(parentKey)
+					if err != nil {
+						log.Warnf("nudge", "agent %s: create branch key: %v", acfg.ID, err)
+						return
+					}
+					if err := extractor.Extract(ctx, ag, branchKey); err != nil {
+						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
+						return
+					}
+					// Refresh the scheduler with new rules
+					rs, err := nudge.LoadRules(rulesPath)
+					if err != nil {
+						log.Warnf("nudge", "agent %s: reload rules after extraction: %v", acfg.ID, err)
+						return
+					}
+					if rs != nil && len(rs.Rules) > 0 {
+						ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
+						log.Infof("nudge", "agent %s: refreshed %d nudge rules", acfg.ID, len(rs.Rules))
+					}
+				}()
+			} else {
+				// Just reload from disk in case file was edited manually
+				rs, err := nudge.LoadRules(rulesPath)
+				if err != nil {
+					log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
+					return
+				}
+				if rs != nil && len(rs.Rules) > 0 {
+					ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
+				}
+			}
+		}
+	}
+
 	if p.store != nil && p.bwStore != nil {
 		ag.Redact = func(text string) string {
 			text = agentStore.Redact(text)
