@@ -45,10 +45,50 @@ type memoryResult struct {
 	agentBackends   map[string]map[string]memory.Searcher // agentID -> backend name -> searcher
 	sharedFTS5      *memory.Index                         // for conversation hook (shared mode)
 	agentFTS5       map[string]*memory.Index              // for conversation hook (per-agent mode)
-	reminderStore   *memory.ReminderStore
-	scratchpadStore *memory.Scratchpad
+	reminderStores  map[string]*memory.ReminderStore
+	scratchpadStores map[string]*memory.Scratchpad
 	todoStores      map[string]*memory.TodoStore
+	taskListStores  map[string]*memory.TaskListStore
 	cleanup         func()
+}
+
+// initStandaloneStores creates per-agent standalone memory stores (reminder,
+// scratchpad, todo, task list) that should always exist regardless of whether
+// memory search sources are configured. Appends to closers for cleanup.
+func initStandaloneStores(cfg *config.Config, result memoryResult, closers *[]io.Closer) memoryResult {
+	for _, acfg := range cfg.Agents {
+		id := acfg.ID
+
+		rs, err := memory.NewReminderStore(sqlite.AgentPath(cfg.DataPath("reminders.db"), id))
+		if err != nil {
+			log.Fatalf("main", "create reminder store for %s: %v", id, err)
+		}
+		result.reminderStores[id] = rs
+		*closers = append(*closers, rs)
+
+		sp, err := memory.NewScratchpad(sqlite.AgentPath(cfg.DataPath("scratchpad.db"), id))
+		if err != nil {
+			log.Fatalf("main", "create scratchpad for %s: %v", id, err)
+		}
+		result.scratchpadStores[id] = sp
+		*closers = append(*closers, sp)
+
+		ts, err := memory.NewTodoStore(sqlite.AgentPath(cfg.DataPath("todo.db"), id))
+		if err != nil {
+			log.Fatalf("main", "create todo store for %s: %v", id, err)
+		}
+		result.todoStores[id] = ts
+		*closers = append(*closers, ts)
+
+		tl, err := memory.NewTaskListStore(sqlite.AgentPath(cfg.DataPath("tasklist.db"), id))
+		if err != nil {
+			log.Fatalf("main", "create task list store for %s: %v", id, err)
+		}
+		result.taskListStores[id] = tl
+		*closers = append(*closers, tl)
+	}
+
+	return result
 }
 
 // initMemorySystem sets up memory indices, reminder/scratchpad/todo stores,
@@ -57,11 +97,14 @@ type memoryResult struct {
 func initMemorySystem(cfg *config.Config) memoryResult {
 	var closers []io.Closer
 	result := memoryResult{
-		sharedBackends: make(map[string]memory.Searcher),
-		agentBackends:  make(map[string]map[string]memory.Searcher),
-		agentFTS5:      make(map[string]*memory.Index),
-		todoStores:     make(map[string]*memory.TodoStore),
-		cleanup:        func() {},
+		sharedBackends:   make(map[string]memory.Searcher),
+		agentBackends:    make(map[string]map[string]memory.Searcher),
+		agentFTS5:        make(map[string]*memory.Index),
+		reminderStores:   make(map[string]*memory.ReminderStore),
+		scratchpadStores: make(map[string]*memory.Scratchpad),
+		todoStores:       make(map[string]*memory.TodoStore),
+		taskListStores:   make(map[string]*memory.TaskListStore),
+		cleanup:          func() {},
 	}
 
 	// Build global source map from [memory] config
@@ -90,6 +133,11 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	}
 
 	memoryEnabled := len(globalMemSources) > 0 || hasPerAgentMemory
+
+	// Always create standalone stores (scratchpad, todo, reminders, task list)
+	// even when no memory search sources are configured.
+	result = initStandaloneStores(cfg, result, &closers)
+
 	if !memoryEnabled {
 		return result
 	}
@@ -199,34 +247,6 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		if fts5Idx != nil {
 			log.ConversationHook = fts5Idx.IndexConversation
 		}
-	}
-
-	// Reminder store (shared across agents)
-	reminderDbPath := cfg.DataPath("reminders.db")
-	var err error
-	result.reminderStore, err = memory.NewReminderStore(reminderDbPath)
-	if err != nil {
-		log.Fatalf("main", "create reminder store: %v", err)
-	}
-	closers = append(closers, result.reminderStore)
-
-	// Scratchpad (shared across agents)
-	scratchpadDbPath := cfg.DataPath("scratchpad.db")
-	result.scratchpadStore, err = memory.NewScratchpad(scratchpadDbPath)
-	if err != nil {
-		log.Fatalf("main", "create scratchpad: %v", err)
-	}
-	closers = append(closers, result.scratchpadStore)
-
-	// Per-agent todo stores
-	for _, acfg := range cfg.Agents {
-		agentTodoPath := sqlite.AgentPath(cfg.DataPath("todo.db"), acfg.ID)
-		ts, err := memory.NewTodoStore(agentTodoPath)
-		if err != nil {
-			log.Fatalf("main", "create todo store for %s: %v", acfg.ID, err)
-		}
-		result.todoStores[acfg.ID] = ts
-		closers = append(closers, ts)
 	}
 
 	result.cleanup = func() {
