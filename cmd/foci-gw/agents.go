@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -355,7 +356,7 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 		nudgeCooldown := acfg.NudgeCooldown
 		nudgeMaxPerBatch := acfg.NudgeMaxPerBatch
-		ag.NudgeReloadFunc = func() {
+		nudgeExtractAndRefresh := func() {
 			extractor := nudge.NewExtractor(acfg.Workspace, fileOrder)
 			_, needed := extractor.NeedsExtraction()
 			if needed {
@@ -398,6 +399,23 @@ func setupAgent(p setupParams) *agentInstance {
 					ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
 				}
 			}
+		}
+
+		// Trigger initial extraction on the first message (when the default
+		// session key becomes available). Subsequent calls are explicit reloads.
+		var nudgeInitOnce sync.Once
+		ag.NudgeReloadFunc = func() {
+			nudgeExtractAndRefresh()
+		}
+		// Hook into OnActivity: fires on first message when session key is set.
+		prevOnActivity := ag.OnActivity
+		ag.OnActivity = func(sessionKey string) {
+			if prevOnActivity != nil {
+				prevOnActivity(sessionKey)
+			}
+			nudgeInitOnce.Do(func() {
+				nudgeExtractAndRefresh()
+			})
 		}
 	}
 
