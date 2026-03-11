@@ -294,6 +294,9 @@ func manaCheck(p cmdRegParams, manaName string, ctx context.Context) (string, er
 // runReload reloads workspace files, skills, and system prompt.
 func runReload(p cmdRegParams) (string, error) {
 	p.bootstrap.Reload()
+	if p.ag.NudgeReloadFunc != nil {
+		p.ag.NudgeReloadFunc()
+	}
 	p.ag.InvalidateSystemCaches()
 	checkSystemPromptSizes(p.bootstrap, p.cfg.Sessions, p.acfg.ID)
 	newSkillRegistry := skills.Load(p.skillsDirs)

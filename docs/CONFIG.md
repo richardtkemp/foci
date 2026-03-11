@@ -609,6 +609,27 @@ Set in `[defaults]`, overridable per-agent.
 | `braindead_warning_prompt` | string | `""` | Custom warning text injected when the threshold is hit. `""` uses a hardcoded default. |
 | `turn_lock_warn_threshold` | string | `"3m"` | Warn if turn lock wait exceeds this duration. Go duration format. `proactive_warning` triggers are excluded. |
 
+### Nudge System
+
+Mid-turn behavioral reminders extracted from character files. Rules are extracted by an LLM from the agent's character files (system prompt) and stored in `{workspace}/nudge-rules.json` (or `{workspace}/character/nudge-rules.json` if the `character/` directory exists). Rules are re-extracted when character files change (detected via content hash on `/reload` or compaction).
+
+Available in both `[defaults]` and `[[agents]]`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `nudge_enable` | bool | `false` | Enable the nudge system. When enabled, loads rules from disk and injects reminders during the agent loop. |
+| `nudge_cooldown` | int | `5` | Minimum tool calls between repeating the same reminder. Prevents spam. |
+| `nudge_max_per_batch` | int | `1` | Maximum reminders injected per tool batch. |
+| `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate. When the model wants to end a turn after 2+ tool calls, inject pre_answer reminders and let it reconsider once. |
+| `nudge_pre_answer_min_tools` | int | `2` | Minimum tool call iterations before the pre-answer gate fires. |
+
+**Trigger types** (configured per-rule in `nudge-rules.json`):
+- `periodic(N)` — remind every N tool calls
+- `pre_answer` — remind just before the model returns a final answer
+- `after_streak(N)` — remind after N consecutive calls to the same tool
+- `after_error` — remind when a tool call returns an error
+- `match(regex)` — remind when the user's message matches a regex pattern
+
 ### Display
 
 Set in `[defaults]`, overridable per-agent.

@@ -13,6 +13,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/nudge"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -99,6 +100,10 @@ type Agent struct {
 	BraindeadWarningEnable        bool                         // enable braindead warning (default true)
 	BraindeadWarningThreshold     int                          // consecutive tool loops before warning (0 = disabled)
 	BraindeadWarningPrompt        string                       // warning text (empty = hardcoded default)
+	Nudger                        *nudge.Scheduler             // nil disables nudge reminders
+	NudgePreAnswerGate            bool                         // enable pre-answer verification gate
+	NudgePreAnswerMinTools        int                          // min tool calls before gate fires (default 2)
+	NudgeReloadFunc               func()                       // called after bootstrap reload to refresh nudge rules; nil disables
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
 	Effort                        string                       // effort level for API requests (empty = omit from request)
 	Thinking                      string                       // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
@@ -351,6 +356,13 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 	braindeadWarningThreshold := a.BraindeadWarningThreshold
 	braindeadWarned := false
+	verified := false // pre-answer gate: true after one verification pass
+	var sameToolStreak int
+	var lastToolName string
+	var lastToolError bool
+	if a.Nudger != nil {
+		a.Nudger.Reset(userMessage)
+	}
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
 	for i := 0; i < maxLoops; i++ {
 		// Remove empty text blocks that would cause API 400 errors.
@@ -477,6 +489,22 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		if resp.StopReason != "tool_use" {
+			// Pre-answer verification gate: if the model wants to end the
+			// turn and pre_answer rules exist, inject a reminder and let
+			// it reconsider once.
+			if !verified && a.Nudger != nil && a.NudgePreAnswerGate && i >= a.NudgePreAnswerMinTools {
+				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
+					verifyMsg := provider.Message{
+						Role:    "user",
+						Content: provider.TextContent("[system] " + reminder),
+					}
+					messages = append(messages, verifyMsg)
+					newMessages = append(newMessages, verifyMsg)
+					verified = true
+					a.logger().Infof("nudge: pre-answer gate fired at loop %d for session %s", i, sessionKey)
+					continue
+				}
+			}
 			// Done — save all new messages and return text
 			writer := a.Sessions.For(sessionKey)
 			if err := writer.AppendAll(sessionKey, newMessages); err != nil {
@@ -540,6 +568,28 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			return "", err
 		}
 
+		// Track tool streak and error state for nudge triggers.
+		lastToolError = false
+		batchToolName := ""
+		for _, block := range resp.Content {
+			if block.Type == "tool_use" {
+				batchToolName = block.Name
+				break
+			}
+		}
+		if batchToolName != "" && batchToolName == lastToolName {
+			sameToolStreak++
+		} else {
+			sameToolStreak = 1
+		}
+		lastToolName = batchToolName
+		for _, tr := range toolResults {
+			if tr.Type == "tool_result" && tr.IsError {
+				lastToolError = true
+				break
+			}
+		}
+
 		// Braindead warning detection: fold warning into tool results to avoid
 		// a separate user message that breaks tool_use/tool_result adjacency.
 		if a.BraindeadWarningEnable && !braindeadWarned && braindeadWarningThreshold > 0 && i+1 >= braindeadWarningThreshold {
@@ -550,6 +600,14 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[system] " + prompt})
 			braindeadWarned = true
 			a.logger().Infof("braindead warning injected at loop %d for session %s", i+1, sessionKey)
+		}
+
+		// Nudge reminders: inject behavioral reminders from character file rules.
+		if a.Nudger != nil {
+			if reminder := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); reminder != "" {
+				toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[system] " + reminder})
+				a.logger().Debugf("nudge: injected reminder at loop %d for session %s", i, sessionKey)
+			}
 		}
 
 		// Steer check: catch messages that arrive after all tools in a batch
