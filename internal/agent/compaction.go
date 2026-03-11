@@ -81,6 +81,84 @@ func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 	return &provider.Message{Role: "user", Content: results}
 }
 
+// repairDuplicateToolUseIDs scans all messages for tool_use blocks with duplicate IDs.
+// When found, later occurrences get their ID rewritten to a unique suffix variant,
+// and a warning is logged. Returns (messages, true) if repairs were made.
+// The Anthropic API rejects requests with duplicate tool_use IDs (400 error).
+func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, ...any)) []provider.Message {
+	// First pass: collect all tool_use IDs and find duplicates
+	seen := make(map[string]bool)
+	hasDuplicates := false
+	for _, msg := range messages {
+		if msg.Role != "assistant" {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.Type != "tool_use" {
+				continue
+			}
+			if seen[block.ID] {
+				hasDuplicates = true
+				break
+			}
+			seen[block.ID] = true
+		}
+		if hasDuplicates {
+			break
+		}
+	}
+	if !hasDuplicates {
+		return messages
+	}
+
+	// Second pass: rewrite duplicates. We rebuild tool_result references too
+	// so tool_use/tool_result pairs stay matched.
+	seen = make(map[string]bool)
+	rewrites := make(map[string]string) // oldID → newID
+	suffix := 0
+	result := make([]provider.Message, len(messages))
+
+	for i, msg := range messages {
+		if msg.Role == "assistant" {
+			newContent := make([]provider.ContentBlock, len(msg.Content))
+			copy(newContent, msg.Content)
+			for j, block := range newContent {
+				if block.Type != "tool_use" {
+					continue
+				}
+				if seen[block.ID] {
+					suffix++
+					newID := fmt.Sprintf("%s_dedup%d", block.ID, suffix)
+					logger("repaired duplicate tool_use ID %s → %s at message %d", block.ID, newID, i)
+					rewrites[block.ID] = newID
+					newContent[j].ID = newID
+				} else {
+					seen[block.ID] = true
+				}
+			}
+			result[i] = provider.Message{Role: msg.Role, Content: newContent}
+		} else if msg.Role == "user" && len(rewrites) > 0 {
+			// Rewrite tool_result references to match rewritten tool_use IDs
+			newContent := make([]provider.ContentBlock, len(msg.Content))
+			copy(newContent, msg.Content)
+			for j, block := range newContent {
+				if block.Type != "tool_result" {
+					continue
+				}
+				if newID, ok := rewrites[block.ToolUseID]; ok {
+					newContent[j].ToolUseID = newID
+					delete(rewrites, block.ToolUseID) // consumed
+				}
+			}
+			result[i] = provider.Message{Role: msg.Role, Content: newContent}
+		} else {
+			result[i] = msg
+		}
+	}
+
+	return result
+}
+
 // summarizeServerToolResult extracts a brief text summary from a server tool result block.
 // Server tool result blocks (web_search_tool_result, web_fetch_tool_result) contain
 // structured data in their Raw JSON. We extract a human-readable snippet for observers.

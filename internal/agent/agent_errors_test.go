@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -21,7 +22,7 @@ func TestHandleMessageRateLimit(t *testing.T) {
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 
 	var rateLimitCalled bool
-	var rateLimitRetry int
+	var rateLimitResetTime time.Time
 
 	ag := &Agent{
 		Client:    client,
@@ -29,9 +30,9 @@ func TestHandleMessageRateLimit(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(retryAfter int) {
+		RateLimitFunc: func(resetTime time.Time) {
 			rateLimitCalled = true
-			rateLimitRetry = retryAfter
+			rateLimitResetTime = resetTime
 		},
 	}
 
@@ -47,8 +48,10 @@ func TestHandleMessageRateLimit(t *testing.T) {
 	if !rateLimitCalled {
 		t.Error("RateLimitFunc not called for background trigger")
 	}
-	if rateLimitRetry != 120 {
-		t.Errorf("retryAfter = %d, want 120", rateLimitRetry)
+	// With Retry-After: 120, reset time should be ~120s from now
+	untilReset := time.Until(rateLimitResetTime)
+	if untilReset < 110*time.Second || untilReset > 130*time.Second {
+		t.Errorf("resetTime should be ~120s from now, got %v", untilReset)
 	}
 }
 
@@ -69,7 +72,7 @@ func TestHandleMessageRateLimitUserTrigger(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(retryAfter int) {
+		RateLimitFunc: func(resetTime time.Time) {
 			rateLimitCalled = true
 		},
 	}
@@ -104,7 +107,7 @@ func TestHandleMessageOverloaded(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(retryAfter int) {
+		RateLimitFunc: func(resetTime time.Time) {
 			rateLimitCalled = true
 		},
 	}
@@ -153,7 +156,7 @@ func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 }
 
 func TestHandleMessageServerError(t *testing.T) {
-	// Client returns 500 Internal Server Error.
+	// Client returns 500 Internal Server Error — should NOT trigger RateLimitFunc.
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 500, Body: "Internal server error"}
 	})
@@ -169,11 +172,8 @@ func TestHandleMessageServerError(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-haiku-4-5",
-		RateLimitFunc: func(retryAfter int) {
+		RateLimitFunc: func(resetTime time.Time) {
 			rateLimitCalled = true
-			if retryAfter != 0 {
-				t.Errorf("retryAfter = %d, want 0 for server error", retryAfter)
-			}
 		},
 	}
 
@@ -189,8 +189,8 @@ func TestHandleMessageServerError(t *testing.T) {
 		t.Errorf("error = %q, should not contain raw JSON", err.Error())
 	}
 
-	if !rateLimitCalled {
-		t.Error("RateLimitFunc not called for 500")
+	if rateLimitCalled {
+		t.Error("RateLimitFunc should not be called for server errors")
 	}
 }
 
