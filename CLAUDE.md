@@ -41,20 +41,21 @@ gh codeql query run query.ql --database=codeql-db
 **Most useful for quick investigations:**
 1. **gopls references** - Find all uses of a field/function/type:
    ```bash
-   $(go env GOPATH)/bin/gopls references internal/telegram/bot.go:93:2
+   gopls references internal/telegram/bot.go:93:2
    ```
    Output: List of file:line:col for every reference
 
 2. **gopls definition** - Jump to where something is defined:
    ```bash
-   $(go env GOPATH)/bin/gopls definition internal/telegram/bot.go:411:9
+   gopls definition internal/telegram/bot.go:411:9
    ```
    Output: Definition location with docstring
 
-3. **Grep tool** - Still excellent for pattern matching:
+3. **ripgrep** - Excellent for pattern matching:
    ```bash
-   grep -rn "\.sessionKeyForMsg(" --include="*.go"
+   rg '\.sessionKeyForMsg\(' -t go
    ```
+   Never use `find -exec grep` or `grep -r` — always use `rg` with `-t <type>` or `-g '*.ext'`.
 
 **For deeper analysis:**
 - **CodeQL** - Create database once, run complex queries
@@ -64,9 +65,8 @@ gh codeql query run query.ql --database=codeql-db
 **Recommendation (based on empirical testing):**
 - **Use gopls for 90% of investigations** - Faster (5min vs 35min), simpler, zero false positives
 - **Use CodeQL for formal verification** - Proves NO instances of a pattern exist (structural soundness)
-- **Use grep for quick pattern checks** - When you just need to see if something exists
+- **Use ripgrep (`rg`) for quick pattern checks** - When you just need to see if something exists. Never use `find -exec grep` or `grep -r`.
 
-**Note:** Always use gopls via `$(go env GOPATH)/bin/gopls` since it's not in PATH.
 
 ## When You Make Changes
 
