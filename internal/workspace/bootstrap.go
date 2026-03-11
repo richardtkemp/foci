@@ -78,11 +78,6 @@ func (b *Bootstrap) SystemBlocks() []provider.SystemBlock {
 		blocks = append(blocks, secretsBlock)
 	}
 
-	// Mark last block for caching
-	if len(blocks) > 0 {
-		blocks[len(blocks)-1].CacheControl = provider.Ephemeral()
-	}
-
 	return blocks
 }
 
@@ -185,11 +180,6 @@ func (b *Bootstrap) loadFromDisk() []provider.SystemBlock {
 			Type: "text",
 			Text: content,
 		})
-	}
-
-	// Mark last block for caching
-	if len(blocks) > 0 {
-		blocks[len(blocks)-1].CacheControl = provider.Ephemeral()
 	}
 
 	return blocks

@@ -38,17 +38,6 @@ func TestSystemBlocks(t *testing.T) {
 			t.Errorf("blocks[%d].Type = %q", i, b.Type)
 		}
 	}
-
-	// Only last block should have cache control
-	if blocks[0].CacheControl != nil {
-		t.Error("blocks[0] should not have cache control")
-	}
-	if blocks[1].CacheControl != nil {
-		t.Error("blocks[1] should not have cache control")
-	}
-	if blocks[2].CacheControl == nil || blocks[2].CacheControl.Type != "ephemeral" {
-		t.Errorf("blocks[2] cache control = %+v, want ephemeral", blocks[2].CacheControl)
-	}
 }
 
 func TestSystemBlocksSkipsMissing(t *testing.T) {
@@ -65,10 +54,6 @@ func TestSystemBlocksSkipsMissing(t *testing.T) {
 	}
 	if blocks[0].Text != "I exist." {
 		t.Errorf("text = %q", blocks[0].Text)
-	}
-	// Single block should get cache control
-	if blocks[0].CacheControl == nil {
-		t.Error("single block should have cache control")
 	}
 }
 
@@ -194,7 +179,8 @@ func TestSetSecretNamesCacheInvalidation(t *testing.T) {
 	}
 }
 
-func TestSecretsCacheControlOnLastBlock(t *testing.T) {
+func TestSecretsBlockIsLast(t *testing.T) {
+	// Verify secrets block is the last block (translate layer will mark it for caching).
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
 	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
@@ -207,13 +193,8 @@ func TestSecretsCacheControlOnLastBlock(t *testing.T) {
 		t.Fatalf("expected 3 blocks, got %d", len(blocks))
 	}
 
-	// Last block (secrets) should have cache control
+	// Secrets block text should contain the secret name and be last
 	last := blocks[len(blocks)-1]
-	if last.CacheControl == nil || last.CacheControl.Type != "ephemeral" {
-		t.Errorf("last block cache control = %+v, want ephemeral", last.CacheControl)
-	}
-
-	// Secrets block text should contain the secret name
 	if !strings.Contains(last.Text, "secret.key") {
 		t.Errorf("last block text = %q, want secret name", last.Text)
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	sdk "github.com/anthropics/anthropic-sdk-go"
 )
 
 func TestBuildSDKParamsBasic(t *testing.T) {
@@ -71,18 +73,23 @@ func TestBuildSDKParamsWithThinking(t *testing.T) {
 	}
 }
 
-func TestBuildSDKParamsWithCacheControl(t *testing.T) {
+func TestBuildSDKParamsWithAutoCache(t *testing.T) {
+	// Verify that CacheStrategy "auto" sets top-level CacheControl and system marker.
 	req := &MessageRequest{
-		Model:     "claude-haiku-4-5",
-		MaxTokens: 1024,
-		Messages:  []Message{{Role: "user", Content: TextContent("Hi")}},
-		CacheControl: Ephemeral(),
+		Model:         "claude-haiku-4-5",
+		MaxTokens:     1024,
+		System:        []SystemBlock{{Type: "text", Text: "sys"}},
+		Messages:      []Message{{Role: "user", Content: TextContent("Hi")}},
+		CacheStrategy: "auto",
 	}
 
 	params := buildSDKParams(req)
 
 	if string(params.CacheControl.Type) != "ephemeral" {
 		t.Errorf("cache_control type = %q, want ephemeral", params.CacheControl.Type)
+	}
+	if string(params.System[0].CacheControl.Type) != "ephemeral" {
+		t.Errorf("system block should have cache_control")
 	}
 }
 
@@ -104,7 +111,7 @@ func TestBuildSDKParamsWithTools(t *testing.T) {
 
 func TestContentBlockToSDKText(t *testing.T) {
 	b := ContentBlock{Type: "text", Text: "hello world"}
-	sdk := contentBlockToSDK(b, "")
+	sdk := contentBlockToSDK(b)
 	if sdk.OfText == nil {
 		t.Fatal("expected OfText")
 	}
@@ -120,7 +127,7 @@ func TestContentBlockToSDKToolResult(t *testing.T) {
 		Content:   "success",
 		IsError:   false,
 	}
-	sdk := contentBlockToSDK(b, "")
+	sdk := contentBlockToSDK(b)
 	if sdk.OfToolResult == nil {
 		t.Fatal("expected OfToolResult")
 	}
@@ -135,7 +142,7 @@ func TestContentBlockToSDKThinking(t *testing.T) {
 		Thinking:  "let me think...",
 		Signature: "sig123",
 	}
-	sdk := contentBlockToSDK(b, "")
+	sdk := contentBlockToSDK(b)
 	if sdk.OfThinking == nil {
 		t.Fatal("expected OfThinking")
 	}
@@ -156,7 +163,7 @@ func TestContentBlockToSDKImage(t *testing.T) {
 			Data:      "abc123",
 		},
 	}
-	sdk := contentBlockToSDK(b, "")
+	sdk := contentBlockToSDK(b)
 	if sdk.OfImage == nil {
 		t.Fatal("expected OfImage")
 	}
@@ -169,7 +176,7 @@ func TestContentBlockToSDKToolUse(t *testing.T) {
 		Name:  "search",
 		Input: json.RawMessage(`{"query":"test"}`),
 	}
-	sdk := contentBlockToSDK(b, "")
+	sdk := contentBlockToSDK(b)
 	if sdk.OfToolUse == nil {
 		t.Fatal("expected OfToolUse")
 	}
@@ -183,27 +190,12 @@ func TestContentBlockToSDKToolUse(t *testing.T) {
 
 func TestContentBlockToSDKRedactedThinking(t *testing.T) {
 	b := ContentBlock{Type: "redacted_thinking", Data: "encrypted"}
-	sdk := contentBlockToSDK(b, "")
+	sdk := contentBlockToSDK(b)
 	if sdk.OfRedactedThinking == nil {
 		t.Fatal("expected OfRedactedThinking")
 	}
 	if sdk.OfRedactedThinking.Data != "encrypted" {
 		t.Errorf("data = %q", sdk.OfRedactedThinking.Data)
-	}
-}
-
-func TestContentBlockToSDKCacheControl(t *testing.T) {
-	b := ContentBlock{
-		Type:         "text",
-		Text:         "cached text",
-		CacheControl: Ephemeral(),
-	}
-	sdk := contentBlockToSDK(b, "")
-	if sdk.OfText == nil {
-		t.Fatal("expected OfText")
-	}
-	if string(sdk.OfText.CacheControl.Type) != "ephemeral" {
-		t.Errorf("cache_control type = %q", sdk.OfText.CacheControl.Type)
 	}
 }
 
@@ -315,14 +307,14 @@ func TestBuildSDKCountParams(t *testing.T) {
 }
 
 func TestBuildSDKParamsWithCacheTTL(t *testing.T) {
-	// Verify that CacheTTL on the request propagates to the top-level
-	// cache_control param as the SDK TTL field.
+	// Verify that CacheTTL propagates to cache markers via CacheStrategy.
 	req := &MessageRequest{
-		Model:        "claude-haiku-4-5",
-		MaxTokens:    1024,
-		Messages:     []Message{{Role: "user", Content: TextContent("Hi")}},
-		CacheControl: Ephemeral(),
-		CacheTTL:     "1h",
+		Model:         "claude-haiku-4-5",
+		MaxTokens:     1024,
+		System:        []SystemBlock{{Type: "text", Text: "sys"}},
+		Messages:      []Message{{Role: "user", Content: TextContent("Hi")}},
+		CacheStrategy: "auto",
+		CacheTTL:      "1h",
 	}
 
 	params := buildSDKParams(req)
@@ -333,114 +325,137 @@ func TestBuildSDKParamsWithCacheTTL(t *testing.T) {
 	if string(params.CacheControl.TTL) != "1h" {
 		t.Errorf("cache_control ttl = %q, want 1h", params.CacheControl.TTL)
 	}
-}
-
-func TestContentBlockToSDKCacheControlWithTTL(t *testing.T) {
-	// Verify TTL propagation to text blocks with cache_control.
-	b := ContentBlock{
-		Type:         "text",
-		Text:         "cached text",
-		CacheControl: Ephemeral(),
-	}
-	sdk := contentBlockToSDK(b, "1h")
-	if sdk.OfText == nil {
-		t.Fatal("expected OfText")
-	}
-	if string(sdk.OfText.CacheControl.Type) != "ephemeral" {
-		t.Errorf("cache_control type = %q", sdk.OfText.CacheControl.Type)
-	}
-	if string(sdk.OfText.CacheControl.TTL) != "1h" {
-		t.Errorf("cache_control ttl = %q, want 1h", sdk.OfText.CacheControl.TTL)
+	// System block should also have TTL
+	if string(params.System[0].CacheControl.TTL) != "1h" {
+		t.Errorf("system cache_control ttl = %q, want 1h", params.System[0].CacheControl.TTL)
 	}
 }
 
-func TestContentBlockToSDKToolResultWithTTL(t *testing.T) {
-	// Verify TTL propagation to tool_result blocks with cache_control.
-	b := ContentBlock{
-		Type:         "tool_result",
-		ToolUseID:    "tool_123",
-		Content:      "success",
-		CacheControl: Ephemeral(),
-	}
-	sdk := contentBlockToSDK(b, "1h")
-	if sdk.OfToolResult == nil {
-		t.Fatal("expected OfToolResult")
-	}
-	if string(sdk.OfToolResult.CacheControl.TTL) != "1h" {
-		t.Errorf("cache_control ttl = %q, want 1h", sdk.OfToolResult.CacheControl.TTL)
-	}
-}
-
-func TestContentBlockToSDKImageWithTTL(t *testing.T) {
-	// Verify TTL propagation to image blocks with cache_control.
-	b := ContentBlock{
-		Type: "image",
-		Source: &ContentSource{
-			Type:     "base64",
-			MimeType: "image/jpeg",
-			Data:     "abc123",
+func TestApplyCacheMarkersAuto(t *testing.T) {
+	// Auto strategy: top-level CacheControl + last system block marker.
+	params := &sdk.MessageNewParams{
+		System: []sdk.TextBlockParam{
+			{Text: "first"},
+			{Text: "second"},
 		},
-		CacheControl: Ephemeral(),
+		Messages: []sdk.MessageParam{
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("hi")}},
+		},
 	}
-	sdk := contentBlockToSDK(b, "1h")
-	if sdk.OfImage == nil {
-		t.Fatal("expected OfImage")
+
+	applyCacheMarkers(params, "auto", "")
+
+	if string(params.CacheControl.Type) != "ephemeral" {
+		t.Errorf("top-level cache_control type = %q, want ephemeral", params.CacheControl.Type)
 	}
-	if string(sdk.OfImage.CacheControl.TTL) != "1h" {
-		t.Errorf("cache_control ttl = %q, want 1h", sdk.OfImage.CacheControl.TTL)
+	if string(params.System[0].CacheControl.Type) != "" {
+		t.Error("first system block should not have cache_control")
+	}
+	if string(params.System[1].CacheControl.Type) != "ephemeral" {
+		t.Errorf("last system block should have cache_control")
 	}
 }
 
-func TestSystemToSDKCacheControlWithTTL(t *testing.T) {
-	// Verify TTL propagation to system blocks with cache_control.
+func TestApplyCacheMarkersExplicit(t *testing.T) {
+	// Explicit strategy: last system block marker + second-to-last message marker.
+	params := &sdk.MessageNewParams{
+		System: []sdk.TextBlockParam{
+			{Text: "sys"},
+		},
+		Messages: []sdk.MessageParam{
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("first")}},
+			{Role: "assistant", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("reply")}},
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("second")}},
+		},
+	}
+
+	applyCacheMarkers(params, "explicit", "1h")
+
+	// System block should have marker with TTL
+	if string(params.System[0].CacheControl.Type) != "ephemeral" {
+		t.Errorf("system cache_control type = %q", params.System[0].CacheControl.Type)
+	}
+	if string(params.System[0].CacheControl.TTL) != "1h" {
+		t.Errorf("system cache_control ttl = %q, want 1h", params.System[0].CacheControl.TTL)
+	}
+	// No top-level CacheControl for explicit
+	if string(params.CacheControl.Type) != "" {
+		t.Error("explicit strategy should not set top-level cache_control")
+	}
+	// Second-to-last message (index 1) should have marker
+	msg := params.Messages[1]
+	lastBlock := msg.Content[len(msg.Content)-1]
+	if lastBlock.OfText == nil || string(lastBlock.OfText.CacheControl.Type) != "ephemeral" {
+		t.Error("second-to-last message should have cache_control on last block")
+	}
+}
+
+func TestApplyCacheMarkersExplicitToolResult(t *testing.T) {
+	// Explicit strategy with tool_result as the breakpoint block.
+	params := &sdk.MessageNewParams{
+		System: []sdk.TextBlockParam{{Text: "sys"}},
+		Messages: []sdk.MessageParam{
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{
+				sdk.NewToolResultBlock("tu_1", "result", false),
+			}},
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("next")}},
+		},
+	}
+
+	applyCacheMarkers(params, "explicit", "")
+
+	// The tool_result block in the first message should get the marker
+	block := params.Messages[0].Content[0]
+	if block.OfToolResult == nil || string(block.OfToolResult.CacheControl.Type) != "ephemeral" {
+		t.Error("tool_result block should have cache_control as breakpoint")
+	}
+}
+
+func TestApplyCacheMarkersNoSystem(t *testing.T) {
+	// No system blocks — should not panic.
+	params := &sdk.MessageNewParams{
+		Messages: []sdk.MessageParam{
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("hi")}},
+		},
+	}
+
+	applyCacheMarkers(params, "auto", "")
+
+	if string(params.CacheControl.Type) != "ephemeral" {
+		t.Errorf("top-level cache_control should still be set")
+	}
+}
+
+func TestApplyCacheMarkersExplicitSingleMessage(t *testing.T) {
+	// Only one message — no second-to-last, should not panic.
+	params := &sdk.MessageNewParams{
+		System: []sdk.TextBlockParam{{Text: "sys"}},
+		Messages: []sdk.MessageParam{
+			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("only")}},
+		},
+	}
+
+	applyCacheMarkers(params, "explicit", "")
+
+	// System should still get marker
+	if string(params.System[0].CacheControl.Type) != "ephemeral" {
+		t.Error("system block should have cache_control")
+	}
+}
+
+func TestSystemToSDKClean(t *testing.T) {
+	// systemToSDK should produce clean blocks without cache markers.
 	blocks := []SystemBlock{
-		{Type: "text", Text: "uncached"},
-		{Type: "text", Text: "cached", CacheControl: Ephemeral()},
+		{Type: "text", Text: "first"},
+		{Type: "text", Text: "second"},
 	}
-	sdk := systemToSDK(blocks, "1h")
-	if len(sdk) != 2 {
-		t.Fatalf("len = %d, want 2", len(sdk))
+	result := systemToSDK(blocks)
+	if len(result) != 2 {
+		t.Fatalf("len = %d, want 2", len(result))
 	}
-	if string(sdk[0].CacheControl.TTL) != "" {
-		t.Error("first block should not have TTL")
-	}
-	if string(sdk[1].CacheControl.TTL) != "1h" {
-		t.Errorf("second block ttl = %q, want 1h", sdk[1].CacheControl.TTL)
-	}
-}
-
-func TestCacheControlWithTTLEmpty(t *testing.T) {
-	// When TTL is empty, the SDK default (5m) should apply — TTL field is zero value.
-	b := ContentBlock{
-		Type:         "text",
-		Text:         "cached text",
-		CacheControl: Ephemeral(),
-	}
-	sdk := contentBlockToSDK(b, "")
-	if sdk.OfText == nil {
-		t.Fatal("expected OfText")
-	}
-	if string(sdk.OfText.CacheControl.Type) != "ephemeral" {
-		t.Errorf("cache_control type = %q", sdk.OfText.CacheControl.Type)
-	}
-	if string(sdk.OfText.CacheControl.TTL) != "" {
-		t.Errorf("cache_control ttl = %q, want empty (SDK default)", sdk.OfText.CacheControl.TTL)
-	}
-}
-
-func TestSystemToSDKCacheControl(t *testing.T) {
-	blocks := []SystemBlock{
-		{Type: "text", Text: "uncached"},
-		{Type: "text", Text: "cached", CacheControl: Ephemeral()},
-	}
-	sdk := systemToSDK(blocks, "")
-	if len(sdk) != 2 {
-		t.Fatalf("len = %d, want 2", len(sdk))
-	}
-	if string(sdk[0].CacheControl.Type) != "" {
-		t.Error("first block should not have cache control")
-	}
-	if string(sdk[1].CacheControl.Type) != "ephemeral" {
-		t.Errorf("second block cache_control = %q", sdk[1].CacheControl.Type)
+	for i, b := range result {
+		if string(b.CacheControl.Type) != "" {
+			t.Errorf("block[%d] should not have cache_control", i)
+		}
 	}
 }

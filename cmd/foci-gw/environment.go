@@ -138,24 +138,16 @@ func buildContextInfoFn(
 				// Build full system blocks (same assembly as agent)
 				bootstrapBlocks := bootstrap.SystemBlocks()
 				bootstrapSizes := bootstrap.SectionSizes()
-				// Strip cache_control from bootstrap blocks
-				for i := range bootstrapBlocks {
-					bootstrapBlocks[i].CacheControl = nil
-				}
 
 				var allSystem []provider.SystemBlock
 				if ag.EnvironmentBlock != "" {
 					allSystem = append(allSystem, provider.SystemBlock{Type: "text", Text: ag.EnvironmentBlock})
 				}
 				allSystem = append(allSystem, bootstrapBlocks...)
-				var cleanExtra []provider.SystemBlock
+				var extraBlocks []provider.SystemBlock
 				if len(ag.ExtraSystemBlocks) > 0 {
-					cleanExtra = make([]provider.SystemBlock, len(ag.ExtraSystemBlocks))
-					copy(cleanExtra, ag.ExtraSystemBlocks)
-					for i := range cleanExtra {
-						cleanExtra[i].CacheControl = nil
-					}
-					allSystem = append(allSystem, cleanExtra...)
+					extraBlocks = ag.ExtraSystemBlocks
+					allSystem = append(allSystem, extraBlocks...)
 				}
 
 				// Build per-section list for individual counting
@@ -178,8 +170,8 @@ func buildContextInfoFn(
 						})
 					}
 				}
-				if len(cleanExtra) > 0 {
-					secs = append(secs, sectionDef{name: "Skills", blocks: cleanExtra})
+				if len(extraBlocks) > 0 {
+					secs = append(secs, sectionDef{name: "Skills", blocks: extraBlocks})
 				}
 
 				// Common request components

@@ -336,7 +336,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}()
 
 	system := a.buildSystemBlocks(sessionKey)
-	useAutoCache := a.CacheStrategy == "auto"
 	toolDefs := a.Tools.ToolDefs()
 	if len(a.ServerTools) > 0 {
 		toolDefs = append(toolDefs, a.ServerTools...)
@@ -357,22 +356,14 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// Remove empty text blocks that would cause API 400 errors.
 		messages = sanitizeEmptyTextBlocks(messages)
 
-		var reqMessages []provider.Message
-		if useAutoCache {
-			reqMessages = messages
-		} else {
-			reqMessages = withCacheBreakpoint(messages)
-		}
 		req := &provider.MessageRequest{
-			Model:     turnModel,
-			MaxTokens: maxOutput,
-			System:    system,
-			Messages:  reqMessages,
-			Tools:     toolDefs,
-			CacheTTL:  a.CacheTTL,
-		}
-		if useAutoCache {
-			req.CacheControl = provider.Ephemeral()
+			Model:         turnModel,
+			MaxTokens:     maxOutput,
+			System:        system,
+			Messages:      messages,
+			Tools:         toolDefs,
+			CacheStrategy: a.CacheStrategy,
+			CacheTTL:      a.CacheTTL,
 		}
 		// Set effort/thinking unconditionally — each provider's SendMessage
 		// handles or ignores unsupported fields. The error-and-retry fallback
@@ -384,11 +375,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			req.Thinking = &provider.ThinkingConfig{Type: "adaptive"}
 		}
 
-		// Debug: log cache_control placement
-		logCacheDebug(sessionKey, system, reqMessages, turnModel)
+		// Debug: log cache placement
+		logCacheDebug(sessionKey, system, messages, turnModel)
 
 		a.logger().Debugf("api_request session=%s model=%s messages=%d tools=%d system_blocks=%d",
-			sessionKey, turnModel, len(reqMessages), len(toolDefs), len(system))
+			sessionKey, turnModel, len(messages), len(toolDefs), len(system))
 
 		start := time.Now()
 		a.logger().Debugf("api_call_start session=%s model=%s streaming=%v", sessionKey, turnModel, a.Streaming)
@@ -467,7 +458,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			return "", ctx.Err()
 		}
 
-		cost := a.logAPIResponse(sessionKey, turnModel, start, duration, req, resp, len(reqMessages))
+		cost := a.logAPIResponse(sessionKey, turnModel, start, duration, req, resp, len(messages))
 		a.processAPIResponse(sessionKey, sm, resp, cost, now, maxOutput)
 
 		// Build assistant message from response

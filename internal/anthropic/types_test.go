@@ -14,19 +14,6 @@ func TestTextContent(t *testing.T) {
 	if blocks[0].Type != "text" || blocks[0].Text != "hello" {
 		t.Errorf("block = %+v", blocks[0])
 	}
-	if blocks[0].CacheControl != nil {
-		t.Error("unexpected cache control")
-	}
-}
-
-func TestCachedTextContent(t *testing.T) {
-	blocks := CachedTextContent("cached")
-	if len(blocks) != 1 {
-		t.Fatalf("len = %d, want 1", len(blocks))
-	}
-	if blocks[0].CacheControl == nil || blocks[0].CacheControl.Type != "ephemeral" {
-		t.Errorf("cache control = %+v", blocks[0].CacheControl)
-	}
 }
 
 func TestTextOf(t *testing.T) {
@@ -271,13 +258,6 @@ func TestDocumentBlockJSON(t *testing.T) {
 	}
 	if decoded.Source == nil || decoded.Source.MimeType != "application/pdf" {
 		t.Errorf("decoded.Source = %+v", decoded.Source)
-	}
-}
-
-func TestEphemeral(t *testing.T) {
-	cc := Ephemeral()
-	if cc.Type != "ephemeral" {
-		t.Errorf("Type = %q", cc.Type)
 	}
 }
 
