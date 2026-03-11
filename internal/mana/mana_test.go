@@ -337,45 +337,35 @@ func TestFormatUsageResetTime(t *testing.T) {
 	}
 }
 
+// Tests overage display in FormatUsage: enabled/disabled, zero, and tiny amounts.
 func TestFormatUsageOverage(t *testing.T) {
-	util := 80.0
-	result := FormatUsage(&provider.UsageResponse{
-		FiveHour: &provider.UsageWindow{Utilization: &util},
-		ExtraUsage: &provider.ExtraUsage{
-			IsEnabled:   true,
-			UsedCredits: 1.50,
-		},
-	})
-	if !strings.Contains(result, "overage $1.50") {
-		t.Errorf("result = %q, want 'overage $1.50'", result)
+	util80 := 80.0
+	withUtil := &provider.UsageWindow{Utilization: &util80}
+	tests := []struct {
+		name    string
+		five    *provider.UsageWindow
+		extra   *provider.ExtraUsage
+		want    string // must contain (empty = skip)
+		notWant string // must NOT contain (empty = skip)
+	}{
+		{"enabled", withUtil, &provider.ExtraUsage{IsEnabled: true, UsedCredits: 1.50}, "overage $1.50", ""},
+		{"disabled", withUtil, &provider.ExtraUsage{IsEnabled: false, UsedCredits: 5.0}, "", "overage"},
+		{"zero_credits", withUtil, &provider.ExtraUsage{IsEnabled: true, UsedCredits: 0.0}, "", "overage"},
+		{"no_util_tiny", nil, &provider.ExtraUsage{IsEnabled: true, UsedCredits: 0.01}, "overage $0.01", ""},
 	}
-}
-
-func TestFormatUsageOverageDisabled(t *testing.T) {
-	util := 80.0
-	result := FormatUsage(&provider.UsageResponse{
-		FiveHour: &provider.UsageWindow{Utilization: &util},
-		ExtraUsage: &provider.ExtraUsage{
-			IsEnabled:   false,
-			UsedCredits: 5.0,
-		},
-	})
-	if strings.Contains(result, "overage") {
-		t.Errorf("result = %q, should not show overage when disabled", result)
-	}
-}
-
-func TestFormatUsageOverageZero(t *testing.T) {
-	util := 80.0
-	result := FormatUsage(&provider.UsageResponse{
-		FiveHour: &provider.UsageWindow{Utilization: &util},
-		ExtraUsage: &provider.ExtraUsage{
-			IsEnabled:   true,
-			UsedCredits: 0.0,
-		},
-	})
-	if strings.Contains(result, "overage") {
-		t.Errorf("result = %q, should not show overage when zero", result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatUsage(&provider.UsageResponse{
+				FiveHour:   tt.five,
+				ExtraUsage: tt.extra,
+			})
+			if tt.want != "" && !strings.Contains(result, tt.want) {
+				t.Errorf("got %q, want to contain %q", result, tt.want)
+			}
+			if tt.notWant != "" && strings.Contains(result, tt.notWant) {
+				t.Errorf("got %q, should NOT contain %q", result, tt.notWant)
+			}
+		})
 	}
 }
 
@@ -432,13 +422,6 @@ func TestParseResetTime_ManyHours(t *testing.T) {
 	}
 }
 
-func TestParseResetTime_ExactHours(t *testing.T) {
-	future := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339Nano)
-	result := ParseResetTime(future)
-	if !strings.HasPrefix(result, "in ") || !strings.Contains(result, "h") {
-		t.Errorf("ParseResetTime(3h) = %q, want format 'in Xh...'", result)
-	}
-}
 
 func TestIsGood_NegativeInvestInterval(t *testing.T) {
 	now := time.Now()
@@ -530,17 +513,6 @@ func TestFormatPercent_EdgeCasesNearZero(t *testing.T) {
 	}
 }
 
-func TestFormatUsage_ExtraUsagePresent(t *testing.T) {
-	result := FormatUsage(&provider.UsageResponse{
-		ExtraUsage: &provider.ExtraUsage{
-			IsEnabled:   true,
-			UsedCredits: 0.01,
-		},
-	})
-	if !strings.Contains(result, "overage $0.01") {
-		t.Errorf("FormatUsage with tiny overage = %q", result)
-	}
-}
 
 func TestIsGood_ZeroInvestInterval(t *testing.T) {
 	now := time.Now()
@@ -712,12 +684,3 @@ func TestManaAndReset_WithServer(t *testing.T) {
 	}
 }
 
-func TestParseResetTime_TabCharacter(t *testing.T) {
-	now := time.Now().UTC()
-	future := now.Add(1 * time.Hour)
-	iso := future.Format(time.RFC3339Nano)
-	result := ParseResetTime(iso)
-	if !strings.HasPrefix(result, "in ") {
-		t.Errorf("ParseResetTime should return relative format, got %q", result)
-	}
-}

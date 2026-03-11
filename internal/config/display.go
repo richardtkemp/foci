@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"foci/internal/display"
-	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -21,13 +20,54 @@ type configRow struct {
 // Secrets are redacted.
 func FormatConfig(cfg *Config, agent AgentConfig) string {
 	rows := collectAgentRows(agent)
+	rows = append(rows, collectGlobalConfigRows(cfg)...)
+	return formatTableBySection(rows)
+}
+
+// FormatConfigGrouped returns per-group config tables as markdown pipe tables.
+// The first table is "Global" config (all non-agent sections), followed by one
+// table for the given agent. Each table is small enough to fit in a single
+// Telegram message.
+func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
+	globalRows := collectGlobalConfigRows(cfg)
+	annotateGlobalRows(globalRows, cfg, agent)
+
+	var tables []string
+	tables = append(tables, "Global\n"+formatTableBySection(globalRows))
+	tables = append(tables, "Agent: "+agent.ID+"\n"+formatTableBySection(collectAgentRows(agent)))
+	return tables
+}
+
+// annotateGlobalRows adds (overridden) and (default) annotations to rows.
+// Only defaults/provider fields that can be overridden per-agent get the
+// (overridden) tag; all fields get (default) if they weren't explicitly set.
+func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
+	overrides := map[string]bool{
+		"defaults.model":             agent.Model != cfg.Defaults.Model,
+		"defaults.max_tool_loops":    agent.MaxToolLoops != cfg.Defaults.MaxToolLoops,
+		"defaults.max_output_tokens": agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens,
+		"anthropic.effort":           agent.Effort != cfg.Anthropic.Effort,
+	}
+	for i := range rows {
+		path := rows[i].Section + "." + rows[i].Key
+		if overrides[path] {
+			rows[i].Value += " (overridden)"
+		}
+		if cfg.DefinedKeys != nil && !cfg.DefinedKeys[path] {
+			rows[i].Value += " (default)"
+		}
+	}
+}
+
+// collectGlobalConfigRows returns config rows for all non-agent sections.
+func collectGlobalConfigRows(cfg *Config) []configRow {
+	var rows []configRow
 	add := func(section, key string, val interface{}) {
 		rows = append(rows, configRow{section, key, formatValue(val)})
 	}
 
 	// defaults
 	add("defaults", "model", cfg.Defaults.Model)
-
 	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
 	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
 	if cfg.Anthropic.Effort != "" {
@@ -56,6 +96,29 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		add("defaults", "system_files", cfg.Defaults.SystemFiles)
+	}
+
+	// keepalive
+	add("keepalive", "enabled", cfg.Keepalive.Enabled)
+	add("keepalive", "interval", cfg.Keepalive.Interval)
+	add("keepalive", "prompt", cfg.Keepalive.Prompt)
+
+	// background
+	add("background", "enabled", cfg.Background.Enabled)
+	add("background", "interval", cfg.Background.Interval)
+	add("background", "prompt", cfg.Background.Prompt)
+
+	// memory_formation
+	add("memory_formation", "interval", cfg.MemoryFormation.Interval)
+	add("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
+	if cfg.MemoryFormation.IntervalEnabled != nil {
+		add("memory_formation", "interval_enabled", *cfg.MemoryFormation.IntervalEnabled)
+	}
+	if cfg.MemoryFormation.ConsolidationEnabled != nil {
+		add("memory_formation", "consolidation_enabled", *cfg.MemoryFormation.ConsolidationEnabled)
+	}
+	if cfg.MemoryFormation.SessionEndEnabled != nil {
+		add("memory_formation", "session_end_enabled", *cfg.MemoryFormation.SessionEndEnabled)
 	}
 
 	// telegram
@@ -249,7 +312,7 @@ func FormatConfig(cfg *Config, agent AgentConfig) string {
 		add("blocked_paths", fmt.Sprintf("(%d paths)", len(cfg.BlockedPaths)), "")
 	}
 
-	return formatTableBySection(rows)
+	return rows
 }
 
 // collectAgentRows returns the standard set of agent config display rows.
@@ -372,262 +435,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	return rows
 }
 
-// FormatConfigGrouped returns per-group config tables as markdown pipe tables.
-// The first table is "Global" config (all non-agent
-// sections), followed by one table for the given agent. Each table is small
-// enough to fit in a single Telegram message.
-func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
-	// Build global rows (everything except agent-specific)
-	var globalRows []configRow
-
-	// isDefined returns true if a key was explicitly set in the TOML file.
-	isDefined := func(path string) bool {
-		if cfg.DefinedKeys == nil {
-			return true // no metadata — assume everything is explicit
-		}
-		return cfg.DefinedKeys[path]
-	}
-
-	// annotate appends indicators to a value string.
-	annotate := func(val, tomlPath string, overridden bool) string {
-		if overridden {
-			val += " (overridden)"
-		}
-		if !isDefined(tomlPath) {
-			val += " (default)"
-		}
-		return val
-	}
-
-	addGlobal := func(section, key string, val interface{}) {
-		v := formatValue(val)
-		if !isDefined(section + "." + key) {
-			v += " (default)"
-		}
-		globalRows = append(globalRows, configRow{section, key, v})
-	}
-
-	// addDefault adds a defaults row with override/default annotations.
-	addDefault := func(key string, val interface{}, overridden bool) {
-		v := annotate(formatValue(val), "defaults."+key, overridden)
-		globalRows = append(globalRows, configRow{"defaults", key, v})
-	}
-
-	// defaults — compare with agent values to detect overrides.
-	addDefault("model", cfg.Defaults.Model, agent.Model != cfg.Defaults.Model)
-
-	addDefault("max_tool_loops", cfg.Defaults.MaxToolLoops, agent.MaxToolLoops != cfg.Defaults.MaxToolLoops)
-	addDefault("max_output_tokens", cfg.Defaults.MaxOutputTokens, agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens)
-	if cfg.Anthropic.Effort != "" {
-		addProvider := func(section, key string, val interface{}, overridden bool) {
-			v := annotate(formatValue(val), section+"."+key, overridden)
-			globalRows = append(globalRows, configRow{section, key, v})
-		}
-		addProvider("anthropic", "effort", cfg.Anthropic.Effort, agent.Effort != cfg.Anthropic.Effort)
-	}
-	if cfg.Defaults.DuplicateMessages {
-		addDefault("duplicate_messages", cfg.Defaults.DuplicateMessages, false)
-	}
-	if cfg.Defaults.InjectAgentWarnings {
-		addDefault("inject_agent_warnings", cfg.Defaults.InjectAgentWarnings, false)
-	}
-	if cfg.Defaults.ShowToolCalls != nil {
-		addDefault("show_tool_calls", string(*cfg.Defaults.ShowToolCalls), false)
-	}
-	if cfg.Defaults.ShowThinking != nil {
-		addDefault("show_thinking", string(*cfg.Defaults.ShowThinking), false)
-	}
-	if cfg.Defaults.InjectedMessageHeader != "" {
-		addDefault("injected_message_header", cfg.Defaults.InjectedMessageHeader, false)
-	}
-	if len(cfg.Defaults.SystemFiles) > 0 {
-		addDefault("system_files", cfg.Defaults.SystemFiles, false)
-	}
-	addGlobal("keepalive", "enabled", cfg.Keepalive.Enabled)
-	addGlobal("keepalive", "interval", cfg.Keepalive.Interval)
-	addGlobal("keepalive", "prompt", cfg.Keepalive.Prompt)
-	addGlobal("background", "enabled", cfg.Background.Enabled)
-	addGlobal("background", "interval", cfg.Background.Interval)
-	addGlobal("background", "prompt", cfg.Background.Prompt)
-	addGlobal("mana", "invest_interval", cfg.Mana.InvestInterval)
-	addGlobal("memory_formation", "interval", cfg.MemoryFormation.Interval)
-	addGlobal("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
-	if cfg.MemoryFormation.IntervalEnabled != nil {
-		addGlobal("memory_formation", "interval_enabled", *cfg.MemoryFormation.IntervalEnabled)
-	}
-	if cfg.MemoryFormation.ConsolidationEnabled != nil {
-		addGlobal("memory_formation", "consolidation_enabled", *cfg.MemoryFormation.ConsolidationEnabled)
-	}
-	if cfg.MemoryFormation.SessionEndEnabled != nil {
-		addGlobal("memory_formation", "session_end_enabled", *cfg.MemoryFormation.SessionEndEnabled)
-	}
-	if len(cfg.Telegram.AllowedUsers) > 0 {
-		addGlobal("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
-	}
-	if len(cfg.Telegram.MultiballBots) > 0 {
-		addGlobal("telegram", "multiball_bots", cfg.Telegram.MultiballBots)
-	}
-	if len(cfg.Telegram.StopAliases) > 0 {
-		addGlobal("telegram", "stop_aliases", cfg.Telegram.StopAliases)
-	}
-	addGlobal("telegram", "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
-	addGlobal("telegram", "enable_startup_notify", cfg.Telegram.EnableStartupNotify)
-	addGlobal("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
-	addGlobal("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
-	addGlobal("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
-	if cfg.Telegram.ReceivedFilesDir != "" {
-		addGlobal("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
-	}
-	if cfg.Telegram.DisplayWidth != nil {
-		addGlobal("telegram", "display_width", *cfg.Telegram.DisplayWidth)
-	}
-	if cfg.Telegram.TableWrapLines != nil {
-		addGlobal("telegram", "table_wrap_lines", *cfg.Telegram.TableWrapLines)
-	}
-	if cfg.Telegram.TableStyle != nil {
-		addGlobal("telegram", "table_style", *cfg.Telegram.TableStyle)
-	}
-	addGlobal("sessions", "dir", cfg.Sessions.Dir)
-	addGlobal("sessions", "compaction_threshold", cfg.Sessions.CompactionThreshold)
-	addGlobal("sessions", "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
-	addGlobal("sessions", "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
-	if cfg.Sessions.CompactionSummaryPrompt != "" {
-		addGlobal("sessions", "compaction_summary_prompt", cfg.Sessions.CompactionSummaryPrompt)
-	}
-	if cfg.Sessions.CompactionHandoffMsg != "" {
-		addGlobal("sessions", "compaction_handoff_msg", cfg.Sessions.CompactionHandoffMsg)
-	}
-	if cfg.Sessions.CompactionNotify != nil {
-		addGlobal("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
-	}
-	addGlobal("sessions", "compaction_debug", cfg.Sessions.CompactionDebug)
-	addGlobal("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
-	addGlobal("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
-	addGlobal("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
-	if cfg.Sessions.BranchOrientationPrompt != "" {
-		addGlobal("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
-	}
-	if cfg.Sessions.BranchOrientationMultiballPrompt != "" {
-		addGlobal("sessions", "branch_orientation_multiball_prompt", cfg.Sessions.BranchOrientationMultiballPrompt)
-	}
-	if cfg.Sessions.BranchOrientationHeadlessPrompt != "" {
-		addGlobal("sessions", "branch_orientation_headless_prompt", cfg.Sessions.BranchOrientationHeadlessPrompt)
-	}
-	if len(cfg.Memory.Sources) > 0 {
-		addGlobal("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
-	}
-	if cfg.Memory.ReindexDebounce != "" {
-		addGlobal("memory", "reindex_debounce", cfg.Memory.ReindexDebounce)
-	}
-	addGlobal("memory", "conversation_weight", cfg.Memory.ConversationWeight)
-	addGlobal("memory", "search_limit", cfg.Memory.SearchLimit)
-	addGlobal("logging", "level", cfg.Logging.Level)
-	addGlobal("logging", "event_file", cfg.Logging.EventFile)
-	addGlobal("logging", "api_file", cfg.Logging.APIFile)
-	addGlobal("logging", "api_db", cfg.Logging.APIDB)
-	addGlobal("logging", "conversation_file", cfg.Logging.ConversationFile)
-	addGlobal("logging", "full_payload", cfg.Logging.FullPayload)
-	if cfg.Logging.PayloadFile != "" {
-		addGlobal("logging", "payload_file", cfg.Logging.PayloadFile)
-	}
-	addGlobal("logging", "messages_in_log", cfg.Logging.MessagesInLog)
-	addGlobal("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
-	addGlobal("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
-	addGlobal("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
-	addGlobal("logging", "warning_window_duration", cfg.Logging.WarningWindowDuration)
-	addGlobal("logging", "log_rotation", cfg.Logging.LogRotation)
-	addGlobal("logging", "rotation_period", cfg.Logging.RotationPeriod)
-	addGlobal("logging", "retention_period", cfg.Logging.RetentionPeriod)
-	addGlobal("logging", "rotation_max_line_size", cfg.Logging.RotationMaxLineSize)
-	if cfg.Logging.ArchiveDir != "" {
-		addGlobal("logging", "archive_dir", cfg.Logging.ArchiveDir)
-	}
-	addGlobal("http", "bind", cfg.HTTP.Bind)
-	addGlobal("http", "port", cfg.HTTP.Port)
-	addGlobal("http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout)
-	addGlobal("tools", "max_result_chars", cfg.Tools.MaxResultChars)
-	addGlobal("tools", "temp_dir", cfg.Tools.TempDir)
-	addGlobal("tools", "tmux_cols", cfg.Tools.TmuxCols)
-	addGlobal("tools", "tmux_rows", cfg.Tools.TmuxRows)
-	addGlobal("tools", "exec_auto_background", cfg.Tools.ExecAutoBackground)
-	addGlobal("tools", "exec_default_timeout", cfg.Tools.ExecDefaultTimeout)
-	addGlobal("tools", "max_summary_chars", cfg.Tools.MaxSummaryChars)
-	addGlobal("tools", "max_summary_input_chars", cfg.Tools.MaxSummaryInputChars)
-	addGlobal("tools", "max_image_pixels", cfg.Tools.MaxImagePixels)
-	addGlobal("tools", "auto_summarise", cfg.Tools.AutoSummarise)
-	addGlobal("tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout)
-	addGlobal("tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout)
-	addGlobal("tools", "web_fetch_max_bytes", cfg.Tools.WebFetchMaxBytes)
-	addGlobal("tools", "web_search_timeout", cfg.Tools.WebSearchTimeout)
-	addGlobal("tools", "max_concurrent_spawns", cfg.Tools.MaxConcurrentSpawns)
-	addGlobal("tools", "explore_max_depth", cfg.Tools.ExploreMaxDepth)
-	addGlobal("tools", "tool_call_preview_chars", cfg.Tools.ToolCallPreviewChars)
-	addGlobal("tools", "tmux_memory_check_interval", cfg.Tools.TmuxMemoryCheckInterval)
-	addGlobal("tools", "tmux_memory_warn", cfg.Tools.TmuxMemoryWarn)
-	addGlobal("tools", "tmux_memory_critical", cfg.Tools.TmuxMemoryCritical)
-	addGlobal("tools", "tmux_memory_kill", cfg.Tools.TmuxMemoryKill)
-	addGlobal("tools", "tmux_autopilot", cfg.Tools.TmuxAutopilot)
-	addGlobal("tools", "tmux_watch_threshold", cfg.Tools.TmuxWatchThreshold)
-	addGlobal("environment", "enabled", cfg.Environment.Enabled)
-	if cfg.Environment.DocsPath != "" {
-		addGlobal("environment", "docs_path", cfg.Environment.DocsPath)
-	}
-	if len(cfg.Skills.Dirs) > 0 {
-		addGlobal("skills", "dirs", cfg.Skills.Dirs)
-	}
-	addGlobal("cache", "strategy", cfg.Cache.Strategy)
-	addGlobal("usage_warnings", "name", cfg.ManaWarnings.Name)
-	if len(cfg.ManaWarnings.Thresholds) > 0 {
-		addGlobal("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
-	}
-	for i, e := range cfg.TTS {
-		prefix := fmt.Sprintf("tts[%d]", i)
-		addGlobal(prefix, "id", e.ID)
-		addGlobal(prefix, "format", e.Format)
-		if e.Endpoint != "" {
-			addGlobal(prefix, "endpoint", e.Endpoint)
-		}
-		if e.Model != "" {
-			addGlobal(prefix, "model", e.Model)
-		}
-		if e.Voice != "" {
-			addGlobal(prefix, "voice", e.Voice)
-		}
-		if e.Rate != 0 {
-			addGlobal(prefix, "rate", e.Rate)
-		}
-	}
-	for i, e := range cfg.STT {
-		prefix := fmt.Sprintf("stt[%d]", i)
-		addGlobal(prefix, "id", e.ID)
-		addGlobal(prefix, "format", e.Format)
-		if e.Endpoint != "" {
-			addGlobal(prefix, "endpoint", e.Endpoint)
-		}
-		if e.Model != "" {
-			addGlobal(prefix, "model", e.Model)
-		}
-	}
-	addGlobal("database", "busy_timeout", cfg.Database.BusyTimeout)
-	addGlobal("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
-	addGlobal("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
-	addGlobal("anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL)
-	if len(cfg.MessageTransforms) > 0 {
-		addGlobal("message_transforms", fmt.Sprintf("(%d rules)", len(cfg.MessageTransforms)), "")
-	}
-	if len(cfg.BlockedPaths) > 0 {
-		addGlobal("blocked_paths", fmt.Sprintf("(%d paths)", len(cfg.BlockedPaths)), "")
-	}
-
-	var tables []string
-	tables = append(tables, "Global\n"+formatTableBySection(globalRows))
-
-	// Current agent table
-	tables = append(tables, "Agent: "+agent.ID+"\n"+formatTableBySection(collectAgentRows(agent)))
-
-	return tables
-}
-
 // formatTableBySection groups rows by Section and emits a separate table for
 // each group, headed by [section]. Each table has only KEY/VALUE columns.
 // Section order is preserved from insertion.
@@ -663,22 +470,10 @@ func formatTableBySection(rows []configRow) string {
 
 // formatValue converts a config value to its display string.
 func formatValue(val interface{}) string {
-	switch v := val.(type) {
-	case string:
-		return v
-	case bool:
-		return fmt.Sprintf("%v", v)
-	case int:
-		return fmt.Sprintf("%d", v)
-	case float64:
-		return fmt.Sprintf("%g", v)
-	case []string:
-		return fmt.Sprintf("%v", v)
-	case []int:
-		return fmt.Sprintf("%v", v)
-	default:
-		return fmt.Sprintf("%v", v)
+	if s, ok := val.(string); ok {
+		return s
 	}
+	return fmt.Sprintf("%v", val)
 }
 
 // displayConfig is a struct used for TOML marshaling that includes
@@ -767,208 +562,3 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 	}
 	return strings.TrimRight(buf.String(), "\n")
 }
-
-// availableOption describes a config field that is at its zero/default value.
-type availableOption struct {
-	Section     string
-	Key         string
-	Default     string
-	Description string
-}
-
-// FormatAvailable returns a table of config options that are currently unset
-// (at zero or default value) for the agent and global sections.
-func FormatAvailable(cfg *Config, agent AgentConfig) string {
-	var opts []availableOption
-
-	// Agent fields
-	if len(agent.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
-		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
-	}
-	if agent.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationMultiballPrompt == "" && agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
-		opts = append(opts, availableOption{"agent", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
-	}
-	if agent.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationHeadlessPrompt == "" && agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
-		opts = append(opts, availableOption{"agent", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
-	}
-	if agent.TelegramBot == "" {
-		opts = append(opts, availableOption{"agent", "telegram_bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
-	}
-	if len(agent.MultiballBots) == 0 {
-		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "additional bot names for multiball"})
-	}
-	if agent.TTSRate == 0 {
-		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
-	}
-	// Only show agent override options when the global fallback isn't covering them.
-	if agent.StartupNotify == nil && !cfg.Defaults.EnableStartupNotify {
-		opts = append(opts, availableOption{"agent", "startup_notify", "(global)", "send startup notification (nil = use global)"})
-	}
-	if agent.ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil && *cfg.Defaults.ShowToolCalls == ToolCallOff {
-		opts = append(opts, availableOption{"agent", "show_tool_calls", "(defaults)", "tool call display mode: off, preview, full (nil = use defaults)"})
-	}
-	if agent.ShowThinking == nil && cfg.Defaults.ShowThinking != nil && *cfg.Defaults.ShowThinking == ShowThinkingOff {
-		opts = append(opts, availableOption{"agent", "show_thinking", "(defaults)", "thinking display mode: off, compact, true (nil = use defaults)"})
-	}
-	if agent.DisplayWidth == nil {
-		dw := 44
-		if cfg.Telegram.DisplayWidth != nil {
-			dw = *cfg.Telegram.DisplayWidth
-		}
-		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use telegram)"})
-	}
-	if agent.TableWrapLines == nil {
-		twl := 5
-		if cfg.Telegram.TableWrapLines != nil {
-			twl = *cfg.Telegram.TableWrapLines
-		}
-		opts = append(opts, availableOption{"agent", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use telegram)"})
-	}
-	if agent.TableStyle == nil {
-		ts := "pretty"
-		if cfg.Telegram.TableStyle != nil {
-			ts = *cfg.Telegram.TableStyle
-		}
-		opts = append(opts, availableOption{"agent", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown (nil = use telegram)"})
-	}
-	if agent.Effort == "" && cfg.Anthropic.Effort == "" {
-		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
-	}
-	if agent.CompactionEffort == "" {
-		opts = append(opts, availableOption{"agent", "compaction_effort", "\"\"", "effort for compaction API calls (empty = use session effort)"})
-	}
-	if agent.ReceivedFilesDir == "" && cfg.Telegram.ReceivedFilesDir == "" {
-		opts = append(opts, availableOption{"agent", "received_files_dir", "\"\"", "save received files to this directory"})
-	}
-	if len(agent.AllowedUsers) == 0 && len(cfg.Telegram.AllowedUsers) == 0 {
-		opts = append(opts, availableOption{"agent", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
-	}
-
-	// Sessions fields
-	if cfg.Sessions.CompactionSummaryPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "compaction_summary_prompt", "\"\"", "path to summary prompt file"})
-	}
-	if cfg.Sessions.CompactionHandoffMsg == "" {
-		opts = append(opts, availableOption{"sessions", "compaction_handoff_msg", "\"\"", "handoff message after compaction"})
-	}
-	if cfg.Sessions.CompactionNotify == nil {
-		opts = append(opts, availableOption{"sessions", "compaction_notify", "true", "send Telegram notification on compaction"})
-	}
-	if cfg.Sessions.MaxSystemPromptFile == 0 {
-		opts = append(opts, availableOption{"sessions", "max_system_prompt_chars_file", "20000", "per-file char warning threshold"})
-	}
-	if cfg.Sessions.MaxSystemPromptTotal == 0 {
-		opts = append(opts, availableOption{"sessions", "max_system_prompt_chars_total", "80000", "total system prompt char warning threshold"})
-	}
-	if cfg.Sessions.CompactionPreserveMessages == 0 {
-		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
-	}
-	if cfg.Sessions.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
-	}
-	if cfg.Sessions.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
-	}
-
-	// Memory fields
-	if cfg.Memory.ReindexDebounce == "" || cfg.Memory.ReindexDebounce == "0s" {
-		opts = append(opts, availableOption{"memory", "reindex_debounce", "\"0s\"", "delay before reindex"})
-	}
-
-	// Logging fields
-	if !cfg.Logging.MessagesInLog {
-		opts = append(opts, availableOption{"logging", "messages_in_log", "false", "log user message content to event log"})
-	}
-	if !cfg.Logging.FullPayload {
-		opts = append(opts, availableOption{"logging", "full_payload", "false", "write full API payloads to file"})
-	}
-	if !cfg.Logging.CacheBustDetect {
-		opts = append(opts, availableOption{"logging", "cache_bust_detect", "false", "alert on cache_read drop"})
-	}
-
-	// Voice fields
-	if len(cfg.TTS) == 0 {
-		opts = append(opts, availableOption{"tts", "(none)", "[[tts]]", "add TTS entries for text-to-speech"})
-	}
-	if len(cfg.STT) == 0 {
-		opts = append(opts, availableOption{"stt", "(none)", "[[stt]]", "add STT entries for speech-to-text"})
-	}
-
-	// Environment fields
-	if cfg.Environment.DocsPath == "" {
-		opts = append(opts, availableOption{"environment", "docs_path", "\"\"", "path to platform docs directory"})
-	}
-
-	// Skills fields
-	if len(cfg.Skills.Dirs) == 0 {
-		opts = append(opts, availableOption{"skills", "dirs", "[]", "directories to scan for skills"})
-	}
-
-	// Usage warnings
-	if len(cfg.ManaWarnings.Thresholds) == 0 && len(agent.UsageWarnings.Thresholds) == 0 {
-		opts = append(opts, availableOption{"usage_warnings", "thresholds", "[]", "mana percentages to warn at"})
-	}
-
-	if len(opts) == 0 {
-		return "All config options are set."
-	}
-
-	// Deduplicate: if a key appears in both "agent" and another section,
-	// keep only the non-agent entry to avoid redundant display.
-	nonAgentKeys := map[string]bool{}
-	for _, o := range opts {
-		if o.Section != "agent" {
-			nonAgentKeys[o.Key] = true
-		}
-	}
-	deduped := opts[:0]
-	for _, o := range opts {
-		if o.Section == "agent" && nonAgentKeys[o.Key] {
-			continue
-		}
-		deduped = append(deduped, o)
-	}
-	opts = deduped
-
-	if len(opts) == 0 {
-		return "All config options are set."
-	}
-
-	// Sort by section, then key within section.
-	sort.Slice(opts, func(i, j int) bool {
-		if opts[i].Section != opts[j].Section {
-			return opts[i].Section < opts[j].Section
-		}
-		return opts[i].Key < opts[j].Key
-	})
-
-	// Group by section, emit a separate 3-column table per section.
-	var sections []string
-	seen := map[string]bool{}
-	grouped := map[string][]availableOption{}
-	for _, o := range opts {
-		if !seen[o.Section] {
-			seen[o.Section] = true
-			sections = append(sections, o.Section)
-		}
-		grouped[o.Section] = append(grouped[o.Section], o)
-	}
-
-	cols := []display.Column{
-		{Header: "KEY"},
-		{Header: "DEFAULT"},
-		{Header: "DESCRIPTION"},
-	}
-	var parts []string
-	for _, sec := range sections {
-		sOpts := grouped[sec]
-		tableRows := make([][]string, len(sOpts))
-		for i, o := range sOpts {
-			tableRows[i] = []string{o.Key, o.Default, o.Description}
-		}
-		parts = append(parts, "["+sec+"]\n"+display.MarkdownTable(cols, tableRows))
-	}
-	return "Unset/default config options:\n\n" + strings.Join(parts, "\n\n")
-}
-
-

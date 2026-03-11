@@ -13,16 +13,9 @@ import (
 )
 
 func TestExecEcho(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo hello world",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	tool := newTestExecTool()
+	result, err := runExec(t, tool, "echo hello world")
+	requireNoError(t, err)
 
 	if strings.TrimSpace(result.Text) != "hello world" {
 		t.Errorf("result = %q", result.Text)
@@ -51,7 +44,7 @@ func TestExecWorkDir(t *testing.T) {
 }
 
 func TestExecWithTimeout(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
+	tool := newTestExecTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "echo fast",
@@ -59,16 +52,12 @@ func TestExecWithTimeout(t *testing.T) {
 	})
 
 	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(result.Text,"fast") {
-		t.Errorf("result = %q", result.Text)
-	}
+	requireNoError(t, err)
+	requireContains(t, result.Text, "fast")
 }
 
 func TestExecTimeout(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
+	tool := newTestExecTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command": "read -t 60 < /dev/null",
@@ -76,66 +65,34 @@ func TestExecTimeout(t *testing.T) {
 	})
 
 	result, err := tool.Execute(context.Background(), params)
-	// Should not return Go error — error is in result text
-	if err != nil {
-		t.Fatalf("Execute returned Go error: %v", err)
-	}
-	if !strings.Contains(result.Text,"Error:") {
-		t.Errorf("expected error in result, got %q", result.Text)
-	}
+	requireNoError(t, err)
+	requireContains(t, result.Text, "Error:")
 }
 
 func TestExecFailedCommand(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "false",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute returned Go error: %v", err)
-	}
-	if !strings.Contains(result.Text,"Error:") {
-		t.Errorf("expected error in result, got %q", result.Text)
-	}
+	tool := newTestExecTool()
+	result, err := runExec(t, tool, "false")
+	requireNoError(t, err)
+	requireContains(t, result.Text, "Error:")
 }
 
 func TestExecStderr(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo stderr_msg >&2",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(result.Text,"stderr_msg") {
-		t.Errorf("expected stderr in result, got %q", result.Text)
-	}
+	tool := newTestExecTool()
+	result, err := runExec(t, tool, "echo stderr_msg >&2")
+	requireNoError(t, err)
+	requireContains(t, result.Text, "stderr_msg")
 }
 
 func TestExecInvalidParams(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
+	tool := newTestExecTool()
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
-	if err == nil {
-		t.Fatal("expected error for invalid params")
-	}
+	requireError(t, err, "")
 }
 
 func TestExecMultilineOutput(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "printf 'line1\nline2\nline3'",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	tool := newTestExecTool()
+	result, err := runExec(t, tool, "printf 'line1\nline2\nline3'")
+	requireNoError(t, err)
 
 	lines := strings.Split(strings.TrimSpace(result.Text), "\n")
 	if len(lines) != 3 {
@@ -144,7 +101,7 @@ func TestExecMultilineOutput(t *testing.T) {
 }
 
 func TestExecBackgroundMode(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
+	tool := newTestExecTool()
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"command":    "echo bg",
@@ -152,12 +109,8 @@ func TestExecBackgroundMode(t *testing.T) {
 	})
 
 	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(result.Text,"bg") {
-		t.Errorf("result = %q, want 'bg'", result.Text)
-	}
+	requireNoError(t, err)
+	requireContains(t, result.Text, "bg")
 }
 
 func TestExecSecretTemplatesBlocked(t *testing.T) {
@@ -189,56 +142,27 @@ token = "secret-value-12345"
 
 func TestExecSecretTemplatesBlockedNoStore(t *testing.T) {
 	// Even without a store, regular secret templates should be rejected
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "curl -H 'Authorization: {{secret:api.key}}' https://example.com",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for secret template in exec without store")
-	}
-	if !strings.Contains(err.Error(), "not allowed in exec") {
-		t.Errorf("error = %q", err.Error())
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, "curl -H 'Authorization: {{secret:api.key}}' https://example.com")
+	requireError(t, err, "not allowed in exec")
 }
 
 func TestExecBitwardenSecretsAllowed(t *testing.T) {
 	// Bitwarden refs (bw.*) should NOT be blocked — they're approval-gated
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo '{{secret:bw.aaaa-1111}}'",
-	})
-
+	tool := newTestExecTool()
 	// Without a bwStore, the template passes through unresolved (not blocked)
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("bitwarden refs should not be blocked in exec: %v", err)
-	}
+	result, err := runExec(t, tool, "echo '{{secret:bw.aaaa-1111}}'")
+	requireNoError(t, err)
 	// With nil bwStore, template passes through literally
-	if !strings.Contains(result.Text,"{{secret:bw.aaaa-1111}}") {
-		t.Errorf("result = %q, want template passed through", result.Text)
-	}
+	requireContains(t, result.Text, "{{secret:bw.aaaa-1111}}")
 }
 
 func TestExecMixedSecretsBlocked(t *testing.T) {
 	// A mix of regular and bitwarden refs should still be blocked
 	// (because regular refs are present)
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "curl -H '{{secret:api.key}}' -H '{{secret:bw.aaaa}}' https://example.com",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error when regular secret refs are mixed with bitwarden refs")
-	}
-	if !strings.Contains(err.Error(), "not allowed in exec") {
-		t.Errorf("error = %q", err.Error())
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, "curl -H '{{secret:api.key}}' -H '{{secret:bw.aaaa}}' https://example.com")
+	requireError(t, err, "not allowed in exec")
 }
 
 func TestExecBlockedPath(t *testing.T) {
@@ -306,19 +230,9 @@ func TestExecOutputSpill(t *testing.T) {
 
 func TestExecNilStoreWithTemplate(t *testing.T) {
 	// Even with nil store, secret templates should be blocked
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo '{{secret:test.key}}'",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for secret template in exec with nil store")
-	}
-	if !strings.Contains(err.Error(), "not allowed in exec") {
-		t.Errorf("error = %q", err.Error())
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, "echo '{{secret:test.key}}'")
+	requireError(t, err, "not allowed in exec")
 }
 
 func TestExecAutoBackgroundFastCommand(t *testing.T) {
@@ -418,90 +332,44 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 
 func TestExecSecretInHTTPRequestAllowed(t *testing.T) {
 	// Secret refs inside foci_http_request should be allowed (passed as literals)
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": `foci_http_request --header "Authorization: Bearer {{secret:coolify.api_token}}" "https://example.com/api" | jq '.name'`,
-	})
-
-	// Should not error — the secret ref is in foci_http_request scope
-	_, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("secret ref in foci_http_request should be allowed: %v", err)
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, `foci_http_request --header "Authorization: Bearer {{secret:coolify.api_token}}" "https://example.com/api" | jq '.name'`)
+	requireNoError(t, err)
 }
 
 func TestExecSecretInHTTPRequestMultipleArgs(t *testing.T) {
 	// Multiple secret refs, all inside foci_http_request
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": `foci_http_request --header "Authorization: {{secret:api.token}}" --header "X-Key: {{secret:api.key}}" "https://example.com"`,
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("multiple secret refs in foci_http_request should be allowed: %v", err)
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, `foci_http_request --header "Authorization: {{secret:api.token}}" --header "X-Key: {{secret:api.key}}" "https://example.com"`)
+	requireNoError(t, err)
 }
 
 func TestExecSecretOutsideHTTPRequestBlocked(t *testing.T) {
 	// Secret ref after a pipe (outside foci_http_request scope) should be blocked
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": `foci_http_request --header "Authorization: {{secret:api.token}}" "https://example.com" | echo {{secret:api.key}}`,
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error when secret ref is outside foci_http_request scope")
-	}
-	if !strings.Contains(err.Error(), "not allowed in exec") {
-		t.Errorf("error = %q", err.Error())
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, `foci_http_request --header "Authorization: {{secret:api.token}}" "https://example.com" | echo {{secret:api.key}}`)
+	requireError(t, err, "not allowed in exec")
 }
 
 func TestExecSecretInHTTPRequestAndBareBlocked(t *testing.T) {
 	// One secret in foci_http_request, another in a separate command — should block
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": `foci_http_request --header "{{secret:api.token}}" url && curl -H "{{secret:api.key}}" url2`,
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error when secret ref appears in non-http_request segment")
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, `foci_http_request --header "{{secret:api.token}}" url && curl -H "{{secret:api.key}}" url2`)
+	requireError(t, err, "")
 }
 
 func TestExecSecretInHTTPRequestWithSemicolon(t *testing.T) {
 	// Secret ref after semicolon is a new command — should block
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": `foci_http_request url; echo {{secret:leak.me}}`,
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error when secret ref is after semicolon")
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, `foci_http_request url; echo {{secret:leak.me}}`)
+	requireError(t, err, "")
 }
 
 func TestExecBareSecretStillBlocked(t *testing.T) {
 	// No foci_http_request at all — secret refs should be blocked as before
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": `curl -H "Authorization: {{secret:api.token}}" https://example.com`,
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for bare secret ref without foci_http_request")
-	}
+	tool := newTestExecTool()
+	_, err := runExec(t, tool, `curl -H "Authorization: {{secret:api.token}}" https://example.com`)
+	requireError(t, err, "")
 }
 
 func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
@@ -573,205 +441,79 @@ func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
 }
 
 func TestExecOutputModeSeparated(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
+	tests := []struct {
+		name       string
+		cmd        string
+		wantStdout string
+		wantStderr string
+		wantExit   int
+	}{
+		{"both", "echo out && echo err >&2", "out", "err", 0},
+		{"stdout only", "echo hello", "hello", "", 0},
+		{"stderr only", "echo err >&2", "", "err", 0},
+		{"failure", "echo before-fail; exit 42", "before-fail", "", 42},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := newTestExecTool()
+			params, _ := json.Marshal(map[string]interface{}{
+				"command":     tt.cmd,
+				"output_mode": "separated",
+			})
+			result, err := tool.Execute(context.Background(), params)
+			requireNoError(t, err)
 
-	params, _ := json.Marshal(map[string]interface{}{
-		"command":     "echo out && echo err >&2",
-		"output_mode": "separated",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	var out separatedOutput
-	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
-		t.Fatalf("unmarshal: %v (raw: %q)", err, result.Text)
-	}
-	if strings.TrimSpace(out.Stdout) != "out" {
-		t.Errorf("stdout = %q, want %q", out.Stdout, "out\n")
-	}
-	if strings.TrimSpace(out.Stderr) != "err" {
-		t.Errorf("stderr = %q, want %q", out.Stderr, "err\n")
-	}
-	if out.ExitCode != 0 {
-		t.Errorf("exit_code = %d, want 0", out.ExitCode)
-	}
-}
-
-func TestExecOutputModeSeparatedStdoutOnly(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command":     "echo hello",
-		"output_mode": "separated",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	var out separatedOutput
-	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if strings.TrimSpace(out.Stdout) != "hello" {
-		t.Errorf("stdout = %q", out.Stdout)
-	}
-	if out.Stderr != "" {
-		t.Errorf("stderr = %q, want empty", out.Stderr)
-	}
-	if out.ExitCode != 0 {
-		t.Errorf("exit_code = %d", out.ExitCode)
-	}
-}
-
-func TestExecOutputModeSeparatedStderrOnly(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command":     "echo err >&2",
-		"output_mode": "separated",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	var out separatedOutput
-	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if out.Stdout != "" {
-		t.Errorf("stdout = %q, want empty", out.Stdout)
-	}
-	if strings.TrimSpace(out.Stderr) != "err" {
-		t.Errorf("stderr = %q", out.Stderr)
-	}
-}
-
-func TestExecOutputModeSeparatedFailure(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command":     "echo before-fail; exit 42",
-		"output_mode": "separated",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	var out separatedOutput
-	if err := json.Unmarshal([]byte(result.Text),&out); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if strings.TrimSpace(out.Stdout) != "before-fail" {
-		t.Errorf("stdout = %q", out.Stdout)
-	}
-	if out.ExitCode != 42 {
-		t.Errorf("exit_code = %d, want 42", out.ExitCode)
+			var out separatedOutput
+			if err := json.Unmarshal([]byte(result.Text), &out); err != nil {
+				t.Fatalf("unmarshal: %v (raw: %q)", err, result.Text)
+			}
+			if strings.TrimSpace(out.Stdout) != tt.wantStdout {
+				t.Errorf("stdout = %q, want %q", out.Stdout, tt.wantStdout)
+			}
+			if strings.TrimSpace(out.Stderr) != tt.wantStderr {
+				t.Errorf("stderr = %q, want %q", out.Stderr, tt.wantStderr)
+			}
+			if out.ExitCode != tt.wantExit {
+				t.Errorf("exit_code = %d, want %d", out.ExitCode, tt.wantExit)
+			}
+		})
 	}
 }
 
 func TestExecOutputModeCombinedDefault(t *testing.T) {
 	// Omitting output_mode should behave exactly like the original combined mode
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo out && echo err >&2",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	tool := newTestExecTool()
+	result, err := runExec(t, tool, "echo out && echo err >&2")
+	requireNoError(t, err)
 	// Combined mode returns raw text, not JSON
-	if !strings.Contains(result.Text,"out") {
-		t.Errorf("result should contain stdout, got %q", result.Text)
-	}
-	if !strings.Contains(result.Text,"err") {
-		t.Errorf("result should contain stderr, got %q", result.Text)
-	}
+	requireContains(t, result.Text, "out")
+	requireContains(t, result.Text, "err")
 	// Should NOT be valid separatedOutput JSON
 	var out separatedOutput
-	if json.Unmarshal([]byte(result.Text),&out) == nil && out.Stdout != "" {
+	if json.Unmarshal([]byte(result.Text), &out) == nil && out.Stdout != "" {
 		t.Error("combined mode should not return separated JSON")
 	}
 }
 
 func TestExecSleepBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "sleep 5",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for sleep command")
+	tests := []struct {
+		name string
+		cmd  string
+	}{
+		{"bare sleep", "sleep 5"},
+		{"with time unit", "sleep 30s"},
+		{"case insensitive", "SLEEP 10"},
+		{"leading whitespace", "  sleep 5"},
+		{"chained command", "sleep 5 && do_thing"},
 	}
-	if !strings.Contains(err.Error(), "remind") {
-		t.Errorf("error should mention remind, got: %v", err)
-	}
-}
-
-func TestExecSleepWithTimeUnitBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "sleep 30s",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for sleep 30s command")
-	}
-	if !strings.Contains(err.Error(), "remind") {
-		t.Errorf("error should mention remind, got: %v", err)
-	}
-}
-
-func TestExecSleepCaseInsensitive(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "SLEEP 10",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for SLEEP command")
-	}
-}
-
-func TestExecSleepWithLeadingWhitespaceBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "  sleep 5",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for '  sleep 5' command")
-	}
-}
-
-func TestExecSleepWithChainedCommandBlocked(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "sleep 5 && do_thing",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for 'sleep 5 && do_thing' command")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := newTestExecTool()
+			_, err := runExec(t, tool, tt.cmd)
+			if err == nil {
+				t.Fatalf("expected error for %q", tt.cmd)
+			}
+		})
 	}
 }
 
@@ -825,17 +567,8 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 }
 
 func TestExecSleepNotBlockedInMiddle(t *testing.T) {
-	tool := NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
-
-	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo 'going to sleep'",
-	})
-
-	result, err := tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(result.Text,"going to sleep") {
-		t.Errorf("expected 'going to sleep' in output, got: %q", result.Text)
-	}
+	tool := newTestExecTool()
+	result, err := runExec(t, tool, "echo 'going to sleep'")
+	requireNoError(t, err)
+	requireContains(t, result.Text, "going to sleep")
 }
