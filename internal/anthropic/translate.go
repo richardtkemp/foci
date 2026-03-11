@@ -28,20 +28,19 @@ func cacheControlWithTTL(ttl string) sdk.CacheControlEphemeralParam {
 }
 
 // buildSDKParams translates a provider.MessageRequest into SDK MessageNewParams.
+// Cache placement is handled entirely here — provider types carry no cache markers.
 func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
-	cacheTTL := req.CacheTTL
-
 	params := sdk.MessageNewParams{
 		Model:     sdk.Model(modelID),
 		MaxTokens: int64(req.MaxTokens),
-		Messages:  messagesToSDK(req.Messages, cacheTTL),
+		Messages:  messagesToSDK(req.Messages),
 	}
 
 	if len(req.System) > 0 {
-		params.System = systemToSDK(req.System, cacheTTL)
+		params.System = systemToSDK(req.System)
 	}
 
 	if len(req.Tools) > 0 {
@@ -69,8 +68,9 @@ func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 		}
 	}
 
-	if req.CacheControl != nil {
-		params.CacheControl = cacheControlWithTTL(cacheTTL)
+	// Apply cache markers after clean translation
+	if req.CacheStrategy != "" {
+		applyCacheMarkers(&params, req.CacheStrategy, req.CacheTTL)
 	}
 
 	return params
@@ -81,16 +81,14 @@ func buildSDKCountParams(req *MessageRequest) sdk.MessageCountTokensParams {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
-	cacheTTL := req.CacheTTL
-
 	params := sdk.MessageCountTokensParams{
 		Model:    sdk.Model(modelID),
-		Messages: messagesToSDK(req.Messages, cacheTTL),
+		Messages: messagesToSDK(req.Messages),
 	}
 
 	if len(req.System) > 0 {
 		params.System = sdk.MessageCountTokensParamsSystemUnion{
-			OfTextBlockArray: systemToSDK(req.System, cacheTTL),
+			OfTextBlockArray: systemToSDK(req.System),
 		}
 	}
 
@@ -241,44 +239,36 @@ func classifySDKError(err error) error {
 }
 
 // messagesToSDK translates provider messages to SDK message params.
-func messagesToSDK(msgs []Message, cacheTTL string) []sdk.MessageParam {
+func messagesToSDK(msgs []Message) []sdk.MessageParam {
 	result := make([]sdk.MessageParam, 0, len(msgs))
 	for _, msg := range msgs {
 		result = append(result, sdk.MessageParam{
 			Role:    sdk.MessageParamRole(msg.Role),
-			Content: contentBlocksToSDK(msg.Content, cacheTTL),
+			Content: contentBlocksToSDK(msg.Content),
 		})
 	}
 	return result
 }
 
 // contentBlocksToSDK translates provider content blocks to SDK content block params.
-func contentBlocksToSDK(blocks []ContentBlock, cacheTTL string) []sdk.ContentBlockParamUnion {
+func contentBlocksToSDK(blocks []ContentBlock) []sdk.ContentBlockParamUnion {
 	result := make([]sdk.ContentBlockParamUnion, 0, len(blocks))
 	for _, b := range blocks {
-		result = append(result, contentBlockToSDK(b, cacheTTL))
+		result = append(result, contentBlockToSDK(b))
 	}
 	return result
 }
 
 // contentBlockToSDK translates a single provider content block to SDK param.
-// cacheTTL is applied to any block with cache_control set.
-func contentBlockToSDK(b ContentBlock, cacheTTL string) sdk.ContentBlockParamUnion {
+// No cache markers — those are applied by applyCacheMarkers after translation.
+func contentBlockToSDK(b ContentBlock) sdk.ContentBlockParamUnion {
 	switch b.Type {
 	case "text":
-		block := sdk.NewTextBlock(b.Text)
-		if b.CacheControl != nil {
-			block.OfText.CacheControl = cacheControlWithTTL(cacheTTL)
-		}
-		return block
+		return sdk.NewTextBlock(b.Text)
 
 	case "image":
 		if b.Source != nil {
-			block := sdk.NewImageBlockBase64(b.Source.MimeType, b.Source.Data)
-			if b.CacheControl != nil {
-				block.OfImage.CacheControl = cacheControlWithTTL(cacheTTL)
-			}
-			return block
+			return sdk.NewImageBlockBase64(b.Source.MimeType, b.Source.Data)
 		}
 
 	case "document":
@@ -293,11 +283,7 @@ func contentBlockToSDK(b ContentBlock, cacheTTL string) sdk.ContentBlockParamUni
 		return sdk.NewToolUseBlock(b.ID, json.RawMessage(b.Input), b.Name)
 
 	case "tool_result":
-		block := sdk.NewToolResultBlock(b.ToolUseID, b.Content, b.IsError)
-		if b.CacheControl != nil {
-			block.OfToolResult.CacheControl = cacheControlWithTTL(cacheTTL)
-		}
-		return block
+		return sdk.NewToolResultBlock(b.ToolUseID, b.Content, b.IsError)
 
 	case "thinking":
 		return sdk.NewThinkingBlock(b.Signature, b.Thinking)
@@ -316,20 +302,58 @@ func contentBlockToSDK(b ContentBlock, cacheTTL string) sdk.ContentBlockParamUni
 	return sdk.NewTextBlock(fmt.Sprintf("[unsupported block type: %s]", b.Type))
 }
 
+// applyCacheMarkers sets cache_control markers on SDK params based on the strategy.
+// Called after clean translation of all blocks.
+//
+// Both strategies mark the last system block (stable prefix).
+// "auto": sets top-level params.CacheControl (Anthropic auto-caches the longest prefix).
+// "explicit": marks the last content block of the second-to-last message.
+func applyCacheMarkers(params *sdk.MessageNewParams, strategy, ttl string) {
+	cc := cacheControlWithTTL(ttl)
+
+	// Always mark last system block
+	if len(params.System) > 0 {
+		params.System[len(params.System)-1].CacheControl = cc
+	}
+
+	switch strategy {
+	case "auto":
+		params.CacheControl = cc
+	case "explicit":
+		// Mark last content block of second-to-last message
+		if len(params.Messages) >= 2 {
+			msg := &params.Messages[len(params.Messages)-2]
+			if len(msg.Content) > 0 {
+				setBlockCacheControl(&msg.Content[len(msg.Content)-1], cc)
+			}
+		}
+	}
+}
+
+// setBlockCacheControl sets cache_control on an SDK content block param,
+// switching on the variant type (text, image, tool_result).
+func setBlockCacheControl(block *sdk.ContentBlockParamUnion, cc sdk.CacheControlEphemeralParam) {
+	switch {
+	case block.OfText != nil:
+		block.OfText.CacheControl = cc
+	case block.OfImage != nil:
+		block.OfImage.CacheControl = cc
+	case block.OfToolResult != nil:
+		block.OfToolResult.CacheControl = cc
+	}
+}
+
 // rawToSDKContentBlock wraps raw JSON as an SDK content block param via Override.
 func rawToSDKContentBlock(raw json.RawMessage) sdk.ContentBlockParamUnion {
 	return param.Override[sdk.ContentBlockParamUnion](json.RawMessage(raw))
 }
 
 // systemToSDK translates provider system blocks to SDK text block params.
-func systemToSDK(blocks []SystemBlock, cacheTTL string) []sdk.TextBlockParam {
+// No cache markers — those are applied by applyCacheMarkers after translation.
+func systemToSDK(blocks []SystemBlock) []sdk.TextBlockParam {
 	result := make([]sdk.TextBlockParam, 0, len(blocks))
 	for _, b := range blocks {
-		tb := sdk.TextBlockParam{Text: b.Text}
-		if b.CacheControl != nil {
-			tb.CacheControl = cacheControlWithTTL(cacheTTL)
-		}
-		result = append(result, tb)
+		result = append(result, sdk.TextBlockParam{Text: b.Text})
 	}
 	return result
 }

@@ -20,11 +20,6 @@ type ModelInfo struct {
 	CreatedAt time.Time
 }
 
-// CacheControl marks a content block for prompt caching.
-type CacheControl struct {
-	Type string `json:"type"`
-}
-
 // ContentSource holds base64-encoded data for image and document content blocks.
 type ContentSource struct {
 	Type      string `json:"type"`       // "base64"
@@ -51,7 +46,6 @@ type ContentBlock struct {
 	Signature    string          `json:"signature,omitempty"` // thinking: encrypted verification signature (must be preserved)
 	Data         string          `json:"data,omitempty"`      // redacted_thinking: encrypted thinking data
 	Source       *ContentSource  `json:"source,omitempty"`    // image/document: base64 source
-	CacheControl *CacheControl   `json:"cache_control,omitempty"`
 	ID           string          `json:"id,omitempty"`        // tool_use / server_tool_use: block ID
 	Name         string          `json:"name,omitempty"`      // tool_use / server_tool_use: tool name
 	Input        json.RawMessage `json:"input,omitempty"`     // tool_use / server_tool_use: parameters
@@ -211,9 +205,8 @@ type ThinkingConfig struct {
 
 // SystemBlock is a block of content in the system prompt.
 type SystemBlock struct {
-	Type         string        `json:"type"`
-	Text         string        `json:"text"`
-	CacheControl *CacheControl `json:"cache_control,omitempty"`
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 // Message is a single message in a conversation.
@@ -224,15 +217,15 @@ type Message struct {
 
 // MessageRequest is the request body for an LLM API call.
 type MessageRequest struct {
-	Model        string         `json:"model"`
-	MaxTokens    int            `json:"max_tokens"`
-	CacheControl *CacheControl  `json:"cache_control,omitempty"` // top-level automatic caching (Anthropic)
-	System       []SystemBlock  `json:"system,omitempty"`
-	Messages     []Message      `json:"messages"`
-	Tools        []ToolDef      `json:"tools,omitempty"`
-	Output       *OutputConfig  `json:"output_config,omitempty"`
-	Thinking     *ThinkingConfig `json:"thinking,omitempty"`
-	CacheTTL     string         `json:"cache_ttl,omitempty"` // Anthropic prompt cache TTL: "5m" or "1h" (read by Anthropic translate layer)
+	Model         string          `json:"model"`
+	MaxTokens     int             `json:"max_tokens"`
+	System        []SystemBlock   `json:"system,omitempty"`
+	Messages      []Message       `json:"messages"`
+	Tools         []ToolDef       `json:"tools,omitempty"`
+	Output        *OutputConfig   `json:"output_config,omitempty"`
+	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+	CacheStrategy string          `json:"cache_strategy,omitempty"` // "auto" or "explicit" (read by Anthropic translate layer)
+	CacheTTL      string          `json:"cache_ttl,omitempty"`      // Anthropic prompt cache TTL: "5m" or "1h" (read by Anthropic translate layer)
 }
 
 // Usage contains token usage information from a response.
@@ -254,19 +247,9 @@ type MessageResponse struct {
 	StopReason string         `json:"stop_reason"`
 }
 
-// Ephemeral returns a CacheControl with type "ephemeral".
-func Ephemeral() *CacheControl {
-	return &CacheControl{Type: "ephemeral"}
-}
-
 // TextContent creates a single text content block.
 func TextContent(text string) []ContentBlock {
 	return []ContentBlock{{Type: "text", Text: text}}
-}
-
-// CachedTextContent creates a single text content block with cache control.
-func CachedTextContent(text string) []ContentBlock {
-	return []ContentBlock{{Type: "text", Text: text, CacheControl: Ephemeral()}}
 }
 
 // mediaContentBlock creates a media content block (image/document) from base64-encoded data.

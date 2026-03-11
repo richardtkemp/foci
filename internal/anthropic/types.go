@@ -7,7 +7,6 @@ import "foci/internal/provider"
 // Type aliases — these allow anthropic/ internal code (client.go, tests)
 // to use unqualified names while the canonical definitions live in provider/.
 type (
-	CacheControl   = provider.CacheControl
 	ContentSource  = provider.ContentSource
 	ContentBlock   = provider.ContentBlock
 	ToolDef        = provider.ToolDef
@@ -27,13 +26,11 @@ type (
 
 // Re-export constructors and helpers so anthropic-internal code compiles unchanged.
 var (
-	Ephemeral        = provider.Ephemeral
-	TextContent      = provider.TextContent
-	CachedTextContent = provider.CachedTextContent
-	ImageBlock       = provider.ImageBlock
-	DocumentBlock    = provider.DocumentBlock
-	ToolResultBlock  = provider.ToolResultBlock
-	TextOf           = provider.TextOf
-	NewCustomTool    = provider.NewCustomTool
-	NewServerTool    = provider.NewServerTool
+	TextContent   = provider.TextContent
+	ImageBlock    = provider.ImageBlock
+	DocumentBlock = provider.DocumentBlock
+	ToolResultBlock = provider.ToolResultBlock
+	TextOf        = provider.TextOf
+	NewCustomTool = provider.NewCustomTool
+	NewServerTool = provider.NewServerTool
 )

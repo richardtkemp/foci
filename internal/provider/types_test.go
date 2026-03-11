@@ -56,26 +56,6 @@ func TestNewCustomToolName(t *testing.T) {
 	}
 }
 
-func TestEphemeral(t *testing.T) {
-	cc := Ephemeral()
-	if cc == nil || cc.Type != "ephemeral" {
-		t.Errorf("Ephemeral() = %v, want {Type: 'ephemeral'}", cc)
-	}
-}
-
-func TestCachedTextContent(t *testing.T) {
-	blocks := CachedTextContent("hello")
-	if len(blocks) != 1 {
-		t.Errorf("CachedTextContent returned %d blocks, want 1", len(blocks))
-	}
-	if blocks[0].Type != "text" || blocks[0].Text != "hello" {
-		t.Errorf("CachedTextContent = %+v", blocks[0])
-	}
-	if blocks[0].CacheControl == nil || blocks[0].CacheControl.Type != "ephemeral" {
-		t.Errorf("CachedTextContent cache control = %+v", blocks[0].CacheControl)
-	}
-}
-
 func TestImageBlock(t *testing.T) {
 	block := ImageBlock("image/jpeg", "base64data")
 	if block.Type != "image" {
@@ -412,17 +392,6 @@ func TestContentBlockUnmarshalJSON_ToolUseBlock(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if cb.Type != "tool_use" || cb.ID != "tu_abc" || cb.Name != "exec" {
-		t.Errorf("decoded = %+v", cb)
-	}
-}
-
-func TestContentBlockUnmarshalJSON_CacheControl(t *testing.T) {
-	data := []byte(`{"type":"text","text":"cached","cache_control":{"type":"ephemeral"}}`)
-	var cb ContentBlock
-	if err := json.Unmarshal(data, &cb); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if cb.Type != "text" || cb.CacheControl == nil || cb.CacheControl.Type != "ephemeral" {
 		t.Errorf("decoded = %+v", cb)
 	}
 }

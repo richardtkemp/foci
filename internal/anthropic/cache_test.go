@@ -35,18 +35,17 @@ func TestCacheSharing(t *testing.T) {
 	}
 
 	system := []anthropic.SystemBlock{{
-		Type:         "text",
-		Text:         sb.String(),
-		CacheControl: anthropic.Ephemeral(),
+		Type: "text",
+		Text: sb.String(),
 	}}
 
 	// Shared prefix: pre-built conversation that parent and branch both share.
-	// cache_control on the last message marks the cache breakpoint.
+	// The translate layer applies cache breakpoints automatically via CacheStrategy.
 	prefix := []anthropic.Message{
 		{Role: "user", Content: anthropic.TextContent("Tell me about the Go programming language and its key features.")},
 		{Role: "assistant", Content: anthropic.TextContent("Go is a statically typed, compiled programming language designed at Google by Robert Griesemer, Rob Pike, and Ken Thompson. Key features include simplicity, fast compilation, built-in concurrency with goroutines and channels, garbage collection, and a comprehensive standard library. Go emphasizes readability and maintainability, with a deliberately small language specification.")},
 		{Role: "user", Content: anthropic.TextContent("How do goroutines work compared to OS threads?")},
-		{Role: "assistant", Content: anthropic.CachedTextContent("Goroutines are lightweight threads managed by the Go runtime rather than the operating system. They start with a small stack of a few kilobytes that grows and shrinks as needed, unlike OS threads which typically allocate one to eight megabytes of fixed stack space. This means you can easily run thousands or even millions of goroutines in a single program. The Go scheduler uses an M:N model, multiplexing many goroutines onto a smaller number of OS threads. Goroutines communicate through channels, following the communicating sequential processes model, which makes concurrent programming safer and more structured than shared-memory approaches with explicit locks.")},
+		{Role: "assistant", Content: anthropic.TextContent("Goroutines are lightweight threads managed by the Go runtime rather than the operating system. They start with a small stack of a few kilobytes that grows and shrinks as needed, unlike OS threads which typically allocate one to eight megabytes of fixed stack space. This means you can easily run thousands or even millions of goroutines in a single program. The Go scheduler uses an M:N model, multiplexing many goroutines onto a smaller number of OS threads. Goroutines communicate through channels, following the communicating sequential processes model, which makes concurrent programming safer and more structured than shared-memory approaches with explicit locks.")},
 	}
 
 	model := "claude-haiku-4-5"
@@ -55,10 +54,11 @@ func TestCacheSharing(t *testing.T) {
 	// --- Step 1: First parent request (expect cache WRITE) ---
 	t.Log("=== Step 1: First parent request (expect cache WRITE) ===")
 	resp1, err := client.SendMessage(ctx, &anthropic.MessageRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		System:    system,
-		Messages: withNewUserMessage(prefix, "How does error handling work in Go?"),
+		Model:         model,
+		MaxTokens:     maxTokens,
+		System:        system,
+		Messages:      withNewUserMessage(prefix, "How does error handling work in Go?"),
+		CacheStrategy: "explicit",
 	})
 	if err != nil {
 		t.Fatalf("Step 1 failed: %v", err)
@@ -79,10 +79,11 @@ func TestCacheSharing(t *testing.T) {
 		anthropic.Message{Role: "user", Content: anthropic.TextContent("Tell me about Go interfaces.")},
 	)
 	resp2, err := client.SendMessage(ctx, &anthropic.MessageRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		System:    system,
-		Messages:  parentMsgs,
+		Model:         model,
+		MaxTokens:     maxTokens,
+		System:        system,
+		Messages:      parentMsgs,
+		CacheStrategy: "explicit",
 	})
 	if err != nil {
 		t.Fatalf("Step 2 failed: %v", err)
@@ -97,10 +98,11 @@ func TestCacheSharing(t *testing.T) {
 	// prefix messages as the parent, but diverges with a different question.
 	t.Log("=== Step 3: BRANCH request (expect cache READ on shared prefix) ===")
 	resp3, err := client.SendMessage(ctx, &anthropic.MessageRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		System:    system,
-		Messages: withNewUserMessage(prefix, "What is the Go module system and how does dependency management work?"),
+		Model:         model,
+		MaxTokens:     maxTokens,
+		System:        system,
+		Messages:      withNewUserMessage(prefix, "What is the Go module system and how does dependency management work?"),
+		CacheStrategy: "explicit",
 	})
 	if err != nil {
 		t.Fatalf("Step 3 failed: %v", err)
@@ -121,10 +123,11 @@ func TestCacheSharing(t *testing.T) {
 		anthropic.Message{Role: "user", Content: anthropic.TextContent("What about Go's type system and generics?")},
 	)
 	resp4, err := client.SendMessage(ctx, &anthropic.MessageRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		System:    system,
-		Messages:  parentMsgs2,
+		Model:         model,
+		MaxTokens:     maxTokens,
+		System:        system,
+		Messages:      parentMsgs2,
+		CacheStrategy: "explicit",
 	})
 	if err != nil {
 		t.Fatalf("Step 4 failed: %v", err)
