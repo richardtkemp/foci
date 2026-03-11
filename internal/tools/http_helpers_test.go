@@ -7,6 +7,7 @@ import (
 
 // TestIsBinaryContentType verifies binary vs text content type detection
 func TestIsBinaryContentType(t *testing.T) {
+	t.Parallel()
 	binary := []string{
 		"image/png", "image/jpeg", "audio/mpeg", "video/mp4",
 		"application/octet-stream", "application/pdf", "application/zip",
@@ -32,6 +33,7 @@ func TestIsBinaryContentType(t *testing.T) {
 
 // TestExtractJSONPath verifies JSON path extraction from response bodies
 func TestExtractJSONPath(t *testing.T) {
+	t.Parallel()
 	data := []byte(`{"data":[{"url":"hello"},{"url":"world"}],"name":"test"}`)
 
 	tests := []struct {
@@ -67,6 +69,7 @@ func TestExtractJSONPath(t *testing.T) {
 // TestDecodeDataURI verifies data URI decoding for embedded data
 func TestDecodeDataURI(t *testing.T) {
 	// Valid base64 data URI
+	t.Parallel()
 	raw := []byte{0x89, 0x50, 0x4e, 0x47}
 	b64 := base64.StdEncoding.EncodeToString(raw)
 	decoded, err := decodeDataURI("data:image/png;base64," + b64)

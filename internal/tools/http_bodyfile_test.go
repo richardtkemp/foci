@@ -16,6 +16,7 @@ import (
 
 // TestHTTPRequestBodyFile verifies request body can be loaded from file
 func TestHTTPRequestBodyFile(t *testing.T) {
+	t.Parallel()
 	var receivedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
@@ -49,6 +50,7 @@ func TestHTTPRequestBodyFile(t *testing.T) {
 
 // TestHTTPRequestBodyFileWithSecrets verifies secrets in body_file are resolved
 func TestHTTPRequestBodyFileWithSecrets(t *testing.T) {
+	t.Parallel()
 	var receivedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
@@ -87,6 +89,7 @@ allowed_hosts = ["%s"]
 
 // TestHTTPRequestBodyFileNotFound verifies missing body_file is rejected
 func TestHTTPRequestBodyFileNotFound(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
@@ -105,6 +108,7 @@ func TestHTTPRequestBodyFileNotFound(t *testing.T) {
 
 // TestHTTPRequestBodyFileMutualExclusionWithBody verifies body + body_file is rejected
 func TestHTTPRequestBodyFileMutualExclusionWithBody(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
@@ -124,6 +128,7 @@ func TestHTTPRequestBodyFileMutualExclusionWithBody(t *testing.T) {
 
 // TestHTTPRequestBodyFileMutualExclusionWithFiles verifies body_file + files is rejected
 func TestHTTPRequestBodyFileMutualExclusionWithFiles(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",
@@ -145,6 +150,7 @@ func TestHTTPRequestBodyFileMutualExclusionWithFiles(t *testing.T) {
 
 // TestHTTPRequestBodyFileIsDirectory verifies directories are rejected as body_file
 func TestHTTPRequestBodyFileIsDirectory(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":       "http://example.com",

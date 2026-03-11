@@ -7,6 +7,7 @@ import (
 )
 
 func TestRegistryRegisterAndGet(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 
 	tool := &Tool{
@@ -30,6 +31,7 @@ func TestRegistryRegisterAndGet(t *testing.T) {
 }
 
 func TestRegistryGetMissing(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	if got := r.Get("nonexistent"); got != nil {
 		t.Errorf("Get(nonexistent) = %v, want nil", got)
@@ -37,6 +39,7 @@ func TestRegistryGetMissing(t *testing.T) {
 }
 
 func TestRegistryAll(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{Name: "a"})
 	r.Register(&Tool{Name: "b"})
@@ -59,6 +62,7 @@ func TestRegistryAll(t *testing.T) {
 }
 
 func TestRegistryToolDefs(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
 		Name:        "shell",
@@ -90,6 +94,7 @@ func TestRegistryToolDefs(t *testing.T) {
 }
 
 func TestRegistryOverwrite(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{Name: "x", Description: "first"})
 	r.Register(&Tool{Name: "x", Description: "second"})

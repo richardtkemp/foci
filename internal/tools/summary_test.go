@@ -15,6 +15,7 @@ import (
 )
 
 func TestSummaryTool_MissingParams(t *testing.T) {
+	t.Parallel()
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", nil)
 
@@ -43,6 +44,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 }
 
 func TestSummaryTool_FileNotFound(t *testing.T) {
+	t.Parallel()
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", nil)
 
@@ -61,6 +63,7 @@ func TestSummaryTool_FileNotFound(t *testing.T) {
 }
 
 func TestSummaryTool_EmptyFile(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "empty.txt")
 	os.WriteFile(tmp, []byte{}, 0644)
 
@@ -82,6 +85,7 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 }
 
 func TestSummaryTool_BinaryFile(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "binary.dat")
 	data := []byte("some text\x00more binary data")
 	os.WriteFile(tmp, data, 0644)
@@ -104,6 +108,7 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 }
 
 func TestSummaryTool_Success(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "test.go")
 	fileContent := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
 	os.WriteFile(tmp, []byte(fileContent), 0644)
@@ -171,6 +176,7 @@ func TestSummaryTool_Success(t *testing.T) {
 }
 
 func TestSummaryTool_ModelAlias(t *testing.T) {
+	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "test.txt")
 	os.WriteFile(tmp, []byte("hello"), 0644)
 

@@ -57,6 +57,7 @@ func parseMultipartRequest(t *testing.T, r *http.Request) (fields map[string]str
 
 // TestHTTPRequestMultipartSingleFile verifies single file upload
 func TestHTTPRequestMultipartSingleFile(t *testing.T) {
+	t.Parallel()
 	var receivedFields map[string]string
 	var receivedFiles map[string]struct {
 		Filename string
@@ -105,6 +106,7 @@ func TestHTTPRequestMultipartSingleFile(t *testing.T) {
 
 // TestHTTPRequestMultipartFileAndFormFields verifies file upload with form fields
 func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
+	t.Parallel()
 	var receivedFields map[string]string
 	var receivedFiles map[string]struct {
 		Filename string
@@ -152,6 +154,7 @@ func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
 
 // TestHTTPRequestMultipartMultipleFiles verifies multiple file upload
 func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
+	t.Parallel()
 	var receivedFiles map[string]struct {
 		Filename string
 		Content  []byte
@@ -195,6 +198,7 @@ func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
 
 // TestHTTPRequestMultipartBodyAndFilesConflict verifies body + files is rejected
 func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 
 	// body + files
@@ -217,6 +221,7 @@ func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
 
 // TestHTTPRequestMultipartFileMissing verifies missing files are rejected
 func TestHTTPRequestMultipartFileMissing(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
@@ -238,6 +243,7 @@ func TestHTTPRequestMultipartFileMissing(t *testing.T) {
 // TestHTTPRequestMultipartFileTooLarge verifies oversized files are rejected
 func TestHTTPRequestMultipartFileTooLarge(t *testing.T) {
 	// Create a file that reports > 50MB via stat
+	t.Parallel()
 	// We can't easily make a real 50MB file in tests, so test the buildMultipartBody directly
 	dir := t.TempDir()
 	largePath := filepath.Join(dir, "large.bin")
@@ -270,6 +276,7 @@ func TestHTTPRequestMultipartFileTooLarge(t *testing.T) {
 
 // TestHTTPRequestMultipartFormFieldsSecrets verifies secrets in form fields are resolved
 func TestHTTPRequestMultipartFormFieldsSecrets(t *testing.T) {
+	t.Parallel()
 	var receivedFields map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedFields, _ = parseMultipartRequest(t, r)
@@ -314,6 +321,7 @@ allowed_hosts = ["%s"]
 
 // TestHTTPRequestMultipartFilenameOverride verifies custom filename in upload
 func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
+	t.Parallel()
 	var receivedFiles map[string]struct {
 		Filename string
 		Content  []byte
@@ -350,6 +358,7 @@ func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
 
 // TestHTTPRequestFormFieldsWithoutFiles verifies form_fields requires files
 func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
+	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":    "http://example.com",
@@ -371,6 +380,7 @@ func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
 // TestHTTPRequestMultipartCustomSizeLimit verifies file size limit enforcement
 func TestHTTPRequestMultipartCustomSizeLimit(t *testing.T) {
 	// Set a small custom limit (1KB) and verify it's enforced
+	t.Parallel()
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "small.bin")
 	os.WriteFile(filePath, make([]byte, 2*1024), 0644) // 2KB file
@@ -397,6 +407,7 @@ func TestHTTPRequestMultipartCustomSizeLimit(t *testing.T) {
 // TestHTTPRequestMultipartCustomSizeLimitAllows verifies larger size limit works
 func TestHTTPRequestMultipartCustomSizeLimitAllows(t *testing.T) {
 	// Set a 100MB limit — the file (2KB) should be accepted
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"ok":true}`)
 	}))

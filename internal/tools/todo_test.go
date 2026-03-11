@@ -12,6 +12,7 @@ import (
 )
 
 func TestTodoToolBatchTransitionDone(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -40,6 +41,7 @@ func TestTodoToolBatchTransitionDone(t *testing.T) {
 }
 
 func TestTodoToolBatchEdit(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -69,6 +71,7 @@ func TestTodoToolBatchEdit(t *testing.T) {
 }
 
 func TestTodoToolBatchRemove(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -95,6 +98,7 @@ func TestTodoToolBatchRemove(t *testing.T) {
 }
 
 func TestTodoToolBatchBothIdAndIds(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -114,6 +118,7 @@ func TestTodoToolBatchBothIdAndIds(t *testing.T) {
 }
 
 func TestTodoToolBatchPartialFailure(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -143,6 +148,7 @@ func TestTodoToolBatchPartialFailure(t *testing.T) {
 }
 
 func TestTodoToolSingleIdStillWorks(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -169,6 +175,7 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 }
 
 func TestTodoToolGet(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -197,6 +204,7 @@ func TestTodoToolGet(t *testing.T) {
 }
 
 func TestTodoToolGetCompleted(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -220,6 +228,7 @@ func TestTodoToolGetCompleted(t *testing.T) {
 }
 
 func TestTodoToolGetNotFound(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -234,6 +243,7 @@ func TestTodoToolGetNotFound(t *testing.T) {
 }
 
 func TestTodoToolGetMissingId(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -247,6 +257,7 @@ func TestTodoToolGetMissingId(t *testing.T) {
 }
 
 func TestTodoToolGetWrongAgent(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -263,6 +274,7 @@ func TestTodoToolGetWrongAgent(t *testing.T) {
 }
 
 func TestTodoToolTransitionDropped(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -289,6 +301,7 @@ func TestTodoToolTransitionDropped(t *testing.T) {
 }
 
 func TestTodoToolTransitionReopen(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -321,6 +334,7 @@ func TestTodoToolTransitionReopen(t *testing.T) {
 }
 
 func TestTodoToolTransitionAliases(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -345,6 +359,7 @@ func TestTodoToolTransitionAliases(t *testing.T) {
 }
 
 func TestTodoToolTransitionMissingReason(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -362,6 +377,7 @@ func TestTodoToolTransitionMissingReason(t *testing.T) {
 }
 
 func TestTodoToolCompleteBackCompat(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -384,6 +400,7 @@ func TestTodoToolCompleteBackCompat(t *testing.T) {
 }
 
 func TestTodoToolInProgressAliases(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -407,6 +424,7 @@ func TestTodoToolInProgressAliases(t *testing.T) {
 }
 
 func TestTodoToolInProgressMarker(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -427,6 +445,7 @@ func TestTodoToolInProgressMarker(t *testing.T) {
 }
 
 func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -444,6 +463,7 @@ func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
 }
 
 func TestTodoToolStatusFilterInProgress(t *testing.T) {
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
@@ -479,6 +499,7 @@ func executeTodoTool(tool *Tool, params map[string]interface{}) (string, error) 
 
 func TestTodoToolListWithSort(t *testing.T) {
 	// Test the sort parameter through the tool interface
+	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 

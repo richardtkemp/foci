@@ -13,6 +13,7 @@ import (
 
 // TestHTTPRequestBasicGET verifies basic HTTP GET request with JSON response
 func TestHTTPRequestBasicGET(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ok","method":"%s"}`, r.Method)
@@ -42,6 +43,7 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 
 // TestHTTPRequestQueryParams verifies query parameter handling
 func TestHTTPRequestQueryParams(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "q=%s&page=%s", r.URL.Query().Get("q"), r.URL.Query().Get("page"))
 	}))
@@ -71,6 +73,7 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 
 // TestHTTPRequestCustomTimeout verifies custom timeout parameter is respected
 func TestHTTPRequestCustomTimeout(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "ok")
 	}))

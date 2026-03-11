@@ -10,6 +10,7 @@ import (
 )
 
 func TestLsBasic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hi"), 0644)
 	os.WriteFile(filepath.Join(dir, "world.txt"), []byte("there"), 0644)
@@ -29,6 +30,7 @@ func TestLsBasic(t *testing.T) {
 }
 
 func TestLsFlags(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("data"), 0644)
 
@@ -48,6 +50,7 @@ func TestLsFlags(t *testing.T) {
 }
 
 func TestLsNonexistentPath(t *testing.T) {
+	t.Parallel()
 	tool := NewLsTool()
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/path/xyz"})
 	result, err := tool.Execute(context.Background(), params)
@@ -60,6 +63,7 @@ func TestLsNonexistentPath(t *testing.T) {
 }
 
 func TestFindByName(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package main"), 0644)
 	os.WriteFile(filepath.Join(dir, "bar.txt"), []byte("text"), 0644)
@@ -82,6 +86,7 @@ func TestFindByName(t *testing.T) {
 }
 
 func TestFindByType(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
@@ -101,6 +106,7 @@ func TestFindByType(t *testing.T) {
 }
 
 func TestFindMaxdepth(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "a", "b"), 0755)
 	os.WriteFile(filepath.Join(dir, "a", "b", "deep.txt"), []byte("deep"), 0644)
@@ -124,6 +130,7 @@ func TestFindMaxdepth(t *testing.T) {
 }
 
 func TestFindBlockedExec(t *testing.T) {
+	t.Parallel()
 	tool := NewFindTool()
 	for _, blocked := range []string{"-exec", "-execdir", "-delete", "-fls"} {
 		params, _ := json.Marshal(map[string]string{
@@ -141,6 +148,7 @@ func TestFindBlockedExec(t *testing.T) {
 }
 
 func TestGrepBasicMatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world\nfoo bar\nhello again"), 0644)
 
@@ -160,6 +168,7 @@ func TestGrepBasicMatch(t *testing.T) {
 }
 
 func TestGrepParams(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("Hello World\nhello lower\nHELLO UPPER"), 0644)
 
@@ -181,6 +190,7 @@ func TestGrepParams(t *testing.T) {
 }
 
 func TestGrepContextLines(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	content := "line1\nline2\ntarget\nline4\nline5\n"
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte(content), 0644)
@@ -205,6 +215,7 @@ func TestGrepContextLines(t *testing.T) {
 }
 
 func TestGrepNoMatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
 
@@ -224,6 +235,7 @@ func TestGrepNoMatch(t *testing.T) {
 }
 
 func TestGrepRejectedParams(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
 
@@ -247,6 +259,7 @@ func TestGrepRejectedParams(t *testing.T) {
 }
 
 func TestGrepGlobFlag(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main\nfunc hello()"), 0644)
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello text"), 0644)
@@ -272,6 +285,7 @@ func TestGrepGlobFlag(t *testing.T) {
 }
 
 func TestResolveGrepBinary(t *testing.T) {
+	t.Parallel()
 	path, name := resolveGrepBinary()
 	if path == "" {
 		t.Error("resolveGrepBinary returned empty path")
@@ -287,6 +301,7 @@ func TestResolveGrepBinary(t *testing.T) {
 }
 
 func TestTranslateGrepFlags(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		params   string
@@ -335,6 +350,7 @@ func TestTranslateGrepFlags(t *testing.T) {
 }
 
 func TestGitAllowedSubcommands(t *testing.T) {
+	t.Parallel()
 	tool := NewGitTool()
 
 	// Allowed subcommands should not error on parse (they may fail if not in a git repo,
@@ -350,6 +366,7 @@ func TestGitAllowedSubcommands(t *testing.T) {
 }
 
 func TestGitBlockedSubcommands(t *testing.T) {
+	t.Parallel()
 	tool := NewGitTool()
 
 	blocked := []string{"push", "pull", "commit", "checkout", "reset", "rebase", "merge", "clean", "rm", "mv", "init", "clone", "fetch", "stash"}
@@ -367,6 +384,7 @@ func TestGitBlockedSubcommands(t *testing.T) {
 }
 
 func TestGitEmptyCommand(t *testing.T) {
+	t.Parallel()
 	tool := NewGitTool()
 	params, _ := json.Marshal(map[string]string{"command": ""})
 	_, err := tool.Execute(context.Background(), params)
@@ -377,6 +395,7 @@ func TestGitEmptyCommand(t *testing.T) {
 
 func TestGitLogInRepo(t *testing.T) {
 	// This test runs in the foci repo itself, so git log should work.
+	t.Parallel()
 	tool := NewGitTool()
 	params, _ := json.Marshal(map[string]string{"command": "log --oneline -3"})
 	result, err := tool.Execute(context.Background(), params)
@@ -389,6 +408,7 @@ func TestGitLogInRepo(t *testing.T) {
 }
 
 func TestSplitShellArgs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  []string

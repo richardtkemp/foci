@@ -12,6 +12,7 @@ import (
 )
 
 func TestSpawnContextRaw(t *testing.T) {
+	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -65,6 +66,7 @@ func TestSpawnContextRaw(t *testing.T) {
 }
 
 func TestSpawnContextCharacter(t *testing.T) {
+	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -116,6 +118,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 
 func TestSpawnContextClone(t *testing.T) {
 	// With a notifier, inherit returns an async ack immediately.
+	t.Parallel()
 	called := make(chan string, 1)
 	mockAgent := &channelSpawnAgent{
 		response: "Task completed successfully.",
@@ -189,6 +192,7 @@ func TestSpawnContextClone(t *testing.T) {
 
 func TestSpawnContextCloneDefault(t *testing.T) {
 	// Clone should be the default context mode — nil notifier = sync fallback
+	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
 
@@ -222,6 +226,7 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 }
 
 func TestSpawnExploreMode(t *testing.T) {
+	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -301,6 +306,7 @@ func TestSpawnExploreMode(t *testing.T) {
 
 func TestSpawnExploreToolSet(t *testing.T) {
 	// Register all real tools in a registry.
+	t.Parallel()
 	reg := NewRegistry()
 	allRegistryTools := []string{
 		"shell", "tmux",
@@ -381,6 +387,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 
 func TestSpawnExploreToolAllowlist(t *testing.T) {
 	// Exhaustive audit: every known tool must be explicitly classified
+	t.Parallel()
 	// as either allowed or excluded for explore mode.
 	// If you add a new tool and this test fails, you MUST decide:
 	//   - Is the tool safe for read-only exploration (no mutation, no messaging)?

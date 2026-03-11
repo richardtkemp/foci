@@ -10,6 +10,7 @@ import (
 
 // TestNormalizePaneContent_ElapsedTimers verifies that elapsed timers are normalized.
 func TestNormalizePaneContent_ElapsedTimers(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
@@ -29,6 +30,7 @@ func TestNormalizePaneContent_ElapsedTimers(t *testing.T) {
 
 // TestNormalizePaneContent_Clocks verifies that clock times are normalized.
 func TestNormalizePaneContent_Clocks(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
@@ -49,6 +51,7 @@ func TestNormalizePaneContent_Clocks(t *testing.T) {
 // TestNormalizePaneContent_TokenCountsPreserved verifies that token counts are preserved.
 func TestNormalizePaneContent_TokenCountsPreserved(t *testing.T) {
 	// Token counts indicate active work — should NOT be stripped
+	t.Parallel()
 	tests := []string{
 		"Context: 88,447 tokens used",
 		"Used 1500 tokens",
@@ -65,6 +68,7 @@ func TestNormalizePaneContent_TokenCountsPreserved(t *testing.T) {
 // TestNormalizePaneContent_PercentagesPreserved verifies that percentages are preserved.
 func TestNormalizePaneContent_PercentagesPreserved(t *testing.T) {
 	// Percentages indicate active work — should NOT be stripped
+	t.Parallel()
 	tests := []string{
 		"44% used",
 		"Context: 88.5% full",
@@ -81,6 +85,7 @@ func TestNormalizePaneContent_PercentagesPreserved(t *testing.T) {
 // TestNormalizePaneContent_CostsPreserved verifies that costs are preserved.
 func TestNormalizePaneContent_CostsPreserved(t *testing.T) {
 	// Cost changes indicate active work — should NOT be stripped
+	t.Parallel()
 	tests := []string{
 		"Cost: $0.0430",
 		"Total $12.50 spent",
@@ -95,6 +100,7 @@ func TestNormalizePaneContent_CostsPreserved(t *testing.T) {
 
 // TestNormalizePaneContent_Durations verifies that short durations are normalized.
 func TestNormalizePaneContent_Durations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input string
 		want  string
@@ -113,6 +119,7 @@ func TestNormalizePaneContent_Durations(t *testing.T) {
 // TestNormalizePaneContent_SpinnersPreserved verifies that spinners are preserved.
 func TestNormalizePaneContent_SpinnersPreserved(t *testing.T) {
 	// Spinners indicate active work — should NOT be stripped
+	t.Parallel()
 	input1 := "⠋ Loading..."
 	input2 := "⠙ Loading..."
 	norm1 := normalizePaneContent(input1)
@@ -125,6 +132,7 @@ func TestNormalizePaneContent_SpinnersPreserved(t *testing.T) {
 // TestNormalizePaneContent_PreservesContent verifies that meaningful content is preserved.
 func TestNormalizePaneContent_PreservesContent(t *testing.T) {
 	// Meaningful content should be preserved
+	t.Parallel()
 	tests := []string{
 		"$ ls -la",
 		"error: file not found",
@@ -144,6 +152,7 @@ func TestNormalizePaneContent_PreservesContent(t *testing.T) {
 // TestNormalizePaneContent_MixedLine verifies mixed realistic content.
 func TestNormalizePaneContent_MixedLine(t *testing.T) {
 	// A realistic TUI status bar line
+	t.Parallel()
 	input := "⠙ Thinking  Claude 3.5 | 44% context | 12,543 tokens | 2m 30s | $0.0430"
 	got := normalizePaneContent(input)
 	// Only clocks/timers should be stripped; spinners, tokens, percentages, costs preserved
@@ -164,6 +173,7 @@ func TestNormalizePaneContent_MixedLine(t *testing.T) {
 // TestNormalizePaneContent_StableHash verifies that normalized content is stable.
 func TestNormalizePaneContent_StableHash(t *testing.T) {
 	// Two snapshots that differ only in clocks/timers should normalize
+	t.Parallel()
 	// to identical strings. Spinners/tokens/percentages are NOT noise.
 	snap1 := `$ opencode
 OpenCode v0.1 | claude-3-5-sonnet
@@ -186,6 +196,7 @@ Thinking... | 2m 54s
 // TestNormalizePaneContent_DifferentContent verifies that different content stays different.
 func TestNormalizePaneContent_DifferentContent(t *testing.T) {
 	// Two snapshots with genuinely different content should NOT normalize
+	t.Parallel()
 	// to the same string.
 	snap1 := `$ opencode
 ⠋ Thinking... | 44% context
@@ -205,6 +216,7 @@ Here's the fix for the bug:
 
 // TestDetectTUIAgent_CC verifies Claude Code detection.
 func TestDetectTUIAgent_CC(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -227,6 +239,7 @@ func TestDetectTUIAgent_CC(t *testing.T) {
 
 // TestDetectTUIAgent_OC verifies OpenCode detection.
 func TestDetectTUIAgent_OC(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -247,6 +260,7 @@ func TestDetectTUIAgent_OC(t *testing.T) {
 
 // TestDetectTUIAgent_None verifies non-detection of TUI agents.
 func TestDetectTUIAgent_None(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		content string
@@ -267,6 +281,7 @@ func TestDetectTUIAgent_None(t *testing.T) {
 
 // TestCleanTUIOutput_CC verifies CC output cleaning.
 func TestCleanTUIOutput_CC(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		"Claude Code v1.2.3",
 		"╭──────────────────────────╮",
@@ -333,6 +348,7 @@ func TestCleanTUIOutput_CC(t *testing.T) {
 
 // TestCleanTUIOutput_OC verifies OpenCode output cleaning.
 func TestCleanTUIOutput_OC(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		"OpenCode v0.1",
 		"┃",
@@ -387,6 +403,7 @@ func TestCleanTUIOutput_OC(t *testing.T) {
 
 // TestCleanTUIOutput_NoAgent verifies that empty agent type returns content unchanged.
 func TestCleanTUIOutput_NoAgent(t *testing.T) {
+	t.Parallel()
 	input := "$ ls -la\ntotal 42\ndrwxr-xr-x 5 user user 4096 file.go"
 	got := cleanTUIOutput(input, "")
 	if got != input {
@@ -396,6 +413,7 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 
 // TestTmuxReadRaw verifies that raw reads preserve all content.
 func TestTmuxReadRaw(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 

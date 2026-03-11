@@ -24,6 +24,7 @@ func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 
 // TestSendMessageToUserVoiceTTS verifies that text with send_as=voice synthesizes audio.
 func TestSendMessageToUserVoiceTTS(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
@@ -54,6 +55,7 @@ func TestSendMessageToUserVoiceTTS(t *testing.T) {
 
 // TestSendMessageToUserVoiceTTSChatRouting verifies that TTS audio is routed to chat-targeted method.
 func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
@@ -84,6 +86,7 @@ func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 
 // TestSendMessageToUserVoiceTTSNoProvider verifies that error is returned when TTS is not configured.
 func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -103,6 +106,7 @@ func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
 
 // TestSendMessageToUserVoiceTTSSynthesizeError verifies that TTS synthesis errors are propagated.
 func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
@@ -124,6 +128,7 @@ func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
 // TestSendMessageToUserVoiceFilePathStillWorks verifies that file_path takes precedence over TTS synthesis.
 func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	// When file_path is provided with send_as=voice, it should use the file-based path
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("should-not-be-used")}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)

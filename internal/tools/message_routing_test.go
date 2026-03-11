@@ -10,6 +10,7 @@ import (
 // TestSendMessageToUserChatRouting verifies that messages are routed to specific chats when chat ID is in session key.
 func TestSendMessageToUserChatRouting(t *testing.T) {
 	// When session key contains a chat ID, send to that specific chat.
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -43,6 +44,7 @@ func TestSendMessageToUserChatRouting(t *testing.T) {
 
 // TestSendMessageToUserChatRoutingDocument verifies that documents are routed to specific chats.
 func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -69,6 +71,7 @@ func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
 
 // TestSendMessageToUserChatRoutingVoice verifies that voice notes are routed to specific chats.
 func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -97,6 +100,7 @@ func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 // TestSendMessageToUserFallbackNoChat verifies that default routing is used when no chat ID is in session key.
 func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 	// When session key doesn't contain a chat ID, fall back to default.
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -123,6 +127,7 @@ func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 // TestSendMessageToUserFallbackNoContext verifies that default routing is used when no session key is present.
 func TestSendMessageToUserFallbackNoContext(t *testing.T) {
 	// No session key in context at all — fall back to default.
+	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -145,6 +150,7 @@ func TestSendMessageToUserFallbackNoContext(t *testing.T) {
 
 // TestChatIDFromSessionKey verifies ChatIDFromSessionKey parsing for various session key formats.
 func TestChatIDFromSessionKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		key  string
 		want int64
@@ -180,6 +186,7 @@ func TestChatIDFromSessionKey(t *testing.T) {
 // TestSendMessageToUserChatSessionUsesPrimary verifies that chat sessions use primary bot even with multiball callbacks.
 func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 	// Regular chat sessions should still use the primary bot.
+	t.Parallel()
 	multiballMock := &mockMessageSender{}
 	primaryMock := &mockMessageSender{}
 
@@ -210,6 +217,7 @@ func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 // TestSendMessageToUserCrossSessionHeader verifies that messages from different sessions are prepended with a header.
 func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 	// Message from a different session than the bot's own session
+	t.Parallel()
 	// should be prepended with a header.
 	mock := &mockMessageSender{sessionKey: "agent:fotini:chat:99887766"}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
@@ -236,6 +244,7 @@ func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 // TestSendMessageToUserSameSessionNoHeader verifies that messages from the same session are not prepended with a header.
 func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 	// Message from the bot's own session should NOT get a header.
+	t.Parallel()
 	mock := &mockMessageSender{sessionKey: "agent:fotini:chat:99887766"}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -260,6 +269,7 @@ func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 // TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty verifies no header when bot session is empty.
 func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) {
 	// When bot has no session key (not yet attached), don't add header.
+	t.Parallel()
 	mock := &mockMessageSender{sessionKey: ""}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
@@ -284,6 +294,7 @@ func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) 
 // TestSendMessageToUserMultiballRouting verifies that multiball sessions are routed to the correct sender.
 func TestSendMessageToUserMultiballRouting(t *testing.T) {
 	// When session key contains :multiball:, the getSender callback receives
+	t.Parallel()
 	// the session key so it can resolve the correct bot.
 	multiballMock := &mockMessageSender{}
 	primaryMock := &mockMessageSender{}

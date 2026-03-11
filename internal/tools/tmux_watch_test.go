@@ -13,6 +13,7 @@ import (
 
 // TestTmuxWatchUnwatch verifies basic watch and unwatch operations.
 func TestTmuxWatchUnwatch(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -61,6 +62,7 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 
 // TestTmuxWatchAlreadyWatched verifies that watching an already-watched session fails.
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -106,6 +108,7 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 
 // TestTmuxUnwatchNotWatched verifies that unwatching a non-watched session fails.
 func TestTmuxUnwatchNotWatched(t *testing.T) {
+	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -127,11 +130,9 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	var wakeCalled atomic.Int32
-	var wakeMsg string
+	var wakeMsg atomic.Value
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
-		wakeCalled.Add(1)
-		wakeMsg = msg
+		wakeMsg.Store(msg)
 	})
 
 	_, tool, _ := NewTmuxTool(300, 30, notifier, nil, "", false, 30, 0)
@@ -164,7 +165,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 
 	// Wait for the wake callback to fire (threshold 3s + poll interval 2s)
 	deadline := time.After(10 * time.Second)
-	for wakeCalled.Load() == 0 {
+	for wakeMsg.Load() == nil {
 		select {
 		case <-deadline:
 			t.Fatal("wake callback not called within timeout")
@@ -172,14 +173,15 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(wakeMsg, name) {
-		t.Errorf("wake message = %q, want to contain session name %q", wakeMsg, name)
+	msg := wakeMsg.Load().(string)
+	if !strings.Contains(msg, name) {
+		t.Errorf("wake message = %q, want to contain session name %q", msg, name)
 	}
-	if !strings.Contains(wakeMsg, "TMUX WATCH") {
-		t.Errorf("wake message = %q, want to contain TMUX WATCH", wakeMsg)
+	if !strings.Contains(msg, "TMUX WATCH") {
+		t.Errorf("wake message = %q, want to contain TMUX WATCH", msg)
 	}
-	if !strings.Contains(wakeMsg, "SYSTEM INJECTION") {
-		t.Errorf("wake message = %q, want to contain context note", wakeMsg)
+	if !strings.Contains(msg, "SYSTEM INJECTION") {
+		t.Errorf("wake message = %q, want to contain context note", msg)
 	}
 
 	// Cleanup
@@ -264,6 +266,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 
 // TestTmuxWatchMissingName verifies that watch/unwatch without name are rejected.
 func TestTmuxWatchMissingName(t *testing.T) {
+	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{

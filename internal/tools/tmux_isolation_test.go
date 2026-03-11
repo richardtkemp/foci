@@ -11,6 +11,7 @@ import (
 
 // TestTmuxInstanceIsolation verifies that multiple tool instances don't interfere.
 func TestTmuxInstanceIsolation(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -208,6 +209,7 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 
 // TestTmuxWatchIsolation verifies that watches in different instances don't interfere.
 func TestTmuxWatchIsolation(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 
 	_, toolA, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)

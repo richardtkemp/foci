@@ -10,6 +10,7 @@ import (
 
 // TestTmuxInvalidOperation verifies that invalid operations are rejected.
 func TestTmuxInvalidOperation(t *testing.T) {
+	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -26,6 +27,7 @@ func TestTmuxInvalidOperation(t *testing.T) {
 
 // TestTmuxStartNoName verifies that sessions can be started without explicit names (auto-generated).
 func TestTmuxStartNoName(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -48,6 +50,7 @@ func TestTmuxStartNoName(t *testing.T) {
 
 // TestTmuxSendNoEnter verifies that text can be sent without pressing Enter.
 func TestTmuxSendNoEnter(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -82,6 +85,7 @@ func TestTmuxSendNoEnter(t *testing.T) {
 
 // TestTmuxSendBareEnter verifies that bare Enter (without keys) works when enter=true.
 func TestTmuxSendBareEnter(t *testing.T) {
+	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -126,6 +130,7 @@ func TestTmuxSendBareEnter(t *testing.T) {
 
 // TestTmuxMissingName verifies that operations without name are properly rejected.
 func TestTmuxMissingName(t *testing.T) {
+	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	for _, op := range []string{"send", "read", "kill"} {

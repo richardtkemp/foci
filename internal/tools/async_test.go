@@ -3,6 +3,7 @@ package tools
 import "testing"
 
 func TestAsyncNotifierDelivers(t *testing.T) {
+	t.Parallel()
 	var gotKey, gotMsg, gotReplyTo string
 	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		gotKey = sk
@@ -22,16 +23,19 @@ func TestAsyncNotifierDelivers(t *testing.T) {
 }
 
 func TestAsyncNotifierNilReceiver(t *testing.T) {
+	t.Parallel()
 	var n *AsyncNotifier
 	n.InjectToAgent("sess", "should not panic", "") // must not panic
 }
 
 func TestAsyncNotifierNilFunc(t *testing.T) {
+	t.Parallel()
 	n := &AsyncNotifier{}
 	n.InjectToAgent("sess", "should not panic", "") // must not panic
 }
 
 func TestAsyncNotifierPendingCounter(t *testing.T) {
+	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 
 	if n.HasPending("sess-1") {
@@ -55,6 +59,7 @@ func TestAsyncNotifierPendingCounter(t *testing.T) {
 }
 
 func TestAsyncNotifierMultiplePending(t *testing.T) {
+	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 
 	n.MarkPending("sess-1")
@@ -74,6 +79,7 @@ func TestAsyncNotifierMultiplePending(t *testing.T) {
 }
 
 func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
+	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
 
 	// MarkDone without MarkPending should not panic or go negative
@@ -84,6 +90,7 @@ func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
 }
 
 func TestAsyncNotifierNilPending(t *testing.T) {
+	t.Parallel()
 	var n *AsyncNotifier
 	// All methods should be safe on nil receiver
 	n.MarkPending("sess")
