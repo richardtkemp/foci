@@ -352,6 +352,48 @@ func TestResponseFromGenai_ToolUse(t *testing.T) {
 	}
 }
 
+func TestResponseFromGenai_ToolUseGeneratesUniqueIDs(t *testing.T) {
+	// When Gemini doesn't provide a FunctionCall ID, we generate unique ones.
+	// Two calls to the same tool in one response must get distinct IDs.
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{
+						{FunctionCall: &genai.FunctionCall{Name: "todo", Args: map[string]any{"text": "a"}}},
+						{FunctionCall: &genai.FunctionCall{Name: "todo", Args: map[string]any{"text": "b"}}},
+						{FunctionCall: &genai.FunctionCall{Name: "todo", Args: map[string]any{"text": "c"}}},
+					},
+				},
+				FinishReason: genai.FinishReasonStop,
+			},
+		},
+	}
+
+	result, err := responseFromGenai(resp, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	if len(result.Content) != 3 {
+		t.Fatalf("content = %d, want 3", len(result.Content))
+	}
+
+	seen := make(map[string]bool)
+	for i, block := range result.Content {
+		if block.ID == "" {
+			t.Errorf("block %d has empty ID", i)
+		}
+		if seen[block.ID] {
+			t.Errorf("block %d has duplicate ID %s", i, block.ID)
+		}
+		seen[block.ID] = true
+		if block.Type != "tool_use" {
+			t.Errorf("block %d type = %q, want tool_use", i, block.Type)
+		}
+	}
+}
+
 func TestResponseFromGenai_Thinking(t *testing.T) {
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{

@@ -1,6 +1,8 @@
 package gemini
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,6 +11,15 @@ import (
 
 	"google.golang.org/genai"
 )
+
+// randomToolID generates a unique tool_use ID for Gemini responses that don't
+// provide one. Without this, every call to the same tool gets an identical ID
+// like "toolu_gemini_todo", which violates the API requirement for unique IDs.
+func randomToolID(toolName string) string {
+	var buf [8]byte
+	_, _ = rand.Read(buf[:])
+	return fmt.Sprintf("toolu_gemini_%s_%s", toolName, hex.EncodeToString(buf[:]))
+}
 
 // systemToGenai concatenates system prompt blocks into a single Gemini Content.
 func systemToGenai(blocks []provider.SystemBlock) *genai.Content {
@@ -274,7 +285,7 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 				inputJSON, _ := json.Marshal(fc.Args)
 				id := fc.ID
 				if id == "" {
-					id = fmt.Sprintf("toolu_gemini_%s", fc.Name)
+					id = randomToolID(fc.Name)
 				}
 				result.Content = append(result.Content, provider.ContentBlock{
 					Type:  "tool_use",

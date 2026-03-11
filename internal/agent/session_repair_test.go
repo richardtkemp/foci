@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"foci/internal/provider"
@@ -305,6 +306,63 @@ func TestRepairDuplicateToolIDs_SameMessageBatch(t *testing.T) {
 	// Every tool_use ID should have a matching tool_result
 	for _, id := range toolUseIDs {
 		if resultSet[id] != 1 {
+			t.Errorf("tool_use %s has no matching tool_result", id)
+		}
+	}
+}
+
+func TestRepairDuplicateToolIDs_OrphanedDedupUse(t *testing.T) {
+	// More duplicate tool_use blocks than tool_results (corruption from partial
+	// defer replay that wrote assistant messages but not tool_results).
+	// Phase 3 should synthesize missing tool_results for orphaned dedup IDs.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("do stuff")},
+		// First turn — normal
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"a"}`)},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_1", Content: "result a"},
+		}},
+		// Second turn — duplicate tool_use from defer replay, no tool_result
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"b"}`)},
+		}},
+		// Third turn continues normally
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_2", Name: "read", Input: json.RawMessage(`{}`)},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_2", Content: "result c"},
+		}},
+	}
+
+	var warnings []string
+	result, repaired := repairDuplicateToolIDs(msgs, func(format string, args ...any) {
+		warnings = append(warnings, fmt.Sprintf(format, args...))
+	})
+
+	if !repaired {
+		t.Fatal("expected repaired=true")
+	}
+
+	// Collect all tool_use IDs and tool_result IDs
+	allUseIDs := make(map[string]bool)
+	allResultIDs := make(map[string]bool)
+	for _, msg := range result {
+		for _, block := range msg.Content {
+			switch block.Type {
+			case "tool_use":
+				allUseIDs[block.ID] = true
+			case "tool_result":
+				allResultIDs[block.ToolUseID] = true
+			}
+		}
+	}
+
+	// Every tool_use must have a matching tool_result
+	for id := range allUseIDs {
+		if !allResultIDs[id] {
 			t.Errorf("tool_use %s has no matching tool_result", id)
 		}
 	}
