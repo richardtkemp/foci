@@ -401,21 +401,8 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 		}
 
-		// Trigger initial extraction on the first message (when the default
-		// session key becomes available). Subsequent calls are explicit reloads.
-		var nudgeInitOnce sync.Once
 		ag.NudgeReloadFunc = func() {
 			nudgeExtractAndRefresh()
-		}
-		// Hook into OnActivity: fires on first message when session key is set.
-		prevOnActivity := ag.OnActivity
-		ag.OnActivity = func(sessionKey string) {
-			if prevOnActivity != nil {
-				prevOnActivity(sessionKey)
-			}
-			nudgeInitOnce.Do(func() {
-				nudgeExtractAndRefresh()
-			})
 		}
 	}
 
@@ -569,6 +556,21 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 
 		wireAgentPlatformCallbacks(ag, acfg, p.cfg, p.plat, connMgr, p.sessionIndex)
+	}
+
+	// Nudge: trigger initial extraction on first message. Must be after
+	// wireAgentPlatformCallbacks which sets OnActivity for session indexing.
+	if ag.NudgeReloadFunc != nil {
+		var nudgeInitOnce sync.Once
+		prevOnActivity := ag.OnActivity
+		ag.OnActivity = func(sessionKey string) {
+			if prevOnActivity != nil {
+				prevOnActivity(sessionKey)
+			}
+			nudgeInitOnce.Do(func() {
+				ag.NudgeReloadFunc()
+			})
+		}
 	}
 
 	return &agentInstance{
