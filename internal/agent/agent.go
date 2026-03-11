@@ -359,7 +359,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 	braindeadWarningThreshold := a.BraindeadWarningThreshold
 	braindeadWarned := false
-	verified := false // pre-answer gate: true after one verification pass
+	verified := false    // pre-answer gate: true after one verification pass
+	matchChecked := false // match triggers: true after one check on no-tools path
 	var sameToolStreak int
 	var lastToolName string
 	var lastToolError bool
@@ -492,6 +493,21 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		if resp.StopReason != "tool_use" {
+			// Match triggers: if any match rules matched the user message
+			// but haven't fired (no tool calls happened), inject them now.
+			if !matchChecked && a.Nudger != nil {
+				if reminder := a.Nudger.CheckMatch(); reminder != "" {
+					matchMsg := provider.Message{
+						Role:    "user",
+						Content: provider.TextContent("[system] " + reminder),
+					}
+					messages = append(messages, matchMsg)
+					newMessages = append(newMessages, matchMsg)
+					matchChecked = true
+					a.logger().Infof("nudge: match trigger fired at loop %d for session %s", i, sessionKey)
+					continue
+				}
+			}
 			// Pre-answer verification gate: if the model wants to end the
 			// turn and pre_answer rules exist, inject a reminder and let
 			// it reconsider once.

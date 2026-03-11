@@ -122,6 +122,36 @@ func (s *Scheduler) CheckPreAnswer() string {
 	return result
 }
 
+// CheckMatch returns the text of match rules that matched the user message
+// but haven't fired yet. Ensures match triggers fire even on turns without
+// tool calls, where CheckAfterTools is never reached.
+func (s *Scheduler) CheckMatch() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var result string
+	for i, r := range s.rules {
+		if r.Trigger.Type != "match" {
+			continue
+		}
+		if !s.matchResults[i] {
+			continue
+		}
+		if _, fired := s.lastFired[i]; fired {
+			continue
+		}
+		s.lastFired[i] = s.toolCount
+		if result != "" {
+			result += "\n"
+		}
+		result += r.Text
+	}
+	return result
+}
+
 // HasPreAnswerRules returns true if any rules have a pre_answer trigger.
 func (s *Scheduler) HasPreAnswerRules() bool {
 	if s == nil {
