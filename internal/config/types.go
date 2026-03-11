@@ -181,7 +181,7 @@ type AgentConfig struct {
 	SteerMode            bool                     `toml:"steer_mode"`             // inject user messages between tool calls (default true)
 	StreamOutput         bool                     `toml:"stream_output"`          // DEPRECATED: use [agents.platforms.telegram.stream_output]
 	StreamUpdateInterval string                   `toml:"stream_update_interval"` // DEPRECATED: use [agents.platforms.telegram.stream_interval]
-
+	CacheTTL             string                   `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 }
 
 type GeminiConfig struct {
@@ -386,6 +386,7 @@ type BitwardenConfig struct {
 
 type CacheConfig struct {
 	Strategy string `toml:"strategy"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
+	TTL      string `toml:"ttl"`      // Anthropic prompt cache TTL: "5m" or "1h" (default "1h")
 }
 
 type ManaWarningsConfig struct {
@@ -511,6 +512,7 @@ type DefaultsConfig struct {
 	StreamOutput         bool    `toml:"stream_output"`          // default stream_output (default: false)
 	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")
 	EnableStartupNotify  bool    `toml:"enable_startup_notify"`  // send notification on startup (default true)
+	CacheTTL             string  `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 }
 
 // ModelsConfig holds model-related configuration.

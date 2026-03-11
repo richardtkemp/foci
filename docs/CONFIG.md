@@ -79,6 +79,15 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 
 Requires `openai.api_key` in `secrets.toml`. Use `model = "openai:gpt-4o"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
+### `[cache]`
+
+Prompt caching strategy and TTL. The `strategy` field is global-only. The `ttl` field is global-or-agent (overridable per-agent via `cache_ttl` in `[defaults]` or `[[agents]]`).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `strategy` | string | `"auto"` | Cache strategy: `"auto"` (top-level, lets the API decide breakpoints) or `"explicit"` (manual breakpoints on system prompt and second-to-last message). |
+| `ttl` | string | `"1h"` | Anthropic prompt cache TTL. Must be `"5m"` (5 minutes) or `"1h"` (1 hour). Only applied to Anthropic API requests — other providers ignore it. Default `"1h"` maximises cache lifetime and is recommended for most deployments. Per-agent override via `cache_ttl` in `[defaults]` or `[[agents]]`. |
+
 ### `[telegram]`
 
 Telegram bot configuration. Fields `allowed_users` and `received_files_dir` can be overridden per-agent — see [Global-or-Agent: Telegram](#telegram-overrides).
@@ -579,6 +588,7 @@ Set in `[defaults]`, overridable per-agent.
 | `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults come from provider sections (`[anthropic] thinking`, `[gemini] thinking`). Only applied for Anthropic and Gemini models — silently skipped for other providers. Overridable at runtime via `/thinking`. |
 | `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
+| `cache_ttl` | string | `""` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 
 Default `system_files` order (most-stable first for cache efficiency):
@@ -693,7 +703,7 @@ Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable keepalive timer. |
-| `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be < 1h (Anthropic cache TTL). |
+| `interval` | string | `"55m"` | Time since cache last warmed before firing. Should be less than `[cache] ttl` (default 1h). |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 
 ### Background (`[background]` / `[[agents.background]]`)
@@ -708,7 +718,7 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 
 **Validation warnings:**
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
-- `keepalive.interval > 1h` — Anthropic cache TTL is 1 hour; cache may expire between keepalives.
+- `keepalive.interval > [cache] ttl` — cache may expire between keepalives (default TTL is 1 hour).
 
 ### Mana (`[mana]`)
 

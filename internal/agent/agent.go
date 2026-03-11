@@ -102,6 +102,7 @@ type Agent struct {
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
 	Effort                        string                       // effort level for API requests (empty = omit from request)
 	Thinking                      string                       // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
+	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
@@ -368,6 +369,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			System:    system,
 			Messages:  reqMessages,
 			Tools:     toolDefs,
+			CacheTTL:  a.CacheTTL,
 		}
 		if useAutoCache {
 			req.CacheControl = provider.Ephemeral()

@@ -253,6 +253,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 
 	// cache
 	add("cache", "strategy", cfg.Cache.Strategy)
+	add("cache", "ttl", cfg.Cache.TTL)
 
 	// usage_warnings
 	add("usage_warnings", "name", cfg.ManaWarnings.Name)

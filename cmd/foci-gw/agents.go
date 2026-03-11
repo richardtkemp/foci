@@ -325,6 +325,7 @@ func setupAgent(p setupParams) *agentInstance {
 		TurnLockWarnThreshold:         parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                        acfg.Effort,
 		Thinking:                      acfg.Thinking,
+		CacheTTL:                      resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
 		Streaming:                     resolveStreamingConfig(acfg, p.cfg),
 		ManaInvestInterval:            parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}

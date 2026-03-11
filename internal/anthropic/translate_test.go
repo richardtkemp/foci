@@ -104,7 +104,7 @@ func TestBuildSDKParamsWithTools(t *testing.T) {
 
 func TestContentBlockToSDKText(t *testing.T) {
 	b := ContentBlock{Type: "text", Text: "hello world"}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfText == nil {
 		t.Fatal("expected OfText")
 	}
@@ -120,7 +120,7 @@ func TestContentBlockToSDKToolResult(t *testing.T) {
 		Content:   "success",
 		IsError:   false,
 	}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfToolResult == nil {
 		t.Fatal("expected OfToolResult")
 	}
@@ -135,7 +135,7 @@ func TestContentBlockToSDKThinking(t *testing.T) {
 		Thinking:  "let me think...",
 		Signature: "sig123",
 	}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfThinking == nil {
 		t.Fatal("expected OfThinking")
 	}
@@ -156,7 +156,7 @@ func TestContentBlockToSDKImage(t *testing.T) {
 			Data:      "abc123",
 		},
 	}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfImage == nil {
 		t.Fatal("expected OfImage")
 	}
@@ -169,7 +169,7 @@ func TestContentBlockToSDKToolUse(t *testing.T) {
 		Name:  "search",
 		Input: json.RawMessage(`{"query":"test"}`),
 	}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfToolUse == nil {
 		t.Fatal("expected OfToolUse")
 	}
@@ -183,7 +183,7 @@ func TestContentBlockToSDKToolUse(t *testing.T) {
 
 func TestContentBlockToSDKRedactedThinking(t *testing.T) {
 	b := ContentBlock{Type: "redacted_thinking", Data: "encrypted"}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfRedactedThinking == nil {
 		t.Fatal("expected OfRedactedThinking")
 	}
@@ -198,7 +198,7 @@ func TestContentBlockToSDKCacheControl(t *testing.T) {
 		Text:         "cached text",
 		CacheControl: Ephemeral(),
 	}
-	sdk := contentBlockToSDK(b)
+	sdk := contentBlockToSDK(b, "")
 	if sdk.OfText == nil {
 		t.Fatal("expected OfText")
 	}
@@ -314,12 +314,126 @@ func TestBuildSDKCountParams(t *testing.T) {
 	}
 }
 
+func TestBuildSDKParamsWithCacheTTL(t *testing.T) {
+	// Verify that CacheTTL on the request propagates to the top-level
+	// cache_control param as the SDK TTL field.
+	req := &MessageRequest{
+		Model:        "claude-haiku-4-5",
+		MaxTokens:    1024,
+		Messages:     []Message{{Role: "user", Content: TextContent("Hi")}},
+		CacheControl: Ephemeral(),
+		CacheTTL:     "1h",
+	}
+
+	params := buildSDKParams(req)
+
+	if string(params.CacheControl.Type) != "ephemeral" {
+		t.Errorf("cache_control type = %q, want ephemeral", params.CacheControl.Type)
+	}
+	if string(params.CacheControl.TTL) != "1h" {
+		t.Errorf("cache_control ttl = %q, want 1h", params.CacheControl.TTL)
+	}
+}
+
+func TestContentBlockToSDKCacheControlWithTTL(t *testing.T) {
+	// Verify TTL propagation to text blocks with cache_control.
+	b := ContentBlock{
+		Type:         "text",
+		Text:         "cached text",
+		CacheControl: Ephemeral(),
+	}
+	sdk := contentBlockToSDK(b, "1h")
+	if sdk.OfText == nil {
+		t.Fatal("expected OfText")
+	}
+	if string(sdk.OfText.CacheControl.Type) != "ephemeral" {
+		t.Errorf("cache_control type = %q", sdk.OfText.CacheControl.Type)
+	}
+	if string(sdk.OfText.CacheControl.TTL) != "1h" {
+		t.Errorf("cache_control ttl = %q, want 1h", sdk.OfText.CacheControl.TTL)
+	}
+}
+
+func TestContentBlockToSDKToolResultWithTTL(t *testing.T) {
+	// Verify TTL propagation to tool_result blocks with cache_control.
+	b := ContentBlock{
+		Type:         "tool_result",
+		ToolUseID:    "tool_123",
+		Content:      "success",
+		CacheControl: Ephemeral(),
+	}
+	sdk := contentBlockToSDK(b, "1h")
+	if sdk.OfToolResult == nil {
+		t.Fatal("expected OfToolResult")
+	}
+	if string(sdk.OfToolResult.CacheControl.TTL) != "1h" {
+		t.Errorf("cache_control ttl = %q, want 1h", sdk.OfToolResult.CacheControl.TTL)
+	}
+}
+
+func TestContentBlockToSDKImageWithTTL(t *testing.T) {
+	// Verify TTL propagation to image blocks with cache_control.
+	b := ContentBlock{
+		Type: "image",
+		Source: &ContentSource{
+			Type:     "base64",
+			MimeType: "image/jpeg",
+			Data:     "abc123",
+		},
+		CacheControl: Ephemeral(),
+	}
+	sdk := contentBlockToSDK(b, "1h")
+	if sdk.OfImage == nil {
+		t.Fatal("expected OfImage")
+	}
+	if string(sdk.OfImage.CacheControl.TTL) != "1h" {
+		t.Errorf("cache_control ttl = %q, want 1h", sdk.OfImage.CacheControl.TTL)
+	}
+}
+
+func TestSystemToSDKCacheControlWithTTL(t *testing.T) {
+	// Verify TTL propagation to system blocks with cache_control.
+	blocks := []SystemBlock{
+		{Type: "text", Text: "uncached"},
+		{Type: "text", Text: "cached", CacheControl: Ephemeral()},
+	}
+	sdk := systemToSDK(blocks, "1h")
+	if len(sdk) != 2 {
+		t.Fatalf("len = %d, want 2", len(sdk))
+	}
+	if string(sdk[0].CacheControl.TTL) != "" {
+		t.Error("first block should not have TTL")
+	}
+	if string(sdk[1].CacheControl.TTL) != "1h" {
+		t.Errorf("second block ttl = %q, want 1h", sdk[1].CacheControl.TTL)
+	}
+}
+
+func TestCacheControlWithTTLEmpty(t *testing.T) {
+	// When TTL is empty, the SDK default (5m) should apply — TTL field is zero value.
+	b := ContentBlock{
+		Type:         "text",
+		Text:         "cached text",
+		CacheControl: Ephemeral(),
+	}
+	sdk := contentBlockToSDK(b, "")
+	if sdk.OfText == nil {
+		t.Fatal("expected OfText")
+	}
+	if string(sdk.OfText.CacheControl.Type) != "ephemeral" {
+		t.Errorf("cache_control type = %q", sdk.OfText.CacheControl.Type)
+	}
+	if string(sdk.OfText.CacheControl.TTL) != "" {
+		t.Errorf("cache_control ttl = %q, want empty (SDK default)", sdk.OfText.CacheControl.TTL)
+	}
+}
+
 func TestSystemToSDKCacheControl(t *testing.T) {
 	blocks := []SystemBlock{
 		{Type: "text", Text: "uncached"},
 		{Type: "text", Text: "cached", CacheControl: Ephemeral()},
 	}
-	sdk := systemToSDK(blocks)
+	sdk := systemToSDK(blocks, "")
 	if len(sdk) != 2 {
 		t.Fatalf("len = %d, want 2", len(sdk))
 	}
