@@ -360,7 +360,7 @@ func TestSpawnExploreToolSet(t *testing.T) {
 	// Must exclude: dangerous tools
 	excluded := []string{
 		"shell", "write", "edit", "spawn", "send_message_to_user",
-		"send_to_session", "scratchpad", "todo", "remind",
+		"send_to_session", "scratchpad", "remind",
 		"http_request", "tmux", "bitwarden_search", "bitwarden_unlock",
 	}
 	for _, name := range excluded {
@@ -404,7 +404,6 @@ func TestSpawnExploreToolAllowlist(t *testing.T) {
 		"send_message_to_user":    true,
 		"send_to_session":  true,
 		"scratchpad":       true,
-		"todo":             true,
 		"remind":           true,
 		"bitwarden_search": true,
 		"bitwarden_unlock": true,

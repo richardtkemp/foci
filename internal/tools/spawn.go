@@ -55,7 +55,7 @@ var spawnRawBlacklist = map[string]bool{
 // exploreSystemPrompt is the system prompt for explore spawn mode.
 const exploreSystemPrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
 
-Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame.
+Use grep for searching file contents. Use find for locating files. Use read for examining files. Use git for commit history, diffs, and blame. Use todo to read and update the todo list.
 
 Match your response to the question type:
 - "Where is X defined?" → file paths and line numbers only
@@ -73,6 +73,7 @@ var spawnExploreAllowed = map[string]bool{
 	"memory_search": true,
 	"web_search":    true,
 	"web_fetch":     true,
+	"todo":          true,
 }
 
 // SpawnDeps holds the dependencies for the spawn tool, wired at registration time.
@@ -102,7 +103,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 	return &Tool{
 		Name:        "spawn",
 		ExecExport:  true,
-		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_message_to_user and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (safe exploration — ls, find, grep, read, memory_search, web_search, web_fetch only — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
+		Description: "Spawn a sub-call to a model. Four context modes: 'raw' (just your prompt, no system context — send_message_to_user and send_to_session excluded), 'character' (your prompt + character files), 'clone' (branch session — a headless self-fork), 'explore' (safe exploration — ls, find, grep, read, todo, memory_search, web_search, web_fetch only — no file mutation, no shell exec, no messaging). Use 'raw'/'character' for one-shot queries. Use 'clone' to delegate complex multi-step tasks. Use 'explore' for codebase research and exploration.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -117,7 +118,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				"context": {
 					"type": "string",
 					"enum": ["raw", "character", "clone", "explore"],
-					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': safe exploration agent with ls, find, grep, read, memory_search, web_search, web_fetch (sync, no mutation, always haiku — model param ignored)."
+					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': safe exploration agent with ls, find, grep, read, todo, memory_search, web_search, web_fetch (sync, no mutation, always haiku — model param ignored)."
 				},
 				"timeout": {
 					"type": "integer",
