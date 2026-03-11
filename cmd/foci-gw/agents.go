@@ -15,6 +15,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/mana"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
 	"foci/internal/periodic"
@@ -829,17 +830,12 @@ func wireAgentPlatformCallbacks(
 	}
 
 	// Rate limit — notify all
-	ag.RateLimitFunc = func(retryAfter int) {
-		msg := "I've run out of mana, it will reset in ~5 hours."
-		if retryAfter > 0 {
-			mins := (retryAfter + 59) / 60
-			if mins >= 60 {
-				msg = fmt.Sprintf("I've run out of mana, it will reset in ~%dh %dm.", mins/60, mins%60)
-			} else {
-				msg = fmt.Sprintf("I've run out of mana, it will reset in ~%d minutes.", mins)
-			}
+	ag.RateLimitFunc = func(resetTime time.Time) {
+		resetStr := mana.ParseResetTime(resetTime.Format(time.RFC3339Nano))
+		if resetStr == "" {
+			resetStr = resetTime.Format(time.Kitchen)
 		}
-		plat.NotifyAgent(acfg.ID, "⚡ "+msg)
+		plat.NotifyAgent(acfg.ID, fmt.Sprintf("⚡ Rate limited (resets %s).", resetStr))
 	}
 
 	// Max tokens — notify all

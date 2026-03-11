@@ -77,7 +77,7 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 
 		a.logger().Infof("rate limit gate (%s) closed until %s", endpoint, resetTime.Format(time.Kitchen))
 		if a.RateLimitFunc != nil && !isUserTrigger(TriggerFromContext(ctx)) {
-			a.RateLimitFunc(apiErr.RetryAfterSeconds())
+			a.RateLimitFunc(resetTime)
 		}
 		return &RateLimitedError{Until: resetTime}
 	}
@@ -86,9 +86,6 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 	}
 	if apiErr.IsRetryable() {
 		a.logger().Debugf("server error detail: %s", err)
-		if a.RateLimitFunc != nil {
-			a.RateLimitFunc(0)
-		}
 		return fmt.Errorf("API is temporarily unavailable, try again in a few minutes")
 	}
 	return fmt.Errorf("send message: %w", err)

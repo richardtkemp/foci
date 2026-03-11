@@ -82,7 +82,7 @@ type Agent struct {
 	ManaWatcher                   *ManaWatcher                 // nil disables mana threshold warnings
 	ManaWarnFunc                  func(string)                 // callback for mana threshold warnings (e.g. platform notification)
 	MaxTokensWarnFunc             func(string)                 // callback when stop_reason=max_tokens (response truncated)
-	RateLimitFunc                 func(retryAfter int)         // callback when API returns 429 (rate limit exhausted)
+	RateLimitFunc                 func(resetTime time.Time)    // callback when API returns 429 (rate limited)
 	CompactionNotifyFunc          func(string, string)         // callback for compaction notifications (session key, message)
 	CompactionDebugFunc           func(string, string)         // callback for compaction debug (session key, summary text)
 	OnActivity                    func(string)                 // callback when a session has activity (session key); nil disables
@@ -296,6 +296,13 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			a.logger().Infof("repaired %d interrupted tool calls in %s", len(repair.Content), sessionKey)
 		}
 	}
+
+	// Repair duplicate tool_use IDs. The Anthropic API rejects requests
+	// containing duplicate IDs with a 400 error. This can happen due to
+	// session corruption (e.g., partial write + defer safety-net replay).
+	messages = repairDuplicateToolUseIDs(messages, func(format string, args ...any) {
+		a.logger().Warnf("session=%s "+format, append([]any{sessionKey}, args...)...)
+	})
 
 	turnModel := a.SessionModel(sessionKey)
 	turnClient := a.SessionClient(sessionKey)
