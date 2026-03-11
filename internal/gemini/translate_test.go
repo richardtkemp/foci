@@ -507,189 +507,58 @@ func TestContextLimit(t *testing.T) {
 var _ provider.Client = (*Client)(nil)
 
 // Tests for error classification functions
-func TestClassifyError_None(t *testing.T) {
-	err := classifyError(nil)
-	if err != nil {
-		t.Errorf("classifyError(nil) should return nil, got %v", err)
-	}
-}
+func TestClassifyError(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		if err := classifyError(nil); err != nil {
+			t.Errorf("classifyError(nil) should return nil, got %v", err)
+		}
+	})
 
-func TestClassifyError_RateLimit_429(t *testing.T) {
-	err := classifyError(errors.New("429: too many requests"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
+	// Cases that should produce a provider.APIError with a specific status code.
+	apiErrTests := []struct {
+		name   string
+		msg    string
+		status int
+	}{
+		{"rate limit 429", "429: too many requests", http.StatusTooManyRequests},
+		{"resource exhausted", "RESOURCE_EXHAUSTED", http.StatusTooManyRequests},
+		{"server error 500", "500: internal server error", http.StatusInternalServerError},
+		{"internal", "INTERNAL: something broke", http.StatusInternalServerError},
+		{"service unavailable 503", "503: service unavailable", http.StatusServiceUnavailable},
+		{"unavailable", "UNAVAILABLE: service down", http.StatusServiceUnavailable},
+		{"bad request 400", "400: bad request", http.StatusBadRequest},
+		{"invalid argument", "INVALID_ARGUMENT: bad input", http.StatusBadRequest},
+		{"unauthorized 401", "401: unauthorized", http.StatusUnauthorized},
+		{"unauthenticated", "UNAUTHENTICATED: invalid key", http.StatusUnauthorized},
+		{"forbidden 403", "403: forbidden", http.StatusForbidden},
+		{"permission denied", "PERMISSION_DENIED: access not allowed", http.StatusForbidden},
+		{"safety error", "SAFETY: content was filtered", http.StatusBadRequest},
+		{"safety blocked", "request blocked by safety policy", http.StatusBadRequest},
+		{"recitation", "RECITATION: cannot recite training data", http.StatusBadRequest},
 	}
-	if apiErr.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
+	for _, tt := range apiErrTests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyError(errors.New(tt.msg))
+			apiErr := &provider.APIError{}
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("expected provider.APIError, got %T", err)
+			}
+			if apiErr.StatusCode != tt.status {
+				t.Errorf("status = %d, want %d", apiErr.StatusCode, tt.status)
+			}
+		})
 	}
-}
 
-func TestClassifyError_RateLimit_ResourceExhausted(t *testing.T) {
-	err := classifyError(errors.New("RESOURCE_EXHAUSTED"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
-	}
-}
-
-func TestClassifyError_ServerError_500(t *testing.T) {
-	err := classifyError(errors.New("500: internal server error"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusInternalServerError)
-	}
-}
-
-func TestClassifyError_ServerError_Internal(t *testing.T) {
-	err := classifyError(errors.New("INTERNAL: something broke"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusInternalServerError)
-	}
-}
-
-func TestClassifyError_ServiceUnavailable_503(t *testing.T) {
-	err := classifyError(errors.New("503: service unavailable"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusServiceUnavailable)
-	}
-}
-
-func TestClassifyError_ServiceUnavailable_Unavailable(t *testing.T) {
-	err := classifyError(errors.New("UNAVAILABLE: service down"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusServiceUnavailable)
-	}
-}
-
-func TestClassifyError_BadRequest_400(t *testing.T) {
-	err := classifyError(errors.New("400: bad request"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusBadRequest)
-	}
-}
-
-func TestClassifyError_BadRequest_InvalidArgument(t *testing.T) {
-	err := classifyError(errors.New("INVALID_ARGUMENT: bad input"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusBadRequest)
-	}
-}
-
-func TestClassifyError_Unauthorized_401(t *testing.T) {
-	err := classifyError(errors.New("401: unauthorized"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusUnauthorized)
-	}
-}
-
-func TestClassifyError_Unauthorized_Unauthenticated(t *testing.T) {
-	err := classifyError(errors.New("UNAUTHENTICATED: invalid key"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusUnauthorized)
-	}
-}
-
-func TestClassifyError_Forbidden_403(t *testing.T) {
-	err := classifyError(errors.New("403: forbidden"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusForbidden)
-	}
-}
-
-func TestClassifyError_Forbidden_PermissionDenied(t *testing.T) {
-	err := classifyError(errors.New("PERMISSION_DENIED: access not allowed"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", apiErr.StatusCode, http.StatusForbidden)
-	}
-}
-
-func TestClassifyError_SafetyError(t *testing.T) {
-	err := classifyError(errors.New("SAFETY: content was filtered"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d (safety filtered to 400)", apiErr.StatusCode, http.StatusBadRequest)
-	}
-}
-
-func TestClassifyError_SafetyError_Blocked(t *testing.T) {
-	err := classifyError(errors.New("request blocked by safety policy"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d (safety filtered to 400)", apiErr.StatusCode, http.StatusBadRequest)
-	}
-}
-
-func TestClassifyError_Recitation(t *testing.T) {
-	err := classifyError(errors.New("RECITATION: cannot recite training data"))
-	apiErr := &provider.APIError{}
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected provider.APIError, got %T", err)
-	}
-	if apiErr.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d (recitation filtered to 400)", apiErr.StatusCode, http.StatusBadRequest)
-	}
-}
-
-func TestClassifyError_Unknown(t *testing.T) {
-	err := classifyError(errors.New("unknown error"))
-	// Unknown errors should be wrapped, not converted to APIError
-	if err == nil {
-		t.Error("expected non-nil error")
-	}
-	// Should not be an APIError
-	var apiErr *provider.APIError
-	if errors.As(err, &apiErr) {
-		t.Error("unknown error should not be classified as APIError")
-	}
+	t.Run("unknown", func(t *testing.T) {
+		err := classifyError(errors.New("unknown error"))
+		if err == nil {
+			t.Error("expected non-nil error")
+		}
+		var apiErr *provider.APIError
+		if errors.As(err, &apiErr) {
+			t.Error("unknown error should not be classified as APIError")
+		}
+	})
 }
 
 func TestIsSafetyError(t *testing.T) {

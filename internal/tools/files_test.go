@@ -163,12 +163,7 @@ func TestEditFileNotFound(t *testing.T) {
 	})
 
 	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for not-found string")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("error = %q", err.Error())
-	}
+	requireError(t, err, "not found")
 }
 
 func TestEditFileNonUnique(t *testing.T) {
@@ -184,12 +179,7 @@ func TestEditFileNonUnique(t *testing.T) {
 	})
 
 	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error for non-unique string")
-	}
-	if !strings.Contains(err.Error(), "2 times") {
-		t.Errorf("error = %q", err.Error())
-	}
+	requireError(t, err, "2 times")
 }
 
 func TestEditFileMissing(t *testing.T) {
@@ -453,80 +443,26 @@ func loadTestStore(t *testing.T) *secrets.Store {
 	return s
 }
 
-func TestReadBlockedSecretsToml(t *testing.T) {
+func TestBlockedPathsAccessDenied(t *testing.T) {
+	// All operations on blocked paths should return "access denied".
 	store := loadTestStore(t)
-	tool := NewReadTool(store)
-	params, _ := json.Marshal(map[string]string{"path": "secrets.toml"})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error reading secrets.toml")
+	tests := []struct {
+		name   string
+		tool   *Tool
+		params interface{}
+	}{
+		{"read secrets.toml", NewReadTool(store), map[string]string{"path": "secrets.toml"}},
+		{"read secrets.toml full path", NewReadTool(store), map[string]string{"path": "/home/user/config/secrets.toml"}},
+		{"read /proc/self/environ", NewReadTool(store), map[string]string{"path": "/proc/self/environ"}},
+		{"write secrets.toml", NewWriteTool(store, nil), map[string]interface{}{"path": "secrets.toml", "content": "malicious"}},
+		{"edit secrets.toml", NewEditTool(store, nil), map[string]interface{}{"path": "secrets.toml", "old_string": "old", "new_string": "new"}},
 	}
-	if !strings.Contains(err.Error(), "access denied") {
-		t.Errorf("error = %q, want access denied", err.Error())
-	}
-}
-
-func TestReadBlockedSecretsTomlFullPath(t *testing.T) {
-	store := loadTestStore(t)
-	tool := NewReadTool(store)
-	params, _ := json.Marshal(map[string]string{"path": "/home/user/config/secrets.toml"})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error reading full path to secrets.toml")
-	}
-	if !strings.Contains(err.Error(), "access denied") {
-		t.Errorf("error = %q, want access denied", err.Error())
-	}
-}
-
-func TestReadBlockedProcEnviron(t *testing.T) {
-	store := loadTestStore(t)
-	tool := NewReadTool(store)
-	params, _ := json.Marshal(map[string]string{"path": "/proc/self/environ"})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error reading /proc/self/environ")
-	}
-	if !strings.Contains(err.Error(), "access denied") {
-		t.Errorf("error = %q, want access denied", err.Error())
-	}
-}
-
-func TestWriteBlockedSecretsToml(t *testing.T) {
-	store := loadTestStore(t)
-	tool := NewWriteTool(store, nil)
-	params, _ := json.Marshal(map[string]interface{}{
-		"path":    "secrets.toml",
-		"content": "malicious content",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error writing secrets.toml")
-	}
-	if !strings.Contains(err.Error(), "access denied") {
-		t.Errorf("error = %q, want access denied", err.Error())
-	}
-}
-
-func TestEditBlockedSecretsToml(t *testing.T) {
-	store := loadTestStore(t)
-	tool := NewEditTool(store, nil)
-	params, _ := json.Marshal(map[string]interface{}{
-		"path":       "secrets.toml",
-		"old_string": "old",
-		"new_string": "new",
-	})
-
-	_, err := tool.Execute(context.Background(), params)
-	if err == nil {
-		t.Fatal("expected error editing secrets.toml")
-	}
-	if !strings.Contains(err.Error(), "access denied") {
-		t.Errorf("error = %q, want access denied", err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params, _ := json.Marshal(tt.params)
+			_, err := tt.tool.Execute(context.Background(), params)
+			requireError(t, err, "access denied")
+		})
 	}
 }
 
@@ -606,36 +542,22 @@ func TestResolveAndValidatePath_RelativeInside(t *testing.T) {
 	}
 }
 
-func TestResolveAndValidatePath_AbsoluteRejected(t *testing.T) {
+func TestResolveAndValidatePath_Rejected(t *testing.T) {
 	dir := t.TempDir()
-	_, err := resolveAndValidatePath("/etc/passwd", dir)
-	if err == nil {
-		t.Fatal("expected error for absolute path")
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{"absolute path", "/etc/passwd", "absolute paths not allowed"},
+		{"dotdot traversal", "../../../etc/passwd", "path traversal"},
+		{"dotdot in middle", "sub/../../outside", "path traversal"},
 	}
-	if !strings.Contains(err.Error(), "absolute paths not allowed") {
-		t.Errorf("error = %q", err.Error())
-	}
-}
-
-func TestResolveAndValidatePath_DotDotTraversal(t *testing.T) {
-	dir := t.TempDir()
-	_, err := resolveAndValidatePath("../../../etc/passwd", dir)
-	if err == nil {
-		t.Fatal("expected error for ../ traversal")
-	}
-	if !strings.Contains(err.Error(), "path traversal") {
-		t.Errorf("error = %q", err.Error())
-	}
-}
-
-func TestResolveAndValidatePath_DotDotInMiddle(t *testing.T) {
-	dir := t.TempDir()
-	_, err := resolveAndValidatePath("sub/../../outside", dir)
-	if err == nil {
-		t.Fatal("expected error for traversal via sub/../..")
-	}
-	if !strings.Contains(err.Error(), "path traversal") {
-		t.Errorf("error = %q", err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := resolveAndValidatePath(tt.path, dir)
+			requireError(t, err, tt.wantErr)
+		})
 	}
 }
 

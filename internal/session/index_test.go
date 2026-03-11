@@ -56,9 +56,8 @@ func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 		Status:           SessionStatusActive,
 	})
 
-count, _ := idx.Count()
+	count, _ := idx.Count()
 	if count != 2 {
-count, _ := idx.Count()
 		t.Fatalf("expected 2 entries, got %d", count)
 	}
 
@@ -203,9 +202,8 @@ func TestSessionIndex_Delete(t *testing.T) {
 
 	idx.Delete("bot/c1/1000000000")
 
-count, _ := idx.Count()
+	count, _ := idx.Count()
 	if count != 0 {
-count, _ := idx.Count()
 		t.Fatalf("expected 0 after delete, got %d", count)
 	}
 }
@@ -225,9 +223,8 @@ func TestSessionIndex_Upsert_Replaces(t *testing.T) {
 		Status: SessionStatusCompacted,
 	})
 
-count, _ := idx.Count()
+	count, _ := idx.Count()
 	if count != 1 {
-count, _ := idx.Count()
 		t.Fatalf("upsert should replace, got %d entries", count)
 	}
 	entries, _ := idx.Query(QueryOptions{})
@@ -323,9 +320,8 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 
 	// Create a session via Append (new file triggers event)
 	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
-count, _ := idx.Count()
+	count, _ := idx.Count()
 	if count != 1 {
-count, _ := idx.Count()
 		t.Fatalf("expected 1 after create, got %d", count)
 	}
 
@@ -339,8 +335,8 @@ count, _ := idx.Count()
 
 	// Append again should NOT fire another create event
 	store.TestAppend("bot/c100/1000000000", msg("assistant", "hi"))
+	count, _ = idx.Count()
 	if count != 1 {
-count, _ := idx.Count()
 		t.Fatalf("expected still 1 after second append, got %d", count)
 	}
 
@@ -478,70 +474,131 @@ func TestSessionIndex_Count_ReflectsInsertionsAndDeletions(t *testing.T) {
 	}
 }
 
-// ========== Agent Metadata tests ==========
+// ========== Metadata CRUD tests ==========
+//
+// Agent, Chat, Session, and SystemState metadata share the same Set/Get/Delete
+// contract. We test them through a common metadataOps adapter to avoid 4x
+// duplicated Set/Get/Upsert/Delete/DeleteNonexistent tests.
 
-func TestAgentMetadata_SetAndGet(t *testing.T) {
-	idx := tempIndex(t)
+type metadataOps struct {
+	name   string
+	set    func(key, value string) error
+	get    func(key string) (string, error)
+	delete func(key string) error
+}
 
-	if err := idx.SetAgentMetadata("bot1", "model", "claude-3"); err != nil {
-		t.Fatalf("SetAgentMetadata: %v", err)
-	}
-
-	val, err := idx.GetAgentMetadata("bot1", "model")
-	if err != nil {
-		t.Fatalf("GetAgentMetadata: %v", err)
-	}
-	if val != "claude-3" {
-		t.Errorf("got %q, want %q", val, "claude-3")
+func agentMetaOps(idx *SessionIndex, agentID string) metadataOps {
+	return metadataOps{
+		name:   "AgentMetadata(" + agentID + ")",
+		set:    func(k, v string) error { return idx.SetAgentMetadata(agentID, k, v) },
+		get:    func(k string) (string, error) { return idx.GetAgentMetadata(agentID, k) },
+		delete: func(k string) error { return idx.DeleteAgentMetadata(agentID, k) },
 	}
 }
 
-func TestAgentMetadata_GetMissing(t *testing.T) {
-	idx := tempIndex(t)
-
-	val, err := idx.GetAgentMetadata("nonexistent", "key")
-	if err != nil {
-		t.Fatalf("GetAgentMetadata: %v", err)
-	}
-	if val != "" {
-		t.Errorf("expected empty string for missing key, got %q", val)
+func chatMetaOps(idx *SessionIndex, agentID string, chatID int64) metadataOps {
+	return metadataOps{
+		name:   "ChatMetadata(" + agentID + ")",
+		set:    func(k, v string) error { return idx.SetChatMetadata(agentID, chatID, k, v) },
+		get:    func(k string) (string, error) { return idx.GetChatMetadata(agentID, chatID, k) },
+		delete: func(k string) error { return idx.DeleteChatMetadata(agentID, chatID, k) },
 	}
 }
 
-func TestAgentMetadata_Upsert(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetAgentMetadata("bot1", "model", "claude-2")
-	idx.SetAgentMetadata("bot1", "model", "claude-3")
-
-	val, _ := idx.GetAgentMetadata("bot1", "model")
-	if val != "claude-3" {
-		t.Errorf("upsert should overwrite: got %q, want %q", val, "claude-3")
+func sessionMetaOps(idx *SessionIndex, sessionKey string) metadataOps {
+	return metadataOps{
+		name:   "SessionMetadata(" + sessionKey + ")",
+		set:    func(k, v string) error { return idx.SetSessionMetadata(sessionKey, k, v) },
+		get:    func(k string) (string, error) { return idx.GetSessionMetadata(sessionKey, k) },
+		delete: func(k string) error { return idx.DeleteSessionMetadata(sessionKey, k) },
 	}
 }
 
-func TestAgentMetadata_Delete(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetAgentMetadata("bot1", "model", "claude-3")
-	if err := idx.DeleteAgentMetadata("bot1", "model"); err != nil {
-		t.Fatalf("DeleteAgentMetadata: %v", err)
-	}
-
-	val, _ := idx.GetAgentMetadata("bot1", "model")
-	if val != "" {
-		t.Errorf("expected empty after delete, got %q", val)
+func systemStateOps(idx *SessionIndex) metadataOps {
+	return metadataOps{
+		name:   "SystemState",
+		set:    func(k, v string) error { return idx.SetSystemState(k, v) },
+		get:    func(k string) (string, error) { return idx.GetSystemState(k) },
+		delete: func(k string) error { return idx.DeleteSystemState(k) },
 	}
 }
 
-func TestAgentMetadata_DeleteNonexistent(t *testing.T) {
-	idx := tempIndex(t)
+// testMetadataCRUD runs the standard Set/Get/Upsert/Delete/DeleteNonexistent
+// battery against any metadata store.
+func testMetadataCRUD(t *testing.T, ops metadataOps) {
+	t.Helper()
 
-	// Should not error when deleting a key that doesn't exist
-	if err := idx.DeleteAgentMetadata("ghost", "key"); err != nil {
-		t.Fatalf("DeleteAgentMetadata on missing key: %v", err)
-	}
+	t.Run("SetAndGet", func(t *testing.T) {
+		if err := ops.set("key1", "val1"); err != nil {
+			t.Fatalf("%s Set: %v", ops.name, err)
+		}
+		val, err := ops.get("key1")
+		if err != nil {
+			t.Fatalf("%s Get: %v", ops.name, err)
+		}
+		if val != "val1" {
+			t.Errorf("got %q, want %q", val, "val1")
+		}
+	})
+
+	t.Run("GetMissing", func(t *testing.T) {
+		val, err := ops.get("nonexistent_key")
+		if err != nil {
+			t.Fatalf("%s Get: %v", ops.name, err)
+		}
+		if val != "" {
+			t.Errorf("expected empty for missing key, got %q", val)
+		}
+	})
+
+	t.Run("Upsert", func(t *testing.T) {
+		ops.set("ukey", "old")
+		ops.set("ukey", "new")
+		val, _ := ops.get("ukey")
+		if val != "new" {
+			t.Errorf("upsert should overwrite: got %q, want %q", val, "new")
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		ops.set("dkey", "val")
+		if err := ops.delete("dkey"); err != nil {
+			t.Fatalf("%s Delete: %v", ops.name, err)
+		}
+		val, _ := ops.get("dkey")
+		if val != "" {
+			t.Errorf("expected empty after delete, got %q", val)
+		}
+	})
+
+	t.Run("DeleteNonexistent", func(t *testing.T) {
+		if err := ops.delete("ghost_key"); err != nil {
+			t.Fatalf("%s Delete nonexistent: %v", ops.name, err)
+		}
+	})
 }
+
+func TestAgentMetadata_CRUD(t *testing.T) {
+	idx := tempIndex(t)
+	testMetadataCRUD(t, agentMetaOps(idx, "bot1"))
+}
+
+func TestChatMetadata_CRUD(t *testing.T) {
+	idx := tempIndex(t)
+	testMetadataCRUD(t, chatMetaOps(idx, "bot1", 42))
+}
+
+func TestSessionMetadata_CRUD(t *testing.T) {
+	idx := tempIndex(t)
+	testMetadataCRUD(t, sessionMetaOps(idx, "bot/c1/1000000000"))
+}
+
+func TestSystemState_CRUD(t *testing.T) {
+	idx := tempIndex(t)
+	testMetadataCRUD(t, systemStateOps(idx))
+}
+
+// ========== Domain-specific isolation and multi-key tests ==========
 
 func TestAgentMetadata_IsolationBetweenAgents(t *testing.T) {
 	idx := tempIndex(t)
@@ -587,62 +644,6 @@ func TestAgentMetadata_MultipleKeys(t *testing.T) {
 	}
 }
 
-// ========== Chat Metadata tests ==========
-
-func TestChatMetadata_SetAndGet(t *testing.T) {
-	idx := tempIndex(t)
-
-	if err := idx.SetChatMetadata("bot1", 42, "effort", "high"); err != nil {
-		t.Fatalf("SetChatMetadata: %v", err)
-	}
-
-	val, err := idx.GetChatMetadata("bot1", 42, "effort")
-	if err != nil {
-		t.Fatalf("GetChatMetadata: %v", err)
-	}
-	if val != "high" {
-		t.Errorf("got %q, want %q", val, "high")
-	}
-}
-
-func TestChatMetadata_GetMissing(t *testing.T) {
-	idx := tempIndex(t)
-
-	val, err := idx.GetChatMetadata("bot", 999, "key")
-	if err != nil {
-		t.Fatalf("GetChatMetadata: %v", err)
-	}
-	if val != "" {
-		t.Errorf("expected empty string for missing key, got %q", val)
-	}
-}
-
-func TestChatMetadata_Upsert(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetChatMetadata("bot1", 42, "model", "old")
-	idx.SetChatMetadata("bot1", 42, "model", "new")
-
-	val, _ := idx.GetChatMetadata("bot1", 42, "model")
-	if val != "new" {
-		t.Errorf("upsert should overwrite: got %q, want %q", val, "new")
-	}
-}
-
-func TestChatMetadata_Delete(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetChatMetadata("bot1", 42, "model", "claude")
-	if err := idx.DeleteChatMetadata("bot1", 42, "model"); err != nil {
-		t.Fatalf("DeleteChatMetadata: %v", err)
-	}
-
-	val, _ := idx.GetChatMetadata("bot1", 42, "model")
-	if val != "" {
-		t.Errorf("expected empty after delete, got %q", val)
-	}
-}
-
 func TestChatMetadata_IsolationBetweenChats(t *testing.T) {
 	idx := tempIndex(t)
 
@@ -667,70 +668,6 @@ func TestChatMetadata_IsolationBetweenChats(t *testing.T) {
 	}
 }
 
-func TestChatMetadata_DeleteNonexistent(t *testing.T) {
-	idx := tempIndex(t)
-
-	if err := idx.DeleteChatMetadata("ghost", 0, "key"); err != nil {
-		t.Fatalf("DeleteChatMetadata on missing key: %v", err)
-	}
-}
-
-// ========== Session Metadata tests ==========
-
-func TestSessionMetadata_SetAndGet(t *testing.T) {
-	idx := tempIndex(t)
-
-	if err := idx.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true"); err != nil {
-		t.Fatalf("SetSessionMetadata: %v", err)
-	}
-
-	val, err := idx.GetSessionMetadata("bot/c1/1000000000", "no_compact")
-	if err != nil {
-		t.Fatalf("GetSessionMetadata: %v", err)
-	}
-	if val != "true" {
-		t.Errorf("got %q, want %q", val, "true")
-	}
-}
-
-func TestSessionMetadata_GetMissing(t *testing.T) {
-	idx := tempIndex(t)
-
-	val, err := idx.GetSessionMetadata("nonexistent/session", "key")
-	if err != nil {
-		t.Fatalf("GetSessionMetadata: %v", err)
-	}
-	if val != "" {
-		t.Errorf("expected empty string for missing key, got %q", val)
-	}
-}
-
-func TestSessionMetadata_Upsert(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetSessionMetadata("bot/c1/1000000000", "no_compact", "false")
-	idx.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true")
-
-	val, _ := idx.GetSessionMetadata("bot/c1/1000000000", "no_compact")
-	if val != "true" {
-		t.Errorf("upsert should overwrite: got %q, want %q", val, "true")
-	}
-}
-
-func TestSessionMetadata_Delete(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true")
-	if err := idx.DeleteSessionMetadata("bot/c1/1000000000", "no_compact"); err != nil {
-		t.Fatalf("DeleteSessionMetadata: %v", err)
-	}
-
-	val, _ := idx.GetSessionMetadata("bot/c1/1000000000", "no_compact")
-	if val != "" {
-		t.Errorf("expected empty after delete, got %q", val)
-	}
-}
-
 func TestSessionMetadata_IsolationBetweenSessions(t *testing.T) {
 	idx := tempIndex(t)
 
@@ -742,78 +679,6 @@ func TestSessionMetadata_IsolationBetweenSessions(t *testing.T) {
 
 	if v1 != "true" || v2 != "false" {
 		t.Errorf("session isolation failed: s1=%q s2=%q", v1, v2)
-	}
-}
-
-func TestSessionMetadata_DeleteNonexistent(t *testing.T) {
-	idx := tempIndex(t)
-
-	if err := idx.DeleteSessionMetadata("ghost/session", "key"); err != nil {
-		t.Fatalf("DeleteSessionMetadata on missing key: %v", err)
-	}
-}
-
-// ========== System State tests ==========
-
-func TestSystemState_SetAndGet(t *testing.T) {
-	idx := tempIndex(t)
-
-	if err := idx.SetSystemState("migration_done", "true"); err != nil {
-		t.Fatalf("SetSystemState: %v", err)
-	}
-
-	val, err := idx.GetSystemState("migration_done")
-	if err != nil {
-		t.Fatalf("GetSystemState: %v", err)
-	}
-	if val != "true" {
-		t.Errorf("got %q, want %q", val, "true")
-	}
-}
-
-func TestSystemState_GetMissing(t *testing.T) {
-	idx := tempIndex(t)
-
-	val, err := idx.GetSystemState("nonexistent")
-	if err != nil {
-		t.Fatalf("GetSystemState: %v", err)
-	}
-	if val != "" {
-		t.Errorf("expected empty string for missing key, got %q", val)
-	}
-}
-
-func TestSystemState_Upsert(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetSystemState("version", "1")
-	idx.SetSystemState("version", "2")
-
-	val, _ := idx.GetSystemState("version")
-	if val != "2" {
-		t.Errorf("upsert should overwrite: got %q, want %q", val, "2")
-	}
-}
-
-func TestSystemState_Delete(t *testing.T) {
-	idx := tempIndex(t)
-
-	idx.SetSystemState("temp_key", "value")
-	if err := idx.DeleteSystemState("temp_key"); err != nil {
-		t.Fatalf("DeleteSystemState: %v", err)
-	}
-
-	val, _ := idx.GetSystemState("temp_key")
-	if val != "" {
-		t.Errorf("expected empty after delete, got %q", val)
-	}
-}
-
-func TestSystemState_DeleteNonexistent(t *testing.T) {
-	idx := tempIndex(t)
-
-	if err := idx.DeleteSystemState("ghost"); err != nil {
-		t.Fatalf("DeleteSystemState on missing key: %v", err)
 	}
 }
 
