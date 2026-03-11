@@ -81,7 +81,11 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 
 	// --- Phase 1: deduplicate tool_use IDs ---
 	seenUse = make(map[string]bool)
-	rewrites := make(map[string][]string) // oldID → queue of newIDs
+	type dedupEntry struct {
+		newID  string
+		msgIdx int // assistant message index (for orphan injection in Phase 3)
+	}
+	rewrites := make(map[string][]dedupEntry) // origID → queue of renames
 	suffix := 0
 	for i, msg := range messages {
 		if msg.Role != "assistant" {
@@ -98,7 +102,7 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 				suffix++
 				newID := fmt.Sprintf("%s_dedup%d", block.ID, suffix)
 				logger("repaired duplicate tool_use ID %s → %s at message %d", block.ID, newID, i)
-				rewrites[block.ID] = append(rewrites[block.ID], newID)
+				rewrites[block.ID] = append(rewrites[block.ID], dedupEntry{newID, i})
 				newContent[j].ID = newID
 			} else {
 				seenUse[block.ID] = true
@@ -111,7 +115,7 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 	// First tool_result for each original ID keeps it; subsequent ones either
 	// get a dedup ID from the queue (if a matching tool_use was renamed) or
 	// are dropped (if they're pure duplicates with no corresponding tool_use).
-	pairedResult := make(map[string]bool) // tool_use_id → already has a tool_result
+	seenResult = make(map[string]bool)
 	for i, msg := range result {
 		if msg.Role != "user" {
 			continue
@@ -123,9 +127,9 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 				filtered = append(filtered, block)
 				continue
 			}
-			if !pairedResult[block.ToolUseID] {
+			if !seenResult[block.ToolUseID] {
 				// First tool_result for this tool_use_id — keep as-is.
-				pairedResult[block.ToolUseID] = true
+				seenResult[block.ToolUseID] = true
 				filtered = append(filtered, block)
 				continue
 			}
@@ -134,9 +138,8 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 			origID := block.ToolUseID
 			queue := rewrites[origID]
 			if len(queue) > 0 {
-				block.ToolUseID = queue[0]
+				block.ToolUseID = queue[0].newID
 				rewrites[origID] = queue[1:]
-				pairedResult[block.ToolUseID] = true
 				filtered = append(filtered, block)
 				changed = true
 			} else {
@@ -149,6 +152,37 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 				filtered = provider.TextContent("(removed duplicate tool results)")
 			}
 			result[i] = provider.Message{Role: msg.Role, Content: filtered}
+		}
+	}
+
+	// --- Phase 3: synthesize tool_results for orphaned dedup IDs ---
+	// Any entries remaining in rewrites had no tool_result to pair with.
+	// Group by assistant message index and inject synthetic results.
+	orphansByMsg := make(map[int][]string) // msg index → orphan IDs
+	for _, queue := range rewrites {
+		for _, entry := range queue {
+			orphansByMsg[entry.msgIdx] = append(orphansByMsg[entry.msgIdx], entry.newID)
+		}
+	}
+	// Process in reverse so slice insertions don't shift indices.
+	for i := len(result) - 1; i >= 0; i-- {
+		ids := orphansByMsg[i]
+		if len(ids) == 0 {
+			continue
+		}
+		var synth []provider.ContentBlock
+		for _, id := range ids {
+			logger("synthesized tool_result for orphaned tool_use %s after message %d", id, i)
+			synth = append(synth, provider.ToolResultBlock(id, "Tool call result unavailable (session corruption repair)", true))
+		}
+		if i+1 < len(result) && result[i+1].Role == "user" {
+			result[i+1] = provider.Message{
+				Role:    "user",
+				Content: append(result[i+1].Content, synth...),
+			}
+		} else {
+			newMsg := provider.Message{Role: "user", Content: synth}
+			result = append(result[:i+1], append([]provider.Message{newMsg}, result[i+1:]...)...)
 		}
 	}
 
