@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/tools"
 	"foci/prompts"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -22,9 +23,10 @@ type Compactor struct {
 	maxTokens        int
 	minMessages      int
 	preserveMessages int                // preserve last N messages through compaction (0 disables)
-	effort           string             // effort level for compaction API call (empty = omit)
-	Scratchpad       *memory.Scratchpad // nil disables scratchpad injection
-	AgentID          string             // agent ID for per-agent scratchpad queries
+	effort           string                // effort level for compaction API call (empty = omit)
+	Scratchpad       *memory.Scratchpad    // nil disables scratchpad injection
+	TaskListStore    *memory.TaskListStore // nil disables task list injection
+	AgentID          string                // agent ID for per-agent store queries
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -374,6 +376,17 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 			for _, e := range entries {
 				handoff += fmt.Sprintf("\n--- %s ---\n%s", e.Key, e.Content)
 			}
+		}
+	}
+
+	// Collect tasks to preserve through compaction
+	if c.TaskListStore != nil {
+		if tasks, err := c.TaskListStore.List(c.AgentID); err != nil {
+			c.log.Warnf("read tasks for %s: %v", sessionKey, err)
+		} else if len(tasks) > 0 {
+			c.log.Infof("tasks preserved through compaction of %s", sessionKey)
+			handoff += "\n\n[task list — preserved through compaction]\n"
+			handoff += tools.FormatTasks(tasks)
 		}
 	}
 

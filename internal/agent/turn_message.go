@@ -46,12 +46,13 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 
 	metaPrefix := buildMetaPrefix(now, turnModel, manaStr, manaGood, sm)
 	reminderBlock := a.collectReminders(sessionKey)
+	stateBlock := a.collectStateDashboard()
 	msgBody := manaRestoreNote + imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && isUserTrigger(trigger) {
 		msgBody = userMessage + "\n\n" + userMessage
 	}
-	annotatedMessage := metaPrefix + reminderBlock + "\n" + msgBody
+	annotatedMessage := metaPrefix + reminderBlock + stateBlock + "\n" + msgBody
 
 	// Build content blocks: attachments first, then text
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents

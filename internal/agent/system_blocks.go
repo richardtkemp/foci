@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"foci/internal/config"
 	"foci/internal/log"
@@ -54,6 +55,67 @@ func (a *Agent) collectReminders(sessionKey string) string {
 	}
 
 	return block
+}
+
+// collectStateDashboard builds a one-line state summary from all active stores.
+// Returns empty string if all stores are empty/nil.
+func (a *Agent) collectStateDashboard() string {
+	var parts []string
+
+	// Tasks: "2/5" or "2/5 → first in_progress subject"
+	if a.TaskListStore != nil {
+		if tasks, err := a.TaskListStore.List(a.AgentID); err != nil {
+			a.logger().Warnf("state dashboard: tasks: %v", err)
+		} else if len(tasks) > 0 {
+			completed, total := 0, len(tasks)
+			var firstActive string
+			for _, t := range tasks {
+				if t.Status == "completed" {
+					completed++
+				} else if firstActive == "" && t.Status == "in_progress" {
+					firstActive = t.Subject
+				}
+			}
+			part := fmt.Sprintf("%d/%d", completed, total)
+			if firstActive != "" {
+				part += " → " + firstActive
+			}
+			parts = append(parts, "tasks: "+part)
+		}
+	}
+
+	// Todos: "2 open (1 high)"
+	if a.TodoStore != nil {
+		if items, err := a.TodoStore.List(a.AgentID, "open", "", "", ""); err != nil {
+			a.logger().Warnf("state dashboard: todos: %v", err)
+		} else if len(items) > 0 {
+			highCount := 0
+			for _, item := range items {
+				if item.Priority == "high" {
+					highCount++
+				}
+			}
+			part := fmt.Sprintf("%d open", len(items))
+			if highCount > 0 {
+				part += fmt.Sprintf(" (%d high)", highCount)
+			}
+			parts = append(parts, "todos: "+part)
+		}
+	}
+
+	// Scratchpad: "N entries"
+	if a.ScratchpadStore != nil {
+		if entries, err := a.ScratchpadStore.List(a.AgentID); err != nil {
+			a.logger().Warnf("state dashboard: scratchpad: %v", err)
+		} else if len(entries) > 0 {
+			parts = append(parts, fmt.Sprintf("scratchpad: %d entries", len(entries)))
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n[state] " + strings.Join(parts, " | ")
 }
 
 // buildSystemBlocks assembles the system prompt blocks from bootstrap,
