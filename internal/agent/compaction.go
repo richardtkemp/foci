@@ -45,6 +45,9 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	// Only invalidate THIS session's cached system blocks so other sessions
 	// keep their byte-identical prompts and don't suffer cache busts.
 	a.Bootstrap.Reload()
+	if a.NudgeReloadFunc != nil {
+		a.NudgeReloadFunc()
+	}
 	sm.systemBlocks = nil
 	// Reset cache baseline — next request will have a different prefix
 	sm.prevCacheRead = 0

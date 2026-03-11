@@ -144,13 +144,14 @@ main
  ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
  ├── tools         → provider, platform, log, memory, secrets, voice
  ├── workspace     → provider
+ ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
  ├── prompts       (no deps — embedded .md files)
  ├── compaction    → provider, prompts, session, log
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
  ├── command       → table, provision, agent, session, workspace, config, state, provider
  ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
- ├── agent         → provider, anthropic, compaction, mana, warnings, session, tools, workspace, log
+ ├── agent         → provider, anthropic, compaction, mana, warnings, nudge, session, tools, workspace, log
  ├── periodic     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
  └── telegram      → agent, command, platform, log, sqlite, table, voice
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
@@ -227,9 +228,14 @@ The core of the system. Two entry points:
    c. log event + log API entry
    d. notify observers for server_tool_use / web_search_tool_result / web_fetch_tool_result blocks
    e. if stop_reason == "pause_turn" → append assistant msg, continue loop (server will resume)
-   f. if stop_reason == "end_turn" → save & check compaction & return text
+   f. if stop_reason == "end_turn":
+      - if nudge pre-answer gate enabled and not yet verified → inject [system] reminder, continue loop
+      - otherwise → save & check compaction & return text
    g. if stop_reason == "tool_use":
       - execute each tool_use via registry (skip server_tool_use — already executed)
+      - track tool streak and error state
+      - inject braindead warning if threshold reached
+      - inject nudge reminders based on trigger conditions (periodic, after_streak, after_error, match)
       - append assistant msg + tool_result msg
       - goto 7a
 8. sessions.AppendAll(sessionKey, newMessages)

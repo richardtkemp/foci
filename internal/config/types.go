@@ -179,6 +179,14 @@ type AgentConfig struct {
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings        AgentUsageWarningsConfig `toml:"usage_warnings"`         // per-agent mana warning thresholds
 	SteerMode            bool                     `toml:"steer_mode"`             // inject user messages between tool calls (default true)
+
+	// Nudge system: mid-turn behavioral reminders extracted from character files
+	NudgeEnable            bool `toml:"nudge_enable"`              // enable the nudge system (default false)
+	NudgeCooldown          int  `toml:"nudge_cooldown"`            // min tool calls between repeating same reminder (default 5)
+	NudgeMaxPerBatch       int  `toml:"nudge_max_per_batch"`       // max reminders injected per tool batch (default 1)
+	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
+	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
+
 	StreamOutput         bool                     `toml:"stream_output"`          // DEPRECATED: use [agents.platforms.telegram.stream_output]
 	StreamUpdateInterval string                   `toml:"stream_update_interval"` // DEPRECATED: use [agents.platforms.telegram.stream_interval]
 	CacheTTL             string                   `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
@@ -513,6 +521,13 @@ type DefaultsConfig struct {
 	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")
 	EnableStartupNotify  bool    `toml:"enable_startup_notify"`  // send notification on startup (default true)
 	CacheTTL             string  `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
+
+	// Nudge system: mid-turn behavioral reminders extracted from character files
+	NudgeEnable            bool `toml:"nudge_enable"`              // enable the nudge system (default false)
+	NudgeCooldown          int  `toml:"nudge_cooldown"`            // min tool calls between repeating same reminder (default 5)
+	NudgeMaxPerBatch       int  `toml:"nudge_max_per_batch"`       // max reminders injected per tool batch (default 1)
+	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
+	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
 }
 
 // ModelsConfig holds model-related configuration.
