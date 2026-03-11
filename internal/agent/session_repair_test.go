@@ -7,7 +7,7 @@ import (
 	"foci/internal/provider"
 )
 
-func TestRepairDuplicateToolUseIDs_NoDuplicates(t *testing.T) {
+func TestRepairDuplicateToolIDs_NoDuplicates(t *testing.T) {
 	// No duplicates: messages should be returned unchanged.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -26,7 +26,7 @@ func TestRepairDuplicateToolUseIDs_NoDuplicates(t *testing.T) {
 	}
 
 	var warnings []string
-	result, repaired := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolIDs(msgs, func(format string, args ...any) {
 		warnings = append(warnings, format)
 	})
 
@@ -42,7 +42,7 @@ func TestRepairDuplicateToolUseIDs_NoDuplicates(t *testing.T) {
 	}
 }
 
-func TestRepairDuplicateToolUseIDs_WithDuplicates(t *testing.T) {
+func TestRepairDuplicateToolIDs_DuplicateToolUse(t *testing.T) {
 	// Duplicate tool_use ID: toolu_1 appears in messages 1 and 3.
 	// The second occurrence and its matching tool_result should be rewritten.
 	msgs := []provider.Message{
@@ -65,7 +65,7 @@ func TestRepairDuplicateToolUseIDs_WithDuplicates(t *testing.T) {
 	}
 
 	var warnings []string
-	result, repaired := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolIDs(msgs, func(format string, args ...any) {
 		warnings = append(warnings, format)
 	})
 
@@ -111,6 +111,89 @@ func TestRepairDuplicateToolUseIDs_WithDuplicates(t *testing.T) {
 	}
 }
 
+func TestRepairDuplicateToolIDs_DuplicateToolResults(t *testing.T) {
+	// Duplicate tool_results without duplicate tool_uses: happens when the defer
+	// safety-net replays messages that were already saved to disk.
+	// One tool_use with ID "toolu_1", but two tool_results reference it.
+	// The second tool_result should be dropped.
+	msgs := []provider.Message{
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_1", Content: "file1"},
+		}},
+		// Replayed from defer safety-net:
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_1", Content: "file1"},
+		}},
+		{Role: "assistant", Content: provider.TextContent("done")},
+	}
+
+	var warnings []string
+	result, repaired := repairDuplicateToolIDs(msgs, func(format string, args ...any) {
+		warnings = append(warnings, format)
+	})
+
+	if !repaired {
+		t.Fatal("expected repaired=true for duplicate tool_results")
+	}
+
+	// The duplicate tool_result message should have been replaced with placeholder
+	if len(result) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(result))
+	}
+	// Message 2 should have been cleaned (duplicate tool_result removed)
+	msg2 := result[2]
+	for _, block := range msg2.Content {
+		if block.Type == "tool_result" && block.ToolUseID == "toolu_1" {
+			t.Error("duplicate tool_result was not removed")
+		}
+	}
+
+	// Original tool_result in message 1 should be kept
+	if result[1].Content[0].ToolUseID != "toolu_1" {
+		t.Error("original tool_result was changed")
+	}
+}
+
+func TestRepairDuplicateToolIDs_DuplicateResultsSameMessage(t *testing.T) {
+	// Two tool_results for the same tool_use_id within a single user message.
+	// Only the first should be kept.
+	msgs := []provider.Message{
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_1", Content: "first"},
+			{Type: "tool_result", ToolUseID: "toolu_1", Content: "duplicate"},
+		}},
+	}
+
+	var warnings []string
+	result, repaired := repairDuplicateToolIDs(msgs, func(format string, args ...any) {
+		warnings = append(warnings, format)
+	})
+
+	if !repaired {
+		t.Fatal("expected repaired=true")
+	}
+
+	// Should have exactly one tool_result
+	resultCount := 0
+	for _, block := range result[1].Content {
+		if block.Type == "tool_result" {
+			resultCount++
+			if block.Content != "first" {
+				t.Errorf("kept wrong tool_result: %s", block.Content)
+			}
+		}
+	}
+	if resultCount != 1 {
+		t.Errorf("expected 1 tool_result, got %d", resultCount)
+	}
+}
+
 func TestSanitizeEmptyTextBlocks(t *testing.T) {
 	// Empty text blocks should be removed; messages with only empty text
 	// blocks get a placeholder.
@@ -147,7 +230,7 @@ func TestSanitizeEmptyTextBlocks(t *testing.T) {
 	}
 }
 
-func TestRepairDuplicateToolUseIDs_SameMessageBatch(t *testing.T) {
+func TestRepairDuplicateToolIDs_SameMessageBatch(t *testing.T) {
 	// Gemini emits ALL tool_use blocks with the same ID in a single message.
 	// All 4 should be deduped: first keeps original, rest get dedup suffixes.
 	// The corresponding 4 tool_results must be rewritten to match.
@@ -168,7 +251,7 @@ func TestRepairDuplicateToolUseIDs_SameMessageBatch(t *testing.T) {
 	}
 
 	var warnings []string
-	result, repaired := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolIDs(msgs, func(format string, args ...any) {
 		warnings = append(warnings, format)
 	})
 
@@ -227,9 +310,9 @@ func TestRepairDuplicateToolUseIDs_SameMessageBatch(t *testing.T) {
 	}
 }
 
-func TestRepairDuplicateToolUseIDs_EmptyMessages(t *testing.T) {
+func TestRepairDuplicateToolIDs_EmptyMessages(t *testing.T) {
 	// Empty messages should be handled gracefully.
-	result, repaired := repairDuplicateToolUseIDs(nil, func(format string, args ...any) {
+	result, repaired := repairDuplicateToolIDs(nil, func(format string, args ...any) {
 		t.Error("unexpected warning")
 	})
 	if repaired {

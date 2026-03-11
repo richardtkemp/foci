@@ -297,12 +297,13 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 	}
 
-	// Repair duplicate tool_use IDs in memory. The Anthropic API rejects requests
-	// containing duplicate IDs with a 400 error. This can happen due to
-	// session corruption (e.g., partial write + defer safety-net replay).
+	// Repair duplicate tool_use/tool_result IDs in memory. The Anthropic API
+	// rejects duplicate IDs with a 400 error. This can happen due to session
+	// corruption (e.g., partial write + defer safety-net replay) or Gemini
+	// synthesising identical IDs for same-name tool calls.
 	// Not persisted: runs on every load (cheap O(n) scan), and Replace on branch
 	// sessions would incorrectly write the full parent+branch chain to the branch file.
-	messages, _ = repairDuplicateToolUseIDs(messages, func(format string, args ...any) {
+	messages, _ = repairDuplicateToolIDs(messages, func(format string, args ...any) {
 		a.logger().Warnf("session=%s "+format, append([]any{sessionKey}, args...)...)
 	})
 
