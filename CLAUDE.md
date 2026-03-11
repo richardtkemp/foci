@@ -103,6 +103,7 @@ All tests are self-contained. Run `make test` — should pass in ~1s.
 
 ## Standards
 
+- **Indentation:** Tabs everywhere. Go enforces this via `gofmt`; use tabs in all other files too.
 - **Tests:** Write tests for all new functionality. Cover happy path, edge cases, and error conditions. Every test function must start with a comment explaining its *purpose* — what it's trying to prove and how. Keep it concise. Don't quote the test code itself.
 - **Docs:** Update `docs/CONFIG.md` for any new config options. Update `docs/WIRING.md` for any architectural or flow changes.
 - **Config:** No magic numbers in code. Thresholds, intervals, model names, percentages, limits — anything that might reasonably vary per deployment — must be a config field with a sensible default. Add fields to the relevant config struct with TOML tags.
