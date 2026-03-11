@@ -111,6 +111,42 @@ func TestRepairDuplicateToolUseIDs_WithDuplicates(t *testing.T) {
 	}
 }
 
+func TestSanitizeEmptyTextBlocks(t *testing.T) {
+	// Empty text blocks should be removed; messages with only empty text
+	// blocks get a placeholder.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "text", Text: ""},
+		}},
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "text", Text: "real text"},
+			{Type: "text", Text: ""},
+		}},
+		{Role: "user", Content: provider.TextContent("bye")},
+	}
+
+	result := sanitizeEmptyTextBlocks(msgs)
+
+	// Message 1 (assistant): was entirely empty text → should have placeholder
+	if len(result[1].Content) != 1 || result[1].Content[0].Text != "(empty)" {
+		t.Errorf("all-empty message should get placeholder, got %+v", result[1].Content)
+	}
+
+	// Message 2 (assistant): had one real + one empty → empty removed, real kept
+	if len(result[2].Content) != 1 || result[2].Content[0].Text != "real text" {
+		t.Errorf("mixed message should keep real text, got %+v", result[2].Content)
+	}
+
+	// Messages 0 and 3 should be unchanged
+	if result[0].Content[0].Text != "hello" {
+		t.Error("non-empty message 0 was changed")
+	}
+	if result[3].Content[0].Text != "bye" {
+		t.Error("non-empty message 3 was changed")
+	}
+}
+
 func TestRepairDuplicateToolUseIDs_EmptyMessages(t *testing.T) {
 	// Empty messages should be handled gracefully.
 	result, repaired := repairDuplicateToolUseIDs(nil, func(format string, args ...any) {

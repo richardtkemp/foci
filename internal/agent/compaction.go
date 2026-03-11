@@ -159,6 +159,37 @@ func repairDuplicateToolUseIDs(messages []provider.Message, logger func(string, 
 	return result, true
 }
 
+// sanitizeEmptyTextBlocks removes empty text content blocks from messages.
+// Both Anthropic and Gemini APIs reject requests containing text blocks with empty text.
+// This can happen from corrupted sessions or API responses that returned empty content.
+func sanitizeEmptyTextBlocks(messages []provider.Message) []provider.Message {
+	for i, msg := range messages {
+		hasEmpty := false
+		for _, block := range msg.Content {
+			if block.Type == "text" && block.Text == "" {
+				hasEmpty = true
+				break
+			}
+		}
+		if !hasEmpty {
+			continue
+		}
+		var filtered []provider.ContentBlock
+		for _, block := range msg.Content {
+			if block.Type == "text" && block.Text == "" {
+				continue
+			}
+			filtered = append(filtered, block)
+		}
+		if len(filtered) == 0 {
+			// Replace entirely empty message with placeholder
+			filtered = provider.TextContent("(empty)")
+		}
+		messages[i].Content = filtered
+	}
+	return messages
+}
+
 // summarizeServerToolResult extracts a brief text summary from a server tool result block.
 // Server tool result blocks (web_search_tool_result, web_fetch_tool_result) contain
 // structured data in their Raw JSON. We extract a human-readable snippet for observers.

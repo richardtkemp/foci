@@ -284,40 +284,27 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		return "", fmt.Errorf("load session: %w", err)
 	}
 
-	// Repair session data issues and persist fixes to disk.
-	// Both repairs modify the in-memory messages AND write corrections back
-	// to the session file so the fix is permanent (not repeated every load).
-	needsReplace := false
-
 	// Repair interrupted tool calls (e.g. SIGTERM during tool execution).
 	// If the last message is assistant with tool_use but no tool_result follows,
 	// inject synthetic error results so the API accepts the message history.
 	if repair := repairInterruptedToolCalls(messages); repair != nil {
 		messages = append(messages, *repair)
-		needsReplace = true
-		a.logger().Infof("session=%s repaired %d interrupted tool calls", sessionKey, len(repair.Content))
-	}
-
-	// Repair duplicate tool_use IDs. The Anthropic API rejects requests
-	// containing duplicate IDs with a 400 error. This can happen due to
-	// session corruption (e.g., partial write + defer safety-net replay).
-	var dupRepaired bool
-	messages, dupRepaired = repairDuplicateToolUseIDs(messages, func(format string, args ...any) {
-		a.logger().Warnf("session=%s "+format, append([]any{sessionKey}, args...)...)
-	})
-	if dupRepaired {
-		needsReplace = true
-	}
-
-	// Persist all repairs in one Replace call.
-	if needsReplace {
 		writer := a.Sessions.For(sessionKey)
-		if err := writer.Replace(sessionKey, messages); err != nil {
-			a.logger().Errorf("session=%s persist repair: %v", sessionKey, err)
+		if err := writer.Append(sessionKey, *repair); err != nil {
+			a.logger().Errorf("session=%s persist tool call repair: %v", sessionKey, err)
 		} else {
-			a.logger().Infof("session=%s repairs persisted to disk", sessionKey)
+			a.logger().Infof("session=%s repaired %d interrupted tool calls", sessionKey, len(repair.Content))
 		}
 	}
+
+	// Repair duplicate tool_use IDs in memory. The Anthropic API rejects requests
+	// containing duplicate IDs with a 400 error. This can happen due to
+	// session corruption (e.g., partial write + defer safety-net replay).
+	// Not persisted: runs on every load (cheap O(n) scan), and Replace on branch
+	// sessions would incorrectly write the full parent+branch chain to the branch file.
+	messages, _ = repairDuplicateToolUseIDs(messages, func(format string, args ...any) {
+		a.logger().Warnf("session=%s "+format, append([]any{sessionKey}, args...)...)
+	})
 
 	turnModel := a.SessionModel(sessionKey)
 	turnClient := a.SessionClient(sessionKey)
@@ -365,6 +352,9 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	braindeadWarned := false
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
 	for i := 0; i < maxLoops; i++ {
+		// Remove empty text blocks that would cause API 400 errors.
+		messages = sanitizeEmptyTextBlocks(messages)
+
 		var reqMessages []provider.Message
 		if useAutoCache {
 			reqMessages = messages
