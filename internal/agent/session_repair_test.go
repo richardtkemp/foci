@@ -147,6 +147,86 @@ func TestSanitizeEmptyTextBlocks(t *testing.T) {
 	}
 }
 
+func TestRepairDuplicateToolUseIDs_SameMessageBatch(t *testing.T) {
+	// Gemini emits ALL tool_use blocks with the same ID in a single message.
+	// All 4 should be deduped: first keeps original, rest get dedup suffixes.
+	// The corresponding 4 tool_results must be rewritten to match.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("add todos")},
+		{Role: "assistant", Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_gemini_todo", Name: "todo", Input: json.RawMessage(`{"text":"a"}`)},
+			{Type: "tool_use", ID: "toolu_gemini_todo", Name: "todo", Input: json.RawMessage(`{"text":"b"}`)},
+			{Type: "tool_use", ID: "toolu_gemini_todo", Name: "todo", Input: json.RawMessage(`{"text":"c"}`)},
+			{Type: "tool_use", ID: "toolu_gemini_todo", Name: "todo", Input: json.RawMessage(`{"text":"d"}`)},
+		}},
+		{Role: "user", Content: []provider.ContentBlock{
+			{Type: "tool_result", ToolUseID: "toolu_gemini_todo", Content: "Added #1"},
+			{Type: "tool_result", ToolUseID: "toolu_gemini_todo", Content: "Added #2"},
+			{Type: "tool_result", ToolUseID: "toolu_gemini_todo", Content: "Added #3"},
+			{Type: "tool_result", ToolUseID: "toolu_gemini_todo", Content: "Added #4"},
+		}},
+	}
+
+	var warnings []string
+	result, repaired := repairDuplicateToolUseIDs(msgs, func(format string, args ...any) {
+		warnings = append(warnings, format)
+	})
+
+	if !repaired {
+		t.Fatal("expected repaired=true")
+	}
+	if len(warnings) != 3 {
+		t.Fatalf("expected 3 warnings (3 duplicates renamed), got %d", len(warnings))
+	}
+
+	// Collect tool_use IDs from assistant message
+	var toolUseIDs []string
+	for _, block := range result[1].Content {
+		if block.Type == "tool_use" {
+			toolUseIDs = append(toolUseIDs, block.ID)
+		}
+	}
+	// First should keep original, rest should be unique
+	if toolUseIDs[0] != "toolu_gemini_todo" {
+		t.Errorf("first tool_use should keep original ID, got %s", toolUseIDs[0])
+	}
+
+	// Collect tool_result IDs from user message
+	var toolResultIDs []string
+	for _, block := range result[2].Content {
+		if block.Type == "tool_result" {
+			toolResultIDs = append(toolResultIDs, block.ToolUseID)
+		}
+	}
+
+	// Every tool_use ID must have exactly one matching tool_result
+	useSet := make(map[string]int)
+	for _, id := range toolUseIDs {
+		useSet[id]++
+	}
+	resultSet := make(map[string]int)
+	for _, id := range toolResultIDs {
+		resultSet[id]++
+	}
+	// All IDs should be unique
+	for id, count := range useSet {
+		if count != 1 {
+			t.Errorf("tool_use ID %s appears %d times (should be 1)", id, count)
+		}
+	}
+	for id, count := range resultSet {
+		if count != 1 {
+			t.Errorf("tool_result ID %s appears %d times (should be 1)", id, count)
+		}
+	}
+	// Every tool_use ID should have a matching tool_result
+	for _, id := range toolUseIDs {
+		if resultSet[id] != 1 {
+			t.Errorf("tool_use %s has no matching tool_result", id)
+		}
+	}
+}
+
 func TestRepairDuplicateToolUseIDs_EmptyMessages(t *testing.T) {
 	// Empty messages should be handled gracefully.
 	result, repaired := repairDuplicateToolUseIDs(nil, func(format string, args ...any) {
