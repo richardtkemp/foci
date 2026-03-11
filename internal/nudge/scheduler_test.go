@@ -219,6 +219,58 @@ func TestMaxPerBatchLimits(t *testing.T) {
 	}
 }
 
+// TestCheckMatchFiresWithoutTools verifies CheckMatch returns unfired match
+// rules, ensuring match triggers work even on turns with no tool calls.
+func TestCheckMatchFiresWithoutTools(t *testing.T) {
+	t.Parallel()
+
+	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s.Reset("Please debug this issue")
+
+	// No CheckAfterTools called — simulate a no-tools turn.
+	r := s.CheckMatch()
+	if r != "match-debug" {
+		t.Errorf("CheckMatch: expected match-debug, got %q", r)
+	}
+
+	// Second call should return "" — already fired.
+	r = s.CheckMatch()
+	if r != "" {
+		t.Errorf("CheckMatch second call: expected empty, got %q", r)
+	}
+}
+
+// TestCheckMatchNoopAfterToolsFired verifies CheckMatch returns "" when
+// the match rule already fired via CheckAfterTools.
+func TestCheckMatchNoopAfterToolsFired(t *testing.T) {
+	t.Parallel()
+
+	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s.Reset("Please debug this issue")
+
+	// Fire via tools path first.
+	s.CheckAfterTools(0, 1, false)
+
+	// CheckMatch should find nothing unfired.
+	r := s.CheckMatch()
+	if r != "" {
+		t.Errorf("CheckMatch after tools: expected empty, got %q", r)
+	}
+}
+
+// TestCheckMatchNoMatch verifies CheckMatch returns "" when no patterns match.
+func TestCheckMatchNoMatch(t *testing.T) {
+	t.Parallel()
+
+	s := NewScheduler(makeTestRuleSet(), 1, 5)
+	s.Reset("Hello world")
+
+	r := s.CheckMatch()
+	if r != "" {
+		t.Errorf("CheckMatch no match: expected empty, got %q", r)
+	}
+}
+
 // TestNilSchedulerSafe verifies nil scheduler doesn't panic.
 func TestNilSchedulerSafe(t *testing.T) {
 	t.Parallel()
@@ -230,6 +282,9 @@ func TestNilSchedulerSafe(t *testing.T) {
 	}
 	if r := s.CheckPreAnswer(); r != "" {
 		t.Errorf("nil scheduler returned %q", r)
+	}
+	if r := s.CheckMatch(); r != "" {
+		t.Errorf("nil scheduler CheckMatch returned %q", r)
 	}
 	if s.HasPreAnswerRules() {
 		t.Error("nil scheduler HasPreAnswerRules should be false")
