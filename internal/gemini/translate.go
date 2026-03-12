@@ -341,7 +341,7 @@ func mapFinishReason(reason genai.FinishReason) string {
 	}
 }
 
-// toolCallStopReason checks if any content blocks are tool_use and returns the appropriate stop reason.
+// hasToolUse reports whether any content block is a tool_use.
 func hasToolUse(blocks []provider.ContentBlock) bool {
 	for _, b := range blocks {
 		if b.Type == "tool_use" {
