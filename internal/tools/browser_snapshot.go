@@ -9,7 +9,6 @@ import (
 	"foci/internal/tools/browserjs"
 
 	"github.com/go-rod/rod"
-	"github.com/go-rod/rod/lib/proto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,10 +28,13 @@ func (s *Snapshot) Generation() int { return s.generation }
 
 // injectSnapshotJS injects the ARIA snapshot engine into a page's JS context.
 // Must be called before each capture since page navigation resets JS context.
-// Uses Runtime.evaluate directly because page.Eval wraps JS in a function,
-// but snapshotEngine must be defined in the global scope.
+// Uses page.Eval (rod's Runtime.callFunctionOn) so the injection targets the
+// same execution context that subsequent page.Eval calls use. Raw
+// proto.RuntimeEvaluate can target a stale context after page redirects.
+// The engine is assigned to window.snapshotEngine since var inside a function
+// is local, but we need it globally for AriaSnapshot and QueryEleByAria.
 func injectSnapshotJS(page *rod.Page) error {
-	_, err := proto.RuntimeEvaluate{Expression: browserjs.SnapshotJS}.Call(page)
+	_, err := page.Eval("() => { " + browserjs.SnapshotJS + "; window.snapshotEngine = snapshotEngine; }")
 	return err
 }
 
