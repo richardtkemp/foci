@@ -5,12 +5,12 @@ import "testing"
 func TestAsyncNotifierDelivers(t *testing.T) {
 	t.Parallel()
 	var gotKey, gotMsg, gotReplyTo string
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		gotKey = sk
 		gotMsg = msg
 		gotReplyTo = replyTo
 	})
-	n.InjectToAgent("sess-1", "hello", "")
+	n.InjectToAgent("sess-1", "hello", "", "async_notify")
 	if gotKey != "sess-1" {
 		t.Errorf("key = %q, want %q", gotKey, "sess-1")
 	}
@@ -25,18 +25,18 @@ func TestAsyncNotifierDelivers(t *testing.T) {
 func TestAsyncNotifierNilReceiver(t *testing.T) {
 	t.Parallel()
 	var n *AsyncNotifier
-	n.InjectToAgent("sess", "should not panic", "") // must not panic
+	n.InjectToAgent("sess", "should not panic", "", "") // must not panic
 }
 
 func TestAsyncNotifierNilFunc(t *testing.T) {
 	t.Parallel()
 	n := &AsyncNotifier{}
-	n.InjectToAgent("sess", "should not panic", "") // must not panic
+	n.InjectToAgent("sess", "should not panic", "", "") // must not panic
 }
 
 func TestAsyncNotifierPendingCounter(t *testing.T) {
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
 	if n.HasPending("sess-1") {
 		t.Error("should not have pending before MarkPending")
@@ -60,7 +60,7 @@ func TestAsyncNotifierPendingCounter(t *testing.T) {
 
 func TestAsyncNotifierMultiplePending(t *testing.T) {
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
 	n.MarkPending("sess-1")
 	n.MarkPending("sess-1")
@@ -80,7 +80,7 @@ func TestAsyncNotifierMultiplePending(t *testing.T) {
 
 func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
 	// MarkDone without MarkPending should not panic or go negative
 	n.MarkDone("sess-1")

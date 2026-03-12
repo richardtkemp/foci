@@ -289,7 +289,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist-watch"
@@ -370,7 +370,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	_, _, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Verify the watch was restored by checking the state is still persisted
@@ -409,7 +409,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Stale watch should have been cleaned from state
@@ -433,7 +433,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-unwatch-persist"
@@ -495,7 +495,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	_, tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-clearall-watch"
@@ -551,7 +551,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	_, tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 	defer cleanup1()
 

@@ -120,10 +120,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeA, wakeB atomic.Int32
-	_, toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	_, toolA, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeA.Add(1)
 	}), nil, "", false, 30, 0)
-	_, toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	_, toolB, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeB.Add(1)
 	}), nil, "", false, 30, 0)
 

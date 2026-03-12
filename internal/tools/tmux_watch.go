@@ -153,7 +153,7 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 					msg := prompts.FormatInjectedMessage("TMUX WATCH",
 						time.Now(),
 						fmt.Sprintf("Session %s:%d has been inactive for %v", ws.session, ws.window, ws.threshold))
-					ws.notifier.InjectToAgent(ws.agentSessionKey, msg, "")
+					ws.notifier.InjectToAgent(ws.agentSessionKey, msg, "", "tmux_watch")
 
 					if ws.autopilot {
 						// Auto-unwatch: remove from watched map and exit goroutine

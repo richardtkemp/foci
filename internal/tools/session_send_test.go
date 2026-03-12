@@ -55,7 +55,7 @@ func TestSendToSession(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -97,7 +97,7 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	callerNotified := false
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		callerNotified = true
 	})
 
@@ -228,7 +228,7 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	// for Telegram delivery.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		// reply_to=caller: verify the notifier receives the TARGET session key
 		// so the async_notify callback can extract the chat ID.
 		if ChatIDFromSessionKey(sk) == 0 {
@@ -298,7 +298,7 @@ func TestSendToSessionPartialKeyResolution(t *testing.T) {
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 

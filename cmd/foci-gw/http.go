@@ -131,7 +131,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 		}
 		if resp != "" && !silent {
 			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
-				if err := conn.SendToSession(sessionKey, resp); err != nil {
+				if err := conn.SendTextToSession(sessionKey, resp); err != nil {
 					log.Errorf(logTag, "async platform delivery: %v", err)
 				}
 			}

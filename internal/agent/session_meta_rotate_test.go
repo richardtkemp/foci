@@ -74,7 +74,7 @@ func TestRotateSession(t *testing.T) {
 // old key resolve to the new key for both delivery and pending tracking.
 func TestRotateSession_MigratesAsyncPending(t *testing.T) {
 	var delivered string
-	notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered = sk
 	})
 
@@ -97,7 +97,7 @@ func TestRotateSession_MigratesAsyncPending(t *testing.T) {
 	}
 
 	// InjectToAgent with old key should deliver to new key
-	notifier.InjectToAgent(oldKey, "async result", "")
+	notifier.InjectToAgent(oldKey, "async result", "", "")
 	if delivered != newKey {
 		t.Errorf("InjectToAgent delivered to %q, want %q", delivered, newKey)
 	}

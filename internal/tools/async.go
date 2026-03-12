@@ -13,7 +13,7 @@ import "sync"
 // the old key so that in-flight async goroutines — which captured the old
 // key at dispatch time — resolve to the new key when they deliver results.
 type AsyncNotifier struct {
-	fn func(targetSession, message string, replyToSession string)
+	fn func(targetSession, message, replyToSession, trigger string)
 
 	mu      sync.Mutex
 	pending map[string]int    // session key → count of pending results
@@ -24,7 +24,8 @@ type AsyncNotifier struct {
 // The targetSession identifies which session should process the message.
 // If replyToSession is non-empty, the response is routed to that session
 // instead of being sent to targetSession's chat.
-func NewAsyncNotifier(fn func(targetSession, message string, replyToSession string)) *AsyncNotifier {
+// The trigger identifies the source (e.g. "async_notify", "tmux_watch").
+func NewAsyncNotifier(fn func(targetSession, message, replyToSession, trigger string)) *AsyncNotifier {
 	return &AsyncNotifier{
 		fn:      fn,
 		pending: make(map[string]int),
@@ -77,15 +78,17 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 // key deliver to the current (rotated) session.
 // If replyToSession is non-empty, the agent's response is routed to that session
 // instead of being sent to targetSession's chat.
+// The trigger identifies the source (e.g. "async_notify", "tmux_watch") for
+// the [meta] via= header.
 // Safe to call on a nil receiver or with a nil fn.
-func (n *AsyncNotifier) InjectToAgent(targetSession, message string, replyToSession string) {
+func (n *AsyncNotifier) InjectToAgent(targetSession, message, replyToSession, trigger string) {
 	if n == nil || n.fn == nil {
 		return
 	}
 	n.mu.Lock()
 	resolved := n.resolveKey(targetSession)
 	n.mu.Unlock()
-	n.fn(resolved, message, replyToSession)
+	n.fn(resolved, message, replyToSession, trigger)
 }
 
 // MigrateSession remaps an old session key to a new one. In-flight async

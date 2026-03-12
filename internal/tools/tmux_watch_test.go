@@ -131,7 +131,7 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	tmuxAvailable(t)
 
 	var wakeMsg atomic.Value
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeMsg.Store(msg)
 	})
 
@@ -199,7 +199,7 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 
 	var msgs []string
 	var mu sync.Mutex
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		mu.Lock()
 		msgs = append(msgs, msg)
 		mu.Unlock()
