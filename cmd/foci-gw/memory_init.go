@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -158,6 +159,21 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	wantFTS5 := cfg.Memory.HasBackend("fts5")
 	wantBleve := cfg.Memory.HasBackend("bleve")
 
+	// migrateBlevePath renames legacy memory-*.bleve paths to search-*.bleve.
+	migrateBlevePath := func(oldName, newName string) {
+		oldPath := cfg.DataPath(oldName)
+		newPath := cfg.DataPath(newName)
+		if _, err := os.Stat(oldPath); err == nil {
+			if _, err := os.Stat(newPath); os.IsNotExist(err) {
+				if err := os.Rename(oldPath, newPath); err != nil {
+					log.Errorf("main", "migrate bleve path %s → %s: %v", oldPath, newPath, err)
+				} else {
+					log.Infof("main", "migrated bleve index %s → %s", oldName, newName)
+				}
+			}
+		}
+	}
+
 	// memoryBackend abstracts over FTS5 and bleve for shared init logic.
 	type memoryBackend interface {
 		memory.Searcher
@@ -220,11 +236,13 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if len(combined) == 0 {
 				continue
 			}
+			bleveName := fmt.Sprintf("search-%s.bleve", acfg.ID)
+			migrateBlevePath(fmt.Sprintf("memory-%s.bleve", acfg.ID), bleveName)
 			backends, fts5Idx, bleveIdx := initBackends(
 				fmt.Sprintf("agent %s", acfg.ID),
 				combined,
 				fmt.Sprintf("memory-%s.db", acfg.ID),
-				fmt.Sprintf("memory-%s.bleve", acfg.ID),
+				bleveName,
 			)
 			result.agentBackends[acfg.ID] = backends
 			if fts5Idx != nil {
@@ -255,7 +273,8 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	} else {
 		// Shared indices (backward compat — no agent has per-agent memory)
-		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, "memory.db", "memory.bleve")
+		migrateBlevePath("memory.bleve", "search.bleve")
+		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, "memory.db", "search.bleve")
 		result.sharedBackends = backends
 		result.sharedFTS5 = fts5Idx
 		result.sharedBleve = bleveIdx
@@ -271,6 +290,24 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			log.ConversationHook = fts5Idx.IndexConversation
 		case bleveIdx != nil:
 			log.ConversationHook = bleveIdx.IndexConversation
+		}
+	}
+
+	// Wire todo stores to bleve indices for full-text search
+	if wantBleve {
+		for agentID, ts := range result.todoStores {
+			var idx *memory.BleveIndex
+			if bleveIdx, ok := result.agentBleve[agentID]; ok {
+				idx = bleveIdx
+			} else if result.sharedBleve != nil {
+				idx = result.sharedBleve
+			}
+			if idx != nil {
+				ts.SetSearchIndex(idx)
+				if err := ts.IndexAllTodos(agentID); err != nil {
+					log.Errorf("main", "index todos for agent %s: %v", agentID, err)
+				}
+			}
 		}
 	}
 

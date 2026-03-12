@@ -25,7 +25,8 @@ type TodoItem struct {
 
 // TodoStore persists todo items in SQLite.
 type TodoStore struct {
-	db *sql.DB
+	db          *sql.DB
+	searchIndex *BleveIndex // optional bleve index for full-text search
 }
 
 // NewTodoStore creates or opens the todo database.
@@ -151,6 +152,45 @@ func columnExists(db *sql.DB, table, column string) bool {
 	return false
 }
 
+// SetSearchIndex sets the bleve index used for full-text search. When set,
+// Add/Edit/Remove operations update the bleve index, and Search queries it
+// instead of the embedded FTS5 index.
+func (s *TodoStore) SetSearchIndex(idx *BleveIndex) {
+	s.searchIndex = idx
+}
+
+// IndexAllTodos indexes all existing todos for an agent into the bleve
+// search index. Call this once after SetSearchIndex to populate the index
+// with pre-existing items.
+func (s *TodoStore) IndexAllTodos(agentID string) error {
+	if s.searchIndex == nil {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT id, text, updated_at, created_at FROM todos WHERE agent_id = ?`, agentID,
+	)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var id int64
+		var text, createdAt string
+		var updatedAt sql.NullString
+		if err := rows.Scan(&id, &text, &updatedAt, &createdAt); err != nil {
+			return err
+		}
+		ts := createdAt
+		if updatedAt.Valid {
+			ts = updatedAt.String
+		}
+		t, _ := time.Parse(time.RFC3339, ts)
+		s.searchIndex.IndexTodo(agentID, id, text, float64(t.Unix()))
+	}
+	return rows.Err()
+}
+
 // Add creates a new todo item and returns its per-agent ID.
 // Each agent gets its own sequential ID space (1, 2, 3, ...).
 func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
@@ -167,6 +207,10 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	).Scan(&nextID)
 	if err != nil {
 		return 0, err
+	}
+	if s.searchIndex != nil {
+		t, _ := time.Parse(time.RFC3339, now)
+		s.searchIndex.IndexTodo(agentID, nextID, text, float64(t.Unix()))
 	}
 	return nextID, nil
 }
@@ -276,6 +320,9 @@ func (s *TodoStore) Remove(agentID string, id int64) error {
 	if n == 0 {
 		return fmt.Errorf("todo #%d not found", id)
 	}
+	if s.searchIndex != nil {
+		s.searchIndex.RemoveTodo(agentID, id)
+	}
 	return nil
 }
 
@@ -337,8 +384,11 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
 	}
 	if completedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, completedAt.String)
-		item.CompletedAt = &t
+		ct, _ := time.Parse(time.RFC3339, completedAt.String)
+		item.CompletedAt = &ct
+	}
+	if s.searchIndex != nil {
+		s.searchIndex.IndexTodo(agentID, id, item.Text, float64(item.UpdatedAt.Unix()))
 	}
 	return &item, nil
 }
@@ -370,10 +420,42 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 	return &item, nil
 }
 
-// Search returns todo items matching the query using FTS5 full-text search
+// Search returns todo items matching the query using full-text search
 // with porter stemming (e.g. "running" matches "run"). Results are ranked
 // by relevance, with a secondary sort by status and priority for ties.
+// Uses the bleve search index when available, falling back to FTS5.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
+	if s.searchIndex != nil {
+		return s.searchBleve(agentID, query)
+	}
+	return s.searchFTS5(agentID, query)
+}
+
+// searchBleve queries the bleve index for matching todos, then loads
+// full items from SQLite in the relevance order bleve returned.
+func (s *TodoStore) searchBleve(agentID, query string) ([]TodoItem, error) {
+	hits, err := s.searchIndex.SearchTodos(agentID, query)
+	if err != nil {
+		return nil, err
+	}
+	if len(hits) == 0 {
+		return nil, nil
+	}
+
+	// Load full items from SQLite by ID, maintaining bleve's relevance order
+	items := make([]TodoItem, 0, len(hits))
+	for _, hit := range hits {
+		item, err := s.Get(agentID, hit.TodoID)
+		if err != nil {
+			continue // deleted between search and load
+		}
+		items = append(items, *item)
+	}
+	return items, nil
+}
+
+// searchFTS5 queries the embedded FTS5 index (fallback when no bleve index).
+func (s *TodoStore) searchFTS5(agentID, query string) ([]TodoItem, error) {
 	ftsQuery := buildFTSQuery(query)
 	if ftsQuery == "" {
 		return nil, nil

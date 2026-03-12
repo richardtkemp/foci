@@ -36,7 +36,8 @@ type BleveIndex struct {
 	mu                 sync.Mutex
 }
 
-// buildBleveMapping creates the index mapping for memory documents.
+// buildBleveMapping creates the index mapping for search documents.
+// Supports memory files, conversation history, and todo items.
 func buildBleveMapping() mapping.IndexMapping {
 	contentField := bleve.NewTextFieldMapping()
 	contentField.Store = true
@@ -55,11 +56,24 @@ func buildBleveMapping() mapping.IndexMapping {
 	mtimeField.Store = true
 	mtimeField.IncludeInAll = false
 
+	// agent_id is used for per-agent filtering (e.g. todo search).
+	// Empty for memory/conversation docs.
+	agentIDField := bleve.NewKeywordFieldMapping()
+	agentIDField.Store = true
+	agentIDField.IncludeInAll = false
+
+	// todo_id stores the per-agent todo ID for result lookup.
+	todoIDField := bleve.NewNumericFieldMapping()
+	todoIDField.Store = true
+	todoIDField.IncludeInAll = false
+
 	docMapping := bleve.NewDocumentMapping()
 	docMapping.AddFieldMappingsAt("content", contentField)
 	docMapping.AddFieldMappingsAt("path", pathField)
 	docMapping.AddFieldMappingsAt("source", sourceField)
 	docMapping.AddFieldMappingsAt("mtime", mtimeField)
+	docMapping.AddFieldMappingsAt("agent_id", agentIDField)
+	docMapping.AddFieldMappingsAt("todo_id", todoIDField)
 
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.DefaultMapping = docMapping
@@ -94,13 +108,13 @@ func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce t
 }
 
 // Reindex scans all configured source directories and rebuilds the file
-// portion of the index. Conversation entries are preserved across reindexes.
+// portion of the index. Conversation and todo entries are preserved.
 func (b *BleveIndex) Reindex() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Collect conversation docs before recreation
-	convDocs := b.collectConversationDocs()
+	// Collect non-file docs (conversations, todos) before recreation
+	dynamicDocs := b.collectDynamicDocs()
 
 	// Close existing index, remove, recreate
 	if err := b.index.Close(); err != nil {
@@ -152,53 +166,50 @@ func (b *BleveIndex) Reindex() error {
 		}
 	}
 
-	// Restore conversation docs
-	for _, doc := range convDocs {
+	// Restore non-file docs (conversations, todos)
+	for _, doc := range dynamicDocs {
 		if err := batch.Index(doc.id, doc.fields); err != nil {
-			log.Errorf("memory", "restore conversation doc: %v", err)
+			log.Errorf("memory", "restore dynamic doc: %v", err)
 		}
 	}
 
 	return b.index.Batch(batch)
 }
 
-// convDoc holds a conversation document's ID and fields for preservation
-// across reindexes.
-type convDoc struct {
+// dynamicDoc holds a non-file document's ID and fields for preservation
+// across reindexes (conversations and todos).
+type dynamicDoc struct {
 	id     string
 	fields map[string]interface{}
 }
 
-// collectConversationDocs reads all conversation documents from the index.
+// collectDynamicDocs reads all conversation and todo documents from the index.
 // Must be called with b.mu held.
-func (b *BleveIndex) collectConversationDocs() []convDoc {
-	termQuery := query.NewTermQuery("conversation")
-	termQuery.SetField("source")
+func (b *BleveIndex) collectDynamicDocs() []dynamicDoc {
+	// Match source = "conversation" OR source = "todo"
+	convQuery := query.NewTermQuery("conversation")
+	convQuery.SetField("source")
+	todoQuery := query.NewTermQuery("todo")
+	todoQuery.SetField("source")
+	combined := bleve.NewDisjunctionQuery(convQuery, todoQuery)
 
-	req := bleve.NewSearchRequest(termQuery)
-	req.Size = 100_000 // generous limit
-	req.Fields = []string{"content", "path", "source", "mtime"}
+	req := bleve.NewSearchRequest(combined)
+	req.Size = 100_000
+	req.Fields = []string{"content", "path", "source", "mtime", "agent_id", "todo_id"}
 
 	result, err := b.index.Search(req)
 	if err != nil {
-		log.Warnf("memory", "collect conversation docs for reindex: %v", err)
+		log.Warnf("memory", "collect dynamic docs for reindex: %v", err)
 		return nil
 	}
 
-	docs := make([]convDoc, 0, len(result.Hits))
+	docs := make([]dynamicDoc, 0, len(result.Hits))
 	for _, hit := range result.Hits {
-		content, _ := hit.Fields["content"].(string)
-		path, _ := hit.Fields["path"].(string)
-		mtime, _ := hit.Fields["mtime"].(float64)
-		docs = append(docs, convDoc{
-			id: hit.ID,
-			fields: map[string]interface{}{
-				"content": content,
-				"path":    path,
-				"source":  "conversation",
-				"mtime":   mtime,
-			},
-		})
+		fields := make(map[string]interface{})
+		for k, v := range hit.Fields {
+			fields[k] = v
+		}
+		docs = append(docs, dynamicDoc{id: hit.ID, fields: fields})
 	}
 	return docs
 }
@@ -223,6 +234,92 @@ func (b *BleveIndex) IndexConversation(text, session string) {
 	if err := b.index.Index(docID, doc); err != nil {
 		log.Errorf("memory", "bleve index conversation: %v", err)
 	}
+}
+
+// TodoSearchHit is a single todo search result from bleve, carrying the
+// per-agent todo ID and relevance rank for subsequent SQLite lookup.
+type TodoSearchHit struct {
+	TodoID int64
+	Rank   float64
+}
+
+// todoDocID returns the bleve document ID for a todo item.
+func todoDocID(agentID string, id int64) string {
+	return fmt.Sprintf("todo:%s:%d", agentID, id)
+}
+
+// IndexTodo adds or updates a todo item in the bleve index.
+func (b *BleveIndex) IndexTodo(agentID string, id int64, text string, mtime float64) {
+	if text == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	doc := map[string]interface{}{
+		"content":  text,
+		"path":     fmt.Sprintf("#%d", id),
+		"source":   "todo",
+		"mtime":    mtime,
+		"agent_id": agentID,
+		"todo_id":  float64(id),
+	}
+	if err := b.index.Index(todoDocID(agentID, id), doc); err != nil {
+		log.Errorf("memory", "bleve index todo: %v", err)
+	}
+}
+
+// RemoveTodo removes a todo item from the bleve index.
+func (b *BleveIndex) RemoveTodo(agentID string, id int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if err := b.index.Delete(todoDocID(agentID, id)); err != nil {
+		log.Errorf("memory", "bleve remove todo: %v", err)
+	}
+}
+
+// SearchTodos queries the bleve index for todo items matching the query,
+// filtered by agent ID. Returns hits with todo IDs and relevance ranks.
+func (b *BleveIndex) SearchTodos(agentID, queryStr string) ([]TodoSearchHit, error) {
+	if strings.TrimSpace(queryStr) == "" {
+		return nil, nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Text query with porter stemming
+	textQuery := bleve.NewQueryStringQuery(queryStr)
+
+	// Filter: source = "todo"
+	sourceQuery := query.NewTermQuery("todo")
+	sourceQuery.SetField("source")
+
+	// Filter: agent_id = agentID
+	agentQuery := query.NewTermQuery(agentID)
+	agentQuery.SetField("agent_id")
+
+	combined := bleve.NewConjunctionQuery(textQuery, sourceQuery, agentQuery)
+
+	req := bleve.NewSearchRequest(combined)
+	req.Size = 50
+	req.Fields = []string{"todo_id"}
+	req.SortBy([]string{"-_score"})
+
+	result, err := b.index.Search(req)
+	if err != nil {
+		return nil, fmt.Errorf("bleve todo search: %w", err)
+	}
+
+	hits := make([]TodoSearchHit, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		todoID, _ := hit.Fields["todo_id"].(float64)
+		hits = append(hits, TodoSearchHit{
+			TodoID: int64(todoID),
+			Rank:   hit.Score,
+		})
+	}
+	return hits, nil
 }
 
 // Search queries the bleve index. sort controls result ordering:
