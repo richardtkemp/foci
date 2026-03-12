@@ -8,11 +8,16 @@ import "sync"
 //
 // It also tracks pending async results per session so that compaction
 // can be deferred until all outstanding results have been delivered.
+//
+// When a session key is rotated (e.g. compaction), MigrateSession remaps
+// the old key so that in-flight async goroutines — which captured the old
+// key at dispatch time — resolve to the new key when they deliver results.
 type AsyncNotifier struct {
 	fn func(targetSession, message string, replyToSession string)
 
 	mu      sync.Mutex
-	pending map[string]int // session key → count of pending results
+	pending map[string]int    // session key → count of pending results
+	remaps  map[string]string // old session key → new session key
 }
 
 // NewAsyncNotifier creates an AsyncNotifier that calls fn with each message.
@@ -38,16 +43,19 @@ func (n *AsyncNotifier) MarkPending(sessionKey string) {
 }
 
 // MarkDone decrements the pending async result count for a session.
-// Call this when an async result has been delivered. Safe to call on a nil receiver.
+// Resolves through key remaps so that async goroutines holding a
+// pre-rotation key correctly decrement the current key's count.
+// Safe to call on a nil receiver.
 func (n *AsyncNotifier) MarkDone(sessionKey string) {
 	if n == nil {
 		return
 	}
 	n.mu.Lock()
-	if n.pending[sessionKey] > 0 {
-		n.pending[sessionKey]--
-		if n.pending[sessionKey] == 0 {
-			delete(n.pending, sessionKey)
+	resolved := n.resolveKey(sessionKey)
+	if n.pending[resolved] > 0 {
+		n.pending[resolved]--
+		if n.pending[resolved] == 0 {
+			delete(n.pending, resolved)
 		}
 	}
 	n.mu.Unlock()
@@ -65,11 +73,61 @@ func (n *AsyncNotifier) HasPending(sessionKey string) bool {
 }
 
 // InjectToAgent delivers a message to the specified agent session for processing.
+// Resolves through key remaps so that async goroutines holding a pre-rotation
+// key deliver to the current (rotated) session.
 // If replyToSession is non-empty, the agent's response is routed to that session
 // instead of being sent to targetSession's chat.
 // Safe to call on a nil receiver or with a nil fn.
 func (n *AsyncNotifier) InjectToAgent(targetSession, message string, replyToSession string) {
-	if n != nil && n.fn != nil {
-		n.fn(targetSession, message, replyToSession)
+	if n == nil || n.fn == nil {
+		return
 	}
+	n.mu.Lock()
+	resolved := n.resolveKey(targetSession)
+	n.mu.Unlock()
+	n.fn(resolved, message, replyToSession)
+}
+
+// MigrateSession remaps an old session key to a new one. In-flight async
+// goroutines that captured the old key will resolve to the new key when
+// they call InjectToAgent or MarkDone. The pending count is also moved
+// from the old key to the new key. Safe to call on a nil receiver.
+func (n *AsyncNotifier) MigrateSession(oldKey, newKey string) {
+	if n == nil || oldKey == newKey || newKey == "" {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Move pending count
+	if count := n.pending[oldKey]; count > 0 {
+		n.pending[newKey] += count
+		delete(n.pending, oldKey)
+	}
+
+	// Add remap
+	if n.remaps == nil {
+		n.remaps = make(map[string]string)
+	}
+	n.remaps[oldKey] = newKey
+
+	// Update any existing remaps that pointed to oldKey (chain flattening).
+	// This handles multi-rotation: if A→B existed and now B→C, update A→C.
+	for k, v := range n.remaps {
+		if v == oldKey {
+			n.remaps[k] = newKey
+		}
+	}
+}
+
+// resolveKey follows the remap chain to find the current key.
+// Must be called with n.mu held.
+func (n *AsyncNotifier) resolveKey(key string) string {
+	if n.remaps == nil {
+		return key
+	}
+	if newKey, ok := n.remaps[key]; ok {
+		return newKey
+	}
+	return key
 }

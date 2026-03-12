@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"foci/internal/state"
+	"foci/internal/tools"
 )
 
 // TestRotateSession verifies that RotateSession migrates the meta map,
@@ -65,6 +66,46 @@ func TestRotateSession(t *testing.T) {
 	// Verify callback fired
 	if callbackOld != oldKey || callbackNew != newKey {
 		t.Errorf("callback: old=%q new=%q, want %q/%q", callbackOld, callbackNew, oldKey, newKey)
+	}
+}
+
+// TestRotateSession_MigratesAsyncPending verifies that RotateSession calls
+// AsyncNotifier.MigrateSession so that in-flight async goroutines holding the
+// old key resolve to the new key for both delivery and pending tracking.
+func TestRotateSession_MigratesAsyncPending(t *testing.T) {
+	var delivered string
+	notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {
+		delivered = sk
+	})
+
+	ag := &Agent{AsyncNotifier: notifier}
+
+	oldKey := "bot/c100/1000000000"
+	newKey := "bot/c100/2000000000"
+
+	// Simulate an async tool dispatched before rotation
+	notifier.MarkPending(oldKey)
+
+	ag.RotateSession(oldKey, newKey)
+
+	// Pending should now be on the new key
+	if notifier.HasPending(oldKey) {
+		t.Error("old key should not have pending after rotation")
+	}
+	if !notifier.HasPending(newKey) {
+		t.Error("new key should have pending after rotation")
+	}
+
+	// InjectToAgent with old key should deliver to new key
+	notifier.InjectToAgent(oldKey, "async result", "")
+	if delivered != newKey {
+		t.Errorf("InjectToAgent delivered to %q, want %q", delivered, newKey)
+	}
+
+	// MarkDone with old key should decrement new key's count
+	notifier.MarkDone(oldKey)
+	if notifier.HasPending(newKey) {
+		t.Error("new key should have no pending after MarkDone")
 	}
 }
 
