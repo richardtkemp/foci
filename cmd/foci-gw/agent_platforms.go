@@ -60,6 +60,18 @@ func wireAgentPlatformCallbacks(
 		plat.NotifyAgent(acfg.ID, "⚠️ "+warn)
 	})
 
+	// Task list notify — session-specific connection, falls back to all
+	taskListNotify := acfg.TaskListNotify
+	if taskListNotify == nil || *taskListNotify {
+		ag.TaskListNotifyFunc.Add(func(sk, msg string) {
+			if c := connMgr.ForSession(sk); c != nil {
+				c.SendNotification(msg)
+			} else {
+				plat.NotifyAgent(acfg.ID, msg)
+			}
+		})
+	}
+
 	// Compaction notify — session-specific connection, falls back to all
 	compactNotify := cfg.Sessions.CompactionNotify
 	if acfg.CompactionNotify != nil {

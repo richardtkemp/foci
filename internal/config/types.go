@@ -147,6 +147,7 @@ type AgentConfig struct {
 	CompactionSummaryPrompt    string   `toml:"compaction_summary_prompt"`    // path to summary prompt file
 	CompactionHandoffMsg       string   `toml:"compaction_handoff_msg"`       // handoff message after compaction
 	CompactionNotify           *bool    `toml:"compaction_notify"`            // send Telegram notification on compaction
+	TaskListNotify             *bool    `toml:"task_list_notify"`              // send Telegram notification on task list changes (default true)
 	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
 	CompactionEffort           string   `toml:"compaction_effort"`            // effort for compaction API calls (empty = use session effort)

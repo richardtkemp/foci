@@ -214,7 +214,11 @@ func setupAgent(p setupParams) *agentInstance {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
 	}
 	if p.taskListStore != nil {
-		registry.Register(tools.NewTaskListTool(p.taskListStore, acfg.ID))
+		registry.Register(tools.NewTaskListTool(p.taskListStore, acfg.ID, func(sk, msg string) {
+			for _, fn := range ag.TaskListNotifyFunc {
+				fn(sk, msg)
+			}
+		}))
 	}
 
 	// Bitwarden tools (if enabled)

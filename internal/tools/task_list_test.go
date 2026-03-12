@@ -18,7 +18,7 @@ func testTaskListTool(t *testing.T) (*Tool, *memory.TaskListStore) {
 		t.Fatalf("NewTaskListStore: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return NewTaskListTool(s, "test"), s
+	return NewTaskListTool(s, "test", nil), s
 }
 
 func execTaskList(t *testing.T, tool *Tool, params any) (ToolResult, error) {
@@ -210,6 +210,72 @@ func TestTaskListList(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "Task B") {
 		t.Errorf("missing task B: %q", result.Text)
+	}
+}
+
+// Verifies notifications fire on create and status-changing update.
+func TestTaskListNotifications(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "tasklist.db")
+	s, err := memory.NewTaskListStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTaskListStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var notifications []string
+	notify := func(sk, msg string) {
+		notifications = append(notifications, sk+"|"+msg)
+	}
+	tool := NewTaskListTool(s, "test", notify)
+
+	ctx := WithSessionKey(context.Background(), "agent:chat:123:v1")
+	data, _ := json.Marshal(map[string]any{"action": "create", "subject": "Review cache"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifications))
+	}
+	if !strings.Contains(notifications[0], "📋 Created #1: Review cache") {
+		t.Errorf("unexpected create notification: %q", notifications[0])
+	}
+	if !strings.HasPrefix(notifications[0], "agent:chat:123:v1|") {
+		t.Errorf("notification missing session key: %q", notifications[0])
+	}
+
+	// Mark in_progress — should fire
+	data, _ = json.Marshal(map[string]any{"action": "update", "id": 1, "status": "in_progress"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if len(notifications) != 2 {
+		t.Fatalf("expected 2 notifications, got %d", len(notifications))
+	}
+	if !strings.Contains(notifications[1], "🔄 0/1: Review cache") {
+		t.Errorf("unexpected in_progress notification: %q", notifications[1])
+	}
+
+	// Mark completed — should fire with progress
+	data, _ = json.Marshal(map[string]any{"action": "create", "subject": "Write tests"})
+	tool.Execute(ctx, data) // creates #2, fires notification
+	data, _ = json.Marshal(map[string]any{"action": "update", "id": 1, "status": "completed"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	last := notifications[len(notifications)-1]
+	if !strings.Contains(last, "✅ 1/2: Review cache") {
+		t.Errorf("unexpected completed notification: %q", last)
+	}
+
+	// Update without status change — should NOT fire
+	countBefore := len(notifications)
+	data, _ = json.Marshal(map[string]any{"action": "update", "id": 2, "subject": "Write more tests"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("update subject: %v", err)
+	}
+	if len(notifications) != countBefore {
+		t.Errorf("subject-only update should not fire notification")
 	}
 }
 
