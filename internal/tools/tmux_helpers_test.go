@@ -10,6 +10,13 @@ import (
 func TestMain(m *testing.M) {
 	dir, _ := os.MkdirTemp("", "foci-tmux-test-*")
 	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
+
+	// Pre-start the tmux server so parallel tests don't race on startup.
+	// "start-server" is a no-op if a server is already running.
+	if _, err := exec.LookPath("tmux"); err == nil {
+		exec.Command("tmux", "-S", tmuxSocketPath, "start-server").Run()
+	}
+
 	code := m.Run()
 	exec.Command("tmux", "-S", tmuxSocketPath, "kill-server").Run()
 	os.RemoveAll(dir)
