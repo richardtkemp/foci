@@ -382,6 +382,58 @@ web_search_timeout = "invalid"
 	}
 }
 
+func TestValidateReservedAgentIDs(t *testing.T) {
+	// Verifies that agent IDs matching reserved home directory names are rejected,
+	// and that dot-prefixed IDs are rejected, while normal IDs pass.
+	reserved := []string{"bin", "character", "config", "data", "go", "logs", "memory", "oldscripts", "scripts", "shared"}
+	for _, id := range reserved {
+		t.Run("reserved_"+id, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "foci.toml")
+			os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = %q", id)), 0644)
+
+			_, err := Load(path)
+			if err == nil {
+				t.Fatalf("expected error for reserved agent id %q", id)
+			}
+			if !strings.Contains(err.Error(), "reserved directory") {
+				t.Errorf("error = %q, want mention of reserved directory", err.Error())
+			}
+		})
+	}
+
+	// Dot-prefixed IDs
+	for _, id := range []string{".hidden", ".config", "."} {
+		t.Run("dot_"+id, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "foci.toml")
+			os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = %q", id)), 0644)
+
+			_, err := Load(path)
+			if err == nil {
+				t.Fatalf("expected error for dot-prefixed agent id %q", id)
+			}
+			if !strings.Contains(err.Error(), "dot") {
+				t.Errorf("error = %q, want mention of dot", err.Error())
+			}
+		})
+	}
+
+	// Valid IDs should pass
+	for _, id := range []string{"clutch", "myagent", "test123"} {
+		t.Run("valid_"+id, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "foci.toml")
+			os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = %q", id)), 0644)
+
+			_, err := Load(path)
+			if err != nil {
+				t.Fatalf("unexpected error for valid agent id %q: %v", id, err)
+			}
+		})
+	}
+}
+
 func TestValidateMemoryThreshold(t *testing.T) {
 	tests := []struct {
 		name    string

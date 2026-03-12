@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -96,13 +97,17 @@ key = "val"
 	}
 }
 
-// TestFlatKeysToSectionsNoDot verifies error for keys without dot.
+// TestFlatKeysToSectionsNoDot verifies that saving a key without a dot separator
+// in a fresh store either succeeds silently or returns an error — it must not panic.
 func TestFlatKeysToSectionsNoDot(t *testing.T) {
-	// Try to save a key without section
-	s, _ := Load("/tmp/nonexistent_secrets.toml")
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 	s.Set("no_dot_key", "value")
-	// Should handle gracefully or error
-	err := s.Save()
+	// Should handle gracefully or error, but not panic.
+	err = s.Save()
 	if err != nil {
 		t.Logf("expected error for key without section: %v", err)
 	}
