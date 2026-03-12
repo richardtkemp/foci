@@ -59,9 +59,9 @@ func TestBuildSDKParamsWithEffort(t *testing.T) {
 	}
 }
 
-// TestBuildSDKParamsEffortStrippedForHaiku verifies effort is silently dropped for Haiku,
+// TestStripUnsupportedParamsEffort verifies effort is silently dropped for Haiku,
 // which does not support the effort parameter and returns a 400 error.
-func TestBuildSDKParamsEffortStrippedForHaiku(t *testing.T) {
+func TestStripUnsupportedParamsEffort(t *testing.T) {
 	req := &MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 1024,
@@ -69,16 +69,17 @@ func TestBuildSDKParamsEffortStrippedForHaiku(t *testing.T) {
 		Output:    &OutputConfig{Effort: "high"},
 	}
 
-	params := buildSDKParams(req)
+	stripUnsupportedParams(req)
 
-	if string(params.OutputConfig.Effort) != "" {
-		t.Errorf("effort should be empty for haiku, got %q", params.OutputConfig.Effort)
+	if req.Output != nil {
+		t.Errorf("Output should be nil for haiku, got %+v", req.Output)
 	}
 }
 
+// TestBuildSDKParamsWithThinking verifies thinking is set for supported models (Sonnet).
 func TestBuildSDKParamsWithThinking(t *testing.T) {
 	req := &MessageRequest{
-		Model:     "claude-haiku-4-5",
+		Model:     "claude-sonnet-4-6",
 		MaxTokens: 1024,
 		Messages:  []Message{{Role: "user", Content: TextContent("Hi")}},
 		Thinking:  &ThinkingConfig{Type: "adaptive"},
@@ -88,6 +89,42 @@ func TestBuildSDKParamsWithThinking(t *testing.T) {
 
 	if params.Thinking.OfAdaptive == nil {
 		t.Error("expected adaptive thinking config")
+	}
+}
+
+// TestStripUnsupportedParamsThinking verifies thinking is silently dropped for Haiku.
+func TestStripUnsupportedParamsThinking(t *testing.T) {
+	req := &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 1024,
+		Messages:  []Message{{Role: "user", Content: TextContent("Hi")}},
+		Thinking:  &ThinkingConfig{Type: "adaptive"},
+	}
+
+	stripUnsupportedParams(req)
+
+	if req.Thinking != nil {
+		t.Error("Thinking should be nil for haiku")
+	}
+}
+
+// TestStripUnsupportedParamsPreservedForSonnet verifies params are kept for supported models.
+func TestStripUnsupportedParamsPreservedForSonnet(t *testing.T) {
+	req := &MessageRequest{
+		Model:     "claude-sonnet-4-6",
+		MaxTokens: 1024,
+		Messages:  []Message{{Role: "user", Content: TextContent("Hi")}},
+		Output:    &OutputConfig{Effort: "high"},
+		Thinking:  &ThinkingConfig{Type: "adaptive"},
+	}
+
+	stripUnsupportedParams(req)
+
+	if req.Output == nil || req.Output.Effort != "high" {
+		t.Errorf("Output should be preserved for sonnet, got %+v", req.Output)
+	}
+	if req.Thinking == nil || req.Thinking.Type != "adaptive" {
+		t.Errorf("Thinking should be preserved for sonnet, got %+v", req.Thinking)
 	}
 }
 
