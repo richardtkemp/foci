@@ -308,6 +308,47 @@ func TestResponseFromGenai(t *testing.T) {
 	}
 }
 
+// Verifies that Gemini's overlapping token counts are normalized to non-overlapping
+// semantics matching Anthropic. PromptTokenCount includes CachedContentTokenCount,
+// so InputTokens = Prompt - Cached, CacheRead = Cached.
+func TestResponseFromGenai_CachedTokensNonOverlapping(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		ResponseID: "resp_cached",
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{{Text: "cached response"}},
+					Role:  "model",
+				},
+				FinishReason: genai.FinishReasonStop,
+			},
+		},
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
+			PromptTokenCount:      150000,
+			CandidatesTokenCount:  500,
+			CachedContentTokenCount: 120000,
+		},
+	}
+
+	result, err := responseFromGenai(resp, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+
+	// InputTokens should be the NON-cached portion: 150000 - 120000 = 30000
+	if result.Usage.InputTokens != 30000 {
+		t.Errorf("InputTokens = %d, want 30000 (non-cached portion)", result.Usage.InputTokens)
+	}
+	if result.Usage.CacheReadInputTokens != 120000 {
+		t.Errorf("CacheReadInputTokens = %d, want 120000", result.Usage.CacheReadInputTokens)
+	}
+	// Sum should equal the original PromptTokenCount
+	total := result.Usage.InputTokens + result.Usage.CacheReadInputTokens
+	if total != 150000 {
+		t.Errorf("InputTokens + CacheRead = %d, want 150000 (original PromptTokenCount)", total)
+	}
+}
+
 func TestResponseFromGenai_ToolUse(t *testing.T) {
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{

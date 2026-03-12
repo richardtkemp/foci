@@ -14,12 +14,15 @@ import (
 // maybeCompact checks whether context compaction is needed and performs it.
 // Supports idle-aware pressure and mana-refresh compaction modes.
 func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
-	if a.Compactor == nil || a.AsyncNotifier.HasPending(sessionKey) {
+	if a.Compactor == nil {
 		return
 	}
 
+	asyncPending := a.AsyncNotifier.HasPending(sessionKey)
+
 	totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-	contextLimit := compaction.ContextLimit(a.Model)
+	effectiveModel := a.SessionModel(sessionKey)
+	contextLimit := compaction.ContextLimit(effectiveModel)
 
 	// Calculate idle duration from session metadata
 	var idleDuration time.Duration
@@ -69,11 +72,22 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 
 	// Fall back to standard ShouldCompact if idle pressure didn't trigger
 	if !shouldCompact && !isManaRefresh {
-		if !a.Compactor.ShouldCompact(sessionKey, messages, usage) {
+		if !a.Compactor.ShouldCompactWithLimit(sessionKey, messages, usage, contextLimit) {
 			return
 		}
 	} else if !shouldCompact {
 		return
+	}
+
+	// Defer compaction while async results are pending — but override the
+	// deferral when context is critically full (>95%) to prevent exhaustion.
+	if asyncPending {
+		critical := int(float64(contextLimit) * 0.95)
+		if totalTokens <= critical {
+			a.logger().Infof("session=%s compaction deferred: async pending (%d/%d tokens)", sessionKey, totalTokens, contextLimit)
+			return
+		}
+		a.logger().Warnf("session=%s compaction forced despite async pending: context critical (%d/%d tokens)", sessionKey, totalTokens, contextLimit)
 	}
 
 	if a.SessionNoCompact(sessionKey) {
