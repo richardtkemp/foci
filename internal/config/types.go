@@ -194,9 +194,7 @@ type AgentConfig struct {
 	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
 	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
 
-	StreamOutput         bool                     `toml:"stream_output"`          // DEPRECATED: use [agents.platforms.telegram.stream_output]
-	StreamUpdateInterval string                   `toml:"stream_update_interval"` // DEPRECATED: use [agents.platforms.telegram.stream_interval]
-	CacheTTL             string                   `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
+	CacheTTL string `toml:"cache_ttl"` // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 }
 
 type GeminiConfig struct {
@@ -507,16 +505,22 @@ type CommandConfig struct {
 
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
-type DefaultsConfig struct {
-	Model string `toml:"model"` // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
+// LLMConfig holds LLM-specific settings that apply globally.
+// Per-agent overrides use the matching fields on AgentConfig.
+type LLMConfig struct {
+	Model           string `toml:"model"`            // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
+	MaxOutputTokens int    `toml:"max_output_tokens"` // default max_output_tokens (default: 8192)
+	SummaryModel    string `toml:"summary_model"`     // default summary model: alias or developer/model_id (empty = provider-aware default)
+	SummaryEndpoint string `toml:"summary_endpoint"`  // default summary endpoint override (empty = auto-select)
+}
 
+type DefaultsConfig struct {
 	DuplicateMessages             bool   `toml:"duplicate_messages"`               // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages bool   `toml:"batch_partial_assistant_messages"` // default batch_partial_assistant_messages (default: false)
 	BatchPartialJoiner            string `toml:"batch_partial_joiner"`             // default separator between batched partial messages (default: "")
 
 	InjectAgentWarnings   bool   `toml:"inject_agent_warnings"`    // default inject_agent_warnings (default: false)
 	MaxToolLoops          int    `toml:"max_tool_loops"`           // default max_tool_loops (default: 25)
-	MaxOutputTokens       int    `toml:"max_output_tokens"`        // default max_output_tokens (default: 8192)
 	BraindeadThreshold    int    `toml:"braindead_threshold"`      // default braindead threshold (default: 10)
 	BraindeadPrompt       string `toml:"braindead_prompt"`         // default braindead prompt
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // default turn lock warn threshold (default: "3m")
@@ -527,15 +531,13 @@ type DefaultsConfig struct {
 	SystemFiles      []string         `toml:"system_files"`      // default system file list
 	CompactionEffort string           `toml:"compaction_effort"` // default compaction effort (empty = use session effort)
 
-	MaxResultChars       int    `toml:"max_result_chars"`        // default max_result_chars (default 15000)
-	MaxSummaryChars      int    `toml:"max_summary_chars"`       // default max_summary_chars (default 300000)
-	AutoSummarise        *bool  `toml:"auto_summarise"`          // default auto_summarise (nil = use [tools] value)
-	SummaryContextTurns  int    `toml:"summary_context_turns"`   // default summary_context_turns (default 5)
-	SummaryContextChars  int    `toml:"summary_context_chars"`   // default summary_context_chars (default 6000)
-	MaxSummaryInputChars int    `toml:"max_summary_input_chars"` // default max_summary_input_chars (default 100000)
-	SummaryModel         string `toml:"summary_model"`           // default summary model: alias or developer/model_id (empty = provider-aware default)
-	SummaryEndpoint      string `toml:"summary_endpoint"`        // default summary endpoint override (empty = auto-select)
-	MaxImagePixels       int    `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
+	MaxResultChars       int   `toml:"max_result_chars"`        // default max_result_chars (default 15000)
+	MaxSummaryChars      int   `toml:"max_summary_chars"`       // default max_summary_chars (default 300000)
+	AutoSummarise        *bool `toml:"auto_summarise"`          // default auto_summarise (nil = use [tools] value)
+	SummaryContextTurns  int   `toml:"summary_context_turns"`   // default summary_context_turns (default 5)
+	SummaryContextChars  int   `toml:"summary_context_chars"`   // default summary_context_chars (default 6000)
+	MaxSummaryInputChars int   `toml:"max_summary_input_chars"` // default max_summary_input_chars (default 100000)
+	MaxImagePixels       int   `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
 
 	SearchProvider        string `toml:"search_provider"`         // default search provider: "brave" (default) or "anthropic"
 	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "anthropic" (default) or "builtin"
@@ -645,6 +647,7 @@ type ManaConfig struct {
 
 type Config struct {
 	DataDir            string                    `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
+	LLM                LLMConfig                 `toml:"llm"`       // LLM-specific settings (model, max_output_tokens, summary model/endpoint)
 	Defaults           DefaultsConfig            `toml:"defaults"`  // global defaults for agent-specific fields
 	Models             ModelsConfig              `toml:"models"`    // model aliases and related config
 	Endpoints          map[string]EndpointConfig `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)

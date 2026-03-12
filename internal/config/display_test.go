@@ -311,11 +311,12 @@ func TestFormatConfigGrouped(t *testing.T) {
 func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	cfg, _ := testConfig()
 	// Set defaults as Load() would.
-	cfg.Defaults = DefaultsConfig{
-		Model: "claude-haiku-4-5",
-
-		MaxToolLoops:    25,
+	cfg.LLM = LLMConfig{
+		Model:           "claude-haiku-4-5",
 		MaxOutputTokens: 8192,
+	}
+	cfg.Defaults = DefaultsConfig{
+		MaxToolLoops: 25,
 	}
 	// Agent overrides model from the default.
 	agent := AgentConfig{
@@ -330,18 +331,19 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 
 	// Simulate TOML metadata: model is explicitly set, some others are not (hardcoded default).
 	cfg.DefinedKeys = map[string]bool{
-		"defaults":                   true,
-		"defaults.model":             true,
-		"defaults.max_tool_loops":    true,
-		"defaults.max_output_tokens": true,
-		"telegram":                   true,
-		"telegram.allowed_users":     true,
-		"sessions":                   true,
-		"sessions.dir":               true,
-		"logging":                    true,
-		"logging.level":              true,
-		"http":                       true,
-		"http.port":                  true,
+		"llm":                     true,
+		"llm.model":               true,
+		"llm.max_output_tokens":   true,
+		"defaults":                true,
+		"defaults.max_tool_loops": true,
+		"telegram":                true,
+		"telegram.allowed_users":  true,
+		"sessions":                true,
+		"sessions.dir":            true,
+		"logging":                 true,
+		"logging.level":           true,
+		"http":                    true,
+		"http.port":               true,
 	}
 
 	tables := FormatConfigGrouped(cfg, agent)

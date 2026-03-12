@@ -65,10 +65,12 @@ func FieldsInSection(section string) []ConfigField {
 }
 
 var configFields = []ConfigField{
+	// llm — global LLM settings inherited by agents
+	{"llm", "model", FieldString, "default model for all agents"},
+	{"llm", "max_output_tokens", FieldInt, "max tokens in model response"},
+
 	// defaults — global defaults inherited by agents
-	{"defaults", "model", FieldString, "default model for all agents"},
 	{"defaults", "max_tool_loops", FieldInt, "max tool iterations per turn"},
-	{"defaults", "max_output_tokens", FieldInt, "max tokens in model response"},
 	{"defaults", "duplicate_messages", FieldBool, "send user text twice per API call"},
 	{"defaults", "inject_agent_warnings", FieldBool, "inject warnings into agent session"},
 	{"defaults", "show_tool_calls", FieldString, "tool call display: off, preview, full"},
@@ -103,8 +105,6 @@ var configFields = []ConfigField{
 	{"agent", "nudge_max_per_batch", FieldInt, "max reminders injected per tool batch"},
 	{"agent", "nudge_pre_answer_gate", FieldBool, "enable pre-answer verification gate"},
 	{"agent", "nudge_pre_answer_min_tools", FieldInt, "min tool calls before pre-answer gate fires"},
-	{"agent", "stream_output", FieldBool, "stream model output to Telegram"},
-	{"agent", "stream_update_interval", FieldDuration, "interval between stream edits"},
 	{"agent", "inject_agent_warnings", FieldBool, "inject warnings into agent session"},
 	{"agent", "show_tool_calls", FieldString, "tool call display: off, preview, full"},
 	{"agent", "show_thinking", FieldString, "thinking display: off, compact, true"},

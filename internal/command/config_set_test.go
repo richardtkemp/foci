@@ -36,7 +36,7 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	w := newConfigSetWizard(deps)
 
 	// Step 0: section
-	resp, done := w.Handle("defaults")
+	resp, done := w.Handle("llm")
 	if done {
 		t.Fatal("should not be done after section")
 	}
@@ -58,14 +58,14 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	if !done {
 		t.Fatal("should be done after value")
 	}
-	if !strings.Contains(resp, "Set defaults.model") {
+	if !strings.Contains(resp, "Set llm.model") {
 		t.Errorf("expected confirmation, got %q", resp)
 	}
 	if !strings.Contains(resp, "Restart") {
 		t.Errorf("expected restart hint, got %q", resp)
 	}
 
-	if captured.Section != "defaults" {
+	if captured.Section != "llm" {
 		t.Errorf("target.Section = %q", captured.Section)
 	}
 	if captured.Key != "model" {
@@ -161,15 +161,15 @@ func TestConfigSetDirect(t *testing.T) {
 		return "", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "defaults.model=new-model")
+	resp, err := ConfigSetDirect(deps, "llm.model=new-model")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
-	if !strings.Contains(resp, "Set defaults.model") {
+	if !strings.Contains(resp, "Set llm.model") {
 		t.Errorf("response = %q", resp)
 	}
 
-	if captured.Section != "defaults" || captured.Key != "model" {
+	if captured.Section != "llm" || captured.Key != "model" {
 		t.Errorf("target = %+v", captured)
 	}
 	if capturedValue != `"new-model"` {
@@ -261,7 +261,7 @@ func TestConfigSetDirectShowsOldValue(t *testing.T) {
 		return `"old-model"`, nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "defaults.model=new-model")
+	resp, err := ConfigSetDirect(deps, "llm.model=new-model")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}

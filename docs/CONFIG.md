@@ -605,13 +605,13 @@ effort = "high"
 
 ### Model & Response
 
-Set in `[defaults]`, overridable per-agent.
+`model` and `max_output_tokens` are set in `[llm]`, overridable per-agent. Other fields are set in `[defaults]`.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `model` | string | `"anthropic:claude-haiku-4-5"` | Model in `endpoint:model_id` format. The endpoint prefix selects which API endpoint to use (e.g. `"gemini:gemini-2.5-flash"`, `"openrouter:claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `:` are auto-migrated with an inferred endpoint. |
-| `max_output_tokens` | int | `8192` | Maximum tokens in model response. Larger values allow longer responses. |
-| `max_tool_loops` | int | `25` | Maximum tool iterations per agent turn. Complex tasks may need more. |
+| Key | Type | Default | Section | Description |
+|-----|------|---------|---------|-------------|
+| `model` | string | `"anthropic:claude-haiku-4-5"` | `[llm]` | Model in `endpoint:model_id` format. The endpoint prefix selects which API endpoint to use (e.g. `"gemini:gemini-2.5-flash"`, `"openrouter:claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `:` are auto-migrated with an inferred endpoint. |
+| `max_output_tokens` | int | `8192` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
+| `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults come from provider sections (`[anthropic] thinking`, `[gemini] thinking`). Only applied for Anthropic and Gemini models — silently skipped for other providers. Overridable at runtime via `/thinking`. |
 | `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
@@ -756,8 +756,8 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `inject_agent_warnings` | bool | `false` | `[defaults]` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
-| `stream_output` | bool | `false` | `[defaults]` | Stream model output to Telegram in real-time. A message is created on the first text delta and edited periodically as more tokens arrive. The final edit replaces the streamed text with the HTML-formatted response. Requires `streaming = true` for API-level delta callbacks. |
-| `stream_update_interval` | string | `"250ms"` | `[defaults]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. |
+| `stream_output` | bool | `false` | `[defaults]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time. A message is created on the first text delta and edited periodically as more tokens arrive. The final edit replaces the streamed text with the HTML-formatted response. Requires `streaming = true` for API-level delta callbacks. Set globally in `[defaults]` or per-agent in platform config. |
+| `stream_update_interval` | string | `"250ms"` | `[defaults]` / `[agents.platforms.telegram]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. Per-agent override via `stream_interval` in platform config. |
 
 ### Telegram Overrides
 
@@ -905,7 +905,7 @@ received_files_dir = ""
 | `stream_interval` | duration | `[defaults]` | Duration between message edits during streaming. |
 | `received_files_dir` | string | `[telegram]` | Save received files to this directory. |
 
-**Backward compatibility:** The old top-level fields (`telegram_bot`, `bot_secret`, `multiball_bots`, `allowed_users`, `show_tool_calls`, `show_thinking`, `display_width`, `stream_output`, `stream_update_interval`, `received_files_dir`) are deprecated but still work. At config load time, they are migrated to the new platform config structure.
+**Backward compatibility:** The old top-level fields (`telegram_bot`, `bot_secret`, `multiball_bots`, `allowed_users`, `show_tool_calls`, `show_thinking`, `display_width`, `received_files_dir`) are deprecated but still work. At config load time, they are migrated to the new platform config structure.
 
 ### Memory (`[[agents.memory.sources]]`)
 
