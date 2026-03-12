@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"foci/internal/compaction"
-	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/nudge"
@@ -413,7 +412,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// Set effort/thinking unconditionally — each provider's SendMessage
 		// handles or ignores unsupported fields. The error-and-retry fallback
 		// below strips them if the model rejects with a 400.
-		if turnEffort != "" && turnEffort != "off" && config.ModelSupportsEffort(turnModel) {
+		if turnEffort != "" && turnEffort != "off" {
 			req.Output = &provider.OutputConfig{Effort: turnEffort}
 		}
 		if turnThinking == "adaptive" {

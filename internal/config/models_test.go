@@ -325,30 +325,34 @@ func TestStripDeveloperPrefix(t *testing.T) {
 	}
 }
 
-// TestModelSupportsEffort verifies that effort is supported for Sonnet/Opus but not Haiku
-// or non-Anthropic models. Accepts both bare and developer-prefixed model IDs.
-func TestModelSupportsEffort(t *testing.T) {
+// TestModelCapabilities verifies that capabilities are correctly reported per model family.
+// Sonnet/Opus support effort+thinking, Haiku supports neither, non-Anthropic supports neither.
+func TestModelCapabilities(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		model string
-		want  bool
+		model        string
+		wantEffort   bool
+		wantThinking bool
 	}{
-		{"claude-sonnet-4-6", true},
-		{"claude-opus-4-6", true},
-		{"anthropic/claude-sonnet-4-6", true},
-		{"anthropic/claude-opus-4-6", true},
-		{"claude-haiku-4-5", false},
-		{"claude-haiku-4-5-20251001", false},
-		{"anthropic/claude-haiku-4-5-20251001", false},
-		{"ANTHROPIC/CLAUDE-HAIKU-4-5", false},
-		{"gemini-2.5-flash", false},
-		{"gpt-4o", false},
+		{"claude-sonnet-4-6", true, true},
+		{"claude-opus-4-6", true, true},
+		{"anthropic/claude-sonnet-4-6", true, true},
+		{"anthropic/claude-opus-4-6", true, true},
+		{"claude-haiku-4-5", false, false},
+		{"claude-haiku-4-5-20251001", false, false},
+		{"anthropic/claude-haiku-4-5-20251001", false, false},
+		{"ANTHROPIC/CLAUDE-HAIKU-4-5", false, false},
+		{"gemini-2.5-flash", false, false},
+		{"gpt-4o", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got := ModelSupportsEffort(tt.model)
-			if got != tt.want {
-				t.Errorf("ModelSupportsEffort(%q) = %v, want %v", tt.model, got, tt.want)
+			caps := ModelCapabilities(tt.model)
+			if caps.Effort != tt.wantEffort {
+				t.Errorf("ModelCapabilities(%q).Effort = %v, want %v", tt.model, caps.Effort, tt.wantEffort)
+			}
+			if caps.Thinking != tt.wantThinking {
+				t.Errorf("ModelCapabilities(%q).Thinking = %v, want %v", tt.model, caps.Thinking, tt.wantThinking)
 			}
 		})
 	}

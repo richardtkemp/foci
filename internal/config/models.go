@@ -110,20 +110,29 @@ func StripDeveloperPrefix(model string) string {
 	return modelID
 }
 
-// ModelSupportsEffort returns true if the given model ID supports the effort parameter.
-// Currently only Anthropic Sonnet and Opus support effort; Haiku does not.
-// Accepts both bare model IDs ("claude-haiku-4-5") and developer-prefixed ("anthropic/claude-haiku-4-5").
-func ModelSupportsEffort(model string) bool {
+// ModelCaps describes which optional API parameters a model supports.
+// Used by translate layers to strip unsupported params before sending,
+// avoiding 400 errors and wasted round-trips.
+type ModelCaps struct {
+	Effort   bool // supports output_config.effort
+	Thinking bool // supports thinking (adaptive/enabled)
+}
+
+// ModelCapabilities returns the capabilities of a model based on its ID.
+// Accepts both bare model IDs ("claude-haiku-4-5") and developer-prefixed
+// ("anthropic/claude-haiku-4-5").
+func ModelCapabilities(model string) ModelCaps {
 	modelID := strings.ToLower(StripDeveloperPrefix(model))
-	// Haiku is the only Anthropic model that doesn't support effort.
-	// Non-Anthropic models won't reach the Anthropic translate layer,
-	// but return false for them too since effort is Anthropic-specific.
-	if strings.Contains(modelID, "haiku") {
-		return false
+
+	// Anthropic models: Haiku supports neither effort nor thinking.
+	// Sonnet and Opus support both.
+	if strings.Contains(modelID, "claude") {
+		if strings.Contains(modelID, "haiku") {
+			return ModelCaps{Effort: false, Thinking: false}
+		}
+		return ModelCaps{Effort: true, Thinking: true}
 	}
-	// Sonnet and Opus support effort.
-	if strings.Contains(modelID, "sonnet") || strings.Contains(modelID, "opus") || strings.Contains(modelID, "claude") {
-		return true
-	}
-	return false
+
+	// Non-Anthropic models: effort and thinking are Anthropic-specific.
+	return ModelCaps{Effort: false, Thinking: false}
 }

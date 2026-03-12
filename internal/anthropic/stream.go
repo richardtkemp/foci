@@ -27,6 +27,7 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler
 		return nil, fmt.Errorf("streaming requires SDK transport (use_sdk = true)")
 	}
 
+	stripUnsupportedParams(req)
 	return c.streamOnce(ctx, req, handler)
 }
 

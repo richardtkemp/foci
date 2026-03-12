@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/config"
+
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
@@ -281,6 +283,10 @@ func (c *Client) sendOnceRaw(ctx context.Context, body []byte) (*MessageResponse
 // SendMessage sends a message request and returns the response.
 // Retry logic is handled by the provider layer.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+	// Strip params the target model doesn't support (avoids 400 errors).
+	// Done here so both raw and SDK paths benefit.
+	stripUnsupportedParams(req)
+
 	// For raw transport, pre-marshal the body once. SDK transport uses req directly.
 	var body []byte
 	if !c.useSDK {
@@ -292,6 +298,19 @@ func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	return c.sendOnce(ctx, body, req)
+}
+
+// stripUnsupportedParams removes API parameters that the target model
+// doesn't support. This prevents 400 errors when effort or thinking
+// is configured globally but the request targets a model like Haiku.
+func stripUnsupportedParams(req *MessageRequest) {
+	caps := config.ModelCapabilities(req.Model)
+	if req.Output != nil && !caps.Effort {
+		req.Output = nil
+	}
+	if req.Thinking != nil && !caps.Thinking {
+		req.Thinking = nil
+	}
 }
 
 
