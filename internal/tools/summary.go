@@ -28,10 +28,13 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 
 	// Pick the cheapest model alias for the agent's provider.
 	summaryAlias := "haiku"
+	defaultFormat := "anthropic"
 	if strings.HasPrefix(agentModelID, "gemini-") {
 		summaryAlias = "flash"
+		defaultFormat = "gemini"
 	} else if isOpenAIModel(agentModelID) {
 		summaryAlias = "gpt4o"
+		defaultFormat = "openai"
 	}
 
 	// Resolve which client to use based on the summary model.
@@ -66,7 +69,7 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, resolveClient(), summaryAlias, modelAliases)
+			return summaryExecute(ctx, params, resolveClient(), summaryAlias, modelAliases, defaultFormat)
 		},
 	}
 }
@@ -85,7 +88,7 @@ func splitDeveloperModel(model string) (developer, modelID string) {
 	return "", model
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, summaryAlias string, modelAliases map[string]string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, summaryAlias string, modelAliases map[string]string, defaultFormat string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -158,8 +161,15 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 	log.Infof("summary", "model=%s input=%d output=%d cost=$%.4f duration=%s",
 		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
+	// Use the resolved model's format for provider attribution,
+	// falling back to the default format from the parent agent.
+	providerFormat := resolved.Format
+	if providerFormat == "" {
+		providerFormat = defaultFormat
+	}
 	log.API(log.APIEntry{
 		Timestamp:  start.UTC(),
+		Provider:   providerFormat,
 		Session:    SessionKeyFromContext(ctx),
 		Model:      model,
 		Input:      resp.Usage.InputTokens,

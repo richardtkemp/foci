@@ -146,8 +146,83 @@ func TestAPIDefaultCallType(t *testing.T) {
 	}
 }
 
+// TestAPIProviderInferenceSQLite verifies the provider column is populated in the SQLite
+// api_calls table for all model families, including Anthropic models (the prior bug was
+// that claude-* models had an empty provider).
+func TestAPIProviderInferenceSQLite(t *testing.T) {
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	tests := []struct {
+		model    string
+		wantProv string
+	}{
+		{"claude-haiku-4-5", "anthropic"},
+		{"claude-opus-4-6", "anthropic"},
+		{"claude-sonnet-4-5", "anthropic"},
+		{"gemini-2.5-pro", "gemini"},
+		{"gemini-2.5-flash", "gemini"},
+		{"gpt-4", "openai"},
+		{"o3", "openai"},
+	}
+
+	for _, tt := range tests {
+		API(APIEntry{Session: "test-" + tt.model, Model: tt.model, CallType: "conversation"})
+	}
+
+	for _, tt := range tests {
+		var provider string
+		err := apiLog.db.QueryRow("SELECT provider FROM api_calls WHERE session = ?", "test-"+tt.model).Scan(&provider)
+		if err != nil {
+			t.Fatalf("query provider for model %q: %v", tt.model, err)
+		}
+		if provider != tt.wantProv {
+			t.Errorf("model %q: SQLite provider = %q, want %q", tt.model, provider, tt.wantProv)
+		}
+	}
+}
+
+// TestAPIProviderExplicitOverridesInference verifies that an explicitly set Provider field
+// on the APIEntry is preserved and not overwritten by inference.
+func TestAPIProviderExplicitOverridesInference(t *testing.T) {
+	resetGlobal()
+	t.Cleanup(resetGlobal)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "api.db")
+	if err := InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	defer CloseAPIDB()
+
+	// Explicitly set provider to "openai" even though model looks like Anthropic.
+	// This simulates an OpenAI-compatible endpoint serving a claude model.
+	API(APIEntry{
+		Session:  "explicit",
+		Model:    "claude-haiku-4-5",
+		Provider: "openai",
+		CallType: "conversation",
+	})
+
+	var provider string
+	err := apiLog.db.QueryRow("SELECT provider FROM api_calls WHERE session = 'explicit'").Scan(&provider)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if provider != "openai" {
+		t.Errorf("explicit provider not preserved: got %q, want %q", provider, "openai")
+	}
+}
+
 // TestAPIProviderInference verifies that the Provider field is auto-inferred from the model name:
-// gemini models get "gemini", gpt models get "openai", claude models get "".
+// gemini models get "gemini", openai models get "openai", claude models get "anthropic".
 func TestAPIProviderInference(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.jsonl")
@@ -159,7 +234,7 @@ func TestAPIProviderInference(t *testing.T) {
 	}{
 		{"gemini-2.5-pro", "gemini"},
 		{"gpt-4", "openai"},
-		{"claude-haiku-4-5", ""},
+		{"claude-haiku-4-5", "anthropic"},
 	}
 
 	for _, tt := range tests {
