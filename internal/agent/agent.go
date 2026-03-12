@@ -378,6 +378,23 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		a.Nudger.StartTurn(userMessage)
 	}
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
+
+	// sendOrBatchText delivers any text from a response as an intermediate
+	// reply, respecting batch mode. Used before nudge continues and for
+	// text mixed into tool_use responses.
+	sendOrBatchText := func(r provider.MessageResponse) {
+		if text := provider.TextOf(r.Content); text != "" {
+			if a.BatchPartialAssistantMessages {
+				if batchedText.Len() > 0 {
+					batchedText.WriteString(a.BatchPartialJoiner)
+				}
+				batchedText.WriteString(text)
+			} else {
+				sendIntermediateCtx(ctx, text)
+			}
+		}
+	}
+
 	for i := 0; i < maxLoops; i++ {
 		// Remove empty text blocks that would cause API 400 errors.
 		messages = sanitizeEmptyTextBlocks(messages)
@@ -515,6 +532,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 					newMessages = append(newMessages, matchMsg)
 					matchChecked = true
 					a.logger().Infof("nudge: match trigger fired at loop %d for session %s", i, sessionKey)
+					sendOrBatchText(*resp)
 					continue
 				}
 			}
@@ -531,6 +549,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 					newMessages = append(newMessages, verifyMsg)
 					verified = true
 					a.logger().Infof("nudge: pre-answer gate fired at loop %d for session %s", i, sessionKey)
+					sendOrBatchText(*resp)
 					continue
 				}
 			}
@@ -566,16 +585,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		// Handle text in tool_use responses: either send immediately or accumulate for batch delivery.
-		if intermediateText := provider.TextOf(resp.Content); intermediateText != "" {
-			if a.BatchPartialAssistantMessages {
-				if batchedText.Len() > 0 {
-					batchedText.WriteString(a.BatchPartialJoiner)
-				}
-				batchedText.WriteString(intermediateText)
-			} else {
-				sendIntermediateCtx(ctx, intermediateText)
-			}
-		}
+		sendOrBatchText(*resp)
 
 		// If this is the last allowed iteration, don't execute tools —
 		// instead inject descriptive error results so the session JSONL
