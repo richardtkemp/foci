@@ -247,11 +247,19 @@ func TestLogCommand(t *testing.T) {
 	}
 }
 
-// TestErrorsCommand verifies errors command filters and displays ERROR and WARN lines.
+// TestErrorsCommand verifies errors command filters by log level field, not message content.
+// INFO lines containing "ERROR" or "WARN" in their message body must NOT be included.
 func TestErrorsCommand(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "test.log")
-	content := "2026-03-01T00:00:00Z INFO  [test] normal\n2026-03-01T00:00:01Z ERROR [test] bad thing\n2026-03-01T00:00:02Z INFO  [test] ok\n2026-03-01T00:00:03Z WARN  [test] warning\n2026-03-01T00:00:04Z INFO  [test] fine\n"
+	content := strings.Join([]string{
+		"2026-03-01T00:00:00Z INFO  [test] normal",
+		"2026-03-01T00:00:01Z ERROR [test] bad thing",
+		"2026-03-01T00:00:02Z INFO  [test] got ERROR response from API",
+		"2026-03-01T00:00:03Z WARN  [test] warning",
+		"2026-03-01T00:00:04Z INFO  [test] WARN string in message body",
+		"2026-03-01T00:00:05Z INFO  [test] fine",
+	}, "\n") + "\n"
 	os.WriteFile(logPath, []byte(content), 0644)
 
 	cmd := NewErrorsCommand(logPath)
@@ -263,12 +271,12 @@ func TestErrorsCommand(t *testing.T) {
 	inner := strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
 	lines := strings.Split(inner, "\n")
 	if len(lines) != 2 {
-		t.Errorf("got %d lines, want 2:\n%s", len(lines), result)
+		t.Fatalf("got %d lines, want 2 (ERROR + WARN only):\n%s", len(lines), result)
 	}
-	if !strings.Contains(lines[0], "ERROR") {
-		t.Errorf("line 0 = %q", lines[0])
+	if !strings.Contains(lines[0], "bad thing") {
+		t.Errorf("line 0 should be the ERROR line: %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "WARN") {
-		t.Errorf("line 1 = %q", lines[1])
+	if !strings.Contains(lines[1], "warning") {
+		t.Errorf("line 1 should be the WARN line: %q", lines[1])
 	}
 }

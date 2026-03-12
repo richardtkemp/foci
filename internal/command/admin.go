@@ -135,7 +135,7 @@ func NewErrorsCommand(eventLogPath string) *Command {
 		Execute: func(ctx context.Context, args string) (string, error) {
 			n := parseLineCount(args, 10)
 			result, err := tailFile(eventLogPath, n, func(line string) bool {
-				return strings.Contains(line, " ERROR ") || strings.Contains(line, " WARN ")
+				return logLineLevel(line) == "ERROR" || logLineLevel(line) == "WARN"
 			})
 			if err != nil || result == "Log file not found." || result == "No matching lines." {
 				return result, err
@@ -289,6 +289,17 @@ func parseLineCount(args string, defaultN int) int {
 		}
 	}
 	return defaultN
+}
+
+// logLineLevel extracts the log level field from a structured log line.
+// Format: "{RFC3339} {LEVEL} [{component}] {msg}" — level is the second
+// space-delimited field, trimmed of padding.
+func logLineLevel(line string) string {
+	fields := strings.SplitN(line, " ", 3)
+	if len(fields) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(fields[1])
 }
 
 // tailFile returns the last n lines from a file. If filter is non-nil,
