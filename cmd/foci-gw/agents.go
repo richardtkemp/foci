@@ -270,7 +270,8 @@ func setupAgent(p setupParams) *agentInstance {
 	compactor.AgentID = acfg.ID
 
 	// Per-agent send_message_to_user tool (closure captures this agent's bot)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate)
+	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.TTSReplacements)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls)
 	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) tools.MessageSender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
 		if conn == nil {
@@ -554,8 +555,8 @@ func setupAgent(p setupParams) *agentInstance {
 			Commands:     cmds,
 			LastMsgStore: lastMsgStore,
 			AgentConfig:  acfg,
-			STT:          resolveSTT(p.sttMap, acfg.STT),
-			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate),
+			STT:          resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
+			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
 			ReclaimHook: func(sessionKey string) {
 				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
 					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
