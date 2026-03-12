@@ -10,6 +10,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/state"
+	"foci/internal/voice"
 )
 
 // telegramProvider implements platform.MessagingProvider for Telegram.
@@ -81,8 +82,8 @@ func (p *telegramProvider) SetupSharedMultiball(params platform.SharedMultiballP
 
 	cmds, _ := params.FirstCommands.(*command.Registry)
 	firstACfg := params.FirstAgentConfig
-	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, firstACfg.STT)
-	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, firstACfg.TTS, firstACfg.TTSRate)
+	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, firstACfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, firstACfg.STTReplacements))
+	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, firstACfg.TTS, firstACfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, firstACfg.TTSReplacements))
 
 	for _, botName := range cfg.Telegram.MultiballBots {
 		mbToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)

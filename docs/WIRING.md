@@ -833,7 +833,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 - `turnMu` — serializes agent turns (prevents concurrent STT→agent→TTS pipelines)
 - `audioMu` — protects recording state and audio buffer
 
-**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate)`. Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
+**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → defaults → agent, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
 ## Multiball (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
