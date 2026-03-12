@@ -375,6 +375,164 @@ func TestShortenSessionKey(t *testing.T) {
 	}
 }
 
+func TestSessionsIndexSortedByLastActive(t *testing.T) {
+	// Verifies that index results are sorted by last activity, most recent first.
+	now := time.Now().UTC()
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
+		// Return in chronological order (oldest first) — command should reverse.
+		return []SessionIndexInfo{
+			{SessionKey: "agent:bot:chat:old", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:mid", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:new", LastActivityAt: now.Add(-5 * time.Minute), SessionType: "chat", Status: "active"},
+		}, nil
+	}
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "new" should appear before "mid" which should appear before "old"
+	newIdx := strings.Index(result, "bot/chat:new")
+	midIdx := strings.Index(result, "bot/chat:mid")
+	oldIdx := strings.Index(result, "bot/chat:old")
+	if newIdx == -1 || midIdx == -1 || oldIdx == -1 {
+		t.Fatalf("expected all sessions in output, got %q", result)
+	}
+	if newIdx > midIdx || midIdx > oldIdx {
+		t.Errorf("expected newest first: new@%d mid@%d old@%d", newIdx, midIdx, oldIdx)
+	}
+}
+
+func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
+	// Verifies that entries with zero LastActivityAt sort by CreatedAt instead.
+	now := time.Now().UTC()
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
+		return []SessionIndexInfo{
+			{SessionKey: "agent:bot:chat:created-old", CreatedAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:active-new", LastActivityAt: now.Add(-10 * time.Minute), SessionType: "chat", Status: "active"},
+		}, nil
+	}
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newIdx := strings.Index(result, "bot/chat:active-n…")
+	oldIdx := strings.Index(result, "bot/chat:created-…")
+	if newIdx == -1 || oldIdx == -1 {
+		t.Fatalf("expected both sessions in output, got %q", result)
+	}
+	if newIdx > oldIdx {
+		t.Errorf("expected active-new before created-old, new@%d old@%d", newIdx, oldIdx)
+	}
+}
+
+func TestSessionsIndexMaxCount(t *testing.T) {
+	// Verifies that a count argument limits the number of displayed sessions.
+	now := time.Now().UTC()
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
+		return []SessionIndexInfo{
+			{SessionKey: "agent:bot:chat:1", LastActivityAt: now, SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:2", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:3", LastActivityAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:4", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "agent:bot:chat:5", LastActivityAt: now.Add(-4 * time.Hour), SessionType: "chat", Status: "active"},
+		}, nil
+	}
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should show "2 of 5 sessions"
+	if !strings.Contains(result, "2 of 5 sessions") {
+		t.Errorf("expected '2 of 5 sessions' in output, got %q", result)
+	}
+	// Should contain the 2 most recent, not the older ones
+	if !strings.Contains(result, "bot/chat:1") {
+		t.Errorf("expected most recent session bot/chat:1, got %q", result)
+	}
+	if !strings.Contains(result, "bot/chat:2") {
+		t.Errorf("expected second most recent session bot/chat:2, got %q", result)
+	}
+	if strings.Contains(result, "bot/chat:3") {
+		t.Errorf("did not expect bot/chat:3 in limited output, got %q", result)
+	}
+}
+
+func TestSessionsIndexMaxCountLargerThanResults(t *testing.T) {
+	// Verifies that a count larger than the result set shows all results without "of N".
+	now := time.Now().UTC()
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
+		return []SessionIndexInfo{
+			{SessionKey: "agent:bot:chat:1", LastActivityAt: now, SessionType: "chat", Status: "active"},
+		}, nil
+	}
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index 10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "1 sessions") {
+		t.Errorf("expected '1 sessions' without 'of' qualifier, got %q", result)
+	}
+	if strings.Contains(result, "of") {
+		t.Errorf("did not expect 'of' when count >= results, got %q", result)
+	}
+}
+
+func TestSessionsIndexRelativeTime(t *testing.T) {
+	// Verifies that the Active column uses relative time format (e.g. "3h ago").
+	now := time.Now().UTC()
+	deps := testSessionsDeps(nil, 0)
+	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
+		return []SessionIndexInfo{
+			{SessionKey: "agent:bot:chat:1", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
+		}, nil
+	}
+	cmd := NewSessionsCommand(deps)
+	result, err := cmd.Execute(context.Background(), "index")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "3h ago") {
+		t.Errorf("expected relative time '3h ago' in output, got %q", result)
+	}
+	// Header should be "Active" not "Last Active"
+	if !strings.Contains(result, "Active") {
+		t.Errorf("expected 'Active' column header, got %q", result)
+	}
+}
+
+func TestParseIndexArgsCount(t *testing.T) {
+	// Verifies that parseIndexArgs recognizes a plain number as MaxCount.
+	opts := parseIndexArgs([]string{"5"})
+	if opts.MaxCount != 5 {
+		t.Errorf("expected MaxCount=5, got %d", opts.MaxCount)
+	}
+
+	// Combined with other filters
+	opts = parseIndexArgs([]string{"chat", "all", "3", "2d"})
+	if opts.MaxCount != 3 {
+		t.Errorf("expected MaxCount=3, got %d", opts.MaxCount)
+	}
+	if opts.TypeFilter != "chat" {
+		t.Errorf("expected TypeFilter=chat, got %q", opts.TypeFilter)
+	}
+	if opts.StatusFilter != "" {
+		t.Errorf("expected StatusFilter empty (all), got %q", opts.StatusFilter)
+	}
+	if opts.MaxAge != 48*time.Hour {
+		t.Errorf("expected MaxAge=48h, got %v", opts.MaxAge)
+	}
+}
+
 func TestSessionsListError(t *testing.T) {
 	deps := SessionsDeps{
 		AgentID: "test",

@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type SessionIndexOpts struct {
 	TypeFilter   string
 	StatusFilter string
 	MaxAge       time.Duration // 0 = no limit
+	MaxCount     int           // 0 = no limit
 }
 
 // SessionsDeps holds dependencies for the /sessions command.
@@ -66,7 +68,8 @@ func NewSessionsCommand(deps SessionsDeps) *Command {
 					"  info              Show details for the current chat's session\n" +
 					"  index [filters]   Query session index (all agents)\n\n" +
 					"Index filters: type (chat/spawn/cron/multiball/branch),\n" +
-					"  status (active/compacted/archived/cleared/all), duration (3d/4h)", nil
+					"  status (active/compacted/archived/cleared/all), duration (3d/4h),\n"+
+					"  count (5/10) — show only the N most recent sessions", nil
 
 			case "list":
 				chatID, _ := ctx.Value(ChatIDKey{}).(int64)
@@ -155,6 +158,12 @@ func parseIndexArgs(args []string) SessionIndexOpts {
 		// Try to parse as a duration (e.g. "3d", "4h", "168h")
 		if d, ok := parseFriendlyDuration(lower); ok {
 			opts.MaxAge = d
+			continue
+		}
+
+		// Try to parse as a plain count (e.g. "5", "10")
+		if n, err := strconv.Atoi(lower); err == nil && n > 0 {
+			opts.MaxCount = n
 			continue
 		}
 	}
@@ -311,24 +320,42 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 		return msg + ".", nil
 	}
 
+	// Sort by last activity, most recent first.
+	sort.Slice(entries, func(i, j int) bool {
+		ti := entries[i].LastActivityAt
+		if ti.IsZero() {
+			ti = entries[i].CreatedAt
+		}
+		tj := entries[j].LastActivityAt
+		if tj.IsZero() {
+			tj = entries[j].CreatedAt
+		}
+		return ti.After(tj)
+	})
+
+	// Apply count limit after sorting.
+	totalCount := len(entries)
+	if opts.MaxCount > 0 && opts.MaxCount < len(entries) {
+		entries = entries[:opts.MaxCount]
+	}
+
 	cols := []display.Column{
 		{Header: "Session Key"},
 		{Header: "Type"},
 		{Header: "Status"},
-		{Header: "Last Active"},
+		{Header: "Active"},
 		{Header: "Parent"},
 	}
 	tableRows := make([][]string, len(entries))
 	for i, e := range entries {
 		activity := "—"
 		if !e.LastActivityAt.IsZero() {
-			activity = e.LastActivityAt.Format("Jan 02 15:04")
+			activity = display.RelativeTime(e.LastActivityAt)
 		} else if !e.CreatedAt.IsZero() {
-			activity = e.CreatedAt.Format("Jan 02 15:04")
+			activity = display.RelativeTime(e.CreatedAt)
 		}
 		parent := "—"
 		if e.ParentSessionKey != "" {
-			// Shorten parent key for display
 			parent = shortenSessionKey(e.ParentSessionKey)
 		}
 		tableRows[i] = []string{
@@ -354,8 +381,13 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 		filterDesc = " (" + strings.TrimSpace(filterDesc) + ")"
 	}
 
-	return fmt.Sprintf("Session Index — %d sessions%s\n\n%s",
-		len(entries), filterDesc, display.MarkdownTable(cols, tableRows)), nil
+	countDesc := fmt.Sprintf("%d sessions", len(entries))
+	if opts.MaxCount > 0 && opts.MaxCount < totalCount {
+		countDesc = fmt.Sprintf("%d of %d sessions", len(entries), totalCount)
+	}
+
+	return fmt.Sprintf("Session Index — %s%s\n\n%s",
+		countDesc, filterDesc, display.MarkdownTable(cols, tableRows)), nil
 }
 
 // shortenSessionKey abbreviates a session key for table display.
