@@ -229,6 +229,7 @@ The core of the system. Two entry points:
    d. notify observers for server_tool_use / web_search_tool_result / web_fetch_tool_result blocks
    e. if stop_reason == "pause_turn" → append assistant msg, continue loop (server will resume)
    f. if stop_reason == "end_turn":
+      - if unfired match nudge triggers exist → inject [system] reminder, continue loop (once)
       - if nudge pre-answer gate enabled and not yet verified → inject [system] reminder, continue loop
       - otherwise → save & check compaction & return text
    g. if stop_reason == "tool_use":
@@ -983,6 +984,38 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `summaryPrompt` — read live from file at compaction time via `ReadPromptFile` callback. If empty, falls back to `prompts.CompactionSummary()` (embedded from `prompts/compaction-summary.md`). Edits to the config file take effect immediately.
 - `handoffMessage` — message after compaction completes. If empty, uses `DefaultHandoffMessage` (embedded from `prompts/compaction-handoff.md`).
 - `dryRun` — when true, runs the full pipeline (API call, summary generation) but skips `sessions.Replace()`. The session is left unchanged. `/compact dry-run` sends the resulting summary as a Telegram document (via `CompactionDebugFunc` if configured, otherwise directly via `primaryBot.SendDocument`) without rewriting history. Useful for iterating on compaction prompts.
+
+## Nudge System (`nudge/`)
+
+Mid-turn behavioral reminders extracted from character files. The nudge package is a leaf dependency (only imports `log`).
+
+### Rule Extraction
+
+Rules are extracted once from character files via an LLM call, then cached in `{workspace}/character/nudge-rules.json` with a content hash. Re-extraction only happens when the hash changes (character files edited).
+
+**Extraction flow:**
+1. On first session activity (`OnActivity` hook), `NudgeReloadFunc` fires via `sync.Once`
+2. `Extractor.NeedsExtraction()` compares current character file hash against stored hash
+3. If changed: spawns a background goroutine that creates a branch session and sends `ExtractionPrompt` to the agent's own model
+4. LLM response is parsed as JSON array of rules, each with text, trigger type, source attribution, and priority
+5. Rules are saved to disk; scheduler is refreshed with new rules
+6. Also re-runs on `/reload` and after compaction (character files may have changed)
+
+### Trigger Types
+
+- **`periodic(N)`** — fires every N tool calls (via `CheckAfterTools`)
+- **`after_streak(N)`** — fires after N consecutive calls to the same tool (via `CheckAfterTools`)
+- **`after_error`** — fires when the last tool call returned an error (via `CheckAfterTools`)
+- **`match(regex)`** — regex evaluated once against user message at `Reset()`; fires via `CheckAfterTools` on the tools path, or via `CheckMatch()` on the no-tools path (ensures match triggers fire even when the model answers directly)
+- **`pre_answer`** — all pre_answer rules concatenated and injected when the model wants to end the turn (gated by `NudgePreAnswerGate` and `NudgePreAnswerMinTools`)
+
+### Injection
+
+All nudge reminders are injected as `[system]` prefixed text blocks in user messages — either appended to tool result batches (tools path) or as standalone user messages that continue the loop (match/pre_answer on no-tools path). Each injection is one-shot per trigger type per turn to prevent infinite loops.
+
+### Configuration
+
+Cooldown (min tool calls between repeating the same rule, default 5) and max-per-batch (max reminders per tool batch, default 1) prevent spam. All config is per-agent via `nudge_enable`, `nudge_cooldown`, `nudge_max_per_batch`, `nudge_pre_answer_gate`, `nudge_pre_answer_min_tools`.
 
 ## Deployment
 
