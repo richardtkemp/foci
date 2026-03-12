@@ -47,7 +47,6 @@ var boolKeys = map[string]bool{
 	"nudge_enable":           true,
 	"nudge_auto_extract":     true,
 	"nudge_pre_answer_gate":  true,
-	"stream_output":         true,
 	"browser_enabled":       true,
 	"headless":              true,
 	"incognito":             true,
@@ -168,13 +167,6 @@ func migrateAgentTelegramFields(acfg *AgentConfig) {
 	if acfg.ReceivedFilesDir != "" && tg.ReceivedFilesDir == "" {
 		tg.ReceivedFilesDir = acfg.ReceivedFilesDir
 	}
-	if acfg.StreamOutput && tg.StreamOutput == nil {
-		tg.StreamOutput = &acfg.StreamOutput
-	}
-	if acfg.StreamUpdateInterval != "" && tg.StreamInterval == "" {
-		tg.StreamInterval = acfg.StreamUpdateInterval
-	}
-
 	// Reverse normalization: copy telegram platform values back to agent-level
 	// fields so generic code (environment block) can access them without importing telegram config.
 	if tg.ShowToolCalls != nil && acfg.ShowToolCalls == nil {
@@ -185,11 +177,11 @@ func migrateAgentTelegramFields(acfg *AgentConfig) {
 	}
 }
 
-// applyDefaultsToAgent copies fields from defaults to agent where the agent
-// field is zero-value and was not explicitly set in the TOML file.
-// Fields are matched by TOML tag name between DefaultsConfig and AgentConfig.
-func applyDefaultsToAgent(agent *AgentConfig, defaults *DefaultsConfig, defined map[string]bool) {
-	dv := reflect.ValueOf(defaults).Elem()
+// applyStructToAgent copies fields from a source struct to agent where the
+// agent field is zero-value and was not explicitly set in the TOML file.
+// Fields are matched by TOML tag name between the source and AgentConfig.
+func applyStructToAgent(agent *AgentConfig, source any, defined map[string]bool) {
+	dv := reflect.ValueOf(source).Elem()
 	dt := dv.Type()
 	av := reflect.ValueOf(agent).Elem()
 	at := av.Type()
@@ -211,7 +203,7 @@ func applyDefaultsToAgent(agent *AgentConfig, defaults *DefaultsConfig, defined 
 
 		ai, ok := agentFieldByTag[tag]
 		if !ok {
-			continue // DefaultsConfig field has no matching AgentConfig field
+			continue // source field has no matching AgentConfig field
 		}
 
 		af := av.Field(ai)
@@ -234,6 +226,14 @@ func applyDefaultsToAgent(agent *AgentConfig, defaults *DefaultsConfig, defined 
 
 		af.Set(df)
 	}
+}
+
+// applyDefaultsToAgent copies fields from defaults and LLM config to agent
+// where the agent field is zero-value and was not explicitly set in the TOML file.
+// Fields are matched by TOML tag name between the source and AgentConfig.
+func applyDefaultsToAgent(agent *AgentConfig, cfg *Config, defined map[string]bool) {
+	applyStructToAgent(agent, &cfg.LLM, defined)
+	applyStructToAgent(agent, &cfg.Defaults, defined)
 }
 
 // ApplyProviderDefaults fills in agent Effort/Thinking from provider-specific
@@ -280,9 +280,9 @@ func Load(path string) (*Config, error) {
 	// Populate [defaults] section with hardcoded fallbacks.
 	// All defaults must be set BEFORE applyDefaultsToAgent so the reflection-based
 	// copier propagates them to agents automatically — no manual fallback needed.
-	setStringDefault(&cfg.Defaults.Model, "anthropic/claude-haiku-4-5-20251001")
+	setStringDefault(&cfg.LLM.Model, "anthropic/claude-haiku-4-5-20251001")
+	setIntDefault(&cfg.LLM.MaxOutputTokens, 8192)
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
-	setIntDefault(&cfg.Defaults.MaxOutputTokens, 8192)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
 	setIntDefaultDefined(&cfg.Defaults.NudgeCooldown, 5, md.IsDefined("defaults", "nudge_cooldown"))
 	setIntDefaultDefined(&cfg.Defaults.NudgeMaxPerBatch, 1, md.IsDefined("defaults", "nudge_max_per_batch"))
@@ -319,7 +319,7 @@ func Load(path string) (*Config, error) {
 		if i < len(perAgentDefined) {
 			defined = perAgentDefined[i]
 		}
-		applyDefaultsToAgent(&cfg.Agents[i], &cfg.Defaults, defined)
+		applyDefaultsToAgent(&cfg.Agents[i], &cfg, defined)
 
 		if cfg.Agents[i].BranchOrientationPrompt != "" {
 			cfg.Agents[i].BranchOrientationPrompt = ResolvePath(cfg.Agents[i].BranchOrientationPrompt)
@@ -347,7 +347,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Legacy agent defaults (in case nothing is configured at all)
-	setStringDefault(&cfg.Agent.Model, "anthropic/claude-haiku-4-5-20251001")
+	setStringDefault(&cfg.Agent.Model, cfg.LLM.Model)
 
 	// Model aliases defaults (if not configured) — use developer/model_id format
 	if len(cfg.Models.Aliases) == 0 {

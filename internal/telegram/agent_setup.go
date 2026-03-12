@@ -291,8 +291,6 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	switch {
 	case tg != nil && tg.StreamOutput != nil:
 		bot.SetStreamOutput(*tg.StreamOutput)
-	case acfg.StreamOutput:
-		bot.SetStreamOutput(acfg.StreamOutput)
 	default:
 		bot.SetStreamOutput(cfg.Defaults.StreamOutput)
 	}
@@ -300,7 +298,7 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	if tg != nil && tg.StreamInterval != "" {
 		streamInterval = tg.StreamInterval
 	} else {
-		streamInterval = acfg.StreamUpdateInterval
+		streamInterval = cfg.Defaults.StreamUpdateInterval
 	}
 	if d, err := time.ParseDuration(streamInterval); err == nil && d > 0 {
 		bot.SetStreamUpdateInterval(d)

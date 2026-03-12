@@ -775,7 +775,7 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 - **Lazy start:** No goroutine or message until the first delta. If the agent returns no text (e.g. pure tool calls), the stream writer does nothing.
 - **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
 
-**Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[defaults]` or per-agent.
+**Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[defaults]`, or `stream_output` and `stream_interval` in `[agents.platforms.telegram]`.
 
 ## Voice (`voice/`, `telegram/bot.go`)
 

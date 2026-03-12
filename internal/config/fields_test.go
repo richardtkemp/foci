@@ -28,16 +28,16 @@ func TestFieldsNonEmpty(t *testing.T) {
 // Verifies LookupField finds known fields and returns false for unknown ones.
 func TestLookupField(t *testing.T) {
 	// Known field
-	f, ok := LookupField("defaults.model")
+	f, ok := LookupField("llm.model")
 	if !ok {
-		t.Fatal("LookupField(defaults.model) returned false")
+		t.Fatal("LookupField(llm.model) returned false")
 	}
-	if f.Key != "model" || f.Section != "defaults" {
+	if f.Key != "model" || f.Section != "llm" {
 		t.Errorf("got section=%q key=%q", f.Section, f.Key)
 	}
 
 	// Case insensitive
-	f2, ok := LookupField("DEFAULTS.MODEL")
+	f2, ok := LookupField("LLM.MODEL")
 	if !ok {
 		t.Fatal("LookupField case-insensitive returned false")
 	}
@@ -69,7 +69,7 @@ func TestFieldSections(t *testing.T) {
 	}
 
 	// Should include well-known sections
-	for _, want := range []string{"defaults", "agent", "sessions", "tools", "logging"} {
+	for _, want := range []string{"llm", "defaults", "agent", "sessions", "tools", "logging"} {
 		if !seen[want] {
 			t.Errorf("missing expected section %q", want)
 		}
@@ -106,6 +106,7 @@ func TestFieldsInSection(t *testing.T) {
 func TestFieldsMatchStructTags(t *testing.T) {
 	// Map section names to the struct types they represent.
 	sectionStructs := map[string]reflect.Type{
+		"llm":              reflect.TypeOf(LLMConfig{}),
 		"defaults":         reflect.TypeOf(DefaultsConfig{}),
 		"agent":            reflect.TypeOf(AgentConfig{}),
 		"anthropic":        reflect.TypeOf(AnthropicConfig{}),

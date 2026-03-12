@@ -43,10 +43,10 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 // (overridden) tag; all fields get (default) if they weren't explicitly set.
 func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
 	overrides := map[string]bool{
-		"defaults.model":             agent.Model != cfg.Defaults.Model,
-		"defaults.max_tool_loops":    agent.MaxToolLoops != cfg.Defaults.MaxToolLoops,
-		"defaults.max_output_tokens": agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens,
-		"anthropic.effort":           agent.Effort != cfg.Anthropic.Effort,
+		"llm.model":               agent.Model != cfg.LLM.Model,
+		"defaults.max_tool_loops": agent.MaxToolLoops != cfg.Defaults.MaxToolLoops,
+		"llm.max_output_tokens":   agent.MaxOutputTokens != cfg.LLM.MaxOutputTokens,
+		"anthropic.effort":        agent.Effort != cfg.Anthropic.Effort,
 	}
 	for i := range rows {
 		path := rows[i].Section + "." + rows[i].Key
@@ -66,10 +66,12 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		rows = append(rows, configRow{section, key, formatValue(val)})
 	}
 
+	// llm
+	add("llm", "model", cfg.LLM.Model)
+	add("llm", "max_output_tokens", cfg.LLM.MaxOutputTokens)
+
 	// defaults
-	add("defaults", "model", cfg.Defaults.Model)
 	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
-	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
 	if cfg.Anthropic.Effort != "" {
 		add("anthropic", "effort", cfg.Anthropic.Effort)
 	}
@@ -361,10 +363,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	add("inject_agent_warnings", agent.InjectAgentWarnings)
 	add("steer_mode", agent.SteerMode)
-	add("stream_output", agent.StreamOutput)
-	if agent.StreamUpdateInterval != "" {
-		add("stream_update_interval", agent.StreamUpdateInterval)
-	}
 	if agent.StartupNotify != nil {
 		add("startup_notify", *agent.StartupNotify)
 	}

@@ -448,8 +448,6 @@ bot_secret = "custom.secret"
 multiball_bots = ["extra1", "extra2"]
 allowed_users = ["123", "456"]
 show_tool_calls = "preview"
-stream_output = true
-stream_update_interval = "500ms"
 
 [telegram]
 allowed_users = ["789"]
@@ -495,12 +493,6 @@ allowed_users = ["789"]
 	}
 	if tg.ShowToolCalls == nil || *tg.ShowToolCalls != ToolCallPreview {
 		t.Errorf("Platforms.Telegram.ShowToolCalls = %v, want preview", tg.ShowToolCalls)
-	}
-	if tg.StreamOutput == nil || *tg.StreamOutput != true {
-		t.Errorf("Platforms.Telegram.StreamOutput = %v, want true", tg.StreamOutput)
-	}
-	if tg.StreamInterval != "500ms" {
-		t.Errorf("Platforms.Telegram.StreamInterval = %q, want %q", tg.StreamInterval, "500ms")
 	}
 }
 

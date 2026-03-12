@@ -216,10 +216,12 @@ func TestApplyDefaultsReflect(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[defaults]
+[llm]
 model = "anthropic/claude-opus-4-6"
-max_tool_loops = 50
 max_output_tokens = 16384
+
+[defaults]
+max_tool_loops = 50
 braindead_threshold = 20
 braindead_prompt = "watch it"
 duplicate_messages = true
