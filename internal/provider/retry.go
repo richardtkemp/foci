@@ -206,63 +206,6 @@ func retryWithOverload(ctx context.Context, rc retryableClient, req *MessageRequ
 func sendOnce(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
 	if handler != nil {
 		if sc, ok := client.(StreamingClient); ok {
-			// For streaming, we need to call the underlying streamOnce method.
-			// However, we can't access private methods. The StreamingClient.StreamMessage
-			// already includes retry logic in Anthropic's case, so we need to call
-			// a method that does a single attempt.
-			//
-			// PROBLEM: We can't call streamOnce directly from here because it's private.
-			// We need to restructure this.
-			//
-			// Actually, looking at the plan again, the idea is that SendMessage/StreamMessage
-			// in anthropic/client.go will be simplified to just call sendOnce/streamOnce.
-			// Then provider.Send() will handle the retry logic.
-			//
-			// But we have a chicken-and-egg problem: we're in provider.Send() trying to
-			// call the client, but the client needs to expose a non-retrying version.
-			//
-			// Let me re-read the plan... The plan says:
-			// "Simplify SendMessage/StreamMessage - remove all retry logic"
-			// "Just marshal and call sendOnce (no retry here)"
-			//
-			// So the client methods will be simplified to call sendOnce/streamOnce directly,
-			// without retry. Then provider.Send() wraps them with retry.
-			//
-			// But that creates a problem: if client.SendMessage() calls sendOnce directly,
-			// and provider.Send() calls client.SendMessage(), we're not adding retry - we're
-			// just calling through.
-			//
-			// Actually, I think the issue is that we need TWO layers:
-			// 1. sendOnce/streamOnce - single attempt (private methods in anthropic)
-			// 2. SendMessage/StreamMessage - exposed to provider, calls sendOnce/streamOnce
-			// 3. provider.Send() - wraps SendMessage/StreamMessage with retry
-			//
-			// But the current SendMessage already calls sendOnce internally. If we remove
-			// retry from SendMessage, it becomes just a wrapper around sendOnce.
-			//
-			// Wait, I think I misunderstood the architecture. Let me re-think...
-			//
-			// Current flow:
-			// - agent calls provider.Send(client, req, handler)
-			// - provider.Send() calls client.SendMessage() or client.StreamMessage()
-			// - client.SendMessage() has retry logic and calls sendOnce() repeatedly
-			//
-			// New flow should be:
-			// - agent calls provider.Send(client, req, handler)
-			// - provider.Send() has retry logic and calls client.SendMessage() repeatedly
-			// - client.SendMessage() just calls sendOnce() once (no retry)
-			//
-			// So the change is:
-			// - Move retry loop from client.SendMessage() to provider.Send()
-			// - client.SendMessage() becomes a thin wrapper around sendOnce()
-			//
-			// This makes sense! So in provider.Send(), we'll call client.SendMessage()
-			// or client.StreamMessage() (which now do single attempts), and wrap them
-			// in retry logic here.
-			//
-			// So sendOnce() here in provider should just call client.SendMessage() or
-			// client.StreamMessage() directly. Those methods will no longer retry.
-
 			return sc.StreamMessage(ctx, req, handler)
 		}
 	}
