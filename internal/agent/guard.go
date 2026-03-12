@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/config"
@@ -15,6 +17,49 @@ import (
 	"foci/internal/provider"
 	"foci/internal/tools"
 )
+
+// missingQueryTools caches which of jq/mdq/yq are not installed.
+// Checked once on first guard trigger (via sync.Once).
+var (
+	missingQueryTools     map[string]bool
+	missingQueryToolsOnce sync.Once
+)
+
+// checkMissingQueryTools probes PATH for jq, mdq, and yq, returning
+// a set of the tool names that are not installed.
+func checkMissingQueryTools() map[string]bool {
+	missing := make(map[string]bool)
+	for _, name := range []string{"jq", "mdq", "yq"} {
+		if _, err := exec.LookPath(name); err != nil {
+			missing[name] = true
+		}
+	}
+	return missing
+}
+
+// getMissingQueryTools returns the cached set of missing tools,
+// running the check on first call. Tests can override by setting
+// missingQueryTools directly before calling (the Once will then
+// populate only if unset).
+func getMissingQueryTools() map[string]bool {
+	missingQueryToolsOnce.Do(func() {
+		missingQueryTools = checkMissingQueryTools()
+	})
+	return missingQueryTools
+}
+
+// setMissingQueryToolsForTest overrides the cached missing-tools set.
+// Returns a cleanup function that restores the original state.
+// Must only be used in tests.
+func setMissingQueryToolsForTest(missing map[string]bool) func() {
+	orig := missingQueryTools
+	missingQueryTools = missing
+	// Ensure the Once has fired so getMissingQueryTools returns our override.
+	missingQueryToolsOnce.Do(func() {})
+	return func() {
+		missingQueryTools = orig
+	}
+}
 
 // providerAwareDefaultAlias returns the cheap-model alias based on the turn model's developer.
 func (a *Agent) providerAwareDefaultAlias(turnModel string) string {
@@ -222,7 +267,8 @@ func recentContext(messages []provider.Message, maxTurns, maxChars int) string {
 
 // guardHint returns a contextual suggestion for how to extract data from a
 // saved tool result file, based on content sniffing. Includes the file path
-// in example commands so the agent can copy-paste.
+// in example commands so the agent can copy-paste. If the suggested tool is
+// not installed, appends an install recommendation.
 func guardHint(content, path string) string {
 	trimmed := strings.TrimSpace(content)
 	if len(trimmed) == 0 {
@@ -230,21 +276,46 @@ func guardHint(content, path string) string {
 	}
 	// Check TOML before JSON — both can start with '[' but TOML sections start with [letter
 	if looksLikeTOML(trimmed) {
-		return fmt.Sprintf("Use `yq` to query, e.g. `yq '.section.key' %s`.", path)
+		return withInstallHint(fmt.Sprintf("Use `yq` to query, e.g. `yq '.section.key' %s`.", path), "yq")
 	}
 	if trimmed[0] == '{' || trimmed[0] == '[' {
-		return fmt.Sprintf("Use `jq` to query, e.g. `jq 'keys' %s` or `jq '.items[:3]' %s`.", path, path)
+		return withInstallHint(fmt.Sprintf("Use `jq` to query, e.g. `jq 'keys' %s` or `jq '.items[:3]' %s`.", path, path), "jq")
 	}
 	if trimmed[0] == '#' {
-		return fmt.Sprintf("Use `mdq` to query sections, e.g. `mdq '# Section' %s`.", path)
+		return withInstallHint(fmt.Sprintf("Use `mdq` to query sections, e.g. `mdq '# Section' %s`.", path), "mdq")
 	}
 	if detectContentExtension(content) == ".xml" {
-		return fmt.Sprintf("Use `yq` to query, e.g. `yq -p xml '.' %s`.", path)
+		return withInstallHint(fmt.Sprintf("Use `yq` to query, e.g. `yq -p xml '.' %s`.", path), "yq")
 	}
 	if looksLikeYAML(trimmed) {
-		return fmt.Sprintf("Use `yq` to query, e.g. `yq '.key' %s`.", path)
+		return withInstallHint(fmt.Sprintf("Use `yq` to query, e.g. `yq '.key' %s`.", path), "yq")
 	}
-	return fmt.Sprintf("Use the `summary` tool to extract specific information from %s.", path)
+	hint := fmt.Sprintf("Use the `summary` tool to extract specific information from %s.", path)
+	// For plain text, suggest installing any missing query tools that could help
+	// with structured data next time.
+	missing := getMissingQueryTools()
+	if len(missing) > 0 {
+		var names []string
+		for _, name := range []string{"jq", "mdq", "yq"} {
+			if missing[name] {
+				names = append(names, name)
+			}
+		}
+		if len(names) > 0 {
+			hint += fmt.Sprintf("\nTip: install %s for more efficient querying of structured files.", strings.Join(names, ", "))
+		}
+	}
+	return hint
+}
+
+// withInstallHint appends an install recommendation if the named tool
+// is not found in PATH.
+func withInstallHint(hint, toolName string) string {
+	missing := getMissingQueryTools()
+	if !missing[toolName] {
+		return hint
+	}
+	return hint + fmt.Sprintf("\nNote: `%s` is not installed. Install it to use this approach, or use the `summary` tool instead.", toolName)
 }
 
 // looksLikeTOML checks if content starts with TOML-like patterns (e.g. [section] or key = value).
