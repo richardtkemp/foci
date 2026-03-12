@@ -50,7 +50,7 @@ type ConnectedMsg struct {
 type SessionReadyMsg struct {
 	Type       string `json:"type"`        // "session_ready"
 	AgentID    string `json:"agent_id"`    // selected agent
-	SessionKey string `json:"session_key"` // e.g. "agent:clutch:voice:abc123"
+	SessionKey string `json:"session_key"` // e.g. "clutch/i1709596800/0"
 }
 
 // TranscriptionMsg — STT result for client audio.

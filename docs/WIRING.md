@@ -566,7 +566,7 @@ Four outputs:
    - Package-level: `log.Infof("component", "format", args...)`
    - Per-component: `log.NewComponentLogger("telegram:" + agentID)` → `logger.Infof("format", args...)`
    - Major components (Agent, Bot, Keepalive, Compactor) carry a `*log.ComponentLogger` field
-     initialized at construction with a prefix like `"agent:mybot"`. This avoids repeating
+     initialized at construction with a prefix like `"agent/mybot"`. This avoids repeating
      the component string at every call site and encodes the agent ID for multi-agent setups.
    - Levels: DEBUG < INFO < WARN < ERROR
 
@@ -601,11 +601,11 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `memory_search` | memory.go | Full-text search over memory files (+ conversation history for FTS5). Pluggable backends: FTS5 (default) and bleve. Porter stemming, weighted ranking, sort by relevance or recency. Optional `backend` parameter when multiple backends are active. |
 | `remind` | remind.go | Defer a thought for later; stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
 | `scratchpad` | scratchpad.go | Working notes that survive compaction (write/read/clear/list via `action` parameter) |
-| `spawn` | spawn.go | Unified sub-call: four context modes. All modes have tool access with a tool-call loop. `raw`: one-shot, no system prompt (`send_message_to_user` and `send_to_session` blacklisted — no character context means no communication awareness). `character`: one-shot with character files (all tools). `clone` (default): branch session — a headless self-fork. `explore`: one-shot safe exploration with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch` only — no file mutation, no shell exec, no messaging, always haiku. clone creates branch `agent:ID:spawn:spawn-TIMESTAMP`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive clone blocked via context key. Concurrent clone limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. |
+| `spawn` | spawn.go | Unified sub-call: four context modes. All modes have tool access with a tool-call loop. `raw`: one-shot, no system prompt (`send_message_to_user` and `send_to_session` blacklisted — no character context means no communication awareness). `character`: one-shot with character files (all tools). `clone` (default): branch session — a headless self-fork. `explore`: one-shot safe exploration with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch` only — no file mutation, no shell exec, no messaging, always haiku. clone creates branch `{parentKey}/b{TIMESTAMP}`, always runs async via `AsyncNotifier` (returns immediate ack, delivers `[SPAWN RESULT]` on completion). Recursive clone blocked via context key. Concurrent clone limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion. |
 | `ls` | explore.go | List directory contents. Internal to `explore` spawn mode — not registered in the main tool registry. |
 | `find` | explore.go | Search for files in a directory hierarchy. Dangerous predicates (`-exec`, `-delete`, etc.) blocked. Internal to `explore` spawn mode. |
 | `grep` | explore.go | Search file contents using the best available binary (rg > ack > ag > grep). Flags are validated and translated to the active binary's dialect. Internal to `explore` spawn mode. |
-| `send_message_to_user` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`agent:X:chat:CHATID`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
+| `send_message_to_user` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`X/cCHATID/{versionTS}`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
 | `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. multiball branches talking to main). |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
@@ -814,7 +814,7 @@ Real-time two-way voice conversation via WebSocket at `/voice`. Used by the FOCI
 ```
 GET /voice?api_key=KEY → auth middleware → upgrade to WebSocket
   → send connected{agents} → client sends select_agent{agent_id}
-  → create ephemeral session (agent:ID:voice:CONN_ID) → send session_ready
+  → create ephemeral session (ID/iCONN_ID/CONN_ID) → send session_ready
 ```
 
 **Audio turn flow:**
@@ -855,7 +855,7 @@ multiball_bots = ["spare1"]          # shared pool (fallback)
                → try per-agent pool first (pool.Acquire())
                → if busy/empty, try shared pool (shared.Acquire())
            → bot.SetAgentAndCommands(ag, cmds)  // re-wire shared bots
-           → sessions.CreateBranch(parent, multiball:mb-TIMESTAMP)
+           → sessions.CreateBranch(parent) → parent/b{TIMESTAMP}
            → bot.SetSessionKey(branchKey)
            → bot.SendNotification("🎱 Forked from main.")
 ```
@@ -867,12 +867,12 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 **Shared pool** (`telegram/manager.go`): `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetAgentAndCommands` at fork time.
 
 **Bot changes** (`telegram/bot.go`):
-- Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `agent:ID:chat:CHATID`
+- Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `ID/cCHATID/{versionTS}`
 - `SessionKey()` — returns override key (secondary bots) or default chat session (primary bots)
 - `SetSessionKey()` — thread-safe override (multiball fork/done)
 - `Bot.SessionKeyForChat(chatID)` — stable cached session key for a chat. On first call for a chat, checks session index for persisted key before generating new one. New keys are persisted to `chat_metadata` table in session index under key `session_key`. This ensures the same session is resumed after restart instead of creating a new timestamped session.
 - `NewSessionKeyForChat(agentID, chatID)` — creates a NEW session key with current timestamp (uncached, unpersisted)
-- Default chat: first message sets the default; persisted in state store as `agent:ID:default_chat`
+- Default chat: first message sets the default; persisted in state store as `agent/ID/default_chat`
 - Username recording: persisted per chat for `/sessions list` display
 - `isSecondary` flag — enables `/done` handling, idle message rejection
 - `/done` handled as special case alongside `/stop` (bypasses command registry)
@@ -880,7 +880,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 **Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<telegram_username>`. Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `main.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetAgentAndCommands` and gets the primary bot's chat ID for notifications.
 
-**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort:<sessionKey>`, `thinking:<sessionKey>`, `model:<sessionKey>`, `model_endpoint:<sessionKey>`, `model_format:<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all five — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern under `voice:<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
+**Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort/<sessionKey>`, `thinking/<sessionKey>`, `model/<sessionKey>`, `model_endpoint/<sessionKey>`, `model_format/<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all five — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern under `voice/<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
 
 **Special commands on secondary bots:**
 - `/done` — detach from forked session, return to pool

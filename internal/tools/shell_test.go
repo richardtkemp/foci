@@ -326,7 +326,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 		"timeout": 10,
 	})
 
-	ctx := WithSessionKey(context.Background(), "agent:test:branch-42")
+	ctx := WithSessionKey(context.Background(), "test/ibranch-42/1000")
 	out, err := tool.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -337,8 +337,8 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 
 	select {
 	case r := <-ch:
-		if r.sk != "agent:test:branch-42" {
-			t.Errorf("session key = %q, want %q", r.sk, "agent:test:branch-42")
+		if r.sk != "test/ibranch-42/1000" {
+			t.Errorf("session key = %q, want %q", r.sk, "test/ibranch-42/1000")
 		}
 		if r.msg == "" {
 			t.Error("message should not be empty")
@@ -562,7 +562,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx = WithSessionKey(ctx, "agent:test:cancel-42")
+	ctx = WithSessionKey(ctx, "test/icancel-42/1000")
 
 	// Cancel the context shortly after starting
 	go func() {
@@ -589,7 +589,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	}
 
 	// Pending count should be back to zero
-	if notifier.HasPending("agent:test:cancel-42") {
+	if notifier.HasPending("test/icancel-42/1000") {
 		t.Error("pending count should be zero after delivery")
 	}
 }

@@ -127,15 +127,12 @@ func resolveConvLog(session string) *ConversationLog {
 	return convFallback
 }
 
-// agentFromSession extracts the agent ID from a session key of the form
-// "agent:<id>:...". Returns "" if the format doesn't match.
+// agentFromSession extracts the agent ID from a session key.
+// Session keys use slash-separated format: "{agentID}/{typeID}/{versionTS}".
+// Returns "" if the format doesn't match.
 func agentFromSession(session string) string {
-	if !strings.HasPrefix(session, "agent:") {
-		return ""
-	}
-	rest := session[len("agent:"):]
-	if idx := strings.IndexByte(rest, ':'); idx > 0 {
-		return rest[:idx]
+	if idx := strings.IndexByte(session, '/'); idx > 0 {
+		return session[:idx]
 	}
 	return ""
 }

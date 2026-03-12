@@ -26,7 +26,7 @@ func TestConversationLog(t *testing.T) {
 		Username:  "testuser",
 		ChatID:    67890,
 		Text:      "Hello bot",
-		Session:   "agent:main:main",
+		Session:   "main/i0/0",
 	})
 
 	// Log a sent response
@@ -37,7 +37,7 @@ func TestConversationLog(t *testing.T) {
 		ChatID:    67890,
 		Text:      "Hello human!",
 		ParseMode: "Markdown",
-		Session:   "agent:main:main",
+		Session:   "main/i0/0",
 	})
 
 	// Log a failed send
@@ -48,7 +48,7 @@ func TestConversationLog(t *testing.T) {
 		ChatID:    67890,
 		Text:      "bad *markdown",
 		ParseMode: "",
-		Session:   "agent:main:main",
+		Session:   "main/i0/0",
 		Error:     "parse error",
 	})
 
@@ -96,7 +96,7 @@ func TestConversationLog(t *testing.T) {
 	if results[0].chatID != 67890 {
 		t.Errorf("row 0 chat_id = %d", results[0].chatID)
 	}
-	if results[0].session != "agent:main:main" {
+	if results[0].session != "main/i0/0" {
 		t.Errorf("row 0 session = %q", results[0].session)
 	}
 
@@ -174,12 +174,11 @@ func TestAgentFromSession(t *testing.T) {
 		session string
 		want    string
 	}{
-		{"agent:clutch:chat:123:abc", "clutch"},
-		{"agent:otto:main", "otto"},
-		{"agent::empty", ""},
-		{"other:format", ""},
+		{"clutch/c123/1000", "clutch"},
+		{"otto/i0/0", "otto"},
+		{"fotini/c5970082313/1000/b2000", "fotini"},
 		{"", ""},
-		{"agent:", ""},
+		{"noslash", ""},
 	}
 	for _, tt := range tests {
 		got := agentFromSession(tt.session)
@@ -206,21 +205,21 @@ func TestConversationHook(t *testing.T) {
 
 	Conversation(ConversationEntry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
-		Text: "hook test", Session: "agent:main:chat:1",
+		Text: "hook test", Session: "main/c1/1000",
 	})
 
 	if hookedText != "hook test" {
 		t.Errorf("hook text = %q, want %q", hookedText, "hook test")
 	}
-	if hookedSession != "agent:main:chat:1" {
-		t.Errorf("hook session = %q, want %q", hookedSession, "agent:main:chat:1")
+	if hookedSession != "main/c1/1000" {
+		t.Errorf("hook session = %q, want %q", hookedSession, "main/c1/1000")
 	}
 
 	// Empty text should NOT trigger the hook
 	hookedText = ""
 	Conversation(ConversationEntry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
-		Text: "", Session: "agent:main:chat:1",
+		Text: "", Session: "main/c1/1000",
 	})
 	if hookedText != "" {
 		t.Errorf("hook should not fire for empty text, got %q", hookedText)
@@ -243,13 +242,13 @@ func TestConversationFallbackRouting(t *testing.T) {
 	// Unknown agent session should go to fallback (alpha)
 	Conversation(ConversationEntry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
-		Text: "unknown agent", Session: "agent:unknown:chat:1",
+		Text: "unknown agent", Session: "unknown/c1/1000",
 	})
 
-	// Non-agent session should also go to fallback
+	// Non-slash session should also go to fallback
 	Conversation(ConversationEntry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
-		Text: "no agent prefix", Session: "direct:chat:1",
+		Text: "no agent prefix", Session: "noslash",
 	})
 
 	alphaDB, _ := sql.Open("sqlite", pathFn("alpha"))
@@ -305,12 +304,12 @@ func TestPerAgentConversationRouting(t *testing.T) {
 	// Log to alpha
 	Conversation(ConversationEntry{
 		Direction: "recv", UserID: "1", Username: "u", ChatID: 1,
-		Text: "hello alpha", Session: "agent:alpha:main",
+		Text: "hello alpha", Session: "alpha/i0/0",
 	})
 	// Log to beta
 	Conversation(ConversationEntry{
 		Direction: "recv", UserID: "2", Username: "v", ChatID: 2,
-		Text: "hello beta", Session: "agent:beta:main",
+		Text: "hello beta", Session: "beta/i0/0",
 	})
 
 	// Verify alpha's DB has 1 row

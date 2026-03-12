@@ -294,12 +294,12 @@ func sessionsInfoCmd(deps SessionsDeps, chatID int64) (string, error) {
 			if s.Username != "" {
 				fmt.Fprintf(&sb, "User: @%s\n", s.Username)
 			}
-			fmt.Fprintf(&sb, "Session: agent:%s:chat:%d", deps.AgentID, chatID)
+			fmt.Fprintf(&sb, "Session: %s/c%d", deps.AgentID, chatID)
 			return sb.String(), nil
 		}
 	}
 
-	fmt.Fprintf(&sb, "Session: agent:%s:chat:%d (new — no messages yet)", deps.AgentID, chatID)
+	fmt.Fprintf(&sb, "Session: %s/c%d (new — no messages yet)", deps.AgentID, chatID)
 	return sb.String(), nil
 }
 
@@ -391,24 +391,26 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 }
 
 // shortenSessionKey abbreviates a session key for table display.
-// "agent:mybot:chat:5970082313" → "mybot/chat:597…"
-// "agent:mybot:branch:abc123-def456" → "mybot/branch:abc123…"
+// "scout/c5970082313/1772794601" → "scout/c597…"
+// "scout/c5970082313/1772794601/b1772795000" → "scout/c597…/b177…"
 func shortenSessionKey(key string) string {
-	if !strings.HasPrefix(key, "agent:") {
+	parts := strings.Split(key, "/")
+	if len(parts) < 2 {
 		return key
 	}
-	rest := key[len("agent:"):]
-	// Split into agent name and session part
-	parts := strings.SplitN(rest, ":", 2)
-	if len(parts) != 2 {
-		return rest
+	// Always show agent + truncated typeID
+	typeID := parts[1]
+	if len(typeID) > 4 {
+		typeID = typeID[:4] + "…"
 	}
-	agentName := parts[0]
-	sessionPart := parts[1] // e.g. "chat:5970082313" or "branch:abc123-def456"
-	// Truncate long IDs (chat IDs, UUIDs)
-	typeParts := strings.SplitN(sessionPart, ":", 2)
-	if len(typeParts) == 2 && len(typeParts[1]) > 8 {
-		typeParts[1] = typeParts[1][:8] + "…"
+	short := parts[0] + "/" + typeID
+	// If there's a child suffix, append truncated child
+	if len(parts) >= 4 {
+		child := parts[3]
+		if len(child) > 4 {
+			child = child[:4] + "…"
+		}
+		short += "/" + child
 	}
-	return agentName + "/" + strings.Join(typeParts, ":")
+	return short
 }

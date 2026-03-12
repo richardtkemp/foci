@@ -50,6 +50,8 @@ func (w *mockSessionWriter) Clear(key string) error {
 }
 
 func TestSendToSession(t *testing.T) {
+	// Verifies basic send_to_session flow: message is delivered via notifier
+	// with reply_to=caller (default).
 	t.Parallel()
 	store := &mockSessionAppender{}
 	delivered := make(chan struct{ sk, msg string }, 1)
@@ -57,11 +59,11 @@ func TestSendToSession(t *testing.T) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, nil)
+	tool := NewSendToSessionTool(store, notifier, nil, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:test:multiball:mb-111")
+	ctx := WithSessionKey(context.Background(), "test/i111/1000")
 	params, _ := json.Marshal(map[string]string{
-		"session_key": "agent:test:main",
+		"session_key": "test/i0/0",
 		"message":     "Here are the results of my research.",
 	})
 
@@ -70,7 +72,7 @@ func TestSendToSession(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if !strings.Contains(result.Text, "Message sent to session agent:test:main") {
+	if !strings.Contains(result.Text, "Message sent to session test/i0/0") {
 		t.Errorf("result = %q", result.Text)
 	}
 
@@ -81,8 +83,8 @@ func TestSendToSession(t *testing.T) {
 
 	// Check notifier was triggered (default reply_to=caller)
 	d := <-delivered
-	if d.sk != "agent:test:main" {
-		t.Errorf("notifier session = %q, want agent:test:main", d.sk)
+	if d.sk != "test/i0/0" {
+		t.Errorf("notifier session = %q, want test/i0/0", d.sk)
 	}
 	if !strings.Contains(d.msg, "Here are the results of my research.") {
 		t.Errorf("notifier msg = %q", d.msg)
@@ -90,6 +92,8 @@ func TestSendToSession(t *testing.T) {
 }
 
 func TestSendToSessionReplyToSession(t *testing.T) {
+	// Verifies reply_to=session routes through sessionNotifyFn instead of
+	// the caller notifier.
 	t.Parallel()
 	store := &mockSessionAppender{}
 	callerNotified := false
@@ -102,11 +106,11 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:alpha:chat:111")
+	ctx := WithSessionKey(context.Background(), "alpha/c111/1000")
 	params, _ := json.Marshal(map[string]string{
-		"session_key": "agent:beta:chat:222",
+		"session_key": "beta/c222/2000",
 		"message":     "Tell Eleni about dinner.",
 		"reply_to":    "session",
 	})
@@ -122,8 +126,8 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 
 	// Check sessionNotifyFn was called, not the caller notifier
 	d := <-sessionDelivered
-	if d.sk != "agent:beta:chat:222" {
-		t.Errorf("session notify key = %q, want agent:beta:chat:222", d.sk)
+	if d.sk != "beta/c222/2000" {
+		t.Errorf("session notify key = %q, want beta/c222/2000", d.sk)
 	}
 	if !strings.Contains(d.msg, "Tell Eleni about dinner.") {
 		t.Errorf("session notify msg = %q", d.msg)
@@ -138,13 +142,14 @@ func TestSendToSessionReplyToSession(t *testing.T) {
 }
 
 func TestSendToSessionInvalidReplyTo(t *testing.T) {
+	// Verifies that an invalid reply_to value is rejected.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/i0/0")
 	params, _ := json.Marshal(map[string]string{
-		"session_key": "agent:test:branch",
+		"session_key": "test/i1/1000",
 		"message":     "hello",
 		"reply_to":    "invalid",
 	})
@@ -159,9 +164,10 @@ func TestSendToSessionInvalidReplyTo(t *testing.T) {
 }
 
 func TestSendToSessionEmptyParams(t *testing.T) {
+	// Verifies that empty session_key and message are rejected.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil)
 
 	// Empty session_key
 	params, _ := json.Marshal(map[string]string{
@@ -178,7 +184,7 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 
 	// Empty message
 	params, _ = json.Marshal(map[string]string{
-		"session_key": "agent:test:main",
+		"session_key": "test/i0/0",
 		"message":     "",
 	})
 	_, err = tool.Execute(context.Background(), params)
@@ -192,13 +198,14 @@ func TestSendToSessionEmptyParams(t *testing.T) {
 
 
 func TestSendToSessionNilNotifier(t *testing.T) {
+	// Verifies graceful behavior when notifier is nil.
 	t.Parallel()
 	store := &mockSessionAppender{}
-	tool := NewSendToSessionTool(store, nil, nil)
+	tool := NewSendToSessionTool(store, nil, nil, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:test:main")
+	ctx := WithSessionKey(context.Background(), "test/i0/0")
 	params, _ := json.Marshal(map[string]string{
-		"session_key": "agent:test:branch",
+		"session_key": "test/i1/1000",
 		"message":     "hello",
 	})
 
@@ -216,10 +223,10 @@ func TestSendToSessionNilNotifier(t *testing.T) {
 }
 
 func TestSendToSessionPerUserChatRouting(t *testing.T) {
-	// Bug #218: verify that cross-session communication between per-user
+	// Verifies that cross-session communication between per-user chat sessions
+	// routes to the correct target session key, enabling chat ID extraction
+	// for Telegram delivery.
 	t.Parallel()
-	// chat sessions routes to the correct target session key, enabling
-	// chat ID extraction for Telegram delivery.
 	store := &mockSessionAppender{}
 	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
 		// reply_to=caller: verify the notifier receives the TARGET session key
@@ -234,11 +241,11 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 		sessionDelivered <- struct{ sk, msg string }{sk, msg}
 	})
 
-	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn)
+	tool := NewSendToSessionTool(store, notifier, sessionNotifyFn, nil)
 
 	// Dick's session sends to Eleni's session with reply_to=session
-	dickSession := "agent:fotini:chat:5970082313"
-	eleniSession := "agent:fotini:chat:8792716180"
+	dickSession := "fotini/c5970082313/1000"
+	eleniSession := "fotini/c8792716180/2000"
 
 	ctx := WithSessionKey(context.Background(), dickSession)
 	params, _ := json.Marshal(map[string]string{
@@ -283,4 +290,66 @@ func TestSendToSessionPerUserChatRouting(t *testing.T) {
 	}
 	// Note: The tool no longer appends directly for reply_to=caller.
 	// InjectToAgent triggers HandleMessage which does the append.
+}
+
+func TestSendToSessionPartialKeyResolution(t *testing.T) {
+	// Verifies that partial session keys (without versionTS) are resolved
+	// via the resolveKeyFn before routing.
+	t.Parallel()
+	store := &mockSessionAppender{}
+	delivered := make(chan struct{ sk, msg string }, 1)
+	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+		delivered <- struct{ sk, msg string }{sk, msg}
+	})
+
+	resolveKeyFn := func(partial string) string {
+		if partial == "scout/c5970082313" {
+			return "scout/c5970082313/1772794601"
+		}
+		return ""
+	}
+
+	tool := NewSendToSessionTool(store, notifier, nil, resolveKeyFn)
+
+	ctx := WithSessionKey(context.Background(), "test/i0/0")
+	params, _ := json.Marshal(map[string]string{
+		"session_key": "scout/c5970082313",
+		"message":     "resolved partial key",
+	})
+
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, "scout/c5970082313/1772794601") {
+		t.Errorf("result = %q, want resolved key in output", result.Text)
+	}
+
+	d := <-delivered
+	if d.sk != "scout/c5970082313/1772794601" {
+		t.Errorf("notifier session = %q, want scout/c5970082313/1772794601", d.sk)
+	}
+}
+
+func TestSendToSessionPartialKeyUnresolved(t *testing.T) {
+	// Verifies that an unresolvable partial key returns an error.
+	t.Parallel()
+	store := &mockSessionAppender{}
+	resolveKeyFn := func(partial string) string { return "" }
+
+	tool := NewSendToSessionTool(store, nil, nil, resolveKeyFn)
+
+	ctx := WithSessionKey(context.Background(), "test/i0/0")
+	params, _ := json.Marshal(map[string]string{
+		"session_key": "nonexistent/c999",
+		"message":     "hello",
+	})
+
+	_, err := tool.Execute(ctx, params)
+	if err == nil {
+		t.Fatal("expected error for unresolvable partial key")
+	}
+	if !strings.Contains(err.Error(), "could not resolve partial session key") {
+		t.Errorf("error = %q", err.Error())
+	}
 }

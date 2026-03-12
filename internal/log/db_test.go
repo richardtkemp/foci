@@ -22,7 +22,7 @@ func TestAPIDB(t *testing.T) {
 	entries := []APIEntry{
 		{
 			Timestamp:  time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
-			Session:    "agent:main:chat:123",
+			Session:    "main/c123/1000",
 			Model:      "claude-haiku-4-5",
 			Input:      1000,
 			Output:     200,
@@ -35,7 +35,7 @@ func TestAPIDB(t *testing.T) {
 		},
 		{
 			Timestamp:  time.Date(2026, 3, 1, 10, 1, 0, 0, time.UTC),
-			Session:    "agent:main:chat:123",
+			Session:    "main/c123/1000",
 			Model:      "claude-haiku-4-5",
 			Input:      2000,
 			Output:     400,
@@ -46,7 +46,7 @@ func TestAPIDB(t *testing.T) {
 		},
 		{
 			Timestamp:  time.Date(2026, 3, 1, 10, 2, 0, 0, time.UTC),
-			Session:    "agent:main:chat:123",
+			Session:    "main/c123/1000",
 			Model:      "claude-haiku-4-5",
 			Input:      500,
 			Output:     100,
@@ -57,7 +57,7 @@ func TestAPIDB(t *testing.T) {
 		},
 		{
 			Timestamp:   time.Date(2026, 3, 1, 10, 3, 0, 0, time.UTC),
-			Session:     "agent:main:spawn:456",
+			Session:     "main/ispawn-456/1000",
 			Model:       "claude-sonnet-4-5",
 			Input:       3000,
 			Output:      600,
@@ -124,7 +124,7 @@ func TestAPIDB(t *testing.T) {
 
 	// Query by session index
 	var total int
-	err = apiLog.db.QueryRow("SELECT count(*) FROM api_calls WHERE session = 'agent:main:chat:123'").Scan(&total)
+	err = apiLog.db.QueryRow("SELECT count(*) FROM api_calls WHERE session = 'main/c123/1000'").Scan(&total)
 	if err != nil {
 		t.Fatalf("query by session: %v", err)
 	}

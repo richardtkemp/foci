@@ -215,13 +215,14 @@ func TestSessionsNoArgsShowsUsage(t *testing.T) {
 }
 
 func TestSessionsIndexWithResults(t *testing.T) {
+	// Verifies that session index displays correctly with filtering.
 	now := time.Now().UTC()
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		all := []SessionIndexInfo{
-			{SessionKey: "agent:bot:chat:123", CreatedAt: now, SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:spawn:spawn-456", CreatedAt: now.Add(-time.Hour), ParentSessionKey: "agent:bot:chat:123", SessionType: "spawn", Status: "active"},
-			{SessionKey: "agent:bot:cron:bg-789", CreatedAt: now.Add(-2 * time.Hour), SessionType: "cron", Status: "compacted"},
+			{SessionKey: "bot/c123/1000", CreatedAt: now, SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/ispawn-456/1000", CreatedAt: now.Add(-time.Hour), ParentSessionKey: "bot/c123/1000", SessionType: "spawn", Status: "active"},
+			{SessionKey: "bot/ibg-789/1000", CreatedAt: now.Add(-2 * time.Hour), SessionType: "cron", Status: "compacted"},
 		}
 		var filtered []SessionIndexInfo
 		for _, e := range all {
@@ -245,7 +246,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	if !strings.Contains(result, "2 sessions") {
 		t.Errorf("expected 2 active sessions, got %q", result)
 	}
-	if !strings.Contains(result, "bot/chat:123") {
+	if !strings.Contains(result, "bot/c123") {
 		t.Errorf("expected chat session in output, got %q", result)
 	}
 
@@ -358,14 +359,16 @@ func TestSessionsListCurrentMarker(t *testing.T) {
 }
 
 func TestShortenSessionKey(t *testing.T) {
+	// Verifies that session keys are abbreviated for table display:
+	// keeps agent + truncated typeID, drops versionTS, truncates children.
 	tests := []struct {
 		input, want string
 	}{
-		{"agent:mybot:chat:5970082313", "mybot/chat:59700823…"},
-		{"agent:mybot:branch:abc123-def456", "mybot/branch:abc123-d…"},
-		{"agent:bot:cron:bg-789", "bot/cron:bg-789"}, // short ID, no truncation
-		{"agent:bot:chat:123", "bot/chat:123"},         // short ID, no truncation
-		{"raw-key", "raw-key"},                          // no agent: prefix
+		{"scout/c5970082313/1772794601", "scout/c597…"},                              // long chat ID truncated
+		{"mybot/i1709596800/1709596800", "mybot/i170…"},                              // independent truncated
+		{"bot/c123/1000/b1772795000", "bot/c123/b177…"},                              // branch child truncated
+		{"bot/c123/1000", "bot/c123"},                                                 // short ID, no truncation
+		{"raw-key", "raw-key"},                                                        // no slash, returned as-is
 	}
 	for _, tt := range tests {
 		got := shortenSessionKey(tt.input)
@@ -382,9 +385,9 @@ func TestSessionsIndexSortedByLastActive(t *testing.T) {
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		// Return in chronological order (oldest first) — command should reverse.
 		return []SessionIndexInfo{
-			{SessionKey: "agent:bot:chat:old", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:mid", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:new", LastActivityAt: now.Add(-5 * time.Minute), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/cold/1000", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/cmid/1000", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/cnew/1000", LastActivityAt: now.Add(-5 * time.Minute), SessionType: "chat", Status: "active"},
 		}, nil
 	}
 	cmd := NewSessionsCommand(deps)
@@ -393,10 +396,10 @@ func TestSessionsIndexSortedByLastActive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// "new" should appear before "mid" which should appear before "old"
-	newIdx := strings.Index(result, "bot/chat:new")
-	midIdx := strings.Index(result, "bot/chat:mid")
-	oldIdx := strings.Index(result, "bot/chat:old")
+	// "cnew" should appear before "cmid" which should appear before "cold"
+	newIdx := strings.Index(result, "bot/cnew")
+	midIdx := strings.Index(result, "bot/cmid")
+	oldIdx := strings.Index(result, "bot/cold")
 	if newIdx == -1 || midIdx == -1 || oldIdx == -1 {
 		t.Fatalf("expected all sessions in output, got %q", result)
 	}
@@ -411,8 +414,8 @@ func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		return []SessionIndexInfo{
-			{SessionKey: "agent:bot:chat:created-old", CreatedAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:active-new", LastActivityAt: now.Add(-10 * time.Minute), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/icreated-old/1000", CreatedAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/iactive-new/1000", LastActivityAt: now.Add(-10 * time.Minute), SessionType: "chat", Status: "active"},
 		}, nil
 	}
 	cmd := NewSessionsCommand(deps)
@@ -421,8 +424,8 @@ func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newIdx := strings.Index(result, "bot/chat:active-n…")
-	oldIdx := strings.Index(result, "bot/chat:created-…")
+	newIdx := strings.Index(result, "bot/iact…")
+	oldIdx := strings.Index(result, "bot/icre…")
 	if newIdx == -1 || oldIdx == -1 {
 		t.Fatalf("expected both sessions in output, got %q", result)
 	}
@@ -437,11 +440,11 @@ func TestSessionsIndexMaxCount(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		return []SessionIndexInfo{
-			{SessionKey: "agent:bot:chat:1", LastActivityAt: now, SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:2", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:3", LastActivityAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:4", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "agent:bot:chat:5", LastActivityAt: now.Add(-4 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c1/1000", LastActivityAt: now, SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c2/1000", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c3/1000", LastActivityAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c4/1000", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c5/1000", LastActivityAt: now.Add(-4 * time.Hour), SessionType: "chat", Status: "active"},
 		}, nil
 	}
 	cmd := NewSessionsCommand(deps)
@@ -454,14 +457,14 @@ func TestSessionsIndexMaxCount(t *testing.T) {
 		t.Errorf("expected '2 of 5 sessions' in output, got %q", result)
 	}
 	// Should contain the 2 most recent, not the older ones
-	if !strings.Contains(result, "bot/chat:1") {
-		t.Errorf("expected most recent session bot/chat:1, got %q", result)
+	if !strings.Contains(result, "bot/c1") {
+		t.Errorf("expected most recent session bot/c1, got %q", result)
 	}
-	if !strings.Contains(result, "bot/chat:2") {
-		t.Errorf("expected second most recent session bot/chat:2, got %q", result)
+	if !strings.Contains(result, "bot/c2") {
+		t.Errorf("expected second most recent session bot/c2, got %q", result)
 	}
-	if strings.Contains(result, "bot/chat:3") {
-		t.Errorf("did not expect bot/chat:3 in limited output, got %q", result)
+	if strings.Contains(result, "bot/c3") {
+		t.Errorf("did not expect bot/c3 in limited output, got %q", result)
 	}
 }
 
@@ -471,7 +474,7 @@ func TestSessionsIndexMaxCountLargerThanResults(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		return []SessionIndexInfo{
-			{SessionKey: "agent:bot:chat:1", LastActivityAt: now, SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c1/1000", LastActivityAt: now, SessionType: "chat", Status: "active"},
 		}, nil
 	}
 	cmd := NewSessionsCommand(deps)
@@ -493,7 +496,7 @@ func TestSessionsIndexRelativeTime(t *testing.T) {
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		return []SessionIndexInfo{
-			{SessionKey: "agent:bot:chat:1", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
+			{SessionKey: "bot/c1/1000", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
 		}, nil
 	}
 	cmd := NewSessionsCommand(deps)

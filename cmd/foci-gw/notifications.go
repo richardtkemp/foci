@@ -60,7 +60,7 @@ func handleWelcomeAndFirstRun(
 					log.Errorf("main", "first-run turn for %s failed: %v", agentID, err)
 					return
 				}
-				if err := stateStore.Set("agent:"+agentID+":first_run_completed", true); err != nil {
+				if err := stateStore.Set("agent/"+agentID+"/first_run_completed", true); err != nil {
 					log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
 				}
 				log.Infof("main", "first-run onboarding completed for %s", agentID)

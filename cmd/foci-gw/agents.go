@@ -99,7 +99,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Default session key resolver — returns the session key for the agent's default chat.
 	// Before any platform message arrives, this returns "" (no default set).
-	// After the first message, it returns agent:<id>:chat:<chatID>.
+	// After the first message, it returns {id}/c{chatID}/{versionTS}.
 	// The resolver is set to use the primary connection's DefaultSessionKey once wired.
 	var defaultSessionKeyFn func() string
 
@@ -286,7 +286,11 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// send_to_session tool — inject messages into other sessions.
 	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
-	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn))
+	var resolveKeyFn tools.SessionKeyResolverFn
+	if p.sessionIndex != nil {
+		resolveKeyFn = p.sessionIndex.ResolvePartialKey
+	}
+	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
 
 	// Per-agent environment block
 	var envBlock string
@@ -297,7 +301,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
-		Log:                           log.NewComponentLogger("agent:" + acfg.ID),
+		Log:                           log.NewComponentLogger("agent/" + acfg.ID),
 		Client:                        p.client,
 		ClientProvider:                p.clientProvider,
 		Sessions:                      p.sessions,
@@ -612,7 +616,7 @@ func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
 		return ""
 	}
 
-	key := "agent:" + acfg.ID + ":first_run_completed"
+	key := "agent/" + acfg.ID + "/first_run_completed"
 
 	// Already completed — nothing to do
 	var completed bool

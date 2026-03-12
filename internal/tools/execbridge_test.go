@@ -199,7 +199,7 @@ func TestExecBridgeSessionKeyPropagated(t *testing.T) {
 		},
 	})
 
-	ctx := WithSessionKey(context.Background(), "agent:test:chat:123")
+	ctx := WithSessionKey(context.Background(), "test/c123/1000")
 	bridge, err := NewExecBridge(r, ctx)
 	if err != nil {
 		t.Fatalf("NewExecBridge: %v", err)
@@ -213,8 +213,8 @@ func TestExecBridgeSessionKeyPropagated(t *testing.T) {
 	if result != "ok" {
 		t.Errorf("result = %q", result)
 	}
-	if capturedKey != "agent:test:chat:123" {
-		t.Errorf("session key = %q, want %q", capturedKey, "agent:test:chat:123")
+	if capturedKey != "test/c123/1000" {
+		t.Errorf("session key = %q, want %q", capturedKey, "test/c123/1000")
 	}
 }
 

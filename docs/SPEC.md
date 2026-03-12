@@ -13,17 +13,17 @@ A minimal, maintainable agent platform in Go. One binary, no framework, no bloat
 
 ### Session Keys
 
-Format: `agent:AGENTID:TYPE[:BRANCHID]`
+Format: `{agentID}/{type}{id}/{versionTS}` — see [docs/SESSION_KEYS.md](docs/SESSION_KEYS.md) for full reference.
 
-- `agent:fotini:chat:123456789` — per-chat DM session (keyed by Telegram chat ID)
-- `agent:main:cron:morning-routine` — cron-triggered branch
-- `agent:main:subagent:research-task` — sub-agent branch
-- `agent:main:multiball:mb-1709123456` — multiball fork
-- `agent:clutch:voice:1709123456` — WebSocket voice session (ephemeral, one per connection)
+- `fotini/c123456789/1709590000` — per-chat DM session (keyed by Telegram chat ID)
+- `main/i0/0/b1709123456` — cron-triggered branch (child of default independent session)
+- `main/c123/1709590000/b1709123456` — sub-agent branch
+- `main/c123/1709590000/b1709123456` — multiball fork
+- `clutch/i1709123456/1709123456` — WebSocket voice session (ephemeral, one per connection)
 
 Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`foci send`/`foci branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
 
-The 4th segment (branch ID) is optional. Branch sessions inherit the parent's message prefix for cache sharing.
+Child sessions (branches, spawns) append `/{childType}{childTS}` to the parent key. Branch sessions inherit the parent's message prefix for cache sharing.
 
 ### Session Branching (Cache Sharing)
 
@@ -37,7 +37,7 @@ A branch session copies the parent's system prompt + message history at a point 
 
 **Storage:** A branch record holds:
 ```
-parent_key: "agent:main:main"
+parent_key: "main/i0/0"
 branch_point: <message index>
 messages: [only messages after branch point]
 ```
@@ -109,7 +109,7 @@ Per-agent multiball pools are configured in the agent's `multiball_bots` list. A
 
 A WebSocket endpoint for real-time two-way voice conversation with an agent. Used by the FOCI Android app.
 
-**Connection:** `GET /voice?api_key=KEY` → auth middleware → upgrade to WebSocket. Server sends a `connected` message with the available agent list. Client sends `select_agent` to pick an agent, server responds with `session_ready` and an ephemeral session key (`agent:ID:voice:CONN_ID`).
+**Connection:** `GET /voice?api_key=KEY` → auth middleware → upgrade to WebSocket. Server sends a `connected` message with the available agent list. Client sends `select_agent` to pick an agent, server responds with `session_ready` and an ephemeral session key (`ID/iCONN_ID/CONN_ID`).
 
 **Audio flow:** Client sends `audio_start` → binary Opus frames → `audio_end`. Server transcribes via STT, sends `transcription`, processes with agent, sends `response_start` → `response_text` (final=true) → `audio_start` + binary MP3 chunks (4KB) + `audio_end` → `response_end`. Text input (`text` message) skips STT, same pipeline from agent call onward.
 
@@ -193,7 +193,7 @@ spawn(prompt="Research this topic thoroughly", context="clone")
 - **`explore`** — safe exploration agent with `ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch`. One-shot, no file mutation, no shell exec, no messaging. Always runs on haiku. Exploration tools are created fresh (not in the main registry) and use direct `exec.CommandContext` (no shell). Good for codebase research tasks where the parent wants to delegate exploration without risk.
 
 **Clone mode details:**
-- Creates a branch session: `agent:AGENTID:spawn:spawn-TIMESTAMP`
+- Creates a branch session: `{parentKey}/b{TIMESTAMP}`
 - Branch has `NoResetHook` set (ephemeral, no memory formation on cleanup)
 - Recursive clone spawns are blocked — a spawned session can use `raw`/`character` but not `clone`
 - Concurrent clone spawns are limited by `max_concurrent_spawns` (default 3)
@@ -530,7 +530,7 @@ Both `POST /send` and `POST /wake` accept optional activity gating fields:
 
 "Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`foci send`/`foci branch`), async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a cron send cannot reset the activity timer.
 
-The timestamp is stored per-agent in the state store (`agent:<id>:last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
+The timestamp is stored per-agent in the state store (`agent/<id>/last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
 ### Keepalive & Background Work
 
@@ -656,7 +656,7 @@ Also writes to stderr so `tmux capture-pane` and `journalctl` (if run as a unit)
 Structured JSONL, one object per API request. For debugging cache behaviour, tracking costs, auditing usage. Also written to SQLite (`api.db`) with indexes on `ts` and `session`, plus a `call_type` column distinguishing conversation, compaction, summary, and spawn calls.
 
 ```json
-{"ts":"2026-02-21T03:52:41Z","session":"agent:main:main","model":"claude-haiku-4-5","input":1119,"output":164,"cache_read":0,"cache_write":1119,"cost_usd":0.003,"duration_ms":1240,"call_type":"conversation"}
+{"ts":"2026-02-21T03:52:41Z","session":"main/i0/0","model":"claude-haiku-4-5","input":1119,"output":164,"cache_read":0,"cache_write":1119,"cost_usd":0.003,"duration_ms":1240,"call_type":"conversation"}
 ```
 
 Searchable with `jq` (JSONL) or `sqlite3 api.db` (SQLite). The agent can query its own API logs via tools.

@@ -90,20 +90,20 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 
 	if a.StateStore != nil {
 		if value == "" {
-			_ = a.StateStore.Delete("model:" + sessionKey)
-			_ = a.StateStore.Delete("model_endpoint:" + sessionKey)
-			_ = a.StateStore.Delete("model_format:" + sessionKey)
+			_ = a.StateStore.Delete("model/" + sessionKey)
+			_ = a.StateStore.Delete("model_endpoint/" + sessionKey)
+			_ = a.StateStore.Delete("model_format/" + sessionKey)
 		} else {
-			if err := a.StateStore.Set("model:"+sessionKey, value); err != nil {
+			if err := a.StateStore.Set("model/"+sessionKey, value); err != nil {
 				a.logger().Errorf("session=%s persist model: %v", sessionKey, err)
 			}
 			if endpoint != "" {
-				if err := a.StateStore.Set("model_endpoint:"+sessionKey, endpoint); err != nil {
+				if err := a.StateStore.Set("model_endpoint/"+sessionKey, endpoint); err != nil {
 					a.logger().Errorf("session=%s persist model_endpoint: %v", sessionKey, err)
 				}
 			}
 			if format != "" {
-				if err := a.StateStore.Set("model_format:"+sessionKey, format); err != nil {
+				if err := a.StateStore.Set("model_format/"+sessionKey, format); err != nil {
 					a.logger().Errorf("session=%s persist model_format: %v", sessionKey, err)
 				}
 			}
@@ -169,28 +169,28 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	var val string
 
 	// Restore effort
-	if a.StateStore.Get("effort:"+sessionKey, &val) && val != "" {
+	if a.StateStore.Get("effort/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.effort = val })
 		restored = append(restored, "effort="+val)
 	}
 
 	// Restore thinking
-	if a.StateStore.Get("thinking:"+sessionKey, &val) && val != "" {
+	if a.StateStore.Get("thinking/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.thinking = val })
 		restored = append(restored, "thinking="+val)
 	}
 
 	// Restore model, endpoint, format, and resolve the matching client
-	if a.StateStore.Get("model:"+sessionKey, &val) && val != "" {
+	if a.StateStore.Get("model/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.model = val })
 		restored = append(restored, "model="+val)
 
 		var ep, format string
-		if a.StateStore.Get("model_endpoint:"+sessionKey, &ep) && ep != "" {
+		if a.StateStore.Get("model_endpoint/"+sessionKey, &ep) && ep != "" {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelEndpoint = ep })
 			restored = append(restored, "endpoint="+ep)
 		}
-		if a.StateStore.Get("model_format:"+sessionKey, &format) && format != "" {
+		if a.StateStore.Get("model_format/"+sessionKey, &format) && format != "" {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelFormat = format })
 			restored = append(restored, "format="+format)
 		}
@@ -210,7 +210,7 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	}
 
 	// Restore no_compact
-	if a.StateStore.Get("no_compact:"+sessionKey, &val) && val != "" {
+	if a.StateStore.Get("no_compact/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.noCompact = (val == "true") })
 		restored = append(restored, "no_compact")
 	}
@@ -249,7 +249,7 @@ func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
 	if a.StateStore == nil {
 		return
 	}
-	key := prefix + ":" + sessionKey
+	key := prefix + "/" + sessionKey
 	if value == "" {
 		_ = a.StateStore.Delete(key)
 	} else if err := a.StateStore.Set(key, value); err != nil {
@@ -278,8 +278,8 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 	// Migrate StateStore keys
 	if a.StateStore != nil {
 		for _, prefix := range []string{"effort", "thinking", "model", "model_endpoint", "model_format", "no_compact"} {
-			oldStoreKey := prefix + ":" + oldKey
-			newStoreKey := prefix + ":" + newKey
+			oldStoreKey := prefix + "/" + oldKey
+			newStoreKey := prefix + "/" + newKey
 			var val string
 			if a.StateStore.Get(oldStoreKey, &val) && val != "" {
 				_ = a.StateStore.Set(newStoreKey, val)

@@ -14,7 +14,7 @@ func TestSendMessageToUserChatRouting(t *testing.T) {
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:99887766")
+	ctx := WithSessionKey(context.Background(), "fotini/c99887766/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello Dick",
 	})
@@ -48,7 +48,7 @@ func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
+	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
 	})
@@ -75,7 +75,7 @@ func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:12345")
+	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
 		"send_as":   "voice",
@@ -104,8 +104,8 @@ func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	// Spawn branch session — no chat ID
-	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
+	// Independent session — no chat ID
+	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "background result",
 	})
@@ -148,32 +148,24 @@ func TestSendMessageToUserFallbackNoContext(t *testing.T) {
 	}
 }
 
-// TestChatIDFromSessionKey verifies ChatIDFromSessionKey parsing for various session key formats.
+// TestChatIDFromSessionKey verifies ChatIDFromSessionKey parsing for session key formats.
 func TestChatIDFromSessionKey(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		key  string
 		want int64
 	}{
-		{"agent:fotini:chat:99887766", 99887766},
-		{"agent:clutch:chat:12345", 12345},
-		{"agent:fotini:chat:5970082313", 5970082313},
-		{"agent:fotini:chat:8792716180", 8792716180},
-		{"agent:test:chat:-1001234567890", -1001234567890}, // group chat
-		{"agent:test:spawn:spawn-123456", 0},
-		{"agent:test:main", 0},
-		{"agent:test:multiball:mb-123", 0},
-		{"agent:fotini:8792716180", 8792716180},          // legacy format without chat: segment
-		{"agent:test:5970082313", 5970082313},              // legacy format — another agent
-		{"agent:test:-1001234567890", -1001234567890},      // legacy format — group chat (negative ID)
+		{"fotini/c99887766/1000", 99887766},
+		{"clutch/c12345/1000", 12345},
+		{"fotini/c5970082313/1000", 5970082313},
+		{"fotini/c8792716180/1000", 8792716180},
+		{"test/c-1001234567890/1000", -1001234567890}, // group chat
+		{"test/ispawn-123456/1000", 0},                // independent session
+		{"test/i0/0", 0},                              // independent session
+		{"test/imb-123/1000", 0},                      // multiball (independent)
 		{"", 0},
-		{"agent:test:chat:notanumber", 0},
-		{"agent:test:notanumber", 0}, // non-numeric third segment is not a chat ID
-		{"fotini/c99887766/1000000000", 99887766},                   // new format
-		{"test/c12345/1000000000", 12345},                           // new format
-		{"test/c-1001234567890/1000000000", -1001234567890},         // new format — group chat
-		{"test/imain/1000000000", 0},                                // new format — independent session, not chat
-		{"test/imain/1000000000/b1000000001", 0},                    // new format — branch, not chat
+		{"fotini/c99887766/1000/b2000", 99887766},            // branch preserves chat ID
+		{"test/c-1001234567890/1000/b2000", -1001234567890},  // branch — group chat
 	}
 	for _, tt := range tests {
 		got := ChatIDFromSessionKey(tt.key)
@@ -191,13 +183,13 @@ func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 	primaryMock := &mockMessageSender{}
 
 	tool := NewSendMessageToUserTool(func(sessionKey string) MessageSender {
-		if strings.Contains(sessionKey, ":multiball:") {
+		if strings.Contains(sessionKey, "/imb-") {
 			return multiballMock
 		}
 		return primaryMock
 	}, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:clutch:chat:99887766")
+	ctx := WithSessionKey(context.Background(), "clutch/c99887766/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "primary message",
 	})
@@ -219,10 +211,10 @@ func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 	// Message from a different session than the bot's own session
 	t.Parallel()
 	// should be prepended with a header.
-	mock := &mockMessageSender{sessionKey: "agent:fotini:chat:99887766"}
+	mock := &mockMessageSender{sessionKey: "fotini/c99887766/1000"}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
+	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "background task done",
 	})
@@ -235,7 +227,7 @@ func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 	if len(mock.textCalls) != 1 {
 		t.Fatalf("expected 1 textCall, got %d", len(mock.textCalls))
 	}
-	want := "[[ message from agent:fotini:spawn:spawn-12345 ]]\nbackground task done"
+	want := "[[ message from fotini/ispawn-12345/1000 ]]\nbackground task done"
 	if mock.textCalls[0] != want {
 		t.Errorf("text = %q, want %q", mock.textCalls[0], want)
 	}
@@ -245,10 +237,10 @@ func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 	// Message from the bot's own session should NOT get a header.
 	t.Parallel()
-	mock := &mockMessageSender{sessionKey: "agent:fotini:chat:99887766"}
+	mock := &mockMessageSender{sessionKey: "fotini/c99887766/1000"}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:fotini:chat:99887766")
+	ctx := WithSessionKey(context.Background(), "fotini/c99887766/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "normal message",
 	})
@@ -273,7 +265,7 @@ func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) 
 	mock := &mockMessageSender{sessionKey: ""}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
 
-	ctx := WithSessionKey(context.Background(), "agent:fotini:spawn:spawn-12345")
+	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
 	})
@@ -293,21 +285,21 @@ func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) 
 
 // TestSendMessageToUserMultiballRouting verifies that multiball sessions are routed to the correct sender.
 func TestSendMessageToUserMultiballRouting(t *testing.T) {
-	// When session key contains :multiball:, the getSender callback receives
+	// When session key is a multiball session, the getSender callback receives
 	t.Parallel()
 	// the session key so it can resolve the correct bot.
 	multiballMock := &mockMessageSender{}
 	primaryMock := &mockMessageSender{}
 
 	tool := NewSendMessageToUserTool(func(sessionKey string) MessageSender {
-		if strings.Contains(sessionKey, ":multiball:") {
+		if strings.Contains(sessionKey, "/imb-") {
 			return multiballMock
 		}
 		return primaryMock
 	}, nil)
 
 	// Multiball session — should use multiball sender
-	ctx := WithSessionKey(context.Background(), "agent:clutch:multiball:mb-123")
+	ctx := WithSessionKey(context.Background(), "clutch/imb-123/1000")
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "multiball message",
 	})

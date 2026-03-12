@@ -161,10 +161,10 @@ func TestSpawnContextClone(t *testing.T) {
 
 	// Should have created a branch
 	if mockSessions.parentKey != "test/imain/1000000000" {
-		t.Errorf("parent = %q, want agent:test:main", mockSessions.parentKey)
+		t.Errorf("parent = %q, want test/imain/1000000000", mockSessions.parentKey)
 	}
 	if !strings.HasPrefix(mockSessions.branchKey, "test/imain/1000000000/b") {
-		t.Errorf("branch = %q, want prefix agent:test:spawn:spawn-", mockSessions.branchKey)
+		t.Errorf("branch = %q, want prefix test/imain/1000000000/b", mockSessions.branchKey)
 	}
 	if !mockSessions.opts.NoResetHook {
 		t.Error("expected noResetHook=true")

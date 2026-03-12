@@ -80,19 +80,19 @@ allowed_users = ["111"]
 
 	// Verify session key patterns that main.go will generate
 	for _, acfg := range cfg.Agents {
-		mainKey := "agent:" + acfg.ID + ":main"
-		wakeKey := "agent:" + acfg.ID + ":cron:wake-12345"
-		mbKey := "agent:" + acfg.ID + ":multiball:mb-12345"
+		mainKey := acfg.ID + "/i0/0"
+		wakeKey := acfg.ID + "/icron-wake-12345/0"
+		mbKey := acfg.ID + "/imb-12345/0"
 
 		// Ensure agent IDs produce distinct namespaces
 		if acfg.ID == "clutch" {
-			if mainKey != "agent:clutch:main" {
+			if mainKey != "clutch/i0/0" {
 				t.Errorf("clutch mainKey = %q", mainKey)
 			}
-			if wakeKey != "agent:clutch:cron:wake-12345" {
+			if wakeKey != "clutch/icron-wake-12345/0" {
 				t.Errorf("clutch wakeKey = %q", wakeKey)
 			}
-			if mbKey != "agent:clutch:multiball:mb-12345" {
+			if mbKey != "clutch/imb-12345/0" {
 				t.Errorf("clutch mbKey = %q", mbKey)
 			}
 			if len(acfg.MultiballBots) != 1 || acfg.MultiballBots[0] != "secondary" {
@@ -100,7 +100,7 @@ allowed_users = ["111"]
 			}
 		}
 		if acfg.ID == "scout" {
-			if mainKey != "agent:scout:main" {
+			if mainKey != "scout/i0/0" {
 				t.Errorf("scout mainKey = %q", mainKey)
 			}
 			if len(acfg.MultiballBots) != 0 {

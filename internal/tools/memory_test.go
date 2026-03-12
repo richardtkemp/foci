@@ -117,7 +117,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
 	defer idx.Close()
 	idx.Reindex()
-	idx.IndexConversation("We talked about the weather yesterday", "agent:main:main")
+	idx.IndexConversation("We talked about the weather yesterday", "main/i0/0")
 
 	backends := map[string]memory.Searcher{"fts5": idx}
 	tool := NewMemorySearchTool(backends, []string{"fts5"})

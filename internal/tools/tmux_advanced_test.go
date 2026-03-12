@@ -74,8 +74,8 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 	nameB := "foci-test-skiso-b"
 	tmuxSetup(t, nameA, nameB)
 
-	ctxA := WithSessionKey(context.Background(), "agent:test:chat:111")
-	ctxB := WithSessionKey(context.Background(), "agent:test:chat:222")
+	ctxA := WithSessionKey(context.Background(), "test/c111/1000")
+	ctxB := WithSessionKey(context.Background(), "test/c222/1000")
 
 	// Session A starts
 	params, _ := json.Marshal(map[string]interface{}{

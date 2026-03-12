@@ -135,7 +135,7 @@ The `foci` CLI wraps the HTTP API. All subcommands accept `-a <id>` / `--agent <
 
 ```
 foci send -a research "check the news"
-foci send -a clutch -s research "text"  # routes to agent:clutch:research
+foci send -a clutch -s research "text"  # routes to clutch/i0/0 (research session)
 foci branch -a research
 foci status --agent=research
 foci ping -a research
@@ -867,7 +867,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `id` | string | `""` | Agent identifier. Used in session keys (`agent:ID:main`). |
+| `id` | string | `""` | Agent identifier. Used in session keys (`ID/c{chatID}/{versionTS}`). |
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
@@ -916,7 +916,7 @@ received_files_dir = ""
 
 Agents can have their own memory directories in addition to the global sources. Global `[[memory.sources]]` are always prepended to each agent's sources — agents inherit global sources automatically. When any agent has per-agent memory configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global + agent-specific sources.
 
-Agent-specific sources automatically receive a weight boost of +1.0, so they rank higher than global sources with the same base weight. Source names are prefixed with `agent:` in search results.
+Agent-specific sources automatically receive a weight boost of +1.0, so they rank higher than global sources with the same base weight. Source names are prefixed with `agent/` in search results.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -926,7 +926,7 @@ Each source entry:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `name` | string | required | Source identifier (prefixed with `agent:` in results). |
+| `name` | string | required | Source identifier (prefixed with `agent/` in results). |
 | `dir` | string | required | Directory path to index. |
 | `weight` | float | `1.0` | Base weight (boosted by +1.0 automatically). |
 

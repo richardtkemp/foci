@@ -333,7 +333,7 @@ func (b *Bot) SetStateStore(store *state.Store, key string) {
 	// Restore default chat from persisted state (for per-chat session routing)
 	if b.agentID != "" {
 		var defaultChat int64
-		if store.Get("agent:"+b.agentID+":default_chat", &defaultChat) && defaultChat != 0 {
+		if store.Get("agent/"+b.agentID+"/default_chat", &defaultChat) && defaultChat != 0 {
 			b.logger().Infof("restored default chat %d for agent %s", defaultChat, b.agentID)
 		}
 	}
