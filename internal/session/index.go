@@ -3,6 +3,7 @@ package session
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -542,7 +543,25 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 // with the given partial key prefix followed by "/". This allows partial keys
 // like "scout/c5970082313" to resolve to the full active session key
 // "scout/c5970082313/1772794601". Returns "" if no match is found.
+// ResolvePartialKey resolves a partial session key (agent/typeID, e.g.
+// "scout/c5970082313") to the latest active full key with a versionTS.
+// Only accepts keys with exactly 2 slash-separated segments where the
+// second starts with a valid session type ('c' or 'i'). Returns "" if
+// no match is found or the format is invalid.
 func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
+	// Validate format: must be exactly agent/typeID (2 segments)
+	parts := strings.Split(partialKey, "/")
+	if len(parts) != 2 || len(parts[0]) == 0 || len(parts[1]) < 2 {
+		return ""
+	}
+	// Second segment must start with a valid session type
+	switch parts[1][0] {
+	case 'c', 'i':
+		// valid
+	default:
+		return ""
+	}
+
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
