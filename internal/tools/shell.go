@@ -222,11 +222,13 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		return ToolResult{}, fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr concurrently — all reads must complete before
-	// proc.Wait is called (Wait closes pipe read-ends, racing in-progress reads).
+	// Read stdout and stderr concurrently with process exit.
 	stdoutSpill, stderrSpill, combinedSpill, doneRead := startPipeReaders(stdout, stderr, outputMode, spillThreshold, spillTempDir)
-	<-doneRead
-	err = proc.Wait()
+
+	// Wait for process exit concurrently. If the process exits but pipe
+	// reads don't complete promptly (a leaked child holds the pipe FDs
+	// open), kill the entire process group to unblock the readers.
+	err = waitAndReap(proc, doneRead, stdout, stderr)
 
 	if outputMode == "separated" {
 		result := TextResult(formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore))
@@ -287,16 +289,13 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		return ToolResult{}, fmt.Errorf("start command: %w", err)
 	}
 
-	// Read stdout and stderr concurrently — all reads must complete before
-	// proc.Wait is called (Wait closes pipe read-ends, racing in-progress reads).
+	// Read stdout and stderr concurrently with process exit.
 	stdoutSpill, stderrSpill, combinedSpill, doneRead := startPipeReaders(stdout, stderr, outputMode, spillThreshold, spillTempDir)
 
-	// done goroutine waits for all reads before calling proc.Wait so that
-	// pipe read-ends are not closed while reads are still in progress.
+	// Wait for process exit and reap leaked children (same as execDirect).
 	done := make(chan error, 1)
 	go func() {
-		<-doneRead
-		done <- proc.Wait()
+		done <- waitAndReap(proc, doneRead, stdout, stderr)
 	}()
 
 	threshold := time.Duration(thresholdSecs) * time.Second
@@ -335,6 +334,67 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
 		return ToolResult{}, ctx.Err()
 	}
+}
+
+// pipeReapGrace is how long to wait for pipe readers after the main process
+// exits before killing the process group. Leaked child processes that inherit
+// pipe FDs keep the write-ends open, blocking io.Copy indefinitely.
+const pipeReapGrace = 2 * time.Second
+
+// waitAndReap waits for both the process to exit and all pipe reads to
+// complete. It uses Process.Wait() (low-level, does NOT close pipes) to
+// detect process exit independently from Cmd.Wait(). This avoids the
+// data race where Cmd.Wait() closes pipe read-ends while io.Copy is
+// still reading.
+//
+// Normal case: pipe reads complete when all write-end holders exit (fast).
+// Leaked child case: process exits but a child holds pipe FDs open. After
+// pipeReapGrace, the entire process group is killed to close the write-ends,
+// letting io.Copy drain remaining data and return EOF.
+func waitAndReap(proc *exec.Cmd, doneRead <-chan struct{}, stdout, stderr io.ReadCloser) error {
+	// Detect process exit via low-level Process.Wait (doesn't close pipes).
+	exitCh := make(chan error, 1)
+	go func() {
+		state, waitErr := proc.Process.Wait()
+		exitCh <- processExitError(state, waitErr)
+	}()
+
+	var err error
+	select {
+	case <-doneRead:
+		// Pipe reads completed first (normal fast path).
+		err = <-exitCh
+	case err = <-exitCh:
+		// Process exited but pipe reads still pending — a leaked child
+		// is holding pipe FDs open. Give a short grace, then kill the
+		// process group to close the write-ends and unblock the readers.
+		select {
+		case <-doneRead:
+		case <-time.After(pipeReapGrace):
+			log.Debugf("exec", "pipe reads stuck after process exit — killing process group %d", proc.Process.Pid)
+			_ = syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
+			<-doneRead
+		}
+	}
+
+	// Close pipe read-ends after all reads are complete (Cmd.Wait is not
+	// called because Process.Wait already reaped the process, and Cmd.Wait
+	// would return ErrProcessDone without doing its cleanup).
+	_ = stdout.Close()
+	_ = stderr.Close()
+	return err
+}
+
+// processExitError converts a ProcessState into the error that Cmd.Wait
+// would return: nil for success, *exec.ExitError for non-zero exit.
+func processExitError(state *os.ProcessState, waitErr error) error {
+	if waitErr != nil {
+		return waitErr
+	}
+	if !state.Success() {
+		return &exec.ExitError{ProcessState: state}
+	}
+	return nil
 }
 
 // startPipeReaders launches goroutines to read stdout and stderr concurrently.
