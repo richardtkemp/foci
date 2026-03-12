@@ -45,6 +45,7 @@ var boolKeys = map[string]bool{
 	"session_end_enabled":   true,
 	"steer_mode":            true,
 	"nudge_enable":           true,
+	"nudge_auto_extract":     true,
 	"nudge_pre_answer_gate":  true,
 	"stream_output":         true,
 }
@@ -294,6 +295,8 @@ func Load(path string) (*Config, error) {
 	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
+	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
+	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
 	setBoolDefaultDefined(&cfg.Defaults.EnableStartupNotify, true, md.IsDefined("defaults", "enable_startup_notify"))
 	setStringDefault(&cfg.Defaults.StreamUpdateInterval, "250ms")
 

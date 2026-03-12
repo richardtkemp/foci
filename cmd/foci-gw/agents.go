@@ -348,19 +348,34 @@ func setupAgent(p setupParams) *agentInstance {
 			ag.NudgePreAnswerMinTools = 2
 		}
 
-		// NudgeReloadFunc: on bootstrap reload, check if character files
-		// changed and spawn async extraction if needed, then refresh the scheduler.
+		// NudgeReloadFunc: on bootstrap reload, optionally extract new rules
+		// from character files (if nudge_auto_extract), then refresh from disk.
 		fileOrder := acfg.SystemFiles
 		if len(fileOrder) == 0 {
 			fileOrder = workspace.DefaultFileOrder
 		}
 		nudgeCooldown := acfg.NudgeCooldown
 		nudgeMaxPerBatch := acfg.NudgeMaxPerBatch
-		nudgeExtractAndRefresh := func() {
+		autoExtract := acfg.NudgeAutoExtract
+		nudgeReloadFromDisk := func() {
+			rs, err := nudge.LoadRules(rulesPath)
+			if err != nil {
+				log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
+				return
+			}
+			if rs != nil && len(rs.Rules) > 0 {
+				ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
+			}
+		}
+
+		ag.NudgeReloadFunc = func() {
+			if !autoExtract {
+				nudgeReloadFromDisk()
+				return
+			}
 			extractor := nudge.NewExtractor(acfg.Workspace, fileOrder)
 			_, needed := extractor.NeedsExtraction()
 			if needed {
-				// Spawn extraction in a background goroutine using the agent's own model
 				go func() {
 					ctx := context.Background()
 					parentKey := defaultSessionKey()
@@ -377,32 +392,12 @@ func setupAgent(p setupParams) *agentInstance {
 						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
 						return
 					}
-					// Refresh the scheduler with new rules
-					rs, err := nudge.LoadRules(rulesPath)
-					if err != nil {
-						log.Warnf("nudge", "agent %s: reload rules after extraction: %v", acfg.ID, err)
-						return
-					}
-					if rs != nil && len(rs.Rules) > 0 {
-						ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
-						log.Infof("nudge", "agent %s: refreshed %d nudge rules", acfg.ID, len(rs.Rules))
-					}
+					nudgeReloadFromDisk()
+					log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)
 				}()
 			} else {
-				// Just reload from disk in case file was edited manually
-				rs, err := nudge.LoadRules(rulesPath)
-				if err != nil {
-					log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
-					return
-				}
-				if rs != nil && len(rs.Rules) > 0 {
-					ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
-				}
+				nudgeReloadFromDisk()
 			}
-		}
-
-		ag.NudgeReloadFunc = func() {
-			nudgeExtractAndRefresh()
 		}
 	}
 
