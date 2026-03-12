@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -127,12 +126,12 @@ func newSessionNotifyFn(
 ) tools.SessionNotifyFn {
 	return tools.SessionNotifyFn(func(targetSessionKey, message string) {
 		go func() {
-			parts := strings.Split(targetSessionKey, ":")
-			if len(parts) < 2 {
-				log.Errorf("session_notify", "invalid session key: %s", targetSessionKey)
+			sk, err := session.ParseSessionKey(targetSessionKey)
+			if err != nil {
+				log.Errorf("session_notify", "invalid session key %q: %v", targetSessionKey, err)
 				return
 			}
-			targetAgentID := parts[1]
+			targetAgentID := sk.AgentID
 
 			inst := agentResolverFn(targetAgentID)
 			if inst == nil {
