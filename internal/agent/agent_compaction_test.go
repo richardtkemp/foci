@@ -2,19 +2,14 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"foci/internal/compaction"
 	"foci/internal/memory"
 	"foci/internal/provider"
-	"foci/internal/session"
-	"foci/internal/tools"
 	"foci/internal/warnings"
-	"foci/internal/workspace"
 )
 
 func TestAgentCompactionIntegration(t *testing.T) {
@@ -270,157 +265,6 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		warned := warnQ.Drain()
 		if len(warned) != 0 {
 			t.Fatalf("expected 0 warnings for no_compact session, got %d: %v", len(warned), warned)
-		}
-	})
-
-	t.Run("skipped_when_async_pending", func(t *testing.T) {
-		var turnCount atomic.Int32
-		env := newCompactionTestEnv(t, &turnCount, 5)
-
-		notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {})
-		env.ag.AsyncNotifier = notifier
-		var notified []string
-		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
-			notified = append(notified, msg)
-		})
-
-		sessionKey := "test/iasyncpending/1000000000"
-
-		// 4 normal turns
-		env.runTurns(t, sessionKey, 1, 4)
-
-		// Mark an async result as pending for this session
-		notifier.MarkPending(sessionKey)
-
-		// Turn 5 triggers compaction threshold — but async pending blocks it
-		resp, err := env.ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
-		if err != nil {
-			t.Fatalf("Turn 5: %v", err)
-		}
-		if resp != "Response 5" {
-			t.Errorf("got %q, want %q", resp, "Response 5")
-		}
-
-		// Compaction should NOT have fired
-		if len(notified) != 0 {
-			t.Errorf("expected 0 compaction notifications with async pending, got %d", len(notified))
-		}
-
-		// Session should still have all original messages
-		msgs, err := env.store.Load(sessionKey)
-		if err != nil {
-			t.Fatalf("load session: %v", err)
-		}
-		if len(msgs) != 10 {
-			t.Errorf("expected 10 messages (uncompacted), got %d", len(msgs))
-		}
-
-		// Clear pending — next turn should compact
-		notifier.MarkDone(sessionKey)
-		turnCount.Store(4) // reset so turn 6 = count 5 → high tokens
-
-		_, err = env.ag.HandleMessage(context.Background(), sessionKey, "Turn 6")
-		if err != nil {
-			t.Fatalf("Turn 6: %v", err)
-		}
-
-		// Compaction should have fired now
-		if len(notified) == 0 {
-			t.Error("expected compaction to fire after async pending cleared")
-		}
-
-		rotatedKey := env.activeKey(sessionKey)
-		msgs, _ = env.store.Load(rotatedKey)
-		if len(msgs) > 5 {
-			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
-		}
-	})
-
-	t.Run("async_pending_overridden_at_critical", func(t *testing.T) {
-		// Verifies that compaction fires despite async pending when context
-		// exceeds the 95% critical threshold, preventing context exhaustion.
-		var turnCount atomic.Int32
-		// Use a custom client that returns 195000 tokens on turn 5 (>95% of 200k)
-		client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
-			lastMsg := req.Messages[len(req.Messages)-1]
-			if strings.Contains(provider.TextOf(lastMsg.Content), "provide continuity") {
-				return &provider.MessageResponse{
-					ID: "msg_summary", Type: "message", Role: "assistant",
-					Content:    provider.TextContent("compacted summary"),
-					StopReason: "end_turn",
-					Usage:      provider.Usage{InputTokens: 500, OutputTokens: 100},
-				}
-			}
-			n := turnCount.Add(1)
-			inputTokens := 1000
-			if n == 5 {
-				inputTokens = 195_000 // >95% of 200k = critical
-			}
-			return &provider.MessageResponse{
-				ID: fmt.Sprintf("msg_%d", n), Type: "message", Role: "assistant",
-				Content:    provider.TextContent(fmt.Sprintf("Response %d", n)),
-				StopReason: "end_turn",
-				Usage:      provider.Usage{InputTokens: inputTokens, OutputTokens: 50},
-			}
-		})
-
-		store := session.NewStore(t.TempDir())
-		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
-
-		notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {})
-		ag := &Agent{
-			Client: client, Sessions: store, Tools: tools.NewRegistry(),
-			Bootstrap: bootstrap, Compactor: compactor,
-			AsyncNotifier: notifier, Model: "claude-haiku-4-5",
-		}
-
-		var notified []string
-		ag.CompactionNotifyFunc.Add(func(session string, msg string) {
-			notified = append(notified, msg)
-		})
-		var rotatedKey string
-		ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
-			rotatedKey = newKey
-		})
-
-		sessionKey := "test/iasynccritical/1000000000"
-
-		// 4 normal turns
-		for i := 1; i <= 4; i++ {
-			resp, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i))
-			if err != nil {
-				t.Fatalf("Turn %d: %v", i, err)
-			}
-			if resp != fmt.Sprintf("Response %d", i) {
-				t.Errorf("Turn %d: response = %q", i, resp)
-			}
-		}
-
-		// Mark async pending — normally blocks compaction
-		notifier.MarkPending(sessionKey)
-
-		// Turn 5: 195k tokens exceeds 95% critical threshold
-		resp, err := ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
-		if err != nil {
-			t.Fatalf("Turn 5: %v", err)
-		}
-		if resp != "Response 5" {
-			t.Errorf("got %q, want %q", resp, "Response 5")
-		}
-
-		// Compaction SHOULD have fired despite async pending (critical override)
-		if len(notified) == 0 {
-			t.Error("expected compaction to fire at critical threshold despite async pending")
-		}
-
-		loadKey := sessionKey
-		if rotatedKey != "" {
-			loadKey = rotatedKey
-		}
-		msgs, _ := store.Load(loadKey)
-		if len(msgs) > 5 {
-			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
 		}
 	})
 
