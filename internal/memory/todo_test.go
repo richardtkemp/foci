@@ -308,7 +308,7 @@ func TestTodoSearch(t *testing.T) {
 	store.Add("agent2", "Buy something for agent2", "medium", "")
 
 	// Case-insensitive substring match
-	items, err := store.Search("agent1", "buy")
+	items, err := store.Search("agent1", "buy", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestTodoSearch(t *testing.T) {
 	}
 
 	// No matches
-	items, err = store.Search("agent1", "deploy")
+	items, err = store.Search("agent1", "deploy", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestTodoSearch(t *testing.T) {
 	}
 
 	// Agent isolation — agent2's item should not appear
-	items, err = store.Search("agent1", "agent2")
+	items, err = store.Search("agent1", "agent2", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -869,7 +869,7 @@ func TestTodoSearchFTSStemming(t *testing.T) {
 	store.Add("agent1", "Update the documented procedures", "low", "")
 
 	// "run" should match "running" via stemming (step 1b: -ing removal)
-	items, err := store.Search("agent1", "run")
+	items, err := store.Search("agent1", "run", nil)
 	if err != nil {
 		t.Fatalf("Search 'run': %v", err)
 	}
@@ -881,7 +881,7 @@ func TestTodoSearchFTSStemming(t *testing.T) {
 
 	// "configuring" should match "configuration" via stemming
 	// (both stem to "configur")
-	items, err = store.Search("agent1", "configuring")
+	items, err = store.Search("agent1", "configuring", nil)
 	if err != nil {
 		t.Fatalf("Search 'configuring': %v", err)
 	}
@@ -891,7 +891,7 @@ func TestTodoSearchFTSStemming(t *testing.T) {
 
 	// "documenting" should match "documented" via stemming
 	// (both stem to "document")
-	items, err = store.Search("agent1", "documenting")
+	items, err = store.Search("agent1", "documenting", nil)
 	if err != nil {
 		t.Fatalf("Search 'documenting': %v", err)
 	}
@@ -908,7 +908,7 @@ func TestTodoSearchFTSRanking(t *testing.T) {
 	store.Add("agent1", "Update the server configuration and server logs", "medium", "")
 
 	// "server" appears twice in the second todo — it should rank higher.
-	items, err := store.Search("agent1", "server")
+	items, err := store.Search("agent1", "server", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -929,7 +929,7 @@ func TestTodoSearchFTSMultipleTerms(t *testing.T) {
 	store.Add("agent1", "Review login page design", "low", "")
 
 	// "fix login" should only match the item containing both terms
-	items, err := store.Search("agent1", "fix login")
+	items, err := store.Search("agent1", "fix login", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -949,7 +949,7 @@ func TestTodoSearchFTSEditUpdatesIndex(t *testing.T) {
 	id, _ := store.Add("agent1", "Buy groceries from the store", "medium", "")
 
 	// Should find it by original text
-	items, err := store.Search("agent1", "groceries")
+	items, err := store.Search("agent1", "groceries", nil)
 	if err != nil {
 		t.Fatalf("Search before edit: %v", err)
 	}
@@ -961,7 +961,7 @@ func TestTodoSearchFTSEditUpdatesIndex(t *testing.T) {
 	store.Edit("agent1", id, "Deploy the application to staging", "", "", false)
 
 	// Old text should no longer match
-	items, err = store.Search("agent1", "groceries")
+	items, err = store.Search("agent1", "groceries", nil)
 	if err != nil {
 		t.Fatalf("Search old text after edit: %v", err)
 	}
@@ -970,7 +970,7 @@ func TestTodoSearchFTSEditUpdatesIndex(t *testing.T) {
 	}
 
 	// New text should match
-	items, err = store.Search("agent1", "staging")
+	items, err = store.Search("agent1", "staging", nil)
 	if err != nil {
 		t.Fatalf("Search new text after edit: %v", err)
 	}
@@ -985,7 +985,7 @@ func TestTodoSearchFTSRemoveUpdatesIndex(t *testing.T) {
 
 	id, _ := store.Add("agent1", "Investigate memory leak", "high", "")
 
-	items, err := store.Search("agent1", "memory")
+	items, err := store.Search("agent1", "memory", nil)
 	if err != nil {
 		t.Fatalf("Search before remove: %v", err)
 	}
@@ -995,7 +995,7 @@ func TestTodoSearchFTSRemoveUpdatesIndex(t *testing.T) {
 
 	store.Remove("agent1", id)
 
-	items, err = store.Search("agent1", "memory")
+	items, err = store.Search("agent1", "memory", nil)
 	if err != nil {
 		t.Fatalf("Search after remove: %v", err)
 	}
@@ -1010,7 +1010,7 @@ func TestTodoSearchFTSEmptyQuery(t *testing.T) {
 
 	store.Add("agent1", "Some task", "medium", "")
 
-	items, err := store.Search("agent1", "")
+	items, err := store.Search("agent1", "", nil)
 	if err != nil {
 		t.Fatalf("Search empty: %v", err)
 	}
@@ -1018,7 +1018,7 @@ func TestTodoSearchFTSEmptyQuery(t *testing.T) {
 		t.Errorf("expected 0 results for empty query, got %d", len(items))
 	}
 
-	items, err = store.Search("agent1", "   ")
+	items, err = store.Search("agent1", "   ", nil)
 	if err != nil {
 		t.Fatalf("Search whitespace: %v", err)
 	}
@@ -1035,7 +1035,7 @@ func TestTodoSearchFTSSpecialCharacters(t *testing.T) {
 
 	// These should not error, even if they don't match
 	for _, q := range []string{"bug", `#123`, "bug #123", `"login"`, "OR AND NOT"} {
-		_, err := store.Search("agent1", q)
+		_, err := store.Search("agent1", q, nil)
 		if err != nil {
 			t.Errorf("Search(%q) errored: %v", q, err)
 		}
@@ -1075,7 +1075,7 @@ func TestTodoSearchFTSMigrationRebuild(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	items, err := store.Search("agent1", "servers")
+	items, err := store.Search("agent1", "servers", nil)
 	if err != nil {
 		t.Fatalf("Search after migration: %v", err)
 	}
@@ -1083,7 +1083,7 @@ func TestTodoSearchFTSMigrationRebuild(t *testing.T) {
 		t.Errorf("expected 1 match after migration rebuild, got %d", len(items))
 	}
 
-	items, err = store.Search("agent1", "databases")
+	items, err = store.Search("agent1", "databases", nil)
 	if err != nil {
 		t.Fatalf("Search after migration: %v", err)
 	}

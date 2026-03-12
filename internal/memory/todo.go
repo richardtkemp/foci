@@ -420,21 +420,44 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 	return &item, nil
 }
 
+// TodoSearchOpts controls filtering, sorting, and limiting of search results.
+type TodoSearchOpts struct {
+	Status string // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
+	Sort   string // "relevance" (default), "newest", "oldest"
+	Limit  int    // max results (0 = default 10)
+}
+
 // Search returns todo items matching the query using full-text search
 // with porter stemming (e.g. "running" matches "run"). Results are ranked
 // by relevance, with a secondary sort by status and priority for ties.
 // Uses the bleve search index when available, falling back to FTS5.
-func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
+func (s *TodoStore) Search(agentID, query string, opts *TodoSearchOpts) ([]TodoItem, error) {
+	if opts == nil {
+		opts = &TodoSearchOpts{}
+	}
 	if s.searchIndex != nil {
-		return s.searchBleve(agentID, query)
+		return s.searchBleve(agentID, query, opts)
 	}
 	return s.searchFTS5(agentID, query)
 }
 
 // searchBleve queries the bleve index for matching todos, then loads
 // full items from SQLite in the relevance order bleve returned.
-func (s *TodoStore) searchBleve(agentID, query string) ([]TodoItem, error) {
-	hits, err := s.searchIndex.SearchTodos(agentID, query)
+// Status filtering is applied post-load since bleve doesn't index status.
+func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]TodoItem, error) {
+	// Request extra results when filtering by status to compensate for post-filter loss.
+	bleveLimit := opts.Limit
+	if bleveLimit <= 0 {
+		bleveLimit = 10
+	}
+	if opts.Status != "" {
+		bleveLimit *= 5 // overfetch to ensure enough results survive filtering
+		if bleveLimit < 50 {
+			bleveLimit = 50
+		}
+	}
+
+	hits, err := s.searchIndex.SearchTodos(agentID, query, opts.Sort, bleveLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -442,16 +465,39 @@ func (s *TodoStore) searchBleve(agentID, query string) ([]TodoItem, error) {
 		return nil, nil
 	}
 
-	// Load full items from SQLite by ID, maintaining bleve's relevance order
+	// Load full items from SQLite by ID, maintaining bleve's order.
+	// Filter by status during load.
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
 	items := make([]TodoItem, 0, len(hits))
 	for _, hit := range hits {
 		item, err := s.Get(agentID, hit.TodoID)
 		if err != nil {
 			continue // deleted between search and load
 		}
+		if !matchesStatusFilter(item.Status, opts.Status) {
+			continue
+		}
 		items = append(items, *item)
+		if len(items) >= limit {
+			break
+		}
 	}
 	return items, nil
+}
+
+// matchesStatusFilter checks whether a todo's status passes the filter.
+func matchesStatusFilter(status, filter string) bool {
+	switch filter {
+	case "":
+		return true
+	case "active":
+		return status != "done" && status != "dropped"
+	default:
+		return status == filter
+	}
 }
 
 // searchFTS5 queries the embedded FTS5 index (fallback when no bleve index).

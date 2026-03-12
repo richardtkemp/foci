@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -625,7 +626,7 @@ func TestBleveTodoIndexAndSearch(t *testing.T) {
 	idx.IndexTodo("agent2", 1, "Fix the login page styling", float64(time.Now().Unix()))
 
 	// Search for agent1 — should find 1 matching result, not agent2's
-	hits, err := idx.SearchTodos("agent1", "login")
+	hits, err := idx.SearchTodos("agent1", "login", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -637,7 +638,7 @@ func TestBleveTodoIndexAndSearch(t *testing.T) {
 	}
 
 	// Search for agent2
-	hits, err = idx.SearchTodos("agent2", "login")
+	hits, err = idx.SearchTodos("agent2", "login", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -657,7 +658,7 @@ func TestBleveTodoRemove(t *testing.T) {
 	idx.IndexTodo("agent1", 1, "Fix the critical bug", float64(time.Now().Unix()))
 	idx.RemoveTodo("agent1", 1)
 
-	hits, err := idx.SearchTodos("agent1", "critical")
+	hits, err := idx.SearchTodos("agent1", "critical", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -673,7 +674,7 @@ func TestBleveTodoStemming(t *testing.T) {
 
 	idx.IndexTodo("agent1", 1, "Running server process in background", float64(time.Now().Unix()))
 
-	hits, err := idx.SearchTodos("agent1", "run")
+	hits, err := idx.SearchTodos("agent1", "run", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -694,7 +695,7 @@ func TestBleveTodoSurvivesReindex(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	hits, err := idx.SearchTodos("agent1", "deployment")
+	hits, err := idx.SearchTodos("agent1", "deployment", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -707,7 +708,7 @@ func TestBleveTodoSurvivesReindex(t *testing.T) {
 func TestBleveTodoEmptyQuery(t *testing.T) {
 	idx, _ := testBleveIndex(t)
 
-	hits, err := idx.SearchTodos("agent1", "")
+	hits, err := idx.SearchTodos("agent1", "", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -715,7 +716,7 @@ func TestBleveTodoEmptyQuery(t *testing.T) {
 		t.Errorf("expected nil for empty query, got %v", hits)
 	}
 
-	hits, err = idx.SearchTodos("agent1", "   ")
+	hits, err = idx.SearchTodos("agent1", "   ", "", 0)
 	if err != nil {
 		t.Fatalf("SearchTodos: %v", err)
 	}
@@ -755,7 +756,7 @@ func TestBleveTodoSearchIntegration(t *testing.T) {
 	ts.Add(agentID, "Write documentation for API endpoints", "low", "docs")
 
 	// Search should find matching items via bleve
-	items, err := ts.Search(agentID, "login")
+	items, err := ts.Search(agentID, "login", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -768,14 +769,14 @@ func TestBleveTodoSearchIntegration(t *testing.T) {
 
 	// Edit should update the bleve index
 	ts.Edit(agentID, 1, "Fix the session token bug", "", "", false)
-	items, err = ts.Search(agentID, "login")
+	items, err = ts.Search(agentID, "login", nil)
 	if err != nil {
 		t.Fatalf("Search after edit: %v", err)
 	}
 	if len(items) != 0 {
 		t.Error("old text 'login' should not match after edit")
 	}
-	items, err = ts.Search(agentID, "session token")
+	items, err = ts.Search(agentID, "session token", nil)
 	if err != nil {
 		t.Fatalf("Search for new text: %v", err)
 	}
@@ -785,7 +786,7 @@ func TestBleveTodoSearchIntegration(t *testing.T) {
 
 	// Remove should update the bleve index
 	ts.Remove(agentID, 2)
-	items, err = ts.Search(agentID, "deploy server")
+	items, err = ts.Search(agentID, "deploy server", nil)
 	if err != nil {
 		t.Fatalf("Search after remove: %v", err)
 	}
@@ -825,7 +826,7 @@ func TestBleveTodoIndexAllTodos(t *testing.T) {
 	}
 
 	// Search should find pre-existing items
-	items, err := ts.Search(agentID, "kubernetes")
+	items, err := ts.Search(agentID, "kubernetes", nil)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -837,4 +838,181 @@ func TestBleveTodoIndexAllTodos(t *testing.T) {
 	}
 
 	ts.Close()
+}
+
+// TestBleveTodoSearchStatusFilter verifies that status filters exclude
+// done/dropped todos from search results when requested.
+func TestBleveTodoSearchStatusFilter(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	indexPath := filepath.Join(dir, "search.bleve")
+	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	ts, err := NewTodoStore(filepath.Join(dir, "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+	defer ts.Close()
+	ts.SetSearchIndex(idx)
+
+	agentID := "test-agent"
+	ts.Add(agentID, "Fix the server deployment process", "high", "")
+	ts.Add(agentID, "Review the server monitoring setup", "medium", "")
+	ts.Add(agentID, "Upgrade the server TLS certificates", "low", "")
+
+	// Mark one done, one dropped
+	ts.Transition(agentID, 2, "done", "reviewed")
+	ts.Transition(agentID, 3, "dropped", "not needed")
+
+	// No filter — should return all 3
+	items, err := ts.Search(agentID, "server", nil)
+	if err != nil {
+		t.Fatalf("Search (no filter): %v", err)
+	}
+	if len(items) != 3 {
+		t.Errorf("no filter: expected 3, got %d", len(items))
+	}
+
+	// Active filter — should exclude done and dropped
+	items, err = ts.Search(agentID, "server", &TodoSearchOpts{Status: "active"})
+	if err != nil {
+		t.Fatalf("Search (active): %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("active filter: expected 1, got %d", len(items))
+	}
+	if items[0].ID != 1 {
+		t.Errorf("active filter: expected todo #1, got #%d", items[0].ID)
+	}
+
+	// Specific status filter — only done
+	items, err = ts.Search(agentID, "server", &TodoSearchOpts{Status: "done"})
+	if err != nil {
+		t.Fatalf("Search (done): %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("done filter: expected 1, got %d", len(items))
+	}
+	if items[0].ID != 2 {
+		t.Errorf("done filter: expected todo #2, got #%d", items[0].ID)
+	}
+}
+
+// TestBleveTodoSearchSortOrder verifies that sort overrides the default
+// relevance ordering.
+func TestBleveTodoSearchSortOrder(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	indexPath := filepath.Join(dir, "search.bleve")
+	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	ts, err := NewTodoStore(filepath.Join(dir, "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+	defer ts.Close()
+	ts.SetSearchIndex(idx)
+
+	agentID := "test-agent"
+	// Add items with distinct timestamps. bleve mtime is unix seconds,
+	// so we index them directly with spaced-out timestamps.
+	ts.Add(agentID, "First deploy task for staging", "high", "")
+	ts.Add(agentID, "Second deploy task for production", "medium", "")
+	ts.Add(agentID, "Third deploy task for testing", "low", "")
+
+	// Re-index with explicit timestamps to guarantee ordering
+	now := time.Now().Unix()
+	idx.IndexTodo(agentID, 1, "First deploy task for staging", float64(now-100))
+	idx.IndexTodo(agentID, 2, "Second deploy task for production", float64(now-50))
+	idx.IndexTodo(agentID, 3, "Third deploy task for testing", float64(now))
+
+	// Oldest first
+	items, err := ts.Search(agentID, "deploy", &TodoSearchOpts{Sort: "oldest"})
+	if err != nil {
+		t.Fatalf("Search (oldest): %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(items))
+	}
+	if items[0].ID != 1 {
+		t.Errorf("oldest: first item should be #1, got #%d", items[0].ID)
+	}
+
+	// Newest first
+	items, err = ts.Search(agentID, "deploy", &TodoSearchOpts{Sort: "newest"})
+	if err != nil {
+		t.Fatalf("Search (newest): %v", err)
+	}
+	if len(items) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(items))
+	}
+	if items[0].ID != 3 {
+		t.Errorf("newest: first item should be #3, got #%d", items[0].ID)
+	}
+}
+
+// TestBleveTodoSearchLimit verifies the default limit of 10 and custom limits.
+func TestBleveTodoSearchLimit(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	indexPath := filepath.Join(dir, "search.bleve")
+	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	ts, err := NewTodoStore(filepath.Join(dir, "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+	defer ts.Close()
+	ts.SetSearchIndex(idx)
+
+	agentID := "test-agent"
+	// Add 15 matching items
+	for i := 1; i <= 15; i++ {
+		ts.Add(agentID, fmt.Sprintf("Deploy service %d to production", i), "medium", "")
+	}
+
+	// Default limit should be 10
+	items, err := ts.Search(agentID, "deploy", nil)
+	if err != nil {
+		t.Fatalf("Search (default limit): %v", err)
+	}
+	if len(items) != 10 {
+		t.Errorf("default limit: expected 10, got %d", len(items))
+	}
+
+	// Custom limit of 5
+	items, err = ts.Search(agentID, "deploy", &TodoSearchOpts{Limit: 5})
+	if err != nil {
+		t.Fatalf("Search (limit=5): %v", err)
+	}
+	if len(items) != 5 {
+		t.Errorf("limit=5: expected 5, got %d", len(items))
+	}
+
+	// Custom limit of 20 (more than available)
+	items, err = ts.Search(agentID, "deploy", &TodoSearchOpts{Limit: 20})
+	if err != nil {
+		t.Fatalf("Search (limit=20): %v", err)
+	}
+	if len(items) != 15 {
+		t.Errorf("limit=20: expected 15, got %d", len(items))
+	}
 }

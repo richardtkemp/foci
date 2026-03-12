@@ -281,14 +281,21 @@ func (b *BleveIndex) RemoveTodo(agentID string, id int64) {
 
 // SearchTodos queries the bleve index for todo items matching the query,
 // filtered by agent ID. Returns hits with todo IDs and relevance ranks.
-func (b *BleveIndex) SearchTodos(agentID, queryStr string) ([]TodoSearchHit, error) {
+//
+// sortOrder controls ordering: "" or "relevance" sorts by score (default),
+// "newest" by mtime descending, "oldest" by mtime ascending.
+// limit caps the number of results (0 uses default of 10).
+func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int) ([]TodoSearchHit, error) {
 	if strings.TrimSpace(queryStr) == "" {
 		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Text query with porter stemming
+	// Text query with porter stemming (BM25 handles multi-term boosting)
 	textQuery := bleve.NewQueryStringQuery(queryStr)
 
 	// Filter: source = "todo"
@@ -302,9 +309,17 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr string) ([]TodoSearchHit, err
 	combined := bleve.NewConjunctionQuery(textQuery, sourceQuery, agentQuery)
 
 	req := bleve.NewSearchRequest(combined)
-	req.Size = 50
+	req.Size = limit
 	req.Fields = []string{"todo_id"}
-	req.SortBy([]string{"-_score"})
+
+	switch sortOrder {
+	case "newest":
+		req.SortBy([]string{"-mtime"})
+	case "oldest":
+		req.SortBy([]string{"mtime"})
+	default:
+		req.SortBy([]string{"-_score"})
+	}
 
 	result, err := b.index.Search(req)
 	if err != nil {
