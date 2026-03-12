@@ -55,6 +55,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | Tool result guard | ✅ auto-summarize large output to preserve meaningful context while conserving tokens | ❌ | ✅ truncation at 500 chars |
 | [Tool piping](TOOLS.md#tool-piping-exec-bridge) | ✅ tools ↔ shell ↔ each other | ❌ | ❌ |
 | Loop detection | ✅ configurable threshold | ✅ pattern-based detectors | ❌ |
+| Mid-turn behavioral nudges | ✅ LLM-extracted from character files, 5 trigger types | ❌ | ❌ |
 
 ## Session Management
 
