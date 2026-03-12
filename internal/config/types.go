@@ -318,7 +318,7 @@ type MemorySource struct {
 
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackends     []string       `toml:"search_backends"`     // active search backends: "fts5", "bleve" (default ["fts5"])
+	SearchBackends     []string       `toml:"search_backends"`     // active search backends: "fts5", "bleve" (default ["bleve"])
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        int            `toml:"search_limit"`        // max search results to return (default 20)

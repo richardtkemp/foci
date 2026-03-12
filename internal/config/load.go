@@ -465,7 +465,7 @@ func Load(path string) (*Config, error) {
 	}
 	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
 	if len(cfg.Memory.SearchBackends) == 0 {
-		cfg.Memory.SearchBackends = []string{"fts5"}
+		cfg.Memory.SearchBackends = []string{"bleve"}
 	}
 	setFloatDefault(&cfg.Memory.ConversationWeight, 0.1)
 	setIntDefault(&cfg.Memory.SearchLimit, 20)
