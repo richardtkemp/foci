@@ -50,10 +50,26 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 			reqJSON, _ = json.Marshal(req)
 		}
 		respJSON, _ := json.Marshal(resp)
+
+		// Increment per-session sequence number.
+		sm := a.getSessionMeta(sessionKey)
+		a.metaMu.Lock()
+		sm.apiSeqNum++
+		seqNum := sm.apiSeqNum
+		a.metaMu.Unlock()
+
+		// Hash system block texts for cache-bust detection.
+		sysTexts := make([]string, len(req.System))
+		for i, b := range req.System {
+			sysTexts[i] = b.Text
+		}
+
 		log.Payload(log.PayloadEntry{
 			Timestamp:  start.UTC(),
 			Session:    sessionKey,
+			SeqNum:     seqNum,
 			Model:      model,
+			SystemHash: log.SystemHash(sysTexts),
 			Request:    reqJSON,
 			Response:   respJSON,
 			DurationMS: duration.Milliseconds(),

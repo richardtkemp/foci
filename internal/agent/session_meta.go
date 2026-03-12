@@ -26,6 +26,7 @@ type sessionMeta struct {
 	usageClient     provider.UsageClient   // per-session usage client (nil = use agent default)
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
+	apiSeqNum       int                    // per-session incrementing counter for payload log entries
 }
 
 // sessionStringWithDefault returns a session-specific override
