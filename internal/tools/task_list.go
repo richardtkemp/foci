@@ -50,8 +50,13 @@ func FormatTask(t *memory.Task) string {
 	return b.String()
 }
 
+// TaskNotifyFunc is called when a task is created or updated.
+// Arguments are (sessionKey, message).
+type TaskNotifyFunc func(string, string)
+
 // NewTaskListTool creates the task list management tool.
-func NewTaskListTool(store *memory.TaskListStore, agentID string) *Tool {
+// If notify is non-nil, it fires on create and status-changing updates.
+func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNotifyFunc) *Tool {
 	return &Tool{
 		Name:        "task_list",
 		Description: "Track tasks for the current work. Survives compaction. Use create/get/update/list to manage tasks.",
@@ -95,13 +100,15 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string) *Tool {
 				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 
+			sk := SessionKeyFromContext(ctx)
+
 			switch p.Action {
 			case "create":
-				return taskCreate(store, agentID, p.Subject, p.Description)
+				return taskCreate(store, agentID, p.Subject, p.Description, sk, notify)
 			case "get":
 				return taskGet(store, agentID, p.ID)
 			case "update":
-				return taskUpdate(store, agentID, p.ID, p.Subject, p.Description, p.Status)
+				return taskUpdate(store, agentID, p.ID, p.Subject, p.Description, p.Status, sk, notify)
 			case "list":
 				return taskList(store, agentID)
 			default:
@@ -111,13 +118,16 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string) *Tool {
 	}
 }
 
-func taskCreate(store *memory.TaskListStore, agentID, subject, description string) (ToolResult, error) {
+func taskCreate(store *memory.TaskListStore, agentID, subject, description, sk string, notify TaskNotifyFunc) (ToolResult, error) {
 	if subject == "" {
 		return ToolResult{}, fmt.Errorf("subject is required for create")
 	}
 	id, err := store.Create(agentID, subject, description)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("create task: %w", err)
+	}
+	if notify != nil && sk != "" {
+		notify(sk, fmt.Sprintf("📋 Created #%d: %s", id, subject))
 	}
 	return TextResult(fmt.Sprintf("Created task #%d: %s", id, subject)), nil
 }
@@ -136,7 +146,7 @@ func taskGet(store *memory.TaskListStore, agentID string, id int) (ToolResult, e
 	return TextResult(FormatTask(task)), nil
 }
 
-func taskUpdate(store *memory.TaskListStore, agentID string, id int, subject, description, status string) (ToolResult, error) {
+func taskUpdate(store *memory.TaskListStore, agentID string, id int, subject, description, status, sk string, notify TaskNotifyFunc) (ToolResult, error) {
 	if id <= 0 {
 		return ToolResult{}, fmt.Errorf("id is required for update")
 	}
@@ -151,7 +161,36 @@ func taskUpdate(store *memory.TaskListStore, agentID string, id int, subject, de
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("re-read task: %w", err)
 	}
+	if notify != nil && sk != "" && status != "" {
+		notify(sk, taskNotifyMessage(store, agentID, task))
+	}
 	return TextResult(FormatTask(task)), nil
+}
+
+// taskNotifyMessage builds a notification string for a task status change,
+// including progress counts (e.g. "✅ 3/5: Fixed token counting").
+func taskNotifyMessage(store *memory.TaskListStore, agentID string, t *memory.Task) string {
+	prefix := "📋"
+	switch t.Status {
+	case "in_progress":
+		prefix = "🔄"
+	case "completed":
+		prefix = "✅"
+	}
+
+	// Include progress counts for in_progress and completed.
+	tasks, err := store.List(agentID)
+	if err == nil && len(tasks) > 0 {
+		completed := 0
+		for _, task := range tasks {
+			if task.Status == "completed" {
+				completed++
+			}
+		}
+		return fmt.Sprintf("%s %d/%d: %s", prefix, completed, len(tasks), t.Subject)
+	}
+
+	return fmt.Sprintf("%s %s", prefix, t.Subject)
 }
 
 func taskList(store *memory.TaskListStore, agentID string) (ToolResult, error) {
