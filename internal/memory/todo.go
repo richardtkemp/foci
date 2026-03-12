@@ -74,7 +74,59 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		}
 	}
 
+	if err := initTodoFTS(db); err != nil {
+		return closeOnErr("init todo FTS", err)
+	}
+
 	return &TodoStore{db: db}, nil
+}
+
+// initTodoFTS creates the FTS5 virtual table and sync triggers for
+// full-text search over todo text. Uses an external content table
+// backed by todos, so no content is duplicated. Porter stemming
+// provides morphological matching (e.g. "running" matches "run").
+func initTodoFTS(db *sql.DB) error {
+	// Check if FTS table already exists (to know if we need a rebuild).
+	var ftsExists bool
+	if err := db.QueryRow("SELECT 1 FROM sqlite_master WHERE type='table' AND name='todos_fts'").Scan(new(int)); err == nil {
+		ftsExists = true
+	}
+
+	_, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS todos_fts USING fts5(
+		text,
+		content='todos',
+		content_rowid='rowid',
+		tokenize='porter unicode61'
+	)`)
+	if err != nil {
+		return fmt.Errorf("create todos_fts: %w", err)
+	}
+
+	// Triggers keep the FTS index in sync with the todos table.
+	for _, stmt := range []string{
+		`CREATE TRIGGER IF NOT EXISTS todos_fts_ai AFTER INSERT ON todos BEGIN
+			INSERT INTO todos_fts(rowid, text) VALUES (new.rowid, new.text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS todos_fts_ad AFTER DELETE ON todos BEGIN
+			INSERT INTO todos_fts(todos_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS todos_fts_au AFTER UPDATE ON todos BEGIN
+			INSERT INTO todos_fts(todos_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+			INSERT INTO todos_fts(rowid, text) VALUES (new.rowid, new.text);
+		END`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("create fts trigger: %w", err)
+		}
+	}
+
+	// Populate FTS index from existing content on first creation.
+	if !ftsExists {
+		if _, err := db.Exec("INSERT INTO todos_fts(todos_fts) VALUES('rebuild')"); err != nil {
+			return fmt.Errorf("rebuild fts index: %w", err)
+		}
+	}
+	return nil
 }
 
 // columnExists checks whether a column exists in the given table.
@@ -318,17 +370,47 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 	return &item, nil
 }
 
-// Search returns todo items matching a case-insensitive substring query.
+// Search returns todo items matching the query using FTS5 full-text search
+// with porter stemming (e.g. "running" matches "run"). Results are ranked
+// by relevance, with a secondary sort by status and priority for ties.
 func (s *TodoStore) Search(agentID, query string) ([]TodoItem, error) {
+	ftsQuery := buildFTSQuery(query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
 	rows, err := s.db.Query(
-		`SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ? AND text LIKE '%' || ? || '%' COLLATE NOCASE ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`,
-		agentID, query,
+		`SELECT t.id, t.text, t.status, t.priority, t.tags, t.close_reason,
+		        t.agent_id, t.created_at, t.updated_at, t.completed_at
+		 FROM todos_fts f
+		 JOIN todos t ON t.rowid = f.rowid
+		 WHERE todos_fts MATCH ? AND t.agent_id = ?
+		 ORDER BY f.rank,
+		          CASE t.status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END,
+		          CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END,
+		          t.id
+		 LIMIT 50`,
+		ftsQuery, agentID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	return scanTodos(rows)
+}
+
+// buildFTSQuery converts a user query into an FTS5 match expression.
+// Each term is quoted to prevent FTS5 syntax errors from special
+// characters, while still allowing porter stemming to apply.
+func buildFTSQuery(query string) string {
+	terms := strings.Fields(query)
+	if len(terms) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(terms))
+	for i, t := range terms {
+		quoted[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
+	}
+	return strings.Join(quoted, " ")
 }
 
 // Close closes the underlying database.

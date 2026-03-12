@@ -1,9 +1,12 @@
 package memory
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestTodoAddAndList(t *testing.T) {
@@ -854,6 +857,254 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	if items[2].ID != id2 {
 		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id2)
 	}
+}
+
+func TestTodoSearchFTSStemming(t *testing.T) {
+	// Verifies that FTS5 porter stemming matches morphological variants
+	// (e.g. "running" matches "run", "deployments" matches "deploy").
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Fix the running server process", "high", "")
+	store.Add("agent1", "Review configuration settings carefully", "medium", "")
+	store.Add("agent1", "Update the documented procedures", "low", "")
+
+	// "run" should match "running" via stemming (step 1b: -ing removal)
+	items, err := store.Search("agent1", "run")
+	if err != nil {
+		t.Fatalf("Search 'run': %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 match for 'run', got %d", len(items))
+	} else if items[0].Text != "Fix the running server process" {
+		t.Errorf("unexpected match: %q", items[0].Text)
+	}
+
+	// "configuring" should match "configuration" via stemming
+	// (both stem to "configur")
+	items, err = store.Search("agent1", "configuring")
+	if err != nil {
+		t.Fatalf("Search 'configuring': %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 match for 'configuring', got %d", len(items))
+	}
+
+	// "documenting" should match "documented" via stemming
+	// (both stem to "document")
+	items, err = store.Search("agent1", "documenting")
+	if err != nil {
+		t.Fatalf("Search 'documenting': %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 match for 'documenting', got %d", len(items))
+	}
+}
+
+func TestTodoSearchFTSRanking(t *testing.T) {
+	// Verifies that results with more term matches rank higher.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Update the server", "medium", "")
+	store.Add("agent1", "Update the server configuration and server logs", "medium", "")
+
+	// "server" appears twice in the second todo — it should rank higher.
+	items, err := store.Search("agent1", "server")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 matches, got %d", len(items))
+	}
+	if items[0].Text != "Update the server configuration and server logs" {
+		t.Errorf("expected higher-ranked result first, got %q", items[0].Text)
+	}
+}
+
+func TestTodoSearchFTSMultipleTerms(t *testing.T) {
+	// Verifies that multiple search terms work as an implicit AND.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Fix the login bug", "high", "")
+	store.Add("agent1", "Fix the payment processing", "medium", "")
+	store.Add("agent1", "Review login page design", "low", "")
+
+	// "fix login" should only match the item containing both terms
+	items, err := store.Search("agent1", "fix login")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 match for 'fix login', got %d", len(items))
+	}
+	if items[0].Text != "Fix the login bug" {
+		t.Errorf("unexpected match: %q", items[0].Text)
+	}
+}
+
+func TestTodoSearchFTSEditUpdatesIndex(t *testing.T) {
+	// Verifies that editing a todo's text updates the FTS index so the
+	// old text no longer matches and the new text does.
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Buy groceries from the store", "medium", "")
+
+	// Should find it by original text
+	items, err := store.Search("agent1", "groceries")
+	if err != nil {
+		t.Fatalf("Search before edit: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 match before edit, got %d", len(items))
+	}
+
+	// Edit the text
+	store.Edit("agent1", id, "Deploy the application to staging", "", "", false)
+
+	// Old text should no longer match
+	items, err = store.Search("agent1", "groceries")
+	if err != nil {
+		t.Fatalf("Search old text after edit: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 matches for old text after edit, got %d", len(items))
+	}
+
+	// New text should match
+	items, err = store.Search("agent1", "staging")
+	if err != nil {
+		t.Fatalf("Search new text after edit: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 match for new text after edit, got %d", len(items))
+	}
+}
+
+func TestTodoSearchFTSRemoveUpdatesIndex(t *testing.T) {
+	// Verifies that removing a todo removes it from the FTS index.
+	store := newTestTodoStore(t)
+
+	id, _ := store.Add("agent1", "Investigate memory leak", "high", "")
+
+	items, err := store.Search("agent1", "memory")
+	if err != nil {
+		t.Fatalf("Search before remove: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 match before remove, got %d", len(items))
+	}
+
+	store.Remove("agent1", id)
+
+	items, err = store.Search("agent1", "memory")
+	if err != nil {
+		t.Fatalf("Search after remove: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 matches after remove, got %d", len(items))
+	}
+}
+
+func TestTodoSearchFTSEmptyQuery(t *testing.T) {
+	// Verifies that an empty query returns nil without error.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Some task", "medium", "")
+
+	items, err := store.Search("agent1", "")
+	if err != nil {
+		t.Fatalf("Search empty: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 results for empty query, got %d", len(items))
+	}
+
+	items, err = store.Search("agent1", "   ")
+	if err != nil {
+		t.Fatalf("Search whitespace: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 results for whitespace query, got %d", len(items))
+	}
+}
+
+func TestTodoSearchFTSSpecialCharacters(t *testing.T) {
+	// Verifies that queries with special characters don't cause FTS5 syntax errors.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Fix bug #123 in the login page", "high", "")
+
+	// These should not error, even if they don't match
+	for _, q := range []string{"bug", `#123`, "bug #123", `"login"`, "OR AND NOT"} {
+		_, err := store.Search("agent1", q)
+		if err != nil {
+			t.Errorf("Search(%q) errored: %v", q, err)
+		}
+	}
+}
+
+func TestTodoSearchFTSMigrationRebuild(t *testing.T) {
+	// Verifies that opening a database with existing todos (but no FTS table)
+	// correctly builds the FTS index from existing content.
+	dbPath := filepath.Join(t.TempDir(), "migrate_test.db")
+
+	// Create a store and add some todos, then close it.
+	store, err := NewTodoStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTodoStore (first): %v", err)
+	}
+	store.Add("agent1", "Pre-existing task about servers", "high", "")
+	store.Add("agent1", "Another old task about databases", "medium", "")
+	store.Close()
+
+	// Drop the FTS table and triggers to simulate a pre-FTS database.
+	db, err := openAndExec(dbPath,
+		"DROP TABLE IF EXISTS todos_fts",
+		"DROP TRIGGER IF EXISTS todos_fts_ai",
+		"DROP TRIGGER IF EXISTS todos_fts_ad",
+		"DROP TRIGGER IF EXISTS todos_fts_au",
+	)
+	if err != nil {
+		t.Fatalf("drop FTS: %v", err)
+	}
+	db.Close()
+
+	// Re-open — should rebuild FTS from existing content.
+	store, err = NewTodoStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTodoStore (second): %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	items, err := store.Search("agent1", "servers")
+	if err != nil {
+		t.Fatalf("Search after migration: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 match after migration rebuild, got %d", len(items))
+	}
+
+	items, err = store.Search("agent1", "databases")
+	if err != nil {
+		t.Fatalf("Search after migration: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 match for 'databases' after migration, got %d", len(items))
+	}
+}
+
+// openAndExec opens a SQLite DB and executes statements, returning the db handle.
+func openAndExec(path string, stmts ...string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	return db, nil
 }
 
 func newTestTodoStore(t *testing.T) *TodoStore {
