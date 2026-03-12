@@ -1,6 +1,7 @@
 package log
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -78,7 +79,9 @@ type APIEntry struct {
 type PayloadEntry struct {
 	Timestamp  time.Time       `json:"ts"`
 	Session    string          `json:"session"`
+	SeqNum     int             `json:"seq"`
 	Model      string          `json:"model"`
+	SystemHash string          `json:"system_hash"`
 	Request    json.RawMessage `json:"request"`
 	Response   json.RawMessage `json:"response"`
 	DurationMS int64           `json:"duration_ms"`
@@ -510,6 +513,19 @@ func isOpenAIModel(model string) bool {
 
 func Payload(entry PayloadEntry) {
 	std.payload(entry)
+}
+
+// SystemHash computes a truncated SHA-256 hash (16 hex chars) of concatenated
+// system block texts. Returns an empty string for nil/empty blocks.
+func SystemHash(texts []string) string {
+	if len(texts) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	for _, t := range texts {
+		h.Write([]byte(t))
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)[:8])
 }
 
 // Fatalf logs at ERROR level and exits.

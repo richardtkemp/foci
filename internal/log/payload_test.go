@@ -8,6 +8,32 @@ import (
 	"testing"
 )
 
+// TestSystemHash verifies that SystemHash returns a stable 16-char hex digest
+// for the same input and an empty string for nil/empty input.
+func TestSystemHash(t *testing.T) {
+	if got := SystemHash(nil); got != "" {
+		t.Errorf("SystemHash(nil) = %q, want empty", got)
+	}
+	if got := SystemHash([]string{}); got != "" {
+		t.Errorf("SystemHash([]) = %q, want empty", got)
+	}
+
+	h1 := SystemHash([]string{"Hello", "World"})
+	if len(h1) != 16 {
+		t.Errorf("SystemHash length = %d, want 16", len(h1))
+	}
+	// Same input produces same hash.
+	h2 := SystemHash([]string{"Hello", "World"})
+	if h1 != h2 {
+		t.Errorf("SystemHash not stable: %q != %q", h1, h2)
+	}
+	// Different input produces different hash.
+	h3 := SystemHash([]string{"Hello", "World!"})
+	if h1 == h3 {
+		t.Errorf("SystemHash collision: %q == %q for different inputs", h1, h3)
+	}
+}
+
 // TestPayloadEnabled verifies that PayloadEnabled returns false when no payload file is
 // configured, and true after Init with a PayloadFile path.
 func TestPayloadEnabled(t *testing.T) {
@@ -51,9 +77,12 @@ func TestPayloadLog(t *testing.T) {
 	}
 	defer Close()
 
+	sysHash := SystemHash([]string{"You are a helper."})
 	Payload(PayloadEntry{
 		Session:    "test-session",
+		SeqNum:     3,
 		Model:      "test-model",
+		SystemHash: sysHash,
 		Request:    json.RawMessage(`{"prompt":"hello"}`),
 		Response:   json.RawMessage(`{"text":"world"}`),
 		DurationMS: 500,
@@ -66,11 +95,11 @@ func TestPayloadLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read payload: %v", err)
 	}
-	if !strings.Contains(string(data), "test-session") {
-		t.Errorf("payload missing session: %s", string(data))
-	}
-	if !strings.Contains(string(data), "test-model") {
-		t.Errorf("payload missing model: %s", string(data))
+	line := string(data)
+	for _, want := range []string{"test-session", "test-model", `"seq":3`, sysHash} {
+		if !strings.Contains(line, want) {
+			t.Errorf("payload missing %q: %s", want, line)
+		}
 	}
 }
 
