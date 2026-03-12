@@ -617,7 +617,8 @@ Available in both `[defaults]` and `[[agents]]`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `nudge_enable` | bool | `false` | Enable the nudge system. When enabled, loads rules from disk and injects reminders during the agent loop. |
+| `nudge_enable` | bool | `true` | Enable the nudge system. When enabled, loads rules from disk and injects reminders during the agent loop. |
+| `nudge_auto_extract` | bool | `true` | Auto-extract rules from character files via LLM when they change. When false, nudges still fire from an existing `nudge-rules.json` but the LLM is never called to create or update it. |
 | `nudge_cooldown` | int | `5` | Minimum tool calls between repeating the same reminder. Prevents spam. |
 | `nudge_max_per_batch` | int | `1` | Maximum reminders injected per tool batch. |
 | `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate. When the model wants to end a turn after 2+ tool calls, inject pre_answer reminders and let it reconsider once. |
