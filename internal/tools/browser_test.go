@@ -52,7 +52,6 @@ func testBrowserManager(t *testing.T) *BrowserManager {
 // capturing a snapshot returns YAML with element refs and page metadata.
 func TestBrowserNavigateAndSnapshot(t *testing.T) {
 	skipIfNoBrowser(t)
-	t.Parallel()
 
 	srv := testHTMLServer(t, `<html><head><title>Test Page</title></head>
 		<body><h1>Hello World</h1><button>Click Me</button></body></html>`)
@@ -90,7 +89,6 @@ func TestBrowserNavigateAndSnapshot(t *testing.T) {
 // we can click an element using its ref from the snapshot.
 func TestBrowserClickByRef(t *testing.T) {
 	skipIfNoBrowser(t)
-	t.Parallel()
 
 	srv := testHTMLServer(t, `<html><body>
 		<button onclick="document.getElementById('out').textContent='clicked'">Click Me</button>
@@ -132,7 +130,6 @@ func TestBrowserClickByRef(t *testing.T) {
 // TestBrowserFillByRef verifies that we can fill an input field using its ref.
 func TestBrowserFillByRef(t *testing.T) {
 	skipIfNoBrowser(t)
-	t.Parallel()
 
 	srv := testHTMLServer(t, `<html><body>
 		<label for="name">Name</label>
@@ -175,7 +172,6 @@ func TestBrowserFillByRef(t *testing.T) {
 // (stale snapshot) returns a meaningful error.
 func TestBrowserStaleRef(t *testing.T) {
 	skipIfNoBrowser(t)
-	t.Parallel()
 
 	srv := testHTMLServer(t, `<html><body><button>Click Me</button></body></html>`)
 
@@ -220,7 +216,6 @@ func TestBrowserStaleRef(t *testing.T) {
 // a validation error.
 func TestBrowserInvalidRef(t *testing.T) {
 	skipIfNoBrowser(t)
-	t.Parallel()
 
 	srv := testHTMLServer(t, `<html><body><button>Test</button></body></html>`)
 
