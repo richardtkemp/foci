@@ -22,8 +22,9 @@ const (
 // ToolDetailStore persists tool call detail text to SQLite so inline keyboard
 // expansions survive restarts. Entries older than 48h are expired on cleanup.
 type ToolDetailStore struct {
-	db *sql.DB
-	mu sync.Mutex // serialise writes (reads use db concurrency)
+	db     *sql.DB
+	mu     sync.Mutex // serialise writes (reads use db concurrency)
+	closed bool
 }
 
 // NewToolDetailStore opens (or creates) the SQLite database for tool call details.
@@ -47,6 +48,12 @@ func NewToolDetailStore(dbPath string) (*ToolDetailStore, error) {
 
 // Close closes the underlying database.
 func (s *ToolDetailStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	return s.db.Close()
 }
 
@@ -54,6 +61,9 @@ func (s *ToolDetailStore) Close() error {
 func (s *ToolDetailStore) Store(messageID int64, compact, fullInput, result string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO tool_call_details (message_id, compact_text, full_input, result, created_at)
@@ -93,6 +103,9 @@ func (s *ToolDetailStore) LoadAll() (map[int64]toolResultEntry, error) {
 func (s *ToolDetailStore) ExpireAndVacuum() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 
 	cutoff := time.Now().Add(-toolDetailTTL).UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(`DELETE FROM tool_call_details WHERE created_at <= ?`, cutoff)
