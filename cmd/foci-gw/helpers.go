@@ -57,6 +57,17 @@ func resolveString(perAgent, global string) string {
 	return resolveZeroable(perAgent, global)
 }
 
+// resolveIntPtrPtr returns perAgent if non-nil, otherwise global (both are *int).
+func resolveIntPtrPtr(perAgent, global *int) *int {
+	if perAgent != nil {
+		return perAgent
+	}
+	return global
+}
+
+// resolveIdlePreserve is an alias for resolveIntPtrPtr for idle-preserve config.
+var resolveIdlePreserve = resolveIntPtrPtr
+
 // resolveOrientPath resolves the branch orientation prompt path for a given variant.
 // Precedence: specific per-agent → specific global → deprecated per-agent → deprecated global.
 func resolveOrientPath(specificAgent, specificGlobal, deprecatedAgent, deprecatedGlobal string) string {

@@ -691,10 +691,42 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
+| `compaction_idle_threshold` | string | `"45m"` | Idle duration before idle pressure starts lowering the compaction threshold. `"0"` disables idle-aware compaction. Format: Go duration string (e.g., `"30m"`, `"1h"`). |
+| `compaction_idle_pressure_start` | string | `"70%"` | Context usage percentage where idle pressure starts ramping. Below this, idle time has no effect. Format: percentage string (e.g., `"70%"`) or decimal (e.g., `"0.7"`). |
+| `compaction_idle_pressure_max` | float | `0.15` | Maximum threshold reduction from idle pressure. With default base threshold of 0.8, this allows reduction to 0.65. Range: 0.0–1.0. |
+| `compaction_mana_refresh_threshold` | string | `"15m"` | Trigger special high-fidelity mana-refresh compaction when mana reset is this soon. Format: Go duration string. `"0"` disables. |
+| `compaction_mana_refresh_preserve` | int | unset | Messages to preserve during mana-refresh compaction. Unset (nil) preserves ALL messages (special high-fidelity mode). `0` uses normal preservation count. |
 | `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
 | `branch_orientation_prompt` | string | `""` | **Deprecated.** Sets both multiball and headless if the specific fields below are empty. |
 | `branch_orientation_multiball_prompt` | string | `""` | Path to prompt file for user-attached multiball branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-multiball.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
+
+#### Idle-Aware Compaction
+
+Foci can trigger compaction proactively when the user has been idle, with mana-aware pressure adjustment:
+
+1. **Normal threshold compaction** (existing): Triggers at 80% context usage.
+2. **Idle pressure** (new): After `compaction_idle_threshold` idle time, gradually reduces the compaction threshold from base (e.g. 80%) down by `compaction_idle_pressure_max` (e.g. to 65%) over the next idle period. Only applies when context is above `compaction_idle_pressure_start`.
+3. **Mana refresh mode** (new): When mana reset is within `compaction_mana_refresh_threshold`, triggers aggressive compaction (50% of base threshold) and preserves all/most messages — a high-fidelity re-summary that's cheap since mana will reset.
+
+Example scenarios:
+
+```toml
+# Scenario A: Conservative (minimize compactions)
+[sessions]
+compaction_idle_threshold = "0"  # disable idle compaction
+
+# Scenario B: Aggressive (keep context small)
+[sessions]
+compaction_idle_threshold = "30m"
+compaction_idle_pressure_max = 0.25  # reduce to 55% threshold
+compaction_mana_refresh_preserve = 50  # preserve last 50 messages in refresh mode
+
+# Scenario C: Per-agent override
+[[agents]]
+id = "research"
+compaction_idle_threshold = "15m"  # compact sooner for research bot
+```
 
 ### Tool Behavior
 

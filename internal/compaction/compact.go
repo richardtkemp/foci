@@ -3,6 +3,7 @@ package compaction
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,6 +106,90 @@ func contextLimit(model string) int {
 // ContextLimit returns the approximate context window for a model (exported).
 func ContextLimit(model string) int {
 	return contextLimit(model)
+}
+
+// Threshold returns the base compaction threshold.
+func (c *Compactor) Threshold() float64 {
+	return c.threshold
+}
+
+// PreserveMessages returns the current preserve messages count.
+func (c *Compactor) PreserveMessages() int {
+	return c.preserveMessages
+}
+
+// SetPreserveMessages sets the preserve messages count.
+func (c *Compactor) SetPreserveMessages(n int) {
+	c.preserveMessages = n
+}
+
+// CalculateIdlePressure returns the adjusted compaction threshold based on
+// idle time and mana state. Returns (adjustedThreshold, isManaRefreshMode).
+//
+// Algorithm:
+// 1. If mana reset is imminent, return aggressive threshold (base * 0.5) + mana refresh flag
+// 2. If not idle yet, return base threshold unchanged
+// 3. If context below pressure start, return base threshold unchanged
+// 4. Otherwise, linearly reduce threshold based on idle duration:
+//   - At idle threshold (e.g. 45m): 0% pressure → base threshold (0.8)
+//   - At 2x idle threshold (e.g. 90m): 100% pressure → base - max (0.65)
+func CalculateIdlePressure(
+	baseThreshold float64,
+	idleDuration time.Duration,
+	idleThreshold time.Duration,
+	pressureStart string,
+	pressureMax float64,
+	manaResetsAt time.Time,
+	manaRefreshThreshold time.Duration,
+	currentTokens int,
+	contextLimit int,
+) (adjustedThreshold float64, isManaRefresh bool) {
+	// Priority 1: Mana refresh special mode (overrides everything)
+	if !manaResetsAt.IsZero() {
+		untilReset := time.Until(manaResetsAt)
+		if untilReset > 0 && untilReset < manaRefreshThreshold {
+			return baseThreshold * 0.5, true
+		}
+	}
+
+	// Priority 2: Not idle yet — no pressure
+	if idleDuration < idleThreshold {
+		return baseThreshold, false
+	}
+
+	// Priority 3: Parse pressure start threshold
+	startPct := parsePressureStart(pressureStart, 0.70)
+
+	// Priority 4: Context below pressure start — no pressure yet
+	if contextLimit > 0 {
+		currentPct := float64(currentTokens) / float64(contextLimit)
+		if currentPct < startPct {
+			return baseThreshold, false
+		}
+	}
+
+	// Priority 5: Apply linear idle pressure ramp
+	// idleThreshold = 0% pressure, 2 * idleThreshold = 100% pressure
+	idleProgress := float64(idleDuration-idleThreshold) / float64(idleThreshold)
+	if idleProgress > 1.0 {
+		idleProgress = 1.0
+	}
+
+	reduction := pressureMax * idleProgress
+	return baseThreshold - reduction, false
+}
+
+// parsePressureStart parses a pressure start value from either "70%" or "0.7" format.
+func parsePressureStart(s string, fallback float64) float64 {
+	if strings.HasSuffix(s, "%") {
+		trimmed := strings.TrimSuffix(s, "%")
+		if val, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return val / 100.0
+		}
+	} else if val, err := strconv.ParseFloat(s, 64); err == nil {
+		return val
+	}
+	return fallback
 }
 
 // hasToolUse returns true if the message contains any tool_use content blocks.
