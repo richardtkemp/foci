@@ -45,7 +45,10 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 	})
 
 	if log.PayloadEnabled() {
-		reqJSON, _ := json.Marshal(req)
+		reqJSON := resp.WireRequest
+		if reqJSON == nil {
+			reqJSON, _ = json.Marshal(req)
+		}
 		respJSON, _ := json.Marshal(resp)
 		log.Payload(log.PayloadEntry{
 			Timestamp:  start.UTC(),
