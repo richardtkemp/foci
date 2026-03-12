@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -39,6 +40,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 	}
 
 	params := buildSDKParams(req)
+	wireReq, _ := json.Marshal(params)
 	sc := c.ensureSDKClient()
 
 	slog.Debug("anthropic: stream_call_start", "model", req.Model)
@@ -81,5 +83,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 		return nil, sdkErr
 	}
 
-	return responseFromSDK(&msg), nil
+	resp := responseFromSDK(&msg)
+	resp.WireRequest = wireReq
+	return resp, nil
 }

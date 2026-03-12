@@ -245,6 +245,10 @@ type MessageResponse struct {
 	Model      string         `json:"model"`
 	Usage      Usage          `json:"usage"`
 	StopReason string         `json:"stop_reason"`
+
+	// WireRequest holds the serialized SDK-level request body (with cache markers).
+	// Populated by transport layer for payload logging. Never persisted.
+	WireRequest json.RawMessage `json:"-"`
 }
 
 // TextContent creates a single text content block.

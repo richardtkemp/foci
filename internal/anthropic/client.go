@@ -204,6 +204,7 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 	}
 
 	params := buildSDKParams(req)
+	wireReq, _ := json.Marshal(params)
 	sc := c.ensureSDKClient()
 
 	slog.Debug("anthropic: sdk_call_start", "model", req.Model)
@@ -218,7 +219,9 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 	}
 	slog.Debug("anthropic: sdk_call_done", "duration", callDur, "stop_reason", msg.StopReason)
 
-	return responseFromSDK(msg), nil
+	resp := responseFromSDK(msg)
+	resp.WireRequest = wireReq
+	return resp, nil
 }
 
 // sendOnceRaw performs a single HTTP request to the messages API and returns the
