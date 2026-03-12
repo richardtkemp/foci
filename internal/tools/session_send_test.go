@@ -41,6 +41,10 @@ func (w *mockSessionWriter) Replace(key string, msgs []provider.Message) error {
 	return nil
 }
 
+func (w *mockSessionWriter) ReplaceAndRotate(key string, msgs []provider.Message) (string, error) {
+	return key, nil
+}
+
 func (w *mockSessionWriter) Clear(key string) error {
 	return nil
 }

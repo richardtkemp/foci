@@ -97,7 +97,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "custom summary prompt", "custom handoff msg", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "custom summary prompt", "custom handoff msg", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 
 	// Verify custom handoff message in resulting messages
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	if len(msgs) != 3 {
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
@@ -146,7 +146,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	// Empty strings should fall back to defaults
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	}
 
 	// Verify default handoff message
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	handoff := provider.TextOf(msgs[2].Content)
 	if !strings.Contains(handoff, DefaultHandoffMessage) {
 		t.Errorf("handoff = %q, want default handoff", handoff)

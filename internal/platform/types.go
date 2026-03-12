@@ -75,6 +75,7 @@ type Connection interface {
 	SetChatID(chatID int64)
 	ChatID() int64
 	Username() string
+	UpdateChatSessionKey(chatID int64, newKey string) // update cached + persisted session key for a chat
 
 	// Messaging
 	SendToSession(sessionKey, text string) error

@@ -85,6 +85,35 @@ func initSessions(cfg *config.Config) sessionInfra {
 						})
 					}
 				}
+			case session.SessionStatusRotated:
+				// Index the archive file
+				if e.ArchivePath != "" {
+					rel, err := filepath.Rel(cfg.Sessions.Dir, e.ArchivePath)
+					if err == nil {
+						archiveKey := strings.TrimSuffix(rel, ".jsonl")
+						archiveKey = strings.ReplaceAll(archiveKey, string(filepath.Separator), ":")
+						sessionIndex.Upsert(session.SessionIndexEntry{
+							SessionKey:       archiveKey,
+							FilePath:         e.ArchivePath,
+							CreatedAt:        time.Now().UTC(),
+							ParentSessionKey: e.Key,
+							SessionType:      e.Type,
+							Status:           session.SessionStatusCompacted,
+						})
+					}
+				}
+				// Create new active entry for the rotated key
+				if e.NewKey != "" {
+					sessionIndex.Upsert(session.SessionIndexEntry{
+						SessionKey:  e.NewKey,
+						FilePath:    e.FilePath,
+						CreatedAt:   time.Now().UTC(),
+						SessionType: e.Type,
+						Status:      session.SessionStatusActive,
+					})
+				}
+				// Mark old key as rotated
+				sessionIndex.SetStatus(e.Key, session.SessionStatusRotated)
 			case session.SessionStatusCleared:
 				sessionIndex.SetStatus(e.Key, session.SessionStatusCleared)
 			}

@@ -128,9 +128,13 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	if handoffMsg == "" {
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
-	if summary, err := a.Compactor.Compact(ctx, client, sessionKey, system, summaryPrompt, handoffMsg, false); err != nil {
+	summary, newKey, err := a.Compactor.Compact(ctx, client, sessionKey, system, summaryPrompt, handoffMsg, false)
+	if err != nil {
 		a.logger().Errorf("session=%s compaction failed: %v", sessionKey, err)
 	} else {
+		if newKey != "" {
+			a.RotateSession(sessionKey, newKey)
+		}
 		for _, fn := range a.CompactionNotifyFunc {
 			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
 		}

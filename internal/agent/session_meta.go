@@ -257,6 +257,55 @@ func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
 	}
 }
 
+// RotateSession migrates all per-session state from oldKey to newKey.
+// This includes the meta map, state store keys, turn locks, and fires
+// SessionKeyRotatedFunc callbacks.
+func (a *Agent) RotateSession(oldKey, newKey string) {
+	if oldKey == newKey || newKey == "" {
+		return
+	}
+
+	// Migrate meta map
+	a.metaMu.Lock()
+	if a.meta != nil {
+		if m, ok := a.meta[oldKey]; ok {
+			a.meta[newKey] = m
+			delete(a.meta, oldKey)
+		}
+	}
+	a.metaMu.Unlock()
+
+	// Migrate StateStore keys
+	if a.StateStore != nil {
+		for _, prefix := range []string{"effort", "thinking", "model", "model_endpoint", "model_format", "no_compact"} {
+			oldStoreKey := prefix + ":" + oldKey
+			newStoreKey := prefix + ":" + newKey
+			var val string
+			if a.StateStore.Get(oldStoreKey, &val) && val != "" {
+				_ = a.StateStore.Set(newStoreKey, val)
+				_ = a.StateStore.Delete(oldStoreKey)
+			}
+		}
+	}
+
+	// Migrate turn lock
+	a.turnLocksMu.Lock()
+	if a.turnLocks != nil {
+		if mu, ok := a.turnLocks[oldKey]; ok {
+			a.turnLocks[newKey] = mu
+			delete(a.turnLocks, oldKey)
+		}
+	}
+	a.turnLocksMu.Unlock()
+
+	// Fire callbacks
+	for _, fn := range a.SessionKeyRotatedFunc {
+		fn(oldKey, newKey)
+	}
+
+	a.logger().Infof("session rotated %s → %s", oldKey, newKey)
+}
+
 // ResetCacheBaseline clears the cache-read baseline for a session so that the
 // next API call won't trigger a false cache-bust warning. Call this after any
 // operation that changes the message prefix (e.g. manual compaction).

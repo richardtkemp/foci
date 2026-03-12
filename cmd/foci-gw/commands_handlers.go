@@ -58,10 +58,11 @@ func runReset(p cmdRegParams) error {
 	fireSessionEndMemory(p.ag, p.sessions, sk, p.acfg.MemoryFormation, func(bk, pk, bt string) string {
 		return buildBranchOrientation(resetOrientPath, bk, pk, bt, false, p.promptSearchDirs)
 	}, p.promptSearchDirs, p.ctx)
-	writer := p.sessions.For(sk)
-	if err := writer.Clear(sk); err != nil {
+	newKey, err := p.sessions.RotateKey(sk)
+	if err != nil {
 		return err
 	}
+	p.ag.RotateSession(sk, newKey)
 	p.bootstrap.Reload()
 	p.ag.InvalidateSystemCaches()
 	return nil
@@ -400,7 +401,7 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), p.promptSearchDirs...)
 	}
 
-	summary, err := p.ag.Compactor.Compact(ctx, p.ag.SessionClient(sk), sk, system, summaryPrompt, handoffMsg, dryRun)
+	summary, newKey, err := p.ag.Compactor.Compact(ctx, p.ag.SessionClient(sk), sk, system, summaryPrompt, handoffMsg, dryRun)
 	if err != nil {
 		return 0, fmt.Errorf("compaction failed: %w", err)
 	}
@@ -430,6 +431,9 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 			fn(sk, "✅ Dry-run complete — summary sent.")
 		}
 	} else {
+		if !dryRun && newKey != "" {
+			p.ag.RotateSession(sk, newKey)
+		}
 		for _, fn := range p.ag.CompactionNotifyFunc {
 			fn(sk, fmt.Sprintf("✅ Context compacted — %d messages summarised.", mc))
 		}
@@ -440,7 +444,11 @@ func runCompaction(p cmdRegParams, ctx context.Context, dryRun bool) (int, error
 		}
 		p.bootstrap.Reload()
 		p.ag.InvalidateSystemCaches()
-		p.ag.ResetCacheBaseline(sk)
+		resetKey := sk
+		if newKey != "" {
+			resetKey = newKey
+		}
+		p.ag.ResetCacheBaseline(resetKey)
 	}
 	return mc, nil
 }
