@@ -110,8 +110,6 @@ func NewManagerForAgent(configDir, agentID string) *Manager {
 
 // Connect connects to all configured MCP servers. Servers that fail to
 // connect are logged and skipped — partial success is acceptable.
-// The provided transport function, if non-nil, overrides the default
-// transport creation (used for testing).
 func (m *Manager) Connect(ctx context.Context, servers []ServerConfig) error {
 	return m.connectWith(ctx, servers, nil)
 }
