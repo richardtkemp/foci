@@ -6,7 +6,7 @@ import (
 )
 
 // Scheduler tracks per-turn state and evaluates nudge triggers.
-// Create one per agent; call Reset() at the start of each turn.
+// Create one per agent; call StartTurn() at the start of each turn.
 type Scheduler struct {
 	rules       []Rule
 	cooldown    int // min tool calls between repeating same rule
@@ -51,9 +51,9 @@ func NewScheduler(rs *RuleSet, cooldown, maxPerBatch int) *Scheduler {
 	return s
 }
 
-// Reset clears per-turn state. Call at the start of each agent turn.
-// userMessage is evaluated once for match() triggers.
-func (s *Scheduler) Reset(userMessage string) {
+// StartTurn clears per-turn state and evaluates match triggers against the
+// user message. Call at the start of each agent turn.
+func (s *Scheduler) StartTurn(userMessage string) {
 	if s == nil {
 		return
 	}

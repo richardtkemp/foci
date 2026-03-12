@@ -22,7 +22,7 @@ func TestPeriodicTrigger(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 1) // cooldown=1 to avoid interference
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// Tool calls 0, 1 should not fire (periodic N=3 fires at multiples of 3)
 	if r := s.CheckAfterTools(0, 1, false); r != "" {
@@ -58,7 +58,7 @@ func TestAfterStreakTrigger(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5) // allow multiple per batch
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// streak=1: should not fire
 	if r := s.CheckAfterTools(0, 1, false); r != "" {
@@ -80,7 +80,7 @@ func TestAfterErrorTrigger(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5) // allow multiple per batch
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// No error: should not fire after_error rule
 	r := s.CheckAfterTools(0, 1, false)
@@ -103,7 +103,7 @@ func TestMatchTrigger(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
-	s.Reset("Please debug this issue")
+	s.StartTurn("Please debug this issue")
 
 	r := s.CheckAfterTools(0, 1, false)
 	if r == "" {
@@ -119,7 +119,7 @@ func TestMatchTriggerNoMatch(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
-	s.Reset("Hello world")
+	s.StartTurn("Hello world")
 
 	r := s.CheckAfterTools(0, 1, false)
 	if r != "" {
@@ -133,7 +133,7 @@ func TestPreAnswerTrigger(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// pre_answer should not fire in CheckAfterTools
 	// (other rules might fire, but pre_answer specifically should not)
@@ -174,7 +174,7 @@ func TestCooldownPreventsSpam(t *testing.T) {
 		},
 	}
 	s := NewScheduler(rs, 3, 1) // cooldown=3
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// First error: should fire
 	r := s.CheckAfterTools(0, 1, true)
@@ -210,7 +210,7 @@ func TestMaxPerBatchLimits(t *testing.T) {
 		},
 	}
 	s := NewScheduler(rs, 1, 1) // maxPerBatch=1
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// Both rules match (error), but only 1 should fire
 	r := s.CheckAfterTools(0, 1, true)
@@ -225,7 +225,7 @@ func TestCheckMatchFiresWithoutTools(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
-	s.Reset("Please debug this issue")
+	s.StartTurn("Please debug this issue")
 
 	// No CheckAfterTools called — simulate a no-tools turn.
 	r := s.CheckMatch()
@@ -246,7 +246,7 @@ func TestCheckMatchNoopAfterToolsFired(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
-	s.Reset("Please debug this issue")
+	s.StartTurn("Please debug this issue")
 
 	// Fire via tools path first.
 	s.CheckAfterTools(0, 1, false)
@@ -263,7 +263,7 @@ func TestCheckMatchNoMatch(t *testing.T) {
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
-	s.Reset("Hello world")
+	s.StartTurn("Hello world")
 
 	r := s.CheckMatch()
 	if r != "" {
@@ -276,7 +276,7 @@ func TestNilSchedulerSafe(t *testing.T) {
 	t.Parallel()
 
 	var s *Scheduler
-	s.Reset("hello")
+	s.StartTurn("hello")
 	if r := s.CheckAfterTools(0, 1, true); r != "" {
 		t.Errorf("nil scheduler returned %q", r)
 	}
@@ -291,8 +291,8 @@ func TestNilSchedulerSafe(t *testing.T) {
 	}
 }
 
-// TestResetClearsState verifies that Reset clears per-turn state.
-func TestResetClearsState(t *testing.T) {
+// TestStartTurnClearsState verifies that StartTurn clears per-turn state.
+func TestStartTurnClearsState(t *testing.T) {
 	t.Parallel()
 
 	rs := &RuleSet{
@@ -301,13 +301,13 @@ func TestResetClearsState(t *testing.T) {
 		},
 	}
 	s := NewScheduler(rs, 5, 1) // cooldown=5
-	s.Reset("hello")
+	s.StartTurn("hello")
 
 	// Fire once
 	s.CheckAfterTools(0, 1, true)
 
-	// Reset should clear cooldown
-	s.Reset("new message")
+	// StartTurn should clear cooldown
+	s.StartTurn("new message")
 	r := s.CheckAfterTools(0, 1, true)
 	if r != "check" {
 		t.Errorf("after reset: expected 'check', got %q", r)
