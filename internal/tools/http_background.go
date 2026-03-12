@@ -65,7 +65,7 @@ func runHTTPBackground(
 			return r.output, nil, true
 
 		case <-time.After(threshold):
-			log.Infof("http_request", "auto-backgrounding after %v: %s", threshold, displayURL)
+			log.Infof("http_request", "session=%s auto-backgrounding after %v: %s", sk, threshold, displayURL)
 			notifier.MarkPending(sk)
 			go func() {
 				defer bgCancel()

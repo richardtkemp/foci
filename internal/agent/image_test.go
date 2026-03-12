@@ -28,7 +28,7 @@ func makePNG(w, h int) []byte {
 // are returned unchanged.
 func TestDownscaleUnderThreshold(t *testing.T) {
 	data := makeJPEG(100, 100) // 10,000 pixels
-	out, mt := maybeDownscaleImage(data, "image/jpeg", 100*100)
+	out, mt := maybeDownscaleImage("", data,"image/jpeg", 100*100)
 	if mt != "image/jpeg" {
 		t.Errorf("mediaType = %s, want image/jpeg", mt)
 	}
@@ -43,7 +43,7 @@ func TestDownscaleOverThreshold(t *testing.T) {
 	data := makeJPEG(200, 200) // 40,000 pixels
 	maxPixels := 10000         // should trigger downscale
 
-	out, mt := maybeDownscaleImage(data, "image/jpeg", maxPixels)
+	out, mt := maybeDownscaleImage("", data,"image/jpeg", maxPixels)
 	if mt != "image/jpeg" {
 		t.Errorf("mediaType = %s, want image/jpeg", mt)
 	}
@@ -65,7 +65,7 @@ func TestDownscaleOverThreshold(t *testing.T) {
 // re-encoded as JPEG.
 func TestDownscalePNGtoJPEG(t *testing.T) {
 	data := makePNG(300, 300) // 90,000 pixels
-	out, mt := maybeDownscaleImage(data, "image/png", 10000)
+	out, mt := maybeDownscaleImage("", data,"image/png", 10000)
 	if mt != "image/jpeg" {
 		t.Errorf("mediaType = %s, want image/jpeg after downscale", mt)
 	}
@@ -79,7 +79,7 @@ func TestDownscalePNGtoJPEG(t *testing.T) {
 // unchanged.
 func TestDownscaleNonImage(t *testing.T) {
 	data := []byte("not an image")
-	out, mt := maybeDownscaleImage(data, "application/pdf", 1000)
+	out, mt := maybeDownscaleImage("", data,"application/pdf", 1000)
 	if mt != "application/pdf" {
 		t.Errorf("mediaType changed to %s", mt)
 	}
@@ -91,7 +91,7 @@ func TestDownscaleNonImage(t *testing.T) {
 // TestDownscaleDisabled verifies that maxPixels=0 disables downscaling.
 func TestDownscaleDisabled(t *testing.T) {
 	data := makeJPEG(1000, 1000)
-	out, mt := maybeDownscaleImage(data, "image/jpeg", 0)
+	out, mt := maybeDownscaleImage("", data,"image/jpeg", 0)
 	if mt != "image/jpeg" {
 		t.Errorf("mediaType = %s", mt)
 	}
@@ -104,7 +104,7 @@ func TestDownscaleDisabled(t *testing.T) {
 // unchanged rather than causing an error.
 func TestDownscaleCorruptData(t *testing.T) {
 	data := []byte("corrupt jpeg data that cannot be decoded")
-	out, mt := maybeDownscaleImage(data, "image/jpeg", 1000)
+	out, mt := maybeDownscaleImage("", data,"image/jpeg", 1000)
 	if !bytes.Equal(out, data) {
 		t.Error("corrupt data should be returned unchanged")
 	}

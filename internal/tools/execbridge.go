@@ -71,7 +71,7 @@ func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error)
 	b.wg.Add(1)
 	go b.acceptLoop()
 
-	log.Debugf("execbridge", "started sock=%s tools=%d", sockPath, b.exportedToolCount())
+	log.Debugf("execbridge", "session=%s started sock=%s tools=%d", SessionKeyFromContext(ctx), sockPath, b.exportedToolCount())
 	return b, nil
 }
 
@@ -134,7 +134,7 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 		return
 	}
 
-	log.Debugf("execbridge", "call tool=%s", req.Tool)
+	log.Debugf("execbridge", "session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
 	result, err := tool.Execute(b.ctx, req.Params)
 	if err != nil {
 		writeResponse(conn, "", err.Error())

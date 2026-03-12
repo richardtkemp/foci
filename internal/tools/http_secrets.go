@@ -23,6 +23,7 @@ type secretResolution struct {
 // validates them against allowed hosts, and resolves the templates.
 // It also reads body_file contents if specified.
 func validateAndResolveSecrets(
+	sessionKey string,
 	reqURL, method, body, bodyFile string,
 	headers, formFields map[string]string,
 	files []fileAttachment,
@@ -94,7 +95,7 @@ func validateAndResolveSecrets(
 	hasBWSecrets := len(bwRefs) > 0
 
 	if parsed, err := url.Parse(reqURL); err == nil {
-		log.Debugf("http_request", "request %s %s secrets=%d (bw=%d)", method, parsed.Hostname(), len(secretRefs), len(bwRefs))
+		log.Debugf("http_request", "session=%s request %s %s secrets=%d (bw=%d)", sessionKey, method, parsed.Hostname(), len(secretRefs), len(bwRefs))
 	}
 
 	// Validate regular secrets against allowed_hosts

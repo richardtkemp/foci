@@ -74,7 +74,7 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 
 	parsed, err := url.Parse(p.URL)
 	if err == nil {
-		log.Debugf("web_fetch", "fetch url=%s raw=%v", parsed.Hostname(), p.Raw)
+		log.Debugf("web_fetch", "session=%s fetch url=%s raw=%v", SessionKeyFromContext(ctx), parsed.Hostname(), p.Raw)
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -175,7 +175,7 @@ func webSearch(ctx context.Context, params json.RawMessage, apiKey string) (Tool
 		return ToolResult{}, fmt.Errorf("parse search results: %w", err)
 	}
 
-	log.Debugf("web_search", "search query=%q results=%d", p.Query, len(result.Web.Results))
+	log.Debugf("web_search", "session=%s search query=%q results=%d", SessionKeyFromContext(ctx), p.Query, len(result.Web.Results))
 
 	var out strings.Builder
 	for i, r := range result.Web.Results {

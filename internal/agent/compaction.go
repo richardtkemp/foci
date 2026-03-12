@@ -78,7 +78,7 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 
 	if a.SessionNoCompact(sessionKey) {
 		percent := int(float64(totalTokens) / float64(contextLimit) * 100)
-		a.logger().Infof("context at %d%% capacity for no_compact session", percent)
+		a.logger().Infof("session=%s context at %d%% capacity for no_compact session", sessionKey, percent)
 		return
 	}
 

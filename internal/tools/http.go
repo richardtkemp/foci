@@ -157,7 +157,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 	}
 
 	// Validate params and resolve secrets
-	resolved, err := validateAndResolveSecrets(p.URL, p.Method, p.Body, p.BodyFile, p.Headers, p.FormFields, p.Files, maxUploadFileSize, store, bwStore)
+	resolved, err := validateAndResolveSecrets(SessionKeyFromContext(ctx), p.URL, p.Method, p.Body, p.BodyFile, p.Headers, p.FormFields, p.Files, maxUploadFileSize, store, bwStore)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -228,7 +228,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -243,7 +243,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 }
 
 // processHTTPResponse reads and formats an HTTP response.
-func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (ToolResult, error) {
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (ToolResult, error) {
 	bodyLimit := getResponseBodyLimit(resp.Header.Get("Content-Type"), saveTo, maxResponseBytes)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
@@ -251,7 +251,7 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 	}
 
 	if parsed, err := url.Parse(reqURL); err == nil {
-		log.Debugf("http_request", "response %s %s status=%d body=%d", method, parsed.Hostname(), resp.StatusCode, len(body))
+		log.Debugf("http_request", "session=%s response %s %s status=%d body=%d", sessionKey, method, parsed.Hostname(), resp.StatusCode, len(body))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -311,7 +311,7 @@ func processHTTPResponse(resp *http.Response, reqURL, method, saveTo, saveFromJS
 		if err := os.WriteFile(savePath, saveData, 0644); err != nil {
 			return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, err)
 		}
-		log.Debugf("http_request", "saved %d bytes to %s", len(saveData), savePath)
+		log.Debugf("http_request", "session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)
 		return TextResult(fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath)), nil
 	}
 

@@ -46,7 +46,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 
 	metaPrefix := buildMetaPrefix(now, turnModel, manaStr, manaGood, sm)
 	reminderBlock := a.collectReminders(sessionKey)
-	stateBlock := a.collectStateDashboard()
+	stateBlock := a.collectStateDashboard(sessionKey)
 	msgBody := manaRestoreNote + imagePaths + userMessage
 	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && isUserTrigger(trigger) {
@@ -66,7 +66,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 			encoded := base64.StdEncoding.EncodeToString(data)
 			contentBlocks = append(contentBlocks, provider.DocumentBlock(mediaType, encoded))
 		} else {
-			data, mediaType = maybeDownscaleImage(data, mediaType, a.MaxImagePixels)
+			data, mediaType = maybeDownscaleImage(sessionKey, data, mediaType, a.MaxImagePixels)
 			encoded := base64.StdEncoding.EncodeToString(data)
 			contentBlocks = append(contentBlocks, provider.ImageBlock(mediaType, encoded))
 		}

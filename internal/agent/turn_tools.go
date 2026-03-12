@@ -99,7 +99,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			continue
 		}
 
-		a.logger().Debugf("tool_use: %s (%d bytes)", block.Name, len(block.Input))
+		a.logger().Debugf("session=%s tool_use: %s (%d bytes)", sessionKey, block.Name, len(block.Input))
 		notifyToolCallCtx(ctx, block.Name, block.Input)
 		td.ToolName = block.Name
 		result, err := tool.Execute(toolCtx, block.Input)
@@ -108,7 +108,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			return nil, ctx.Err()
 		}
 		if err != nil {
-			a.logger().Debugf("tool %s error: %v", block.Name, err)
+			a.logger().Debugf("session=%s tool %s error: %v", sessionKey, block.Name, err)
 			errMsg := fmt.Sprintf("Error: %s", err)
 			if a.Redact != nil {
 				errMsg = a.Redact(errMsg)

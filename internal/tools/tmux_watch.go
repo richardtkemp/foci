@@ -20,7 +20,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		thresholdSeconds = 30
 	}
 
-	log.Debugf("tmux", "watch: name=%s window=%d threshold=%ds", name, window, thresholdSeconds)
+	log.Debugf("tmux", "session=%s watch: name=%s window=%d threshold=%ds", SessionKeyFromContext(ctx), name, window, thresholdSeconds)
 
 	inst.mu.Lock()
 	inst.lastAccess[name] = time.Now()

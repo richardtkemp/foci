@@ -80,7 +80,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 		resultLen = int(tr.ResultSize) // use the full size, not the truncated head
 	}
 
-	a.logger().Debugf("tool result guard: %s produced %d chars (limit %d), saved to %s", toolName, resultLen, a.MaxResultChars, fpath)
+	a.logger().Debugf("session=%s tool result guard: %s produced %d chars (limit %d), saved to %s", sessionKey, toolName, resultLen, a.MaxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
 	if a.AutoSummarise && client != nil && len(a.ModelAliases) > 0 && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
@@ -107,12 +107,12 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	// Resolve through config system (handles aliases and developer/model_id)
 	resolved, err := config.ResolveModel(summaryModel, summaryEndpoint, a.ModelAliases)
 	if err != nil {
-		a.logger().Warnf("failed to resolve summary model %q: %v, using provider fallback", summaryModel, err)
+		a.logger().Warnf("session=%s failed to resolve summary model %q: %v, using provider fallback", sessionKey, summaryModel, err)
 		// Try provider-aware fallback
 		summaryModel = a.providerAwareDefaultAlias(turnModel)
 		resolved, err = config.ResolveModel(summaryModel, "", a.ModelAliases)
 		if err != nil {
-			a.logger().Warnf("provider fallback also failed: %v", err)
+			a.logger().Warnf("session=%s provider fallback also failed: %v", sessionKey, err)
 			return ""
 		}
 	}
@@ -169,8 +169,8 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-	a.logger().Infof("auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
-		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
+	a.logger().Infof("session=%s auto-summary model=%s input=%d output=%d cost=$%.4f duration=%s",
+		sessionKey, model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
 	summary := provider.TextOf(resp.Content)
 	if summary == "" {

@@ -469,12 +469,12 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 					body := strings.ToLower(apiErr.Body)
 					stripped := false
 					if req.Thinking != nil && strings.Contains(body, "thinking") {
-						a.logger().Warnf("model %s rejected thinking param, retrying without it", turnModel)
+						a.logger().Warnf("session=%s model %s rejected thinking param, retrying without it", sessionKey, turnModel)
 						req.Thinking = nil
 						stripped = true
 					}
 					if req.Output != nil && (strings.Contains(body, "effort") || strings.Contains(body, "output")) {
-						a.logger().Warnf("model %s rejected effort param, retrying without it", turnModel)
+						a.logger().Warnf("session=%s model %s rejected effort param, retrying without it", sessionKey, turnModel)
 						req.Output = nil
 						stripped = true
 					}
