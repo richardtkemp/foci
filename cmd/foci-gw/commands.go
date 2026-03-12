@@ -157,22 +157,24 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	}))
 	cmds.Register(command.NewHelpCommand(cmds))
 
-	// Dynamic mana command (configurable name: /mana, /juice, /credits, etc.)
-	manaName := p.cfg.ManaWarnings.Name
-	if manaName == "" {
-		manaName = "mana"
-	}
-	manaFn := func(ctx context.Context) (string, error) { return manaCheck(p, manaName, ctx) }
-	cmds.Register(command.NewManaCommand(manaName, manaFn))
-	cmds.Register(&command.Command{
-		Name: "usage", Hidden: true,
-		Execute: func(ctx context.Context, args string) (string, error) { return manaFn(ctx) },
-	})
-	if manaName != "m" {
+	// Dynamic mana command — only register if the provider supports usage tracking.
+	if p.ag.UsageClient != nil {
+		manaName := p.cfg.ManaWarnings.Name
+		if manaName == "" {
+			manaName = "mana"
+		}
+		manaFn := func(ctx context.Context) (string, error) { return manaCheck(p, manaName, ctx) }
+		cmds.Register(command.NewManaCommand(manaName, manaFn))
 		cmds.Register(&command.Command{
-			Name: "m", Hidden: true,
+			Name: "usage", Hidden: true,
 			Execute: func(ctx context.Context, args string) (string, error) { return manaFn(ctx) },
 		})
+		if manaName != "m" {
+			cmds.Register(&command.Command{
+				Name: "m", Hidden: true,
+				Execute: func(ctx context.Context, args string) (string, error) { return manaFn(ctx) },
+			})
+		}
 	}
 
 	cmds.Register(command.NewReloadCommand(func() (string, error) {
