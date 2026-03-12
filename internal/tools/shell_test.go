@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -599,4 +600,93 @@ func TestExecSleepNotBlockedInMiddle(t *testing.T) {
 	result, err := runExec(t, tool, "echo 'going to sleep'")
 	requireNoError(t, err)
 	requireContains(t, result.Text, "going to sleep")
+}
+
+func TestExecLeakedChildDoesNotHang(t *testing.T) {
+	// A background child that inherits pipe FDs should not block the exec
+	// tool. Before the fix, the pipe readers would wait for EOF indefinitely
+	// because the leaked child held the write-ends open, causing a 30s timeout.
+	t.Parallel()
+	tool := newTestExecTool()
+
+	start := time.Now()
+	// Spawn a long-lived background process that inherits stdout/stderr,
+	// then print output and exit. The background tail holds the pipe FDs
+	// open after bash exits. Use a subshell to avoid the sleep regex blocker.
+	result, err := runExec(t, tool, "(tail -f /dev/null &); echo leaked-child-test")
+	elapsed := time.Since(start)
+
+	requireNoError(t, err)
+	requireContains(t, result.Text, "leaked-child-test")
+
+	// Should complete in well under 10 seconds (the grace period is 2s).
+	// Before the fix this would hang for the full 30s default timeout.
+	if elapsed > 10*time.Second {
+		t.Errorf("took %v — leaked child blocked pipe readers (bug #497)", elapsed)
+	}
+}
+
+func TestExecLeakedChildWithPipeline(t *testing.T) {
+	// Piped commands where a background child leaks FDs should also complete
+	// promptly. Exercises the same reap logic with pipefail semantics.
+	t.Parallel()
+	tool := newTestExecTool()
+
+	start := time.Now()
+	result, err := runExec(t, tool, "(tail -f /dev/null &); echo hello | grep hello")
+	elapsed := time.Since(start)
+
+	requireNoError(t, err)
+	requireContains(t, result.Text, "hello")
+
+	if elapsed > 10*time.Second {
+		t.Errorf("took %v — leaked child blocked pipe readers (bug #497)", elapsed)
+	}
+}
+
+func TestExecLeakedChildGrepNoMatch(t *testing.T) {
+	// Reproduces the exact bug #497 scenario: grep finds no match and should
+	// exit 1 instantly, but a leaked background child keeps pipe FDs open.
+	t.Parallel()
+	tool := newTestExecTool()
+	dir := t.TempDir()
+	testFile := dir + "/test.json"
+	os.WriteFile(testFile, []byte(`{"rules": []}`), 0644)
+
+	start := time.Now()
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": fmt.Sprintf("(tail -f /dev/null &); grep 'nonexistent-pattern-xyz' %s", testFile),
+		"timeout": 15,
+	})
+	result, err := tool.Execute(context.Background(), params)
+	elapsed := time.Since(start)
+
+	requireNoError(t, err)
+	// grep should exit 1 — combined mode shows "Error: exit status 1"
+	requireContains(t, result.Text, "Error:")
+
+	if elapsed > 10*time.Second {
+		t.Errorf("took %v — grep no-match with leaked child blocked (bug #497)", elapsed)
+	}
+}
+
+func TestExecAutoBackgroundLeakedChild(t *testing.T) {
+	// The auto-background path had the same leaked-FD bug. A fast command
+	// that leaks a child should still complete before the threshold.
+	t.Parallel()
+	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg string, replyTo string) {}), "", nil, 0, "")
+
+	start := time.Now()
+	params, _ := json.Marshal(map[string]interface{}{
+		"command": "(tail -f /dev/null &); echo fast-bg-test",
+	})
+	result, err := tool.Execute(context.Background(), params)
+	elapsed := time.Since(start)
+
+	requireNoError(t, err)
+	requireContains(t, result.Text, "fast-bg-test")
+	// Should complete before the 5s auto-background threshold.
+	if elapsed > 5*time.Second {
+		t.Errorf("took %v — leaked child delayed auto-bg fast path (bug #497)", elapsed)
+	}
 }
