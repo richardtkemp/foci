@@ -68,7 +68,9 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 
 	// Create the tmux session (simulating it still exists from before restart)
 	tmuxSetup(t, "foci-test-restore")
-	exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", "foci-test-restore", "sleep", "60").Run()
+	if err := exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", "foci-test-restore", "sleep", "60").Run(); err != nil {
+		t.Fatalf("create tmux session: %v", err)
+	}
 
 	// Load state
 	if err := store.Load(); err != nil {
@@ -350,7 +352,9 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	tmuxSetup(t, name)
 
 	// Create the tmux session (simulating it still exists from before restart)
-	exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", name, "sleep", "60").Run()
+	if err := exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", name, "sleep", "60").Run(); err != nil {
+		t.Fatalf("create tmux session: %v", err)
+	}
 
 	// Pre-populate state with owned session and watch
 	if err := store.Set("tmux:test-agent", map[string]string{name: ""}); err != nil {
