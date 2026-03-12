@@ -424,7 +424,7 @@ type ResourcesConfig struct {
 
 // BrowserConfig holds configuration for the browser automation tool.
 type BrowserConfig struct {
-	Enabled        bool    `toml:"enabled"`          // enable browser tool (default false)
+	Enabled        bool    `toml:"enabled"`          // enable browser tool (default true)
 	Headless       bool    `toml:"headless"`          // run headless (default true)
 	TimeoutSec     int     `toml:"timeout_sec"`       // page operation timeout in seconds (default 30)
 	UserDataDir    string  `toml:"user_data_dir"`     // Chrome user data dir (empty = temp profile)

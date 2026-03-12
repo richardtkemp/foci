@@ -505,6 +505,7 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Tools.MaxImagePixels, 1920*1080) // 2,073,600 pixels
 
 	// Browser defaults
+	setBoolDefaultDefined(&cfg.Tools.Browser.Enabled, true, md.IsDefined("tools", "browser", "enabled"))
 	setBoolDefaultDefined(&cfg.Tools.Browser.Headless, true, md.IsDefined("tools", "browser", "headless"))
 	setIntDefault(&cfg.Tools.Browser.TimeoutSec, 30)
 	setBoolDefaultDefined(&cfg.Tools.Browser.Incognito, true, md.IsDefined("tools", "browser", "incognito"))
