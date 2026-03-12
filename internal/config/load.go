@@ -403,6 +403,11 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
+	setStringDefault(&cfg.Sessions.CompactionIdleThreshold, "45m")
+	setStringDefault(&cfg.Sessions.CompactionIdlePressureStart, "70%")
+	setFloatDefault(&cfg.Sessions.CompactionIdlePressureMax, 0.15)
+	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "15m")
+	// CompactionManaRefreshPreserve: nil = special "preserve ALL" mode
 	setStringDefault(&cfg.Sessions.ArchiveAfter, "24h")
 	setIntDefault(&cfg.HTTP.Port, 18791)
 	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")

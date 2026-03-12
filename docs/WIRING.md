@@ -240,10 +240,10 @@ The core of the system. Two entry points:
       - append assistant msg + tool_result msg
       - goto 7a
 8. sessions.AppendAll(sessionKey, newMessages)
-9. if compactor.ShouldCompact(messages, usage) → compactor.Compact(sessionKey)
+9. maybeCompact: idle-aware pressure + mana-refresh check → possibly compactor.Compact(sessionKey)
 ```
 
-Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save, replacing the session with a 3-message summary if the context exceeds the threshold (default 80% of 200k).
+Messages are only saved to disk after the full turn completes (all tool loops resolved). Compaction runs after save; the threshold may be lowered by idle pressure or mana-refresh mode (see below).
 
 **Error handling by status code:**
 - **429 (rate limit):** Could be burst rate limit or daily quota exhaustion. `classifyAPIError` fires `RateLimitFunc` callback (Telegram notification with estimated retry time from `Retry-After` header) and returns `"rate limited"`. The rate limit gate closes using the `Retry-After` header duration, or 60s if the header is absent (e.g. streaming SSE errors). No transport-level retry.
@@ -968,6 +968,11 @@ Checks token usage against threshold (default 80% of context window). When trigg
 **Session file rotation:** `Replace()` in `session/store.go` renames the existing file before writing. Archive files use the pattern `{name}.{timestamp}.jsonl` (timestamp in format `YYYY-MM-DDTHH-MM-SSZ`) or `{name}.{timestamp}.{N}.jsonl` if multiple archives have the same timestamp. The active session is always the unnumbered file. `Load`, `LoadFull`, `Append` etc. are unaffected — `keyToPath()` always resolves to the unnumbered path. `ListChatSessions`, `RepairOrphans`, and `InjectRestartMarkers` skip archive files.
 
 **Session lifecycle events:** `Store.OnSessionEvent(func(SessionEvent))` fires on create (first `Append` to new file), branch create (`CreateBranchWithOptions`), compaction (`Replace`), and clear (`Clear`). Events carry the session key, type, status, parent key, file path, and timestamp. Used by `SessionIndex` to maintain a queryable SQLite index of all sessions.
+
+**Idle-aware compaction:** `maybeCompact()` in `agent/compaction.go` calculates an adjusted threshold using `compaction.CalculateIdlePressure()`. Three modes:
+1. **Normal:** standard `ShouldCompact()` check against base threshold (default 0.8).
+2. **Idle pressure:** after `compaction_idle_threshold` (default 45m) of user inactivity, linearly ramps the threshold down by up to `compaction_idle_pressure_max` (default 0.15) over the next idle period. Only applies when context is above `compaction_idle_pressure_start` (default 70%). This gradually shrinks context during quiet periods.
+3. **Mana refresh:** when mana resets within `compaction_mana_refresh_threshold` (default 15m), triggers aggressive compaction at 50% of base threshold. Preserves all messages by default (`compaction_mana_refresh_preserve` = nil → preserve ALL), producing a high-fidelity re-summary. The cost is "free" since mana is about to reset.
 
 **Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
 
