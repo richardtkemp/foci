@@ -125,7 +125,13 @@ func (s *TodoStore) List(agentID, status, tag, priority, sort string) ([]TodoIte
 	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
-	if status != "" {
+	switch status {
+	case "":
+		// No filter — return all statuses.
+	case "active":
+		// Exclude terminal statuses (done, dropped).
+		query += ` AND status NOT IN ('done', 'dropped')`
+	default:
 		query += ` AND status = ?`
 		args = append(args, status)
 	}
@@ -146,9 +152,11 @@ func (s *TodoStore) List(agentID, status, tag, priority, sort string) ([]TodoIte
 	case "updated":
 		query += ` ORDER BY updated_at DESC, id DESC`
 	default: // "priority" or empty (default)
-		if status != "" {
+		if status != "" && status != "active" {
+			// Single-status filter: sort by priority only.
 			query += ` ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
 		} else {
+			// Multiple statuses visible: group by status, then priority.
 			query += ` ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
 		}
 	}

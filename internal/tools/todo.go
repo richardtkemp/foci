@@ -48,7 +48,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"status": {
 					"type": "string",
-					"description": "Filter by status (used with 'list', default: all). Values: 'open', 'in_progress', 'done', 'dropped'"
+					"description": "Filter by status (used with 'list'). Default: active items only (excludes done/dropped). Use 'all' to include done/dropped. Values: 'open', 'in_progress', 'done', 'dropped', 'all'"
 				},
 				"state": {
 					"type": "string",
@@ -163,10 +163,14 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 		return ToolResult{}, fmt.Errorf("list todos: %w", err)
 	}
 	if len(items) == 0 {
-		if status != "" {
+		switch status {
+		case "":
+			return TextResult("No todos."), nil
+		case "active":
+			return TextResult("No active todos."), nil
+		default:
 			return TextResult(fmt.Sprintf("No %s todos.", status)), nil
 		}
-		return TextResult("No todos."), nil
 	}
 	return TextResult(formatTodoLines(items)), nil
 }
@@ -197,10 +201,15 @@ func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, err
 }
 
 // normalizeStatusFilter maps status filter aliases to canonical values for list.
-// Returns empty string for "all" or unrecognized (show everything).
+// Returns "active" for empty/unrecognized (excludes done/dropped).
+// Returns empty string for "all" (show everything).
 // "closed" is deliberately not mapped — it's ambiguous (could mean done or dropped).
 func normalizeStatusFilter(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "all":
+		return ""
+	case "active":
+		return "active"
 	case "open", "reopen", "reopened":
 		return "open"
 	case "in_progress", "in-progress", "wip", "started", "working":
@@ -209,6 +218,8 @@ func normalizeStatusFilter(s string) string {
 		return "done"
 	case "dropped", "drop", "cancelled", "canceled":
 		return "dropped"
+	case "":
+		return "active"
 	default:
 		return s
 	}
