@@ -257,12 +257,15 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 		Model: model,
 	}
 
-	// Usage
+	// Usage — Gemini's PromptTokenCount is the TOTAL input including cached tokens.
+	// CachedContentTokenCount is a subset, not additive. Subtract to match
+	// Anthropic's non-overlapping semantics (InputTokens + CacheRead = total).
 	if resp.UsageMetadata != nil {
+		cached := int(resp.UsageMetadata.CachedContentTokenCount)
 		result.Usage = provider.Usage{
-			InputTokens:         int(resp.UsageMetadata.PromptTokenCount),
+			InputTokens:         int(resp.UsageMetadata.PromptTokenCount) - cached,
 			OutputTokens:        int(resp.UsageMetadata.CandidatesTokenCount),
-			CacheReadInputTokens: int(resp.UsageMetadata.CachedContentTokenCount),
+			CacheReadInputTokens: cached,
 		}
 	}
 

@@ -2,15 +2,19 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"foci/internal/compaction"
 	"foci/internal/memory"
 	"foci/internal/provider"
+	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/warnings"
+	"foci/internal/workspace"
 )
 
 func TestAgentCompactionIntegration(t *testing.T) {
@@ -320,6 +324,120 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		msgs, _ = env.store.Load(sessionKey)
 		if len(msgs) > 5 {
 			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
+		}
+	})
+
+	t.Run("async_pending_overridden_at_critical", func(t *testing.T) {
+		// Verifies that compaction fires despite async pending when context
+		// exceeds the 95% critical threshold, preventing context exhaustion.
+		var turnCount atomic.Int32
+		// Use a custom client that returns 195000 tokens on turn 5 (>95% of 200k)
+		client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+			lastMsg := req.Messages[len(req.Messages)-1]
+			if strings.Contains(provider.TextOf(lastMsg.Content), "provide continuity") {
+				return &provider.MessageResponse{
+					ID: "msg_summary", Type: "message", Role: "assistant",
+					Content:    provider.TextContent("compacted summary"),
+					StopReason: "end_turn",
+					Usage:      provider.Usage{InputTokens: 500, OutputTokens: 100},
+				}
+			}
+			n := turnCount.Add(1)
+			inputTokens := 1000
+			if n == 5 {
+				inputTokens = 195_000 // >95% of 200k = critical
+			}
+			return &provider.MessageResponse{
+				ID: fmt.Sprintf("msg_%d", n), Type: "message", Role: "assistant",
+				Content:    provider.TextContent(fmt.Sprintf("Response %d", n)),
+				StopReason: "end_turn",
+				Usage:      provider.Usage{InputTokens: inputTokens, OutputTokens: 50},
+			}
+		})
+
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
+
+		notifier := tools.NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+		ag := &Agent{
+			Client: client, Sessions: store, Tools: tools.NewRegistry(),
+			Bootstrap: bootstrap, Compactor: compactor,
+			AsyncNotifier: notifier, Model: "claude-haiku-4-5",
+		}
+
+		var notified []string
+		ag.CompactionNotifyFunc.Add(func(session string, msg string) {
+			notified = append(notified, msg)
+		})
+
+		sessionKey := "test/iasynccritical/1000000000"
+
+		// 4 normal turns
+		for i := 1; i <= 4; i++ {
+			resp, err := ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i))
+			if err != nil {
+				t.Fatalf("Turn %d: %v", i, err)
+			}
+			if resp != fmt.Sprintf("Response %d", i) {
+				t.Errorf("Turn %d: response = %q", i, resp)
+			}
+		}
+
+		// Mark async pending — normally blocks compaction
+		notifier.MarkPending(sessionKey)
+
+		// Turn 5: 195k tokens exceeds 95% critical threshold
+		resp, err := ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
+		if err != nil {
+			t.Fatalf("Turn 5: %v", err)
+		}
+		if resp != "Response 5" {
+			t.Errorf("got %q, want %q", resp, "Response 5")
+		}
+
+		// Compaction SHOULD have fired despite async pending (critical override)
+		if len(notified) == 0 {
+			t.Error("expected compaction to fire at critical threshold despite async pending")
+		}
+
+		msgs, _ := store.Load(sessionKey)
+		if len(msgs) > 5 {
+			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
+		}
+	})
+
+	t.Run("uses_session_model_for_context_limit", func(t *testing.T) {
+		// Verifies that compaction uses the session's effective model (not agent default)
+		// for context limit calculation. A session overridden to Gemini (1M context)
+		// should NOT trigger compaction at 170k tokens (which exceeds 80% of 200k
+		// but is well below 80% of 1M).
+		var turnCount atomic.Int32
+		env := newCompactionTestEnv(t, &turnCount, 5)
+
+		var notified []string
+		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
+			notified = append(notified, msg)
+		})
+
+		sessionKey := "test/isessionmodel/1000000000"
+
+		// Override session model to Gemini (1M context window)
+		env.ag.SetSessionModel(sessionKey, "google/gemini-2.5-flash", "", "", nil)
+
+		// 4 normal turns, then turn 5 returns 170k tokens.
+		// With Claude (200k), 170k > 160k threshold → would compact.
+		// With Gemini (1M), 170k < 800k threshold → should NOT compact.
+		env.runTurns(t, sessionKey, 1, 5)
+
+		if len(notified) != 0 {
+			t.Errorf("expected 0 compaction notifications with Gemini session model, got %d", len(notified))
+		}
+
+		// Session should still have all 10 messages (5 turns × 2)
+		msgs, _ := env.store.Load(sessionKey)
+		if len(msgs) != 10 {
+			t.Errorf("expected 10 messages (uncompacted with Gemini limit), got %d", len(msgs))
 		}
 	})
 }

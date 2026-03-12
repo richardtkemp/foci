@@ -317,8 +317,15 @@ func estimateTokens(messages []provider.Message) int {
 }
 
 // ShouldCompact returns true if the session likely exceeds the threshold.
+// Uses the compactor's model for context limit. Use ShouldCompactWithLimit
+// to supply an explicit limit (e.g. when session model differs from agent default).
 func (c *Compactor) ShouldCompact(sessionKey string, messages []provider.Message, lastUsage *provider.Usage) bool {
-	limit := contextLimit(c.model)
+	return c.ShouldCompactWithLimit(sessionKey, messages, lastUsage, contextLimit(c.model))
+}
+
+// ShouldCompactWithLimit returns true if the session likely exceeds the threshold,
+// using the provided context limit instead of the compactor's model default.
+func (c *Compactor) ShouldCompactWithLimit(sessionKey string, messages []provider.Message, lastUsage *provider.Usage, limit int) bool {
 	threshold := int(float64(limit) * c.threshold)
 	estimated := estimateTokens(messages)
 
