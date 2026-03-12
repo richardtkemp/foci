@@ -33,7 +33,35 @@ func validateNonNegative(value int, fieldName string) error {
 	return nil
 }
 
+// reservedAgentIDs are directory names in the foci home directory that must not
+// be used as agent IDs, since the workspace defaults to ~/agentid/.
+var reservedAgentIDs = map[string]bool{
+	"bin":        true,
+	"character":  true,
+	"config":     true,
+	"data":       true,
+	"go":         true,
+	"logs":       true,
+	"memory":     true,
+	"oldscripts": true,
+	"scripts":    true,
+	"shared":     true,
+}
+
 func validate(cfg *Config) error {
+	// Validate agent IDs don't collide with reserved directory names
+	for _, a := range cfg.Agents {
+		if a.ID == "" {
+			continue
+		}
+		if strings.HasPrefix(a.ID, ".") {
+			return fmt.Errorf("agent id %q: must not start with a dot (conflicts with hidden directories)", a.ID)
+		}
+		if reservedAgentIDs[a.ID] {
+			return fmt.Errorf("agent id %q: conflicts with reserved directory ~/%s/ — choose a different id", a.ID, a.ID)
+		}
+	}
+
 	// Validate agent model format (must use slash syntax, not colon)
 	for _, a := range cfg.Agents {
 		if a.Model == "" {
