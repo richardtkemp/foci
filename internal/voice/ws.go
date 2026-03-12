@@ -226,7 +226,7 @@ func (c *conn) handleBinaryMessage(data []byte) {
 	}
 }
 
-// handleSelectAgent picks an agent and creates a voice session.
+// handleSelectAgent picks an agent and creates or reuses a voice session.
 func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 	// Validate agent exists.
 	agents := c.cfg.ListAgents()
@@ -247,8 +247,7 @@ func (c *conn) handleSelectAgent(connID string, sel SelectAgentMsg) {
 		c.sessionKey = sel.SessionKey
 		log.Infof("voice-ws", "agent selected: %s (reused session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
 	} else {
-		// Voice sessions use chat IDs (treat voice chat ID as regular chat)
-	// Use a generated ID based on connection for voice-only sessions
+		// Generate a timestamp-based chat ID for new voice sessions.
 	voiceChatID := int64(time.Now().Unix())
 	c.sessionKey = session.NewChatSessionKey(sel.AgentID, voiceChatID)
 		log.Infof("voice-ws", "agent selected: %s (new session=%s, conn=%s)", c.agentID, c.sessionKey, connID)
