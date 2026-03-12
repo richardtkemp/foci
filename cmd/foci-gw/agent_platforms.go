@@ -32,7 +32,7 @@ func wireAgentPlatformCallbacks(
 	// Cache bust — notify all connections
 	if ag.CacheBustDetect {
 		ag.CacheBustAlert.Add(func(sess string, prev, cur int) {
-			msg := fmt.Sprintf("⚠️ Cache bust: cache_read dropped %d → %d on %s", prev, cur, sess)
+			msg := fmt.Sprintf("⚠️ %s: cache bust, cache_read dropped %d → %d", sess, prev, cur)
 			log.Warnf("agent", "%s", msg)
 			plat.NotifyAgent(acfg.ID, msg)
 		})
