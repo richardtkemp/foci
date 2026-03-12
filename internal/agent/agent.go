@@ -293,6 +293,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		return "", fmt.Errorf("load session: %w", err)
 	}
 
+	if loadStats := provider.ComputeSessionStats(messages); loadStats.Messages > 0 {
+		a.logger().Debugf("session_loaded session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
+			sessionKey, loadStats.Messages, loadStats.Blocks, loadStats.ApproxBytes, loadStats.ApproxTokens())
+	}
+
 	// Repair interrupted tool calls (e.g. SIGTERM during tool execution).
 	// If the last message is assistant with tool_use but no tool_result follows,
 	// inject synthetic error results so the API accepts the message history.
@@ -531,6 +536,10 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			}
 			newMessages = nil // saved — defer won't double-save
 
+			endStats := provider.ComputeSessionStats(messages)
+			a.logger().Debugf("turn_end session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
+				sessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
+
 			// Update session metadata for next turn
 			sm.lastMessageTime = now
 			sm.prevCost = cost
@@ -656,6 +665,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		return "", fmt.Errorf("save session: %w", err)
 	}
 	newMessages = nil // saved — defer won't double-save
+
+	endStats := provider.ComputeSessionStats(messages)
+	a.logger().Debugf("turn_end session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
+		sessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
+
 	return "Max tool call depth reached.", nil
 }
 

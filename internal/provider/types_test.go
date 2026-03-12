@@ -480,3 +480,73 @@ func TestContentBlockUnmarshalJSON_ToolResultInvalidJSON(t *testing.T) {
 		t.Errorf("decoded = %+v, want Content 'raw-json-fallback'", cb)
 	}
 }
+
+// TestComputeSessionStats_Empty verifies that an empty message slice returns zero stats.
+func TestComputeSessionStats_Empty(t *testing.T) {
+	s := ComputeSessionStats(nil)
+	if s.Messages != 0 || s.Blocks != 0 || s.ApproxBytes != 0 {
+		t.Errorf("empty stats = %+v, want all zeros", s)
+	}
+	if s.ApproxTokens() != 0 {
+		t.Errorf("empty ApproxTokens = %d, want 0", s.ApproxTokens())
+	}
+}
+
+// TestComputeSessionStats_MixedBlocks verifies byte counting across text, thinking,
+// tool input, tool result content, and base64 source data.
+func TestComputeSessionStats_MixedBlocks(t *testing.T) {
+	msgs := []Message{
+		{
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "text", Text: "hello"}, // 5 bytes
+			},
+		},
+		{
+			Role: "assistant",
+			Content: []ContentBlock{
+				{Type: "thinking", Thinking: "hmm"},                     // 3 bytes
+				{Type: "text", Text: "hi"},                              // 2 bytes
+				{Type: "tool_use", Input: json.RawMessage(`{"a":"b"}`)}, // 7 bytes
+			},
+		},
+		{
+			Role: "user",
+			Content: []ContentBlock{
+				{Type: "tool_result", Content: "result"}, // 6 bytes
+				{Type: "image", Source: &ContentSource{Data: "AAAA"}}, // 4 bytes
+			},
+		},
+	}
+	s := ComputeSessionStats(msgs)
+	if s.Messages != 3 {
+		t.Errorf("Messages = %d, want 3", s.Messages)
+	}
+	if s.Blocks != 6 {
+		t.Errorf("Blocks = %d, want 6", s.Blocks)
+	}
+	// 5 + 3 + 2 + 9 (json raw) + 6 + 4 = 29
+	if s.ApproxBytes != 29 {
+		t.Errorf("ApproxBytes = %d, want 29", s.ApproxBytes)
+	}
+	// 29 / 4 = 7
+	if s.ApproxTokens() != 7 {
+		t.Errorf("ApproxTokens = %d, want 7", s.ApproxTokens())
+	}
+}
+
+// TestComputeSessionStats_ApproxTokensRounding verifies integer division truncation
+// in the token estimate.
+func TestComputeSessionStats_ApproxTokensRounding(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: []ContentBlock{{Type: "text", Text: "ab"}}}, // 2 bytes
+	}
+	s := ComputeSessionStats(msgs)
+	if s.ApproxBytes != 2 {
+		t.Errorf("ApproxBytes = %d, want 2", s.ApproxBytes)
+	}
+	// 2 / 4 = 0 (integer division)
+	if s.ApproxTokens() != 0 {
+		t.Errorf("ApproxTokens = %d, want 0", s.ApproxTokens())
+	}
+}
