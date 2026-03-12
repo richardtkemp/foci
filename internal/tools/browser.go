@@ -7,42 +7,41 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/log"
+
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 )
 
-type BrowserConfig struct {
-	Enabled        bool   `toml:"enabled"`
-	Headless       bool   `toml:"headless" default:"true"`
-	TimeoutSec     int    `toml:"timeout_sec" default:"30"`
-	UserDataDir    string `toml:"user_data_dir"`
-	ExecutablePath string `toml:"executable_path"`
-	Incognito      bool   `toml:"incognito" default:"true"`
-}
-
+// BrowserManager manages a browser instance, page, and snapshot state.
 type BrowserManager struct {
-	mu      sync.Mutex
-	browser *rod.Browser
-	page    *rod.Page
-	config  *BrowserConfig
-	logger  *log.ComponentLogger
+	mu         sync.Mutex
+	browser    *rod.Browser
+	page       *rod.Page
+	config     *config.BrowserConfig
+	logger     *log.ComponentLogger
+	snapshot   *Snapshot
+	generation int
 }
 
-func NewBrowserManager(cfg *BrowserConfig) *BrowserManager {
+// NewBrowserManager creates a new browser manager with the given config.
+func NewBrowserManager(cfg *config.BrowserConfig) *BrowserManager {
 	return &BrowserManager{
 		config: cfg,
 		logger: log.NewComponentLogger("browser"),
 	}
 }
 
+// IsConnected reports whether the browser is running.
 func (m *BrowserManager) IsConnected() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.browser != nil
 }
 
+// Start launches the browser process.
 func (m *BrowserManager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -61,7 +60,7 @@ func (m *BrowserManager) Start() error {
 
 	url, err := l.Launch()
 	if err != nil {
-		return fmt.Errorf("failed to launch browser: %w", err)
+		return fmt.Errorf("launch browser: %w", err)
 	}
 
 	m.browser = rod.New().ControlURL(url).MustConnect()
@@ -69,6 +68,7 @@ func (m *BrowserManager) Start() error {
 	return nil
 }
 
+// Stop shuts down the browser.
 func (m *BrowserManager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -82,6 +82,7 @@ func (m *BrowserManager) Stop() error {
 	}
 	m.browser = nil
 	m.page = nil
+	m.snapshot = nil
 	m.logger.Infof("Browser stopped")
 	return nil
 }
@@ -104,7 +105,7 @@ func (m *BrowserManager) ensurePage() error {
 	if m.page == nil {
 		page, err := m.browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 		if err != nil {
-			return fmt.Errorf("failed to create page: %w", err)
+			return fmt.Errorf("create page: %w", err)
 		}
 		m.page = page
 	}
@@ -120,6 +121,14 @@ func (m *BrowserManager) getPage() (*rod.Page, error) {
 	return m.page, nil
 }
 
+// Timeout returns the configured browser timeout.
+func (m *BrowserManager) Timeout() time.Duration {
+	if m.config.TimeoutSec <= 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(m.config.TimeoutSec) * time.Second
+}
+
 func (m *BrowserManager) withTimeout(page *rod.Page, timeoutMs int) *rod.Page {
 	d := m.Timeout()
 	if timeoutMs > 0 {
@@ -128,46 +137,89 @@ func (m *BrowserManager) withTimeout(page *rod.Page, timeoutMs int) *rod.Page {
 	return page.Timeout(d)
 }
 
-func (m *BrowserManager) Timeout() time.Duration {
-	if m.config.TimeoutSec <= 0 {
-		return 30 * time.Second
+// CaptureSnapshot takes a fresh accessibility tree snapshot of the current page.
+func (m *BrowserManager) CaptureSnapshot() (*Snapshot, error) {
+	page, err := m.getPage()
+	if err != nil {
+		return nil, err
 	}
-	return time.Duration(m.config.TimeoutSec) * time.Second
+
+	m.mu.Lock()
+	m.generation++
+	gen := m.generation
+	m.mu.Unlock()
+
+	snap, err := BuildSnapshot(page, gen)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	m.snapshot = snap
+	m.mu.Unlock()
+
+	return snap, nil
 }
 
-func NewBrowserTool(mgr *BrowserManager) *Tool {
-	description := `Control a browser for web automation using native selectors.
+// LatestSnapshot returns the most recent snapshot, or nil.
+func (m *BrowserManager) LatestSnapshot() *Snapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.snapshot
+}
 
-Element selection (use ONE of):
-- selector: CSS selector (e.g., "button.submit", "#email", "input[name='user']")
-- xpath: XPath expression (e.g., "//button[@type='submit']")
-- regex: Match element text content (e.g., "Sign.*In")
+// WaitDOMStable waits for the DOM to stabilize by comparing page content
+// hashes at intervals. Uses config dom_stable_sec and dom_stable_diff.
+func (m *BrowserManager) WaitDOMStable(page *rod.Page) {
+	interval := 1.0
+	if m.config.DOMStableSec > 0 {
+		interval = m.config.DOMStableSec
+	}
+	diff := 0.2
+	if m.config.DOMStableDiff > 0 {
+		diff = m.config.DOMStableDiff
+	}
+	_ = page.WaitDOMStable(time.Duration(interval*float64(time.Second)), diff)
+}
+
+// ResetSnapshot clears the stored snapshot (e.g., on navigation).
+func (m *BrowserManager) ResetSnapshot() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.snapshot = nil
+}
+
+// NewBrowserTool creates the browser tool definition using snapshot/ref paradigm.
+func NewBrowserTool(mgr *BrowserManager) *Tool {
+	description := `Control a browser using accessibility tree snapshots and element refs.
+
+The browser renders pages and captures an accessibility tree snapshot as YAML.
+Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
+
+Workflow:
+1. navigate to a URL → auto-returns snapshot
+2. Read the snapshot to find element refs
+3. Use click/fill/select with the ref to interact
+4. Each action auto-returns a fresh snapshot
 
 Actions:
-- start: Start browser
-- stop: Stop browser
-- navigate: Go to URL (requires targetUrl)
-- click: Click element (requires selector/xpath/regex)
-- type: Type text into element (requires text + selector/xpath/regex)
-- press: Press a key (requires key: Enter, Tab, Escape, Backspace, Delete, Home, End, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, PageUp, PageDown)
-- hover: Hover over element
-- select: Select option(s) in dropdown (requires values array + selector)
-- scroll: Scroll element into view
-- evaluate: Run JavaScript (requires script)
-- screenshot: Capture screenshot (optional fullPage=true, returnPath=true for file path only)
+- snapshot: Capture current page accessibility tree
+- navigate: Go to URL (params: url). Auto-snapshot.
+- click: Click element (params: ref, element). Auto-snapshot.
+- fill: Fill input (params: ref, element, value, submit). Auto-snapshot.
+- select: Select option(s) (params: ref, element, values). Auto-snapshot.
+- press: Press keyboard key (params: key)
+- go_back: Browser back. Auto-snapshot.
+- go_forward: Browser forward. Auto-snapshot.
+- reload: Reload page. Auto-snapshot.
+- screenshot: Capture screenshot (params: fullPage, returnPath)
 - pdf: Save page as PDF
-- wait: Wait for load/idle (requires waitType: load or idle)
-- get_text: Get element text content
-- get_attribute: Get element attribute value (requires attribute)
-- exists: Check if element exists
-- list_elements: List elements on page (optional maxDepth, default 3)
+- evaluate: Run JavaScript (params: script)
+- wait: Wait for page state (params: waitType: load|idle)
+- close: Close browser
 
-Common patterns:
-1. Navigate to page → list_elements to discover structure
-2. Interact using selectors → verify with get_text/exists
-3. Screenshot for debugging
-
-Timeout: Use timeoutMs parameter (default 30s). Implicit waits are enabled by default.`
+The "element" param is a human description (e.g., "Login button") — for logging only.
+The "ref" param is the [ref=...] value from the snapshot — this is the actual locator.`
 
 	return &Tool{
 		Name:        "browser",
@@ -178,22 +230,19 @@ Timeout: Use timeoutMs parameter (default 30s). Implicit waits are enabled by de
 				"action": {
 					"type": "string",
 					"description": "Action to perform",
-					"enum": ["start", "stop", "navigate", "click", "type", "press", "hover", "select", "scroll", "evaluate", "screenshot", "pdf", "wait", "get_text", "get_attribute", "exists", "list_elements"]
+					"enum": ["snapshot", "navigate", "click", "fill", "select", "press", "go_back", "go_forward", "reload", "screenshot", "pdf", "evaluate", "wait", "close"]
 				},
-				"selector": {"type": "string", "description": "CSS selector"},
-				"xpath": {"type": "string", "description": "XPath expression"},
-				"regex": {"type": "string", "description": "Regex to match element text"},
-				"targetUrl": {"type": "string", "description": "URL to navigate to"},
-				"text": {"type": "string", "description": "Text to type"},
-				"key": {"type": "string", "description": "Key to press"},
+				"url": {"type": "string", "description": "URL to navigate to"},
+				"ref": {"type": "string", "description": "Element ref from snapshot (e.g., s1e5)"},
+				"element": {"type": "string", "description": "Human-readable element description (for logging)"},
+				"value": {"type": "string", "description": "Value to fill into input"},
 				"values": {"type": "array", "items": {"type": "string"}, "description": "Values for select"},
-				"attribute": {"type": "string", "description": "Attribute name to get"},
+				"submit": {"type": "boolean", "description": "Press Enter after filling"},
+				"key": {"type": "string", "description": "Key to press (Enter, Tab, Escape, etc.)"},
 				"script": {"type": "string", "description": "JavaScript to evaluate"},
-				"waitType": {"type": "string", "description": "Type of wait (load or idle)"},
-				"timeoutMs": {"type": "integer", "description": "Timeout in milliseconds"},
+				"waitType": {"type": "string", "description": "Wait type: load or idle"},
 				"fullPage": {"type": "boolean", "description": "Capture full page screenshot"},
-				"returnPath": {"type": "boolean", "description": "Return file path instead of base64"},
-				"maxDepth": {"type": "integer", "description": "Max depth for list_elements (default 3)"}
+				"returnPath": {"type": "boolean", "description": "Return file path instead of base64"}
 			},
 			"required": ["action"]
 		}`),
@@ -204,21 +253,18 @@ Timeout: Use timeoutMs parameter (default 30s). Implicit waits are enabled by de
 }
 
 type browserParams struct {
-	Action     string   `json:"action"`
-	Selector   string   `json:"selector"`
-	XPath      string   `json:"xpath"`
-	Regex      string   `json:"regex"`
-	TargetURL  string   `json:"targetUrl"`
-	Text       string   `json:"text"`
-	Key        string   `json:"key"`
-	Values     []string `json:"values"`
-	Attribute  string   `json:"attribute"`
-	Script     string   `json:"script"`
-	WaitType   string   `json:"waitType"`
-	TimeoutMs  int      `json:"timeoutMs"`
-	FullPage   bool     `json:"fullPage"`
-	ReturnPath bool     `json:"returnPath"`
-	MaxDepth   int      `json:"maxDepth"`
+	Action   string   `json:"action"`
+	URL      string   `json:"url"`
+	Ref      string   `json:"ref"`
+	Element  string   `json:"element"`
+	Value    string   `json:"value"`
+	Values   []string `json:"values"`
+	Submit   bool     `json:"submit"`
+	Key      string   `json:"key"`
+	Script   string   `json:"script"`
+	WaitType string   `json:"waitType"`
+	FullPage bool     `json:"fullPage"`
+	RetPath  bool     `json:"returnPath"`
 }
 
 func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *BrowserManager) (ToolResult, error) {
@@ -228,42 +274,35 @@ func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *Browse
 	}
 
 	switch p.Action {
-	case "start":
-		return browserStart(mgr, p)
-	case "stop":
-		return browserStop(mgr, p)
+	case "snapshot":
+		return browserSnapshot(mgr)
 	case "navigate":
 		return browserNavigate(mgr, p)
 	case "click":
 		return browserClick(mgr, p)
-	case "type":
-		return browserType(mgr, p)
-	case "press":
-		return browserPress(mgr, p)
-	case "hover":
-		return browserHover(mgr, p)
+	case "fill":
+		return browserFill(mgr, p)
 	case "select":
 		return browserSelect(mgr, p)
-	case "scroll":
-		return browserScroll(mgr, p)
-	case "evaluate":
-		return browserEvaluate(mgr, p)
+	case "press":
+		return browserPress(mgr, p)
+	case "go_back":
+		return browserGoBack(mgr)
+	case "go_forward":
+		return browserGoForward(mgr)
+	case "reload":
+		return browserReload(mgr)
 	case "screenshot":
 		return browserScreenshot(mgr, p)
 	case "pdf":
-		return browserPDF(mgr, p)
+		return browserPDF(mgr)
+	case "evaluate":
+		return browserEvaluate(mgr, p)
 	case "wait":
 		return browserWait(mgr, p)
-	case "get_text":
-		return browserGetText(mgr, p)
-	case "get_attribute":
-		return browserGetAttribute(mgr, p)
-	case "exists":
-		return browserExists(mgr, p)
-	case "list_elements":
-		return browserListElements(mgr, p)
+	case "close":
+		return browserClose(mgr)
 	default:
 		return ToolResult{Text: fmt.Sprintf("Unknown action: %q", p.Action)}, nil
 	}
 }
-

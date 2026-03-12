@@ -48,6 +48,9 @@ var boolKeys = map[string]bool{
 	"nudge_auto_extract":     true,
 	"nudge_pre_answer_gate":  true,
 	"stream_output":         true,
+	"browser_enabled":       true,
+	"headless":              true,
+	"incognito":             true,
 }
 
 // normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
@@ -500,6 +503,13 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Tools.SummaryContextChars, 6000)
 	setIntDefault(&cfg.Tools.MaxSummaryInputChars, 100000)
 	setIntDefault(&cfg.Tools.MaxImagePixels, 1920*1080) // 2,073,600 pixels
+
+	// Browser defaults
+	setBoolDefaultDefined(&cfg.Tools.Browser.Headless, true, md.IsDefined("tools", "browser", "headless"))
+	setIntDefault(&cfg.Tools.Browser.TimeoutSec, 30)
+	setBoolDefaultDefined(&cfg.Tools.Browser.Incognito, true, md.IsDefined("tools", "browser", "incognito"))
+	setFloatDefault(&cfg.Tools.Browser.DOMStableSec, 1.0)
+	setFloatDefault(&cfg.Tools.Browser.DOMStableDiff, 0.2)
 
 	// Telegram defaults
 	setIntDefault(&cfg.Telegram.MessageQueueSize, 64)

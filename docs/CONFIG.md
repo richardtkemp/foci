@@ -469,6 +469,31 @@ The `summary` tool uses `claude-haiku-4-5` hardcoded (always cheap/fast) and has
 
 Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
 
+### `[tools.browser]`
+
+Browser automation tool configuration. Disabled by default. When enabled, agents get a `browser` tool that uses accessibility tree snapshots with element refs for interaction.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable browser tool for all agents. |
+| `headless` | bool | `true` | Run browser in headless mode. Set `false` for debugging. |
+| `timeout_sec` | int | `30` | Default timeout for page operations in seconds. |
+| `user_data_dir` | string | `""` | Chrome user data directory. Empty uses a temp profile. Ignored when `incognito = true`. |
+| `executable_path` | string | `""` | Path to Chrome/Chromium binary. Empty uses auto-detection via go-rod launcher. |
+| `incognito` | bool | `true` | Use incognito mode (no persistent cookies/storage). |
+| `dom_stable_sec` | float | `1.0` | DOM stability check interval in seconds before capturing auto-snapshots. |
+| `dom_stable_diff` | float | `0.2` | DOM change threshold (0.0–1.0) for stability detection. Lower = stricter. |
+
+Per-agent override: `browser_enabled` in `[[agents]]` overrides `tools.browser.enabled`.
+
+Example:
+```toml
+[tools.browser]
+enabled = true
+headless = true
+timeout_sec = 30
+```
+
 ### `[skills]`
 
 Skill directories to scan on startup. Per-agent override: `skills_dirs` in `[[agents]]` — see [Global-or-Agent: Skills & Message Transforms](#skills--message-transforms).

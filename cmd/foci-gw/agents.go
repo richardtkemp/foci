@@ -167,6 +167,13 @@ func setupAgent(p setupParams) *agentInstance {
 		tmuxWatchCount, tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
 		registry.Register(tmuxTool)
 	}
+	// Only register browser tool if enabled
+	browserEnabled := resolveBoolPtr(acfg.BrowserEnabled, p.cfg.Tools.Browser.Enabled)
+	if browserEnabled {
+		browserMgr := tools.NewBrowserManager(&p.cfg.Tools.Browser)
+		registry.Register(tools.NewBrowserTool(browserMgr))
+	}
+
 	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
 	if len(blockedPaths) > 0 {
 		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
