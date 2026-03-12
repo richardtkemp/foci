@@ -338,6 +338,13 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
 
+	// Task List
+	b.WriteString("\n## Task List\n")
+	b.WriteString("The `task_list` tool tracks progress when working through a list of steps with the user (e.g., reviewing items, multi-step processes).\n")
+	b.WriteString("Create individual tasks, mark them `in_progress` as you work on each, and `completed` when done.\n")
+	b.WriteString("The state dashboard auto-injects progress into every message (e.g., \"tasks: 2/12 → current task\"), and tasks survive compaction.\n")
+	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
+
 	// Visibility: resolve effective show_tool_calls and show_thinking.
 	// Agent-level fields are populated by config migration from platform-specific
 	// settings, so they always reflect the effective value without needing
