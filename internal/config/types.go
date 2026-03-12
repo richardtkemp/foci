@@ -124,9 +124,11 @@ type AgentConfig struct {
 	Thinking              string `toml:"thinking"`                 // thinking mode: "adaptive" (default) or "off"
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
 
-	TTS     string  `toml:"tts"`      // per-agent TTS provider id (empty = default [[tts]] entry)
-	STT     string  `toml:"stt"`      // per-agent STT provider id (empty = default [[stt]] entry)
-	TTSRate float64 `toml:"tts_rate"` // per-agent TTS speech rate multiplier (0 = use entry rate only)
+	TTS              string            `toml:"tts"`               // per-agent TTS provider id (empty = default [[tts]] entry)
+	STT              string            `toml:"stt"`               // per-agent STT provider id (empty = default [[stt]] entry)
+	TTSRate          float64           `toml:"tts_rate"`          // per-agent TTS speech rate multiplier (0 = use entry rate only)
+	TTSReplacements  map[string]string `toml:"tts_replacements"`  // per-agent TTS word replacements (merged with [[tts]] entry replacements)
+	STTReplacements  map[string]string `toml:"stt_replacements"`  // per-agent STT word replacements (merged with [[stt]] entry replacements)
 
 	InjectAgentWarnings bool  `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 	StartupNotify       *bool `toml:"startup_notify"`        // send startup notification (nil = use global defaults.enable_startup_notify)
@@ -381,8 +383,9 @@ type TTSConfig struct {
 	Voice          string  `toml:"voice"`           // voice name (format-specific)
 	Rate           float64 `toml:"rate"`            // speed multiplier: 1.0 = normal, 0 = omit
 	Secret         string  `toml:"secret"`          // secret name in secrets.toml (optional, fallback: hostname)
-	Command        string  `toml:"command"`         // binary for edge-tts (default: "edge-tts")
-	ResponseFormat string  `toml:"response_format"` // audio format: "mp3", "wav", etc. (default: "wav")
+	Command        string            `toml:"command"`         // binary for edge-tts (default: "edge-tts")
+	ResponseFormat string            `toml:"response_format"` // audio format: "mp3", "wav", etc. (default: "wav")
+	Replacements   map[string]string `toml:"replacements"`    // word replacements applied before synthesis (e.g. "foci" = "foki")
 }
 
 // STTConfig describes a speech-to-text provider entry.
@@ -392,7 +395,8 @@ type STTConfig struct {
 	Format   string `toml:"format"`   // "openai" (only supported format currently)
 	Endpoint string `toml:"endpoint"` // API URL
 	Model    string `toml:"model"`    // model name
-	Secret   string `toml:"secret"`   // secret name in secrets.toml (optional, fallback: hostname)
+	Secret       string            `toml:"secret"`       // secret name in secrets.toml (optional, fallback: hostname)
+	Replacements map[string]string `toml:"replacements"` // word replacements applied after transcription (e.g. "foki" = "foci")
 }
 
 type BitwardenConfig struct {
@@ -543,9 +547,11 @@ type DefaultsConfig struct {
 	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "anthropic" (default) or "builtin"
 	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
 
-	TTS                  string  `toml:"tts"`                    // default TTS provider id
-	STT                  string  `toml:"stt"`                    // default STT provider id
-	TTSRate              float64 `toml:"tts_rate"`               // default TTS speech rate multiplier
+	TTS                  string            `toml:"tts"`                    // default TTS provider id
+	STT                  string            `toml:"stt"`                    // default STT provider id
+	TTSRate              float64           `toml:"tts_rate"`               // default TTS speech rate multiplier
+	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
+	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
 	SteerMode            bool    `toml:"steer_mode"`             // default steer_mode (default: true)
 	StreamOutput         bool    `toml:"stream_output"`          // default stream_output (default: false)
 	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")

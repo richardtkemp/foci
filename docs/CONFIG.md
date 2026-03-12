@@ -256,6 +256,7 @@ Text-to-speech provider entries. Multiple entries are supported; the first is th
 | `secret` | string | `""` | Secret name in secrets.toml (e.g. `"groq.api_key"`). If empty, auto-detected from endpoint hostname. |
 | `command` | string | `"edge-tts"` | Binary for edge-tts format. |
 | `response_format` | string | `"wav"` | Audio format for OpenAI-compatible APIs: `"mp3"`, `"wav"`, `"opus"`, `"aac"`, `"flac"`. Groq only supports `"wav"`. |
+| `replacements` | map | `{}` | Word replacements applied to text before synthesis. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foci = "foki" }`. |
 
 ### `[[stt]]`
 
@@ -268,6 +269,7 @@ Speech-to-text provider entries. Multiple entries are supported; the first is th
 | `endpoint` | string | `""` | API endpoint URL. |
 | `model` | string | `""` | Model name (e.g. `"whisper-large-v3"`). |
 | `secret` | string | `""` | Secret name in secrets.toml. If empty, auto-detected from endpoint hostname. |
+| `replacements` | map | `{}` | Word replacements applied to transcribed text after transcription. Case-insensitive whole-word matching; preserves original case pattern. Example: `{ foki = "foci" }` (reverse of TTS replacements). |
 
 API keys are resolved via the `secret` field or auto-detected from the endpoint hostname (e.g. `https://api.groq.com/...` → `groq.api_key` in secrets.toml). The `/voice` WebSocket endpoint is enabled via `[http] ws_enabled = true`.
 
@@ -776,6 +778,8 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `tts_rate` | float | `0` | `[defaults]` | Per-agent TTS speech rate multiplier. Combined with entry rate: effective = entry.rate × agent.tts_rate (0 treated as 1.0). |
 | `tts` | string | `""` | `[defaults]` | Override TTS entry by id (empty = default entry). |
 | `stt` | string | `""` | `[defaults]` | Override STT entry by id (empty = default entry). |
+| `tts_replacements` | map | `{}` | `[defaults]` | TTS word replacements (merged with `[[tts]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
+| `stt_replacements` | map | `{}` | `[defaults]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
