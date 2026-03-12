@@ -471,11 +471,11 @@ Tmux memory monitoring detects runaway memory from long-running tmux sessions (g
 
 ### `[tools.browser]`
 
-Browser automation tool configuration. Disabled by default. When enabled, agents get a `browser` tool that uses accessibility tree snapshots with element refs for interaction.
+Browser automation tool configuration. Enabled by default. Agents get a `browser` tool that uses accessibility tree snapshots with element refs for interaction.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable browser tool for all agents. |
+| `enabled` | bool | `true` | Enable browser tool for all agents. |
 | `headless` | bool | `true` | Run browser in headless mode. Set `false` for debugging. |
 | `timeout_sec` | int | `30` | Default timeout for page operations in seconds. |
 | `user_data_dir` | string | `""` | Chrome user data directory. Empty uses a temp profile. Ignored when `incognito = true`. |
