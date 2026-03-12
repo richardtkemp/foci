@@ -85,7 +85,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 					return
 				}
 				if conn := p.connMgr.ForSessionOrPrimary(sk, agentID); conn != nil {
-					if err := conn.SendToSession(sk, resp); err != nil {
+					if err := conn.SendTextToSession(sk, resp); err != nil {
 						log.Errorf("warning", "[%s] proactive warning platform delivery: %v", agentID, err)
 					}
 				}

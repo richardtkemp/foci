@@ -36,18 +36,27 @@ func isUserTrigger(trigger string) bool {
 
 // triggerToPlatform maps a trigger label to a platform name for the [meta] header.
 // Platform tells the agent which transport delivered the message:
-//   - telegram: message arrived via Telegram
+//   - telegram: message arrived via Telegram text
+//   - voice: message arrived via voice (speech-to-text)
 //   - android: message arrived via Android app
 //   - api: message arrived via HTTP /send endpoint
+//   - tmux: message from tmux watch inactivity detection
+//   - async: message from async tool result (shell, http_request, etc.)
 //   - cron: message is system-initiated (keepalive, wake, scheduled, etc.)
 func triggerToPlatform(trigger string) string {
 	switch trigger {
-	case "telegram", "voice":
+	case "telegram":
 		return "telegram"
+	case "voice":
+		return "voice"
 	case "android":
 		return "android"
 	case "", "user":
 		return "api"
+	case "tmux_watch":
+		return "tmux"
+	case "async_notify":
+		return "async"
 	default:
 		return "cron"
 	}

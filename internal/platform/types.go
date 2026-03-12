@@ -78,7 +78,8 @@ type Connection interface {
 	UpdateChatSessionKey(chatID int64, newKey string) // update cached + persisted session key for a chat
 
 	// Messaging
-	SendToSession(sessionKey, text string) error
+	SendToSession(sessionKey, text string) error     // sends with system injection header
+	SendTextToSession(sessionKey, text string) error // sends without header (for agent replies)
 	SendNotification(text string)
 }
 

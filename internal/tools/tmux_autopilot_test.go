@@ -17,7 +17,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
@@ -74,7 +74,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
@@ -148,7 +148,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 
 	var mu sync.Mutex
 	var notifications []string
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		mu.Lock()
 		notifications = append(notifications, msg)
 		mu.Unlock()
@@ -209,7 +209,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
@@ -277,7 +277,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {

@@ -142,7 +142,7 @@ func TestTriggerToPlatform(t *testing.T) {
 		platform string
 	}{
 		{"telegram", "telegram"},
-		{"voice", "telegram"},
+		{"voice", "voice"},
 		{"android", "android"},
 		{"user", "api"},
 		{"", "api"},
@@ -151,7 +151,8 @@ func TestTriggerToPlatform(t *testing.T) {
 		{"cron", "cron"},
 		{"restart", "cron"},
 		{"first_run", "cron"},
-		{"async_notify", "cron"},
+		{"async_notify", "async"},
+		{"tmux_watch", "tmux"},
 		{"scheduled_wake", "cron"},
 		{"proactive_warning", "cron"},
 		{"session_end_memory", "cron"},

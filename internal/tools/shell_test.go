@@ -256,7 +256,7 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 	// A fast command should complete before the threshold
 	t.Parallel()
 	var called bool
-	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		called = true
 	}), "", nil, 0, "")
 
@@ -280,7 +280,7 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 	t.Parallel()
 	// A slow command should auto-background after 1 second
 	completeCh := make(chan string, 1)
-	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	}), "", nil, 0, "")
 
@@ -317,7 +317,7 @@ func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
 		sk, msg string
 	}
 	ch := make(chan result, 1)
-	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		ch <- result{sk, msg}
 	}), "", nil, 0, "")
 
@@ -550,7 +550,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	// When the parent context is cancelled mid-execution (turn cancelled),
 	// results should still be delivered via the notifier — not silently lost.
 	completeCh := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
 	})
 	// Use a 10s threshold so the ctx.Done() path fires before the threshold.
@@ -674,7 +674,7 @@ func TestExecAutoBackgroundLeakedChild(t *testing.T) {
 	// The auto-background path had the same leaked-FD bug. A fast command
 	// that leaks a child should still complete before the threshold.
 	t.Parallel()
-	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg string, replyTo string) {}), "", nil, 0, "")
+	tool := NewExecTool(nil, nil, 5, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {}), "", nil, 0, "")
 
 	start := time.Now()
 	params, _ := json.Marshal(map[string]interface{}{

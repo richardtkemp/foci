@@ -25,20 +25,23 @@ func newAsyncNotifier(
 	sessions tools.SessionAppender,
 	connMgr platform.ConnectionManager,
 ) *tools.AsyncNotifier {
-	return tools.NewAsyncNotifier(func(targetSession, message string, replyToSession string) {
+	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
 		go func() {
 			target := targetSession
 			if target == "" {
 				target = defaultSessionKey()
 			}
+			if trigger == "" {
+				trigger = "async_notify"
+			}
 
 			// If replyToSession is set, route response back to caller
 			if replyToSession != "" {
-				notifyCtx := agent.WithTrigger(ctx, "async_notify")
+				notifyCtx := agent.WithTrigger(ctx, trigger)
 				// Process message on target session
 				resp, err := getAgent().HandleMessage(notifyCtx, target, message)
 				if err != nil {
-					log.Errorf("async_notify", "error processing on target %s: %v", target, err)
+					log.Errorf(trigger, "error processing on target %s: %v", target, err)
 					return
 				}
 				if resp == "" {
@@ -55,19 +58,20 @@ func newAsyncNotifier(
 				}
 				writer := sessions.For(replyToSession)
 				if err := writer.Append(replyToSession, msg); err != nil {
-					log.Errorf("async_notify", "failed to append to caller %s: %v", replyToSession, err)
+					log.Errorf(trigger, "failed to append to caller %s: %v", replyToSession, err)
 					return
 				}
 
-				// STEP 2: Display to user in calling session's chat
-				// Note: SendToSession() displays to the user, doesn't append to session
+				// STEP 2: Display to user in calling session's chat.
+				// Use SendTextToSession (not SendToSession) — the response is an
+				// agent reply, not a system injection, so no header prefix.
 				callerConn := connMgr.ForSession(replyToSession)
 				if callerConn != nil {
-					if err := callerConn.SendToSession(replyToSession, formattedResp); err != nil {
-						log.Errorf("async_notify", "platform delivery to caller %s: %v", replyToSession, err)
+					if err := callerConn.SendTextToSession(replyToSession, formattedResp); err != nil {
+						log.Errorf(trigger, "platform delivery to caller %s: %v", replyToSession, err)
 					}
 				} else {
-					log.Debugf("async_notify", "no connection for caller session %s, response recorded but not displayed", replyToSession)
+					log.Debugf(trigger, "no connection for caller session %s, response recorded but not displayed", replyToSession)
 				}
 				return
 			}
@@ -81,12 +85,14 @@ func newAsyncNotifier(
 			sk, parseErr := session.ParseSessionKey(target)
 			isBranchWithoutConn := parseErr == nil && !sk.IsRoot() && connMgr.ForSession(target) == nil
 
-			notifyCtx := agent.WithTrigger(ctx, "async_notify")
+			notifyCtx := agent.WithTrigger(ctx, trigger)
 			if conn != nil && !isBranchWithoutConn {
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
-						if err := conn.SendToSession(target, text); err != nil {
-							log.Errorf("async_notify", "intermediate platform delivery: %v", err)
+						// Intermediate replies are agent output — use SendTextToSession
+						// to avoid prepending the system injection header.
+						if err := conn.SendTextToSession(target, text); err != nil {
+							log.Errorf(trigger, "intermediate platform delivery: %v", err)
 						}
 					},
 				})
@@ -94,23 +100,25 @@ func newAsyncNotifier(
 
 			resp, err := getAgent().HandleMessage(notifyCtx, target, message)
 			if err != nil {
-				log.Errorf("async_notify", "error: %v", err)
+				log.Errorf(trigger, "error: %v", err)
 				return
 			}
-			log.Debugf("async_notify", "response length: %d", len(resp))
+			log.Debugf(trigger, "response length: %d", len(resp))
 			if resp == "" {
 				return
 			}
 			if conn == nil || isBranchWithoutConn {
 				if isBranchWithoutConn {
-					log.Debugf("async_notify", "branch session %s has no dedicated connection, skipping platform delivery", target)
+					log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", target)
 				} else {
-					log.Warnf("async_notify", "no connection for agent %s session %s, response not delivered", agentID, target)
+					log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", agentID, target)
 				}
 				return
 			}
-			if err := conn.SendToSession(target, resp); err != nil {
-				log.Errorf("async_notify", "platform delivery: %v", err)
+			// Final reply is agent output — use SendTextToSession to avoid
+			// prepending the system injection header.
+			if err := conn.SendTextToSession(target, resp); err != nil {
+				log.Errorf(trigger, "platform delivery: %v", err)
 			}
 		}()
 	})
@@ -154,7 +162,9 @@ func newSessionNotifyFn(
 				return
 			}
 
-			if err := conn.SendToSession(targetSessionKey, resp); err != nil {
+			// Agent reply — use SendTextToSession to avoid prepending the
+			// system injection header.
+			if err := conn.SendTextToSession(targetSessionKey, resp); err != nil {
 				log.Errorf("session_notify", "platform delivery for session %s: %v", targetSessionKey, err)
 			}
 		}()

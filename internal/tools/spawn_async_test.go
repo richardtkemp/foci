@@ -20,7 +20,7 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	// Use notifier to detect completion of background spawns.
 	var completions int32
 	allDone := make(chan struct{})
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		if c := atomic.AddInt32(&completions, 1); c == 4 {
 			close(allDone)
 		}
@@ -76,7 +76,7 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	// Verify the notifier receives [SPAWN RESULT] with correct session and content.
 	t.Parallel()
 	delivered := make(chan struct{ sk, msg string }, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered <- struct{ sk, msg string }{sk, msg}
 	})
 
@@ -129,7 +129,7 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	// Verify errors are delivered via notifier with "failed:" tag.
 	t.Parallel()
 	delivered := make(chan string, 1)
-	notifier := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered <- msg
 	})
 

@@ -7,14 +7,14 @@ import "testing"
 func TestMigrateSession_InjectResolvesToNewKey(t *testing.T) {
 	t.Parallel()
 	var delivered string
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered = sk
 	})
 
 	n.MarkPending("old/key")
 	n.MigrateSession("old/key", "new/key")
 
-	n.InjectToAgent("old/key", "result", "")
+	n.InjectToAgent("old/key", "result", "", "")
 	if delivered != "new/key" {
 		t.Errorf("InjectToAgent delivered to %q, want %q", delivered, "new/key")
 	}
@@ -24,7 +24,7 @@ func TestMigrateSession_InjectResolvesToNewKey(t *testing.T) {
 // decrements the new key's count when called with the old key.
 func TestMigrateSession_MarkDoneResolvesToNewKey(t *testing.T) {
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
 	n.MarkPending("old/key")
 	n.MarkPending("old/key")
@@ -52,7 +52,7 @@ func TestMigrateSession_MarkDoneResolvesToNewKey(t *testing.T) {
 // that already has pending results adds the counts together.
 func TestMigrateSession_PendingCountMerges(t *testing.T) {
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
 	n.MarkPending("old/key")
 	n.MarkPending("old/key")
@@ -77,7 +77,7 @@ func TestMigrateSession_PendingCountMerges(t *testing.T) {
 func TestMigrateSession_ChainedRotation(t *testing.T) {
 	t.Parallel()
 	var delivered string
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered = sk
 	})
 
@@ -86,7 +86,7 @@ func TestMigrateSession_ChainedRotation(t *testing.T) {
 	n.MigrateSession("key/b", "key/c")
 
 	// Goroutine still holding key/a should resolve to key/c
-	n.InjectToAgent("key/a", "result", "")
+	n.InjectToAgent("key/a", "result", "", "")
 	if delivered != "key/c" {
 		t.Errorf("chained inject delivered to %q, want %q", delivered, "key/c")
 	}
@@ -105,7 +105,7 @@ func TestMigrateSession_ChainedRotation(t *testing.T) {
 // equals new, when newKey is empty, or on a nil receiver.
 func TestMigrateSession_NoOp(t *testing.T) {
 	t.Parallel()
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {})
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
 	n.MarkPending("sess")
 	n.MigrateSession("sess", "sess") // same key
@@ -129,13 +129,13 @@ func TestMigrateSession_NoOp(t *testing.T) {
 func TestMigrateSession_NoPendingStillRemaps(t *testing.T) {
 	t.Parallel()
 	var delivered string
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered = sk
 	})
 
 	// No MarkPending — but migration should still remap
 	n.MigrateSession("old/key", "new/key")
-	n.InjectToAgent("old/key", "late result", "")
+	n.InjectToAgent("old/key", "late result", "", "")
 	if delivered != "new/key" {
 		t.Errorf("delivered to %q, want %q", delivered, "new/key")
 	}
@@ -146,13 +146,13 @@ func TestMigrateSession_NoPendingStillRemaps(t *testing.T) {
 func TestMigrateSession_ReplyToSessionUnchanged(t *testing.T) {
 	t.Parallel()
 	var gotTarget, gotReplyTo string
-	n := NewAsyncNotifier(func(sk, msg string, replyTo string) {
+	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		gotTarget = sk
 		gotReplyTo = replyTo
 	})
 
 	n.MigrateSession("old/key", "new/key")
-	n.InjectToAgent("old/key", "msg", "reply/sess")
+	n.InjectToAgent("old/key", "msg", "reply/sess", "")
 
 	if gotTarget != "new/key" {
 		t.Errorf("target = %q, want %q", gotTarget, "new/key")
