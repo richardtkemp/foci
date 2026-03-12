@@ -111,6 +111,20 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 	return memGuard.Stop
 }
 
+// setupGoroutineMonitor starts the goroutine count monitor if configured. Returns a stop function (may be nil).
+func setupGoroutineMonitor(cfg *config.Config, ctx context.Context) func() {
+	interval, _ := time.ParseDuration(cfg.Resources.GoroutineMonitorInterval)
+	if interval <= 0 {
+		return nil
+	}
+	mon := resources.NewGoroutineMonitor(resources.GoroutineMonitorConfig{
+		Interval:  interval,
+		Threshold: cfg.Resources.GoroutineMonitorThreshold,
+	})
+	mon.Start(ctx)
+	return mon.Stop
+}
+
 // setupToolDetailCleanup starts periodic tool detail expiry when all users are idle.
 func setupToolDetailCleanup(
 	toolDetailStore platform.ToolDetailStore,
