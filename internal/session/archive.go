@@ -125,6 +125,131 @@ func isArchiveFile(name string) bool {
 	return false
 }
 
+// rotateKeyInternal archives the old root.jsonl and computes a new session key
+// via WithVersion(now). Returns the new key string and archive path.
+func (s *Store) rotateKeyInternal(oldKey string) (newKey, archivePath string, err error) {
+	sk, err := ParseSessionKey(oldKey)
+	if err != nil {
+		return "", "", fmt.Errorf("parse session key for rotation: %w", err)
+	}
+	rotated := sk.WithVersion(time.Now().Unix())
+	newKey = rotated.String()
+
+	path, err := s.SessionPath(oldKey)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Archive old root.jsonl if it exists
+	if _, err := os.Stat(path); err == nil {
+		archivePath = nextArchivePath(path)
+		if err := os.Rename(path, archivePath); err != nil {
+			return "", "", fmt.Errorf("rotate session file: %w", err)
+		}
+		log.Infof("session", "session rotated key=%s → %s archive=%s", oldKey, newKey, filepath.Base(archivePath))
+	}
+
+	return newKey, archivePath, nil
+}
+
+// ReplaceAndRotate archives the old session file, creates a new session key via
+// WithVersion, and writes the given messages to the new key's path. Returns the
+// new session key. Used by compaction.
+func (s *Store) ReplaceAndRotate(oldKey string, msgs []provider.Message) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Read metadata before archiving
+	branchMeta, _ := s.readBranchMeta(oldKey)
+	createdAt := s.getStoredCreatedAt(oldKey)
+
+	newKey, archivePath, err := s.rotateKeyInternal(oldKey)
+	if err != nil {
+		return "", err
+	}
+
+	// Write messages to new key path
+	newPath, err := s.SessionPath(newKey)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0755); err != nil {
+		return "", fmt.Errorf("create session dir: %w", err)
+	}
+
+	f, err := os.Create(newPath)
+	if err != nil {
+		return "", fmt.Errorf("create session file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if branchMeta != nil {
+		branchMeta.BranchPoint = 0
+		metaData, err := json.Marshal(branchMeta)
+		if err != nil {
+			return "", fmt.Errorf("marshal branch meta: %w", err)
+		}
+		if _, err := f.Write(append(metaData, '\n')); err != nil {
+			return "", fmt.Errorf("write branch meta: %w", err)
+		}
+	} else if createdAt != "" {
+		meta := SessionMeta{
+			Type:      "session_meta",
+			CreatedAt: createdAt,
+		}
+		metaData, err := json.Marshal(meta)
+		if err != nil {
+			return "", fmt.Errorf("marshal session meta: %w", err)
+		}
+		if _, err := f.Write(append(metaData, '\n')); err != nil {
+			return "", fmt.Errorf("write session meta: %w", err)
+		}
+	}
+
+	for _, msg := range msgs {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			return "", fmt.Errorf("marshal message: %w", err)
+		}
+		if _, err := f.Write(append(data, '\n')); err != nil {
+			return "", fmt.Errorf("write message: %w", err)
+		}
+	}
+
+	log.Infof("session", "session replaced+rotated key=%s → %s messages=%d", oldKey, newKey, len(msgs))
+	s.fireEvent(SessionEvent{
+		Key:         oldKey,
+		NewKey:      newKey,
+		Type:        ClassifySessionKey(oldKey),
+		Status:      SessionStatusRotated,
+		FilePath:    newPath,
+		ArchivePath: archivePath,
+	})
+	return newKey, nil
+}
+
+// RotateKey archives the old session file and returns a new session key via
+// WithVersion. Does not write a new file — the next Append creates it lazily.
+// Used by /reset.
+func (s *Store) RotateKey(oldKey string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	newKey, archivePath, err := s.rotateKeyInternal(oldKey)
+	if err != nil {
+		return "", err
+	}
+
+	s.fireEvent(SessionEvent{
+		Key:         oldKey,
+		NewKey:      newKey,
+		Type:        ClassifySessionKey(oldKey),
+		Status:      SessionStatusRotated,
+		ArchivePath: archivePath,
+	})
+	return newKey, nil
+}
+
 // replaceInternal overwrites a session with the given messages, rotating the old file
 // to a numbered archive (e.g. 5970082313.1.jsonl) for audit/history.
 // This is internal and must be called through SessionWriter only.

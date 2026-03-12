@@ -64,6 +64,7 @@ func (m *mockConnection) SetSessionKeyDirect(key string)        {}
 func (m *mockConnection) SetChatID(chatID int64)                {}
 func (m *mockConnection) ChatID() int64                         { return 0 }
 func (m *mockConnection) Username() string                      { return "" }
+func (m *mockConnection) UpdateChatSessionKey(int64, string)     {}
 func (m *mockConnection) SendToSession(sk, text string) error   { return nil }
 func (m *mockConnection) SendNotification(text string)          {}
 

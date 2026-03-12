@@ -94,6 +94,7 @@ type Agent struct {
 	CompactionManaRefreshPreserve  *int                                   // messages to preserve in refresh mode (nil = ALL)
 	CompactionNotifyFunc          HookList[func(string, string)]         // callbacks for compaction notifications (session key, message)
 	CompactionDebugFunc           HookList[func(string, string)]         // callbacks for compaction debug (session key, summary text)
+	SessionKeyRotatedFunc         HookList[func(string, string)]         // callbacks when session key rotates (oldKey, newKey)
 	OnActivity                    HookList[func(string)]                 // callbacks when a session has activity (session key)
 	Redact                        func(string) string          // redact secrets from tool output; nil disables
 	StateStore                    *state.Store                 // nil disables state persistence

@@ -268,12 +268,12 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 4, 3)
 
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 
 	// Verify no orphaned tool_use: every assistant with tool_use must be followed
 	// by a user with matching tool_result.
@@ -327,7 +327,7 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	c.WithConfig(4096, 4, 0) // no preservation — all messages summarized
 
 	// This should not fail — repairOrphanedToolUse should inject synthetic results.
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with orphaned tool_use: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestCompactWithEffortOverride(t *testing.T) {
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithEffort("high")
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	// Not setting effort — should omit from request
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

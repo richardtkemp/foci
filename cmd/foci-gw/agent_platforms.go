@@ -108,6 +108,17 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
+	// Session key rotation — update platform caches
+	ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
+		chatID := session.ChatIDFromKey(oldKey)
+		if chatID == 0 {
+			return
+		}
+		if conn := connMgr.ForSession(oldKey); conn != nil {
+			conn.UpdateChatSessionKey(chatID, newKey)
+		}
+	})
+
 	// Session activity tracking
 	if sessionIndex != nil {
 		ag.OnActivity.Add(func(sk string) { sessionIndex.TouchActivity(sk) })

@@ -32,16 +32,19 @@ func TestCompactBasic(t *testing.T) {
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	summary, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	if summary == "" {
 		t.Error("expected non-empty summary")
 	}
+	if newKey == "" || newKey == sessionKey {
+		t.Fatalf("expected rotated key, got %q", newKey)
+	}
 
-	// After compaction: should have 3 messages (marker + summary + handoff)
-	msgs, _ := store.Load(sessionKey)
+	// After compaction: should have 3 messages at the new key
+	msgs, _ := store.Load(newKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after compact: %d messages, want 3", len(msgs))
 	}
@@ -87,7 +90,7 @@ func TestCompactDryRun(t *testing.T) {
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", true)
+	summary, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", true)
 	if err != nil {
 		t.Fatalf("Compact dry-run: %v", err)
 	}
@@ -118,7 +121,7 @@ func TestCompactTooFewMessages(t *testing.T) {
 	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hello")})
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
+	summary, _, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -163,12 +166,12 @@ func TestCompactWithScratchpad(t *testing.T) {
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, err = c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	if len(msgs) != 3 {
 		t.Fatalf("messages = %d, want 3", len(msgs))
 	}
@@ -212,12 +215,12 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	c.Scratchpad = sp
 	c.AgentID = "test"
 
-	_, err = c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	handoff := provider.TextOf(msgs[2].Content)
 	// Should have default handoff without scratchpad section
 	if strings.Contains(handoff, "scratchpad") {
@@ -243,7 +246,7 @@ func TestCompactAPIError(t *testing.T) {
 	}
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error from API failure")
 	}
@@ -275,7 +278,7 @@ func TestCompactStreaming(t *testing.T) {
 	}
 
 	c := NewCompactor(store, "anthropic/claude-haiku-4-5", 0.8)
-	summary, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
+	summary, newKey, err := c.Compact(context.Background(), client, sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact (streaming): %v", err)
 	}
@@ -283,7 +286,7 @@ func TestCompactStreaming(t *testing.T) {
 		t.Errorf("summary = %q, want to contain 'Streamed summary'", summary)
 	}
 
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after streaming compact: %d messages, want 3", len(msgs))
 	}
@@ -374,7 +377,7 @@ func TestCompactLoadError(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "test", "imain", "1000000000"), []byte("conflict"), 0644)
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	_, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), nil, sessionKey, nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error when session can't be loaded")
 	}
@@ -403,13 +406,13 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 	// len(messages)-preserveN = 4-3 = 1 < minMessages(4), so preserveN = 4-4 = 0
 	c.WithConfig(4096, 4, 3)
 
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
 	// Should have compacted everything (no preservation since preserveN clamped to 0)
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after compact: %d messages, want 3 (no preserved)", len(msgs))
 	}
@@ -436,13 +439,13 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 6, 3) // minMessages=6, preserve=3
 
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
 	// Walk-back should have pushed split below minMessages, so nothing is preserved.
-	msgs, _ := store.Load(sessionKey)
+	msgs, _ := store.Load(newKey)
 	if len(msgs) != 3 {
 		t.Fatalf("after compact: %d messages, want 3 (walk-back dropped preservation)", len(msgs))
 	}
@@ -475,7 +478,7 @@ func TestCompactScratchpadError(t *testing.T) {
 	c.AgentID = "test"
 
 	// Should succeed despite scratchpad error (it's best-effort).
-	_, err = c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err = c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact should succeed despite scratchpad error: %v", err)
 	}
@@ -502,7 +505,7 @@ func TestCompactReplaceError(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(sessDir, 0755) })
 
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	_, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err == nil {
 		t.Fatal("expected error when Replace fails")
 	}

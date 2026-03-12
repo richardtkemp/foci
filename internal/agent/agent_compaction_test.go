@@ -34,8 +34,13 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// Phase 2: Turn 5 — high tokens triggers compaction
 		env.runTurns(t, sessionKey, 5, 5)
 
-		// After compaction, session should have exactly 3 messages
-		msgs, _ = env.store.Load(sessionKey)
+		// After compaction, data is at the rotated key
+		rotatedKey := env.activeKey(sessionKey)
+		if rotatedKey == sessionKey {
+			t.Fatal("expected key rotation after compaction")
+		}
+
+		msgs, _ = env.store.Load(rotatedKey)
 		if len(msgs) != 3 {
 			t.Fatalf("after compaction: %d messages, want 3", len(msgs))
 		}
@@ -53,11 +58,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("msg[2] should contain handoff: %q", provider.TextOf(msgs[2].Content))
 		}
 
-		// Phase 3: Turn 6 — post-compaction continuity
-		env.runTurns(t, sessionKey, 6, 6)
+		// Phase 3: Turn 6 — post-compaction continuity (uses rotated key)
+		env.runTurns(t, rotatedKey, 6, 6)
 
 		// 3 compacted + user turn 6 + assistant turn 6 = 5
-		msgs, _ = env.store.Load(sessionKey)
+		msgs, _ = env.store.Load(rotatedKey)
 		if len(msgs) != 5 {
 			t.Fatalf("after Turn 6: %d messages, want 5", len(msgs))
 		}
@@ -89,7 +94,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// Build up 4 turns then trigger compaction on turn 5
 		env.runTurns(t, sessionKey, 1, 5)
 
-		msgs, _ := env.store.Load(sessionKey)
+		rotatedKey := env.activeKey(sessionKey)
+		msgs, _ := env.store.Load(rotatedKey)
 		if len(msgs) != 3 {
 			t.Fatalf("after compaction: %d messages, want 3", len(msgs))
 		}
@@ -131,9 +137,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// Phase 2: Turn 5 — high tokens triggers compaction
 		env.runTurns(t, sessionKey, 5, 5)
 
+		rotatedKey := env.activeKey(sessionKey)
+
 		// After compaction with preserve=4, preserved[0] is user so handoff folds:
 		// 2 (marker + summary+handoff) + 4 preserved = 6
-		msgs, _ = env.store.Load(sessionKey)
+		msgs, _ = env.store.Load(rotatedKey)
 		if len(msgs) != 6 {
 			t.Fatalf("after compaction: %d messages, want 6 (2 header + 4 preserved)", len(msgs))
 		}
@@ -175,11 +183,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Errorf("summary should contain folded handoff: %q", summaryText)
 		}
 
-		// Phase 3: Turn 6 — post-compaction continuity (messages survive reload)
-		env.runTurns(t, sessionKey, 6, 6)
+		// Phase 3: Turn 6 — post-compaction continuity (uses rotated key)
+		env.runTurns(t, rotatedKey, 6, 6)
 
 		// 6 compacted + user turn 6 + assistant turn 6 = 8
-		msgs, _ = env.store.Load(sessionKey)
+		msgs, _ = env.store.Load(rotatedKey)
 		if len(msgs) != 8 {
 			t.Fatalf("after Turn 6: %d messages, want 8", len(msgs))
 		}
@@ -321,7 +329,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Error("expected compaction to fire after async pending cleared")
 		}
 
-		msgs, _ = env.store.Load(sessionKey)
+		rotatedKey := env.activeKey(sessionKey)
+		msgs, _ = env.store.Load(rotatedKey)
 		if len(msgs) > 5 {
 			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
 		}
@@ -370,6 +379,10 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		ag.CompactionNotifyFunc.Add(func(session string, msg string) {
 			notified = append(notified, msg)
 		})
+		var rotatedKey string
+		ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
+			rotatedKey = newKey
+		})
 
 		sessionKey := "test/iasynccritical/1000000000"
 
@@ -401,7 +414,11 @@ func TestAgentCompactionIntegration(t *testing.T) {
 			t.Error("expected compaction to fire at critical threshold despite async pending")
 		}
 
-		msgs, _ := store.Load(sessionKey)
+		loadKey := sessionKey
+		if rotatedKey != "" {
+			loadKey = rotatedKey
+		}
+		msgs, _ := store.Load(loadKey)
 		if len(msgs) > 5 {
 			t.Errorf("expected compacted session (<=5 messages), got %d", len(msgs))
 		}

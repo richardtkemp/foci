@@ -21,6 +21,7 @@ type SessionWriter interface {
 	Append(key string, msg provider.Message) error
 	AppendAll(key string, msgs []provider.Message) error
 	Replace(key string, msgs []provider.Message) error
+	ReplaceAndRotate(key string, msgs []provider.Message) (string, error)
 	Clear(key string) error
 }
 
@@ -105,6 +106,16 @@ func (w *sessionWriter) Replace(key string, msgs []provider.Message) error {
 			w.sessionKey, key)
 	}
 	return w.store.replaceInternal(key, msgs)
+}
+
+// ReplaceAndRotate overwrites the owned session with new messages under a rotated
+// key (new VersionTS), archiving the old file. Returns the new session key.
+func (w *sessionWriter) ReplaceAndRotate(key string, msgs []provider.Message) (string, error) {
+	if key != w.sessionKey {
+		return "", fmt.Errorf("cross-session write blocked: SessionWriter for session %q cannot write to session %q",
+			w.sessionKey, key)
+	}
+	return w.store.ReplaceAndRotate(key, msgs)
 }
 
 // Clear deletes the owned session, rejecting cross-session writes.
@@ -477,6 +488,7 @@ func (s *Store) fileTime(key string) string {
 // SessionEvent describes a lifecycle event on a session.
 type SessionEvent struct {
 	Key         string
+	NewKey      string // set on rotation: the new session key
 	Type        SessionType
 	Status      SessionStatus
 	ParentKey   string // for branches

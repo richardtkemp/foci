@@ -349,12 +349,13 @@ func (c *Compactor) ShouldCompactWithLimit(sessionKey string, messages []provide
 // Loaded from prompts/compaction-handoff.md at build time.
 var DefaultHandoffMessage = prompts.CompactionHandoff()
 
-// Compact summarizes a session's history and replaces it.
+// Compact summarizes a session's history and replaces it with a rotated key.
 // summaryPrompt is read from a file at call time; if empty, compaction uses a
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
 // When dryRun is true, the full pipeline runs (API call, summary generation)
-// but sessions.Replace() is skipped — the session is left unchanged.
-func (c *Compactor) Compact(ctx context.Context, client provider.Client, sessionKey string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, error) {
+// but the session is left unchanged — returns ("summary", "", nil).
+// On success, returns (summary, newKey, nil) where newKey is the rotated session key.
+func (c *Compactor) Compact(ctx context.Context, client provider.Client, sessionKey string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, string, error) {
 	if summaryPrompt == "" {
 		summaryPrompt = prompts.CompactionSummary()
 	}
@@ -364,11 +365,11 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 
 	messages, err := c.sessions.LoadFull(sessionKey)
 	if err != nil {
-		return "", fmt.Errorf("load session for compaction: %w", err)
+		return "", "", fmt.Errorf("load session for compaction: %w", err)
 	}
 
 	if len(messages) < c.minMessages {
-		return "", nil // not enough to compact
+		return "", "", nil // not enough to compact
 	}
 
 	c.log.Infof("compacting session %s (%d messages)", sessionKey, len(messages))
@@ -441,7 +442,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	handler := &provider.StreamHandler{}
 	resp, err := provider.Send(ctx, client, req, handler)
 	if err != nil {
-		return "", fmt.Errorf("summarize for compaction: %w", err)
+		return "", "", fmt.Errorf("summarize for compaction: %w", err)
 	}
 
 	duration := time.Since(start)
@@ -536,14 +537,15 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 
 	if dryRun {
 		c.log.Infof("dry-run complete for %s, summary generated (%d messages would compact to %d)", sessionKey, len(messages), len(compacted))
-		return summary, nil
+		return summary, "", nil
 	}
 
 	writer := c.sessions.For(sessionKey)
-	if err := writer.Replace(sessionKey, compacted); err != nil {
-		return "", fmt.Errorf("replace session after compaction: %w", err)
+	newKey, err := writer.ReplaceAndRotate(sessionKey, compacted)
+	if err != nil {
+		return "", "", fmt.Errorf("replace session after compaction: %w", err)
 	}
 
-	c.log.Infof("session %s compacted from %d messages to %d", sessionKey, len(messages), len(compacted))
-	return summary, nil
+	c.log.Infof("session %s compacted+rotated from %d messages to %d → %s", sessionKey, len(messages), len(compacted), newKey)
+	return summary, newKey, nil
 }
