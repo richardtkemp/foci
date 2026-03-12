@@ -109,3 +109,21 @@ func StripDeveloperPrefix(model string) string {
 	_, modelID := SplitDeveloperModel(model)
 	return modelID
 }
+
+// ModelSupportsEffort returns true if the given model ID supports the effort parameter.
+// Currently only Anthropic Sonnet and Opus support effort; Haiku does not.
+// Accepts both bare model IDs ("claude-haiku-4-5") and developer-prefixed ("anthropic/claude-haiku-4-5").
+func ModelSupportsEffort(model string) bool {
+	modelID := strings.ToLower(StripDeveloperPrefix(model))
+	// Haiku is the only Anthropic model that doesn't support effort.
+	// Non-Anthropic models won't reach the Anthropic translate layer,
+	// but return false for them too since effort is Anthropic-specific.
+	if strings.Contains(modelID, "haiku") {
+		return false
+	}
+	// Sonnet and Opus support effort.
+	if strings.Contains(modelID, "sonnet") || strings.Contains(modelID, "opus") || strings.Contains(modelID, "claude") {
+		return true
+	}
+	return false
+}

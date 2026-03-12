@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/tools"
@@ -434,7 +435,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		System:    system,
 		Messages:  summaryMessages,
 	}
-	if c.effort != "" {
+	if c.effort != "" && config.ModelSupportsEffort(c.model) {
 		req.Output = &provider.OutputConfig{Effort: c.effort}
 	}
 

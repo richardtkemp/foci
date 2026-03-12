@@ -43,9 +43,10 @@ func TestBuildSDKParamsBasic(t *testing.T) {
 	}
 }
 
+// TestBuildSDKParamsWithEffort verifies effort is set for models that support it (Sonnet).
 func TestBuildSDKParamsWithEffort(t *testing.T) {
 	req := &MessageRequest{
-		Model:     "claude-haiku-4-5",
+		Model:     "claude-sonnet-4-6",
 		MaxTokens: 1024,
 		Messages:  []Message{{Role: "user", Content: TextContent("Hi")}},
 		Output:    &OutputConfig{Effort: "high"},
@@ -55,6 +56,23 @@ func TestBuildSDKParamsWithEffort(t *testing.T) {
 
 	if string(params.OutputConfig.Effort) != "high" {
 		t.Errorf("effort = %q, want high", params.OutputConfig.Effort)
+	}
+}
+
+// TestBuildSDKParamsEffortStrippedForHaiku verifies effort is silently dropped for Haiku,
+// which does not support the effort parameter and returns a 400 error.
+func TestBuildSDKParamsEffortStrippedForHaiku(t *testing.T) {
+	req := &MessageRequest{
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 1024,
+		Messages:  []Message{{Role: "user", Content: TextContent("Hi")}},
+		Output:    &OutputConfig{Effort: "high"},
+	}
+
+	params := buildSDKParams(req)
+
+	if string(params.OutputConfig.Effort) != "" {
+		t.Errorf("effort should be empty for haiku, got %q", params.OutputConfig.Effort)
 	}
 }
 

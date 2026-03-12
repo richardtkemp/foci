@@ -333,7 +333,8 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	}
 }
 
-// TestCompactWithEffortOverride verifies effort parameter is included in API request.
+// TestCompactWithEffortOverride verifies effort parameter is included in API request
+// when the model supports it (Sonnet), and stripped when it doesn't (Haiku).
 func TestCompactWithEffortOverride(t *testing.T) {
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +360,8 @@ func TestCompactWithEffortOverride(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	// Sonnet supports effort — should be included
+	c := NewCompactor(store, "claude-sonnet-4-6", 0.8)
 	c.WithEffort("high")
 	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
@@ -372,6 +374,23 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	}
 	if !strings.Contains(body, `"output_config"`) {
 		t.Errorf("API request body should contain output_config, got: %s", body)
+	}
+
+	// Haiku does not support effort — should be stripped
+	store2 := session.NewStore(t.TempDir())
+	for i := 0; i < 3; i++ {
+		store2.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
+		store2.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
+	}
+	c2 := NewCompactor(store2, "claude-haiku-4-5", 0.8)
+	c2.WithEffort("high")
+	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	if err != nil {
+		t.Fatalf("Compact with haiku: %v", err)
+	}
+	body2 := string(capturedBody)
+	if strings.Contains(body2, `"effort"`) {
+		t.Errorf("API request body should NOT contain effort for haiku, got: %s", body2)
 	}
 }
 
