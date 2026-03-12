@@ -155,7 +155,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		timeout = time.Duration(p.Timeout) * time.Second
 	}
 
-	log.Debugf("exec", "running: %s (timeout=%s background=%v)", truncateCmd(p.Command, 200), timeout, p.Background)
+	log.Debugf("exec", "session=%s running: %s (timeout=%s background=%v)", SessionKeyFromContext(ctx), truncateCmd(p.Command, 200), timeout, p.Background)
 
 	// For explicit background mode, use the original direct approach (no bridge)
 	if p.Background {
@@ -183,7 +183,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		var err error
 		bridge, err = NewExecBridge(registry, ctx)
 		if err != nil {
-			log.Debugf("exec", "exec bridge creation failed (continuing without): %v", err)
+			log.Debugf("exec", "session=%s exec bridge creation failed (continuing without): %v", SessionKeyFromContext(ctx), err)
 		} else {
 			defer bridge.Close()
 			cmd = fmt.Sprintf("%s; source %s; %s", execPreamble(), bridge.FuncsPath(), cmd)
@@ -439,7 +439,7 @@ func formatResult(output string, err error, ctx context.Context, timeout time.Du
 
 	if err != nil {
 		if ctx.Err() != nil {
-			log.Debugf("exec", "command timed out after %s: %s", timeout, truncateCmd(displayCmd, 100))
+			log.Debugf("exec", "session=%s command timed out after %s: %s", SessionKeyFromContext(ctx), timeout, truncateCmd(displayCmd, 100))
 		}
 		return result + "\nError: " + err.Error()
 	}

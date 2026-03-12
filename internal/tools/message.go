@@ -71,7 +71,7 @@ func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, t
 				}
 				audioData, err := tts.Synthesize(ctx, p.Text)
 				if err != nil {
-					log.Errorf("voice", "tts synthesis failed: %v", err)
+					log.Errorf("voice", "session=%s tts synthesis failed: %v", sessionKey, err)
 					return ToolResult{}, fmt.Errorf("tts: %w", err)
 				}
 				if chatID != 0 {

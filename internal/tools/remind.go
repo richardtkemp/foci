@@ -54,7 +54,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 			}
 
 			if p.Wake {
-				return remindWake(rs, agentID, p.Text, p.When, wakeFn)
+				return remindWake(SessionKeyFromContext(ctx), rs, agentID, p.Text, p.When, wakeFn)
 			}
 
 			// Passive reminder — store in ReminderStore
@@ -68,7 +68,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 }
 
 // remindWake stores a wake reminder in the DB, then schedules it in-memory.
-func remindWake(rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn) (ToolResult, error) {
+func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when string, wakeFn ScheduleWakeFn) (ToolResult, error) {
 	if wakeFn == nil {
 		return ToolResult{}, fmt.Errorf("wake not configured")
 	}
@@ -88,7 +88,7 @@ func remindWake(rs *memory.ReminderStore, agentID, text, when string, wakeFn Sch
 		return ToolResult{}, fmt.Errorf("schedule wake: %w", err)
 	}
 
-	log.Debugf("remind", "scheduled wake id=%d in %v: %q", id, dur, text)
+	log.Debugf("remind", "session=%s scheduled wake id=%d in %v: %q", sessionKey, id, dur, text)
 	return TextResult(fmt.Sprintf("Wake scheduled in %v: %q", dur, text)), nil
 }
 

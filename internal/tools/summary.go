@@ -158,8 +158,8 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-	log.Infof("summary", "model=%s input=%d output=%d cost=$%.4f duration=%s",
-		model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
+	log.Infof("summary", "session=%s model=%s input=%d output=%d cost=$%.4f duration=%s",
+		SessionKeyFromContext(ctx), model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
 	// Use the resolved model's format for provider attribution,
 	// falling back to the default format from the parent agent.

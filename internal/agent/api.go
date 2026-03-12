@@ -17,8 +17,8 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
-	a.logger().Infof("stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
-		resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
+	a.logger().Infof("session=%s stop_reason=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f",
+		sessionKey, resp.StopReason, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, cost)
 
 	sessionFile := ""
@@ -76,7 +76,7 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		resetTime := gate.ComputeResetTime(apiErr.RetryAfterSeconds())
 		gate.Close(resetTime)
 
-		a.logger().Infof("rate limit gate (%s) closed until %s", endpoint, resetTime.Format(time.Kitchen))
+		a.logger().Infof("session=%s rate limit gate (%s) closed until %s", sessionKey, endpoint, resetTime.Format(time.Kitchen))
 		if !isUserTrigger(TriggerFromContext(ctx)) {
 			for _, fn := range a.RateLimitFunc {
 				fn(resetTime)
@@ -88,7 +88,7 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return fmt.Errorf("API is overloaded — try again shortly")
 	}
 	if apiErr.IsRetryable() {
-		a.logger().Debugf("server error detail: %s", err)
+		a.logger().Debugf("session=%s server error detail: %s", sessionKey, err)
 		return fmt.Errorf("API is temporarily unavailable, try again in a few minutes")
 	}
 	return fmt.Errorf("send message: %w", err)

@@ -59,13 +59,13 @@ func (a *Agent) collectReminders(sessionKey string) string {
 
 // collectStateDashboard builds a one-line state summary from all active stores.
 // Returns empty string if all stores are empty/nil.
-func (a *Agent) collectStateDashboard() string {
+func (a *Agent) collectStateDashboard(sessionKey string) string {
 	var parts []string
 
 	// Tasks: "2/5" or "2/5 → first in_progress subject"
 	if a.TaskListStore != nil {
 		if tasks, err := a.TaskListStore.List(a.AgentID); err != nil {
-			a.logger().Warnf("state dashboard: tasks: %v", err)
+			a.logger().Warnf("session=%s state dashboard: tasks: %v", sessionKey, err)
 		} else if len(tasks) > 0 {
 			completed, total := 0, len(tasks)
 			var firstActive string
@@ -87,7 +87,7 @@ func (a *Agent) collectStateDashboard() string {
 	// Todos: "2 open (1 high)"
 	if a.TodoStore != nil {
 		if items, err := a.TodoStore.List(a.AgentID, "open", "", "", ""); err != nil {
-			a.logger().Warnf("state dashboard: todos: %v", err)
+			a.logger().Warnf("session=%s state dashboard: todos: %v", sessionKey, err)
 		} else if len(items) > 0 {
 			highCount := 0
 			for _, item := range items {
@@ -106,7 +106,7 @@ func (a *Agent) collectStateDashboard() string {
 	// Scratchpad: "N entries"
 	if a.ScratchpadStore != nil {
 		if entries, err := a.ScratchpadStore.List(a.AgentID); err != nil {
-			a.logger().Warnf("state dashboard: scratchpad: %v", err)
+			a.logger().Warnf("session=%s state dashboard: scratchpad: %v", sessionKey, err)
 		} else if len(entries) > 0 {
 			parts = append(parts, fmt.Sprintf("scratchpad: %d entries", len(entries)))
 		}
