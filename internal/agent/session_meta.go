@@ -298,6 +298,10 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 	}
 	a.turnLocksMu.Unlock()
 
+	// Migrate async pending tracking so in-flight goroutines that captured
+	// the old key resolve to the new key when they deliver results.
+	a.AsyncNotifier.MigrateSession(oldKey, newKey)
+
 	// Fire callbacks
 	for _, fn := range a.SessionKeyRotatedFunc {
 		fn(oldKey, newKey)
