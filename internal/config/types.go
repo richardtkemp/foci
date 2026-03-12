@@ -420,6 +420,8 @@ type ResourcesConfig struct {
 	MemoryWarnPercent       int     `toml:"memory_warn_percent"`       // warn threshold as % of total RAM (default 25)
 	MemoryKillPercent       int     `toml:"memory_kill_percent"`       // kill threshold as % of total RAM (default 40)
 	MemoryPressureThreshold float64 `toml:"memory_pressure_threshold"` // PSI avg10 threshold to require before acting (default 10.0)
+	GoroutineMonitorInterval  string `toml:"goroutine_monitor_interval"`  // goroutine count check interval (default "60s")
+	GoroutineMonitorThreshold int    `toml:"goroutine_monitor_threshold"` // warn when goroutine count exceeds this (default 100)
 }
 
 // BrowserConfig holds configuration for the browser automation tool.
