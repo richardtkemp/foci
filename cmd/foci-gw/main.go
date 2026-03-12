@@ -157,10 +157,6 @@ Subcommands:
 	toolDetailStore := plat.ToolDetailStore()
 	if toolDetailStore != nil {
 		toolDetailStore.ExpireAndVacuum()
-		defer func() {
-			toolDetailStore.ExpireAndVacuum()
-			_ = toolDetailStore.Close()
-		}()
 	}
 
 	startTime := time.Now()
