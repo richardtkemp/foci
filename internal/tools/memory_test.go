@@ -214,7 +214,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 	defer fts5Idx.Close()
 	fts5Idx.Reindex()
 
-	bleveIdx, err := memory.NewBleveIndex(filepath.Join(dir, "memory.bleve"), sources, 0)
+	bleveIdx, err := memory.NewBleveIndex(filepath.Join(dir, "memory.bleve"), sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex: %v", err)
 	}

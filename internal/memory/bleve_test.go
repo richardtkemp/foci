@@ -20,7 +20,7 @@ func testBleveIndex(t *testing.T) (*BleveIndex, string) {
 			Weight: 1.0,
 		},
 	}
-	idx, err := NewBleveIndex(indexPath, sources, 0)
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestBleveMultiSourceIndexing(t *testing.T) {
 		"code":      {Dir: code, Weight: 0.3},
 	}
 
-	idx, err := NewBleveIndex(indexPath, sources, 0)
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestBleveWeightedRanking(t *testing.T) {
 		"low":  {Dir: lowPriority, Weight: 0.0},
 	}
 
-	idx, err := NewBleveIndex(indexPath, sources, 0)
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestBleveStartSweepDisabledByClose(t *testing.T) {
 	// Reopen the index to verify nothing was indexed after close.
 	indexPath := filepath.Join(filepath.Dir(memDir), "memory.bleve")
 	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
-	idx2, err := NewBleveIndex(indexPath, sources, 0)
+	idx2, err := NewBleveIndex(indexPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestBleveReopenExisting(t *testing.T) {
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("persistent data across reopens"), 0644)
 
 	// Create and index
-	idx, err := NewBleveIndex(indexPath, sources, 0)
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestBleveReopenExisting(t *testing.T) {
 	idx.Close()
 
 	// Reopen
-	idx2, err := NewBleveIndex(indexPath, sources, 0)
+	idx2, err := NewBleveIndex(indexPath, sources, 0, 0.1)
 	if err != nil {
 		t.Fatalf("NewBleveIndex (reopen): %v", err)
 	}
@@ -482,5 +482,135 @@ func TestBleveSearchDateRangeFilter(t *testing.T) {
 	// Should find nothing (both files are outside the 1-day window)
 	if len(results) != 0 {
 		t.Errorf("expected 0 results with narrow date range, got %d", len(results))
+	}
+}
+
+// TestBleveIndexConversation verifies that conversation messages are indexed
+// and searchable, matching the FTS5 backend's conversation indexing behavior.
+func TestBleveIndexConversation(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+
+	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
+	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main")
+
+	results, err := idx.Search("quantum", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for 'quantum'")
+	}
+	for _, r := range results {
+		if r.Source != "conversation" {
+			t.Errorf("source = %q, want 'conversation'", r.Source)
+		}
+	}
+}
+
+// TestBleveConversationEmpty verifies that empty conversation text is a no-op.
+func TestBleveConversationEmpty(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+	idx.IndexConversation("", "agent:main:main") // should not panic or error
+}
+
+// TestBleveMemoryWeightedHigher verifies that memory results rank higher
+// than conversation results when both match the same query.
+func TestBleveMemoryWeightedHigher(t *testing.T) {
+	idx, memDir := testBleveIndex(t)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Important fact about neural networks"), 0644)
+	idx.Reindex()
+	idx.IndexConversation("Random fact about neural networks", "agent:main:main")
+
+	results, err := idx.Search("neural networks", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// Memory result should rank higher (weight 1.0 → 2.0x multiplier vs 0.1x conversation)
+	if results[0].Source != "memory" {
+		t.Errorf("first result source = %q, want 'memory' (should rank higher)", results[0].Source)
+	}
+}
+
+// TestBleveConversationSurvivedReindex verifies that conversation entries
+// are preserved when Reindex() recreates the file portion of the index.
+func TestBleveConversationSurvivedReindex(t *testing.T) {
+	idx, memDir := testBleveIndex(t)
+
+	idx.IndexConversation("Discussing special relativity theory", "agent:main:main")
+
+	// Add a file and reindex — conversations should survive
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("General notes about physics"), 0644)
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	// Conversation should still be findable
+	results, err := idx.Search("relativity", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("conversation entry should survive reindex")
+	}
+	if results[0].Source != "conversation" {
+		t.Errorf("source = %q, want 'conversation'", results[0].Source)
+	}
+
+	// File content should also be findable
+	results, err = idx.Search("physics", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("file content should be indexed after reindex")
+	}
+}
+
+// TestBleveConversationWeight verifies that the conversation weight multiplier
+// is applied correctly and is configurable.
+func TestBleveConversationWeight(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	indexPath := filepath.Join(dir, "memory.bleve")
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Neural networks are great"), 0644)
+
+	sources := map[string]SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+
+	// Use a higher conversation weight (0.5) — still lower than memory (2.0x)
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.5)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	idx.IndexConversation("Neural networks are interesting", "agent:main:main")
+
+	results, err := idx.Search("neural", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+
+	// Memory should still rank higher (2.0x vs 0.5x)
+	if results[0].Source != "memory" {
+		t.Errorf("first result = %q, want 'memory'", results[0].Source)
+	}
+	if results[1].Source != "conversation" {
+		t.Errorf("second result = %q, want 'conversation'", results[1].Source)
 	}
 }
