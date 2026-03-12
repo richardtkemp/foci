@@ -65,9 +65,9 @@ func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voic
 }
 
 // resolveTTS looks up a TTS provider by id (empty → default), applies the
-// combined rate (entry.Rate × agentRate, 0 treated as 1.0), and returns the
-// rate-adjusted provider.
-func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, agentRate float64) voice.TTS {
+// combined rate (entry.Rate × agentRate, 0 treated as 1.0), and wraps with
+// merged word replacements (entry → defaults → agent, later wins).
+func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, agentRate float64, replacements map[string]string) voice.TTS {
 	baseTTS := ttsMap[ttsID]
 	if baseTTS == nil {
 		baseTTS = ttsMap[""] // default
@@ -75,19 +75,23 @@ func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsI
 	if baseTTS == nil {
 		return nil
 	}
-	// Find entry rate from config
-	var entryRate float64
+	// Find entry config.
+	var entry *config.TTSConfig
 	if ttsID == "" && len(ttsEntries) > 0 {
-		entryRate = ttsEntries[0].Rate
+		entry = &ttsEntries[0]
 	} else {
-		for _, e := range ttsEntries {
-			if e.ID == ttsID {
-				entryRate = e.Rate
+		for i := range ttsEntries {
+			if ttsEntries[i].ID == ttsID {
+				entry = &ttsEntries[i]
 				break
 			}
 		}
 	}
-	// Combine: treat 0 as 1.0
+	// Apply rate.
+	var entryRate float64
+	if entry != nil {
+		entryRate = entry.Rate
+	}
 	eff := entryRate
 	if eff == 0 {
 		eff = 1.0
@@ -98,14 +102,39 @@ func resolveTTS(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsI
 	if eff == 1.0 {
 		eff = 0 // WithRate(0) returns the original provider unchanged
 	}
-	return voice.WithRate(baseTTS, eff)
+	result := voice.WithRate(baseTTS, eff)
+
+	// Merge replacements: entry-level first, then caller's (defaults+agent).
+	var entryRepls map[string]string
+	if entry != nil {
+		entryRepls = entry.Replacements
+	}
+	merged := voice.MergeReplacements(entryRepls, replacements)
+	return voice.WrapTTS(result, merged)
 }
 
-// resolveSTT looks up an STT provider by id (empty → default).
-func resolveSTT(sttMap map[string]voice.STT, sttID string) voice.STT {
+// resolveSTT looks up an STT provider by id (empty → default) and wraps with
+// merged word replacements (entry → caller, later wins).
+func resolveSTT(sttMap map[string]voice.STT, sttEntries []config.STTConfig, sttID string, replacements map[string]string) voice.STT {
 	stt := sttMap[sttID]
 	if stt == nil {
 		stt = sttMap[""] // default
 	}
-	return stt
+	if stt == nil {
+		return stt
+	}
+	// Find entry replacements.
+	var entryRepls map[string]string
+	if sttID == "" && len(sttEntries) > 0 {
+		entryRepls = sttEntries[0].Replacements
+	} else {
+		for _, e := range sttEntries {
+			if e.ID == sttID {
+				entryRepls = e.Replacements
+				break
+			}
+		}
+	}
+	merged := voice.MergeReplacements(entryRepls, replacements)
+	return voice.WrapSTT(stt, merged)
 }

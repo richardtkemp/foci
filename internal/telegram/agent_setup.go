@@ -36,10 +36,10 @@ type AgentSetupParams struct {
 	ReclaimHook func(sessionKey string)
 
 	// ResolveTTS resolves the TTS provider for a given agent config.
-	ResolveTTS func(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, rate float64) voice.TTS
+	ResolveTTS func(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, rate float64, replacements map[string]string) voice.TTS
 
 	// ResolveSTT resolves the STT provider for a given agent config.
-	ResolveSTT func(sttMap map[string]voice.STT, agentSTT string) voice.STT
+	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
 }
 
 // SetupAgent creates and registers platform bots for an agent.
@@ -158,8 +158,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			continue
 		}
 		ConfigureMultiballBot(mbBot, MultiballBotConfig{
-			STTProvider:     p.ResolveSTT(p.STTMap, acfg.STT),
-			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, acfg.TTS, acfg.TTSRate),
+			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, acfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, acfg.STTReplacements)),
+			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, acfg.TTS, acfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, acfg.TTSReplacements)),
 			StopAliases:     cfg.Telegram.StopAliases,
 			EnableStopAlias: cfg.Telegram.EnableStopAliases,
 			AgentConfig:     acfg,

@@ -102,7 +102,7 @@ func TestResolveTTS_DefaultFallback(t *testing.T) {
 	}
 	entries := []config.TTSConfig{{ID: "", Rate: 1.3}}
 
-	result := resolveTTS(ttsMap, entries, "nonexistent", 0)
+	result := resolveTTS(ttsMap, entries, "nonexistent", 0, nil)
 	if result == nil {
 		t.Fatal("expected non-nil TTS from default fallback")
 	}
@@ -118,7 +118,7 @@ func TestResolveTTS_RateComposition(t *testing.T) {
 	entries := []config.TTSConfig{{ID: "fast", Rate: 1.3}}
 
 	// entry=1.3, agent=1.5 → effective=1.95
-	result := resolveTTS(ttsMap, entries, "fast", 1.5)
+	result := resolveTTS(ttsMap, entries, "fast", 1.5, nil)
 	oai, ok := result.(*voice.OpenAITTS)
 	if !ok {
 		t.Fatalf("expected *OpenAITTS, got %T", result)
@@ -136,7 +136,7 @@ func TestResolveTTS_EntryRateOnly(t *testing.T) {
 	ttsMap := map[string]voice.TTS{"x": base}
 	entries := []config.TTSConfig{{ID: "x", Rate: 1.3}}
 
-	result := resolveTTS(ttsMap, entries, "x", 0)
+	result := resolveTTS(ttsMap, entries, "x", 0, nil)
 	oai, ok := result.(*voice.OpenAITTS)
 	if !ok {
 		t.Fatalf("expected *OpenAITTS, got %T", result)
@@ -149,7 +149,7 @@ func TestResolveTTS_EntryRateOnly(t *testing.T) {
 // TestResolveTTS_NilMap verifies that resolveTTS returns nil when given
 // an empty map.
 func TestResolveTTS_NilMap(t *testing.T) {
-	result := resolveTTS(nil, nil, "", 0)
+	result := resolveTTS(nil, nil, "", 0, nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}
@@ -163,7 +163,7 @@ func TestResolveSTT_DefaultFallback(t *testing.T) {
 		"": base,
 	}
 
-	result := resolveSTT(sttMap, "nonexistent")
+	result := resolveSTT(sttMap, nil, "nonexistent", nil)
 	if result != base {
 		t.Error("expected default STT fallback")
 	}
@@ -179,7 +179,7 @@ func TestResolveSTT_ExactMatch(t *testing.T) {
 		"fast": other,
 	}
 
-	result := resolveSTT(sttMap, "fast")
+	result := resolveSTT(sttMap, nil, "fast", nil)
 	if result != other {
 		t.Error("expected exact match, got fallback")
 	}
@@ -188,7 +188,7 @@ func TestResolveSTT_ExactMatch(t *testing.T) {
 // TestResolveSTT_NilMap verifies that resolveSTT returns nil when given
 // an empty map.
 func TestResolveSTT_NilMap(t *testing.T) {
-	result := resolveSTT(nil, "")
+	result := resolveSTT(nil, nil, "", nil)
 	if result != nil {
 		t.Errorf("expected nil, got %v", result)
 	}

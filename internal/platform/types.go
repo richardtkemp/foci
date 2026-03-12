@@ -158,8 +158,8 @@ type ProviderDeps struct {
 	STTMap       map[string]voice.STT
 	TTSMap       map[string]voice.TTS
 	Ctx          context.Context
-	ResolveSTT   func(map[string]voice.STT, string) voice.STT
-	ResolveTTS   func(map[string]voice.TTS, []config.TTSConfig, string, float64) voice.TTS
+	ResolveSTT   func(map[string]voice.STT, []config.STTConfig, string, map[string]string) voice.STT
+	ResolveTTS   func(map[string]voice.TTS, []config.TTSConfig, string, float64, map[string]string) voice.TTS
 }
 
 // AgentConnectionParams holds the per-agent parameters for setting up platform connections.
