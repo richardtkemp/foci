@@ -551,6 +551,111 @@ func TestTodoToolListWithSort(t *testing.T) {
 	}
 }
 
+// Verifies that list without a status filter excludes done and dropped items.
+func TestTodoToolListDefaultExcludesDoneDropped(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	store.Add("agent1", "Open task", "medium", "")
+	id2, _ := store.Add("agent1", "Done task", "medium", "")
+	id3, _ := store.Add("agent1", "Dropped task", "medium", "")
+	store.Add("agent1", "In-progress task", "medium", "")
+
+	store.Complete("agent1", id2, "finished")
+	store.Transition("agent1", id3, "dropped", "not needed")
+	store.Transition("agent1", 4, "in_progress", "")
+
+	result, err := executeTodoTool(tool, map[string]interface{}{"action": "list"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(result, "Open task") {
+		t.Errorf("should include open task, got: %s", result)
+	}
+	if !strings.Contains(result, "In-progress task") {
+		t.Errorf("should include in-progress task, got: %s", result)
+	}
+	if strings.Contains(result, "Done task") {
+		t.Errorf("should exclude done task, got: %s", result)
+	}
+	if strings.Contains(result, "Dropped task") {
+		t.Errorf("should exclude dropped task, got: %s", result)
+	}
+}
+
+// Verifies that list with status=all includes done and dropped items.
+func TestTodoToolListAllIncludesDoneDropped(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	store.Add("agent1", "Open task", "medium", "")
+	id2, _ := store.Add("agent1", "Done task", "medium", "")
+	id3, _ := store.Add("agent1", "Dropped task", "medium", "")
+
+	store.Complete("agent1", id2, "finished")
+	store.Transition("agent1", id3, "dropped", "not needed")
+
+	result, err := executeTodoTool(tool, map[string]interface{}{"action": "list", "status": "all"})
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if !strings.Contains(result, "Open task") {
+		t.Errorf("should include open task, got: %s", result)
+	}
+	if !strings.Contains(result, "Done task") {
+		t.Errorf("should include done task, got: %s", result)
+	}
+	if !strings.Contains(result, "Dropped task") {
+		t.Errorf("should include dropped task, got: %s", result)
+	}
+}
+
+// Verifies that list with no active items shows appropriate message.
+func TestTodoToolListDefaultNoActive(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent1")
+
+	id1, _ := store.Add("agent1", "Done task", "medium", "")
+	store.Complete("agent1", id1, "finished")
+
+	result, err := executeTodoTool(tool, map[string]interface{}{"action": "list"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(result, "No active todos") {
+		t.Errorf("expected 'No active todos', got: %s", result)
+	}
+}
+
+// Verifies normalizeStatusFilter maps correctly, including new "all" and "active" values.
+func TestNormalizeStatusFilter(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", "active"},
+		{"all", ""},
+		{"active", "active"},
+		{"open", "open"},
+		{"in_progress", "in_progress"},
+		{"wip", "in_progress"},
+		{"done", "done"},
+		{"completed", "done"},
+		{"dropped", "dropped"},
+		{"cancelled", "dropped"},
+	}
+	for _, tt := range tests {
+		got := normalizeStatusFilter(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeStatusFilter(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func newTestTodoStore(t *testing.T) *memory.TodoStore {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "todo_test.db")

@@ -181,6 +181,33 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	}
 }
 
+// Verifies the "active" status filter excludes done and dropped items.
+func TestTodoListFilterActive(t *testing.T) {
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Open task", "medium", "")
+	id2, _ := store.Add("agent1", "Done task", "medium", "")
+	id3, _ := store.Add("agent1", "Dropped task", "medium", "")
+	id4, _ := store.Add("agent1", "WIP task", "medium", "")
+
+	store.Complete("agent1", id2, "finished")
+	store.Transition("agent1", id3, "dropped", "not needed")
+	store.Transition("agent1", id4, "in_progress", "")
+
+	active, err := store.List("agent1", "active", "", "", "")
+	if err != nil {
+		t.Fatalf("List active: %v", err)
+	}
+	if len(active) != 2 {
+		t.Errorf("expected 2 active, got %d", len(active))
+	}
+	for _, item := range active {
+		if item.Status == "done" || item.Status == "dropped" {
+			t.Errorf("active filter should exclude %q items", item.Status)
+		}
+	}
+}
+
 func TestTodoListFilterByPriority(t *testing.T) {
 	store := newTestTodoStore(t)
 

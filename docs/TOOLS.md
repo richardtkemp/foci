@@ -13,7 +13,7 @@ Tools are Go functions registered at compile time. No dynamic loading, no plugin
 | `web_search` | Search the web. Default: Anthropic server-side tool (`search_provider = "anthropic"`). Fallback: Brave Search API (`search_provider = "brave"`). |
 | `web_fetch` | Fetch web page content. Two providers: `"builtin"` (default) — client-side HTTP GET with readability extraction, goes through tool result guard and auto-summarise. `"anthropic"` — server-side fetch, bypasses guard/summarise. Set via `fetch_provider` in config. |
 | `memory_search` | FTS5 full-text search over memory files + conversation history (porter stemming, memory weighted 2x, sort by relevance or recency). |
-| `todo` | Per-agent task list — add, list, complete, remove, search. SQLite backend with priority ordering (high/medium/low) and status tracking (open/in_progress/done/dropped). Tag support for filtering. Items tagged `background` are automatically picked up and worked on in background branch sessions when the user is idle and mana is available — see [HEARTBEAT.md](HEARTBEAT.md). |
+| `todo` | Per-agent task list — add, list, complete, remove, search. SQLite backend with priority ordering (high/medium/low) and status tracking (open/in_progress/done/dropped). List excludes done/dropped by default; use `status: "all"` to include them. Tag support for filtering. Items tagged `background` are automatically picked up and worked on in background branch sessions when the user is idle and mana is available — see [HEARTBEAT.md](HEARTBEAT.md). |
 | `remind` | Defer a thought for later (delay, tomorrow, specific date/time). Stored in SQLite, surfaced as injected context when due. `wake=true` actively wakes the session. |
 | `scratchpad` | Working notes that survive compaction — write, read, clear, list via `action` parameter. |
 | `send_message_to_user` | Send proactive Telegram messages and media. `send_as` controls file type: document (default), voice, video, photo, audio, animation. With `send_as="voice"` and text (no file), synthesizes speech via TTS. |
@@ -131,10 +131,12 @@ echo "Pipeline results: all green" | foci_send_message_to_user
 ```
 
 #### `foci_todo <action> [args...]`
-Manage the todo list.
+Manage the todo list. `list` shows active items only (excludes done/dropped); use `list-all` or `list --status all` to see everything.
 ```bash
 foci_todo add "Review PR #42"
-foci_todo list
+foci_todo list                    # active items only
+foci_todo list --status all       # include done/dropped
+foci_todo list-all                # shorthand for --status all
 foci_todo complete 3
 foci_todo search "review"
 foci_todo remove 5

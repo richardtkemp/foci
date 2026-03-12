@@ -439,6 +439,13 @@ func generateShellFunc(t *Tool) string {
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
+    list-all)
+      local params='{"action":"list","status":"all"}'
+      [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
+      [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
+      [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
+      ;;
     search)
       local params='{"action":"search"}'
       [ -n "$query" ] && params="$(echo "$params" | jq --arg q "$query" '. + {query: $q}')"
@@ -465,7 +472,7 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"remove","id":$id}}')"
       ;;
     *)
-      echo "usage: %s <add|list|search|get|complete|edit|remove> [args...]" >&2
+      echo "usage: %s <add|list|list-all|search|get|complete|edit|remove> [args...]" >&2
       return 1
       ;;
   esac
