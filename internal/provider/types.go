@@ -284,6 +284,39 @@ func ToolResultBlock(toolUseID string, content string, isError bool) ContentBloc
 	}
 }
 
+// SessionStats holds summary metrics for a session's message history.
+type SessionStats struct {
+	Messages   int // number of messages
+	Blocks     int // total content blocks across all messages
+	ApproxBytes int // approximate size in bytes (text + tool content)
+}
+
+// ApproxTokens returns a rough token estimate (~4 chars per token).
+func (s SessionStats) ApproxTokens() int {
+	return s.ApproxBytes / 4
+}
+
+// ComputeSessionStats computes summary metrics for a slice of messages.
+// The byte estimate counts text, thinking, tool input, tool result content,
+// and base64 source data — enough to diagnose memory growth without being exact.
+func ComputeSessionStats(msgs []Message) SessionStats {
+	var s SessionStats
+	s.Messages = len(msgs)
+	for _, m := range msgs {
+		s.Blocks += len(m.Content)
+		for _, b := range m.Content {
+			s.ApproxBytes += len(b.Text)
+			s.ApproxBytes += len(b.Thinking)
+			s.ApproxBytes += len(b.Content)
+			s.ApproxBytes += len(b.Input)
+			if b.Source != nil {
+				s.ApproxBytes += len(b.Source.Data)
+			}
+		}
+	}
+	return s
+}
+
 // TextOf extracts the concatenated text from content blocks.
 func TextOf(blocks []ContentBlock) string {
 	var parts []string
