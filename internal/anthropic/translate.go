@@ -47,7 +47,7 @@ func buildSDKParams(req *MessageRequest) sdk.MessageNewParams {
 		params.Tools = toolsToSDK(req.Tools)
 	}
 
-	if req.Output != nil && req.Output.Effort != "" {
+	if req.Output != nil && req.Output.Effort != "" && config.ModelSupportsEffort(req.Model) {
 		params.OutputConfig = sdk.OutputConfigParam{
 			Effort: sdk.OutputConfigEffort(req.Output.Effort),
 		}

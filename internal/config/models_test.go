@@ -325,6 +325,35 @@ func TestStripDeveloperPrefix(t *testing.T) {
 	}
 }
 
+// TestModelSupportsEffort verifies that effort is supported for Sonnet/Opus but not Haiku
+// or non-Anthropic models. Accepts both bare and developer-prefixed model IDs.
+func TestModelSupportsEffort(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"claude-sonnet-4-6", true},
+		{"claude-opus-4-6", true},
+		{"anthropic/claude-sonnet-4-6", true},
+		{"anthropic/claude-opus-4-6", true},
+		{"claude-haiku-4-5", false},
+		{"claude-haiku-4-5-20251001", false},
+		{"anthropic/claude-haiku-4-5-20251001", false},
+		{"ANTHROPIC/CLAUDE-HAIKU-4-5", false},
+		{"gemini-2.5-flash", false},
+		{"gpt-4o", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			got := ModelSupportsEffort(tt.model)
+			if got != tt.want {
+				t.Errorf("ModelSupportsEffort(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || (len(s) > 0 && len(substr) > 0 && hasSubstring(s, substr)))
 }
