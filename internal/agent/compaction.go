@@ -18,8 +18,6 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 		return
 	}
 
-	asyncPending := a.AsyncNotifier.HasPending(sessionKey)
-
 	totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	effectiveModel := a.SessionModel(sessionKey)
 	contextLimit := compaction.ContextLimit(effectiveModel)
@@ -77,17 +75,6 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 		}
 	} else if !shouldCompact {
 		return
-	}
-
-	// Defer compaction while async results are pending — but override the
-	// deferral when context is critically full (>95%) to prevent exhaustion.
-	if asyncPending {
-		critical := int(float64(contextLimit) * 0.95)
-		if totalTokens <= critical {
-			a.logger().Infof("session=%s compaction deferred: async pending (%d/%d tokens)", sessionKey, totalTokens, contextLimit)
-			return
-		}
-		a.logger().Warnf("session=%s compaction forced despite async pending: context critical (%d/%d tokens)", sessionKey, totalTokens, contextLimit)
 	}
 
 	if a.SessionNoCompact(sessionKey) {
