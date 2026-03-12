@@ -306,7 +306,7 @@ func parseMetaTime(text string) (time.Time, bool) {
 }
 
 // buildMetaPrefix creates the metadata line prepended to user messages.
-func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm *sessionMeta) string {
+func buildMetaPrefix(now time.Time, model, platform string, mana string, manaGood bool, sm *sessionMeta) string {
 	gap := "none"
 	if !sm.lastMessageTime.IsZero() {
 		gap = display.FormatDuration(now.Sub(sm.lastMessageTime))
@@ -323,11 +323,12 @@ func buildMetaPrefix(now time.Time, model string, mana string, manaGood bool, sm
 
 	if sm.prevCost == 0 && sm.prevInput == 0 {
 		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s model=%s%s", now.UTC().Format(time.RFC3339), gap, model, manaFlag)
+		return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s%s", now.UTC().Format(time.RFC3339), gap, model, platform, manaFlag)
 	}
 
-	return fmt.Sprintf("[meta] time=%s gap=%s model=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
+	return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
 		now.UTC().Format(time.RFC3339), gap, model,
+		platform,
 		sm.prevCost,
 		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite,
 		manaFlag)

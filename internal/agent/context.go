@@ -34,6 +34,25 @@ func isUserTrigger(trigger string) bool {
 	}
 }
 
+// triggerToPlatform maps a trigger label to a platform name for the [meta] header.
+// Platform tells the agent which transport delivered the message:
+//   - telegram: message arrived via Telegram
+//   - android: message arrived via Android app
+//   - api: message arrived via HTTP /send endpoint
+//   - cron: message is system-initiated (keepalive, wake, scheduled, etc.)
+func triggerToPlatform(trigger string) string {
+	switch trigger {
+	case "telegram", "voice":
+		return "telegram"
+	case "android":
+		return "android"
+	case "", "user":
+		return "api"
+	default:
+		return "cron"
+	}
+}
+
 // TurnCallbacks holds per-turn callbacks scoped to a context.
 // Using context avoids cross-turn races from mutable Agent fields.
 type TurnCallbacks struct {
