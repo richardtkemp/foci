@@ -491,6 +491,8 @@ func API(entry APIEntry) {
 			entry.Provider = "gemini"
 		} else if isOpenAIModel(entry.Model) {
 			entry.Provider = "openai"
+		} else if strings.HasPrefix(entry.Model, "claude-") {
+			entry.Provider = "anthropic"
 		}
 	}
 	std.api(entry)

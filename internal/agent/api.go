@@ -29,6 +29,7 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 	}
 	log.API(log.APIEntry{
 		Timestamp:   start.UTC(),
+		Provider:    a.SessionFormat(sessionKey),
 		Session:     sessionKey,
 		Model:       model,
 		Input:       resp.Usage.InputTokens,

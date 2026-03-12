@@ -264,6 +264,7 @@ func setupAgent(p setupParams) *agentInstance {
 	if acfg.CompactionEffort != "" {
 		compactor.WithEffort(acfg.CompactionEffort)
 	}
+	compactor.WithFormat(defaultFormat)
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
 	compactor.AgentID = acfg.ID

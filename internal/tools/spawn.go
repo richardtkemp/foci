@@ -168,7 +168,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, client, model, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, resolved.Format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -184,7 +184,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				result, err := spawnOneShot(ctx, client, model, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, resolved.Format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -200,7 +200,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, exploreClient, exploreResolved.ModelID, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
+				result, err := spawnOneShot(ctx, exploreClient, exploreResolved.ModelID, exploreResolved.Format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -403,7 +403,7 @@ func spawnGuardResult(toolName, result string, limit int) string {
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
-func spawnOneShot(ctx context.Context, client provider.Client, model string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int) (string, error) {
+func spawnOneShot(ctx context.Context, client provider.Client, model, format string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -444,6 +444,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model string, sys
 		}
 		log.API(log.APIEntry{
 			Timestamp:   start.UTC(),
+			Provider:    format,
 			Session:     sessionKey,
 			Model:       model,
 			Input:       resp.Usage.InputTokens,

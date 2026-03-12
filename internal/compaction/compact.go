@@ -19,6 +19,7 @@ type Compactor struct {
 	log              *log.ComponentLogger
 	sessions         *session.Store
 	model            string
+	format           string  // wire format ("anthropic", "gemini", "openai") for API log provider field
 	threshold        float64 // fraction of context window (e.g. 0.8)
 	maxTokens        int
 	minMessages      int
@@ -59,6 +60,12 @@ func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Co
 // WithEffort sets the effort level for compaction API calls.
 func (c *Compactor) WithEffort(effort string) *Compactor {
 	c.effort = effort
+	return c
+}
+
+// WithFormat sets the wire format for API log provider attribution.
+func (c *Compactor) WithFormat(format string) *Compactor {
+	c.format = format
 	return c
 }
 
@@ -351,6 +358,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{
 		Timestamp:  start.UTC(),
+		Provider:   c.format,
 		Session:    sessionKey,
 		Model:      c.model,
 		Input:      resp.Usage.InputTokens,
