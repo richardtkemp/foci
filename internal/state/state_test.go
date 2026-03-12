@@ -275,8 +275,8 @@ func contains(s, substr string) bool {
 	return false
 }
 
-// TestSetUnmarshalError tests Set when the value can't be marshaled
-func TestSetUnmarshalError(t *testing.T) {
+// TestSetMarshalError tests Set when the value can't be marshaled
+func TestSetMarshalError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	s := New(path)
 
@@ -288,8 +288,8 @@ func TestSetUnmarshalError(t *testing.T) {
 	}
 }
 
-// TestLoadWriteError tests Set when file write fails
-func TestLoadWriteError(t *testing.T) {
+// TestSetWriteError tests Set when file write fails
+func TestSetWriteError(t *testing.T) {
 	// Use a read-only directory to trigger write error
 	path := filepath.Join(t.TempDir(), "readonly", "state.json")
 	os.MkdirAll(filepath.Dir(path), 0555) // read-only
