@@ -115,7 +115,7 @@ cache_bust_idle_minutes = 10       # suppress alert if session idle > N minutes 
 ```
 
 ```
-⚠️ Cache write: 43,201 tokens ($0.27) on agent:main:main
+⚠️ Cache write: 43,201 tokens ($0.27) on main/i0/0
 ```
 
 Default threshold: 20,000 tokens. Set to 0 to disable. Helps catch system prompt mutations, unexpected session resets, or compaction failures that silently blow up costs.

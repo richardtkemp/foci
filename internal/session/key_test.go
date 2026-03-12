@@ -182,9 +182,9 @@ func TestSessionKeyBranch(t *testing.T) {
 	}
 }
 
-// TestChatIDFromKey verifies that ChatIDFromKey extracts chat IDs from both
-// new slash-separated and legacy colon-separated session key formats,
-// including branch keys which preserve the root chat type.
+// TestChatIDFromKey verifies that ChatIDFromKey extracts chat IDs from
+// slash-separated session key formats, including branch keys which
+// preserve the root chat type.
 func TestChatIDFromKey(t *testing.T) {
 	tests := []struct {
 		name string
@@ -192,34 +192,24 @@ func TestChatIDFromKey(t *testing.T) {
 		want int64
 	}{
 		{
-			name: "new format chat root",
+			name: "chat root",
 			key:  "main/c123456/1709590000",
 			want: 123456,
 		},
 		{
-			name: "new format chat branch",
+			name: "chat branch",
 			key:  "main/c123456/1709590000/b1709596800",
 			want: 123456,
 		},
 		{
-			name: "new format independent root",
+			name: "independent root",
 			key:  "main/i1709596800/1709596800",
 			want: 0,
 		},
 		{
-			name: "new format independent branch",
+			name: "independent branch",
 			key:  "main/i1709596800/1709596800/b1709596900",
 			want: 0,
-		},
-		{
-			name: "legacy agent:name:chat:chatID",
-			key:  "agent:main:chat:789",
-			want: 789,
-		},
-		{
-			name: "legacy agent:name:chatID",
-			key:  "agent:main:456",
-			want: 456,
 		},
 		{
 			name: "empty key",
@@ -232,7 +222,7 @@ func TestChatIDFromKey(t *testing.T) {
 			want: 0,
 		},
 		{
-			name: "new format with collision",
+			name: "collision suffix",
 			key:  "main/c999/1709590000/b1709596800.2",
 			want: 999,
 		},

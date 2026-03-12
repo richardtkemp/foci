@@ -35,7 +35,7 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, activityChecker) {
 			return true
 		}
 		var ts int64
-		if !d.stateStore.Get("agent:"+agentID+":last_user_activity", &ts) {
+		if !d.stateStore.Get("agent/"+agentID+"/last_user_activity", &ts) {
 			return false
 		}
 		return time.Since(time.Unix(ts, 0)) <= within

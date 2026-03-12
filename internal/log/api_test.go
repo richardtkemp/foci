@@ -19,7 +19,7 @@ func TestAPILog(t *testing.T) {
 
 	entry := APIEntry{
 		Timestamp:  time.Date(2026, 2, 21, 3, 52, 41, 0, time.UTC),
-		Session:    "agent:main:main",
+		Session:    "main/i0/0",
 		Model:      "claude-haiku-4-5",
 		Input:      1119,
 		Output:     164,
@@ -40,7 +40,7 @@ func TestAPILog(t *testing.T) {
 		t.Fatalf("unmarshal API entry: %v\nraw: %s", err, string(data))
 	}
 
-	if decoded.Session != "agent:main:main" {
+	if decoded.Session != "main/i0/0" {
 		t.Errorf("Session = %q", decoded.Session)
 	}
 	if decoded.Model != "claude-haiku-4-5" {

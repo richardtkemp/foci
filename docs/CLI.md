@@ -61,7 +61,7 @@ foci send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <durat
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--agent <id>` | `-a` | Target agent. |
-| `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `agent:<id>:<session>`. Default: `main`. |
+| `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `<id>/i0/0`. Default: `main`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
 | `--if-inactive <dur>` | | Skip if user was active within duration. Opposite of `--if-active` — for keepalives that should only fire when idle. |
 | `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |

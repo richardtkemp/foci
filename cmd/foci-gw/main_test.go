@@ -121,7 +121,7 @@ func TestInjectWelcomeFile(t *testing.T) {
 	os.WriteFile(welcomePath, []byte("# Updated\n\nNew stuff here."), 0644)
 
 	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
+		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -143,7 +143,7 @@ func TestInjectWelcomeFile(t *testing.T) {
 
 func TestInjectWelcomeFile_NoFile(t *testing.T) {
 	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
+		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -160,7 +160,7 @@ func TestInjectWelcomeFile_EmptyFile(t *testing.T) {
 	os.WriteFile(welcomePath, []byte(""), 0644)
 
 	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
+		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -189,7 +189,7 @@ func TestInjectWelcomeFile_TriggersTurnOnlyWithContent(t *testing.T) {
 	dir := t.TempDir()
 
 	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "agent:main:main" }},
+		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
 	}
 	agentOrder := []string{"main"}
 
@@ -357,7 +357,7 @@ func TestBuildAgentMemorySources_AgentOnly(t *testing.T) {
 	if len(combined) != 1 {
 		t.Fatalf("expected 1 source, got %d", len(combined))
 	}
-	src, ok := combined["agent:workspace"]
+	src, ok := combined["agent/workspace"]
 	if !ok {
 		t.Fatal("expected 'agent:workspace' key")
 	}
@@ -387,7 +387,7 @@ func TestBuildAgentMemorySources_Combined(t *testing.T) {
 	}
 
 	// Agent source boosted
-	agentSrc := combined["agent:workspace"]
+	agentSrc := combined["agent/workspace"]
 	expectedWeight := 1.0 + AgentMemoryBoost
 	if agentSrc.Weight != expectedWeight {
 		t.Errorf("agent weight = %v, want %v", agentSrc.Weight, expectedWeight)
@@ -449,7 +449,7 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 	}
 
 	// Agent-specific source should rank higher due to weight boost
-	if results[0].Source != "agent:local" {
+	if results[0].Source != "agent/local" {
 		t.Errorf("first result source = %q, want 'agent:local' (should rank higher due to boost)", results[0].Source)
 	}
 	if results[1].Source != "global" {

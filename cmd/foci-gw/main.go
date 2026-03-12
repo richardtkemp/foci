@@ -287,8 +287,7 @@ Subcommands:
 			ReclaimHook: func(sessionKey string) {
 				for _, id := range agentOrder {
 					inst := agents[id]
-					prefix := "agent:" + id + ":"
-					if strings.HasPrefix(sessionKey, prefix) {
+					if strings.HasPrefix(sessionKey, id+"/") {
 						orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 						fireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
 							return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)

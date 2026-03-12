@@ -59,7 +59,7 @@ From the agent's perspective, a multiball session is just another session. It ha
 - Its own compaction cycle
 - Its own tool call context
 
-The agent knows it's in a multiball session via its session key (e.g., `agent:clutch:multiball:mb-123456`).
+The agent knows it's in a multiball session via its session key (e.g., `clutch/c123/1709590000/b1709123456`).
 
 ## Display Settings
 

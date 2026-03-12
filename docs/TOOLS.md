@@ -69,7 +69,7 @@ Unified sub-call to a model with four context modes, all with tool access:
 | `clone` (default) | Full clone | All | Branch session — a headless self-fork. Runs async, delivers result on completion. |
 | `explore` | Code explorer | Read-only (`ls`, `find`, `grep`, `read`, `memory_search`, `web_search`, `web_fetch`) | One-shot. Safe exploration — no file mutation, no shell exec, no messaging. Always haiku. |
 
-`clone` creates a branch `agent:ID:spawn:spawn-TIMESTAMP`, runs via `AsyncNotifier`, and returns an immediate ack. Recursive `clone` is blocked. Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion.
+`clone` creates a branch `{parentKey}/b{TIMESTAMP}`, runs via `AsyncNotifier`, and returns an immediate ack. Recursive `clone` is blocked. Concurrent spawns limited by `max_concurrent_spawns` (default 3). `spawn` itself is excluded from one-shot tool sets to prevent recursion.
 
 ## Slash Commands as Tools
 

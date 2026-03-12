@@ -183,7 +183,7 @@ func restoreMultiballSessions(
 	var pools []poolInfo
 	for _, id := range params.AgentOrder {
 		if pool := mgr.Pool(id); pool != nil {
-			pools = append(pools, poolInfo{pool: pool, name: "agent:" + id})
+			pools = append(pools, poolInfo{pool: pool, name: "agent/" + id})
 		}
 	}
 	if sp := mgr.SharedPool(); sp != nil {

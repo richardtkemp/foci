@@ -471,7 +471,7 @@ func buildSessionsDeps(p cmdRegParams) command.SessionsDeps {
 				}
 				if p.stateStore != nil {
 					var username string
-					key := fmt.Sprintf("agent:%s:chat:%d:username", p.acfg.ID, cs.ChatID)
+					key := fmt.Sprintf("agent/%s/chat/%d/username", p.acfg.ID, cs.ChatID)
 					if p.stateStore.Get(key, &username) {
 						info.Username = username
 					}
@@ -484,14 +484,14 @@ func buildSessionsDeps(p cmdRegParams) command.SessionsDeps {
 			if p.stateStore == nil {
 				return fmt.Errorf("no state store configured")
 			}
-			return p.stateStore.Set("agent:"+p.acfg.ID+":default_chat", chatID)
+			return p.stateStore.Set("agent/"+p.acfg.ID+"/default_chat", chatID)
 		},
 		DefaultChatFn: func() int64 {
 			if p.stateStore == nil {
 				return 0
 			}
 			var chatID int64
-			p.stateStore.Get("agent:"+p.acfg.ID+":default_chat", &chatID)
+			p.stateStore.Get("agent/"+p.acfg.ID+"/default_chat", &chatID)
 			return chatID
 		},
 		IndexFn: func(opts command.SessionIndexOpts) ([]command.SessionIndexInfo, error) {

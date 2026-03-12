@@ -31,7 +31,7 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 
 	// Add agent-specific sources with weight boost
 	for _, src := range agentSources {
-		combined["agent:"+src.Name] = memory.SourceConfig{
+		combined["agent/"+src.Name] = memory.SourceConfig{
 			Dir:    src.Dir,
 			Weight: src.Weight + AgentMemoryBoost,
 		}
@@ -258,13 +258,13 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		if wantFTS5 || wantBleve {
 			log.ConversationHook = func(text, session string) {
 				for agentID, idx := range result.agentFTS5 {
-					if strings.HasPrefix(session, "agent:"+agentID+":") {
+					if strings.HasPrefix(session, agentID+"/") {
 						idx.IndexConversation(text, session)
 						break
 					}
 				}
 				for agentID, idx := range result.agentBleve {
-					if strings.HasPrefix(session, "agent:"+agentID+":") {
+					if strings.HasPrefix(session, agentID+"/") {
 						idx.IndexConversation(text, session)
 						break
 					}

@@ -127,7 +127,7 @@ func (b *Bot) defaultChatID() int64 {
 		return 0
 	}
 	var chatID int64
-	if b.stateStore.Get("agent:"+b.agentID+":default_chat", &chatID) {
+	if b.stateStore.Get("agent/"+b.agentID+"/default_chat", &chatID) {
 		return chatID
 	}
 	return 0
@@ -138,7 +138,7 @@ func (b *Bot) setDefaultChat(chatID int64) {
 	if b.stateStore == nil || b.agentID == "" {
 		return
 	}
-	if err := b.stateStore.Set("agent:"+b.agentID+":default_chat", chatID); err != nil {
+	if err := b.stateStore.Set("agent/"+b.agentID+"/default_chat", chatID); err != nil {
 		b.logger().Errorf("persist default chat: %v", err)
 	}
 }
@@ -148,7 +148,7 @@ func (b *Bot) recordChatUsername(chatID int64, username string) {
 	if b.stateStore == nil || b.agentID == "" || username == "" {
 		return
 	}
-	key := fmt.Sprintf("agent:%s:chat:%d:username", b.agentID, chatID)
+	key := fmt.Sprintf("agent/%s/chat/%d/username", b.agentID, chatID)
 	if err := b.stateStore.Set(key, username); err != nil {
 		b.logger().Errorf("persist chat username: %v", err)
 	}

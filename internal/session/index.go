@@ -537,3 +537,26 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 	)
 	return err
 }
+
+// ResolvePartialKey finds the most recently active session whose key starts
+// with the given partial key prefix followed by "/". This allows partial keys
+// like "scout/c5970082313" to resolve to the full active session key
+// "scout/c5970082313/1772794601". Returns "" if no match is found.
+func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	prefix := partialKey + "/"
+	var key string
+	err := idx.db.QueryRow(
+		`SELECT session_key FROM sessions
+		 WHERE session_key LIKE ? AND status = 'active'
+		 ORDER BY last_activity_at DESC, created_at DESC
+		 LIMIT 1`,
+		prefix+"%",
+	).Scan(&key)
+	if err != nil {
+		return ""
+	}
+	return key
+}
