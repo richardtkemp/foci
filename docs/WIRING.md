@@ -47,7 +47,7 @@ config.Load(path)                                        ← validates values; l
    Per-agent loop (for each cfg.Agents[i]):
    → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
      → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
-     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock if enabled)
+     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock, browser if enabled)
      → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
      → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
      → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
@@ -609,6 +609,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
+| `browser` | browser.go, browser_actions.go, browser_snapshot.go | Browser automation via accessibility tree snapshots. Uses go-rod to control Chrome, captures ARIA snapshot as YAML with numeric refs (`[ref=s1e5]`). Actions: navigate, click, fill, select, press, screenshot, pdf, evaluate, etc. Each mutation auto-captures a fresh snapshot. JS engine vendored from go-rod/rod-mcp (browserjs/). Only registered when `[tools.browser] enabled = true`. |
 
 ### Exec Bridge / Tool Piping (`tools/execbridge.go`)
 

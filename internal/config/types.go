@@ -157,6 +157,7 @@ type AgentConfig struct {
 	MaxConcurrentSpawns   int    `toml:"max_concurrent_spawns"`   // max concurrent spawn sessions
 	ExploreMaxDepth       int    `toml:"explore_max_depth"`       // max tool loops for explore spawn mode (0 = use global)
 	MaxUploadFileSize     int64  `toml:"max_upload_file_size"`    // max file size for multipart uploads in bytes
+	BrowserEnabled        *bool  `toml:"browser_enabled"`         // per-agent browser tool override (nil = use global tools.browser.enabled)
 	TmuxAutopilot         *bool  `toml:"tmux_autopilot"`          // per-agent tmux autopilot override (nil = use global)
 	TmuxWatchThreshold    string `toml:"tmux_watch_threshold"`    // per-agent watch threshold (empty = use global)
 	TmuxSessionTTL        string `toml:"tmux_session_ttl"`        // per-agent session TTL override (empty = use global)
@@ -421,6 +422,18 @@ type ResourcesConfig struct {
 	MemoryPressureThreshold float64 `toml:"memory_pressure_threshold"` // PSI avg10 threshold to require before acting (default 10.0)
 }
 
+// BrowserConfig holds configuration for the browser automation tool.
+type BrowserConfig struct {
+	Enabled        bool    `toml:"enabled"`          // enable browser tool (default false)
+	Headless       bool    `toml:"headless"`          // run headless (default true)
+	TimeoutSec     int     `toml:"timeout_sec"`       // page operation timeout in seconds (default 30)
+	UserDataDir    string  `toml:"user_data_dir"`     // Chrome user data dir (empty = temp profile)
+	ExecutablePath string  `toml:"executable_path"`   // Chrome executable path (empty = auto-detect)
+	Incognito      bool    `toml:"incognito"`          // use incognito mode (default true)
+	DOMStableSec   float64 `toml:"dom_stable_sec"`    // DOM stability wait interval in seconds (default 1)
+	DOMStableDiff  float64 `toml:"dom_stable_diff"`   // DOM stability diff threshold (default 0.2)
+}
+
 type ToolsConfig struct {
 	MaxResultChars          int      `toml:"max_result_chars"`           // max chars before writing result to file (default 15000)
 	TempDir                 string   `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci-tool-results)
@@ -457,8 +470,9 @@ type ToolsConfig struct {
 	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"` // domain whitelist (mutually exclusive with blocked)
 	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"` // domain blacklist
 	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`         // max fetches per API call (0 = unlimited)
-	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`  // domain whitelist
-	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`  // domain blacklist
+	WebFetchAllowedDomains  []string      `toml:"web_fetch_allowed_domains"`  // domain whitelist
+	WebFetchBlockedDomains  []string      `toml:"web_fetch_blocked_domains"`  // domain blacklist
+	Browser                 BrowserConfig `toml:"browser"`                    // browser automation tool config
 }
 
 type MessageTransform struct {
