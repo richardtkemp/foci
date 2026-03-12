@@ -20,18 +20,20 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// BleveIndex manages a bleve full-text search index over memory files.
-// Unlike the FTS5 Index, it does not index conversation history — only files.
+// BleveIndex manages a bleve full-text search index over memory files
+// and conversation history. Multiple sources can be indexed, each
+// with a configurable weight multiplier.
 type BleveIndex struct {
-	indexPath    string
-	index        bleve.Index
-	sources      map[string]SourceConfig
-	watcher      *fsnotify.Watcher
-	debounce     time.Duration
-	reindexTimer *time.Timer
-	sweepStop    chan struct{}
-	closed       bool
-	mu           sync.Mutex
+	indexPath          string
+	index              bleve.Index
+	sources            map[string]SourceConfig
+	conversationWeight float64 // weight multiplier for conversation results
+	watcher            *fsnotify.Watcher
+	debounce           time.Duration
+	reindexTimer       *time.Timer
+	sweepStop          chan struct{}
+	closed             bool
+	mu                 sync.Mutex
 }
 
 // buildBleveMapping creates the index mapping for memory documents.
@@ -67,7 +69,8 @@ func buildBleveMapping() mapping.IndexMapping {
 
 // NewBleveIndex creates or opens a bleve index at indexPath, indexing .md files
 // from the given sources. debounce is the delay before auto-reindexing on file change.
-func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce time.Duration) (*BleveIndex, error) {
+// conversationWeight is the multiplier for conversation search results.
+func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce time.Duration, conversationWeight float64) (*BleveIndex, error) {
 	var idx bleve.Index
 	var err error
 
@@ -82,18 +85,22 @@ func NewBleveIndex(indexPath string, sources map[string]SourceConfig, debounce t
 	}
 
 	return &BleveIndex{
-		indexPath: indexPath,
-		index:     idx,
-		sources:   sources,
-		debounce:  debounce,
+		indexPath:          indexPath,
+		index:              idx,
+		sources:            sources,
+		conversationWeight: conversationWeight,
+		debounce:           debounce,
 	}, nil
 }
 
-// Reindex scans all configured source directories and rebuilds the index.
-// The index is closed, removed, and recreated to ensure a clean state.
+// Reindex scans all configured source directories and rebuilds the file
+// portion of the index. Conversation entries are preserved across reindexes.
 func (b *BleveIndex) Reindex() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// Collect conversation docs before recreation
+	convDocs := b.collectConversationDocs()
 
 	// Close existing index, remove, recreate
 	if err := b.index.Close(); err != nil {
@@ -145,7 +152,77 @@ func (b *BleveIndex) Reindex() error {
 		}
 	}
 
+	// Restore conversation docs
+	for _, doc := range convDocs {
+		if err := batch.Index(doc.id, doc.fields); err != nil {
+			log.Errorf("memory", "restore conversation doc: %v", err)
+		}
+	}
+
 	return b.index.Batch(batch)
+}
+
+// convDoc holds a conversation document's ID and fields for preservation
+// across reindexes.
+type convDoc struct {
+	id     string
+	fields map[string]interface{}
+}
+
+// collectConversationDocs reads all conversation documents from the index.
+// Must be called with b.mu held.
+func (b *BleveIndex) collectConversationDocs() []convDoc {
+	termQuery := query.NewTermQuery("conversation")
+	termQuery.SetField("source")
+
+	req := bleve.NewSearchRequest(termQuery)
+	req.Size = 100_000 // generous limit
+	req.Fields = []string{"content", "path", "source", "mtime"}
+
+	result, err := b.index.Search(req)
+	if err != nil {
+		log.Warnf("memory", "collect conversation docs for reindex: %v", err)
+		return nil
+	}
+
+	docs := make([]convDoc, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		content, _ := hit.Fields["content"].(string)
+		path, _ := hit.Fields["path"].(string)
+		mtime, _ := hit.Fields["mtime"].(float64)
+		docs = append(docs, convDoc{
+			id: hit.ID,
+			fields: map[string]interface{}{
+				"content": content,
+				"path":    path,
+				"source":  "conversation",
+				"mtime":   mtime,
+			},
+		})
+	}
+	return docs
+}
+
+// IndexConversation adds a conversation message to the bleve index.
+func (b *BleveIndex) IndexConversation(text, session string) {
+	if text == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Use a unique doc ID to allow multiple messages per session.
+	// Prefix with "conversation:" to avoid collision with file doc IDs.
+	docID := fmt.Sprintf("conversation:%s:%d", session, time.Now().UnixNano())
+	doc := map[string]interface{}{
+		"content": text,
+		"path":    session,
+		"source":  "conversation",
+		"mtime":   float64(time.Now().Unix()),
+	}
+	if err := b.index.Index(docID, doc); err != nil {
+		log.Errorf("memory", "bleve index conversation: %v", err)
+	}
 }
 
 // Search queries the bleve index. sort controls result ordering:
@@ -210,7 +287,9 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 
 		rank := hit.Score
 		// Apply source weight multiplier (same formula as FTS5)
-		if cfg, ok := b.sources[source]; ok {
+		if source == "conversation" {
+			rank *= b.conversationWeight
+		} else if cfg, ok := b.sources[source]; ok {
 			rank *= (1.0 + cfg.Weight)
 		}
 

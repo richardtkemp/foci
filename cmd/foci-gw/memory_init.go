@@ -45,6 +45,8 @@ type memoryResult struct {
 	agentBackends   map[string]map[string]memory.Searcher // agentID -> backend name -> searcher
 	sharedFTS5      *memory.Index                         // for conversation hook (shared mode)
 	agentFTS5       map[string]*memory.Index              // for conversation hook (per-agent mode)
+	sharedBleve     *memory.BleveIndex                    // for conversation hook (shared mode)
+	agentBleve      map[string]*memory.BleveIndex         // for conversation hook (per-agent mode)
 	reminderStores  map[string]*memory.ReminderStore
 	scratchpadStores map[string]*memory.Scratchpad
 	todoStores      map[string]*memory.TodoStore
@@ -100,6 +102,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		sharedBackends:   make(map[string]memory.Searcher),
 		agentBackends:    make(map[string]map[string]memory.Searcher),
 		agentFTS5:        make(map[string]*memory.Index),
+		agentBleve:       make(map[string]*memory.BleveIndex),
 		reminderStores:   make(map[string]*memory.ReminderStore),
 		scratchpadStores: make(map[string]*memory.Scratchpad),
 		todoStores:       make(map[string]*memory.TodoStore),
@@ -155,56 +158,59 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	wantFTS5 := cfg.Memory.HasBackend("fts5")
 	wantBleve := cfg.Memory.HasBackend("bleve")
 
+	// memoryBackend abstracts over FTS5 and bleve for shared init logic.
+	type memoryBackend interface {
+		memory.Searcher
+		io.Closer
+		Reindex() error
+		Watch() error
+		StartSweep(initial, interval time.Duration)
+	}
+
+	// initOne creates, reindexes, watches, and registers a single backend.
+	initOne := func(label string, b memoryBackend) {
+		closers = append(closers, b)
+		if err := b.Reindex(); err != nil {
+			log.Errorf("main", "reindex %s: %v", label, err)
+		}
+		if memDebounce > 0 || len(globalMemSources) > 0 || hasPerAgentMemory {
+			if err := b.Watch(); err != nil {
+				log.Errorf("main", "start %s file watching: %v", label, err)
+			}
+		}
+		if sweepInterval > 0 {
+			b.StartSweep(30*time.Second, sweepInterval)
+		}
+	}
+
 	// initBackends creates FTS5 and/or bleve backends for a given set of sources,
-	// returning the backend map and (optionally) the FTS5 index for conversation hooks.
-	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPrefix string, blevePrefix string) (map[string]memory.Searcher, *memory.Index) {
+	// returning the backend map and (optionally) the typed indices for conversation hooks.
+	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPrefix string, blevePrefix string) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex) {
 		backends := make(map[string]memory.Searcher)
 		var fts5Idx *memory.Index
+		var bleveIdx *memory.BleveIndex
 
 		if wantFTS5 {
-			dbPath := cfg.DataPath(dbPrefix)
-			idx, err := memory.NewIndex(dbPath, sources, memDebounce, cfg.Memory.ConversationWeight)
+			idx, err := memory.NewIndex(cfg.DataPath(dbPrefix), sources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create FTS5 index (%s): %v", label, err)
 			}
-			closers = append(closers, idx)
-			if err := idx.Reindex(); err != nil {
-				log.Errorf("main", "reindex FTS5 (%s): %v", label, err)
-			}
-			if memDebounce > 0 || len(sources) > 0 {
-				if err := idx.Watch(); err != nil {
-					log.Errorf("main", "start FTS5 file watching (%s): %v", label, err)
-				}
-			}
-			if sweepInterval > 0 {
-				idx.StartSweep(30*time.Second, sweepInterval)
-			}
+			initOne(fmt.Sprintf("FTS5 (%s)", label), idx)
 			backends["fts5"] = idx
 			fts5Idx = idx
 		}
 
 		if wantBleve {
-			blevePath := cfg.DataPath(blevePrefix)
-			bidx, err := memory.NewBleveIndex(blevePath, sources, memDebounce)
+			bidx, err := memory.NewBleveIndex(cfg.DataPath(blevePrefix), sources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create bleve index (%s): %v", label, err)
 			}
-			closers = append(closers, bidx)
-			if err := bidx.Reindex(); err != nil {
-				log.Errorf("main", "reindex bleve (%s): %v", label, err)
-			}
-			if memDebounce > 0 || len(sources) > 0 {
-				if err := bidx.Watch(); err != nil {
-					log.Errorf("main", "start bleve file watching (%s): %v", label, err)
-				}
-			}
-			if sweepInterval > 0 {
-				bidx.StartSweep(30*time.Second, sweepInterval)
-			}
+			initOne(fmt.Sprintf("bleve (%s)", label), bidx)
 			backends["bleve"] = bidx
+			bleveIdx = bidx
 		}
 
-		return backends, fts5Idx
+		return backends, fts5Idx, bleveIdx
 	}
 
 	if hasPerAgentMemory {
@@ -214,7 +220,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if len(combined) == 0 {
 				continue
 			}
-			backends, fts5Idx := initBackends(
+			backends, fts5Idx, bleveIdx := initBackends(
 				fmt.Sprintf("agent %s", acfg.ID),
 				combined,
 				fmt.Sprintf("memory-%s.db", acfg.ID),
@@ -224,28 +230,47 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if fts5Idx != nil {
 				result.agentFTS5[acfg.ID] = fts5Idx
 			}
+			if bleveIdx != nil {
+				result.agentBleve[acfg.ID] = bleveIdx
+			}
 			log.Infof("main", "agent %q: memory backends %v with %d sources", acfg.ID, cfg.Memory.SearchBackends, len(combined))
 		}
 
-		// Conversation hook: route to agent's FTS5 index by session key prefix
-		if wantFTS5 {
+		// Conversation hook: route to agent's indices by session key prefix
+		if wantFTS5 || wantBleve {
 			log.ConversationHook = func(text, session string) {
 				for agentID, idx := range result.agentFTS5 {
 					if strings.HasPrefix(session, "agent:"+agentID+":") {
 						idx.IndexConversation(text, session)
-						return
+						break
+					}
+				}
+				for agentID, idx := range result.agentBleve {
+					if strings.HasPrefix(session, "agent:"+agentID+":") {
+						idx.IndexConversation(text, session)
+						break
 					}
 				}
 			}
 		}
 	} else {
 		// Shared indices (backward compat — no agent has per-agent memory)
-		backends, fts5Idx := initBackends("shared", globalMemSources, "memory.db", "memory.bleve")
+		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, "memory.db", "memory.bleve")
 		result.sharedBackends = backends
 		result.sharedFTS5 = fts5Idx
+		result.sharedBleve = bleveIdx
 
-		if fts5Idx != nil {
+		// Wire conversation hook to all active backends
+		switch {
+		case fts5Idx != nil && bleveIdx != nil:
+			log.ConversationHook = func(text, session string) {
+				fts5Idx.IndexConversation(text, session)
+				bleveIdx.IndexConversation(text, session)
+			}
+		case fts5Idx != nil:
 			log.ConversationHook = fts5Idx.IndexConversation
+		case bleveIdx != nil:
+			log.ConversationHook = bleveIdx.IndexConversation
 		}
 	}
 
