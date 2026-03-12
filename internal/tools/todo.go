@@ -48,7 +48,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"status": {
 					"type": "string",
-					"description": "Filter by status (used with 'list'). Default: active items only (excludes done/dropped). Use 'all' to include done/dropped. Values: 'open', 'in_progress', 'done', 'dropped', 'all'"
+					"description": "Filter by status (used with 'list' and 'search'). For 'list': default is active (excludes done/dropped). For 'search': default is all. Values: 'open', 'in_progress', 'done', 'dropped', 'active', 'all'"
 				},
 				"state": {
 					"type": "string",
@@ -56,7 +56,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"query": {
 					"type": "string",
-					"description": "Search query (required for 'search', case-insensitive substring match)"
+					"description": "Search query (required for 'search', full-text search with stemming)"
+				},
+				"limit": {
+					"type": "integer",
+					"description": "Max results for 'search' (default: 10)"
 				},
 				"reason": {
 					"type": "string",
@@ -64,8 +68,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"sort": {
 					"type": "string",
-					"enum": ["priority", "created", "updated"],
-					"description": "Sort order for 'list' (default: priority). 'priority' sorts by status then priority, 'created' sorts by creation timestamp (oldest first), 'updated' sorts by last update timestamp (newest first)"
+					"enum": ["priority", "created", "updated", "relevance", "newest", "oldest"],
+					"description": "Sort order. For 'list': 'priority' (default), 'created', 'updated'. For 'search': 'relevance' (default), 'newest', 'oldest'"
 				}
 			},
 			"required": ["action"]
@@ -83,6 +87,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Query    string  `json:"query"`
 				Reason   string  `json:"reason"`
 				Sort     string  `json:"sort"`
+				Limit    int     `json:"limit"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return ToolResult{}, fmt.Errorf("parse params: %w", err)
@@ -95,7 +100,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				status := normalizeStatusFilter(p.Status)
 				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort)
 			case "search":
-				return todoSearch(store, agentID, p.Query)
+				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Limit)
 			case "get":
 				return todoGet(store, agentID, p.ID)
 			case "transition":
@@ -175,11 +180,32 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 	return TextResult(formatTodoLines(items)), nil
 }
 
-func todoSearch(store *memory.TodoStore, agentID, query string) (ToolResult, error) {
+func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, limit int) (ToolResult, error) {
 	if query == "" {
 		return ToolResult{}, fmt.Errorf("query is required for search")
 	}
-	items, err := store.Search(agentID, query)
+	// Normalize status filter for search (same aliases as list).
+	statusFilter := normalizeStatusFilter(status)
+	// normalizeStatusFilter returns "active" for empty — but for search
+	// we default to no filter (search all statuses) unless explicitly set.
+	if status == "" {
+		statusFilter = ""
+	}
+	// Normalize sort for search: map list-style sorts to search-style sorts.
+	searchSort := ""
+	switch sort {
+	case "created", "oldest":
+		searchSort = "oldest"
+	case "updated", "newest":
+		searchSort = "newest"
+	default:
+		searchSort = "relevance"
+	}
+	items, err := store.Search(agentID, query, &memory.TodoSearchOpts{
+		Status: statusFilter,
+		Sort:   searchSort,
+		Limit:  limit,
+	})
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("search todos: %w", err)
 	}
