@@ -504,6 +504,64 @@ func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
 	}
 }
 
+// TestCheckMissingQueryTools verifies the tool detection function reports
+// tools absent from PATH.
+func TestCheckMissingQueryTools(t *testing.T) {
+	missing := checkMissingQueryTools()
+	// We can't control what's installed, but we can verify the function
+	// returns a valid map and only contains expected keys.
+	for name := range missing {
+		if name != "jq" && name != "mdq" && name != "yq" {
+			t.Errorf("unexpected tool name %q in missing set", name)
+		}
+	}
+}
+
+// TestWithInstallHint verifies that install hints are appended for missing
+// tools and omitted for present tools.
+func TestWithInstallHint(t *testing.T) {
+	// Simulate all tools missing.
+	cleanup := setMissingQueryToolsForTest(map[string]bool{"jq": true, "mdq": true, "yq": true})
+	defer cleanup()
+
+	got := withInstallHint("Use `jq` to query.", "jq")
+	if !strings.Contains(got, "not installed") {
+		t.Errorf("expected install hint for missing jq: %q", got)
+	}
+	if !strings.Contains(got, "summary") {
+		t.Error("install hint should suggest summary tool as alternative")
+	}
+
+	// Simulate jq present.
+	missingQueryTools = map[string]bool{"mdq": true, "yq": true}
+	got = withInstallHint("Use `jq` to query.", "jq")
+	if strings.Contains(got, "not installed") {
+		t.Errorf("should not show install hint when jq is present: %q", got)
+	}
+}
+
+// TestGuardHintPlainTextInstallRecommendation verifies that the plain text
+// fallback includes install recommendations for missing query tools.
+func TestGuardHintPlainTextInstallRecommendation(t *testing.T) {
+	// Simulate mdq and yq missing, jq present.
+	cleanup := setMissingQueryToolsForTest(map[string]bool{"mdq": true, "yq": true})
+	defer cleanup()
+
+	got := guardHint("just plain text", "/tmp/result.txt")
+	if !strings.Contains(got, "summary") {
+		t.Error("plain text hint should suggest summary tool")
+	}
+	if !strings.Contains(got, "install") {
+		t.Error("should recommend installing missing tools")
+	}
+	if !strings.Contains(got, "mdq") || !strings.Contains(got, "yq") {
+		t.Errorf("should list missing tools: %q", got)
+	}
+	if strings.Contains(got, "jq") && strings.Contains(got, "install jq") {
+		t.Error("should not recommend installing jq when it's present")
+	}
+}
+
 func TestGuardToolResult_SummaryFormat(t *testing.T) {
 	// Test the summary output format by calling summariseToolResult directly
 	// This would need a real API client, so we test the format string construction
