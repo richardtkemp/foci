@@ -365,7 +365,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	var lastToolName string
 	var lastToolError bool
 	if a.Nudger != nil {
-		a.Nudger.Reset(userMessage)
+		a.Nudger.StartTurn(userMessage)
 	}
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
 	for i := 0; i < maxLoops; i++ {
