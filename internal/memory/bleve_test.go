@@ -614,3 +614,227 @@ func TestBleveConversationWeight(t *testing.T) {
 		t.Errorf("second result = %q, want 'conversation'", results[1].Source)
 	}
 }
+
+// TestBleveTodoIndexAndSearch verifies that todos can be indexed and
+// searched via the shared bleve index, with agent ID filtering.
+func TestBleveTodoIndexAndSearch(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+
+	idx.IndexTodo("agent1", 1, "Fix the login bug in authentication module", float64(time.Now().Unix()))
+	idx.IndexTodo("agent1", 2, "Deploy new server to production", float64(time.Now().Unix()))
+	idx.IndexTodo("agent2", 1, "Fix the login page styling", float64(time.Now().Unix()))
+
+	// Search for agent1 — should find 1 matching result, not agent2's
+	hits, err := idx.SearchTodos("agent1", "login")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit for agent1+login, got %d", len(hits))
+	}
+	if hits[0].TodoID != 1 {
+		t.Errorf("expected todo ID 1, got %d", hits[0].TodoID)
+	}
+
+	// Search for agent2
+	hits, err = idx.SearchTodos("agent2", "login")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit for agent2+login, got %d", len(hits))
+	}
+	if hits[0].TodoID != 1 {
+		t.Errorf("expected todo ID 1, got %d", hits[0].TodoID)
+	}
+}
+
+// TestBleveTodoRemove verifies that removing a todo from the bleve index
+// makes it no longer searchable.
+func TestBleveTodoRemove(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+
+	idx.IndexTodo("agent1", 1, "Fix the critical bug", float64(time.Now().Unix()))
+	idx.RemoveTodo("agent1", 1)
+
+	hits, err := idx.SearchTodos("agent1", "critical")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Errorf("expected 0 hits after remove, got %d", len(hits))
+	}
+}
+
+// TestBleveTodoStemming verifies that porter stemming works for todo
+// search (e.g. "running" matches "run").
+func TestBleveTodoStemming(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+
+	idx.IndexTodo("agent1", 1, "Running server process in background", float64(time.Now().Unix()))
+
+	hits, err := idx.SearchTodos("agent1", "run")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("porter stemming should match 'run' against 'running'")
+	}
+}
+
+// TestBleveTodoSurvivesReindex verifies that todo documents are
+// preserved when Reindex() recreates the file portion of the index.
+func TestBleveTodoSurvivesReindex(t *testing.T) {
+	idx, memDir := testBleveIndex(t)
+
+	idx.IndexTodo("agent1", 1, "Important task about deployment", float64(time.Now().Unix()))
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Deployment notes"), 0644)
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	hits, err := idx.SearchTodos("agent1", "deployment")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("todo should survive reindex")
+	}
+}
+
+// TestBleveTodoEmptyQuery verifies that empty queries return nil.
+func TestBleveTodoEmptyQuery(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+
+	hits, err := idx.SearchTodos("agent1", "")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if hits != nil {
+		t.Errorf("expected nil for empty query, got %v", hits)
+	}
+
+	hits, err = idx.SearchTodos("agent1", "   ")
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if hits != nil {
+		t.Errorf("expected nil for whitespace query, got %v", hits)
+	}
+}
+
+// TestBleveTodoSearchIntegration verifies end-to-end todo search through
+// TodoStore backed by a bleve index (instead of FTS5).
+func TestBleveTodoSearchIntegration(t *testing.T) {
+	// Create bleve index
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	indexPath := filepath.Join(dir, "search.bleve")
+	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	// Create todo store and wire to bleve
+	ts, err := NewTodoStore(filepath.Join(dir, "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+	defer ts.Close()
+	ts.SetSearchIndex(idx)
+
+	agentID := "test-agent"
+
+	// Add todos — should auto-index into bleve
+	ts.Add(agentID, "Fix the authentication login bug", "high", "")
+	ts.Add(agentID, "Deploy new server to production", "medium", "")
+	ts.Add(agentID, "Write documentation for API endpoints", "low", "docs")
+
+	// Search should find matching items via bleve
+	items, err := ts.Search(agentID, "login")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 result for 'login', got %d", len(items))
+	}
+	if items[0].Text != "Fix the authentication login bug" {
+		t.Errorf("wrong item: %q", items[0].Text)
+	}
+
+	// Edit should update the bleve index
+	ts.Edit(agentID, 1, "Fix the session token bug", "", "", false)
+	items, err = ts.Search(agentID, "login")
+	if err != nil {
+		t.Fatalf("Search after edit: %v", err)
+	}
+	if len(items) != 0 {
+		t.Error("old text 'login' should not match after edit")
+	}
+	items, err = ts.Search(agentID, "session token")
+	if err != nil {
+		t.Fatalf("Search for new text: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 result for 'session token', got %d", len(items))
+	}
+
+	// Remove should update the bleve index
+	ts.Remove(agentID, 2)
+	items, err = ts.Search(agentID, "deploy server")
+	if err != nil {
+		t.Fatalf("Search after remove: %v", err)
+	}
+	if len(items) != 0 {
+		t.Error("removed todo should not appear in search")
+	}
+}
+
+// TestBleveTodoIndexAllTodos verifies that IndexAllTodos populates the
+// bleve index with pre-existing todos from SQLite.
+func TestBleveTodoIndexAllTodos(t *testing.T) {
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	// Create todo store WITHOUT bleve and add items
+	ts, err := NewTodoStore(filepath.Join(dir, "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+	agentID := "test-agent"
+	ts.Add(agentID, "Pre-existing todo about kubernetes", "high", "")
+	ts.Add(agentID, "Another task about docker containers", "medium", "")
+
+	// Now create bleve and wire it up
+	indexPath := filepath.Join(dir, "search.bleve")
+	sources := map[string]SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, err := NewBleveIndex(indexPath, sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer idx.Close()
+
+	ts.SetSearchIndex(idx)
+	if err := ts.IndexAllTodos(agentID); err != nil {
+		t.Fatalf("IndexAllTodos: %v", err)
+	}
+
+	// Search should find pre-existing items
+	items, err := ts.Search(agentID, "kubernetes")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 result for 'kubernetes', got %d", len(items))
+	}
+	if items[0].Text != "Pre-existing todo about kubernetes" {
+		t.Errorf("wrong item: %q", items[0].Text)
+	}
+
+	ts.Close()
+}
