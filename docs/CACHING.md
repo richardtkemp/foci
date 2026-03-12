@@ -5,7 +5,7 @@
 > 1. **Stable system prompt**: character files, config, and skills are assembled in a fixed order at the start of every request. This prefix rarely changes, so it's served from cache at ~90% discount on every turn.
 > 2. **Append-only conversation**: new messages are only ever added at the end. Nothing is inserted in the middle, so the cached prefix (system prompt + prior conversation) is never invalidated.
 >
-> **Benefits**: Opus cache reads cost 92% less than writes. A well-cached session uses ~5x less mana (rate limit quota) per turn. Branch sessions and forks share the parent's cache automatically.
+> **Benefits**: Cache reads cost 90% less than regular input for all models. A well-cached session uses ~5x less mana (rate limit quota) per turn. Branch sessions and forks share the parent's cache automatically.
 
 Foci is designed around Anthropic's prompt cache. Every architectural decision considers cache impact.
 
@@ -20,12 +20,18 @@ Anthropic caches the **prefix** of your prompt. If the first N tokens of a reque
 
 This means: **anything that changes the beginning of your prompt busts the entire cache.**
 
-Pricing difference (cache read vs write):
+Cache pricing is expressed as multipliers of the model's base input price:
 
-| Model | Cache Read | Cache Write | Savings |
-|-------|-----------|-------------|---------|
-| Haiku | $0.30/MTok | $1.25/MTok | 76% |
-| Opus | $0.50/MTok | $6.25/MTok | 92% |
+| Operation | Multiplier | vs Regular Input |
+|-----------|-----------|-----------------|
+| Regular input | 1x | — |
+| Cache write (5-min TTL) | 1.25x | 25% surcharge |
+| Cache write (1-hour TTL) | 2x | 100% surcharge |
+| Cache read | 0.1x | **90% savings** |
+
+These multipliers are the same across all models (Haiku, Sonnet, Opus). The savings on reads (90%) always dwarf the write surcharge — even with 1-hour TTL, a single cache read recoups the write cost.
+
+Foci uses **1-hour TTL** by default (the `2x` write tier). This costs more upfront than the 5-min TTL but keeps the cache alive across idle periods, which matters for long-running agent sessions.
 
 ## What Foci Caches
 
