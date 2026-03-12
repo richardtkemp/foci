@@ -69,6 +69,22 @@ for svcfile in /etc/systemd/system/foci*.service; do
     chown "$SVC_USER:$SVC_USER" "$COMMIT_FILE"
 done
 
+# Copy platform docs to each service's shared directory for agent access
+echo "Copying platform docs..."
+for svcfile in /etc/systemd/system/foci*.service; do
+    [[ -f "$svcfile" ]] || continue
+    SVC_HOME="$(grep '^WorkingDirectory=' "$svcfile" | cut -d= -f2)" || continue
+    SVC_USER="$(grep '^User=' "$svcfile" | cut -d= -f2)" || continue
+    [[ -n "$SVC_HOME" && -n "$SVC_USER" ]] || continue
+
+    DOCS_TARGET="$SVC_HOME/shared/docs/foci"
+    mkdir -p "$DOCS_TARGET"
+    rsync -a --delete "$SCRIPT_DIR/docs/" "$DOCS_TARGET/docs/"
+    cp "$SCRIPT_DIR/README.md" "$DOCS_TARGET/README.md"
+    chown -R "$SVC_USER:$SVC_USER" "$DOCS_TARGET"
+    echo "  $(basename "$svcfile" .service): docs copied to $DOCS_TARGET"
+done
+
 echo "Restarting services..."
 s=$(systemctl list-units --type=service --plain --no-legend 'foci*' | awk '{print $1}')
 for svc in $s; do
