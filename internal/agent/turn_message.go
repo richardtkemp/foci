@@ -44,11 +44,12 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 		}
 	}
 
-	metaPrefix := buildMetaPrefix(now, turnModel, manaStr, manaGood, sm)
+	trigger := TriggerFromContext(ctx)
+	plat := triggerToPlatform(trigger)
+	metaPrefix := buildMetaPrefix(now, turnModel, plat, manaStr, manaGood, sm)
 	reminderBlock := a.collectReminders(sessionKey)
 	stateBlock := a.collectStateDashboard(sessionKey)
 	msgBody := manaRestoreNote + imagePaths + userMessage
-	trigger := TriggerFromContext(ctx)
 	if a.DuplicateMessages && isUserTrigger(trigger) {
 		msgBody = userMessage + "\n\n" + userMessage
 	}

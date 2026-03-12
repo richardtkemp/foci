@@ -17,7 +17,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 
 	// First message — no previous turn data
 	sm := &sessionMeta{}
-	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "", false, sm)
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "api", "", false, sm)
 	if !strings.Contains(prefix, "time=2026-02-21T05:30:00Z") {
 		t.Errorf("missing timestamp in prefix: %q", prefix)
 	}
@@ -26,6 +26,9 @@ func TestBuildMetaPrefix(t *testing.T) {
 	}
 	if !strings.Contains(prefix, "model=claude-haiku-4-5") {
 		t.Errorf("missing model in prefix: %q", prefix)
+	}
+	if !strings.Contains(prefix, "via=api") {
+		t.Errorf("missing platform in prefix: %q", prefix)
 	}
 	if strings.Contains(prefix, "prev_cost") {
 		t.Errorf("first message should not have prev_cost: %q", prefix)
@@ -39,12 +42,15 @@ func TestBuildMetaPrefix(t *testing.T) {
 	sm.prevCacheRead = 18000
 	sm.prevCacheWrite = 200
 
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "", false, sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "telegram", "", false, sm)
 	if !strings.Contains(prefix, "gap=3h12m") {
 		t.Errorf("missing gap in prefix: %q", prefix)
 	}
 	if !strings.Contains(prefix, "model=claude-haiku-4-5") {
 		t.Errorf("missing model in prefix: %q", prefix)
+	}
+	if !strings.Contains(prefix, "via=telegram") {
+		t.Errorf("missing platform in prefix: %q", prefix)
 	}
 	if !strings.Contains(prefix, "prev_cost=$0.0430") {
 		t.Errorf("missing prev_cost in prefix: %q", prefix)
@@ -103,19 +109,19 @@ func TestBuildMetaPrefix_Mana(t *testing.T) {
 
 	// Without mana
 	sm := &sessionMeta{}
-	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "", false, sm)
+	prefix := buildMetaPrefix(now, "claude-haiku-4-5", "api", "", false, sm)
 	if strings.Contains(prefix, "mana=") {
 		t.Errorf("should not contain mana when empty: %q", prefix)
 	}
 
 	// With mana, not good (first message) — red indicator
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "75%", false, sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "api", "75%", false, sm)
 	if !strings.Contains(prefix, "mana=75% 🔴") {
 		t.Errorf("should contain mana=75%% with red indicator: %q", prefix)
 	}
 
 	// With mana, good — green indicator
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "75%", true, sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "api", "75%", true, sm)
 	if !strings.Contains(prefix, "mana=75% 🟢") {
 		t.Errorf("should contain mana=75%% with green indicator: %q", prefix)
 	}
@@ -123,9 +129,78 @@ func TestBuildMetaPrefix_Mana(t *testing.T) {
 	// With mana (subsequent message with cost data)
 	sm.prevCost = 0.01
 	sm.prevInput = 100
-	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "50%", false, sm)
+	prefix = buildMetaPrefix(now, "claude-haiku-4-5", "api", "50%", false, sm)
 	if !strings.Contains(prefix, "mana=50% 🔴") {
 		t.Errorf("should contain mana=50%% with red indicator in subsequent message: %q", prefix)
+	}
+}
+
+func TestTriggerToPlatform(t *testing.T) {
+	// Maps trigger labels to expected platform values for the [meta] header.
+	tests := []struct {
+		trigger  string
+		platform string
+	}{
+		{"telegram", "telegram"},
+		{"voice", "telegram"},
+		{"android", "android"},
+		{"user", "api"},
+		{"", "api"},
+		{"keepalive", "cron"},
+		{"wake", "cron"},
+		{"cron", "cron"},
+		{"restart", "cron"},
+		{"first_run", "cron"},
+		{"async_notify", "cron"},
+		{"scheduled_wake", "cron"},
+		{"proactive_warning", "cron"},
+		{"session_end_memory", "cron"},
+	}
+	for _, tt := range tests {
+		got := triggerToPlatform(tt.trigger)
+		if got != tt.platform {
+			t.Errorf("triggerToPlatform(%q) = %q, want %q", tt.trigger, got, tt.platform)
+		}
+	}
+}
+
+func TestMetaPlatformFromTrigger(t *testing.T) {
+	// Verifies that platform= appears in the [meta] header with the correct
+	// value derived from the context trigger.
+	for _, tt := range []struct {
+		trigger  string
+		wantPlat string
+	}{
+		{"telegram", "telegram"},
+		{"user", "api"},
+		{"keepalive", "cron"},
+	} {
+		var receivedReq *provider.MessageRequest
+		client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+			receivedReq = req
+			return &provider.MessageResponse{
+				ID: "msg_test", Type: "message", Role: "assistant",
+				Content: provider.TextContent("ok"), StopReason: "end_turn",
+				Usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		})
+		store := session.NewStore(t.TempDir())
+		bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+		ag := &Agent{
+			Client: client, Sessions: store, Tools: tools.NewRegistry(),
+			Bootstrap: bootstrap, Model: "claude-haiku-4-5",
+		}
+
+		ctx := WithTrigger(context.Background(), tt.trigger)
+		sk := "test/plat_" + tt.trigger + "/1000000000"
+		ag.HandleMessage(ctx, sk, "Hello")
+
+		lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+		text := provider.TextOf(lastMsg.Content)
+		want := "via=" + tt.wantPlat
+		if !strings.Contains(text, want) {
+			t.Errorf("trigger=%q: expected %q in meta, got: %q", tt.trigger, want, text)
+		}
 	}
 }
 
