@@ -138,13 +138,13 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	var response string
 	var err error
-	if len(qm.images) > 0 {
-		// Convert telegram images to platform image data
-		platformImages := make([]platform.Attachment, len(qm.images))
-		for i, img := range qm.images {
-			platformImages[i] = platform.Attachment{MimeType: img.mediaType, Data: img.data, SavedPath: img.savedPath}
+	if len(qm.attachments) > 0 {
+		// Convert telegram attachments to platform attachment data
+		platformAttachments := make([]platform.Attachment, len(qm.attachments))
+		for i, att := range qm.attachments {
+			platformAttachments[i] = platform.Attachment{MimeType: att.mediaType, Data: att.data, SavedPath: att.savedPath}
 		}
-		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, qm.text, platformImages)
+		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, qm.text, platformAttachments)
 	} else {
 		response, err = b.handler.HandleMessage(turnCtx, sk, qm.text)
 	}

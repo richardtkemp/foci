@@ -122,17 +122,17 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		return
 	}
 
-	// Download images/PDFs from photos or documents
-	var images []attachment
+	// Download attachments from photos or documents
+	var attachments []attachment
 	if len(msg.Photo) > 0 {
 		// Take the largest photo (last in the array)
 		photo := msg.Photo[len(msg.Photo)-1]
 		if att, ok := b.downloadAttachment(photo.FileId, "image/jpeg", msg.Chat.Id); ok {
-			images = append(images, att)
+			attachments = append(attachments, att)
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
 		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
-			images = append(images, att)
+			attachments = append(attachments, att)
 		}
 	} else if msg.Document != nil && isPDFMIME(msg.Document.MimeType) {
 		// PDFs under 32MB go through the content-block path (like images);
@@ -147,8 +147,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 					text = fmt.Sprintf("[PDF saved to: %s]\n\n%s", att.savedPath, text)
 				}
 			} else {
-				images = append(images, att)
+				attachments = append(attachments, att)
 			}
+		}
+	} else if msg.Document != nil && isConvertibleDocMIME(msg.Document.MimeType) {
+		// Convertible documents (docx, xlsx, pptx, HTML, CSV, plain text):
+		// download and pass through the attachment pipeline for text conversion.
+		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
+			attachments = append(attachments, att)
 		}
 	}
 
@@ -162,8 +168,8 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		text = b.handleMediaMessage(text, msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", "Video", msg.Chat.Id, ".mp4")
 	}
 
-	// Handle non-image, non-PDF document attachments
-	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) && !isPDFMIME(msg.Document.MimeType) {
+	// Handle remaining document types (not image, not PDF, not convertible)
+	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) && !isPDFMIME(msg.Document.MimeType) && !isConvertibleDocMIME(msg.Document.MimeType) {
 		ext := filepath.Ext(msg.Document.FileName)
 		if ext == "" {
 			ext = extForMIME(msg.Document.MimeType)
@@ -171,14 +177,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "Document", msg.Chat.Id, ext)
 	}
 
-	// Drop messages with no text and no images
-	if text == "" && len(images) == 0 {
+	// Drop messages with no text and no attachments
+	if text == "" && len(attachments) == 0 {
 		return
 	}
 
 	logText := text
-	if len(images) > 0 {
-		logText = fmt.Sprintf("[%d image(s)] %s", len(images), text)
+	if len(attachments) > 0 {
+		logText = fmt.Sprintf("[%d attachment(s)] %s", len(attachments), text)
 	}
 	if b.messagesInLog {
 		b.logger().Infof("message from %s: %s", formatUserInfo(msg.From), truncate(logText, 100))
@@ -250,7 +256,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 
 	// Steer mode: if a turn is active, route text to the steer buffer
 	// so it gets injected between tool calls instead of queuing behind the turn lock.
-	if b.steerMode && text != "" && len(images) == 0 {
+	if b.steerMode && text != "" && len(attachments) == 0 {
 		b.turnMu.Lock()
 		active := b.turnCancel != nil
 		b.turnMu.Unlock()
@@ -262,7 +268,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	}
 
 	select {
-	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, images: images}:
+	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments}:
 	default:
 		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(msg.From))
 		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
