@@ -128,8 +128,11 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		BranchFunc:         branchFn,
 		ManaMonitor:        nil, // DEPRECATED: no longer used
 		WarningDispatcher:  warningDispatcher,
-		HasActiveWorkFn: func() bool {
-			return inst.tmuxWatchCount != nil && inst.tmuxWatchCount() > 0
+		HasActiveWorkFn: func() int {
+			if inst.tmuxWatchCount == nil {
+				return 0
+			}
+			return inst.tmuxWatchCount()
 		},
 		DrainFn: func() {
 			inst.ag.DrainRateLimitQueue(p.ctx)

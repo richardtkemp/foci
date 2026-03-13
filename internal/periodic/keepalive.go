@@ -63,7 +63,7 @@ type Runner struct {
 	branchFn           BranchFunc
 	manaMonitor        *mana.Monitor
 	warningDispatcher  *warnings.Dispatcher
-	hasActiveWorkFn    func() bool // external check for async work (e.g. tmux watches)
+	hasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	drainFn            func() // called each tick to drain rate-limit queues
 
 	// Session-aware availability checking
@@ -101,7 +101,7 @@ type RunnerConfig struct {
 	BranchFunc         BranchFunc
 	ManaMonitor        *mana.Monitor
 	WarningDispatcher  *warnings.Dispatcher
-	HasActiveWorkFn    func() bool // external check for async work (e.g. tmux watches)
+	HasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
 
 	// Session-aware availability checking
@@ -256,17 +256,23 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	elapsed := time.Since(r.lastInteraction)
 	running := r.backgroundRunning
 	sinceLastBgEnd := time.Since(r.lastBackgroundEnded)
+	lastBgEndZero := r.lastBackgroundEnded.IsZero()
 	r.mu.Unlock()
 
 	if running {
+		r.log.Debugf("skipping background work for agent %s: already running", r.agentID)
 		return
 	}
 
-	if r.hasActiveWorkFn != nil && r.hasActiveWorkFn() {
-		return
+	if r.hasActiveWorkFn != nil {
+		if n := r.hasActiveWorkFn(); n > 0 {
+			r.log.Debugf("skipping background work for agent %s: %d active tmux watches", r.agentID, n)
+			return
+		}
 	}
 
 	if elapsed < interval {
+		r.log.Debugf("skipping background work for agent %s: idle %s < interval %s", r.agentID, elapsed.Round(time.Second), interval)
 		return
 	}
 
@@ -274,7 +280,8 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	// configured interval after the previous one ended. This prevents rapid
 	// self-chaining where each completed session immediately triggers the next,
 	// accumulating orphaned child processes (e.g. coding agents in tmux).
-	if !r.lastBackgroundEnded.IsZero() && sinceLastBgEnd < interval {
+	if !lastBgEndZero && sinceLastBgEnd < interval {
+		r.log.Debugf("skipping background work for agent %s: cooldown %s < interval %s", r.agentID, sinceLastBgEnd.Round(time.Second), interval)
 		return
 	}
 
@@ -286,6 +293,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 			return
 		}
 		if count == 0 {
+			r.log.Debugf("skipping background work for agent %s: no open background todos", r.agentID)
 			return
 		}
 	}

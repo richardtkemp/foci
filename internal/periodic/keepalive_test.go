@@ -16,7 +16,7 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 	var mu sync.Mutex
 	calls := 0
 
-	activeWork := true
+	activeCount := 1
 
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -26,7 +26,7 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
-		hasActiveWorkFn: func() bool { return activeWork },
+		hasActiveWorkFn: func() int { return activeCount },
 		branchFn: func(branchType, promptText string, noCompact bool) {
 			mu.Lock()
 			calls++
@@ -47,7 +47,7 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 	}
 
 	// Clear active work — should now fire
-	activeWork = false
+	activeCount = 0
 	r.maybeBackgroundWork(context.Background())
 	time.Sleep(50 * time.Millisecond)
 
