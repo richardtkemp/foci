@@ -26,6 +26,25 @@ func TestResolvePath(t *testing.T) {
 	}
 }
 
+// TestAgentDataPath verifies workspace-scoped per-agent data paths.
+func TestAgentDataPath(t *testing.T) {
+	tests := []struct {
+		workspace string
+		filename  string
+		want      string
+	}{
+		{"/home/foci/clutch", "reminders.db", "/home/foci/clutch/.data/reminders.db"},
+		{"/opt/agents/otto", "conversation.db", "/opt/agents/otto/.data/conversation.db"},
+		{"/ws", "search.bleve", "/ws/.data/search.bleve"},
+	}
+	for _, tt := range tests {
+		got := AgentDataPath(tt.workspace, tt.filename)
+		if got != tt.want {
+			t.Errorf("AgentDataPath(%q, %q) = %q, want %q", tt.workspace, tt.filename, got, tt.want)
+		}
+	}
+}
+
 func TestDataPathAbsoluteDataDir(t *testing.T) {
 	cfg := &Config{DataDir: "/opt/foci/data"}
 	got := cfg.DataPath("memory.db")

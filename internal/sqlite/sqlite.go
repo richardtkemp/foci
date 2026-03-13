@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -49,4 +50,32 @@ func OpenInit(path string, stmts ...string) (*sql.DB, error) {
 func AgentPath(basePath, agentID string) string {
 	ext := filepath.Ext(basePath)
 	return strings.TrimSuffix(basePath, ext) + "-" + agentID + ext
+}
+
+// MigrateFile moves a file from oldPath to newPath if oldPath exists and
+// newPath does not. Creates the parent directory of newPath if needed.
+// For SQLite databases, also migrates WAL and SHM sidecar files.
+// Returns true if migration occurred, false if skipped (already at new
+// location or old doesn't exist).
+func MigrateFile(oldPath, newPath string) (bool, error) {
+	if _, err := os.Stat(oldPath); os.IsNotExist(err) {
+		return false, nil
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0755); err != nil {
+		return false, fmt.Errorf("create directory for %s: %w", newPath, err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return false, fmt.Errorf("migrate %s → %s: %w", oldPath, newPath, err)
+	}
+	// Migrate SQLite sidecar files (WAL, SHM) if they exist
+	for _, suffix := range []string{"-wal", "-shm"} {
+		old := oldPath + suffix
+		if _, err := os.Stat(old); err == nil {
+			_ = os.Rename(old, newPath+suffix)
+		}
+	}
+	return true, nil
 }
