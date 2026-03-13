@@ -354,6 +354,36 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	}
 
+	// Backfill historical conversations into bleve indices.
+	// Runs in a goroutine to avoid blocking startup.
+	if wantBleve {
+		go func() {
+			if hasPerAgentMemory {
+				for _, acfg := range cfg.Agents {
+					idx, ok := result.agentBleve[acfg.ID]
+					if !ok {
+						continue
+					}
+					dbPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
+					n, err := idx.BackfillConversations(dbPath)
+					if err != nil {
+						log.Errorf("main", "backfill conversations for agent %s: %v", acfg.ID, err)
+					} else if n > 0 {
+						log.Infof("main", "backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
+					}
+				}
+			} else if result.sharedBleve != nil {
+				dbPath := cfg.DataPath("conversation.db")
+				n, err := result.sharedBleve.BackfillConversations(dbPath)
+				if err != nil {
+					log.Errorf("main", "backfill conversations: %v", err)
+				} else if n > 0 {
+					log.Infof("main", "backfilled %d conversation messages into bleve", n)
+				}
+			}
+		}()
+	}
+
 	result.cleanup = func() {
 		for i := len(closers) - 1; i >= 0; i-- {
 			_ = closers[i].Close()

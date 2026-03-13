@@ -475,7 +475,7 @@ WHERE memory_fts MATCH ?
 ORDER BY weighted_rank;
 ```
 
-**Bleve backend** — blevesearch/bleve full-text index. Files only (no conversation history). English analyzer with Porter stemming, per-source weighted ranking, highlighted snippets. Index stored at `{data_dir}/memory.bleve`. Clean rebuild on each reindex (close → remove → recreate).
+**Bleve backend** — blevesearch/bleve full-text index. Files and conversation history. English analyzer with Porter stemming, per-source weighted ranking, highlighted snippets. Index stored at `{data_dir}/memory.bleve`. Clean rebuild on each reindex (close → remove → recreate). Conversation messages are indexed in real time via hook and backfilled from SQLite on startup.
 
 Active backends are listed in `search_backends` (default: `["fts5"]`).
 
@@ -486,7 +486,7 @@ When multiple backends are active, the `memory_search` tool exposes a `backend` 
 - Memory files: re-indexed on startup
 - File watching: optional auto-reindex when `.md` files change via fsnotify
 - Debounce delay is configurable (default: immediate).
-- Conversation history: indexed as messages are logged (FTS5 only — bleve skips conversations)
+- Conversation history: indexed as messages are logged (both FTS5 and bleve). On startup, bleve backfills any historical messages from the conversation SQLite DB that aren't already indexed.
 
 **Why FTS5 over vector embeddings:**
 - Zero dependencies (built into SQLite, which we already use)
