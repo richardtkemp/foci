@@ -48,10 +48,11 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	metaPrefix := buildMetaPrefix(now, turnModel, plat, manaStr, manaGood, sm)
 	reminderBlock := a.collectReminders(sessionKey)
 	stateBlock := a.collectStateDashboard(sessionKey)
-	msgBody := manaRestoreNote + attachmentPaths + userMessage
+	userText := userMessage
 	if duplicateMessages && isUserTrigger(trigger) {
-		msgBody = manaRestoreNote + attachmentPaths + userMessage + "\n\n" + userMessage
+		userText = userMessage + "\n\n" + userMessage
 	}
+	msgBody := manaRestoreNote + attachmentPaths + userText
 	annotatedMessage := metaPrefix + reminderBlock + stateBlock + "\n" + msgBody
 
 	// Build content blocks: attachments first, then text

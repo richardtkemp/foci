@@ -2,9 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-shiori/go-readability"
@@ -77,13 +79,18 @@ func convertHTML(data []byte) convertResult {
 	return convertResult{Text: md}
 }
 
+// convertTimeout is the maximum time allowed for external document conversion tools.
+const convertTimeout = 30 * time.Second
+
 // convertWithPandoc converts a document file to plain text using pandoc.
 func convertWithPandoc(path, format string) convertResult {
 	if _, err := exec.LookPath("pandoc"); err != nil {
 		return convertResult{Err: fmt.Sprintf("Need pandoc to read .%s files. Install: https://pandoc.org/installing.html", format)}
 	}
 
-	cmd := exec.Command("pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
+	ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -98,7 +105,9 @@ func convertWithPandoc(path, format string) convertResult {
 func convertXlsx(path string) convertResult {
 	// Try ssconvert first (produces clean CSV output)
 	if ssconvert, err := exec.LookPath("ssconvert"); err == nil {
-		cmd := exec.Command(ssconvert, "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
+		ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, ssconvert, "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
