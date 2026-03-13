@@ -82,6 +82,7 @@ func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, t
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("send voice note: %w", err)
 				}
+				logToolSend(sessionKey, chatID, "[voice note]")
 				return TextResult("Sent: voice note"), nil
 			}
 
@@ -105,6 +106,7 @@ func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, t
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("send text: %w", err)
 				}
+				logToolSend(sessionKey, chatID, p.Text)
 				sent = append(sent, "text")
 			}
 
@@ -158,12 +160,23 @@ func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, t
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("send %s: %w", label, err)
 				}
+				logToolSend(sessionKey, chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
 				sent = append(sent, label)
 			}
 
 			return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil
 		},
 	}
+}
+
+// logToolSend logs a conversation entry for a tool-initiated send.
+func logToolSend(sessionKey string, chatID int64, text string) {
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		ChatID:    chatID,
+		Text:      text,
+		Session:   sessionKey,
+	})
 }
 
 // ChatIDFromSessionKey extracts the chat ID from a session key.

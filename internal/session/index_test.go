@@ -19,23 +19,6 @@ func tempIndex(t *testing.T) *SessionIndex {
 	return idx
 }
 
-// Test helper: create new-format session keys
-// chatKey("bot", 123) → "bot/c123/1000000000"
-func chatKey(agentID string, chatID int64) string {
-	return NewChatSessionKey(agentID, chatID)
-}
-
-// branchKey("bot/c123/1000000000") → "bot/c123/1000000000/b1000000001"
-func branchKey(parent string) string {
-	k, _ := ParseSessionKey(parent)
-	return k.Branch().String()
-}
-
-// independentKey("bot") → "bot/i1000000000/1000000000"
-func independentKey(agentID string) string {
-	return IndependentSessionKey(agentID)
-}
-
 func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 	// Proves the basic insert-then-query contract: upserted entries are retrievable
 	// via Query, returned in created_at descending order, and parent keys are preserved.

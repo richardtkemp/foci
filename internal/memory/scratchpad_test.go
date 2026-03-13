@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -238,8 +237,4 @@ func TestScratchpadListEmpty(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("expected 0 entries, got %d", len(entries))
 	}
-}
-
-func openTestDB(path string) (*sql.DB, error) {
-	return sql.Open("sqlite", path)
 }

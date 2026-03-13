@@ -181,7 +181,7 @@ func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total
 }
 
 // stepCharacterMode prompts for character file sourcing.
-func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode, importDir string, back bool) {
+func stepCharacterMode(reader *bufio.Reader, _ setupFlags, total int) (charMode, importDir string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 6/%d: Character Files\n", total)
 	fmt.Println("  How should we set up the character files?")

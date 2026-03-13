@@ -83,7 +83,7 @@ func TestSendReply_SkipsEmptyText(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	msg := makeMsg(111, "owner", "hello")
 
-	b.sendReply(msg, "111", "")
+	b.sendReply(msg, "")
 	if mock.sentCount() != 0 {
 		t.Errorf("sends = %d, want 0 (sendReply skips empty text)", mock.sentCount())
 	}

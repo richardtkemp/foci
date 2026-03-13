@@ -8,6 +8,29 @@ import (
 // turnCallbacksKey is the context key for TurnCallbacks.
 type turnCallbacksKey struct{}
 
+// turnMetadataKey is the context key for TurnMetadata.
+type turnMetadataKey struct{}
+
+// TurnMetadata carries platform-specific identity information through the agent turn.
+// Set by the platform layer so the agent can log conversation entries without
+// coupling to platform-specific types.
+type TurnMetadata struct {
+	UserID   string // platform-specific user identifier (e.g. Telegram user ID)
+	Username string // display name / username
+	ChatID   int64  // from platform message or session key
+}
+
+// WithTurnMetadata attaches TurnMetadata to a context.
+func WithTurnMetadata(ctx context.Context, meta *TurnMetadata) context.Context {
+	return context.WithValue(ctx, turnMetadataKey{}, meta)
+}
+
+// TurnMetadataFromContext extracts TurnMetadata from context (nil if absent).
+func TurnMetadataFromContext(ctx context.Context) *TurnMetadata {
+	meta, _ := ctx.Value(turnMetadataKey{}).(*TurnMetadata)
+	return meta
+}
+
 // triggerKey is the context key for the turn trigger type.
 type triggerKey struct{}
 

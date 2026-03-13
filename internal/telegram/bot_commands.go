@@ -9,7 +9,7 @@ import (
 
 // tryDispatchCommand tries to dispatch text as a slash or dot-command.
 // Returns true if the message was handled (caller should return).
-func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
+func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, text string) bool {
 	if text == "" {
 		return false
 	}
@@ -19,11 +19,11 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, user
 		cmd := strings.ToLower(strings.TrimSpace(text))
 		if b.isStopCommand(cmd) {
 			b.cancelTurn()
-			b.sendReply(msg, userID, "Stopped.")
+			b.sendReply(msg, "Stopped.")
 			return true
 		}
 		if cmd == "/done" {
-			return b.handleDoneCommand(msg, userID)
+			return b.handleDoneCommand(msg)
 		}
 	}
 
@@ -31,11 +31,11 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, user
 		return false
 	}
 
-	return b.tryDispatchViaDispatcher(ctx, msg, userID, text)
+	return b.tryDispatchViaDispatcher(ctx, msg, text)
 }
 
 // tryDispatchViaDispatcher uses the platform-aware Dispatcher.
-func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
+func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message, text string) bool {
 	result := b.dispatcher.Dispatch(ctx, msg)
 	if !result.Handled {
 		return false
@@ -48,7 +48,7 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 	}
 
 	if result.Response.Text != "" {
-		b.sendReply(msg, userID, result.Response.Text)
+		b.sendReply(msg, result.Response.Text)
 	}
 	if result.Response.DocPath != "" {
 		_ = b.SendDocument(result.Response.DocPath)
@@ -57,21 +57,21 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 }
 
 // handleDoneCommand handles the /done command for secondary bots.
-func (b *Bot) handleDoneCommand(msg *gotgbot.Message, userID string) bool {
+func (b *Bot) handleDoneCommand(msg *gotgbot.Message) bool {
 	if !b.isSecondary {
-		b.sendReply(msg, userID, "Nothing to detach — this is the main session.")
+		b.sendReply(msg, "Nothing to detach — this is the main session.")
 		return true
 	}
 	sk := b.SessionKey()
 	if sk == "" {
-		b.sendReply(msg, userID, "Already idle.")
+		b.sendReply(msg, "Already idle.")
 		return true
 	}
 	b.cancelTurn()
 	if b.pool != nil {
 		b.pool.Release(b)
 	}
-	b.sendReply(msg, userID, "Session ended.")
+	b.sendReply(msg, "Session ended.")
 	b.logger().Infof("secondary bot detached from %s", sk)
 	return true
 }

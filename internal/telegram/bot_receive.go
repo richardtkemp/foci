@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -106,20 +105,20 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		if data, err := b.downloadFile(msg.Voice.FileId); err != nil {
 			b.logger().Errorf("download voice: %s", b.sanitizeError(err))
 			if b.handler == nil || b.handler.Warnings() == nil {
-				b.sendReply(msg, userID, "Could not download voice note — please try again.")
+				b.sendReply(msg, "Could not download voice note — please try again.")
 			}
 		} else {
 			transcript, err := b.transcriber.Transcribe(ctx, data, "voice.ogg")
 			if err != nil {
 				b.logger().Errorf("transcribe voice: %v", err)
-				b.sendReply(msg, userID, "Could not transcribe voice note.")
+				b.sendReply(msg, "Could not transcribe voice note.")
 				return
 			}
 			b.logger().Infof("voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
 			text = "[voice] " + transcript
 		}
 	} else if msg.Voice != nil && b.transcriber == nil {
-		b.sendReply(msg, userID, "Voice notes require an STT provider. Set groq.api_key in secrets.toml or configure [voice] stt_endpoint.")
+		b.sendReply(msg, "Voice notes require an STT provider. Set groq.api_key in secrets.toml or configure [voice] stt_endpoint.")
 		return
 	}
 
@@ -193,24 +192,10 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		b.logger().Debugf("message from %s", formatUserInfo(msg.From))
 	}
 
-	// Log received message — use per-chat session key for primary bots
-	recvSession := b.SessionKey()
-	if !b.isSecondary && b.agentID != "" {
-		recvSession = b.sessionKeyForMsg(msg.Chat.Id)
-	}
-	log.Conversation(log.ConversationEntry{
-		Direction: "recv",
-		UserID:    userID,
-		Username:  msg.From.Username,
-		ChatID:    msg.Chat.Id,
-		Text:      logText,
-		Session:   recvSession,
-	})
-
 	// Wizard intercept — route all messages to active wizard before normal dispatch
 	if text != "" {
 		if result, ok := b.commands.HandleMessage(text); ok {
-			b.sendReply(msg, userID, result)
+			b.sendReply(msg, result)
 			return
 		}
 	}
@@ -232,7 +217,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	}
 
 	// Try dispatching the original message as a command (slash or dot-prefix).
-	if b.tryDispatchCommand(ctx, msg, userID, text) {
+	if b.tryDispatchCommand(ctx, msg, text) {
 		return
 	}
 
@@ -241,7 +226,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if b.handler != nil {
 		if transformed := b.handler.TransformMessage(text); transformed != text {
 			text = transformed
-			if b.tryDispatchCommand(ctx, msg, userID, text) {
+			if b.tryDispatchCommand(ctx, msg, text) {
 				return
 			}
 		}
@@ -272,6 +257,6 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments}:
 	default:
 		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(msg.From))
-		b.sendReply(msg, userID, "Busy — message queue is full. Try again shortly.")
+		b.sendReply(msg, "Busy — message queue is full. Try again shortly.")
 	}
 }
