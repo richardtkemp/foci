@@ -213,9 +213,9 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	}
 }
 
-// TestConfigSetDirectUnknownField verifies that direct mode returns an
-// "unknown config field" error for a section.key path that doesn't match
-// any registered config field, preventing writes to invalid keys.
+// TestConfigSetDirectUnknownField verifies that direct mode returns an error containing
+// "unknown config field" when the section.key path ("nonexistent.field") does not correspond
+// to any known config field, preventing writes to nonexistent configuration keys.
 func TestConfigSetDirectUnknownField(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 
@@ -228,9 +228,9 @@ func TestConfigSetDirectUnknownField(t *testing.T) {
 	}
 }
 
-// TestConfigSetDirectMissingEquals verifies that direct mode returns an error
-// when the input lacks a "=" separator (e.g. "defaults.model" without a value),
-// since we can't distinguish an empty value from a malformed command.
+// TestConfigSetDirectMissingEquals verifies that direct mode returns an error when the input
+// string lacks an "=" separator (e.g. "defaults.model" without "=value"), ensuring the parser
+// rejects malformed input rather than silently misinterpreting it.
 func TestConfigSetDirectMissingEquals(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 
@@ -240,9 +240,10 @@ func TestConfigSetDirectMissingEquals(t *testing.T) {
 	}
 }
 
-// TestConfigSetDirectBool verifies boolean normalisation: "yes" is converted to
-// "true" (bare, not quoted) for valid TOML boolean representation, so the TOML
-// file contains `key = true` rather than `key = "yes"`.
+// TestConfigSetDirectBool verifies that direct mode normalizes boolean-like input values
+// (e.g. "yes") to their canonical TOML form ("true") before passing them to SetInFileFn,
+// ensuring consistent boolean representation in the config file regardless of the user's
+// input style.
 func TestConfigSetDirectBool(t *testing.T) {
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
