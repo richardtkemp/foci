@@ -179,6 +179,12 @@ type AgentConnectionParams struct {
 	STT          voice.STT
 	TTS          voice.TTS
 	ReclaimHook  func(sessionKey string)
+
+	// DisplayOverrideFn returns per-session display overrides.
+	// Returns (showToolCalls, showThinking, streamOutput, displayWidth).
+	// Empty strings / "0" mean "not overridden — use config default".
+	// May be nil if per-session display overrides are not supported.
+	DisplayOverrideFn func(sessionKey string) (showToolCalls, showThinking, streamOutput, displayWidth string)
 }
 
 // SharedMultiballParams holds parameters for setting up shared multiball bots.

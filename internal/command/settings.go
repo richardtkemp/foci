@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string, string), resolveModel func(string) (string, string, string), modelAliases map[string]string) *Command {
@@ -162,6 +163,164 @@ func NewThinkingCommand(getThinking func(context.Context) string, setThinking fu
 			}
 			return opts
 		},
+	}
+}
+
+// DisplayField represents one display setting with its effective value and override status.
+type DisplayField struct {
+	Key      string // config key name (e.g. "show_tool_calls")
+	Value    string // effective value
+	Override string // per-session override value (empty = using default)
+}
+
+// DisplayGetters provides callbacks for reading per-session display overrides.
+type DisplayGetters struct {
+	ShowToolCalls func(ctx context.Context) (override, effective string)
+	ShowThinking  func(ctx context.Context) (override, effective string)
+	StreamOutput  func(ctx context.Context) (override, effective string)
+	DisplayWidth  func(ctx context.Context) (override, effective string)
+}
+
+// DisplaySetters provides callbacks for writing per-session display overrides.
+type DisplaySetters struct {
+	SetShowToolCalls func(ctx context.Context, value string)
+	SetShowThinking  func(ctx context.Context, value string)
+	SetStreamOutput  func(ctx context.Context, value string)
+	SetDisplayWidth  func(ctx context.Context, value string)
+	ResetAll         func(ctx context.Context)
+}
+
+// NewDisplayCommand returns a /display command to show or set per-session display overrides.
+// Supported keys: show_tool_calls, show_thinking, stream_output, display_width.
+func NewDisplayCommand(getters DisplayGetters, setters DisplaySetters) *Command {
+	return &Command{
+		Name:        "display",
+		Description: "Show or set display options (show_tool_calls, show_thinking, stream_output, display_width)",
+		Category:    "operations",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			args = strings.TrimSpace(args)
+
+			// /display reset — clear all overrides
+			if args == "reset" {
+				setters.ResetAll(ctx)
+				return "Display overrides cleared — using config defaults.", nil
+			}
+
+			// /display — show all current values
+			if args == "" {
+				return formatDisplayStatus(ctx, getters), nil
+			}
+
+			// /display <key> [value] — get or set a single key
+			parts := strings.SplitN(args, " ", 2)
+			key := strings.ToLower(parts[0])
+			if len(parts) == 1 {
+				// Show single key
+				return formatSingleDisplay(ctx, getters, key)
+			}
+			value := strings.TrimSpace(parts[1])
+			return applyDisplaySetting(ctx, setters, key, value)
+		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "show_tool_calls", Data: "show_tool_calls"},
+				{Label: "show_thinking", Data: "show_thinking"},
+				{Label: "stream_output", Data: "stream_output"},
+				{Label: "display_width", Data: "display_width"},
+				{Label: "reset", Data: "reset"},
+			}
+		},
+	}
+}
+
+// formatDisplayStatus builds the full status string for all display settings.
+func formatDisplayStatus(ctx context.Context, g DisplayGetters) string {
+	var b strings.Builder
+	b.WriteString("Display settings:\n")
+	for _, field := range allDisplayFields(ctx, g) {
+		if field.Override != "" {
+			fmt.Fprintf(&b, "  %s: %s (override)\n", field.Key, field.Value)
+		} else {
+			fmt.Fprintf(&b, "  %s: %s\n", field.Key, field.Value)
+		}
+	}
+	b.WriteString("\nUse /display <key> <value> to set, /display reset to clear all overrides.")
+	return b.String()
+}
+
+// formatSingleDisplay returns the status of a single display key.
+func formatSingleDisplay(ctx context.Context, g DisplayGetters, key string) (string, error) {
+	fields := allDisplayFields(ctx, g)
+	for _, f := range fields {
+		if f.Key == key {
+			if f.Override != "" {
+				return fmt.Sprintf("%s: %s (override)", f.Key, f.Value), nil
+			}
+			return fmt.Sprintf("%s: %s", f.Key, f.Value), nil
+		}
+	}
+	return "", fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output, display_width", key)
+}
+
+// allDisplayFields returns all display fields with their current status.
+func allDisplayFields(ctx context.Context, g DisplayGetters) []DisplayField {
+	fields := make([]DisplayField, 4)
+	override, effective := g.ShowToolCalls(ctx)
+	fields[0] = DisplayField{Key: "show_tool_calls", Value: effective, Override: override}
+	override, effective = g.ShowThinking(ctx)
+	fields[1] = DisplayField{Key: "show_thinking", Value: effective, Override: override}
+	override, effective = g.StreamOutput(ctx)
+	fields[2] = DisplayField{Key: "stream_output", Value: effective, Override: override}
+	override, effective = g.DisplayWidth(ctx)
+	fields[3] = DisplayField{Key: "display_width", Value: effective, Override: override}
+	return fields
+}
+
+// applyDisplaySetting validates and applies a display setting override.
+func applyDisplaySetting(ctx context.Context, s DisplaySetters, key, value string) (string, error) {
+	value = strings.ToLower(value)
+
+	switch key {
+	case "show_tool_calls":
+		switch value {
+		case "off", "preview", "full":
+			s.SetShowToolCalls(ctx, value)
+			return fmt.Sprintf("show_tool_calls set to: %s", value), nil
+		default:
+			return "", fmt.Errorf("invalid show_tool_calls value: %q\nOptions: off, preview, full", value)
+		}
+
+	case "show_thinking":
+		switch value {
+		case "off", "compact", "true":
+			s.SetShowThinking(ctx, value)
+			return fmt.Sprintf("show_thinking set to: %s", value), nil
+		default:
+			return "", fmt.Errorf("invalid show_thinking value: %q\nOptions: off, compact, true", value)
+		}
+
+	case "stream_output", "stream":
+		switch value {
+		case "on", "true":
+			s.SetStreamOutput(ctx, "true")
+			return "stream_output set to: on", nil
+		case "off", "false":
+			s.SetStreamOutput(ctx, "false")
+			return "stream_output set to: off", nil
+		default:
+			return "", fmt.Errorf("invalid stream_output value: %q\nOptions: on, off", value)
+		}
+
+	case "display_width", "width":
+		w, err := strconv.Atoi(value)
+		if err != nil || w < 20 || w > 200 {
+			return "", fmt.Errorf("invalid display_width: %q (must be 20–200)", value)
+		}
+		s.SetDisplayWidth(ctx, strconv.Itoa(w))
+		return fmt.Sprintf("display_width set to: %d", w), nil
+
+	default:
+		return "", fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output, display_width", key)
 	}
 }
 

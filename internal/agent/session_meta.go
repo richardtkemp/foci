@@ -27,6 +27,12 @@ type sessionMeta struct {
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 	apiSeqNum       int                    // per-session incrementing counter for payload log entries
+
+	// Display overrides (empty = use agent/config default)
+	showToolCalls      string // "off"/"preview"/"full"
+	displayShowThink   string // "off"/"compact"/"true" — distinct from API thinking mode
+	streamOutput       string // "true"/"false"
+	displayWidth       string // numeric string (e.g. "80")
 }
 
 // sessionStringWithDefault returns a session-specific override
@@ -160,6 +166,66 @@ func (a *Agent) SetSessionNoCompact(sessionKey string, value bool) {
 	a.persistSessionString(sessionKey, "no_compact", val)
 }
 
+// SessionShowToolCalls returns the per-session show_tool_calls override (empty = not overridden).
+func (a *Agent) SessionShowToolCalls(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.showToolCalls
+}
+
+// SetSessionShowToolCalls sets the per-session show_tool_calls override and persists it.
+func (a *Agent) SetSessionShowToolCalls(sessionKey, value string) {
+	a.setSessionString(sessionKey, "show_tool_calls", value, func(sm *sessionMeta, v string) { sm.showToolCalls = v })
+}
+
+// SessionDisplayShowThinking returns the per-session display show_thinking override (empty = not overridden).
+func (a *Agent) SessionDisplayShowThinking(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.displayShowThink
+}
+
+// SetSessionDisplayShowThinking sets the per-session display show_thinking override and persists it.
+func (a *Agent) SetSessionDisplayShowThinking(sessionKey, value string) {
+	a.setSessionString(sessionKey, "display_show_thinking", value, func(sm *sessionMeta, v string) { sm.displayShowThink = v })
+}
+
+// SessionStreamOutput returns the per-session stream_output override (empty = not overridden).
+func (a *Agent) SessionStreamOutput(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.streamOutput
+}
+
+// SetSessionStreamOutput sets the per-session stream_output override and persists it.
+func (a *Agent) SetSessionStreamOutput(sessionKey, value string) {
+	a.setSessionString(sessionKey, "stream_output", value, func(sm *sessionMeta, v string) { sm.streamOutput = v })
+}
+
+// SessionDisplayWidth returns the per-session display_width override (empty = not overridden).
+func (a *Agent) SessionDisplayWidth(sessionKey string) string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+	return sm.displayWidth
+}
+
+// SetSessionDisplayWidth sets the per-session display_width override and persists it.
+func (a *Agent) SetSessionDisplayWidth(sessionKey, value string) {
+	a.setSessionString(sessionKey, "display_width", value, func(sm *sessionMeta, v string) { sm.displayWidth = v })
+}
+
+// ClearSessionDisplayOverrides removes all per-session display overrides.
+func (a *Agent) ClearSessionDisplayOverrides(sessionKey string) {
+	a.SetSessionShowToolCalls(sessionKey, "")
+	a.SetSessionDisplayShowThinking(sessionKey, "")
+	a.SetSessionStreamOutput(sessionKey, "")
+	a.SetSessionDisplayWidth(sessionKey, "")
+}
+
 // RestoreSessionOverrides loads per-session effort/thinking/model/no_compact from state store.
 func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	if a.StateStore == nil {
@@ -213,6 +279,23 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	if a.StateStore.Get("no_compact/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.noCompact = (val == "true") })
 		restored = append(restored, "no_compact")
+	}
+
+	// Restore display overrides
+	for _, pair := range []struct {
+		prefix string
+		setter func(*sessionMeta, string)
+	}{
+		{"show_tool_calls", func(sm *sessionMeta, v string) { sm.showToolCalls = v }},
+		{"display_show_thinking", func(sm *sessionMeta, v string) { sm.displayShowThink = v }},
+		{"stream_output", func(sm *sessionMeta, v string) { sm.streamOutput = v }},
+		{"display_width", func(sm *sessionMeta, v string) { sm.displayWidth = v }},
+	} {
+		if a.StateStore.Get(pair.prefix+"/"+sessionKey, &val) && val != "" {
+			setter := pair.setter
+			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { setter(sm, val) })
+			restored = append(restored, pair.prefix+"="+val)
+		}
 	}
 
 	if len(restored) > 0 {
@@ -277,7 +360,7 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 
 	// Migrate StateStore keys
 	if a.StateStore != nil {
-		for _, prefix := range []string{"effort", "thinking", "model", "model_endpoint", "model_format", "no_compact"} {
+		for _, prefix := range []string{"effort", "thinking", "model", "model_endpoint", "model_format", "no_compact", "show_tool_calls", "display_show_thinking", "stream_output", "display_width"} {
 			oldStoreKey := prefix + "/" + oldKey
 			newStoreKey := prefix + "/" + newKey
 			var val string

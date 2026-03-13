@@ -1,0 +1,125 @@
+package agent
+
+import (
+	"path/filepath"
+	"testing"
+
+	"foci/internal/state"
+	"foci/internal/tools"
+)
+
+// TestSessionDisplayOverrides verifies that per-session display overrides
+// (show_tool_calls, display_show_thinking, stream_output, display_width) can
+// be set, retrieved, and cleared independently.
+func TestSessionDisplayOverrides(t *testing.T) {
+	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
+	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	sk := "bot/c100/1000000000"
+
+	// Initially empty
+	if v := ag.SessionShowToolCalls(sk); v != "" {
+		t.Errorf("initial show_tool_calls = %q, want empty", v)
+	}
+	if v := ag.SessionDisplayShowThinking(sk); v != "" {
+		t.Errorf("initial display_show_thinking = %q, want empty", v)
+	}
+	if v := ag.SessionStreamOutput(sk); v != "" {
+		t.Errorf("initial stream_output = %q, want empty", v)
+	}
+	if v := ag.SessionDisplayWidth(sk); v != "" {
+		t.Errorf("initial display_width = %q, want empty", v)
+	}
+
+	// Set overrides
+	ag.SetSessionShowToolCalls(sk, "full")
+	ag.SetSessionDisplayShowThinking(sk, "compact")
+	ag.SetSessionStreamOutput(sk, "true")
+	ag.SetSessionDisplayWidth(sk, "80")
+
+	if v := ag.SessionShowToolCalls(sk); v != "full" {
+		t.Errorf("show_tool_calls = %q, want full", v)
+	}
+	if v := ag.SessionDisplayShowThinking(sk); v != "compact" {
+		t.Errorf("display_show_thinking = %q, want compact", v)
+	}
+	if v := ag.SessionStreamOutput(sk); v != "true" {
+		t.Errorf("stream_output = %q, want true", v)
+	}
+	if v := ag.SessionDisplayWidth(sk); v != "80" {
+		t.Errorf("display_width = %q, want 80", v)
+	}
+
+	// Clear all
+	ag.ClearSessionDisplayOverrides(sk)
+
+	if v := ag.SessionShowToolCalls(sk); v != "" {
+		t.Errorf("after clear show_tool_calls = %q, want empty", v)
+	}
+	if v := ag.SessionStreamOutput(sk); v != "" {
+		t.Errorf("after clear stream_output = %q, want empty", v)
+	}
+}
+
+// TestSessionDisplayOverrides_Restore verifies that display overrides persist
+// to the state store and can be restored after an Agent restart.
+func TestSessionDisplayOverrides_Restore(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	stateStore := state.New(statePath)
+	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	sk := "bot/c100/1000000000"
+
+	ag.SetSessionShowToolCalls(sk, "preview")
+	ag.SetSessionDisplayShowThinking(sk, "true")
+	ag.SetSessionStreamOutput(sk, "false")
+	ag.SetSessionDisplayWidth(sk, "60")
+
+	// Simulate restart: new Agent, same state store
+	ag2 := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	ag2.RestoreSessionOverrides(sk)
+
+	if v := ag2.SessionShowToolCalls(sk); v != "preview" {
+		t.Errorf("restored show_tool_calls = %q, want preview", v)
+	}
+	if v := ag2.SessionDisplayShowThinking(sk); v != "true" {
+		t.Errorf("restored display_show_thinking = %q, want true", v)
+	}
+	if v := ag2.SessionStreamOutput(sk); v != "false" {
+		t.Errorf("restored stream_output = %q, want false", v)
+	}
+	if v := ag2.SessionDisplayWidth(sk); v != "60" {
+		t.Errorf("restored display_width = %q, want 60", v)
+	}
+}
+
+// TestSessionDisplayOverrides_Rotate verifies that display overrides migrate
+// correctly when a session key rotates (e.g. during session branching).
+func TestSessionDisplayOverrides_Rotate(t *testing.T) {
+	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
+	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+
+	oldKey := "bot/c100/1000000000"
+	newKey := "bot/c100/2000000000"
+
+	ag.SetSessionShowToolCalls(oldKey, "full")
+	ag.SetSessionDisplayWidth(oldKey, "80")
+
+	ag.RotateSession(oldKey, newKey)
+
+	if v := ag.SessionShowToolCalls(newKey); v != "full" {
+		t.Errorf("rotated show_tool_calls = %q, want full", v)
+	}
+	if v := ag.SessionDisplayWidth(newKey); v != "80" {
+		t.Errorf("rotated display_width = %q, want 80", v)
+	}
+
+	// Old key should be empty
+	if v := ag.SessionShowToolCalls(oldKey); v != "" {
+		t.Errorf("old key show_tool_calls = %q, want empty", v)
+	}
+
+	// Verify state store has the new key
+	var restored string
+	if !stateStore.Get("show_tool_calls/"+newKey, &restored) || restored != "full" {
+		t.Errorf("state store show_tool_calls/%s = %q, want full", newKey, restored)
+	}
+}

@@ -192,7 +192,7 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
 	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
 		paramStr = pretty.String()
 	}
-	if b.showToolCalls != "full" && len(paramStr) > maxChars {
+	if b.effectiveShowToolCalls() != "full" && len(paramStr) > maxChars {
 		paramStr = paramStr[:maxChars] + "..."
 	}
 	// Unescape literal \n and \t within JSON string values so they render

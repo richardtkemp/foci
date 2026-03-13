@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -122,6 +123,87 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		func(ctx context.Context) string { return p.ag.SessionThinking(p.sessionKeyFromCtx(ctx)) },
 		func(ctx context.Context, t string) { p.ag.SetSessionThinking(p.sessionKeyFromCtx(ctx), t) },
 	))
+	// Resolve config defaults for display settings.
+	defaultShowToolCalls := "off"
+	if p.acfg.ShowToolCalls != nil {
+		defaultShowToolCalls = string(*p.acfg.ShowToolCalls)
+	} else if p.cfg.Defaults.ShowToolCalls != nil {
+		defaultShowToolCalls = string(*p.cfg.Defaults.ShowToolCalls)
+	}
+	defaultShowThinking := "off"
+	if p.acfg.ShowThinking != nil {
+		defaultShowThinking = string(*p.acfg.ShowThinking)
+	} else if p.cfg.Defaults.ShowThinking != nil {
+		defaultShowThinking = string(*p.cfg.Defaults.ShowThinking)
+	}
+	defaultStreamOutput := "off"
+	if p.cfg.Defaults.StreamOutput {
+		defaultStreamOutput = "on"
+	}
+	defaultDisplayWidth := "44"
+	if p.acfg.DisplayWidth != nil {
+		defaultDisplayWidth = fmt.Sprintf("%d", *p.acfg.DisplayWidth)
+	} else if p.cfg.Telegram.DisplayWidth != nil {
+		defaultDisplayWidth = fmt.Sprintf("%d", *p.cfg.Telegram.DisplayWidth)
+	}
+
+	displayGetters := command.DisplayGetters{
+		ShowToolCalls: func(ctx context.Context) (string, string) {
+			sk := p.sessionKeyFromCtx(ctx)
+			override := p.ag.SessionShowToolCalls(sk)
+			if override != "" {
+				return override, override
+			}
+			return "", defaultShowToolCalls
+		},
+		ShowThinking: func(ctx context.Context) (string, string) {
+			sk := p.sessionKeyFromCtx(ctx)
+			override := p.ag.SessionDisplayShowThinking(sk)
+			if override != "" {
+				return override, override
+			}
+			return "", defaultShowThinking
+		},
+		StreamOutput: func(ctx context.Context) (string, string) {
+			sk := p.sessionKeyFromCtx(ctx)
+			override := p.ag.SessionStreamOutput(sk)
+			if override != "" {
+				effective := "off"
+				if override == "true" {
+					effective = "on"
+				}
+				return override, effective
+			}
+			return "", defaultStreamOutput
+		},
+		DisplayWidth: func(ctx context.Context) (string, string) {
+			sk := p.sessionKeyFromCtx(ctx)
+			override := p.ag.SessionDisplayWidth(sk)
+			if override != "" {
+				return override, override
+			}
+			return "", defaultDisplayWidth
+		},
+	}
+	displaySetters := command.DisplaySetters{
+		SetShowToolCalls: func(ctx context.Context, value string) {
+			p.ag.SetSessionShowToolCalls(p.sessionKeyFromCtx(ctx), value)
+		},
+		SetShowThinking: func(ctx context.Context, value string) {
+			p.ag.SetSessionDisplayShowThinking(p.sessionKeyFromCtx(ctx), value)
+		},
+		SetStreamOutput: func(ctx context.Context, value string) {
+			p.ag.SetSessionStreamOutput(p.sessionKeyFromCtx(ctx), value)
+		},
+		SetDisplayWidth: func(ctx context.Context, value string) {
+			p.ag.SetSessionDisplayWidth(p.sessionKeyFromCtx(ctx), value)
+		},
+		ResetAll: func(ctx context.Context) {
+			p.ag.ClearSessionDisplayOverrides(p.sessionKeyFromCtx(ctx))
+		},
+	}
+	cmds.Register(command.NewDisplayCommand(displayGetters, displaySetters))
+
 	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
 		var infos []command.ToolInfo
 		for _, t := range p.registry.All() {

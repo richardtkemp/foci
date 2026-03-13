@@ -570,6 +570,12 @@ func setupAgent(p setupParams) *agentInstance {
 					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
 				}, reclaimSearchDirs, p.ctx, false)
 			},
+			DisplayOverrideFn: func(sessionKey string) (string, string, string, string) {
+				return ag.SessionShowToolCalls(sessionKey),
+					ag.SessionDisplayShowThinking(sessionKey),
+					ag.SessionStreamOutput(sessionKey),
+					ag.SessionDisplayWidth(sessionKey)
+			},
 		})
 		for _, result := range results {
 			if result.DefaultSessionKeyFn != nil {
