@@ -68,7 +68,7 @@ func Provision(spec AgentSpec) (*Result, error) {
 	// 2. Character files based on CharMode
 	switch spec.CharMode {
 	case "defaults":
-		if err := copyCharacterFiles(spec.DefaultsDir, workspace); err != nil {
+		if err := copyDefaultFiles(spec.DefaultsDir, workspace); err != nil {
 			return nil, fmt.Errorf("copy defaults: %w", err)
 		}
 		if err := templateSoulFile(filepath.Join(workspace, "character", "SOUL.md"), spec.DisplayName); err != nil {
@@ -119,8 +119,8 @@ func Provision(spec AgentSpec) (*Result, error) {
 	}, nil
 }
 
-// copyCharacterFiles copies default character and prompt files to a new workspace.
-func copyCharacterFiles(defaultsDir, workspace string) error {
+// copyDefaultFiles copies default character and prompt files to a new workspace.
+func copyDefaultFiles(defaultsDir, workspace string) error {
 	charSrc := filepath.Join(defaultsDir, "character")
 	charDst := filepath.Join(workspace, "character")
 
