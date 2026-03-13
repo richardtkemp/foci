@@ -8,6 +8,8 @@ import (
 )
 
 func TestParseThreshold(t *testing.T) {
+	// Proves that threshold strings in %, mb, and gb formats are correctly converted to kB values,
+	// and that invalid or zero/negative inputs are rejected.
 	t.Parallel()
 	memTotalKB := int64(16 * 1024 * 1024) // 16 GB in kB
 
@@ -73,6 +75,7 @@ func TestParseThreshold(t *testing.T) {
 }
 
 func TestCheckOnce_WarnThreshold(t *testing.T) {
+	// Proves that RSS exceeding the warn threshold (but not critical) produces exactly one WARNING notification.
 	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
@@ -109,6 +112,7 @@ func TestCheckOnce_WarnThreshold(t *testing.T) {
 }
 
 func TestCheckOnce_CriticalThreshold(t *testing.T) {
+	// Proves that RSS exceeding the critical threshold (but not kill) produces exactly one CRITICAL notification.
 	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
@@ -145,6 +149,8 @@ func TestCheckOnce_CriticalThreshold(t *testing.T) {
 }
 
 func TestCheckOnce_KillThreshold(t *testing.T) {
+	// Proves that RSS exceeding the kill threshold fires both CRITICAL and KILL notifications,
+	// invokes the kill function, and calls the cleanup callback.
 	t.Parallel()
 	var notifications []string
 	cleanupCalled := false
@@ -192,6 +198,8 @@ func TestCheckOnce_KillThreshold(t *testing.T) {
 }
 
 func TestDedup_SameThresholdDoesNotReNotify(t *testing.T) {
+	// Proves that repeated checks at the same memory level do not re-fire notifications —
+	// only the first crossing of a threshold triggers an alert.
 	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
@@ -229,6 +237,8 @@ func TestDedup_SameThresholdDoesNotReNotify(t *testing.T) {
 }
 
 func TestDedup_EscalatesToCritical(t *testing.T) {
+	// Proves that when memory grows from warn to critical level, a second notification is sent
+	// for the escalation, resulting in two total notifications.
 	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
@@ -272,6 +282,8 @@ func TestDedup_EscalatesToCritical(t *testing.T) {
 }
 
 func TestDedup_DropBelowResetsState(t *testing.T) {
+	// Proves that when memory drops below all thresholds and then rises again,
+	// the warn notification fires a second time (dedup state is reset on recovery).
 	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex
@@ -313,6 +325,8 @@ func TestDedup_DropBelowResetsState(t *testing.T) {
 }
 
 func TestKillCleansUp(t *testing.T) {
+	// Proves that after a kill event, dedup state is reset so subsequent warn-level crossings
+	// fire new notifications, and that both the kill and cleanup callbacks are invoked.
 	t.Parallel()
 	cleanupCalled := false
 	killCalled := false
@@ -371,6 +385,8 @@ func TestKillCleansUp(t *testing.T) {
 }
 
 func TestCheckOnce_TmuxNotRunning(t *testing.T) {
+	// Proves that an error from the RSS query (e.g. tmux not running) is handled silently —
+	// no notification is sent.
 	t.Parallel()
 	notifyCalled := false
 
@@ -395,6 +411,8 @@ func TestCheckOnce_TmuxNotRunning(t *testing.T) {
 }
 
 func TestCheckOnce_KillFails(t *testing.T) {
+	// Proves that a failed kill operation still sends a FAILED notification and calls the cleanup
+	// callback, so the agent is informed even when the kill could not complete.
 	t.Parallel()
 	var notifications []string
 	cleanupCalled := false
@@ -441,6 +459,8 @@ func TestCheckOnce_KillFails(t *testing.T) {
 }
 
 func TestDedup_CriticalDropsToWarn(t *testing.T) {
+	// Proves that when memory drops from critical to warn level and then rises back to critical,
+	// the critical notification fires a second time (partial reset on descent).
 	t.Parallel()
 	var notifications []string
 	var mu sync.Mutex

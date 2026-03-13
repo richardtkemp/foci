@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TestTmuxInvalidOperation verifies that invalid operations are rejected.
 func TestTmuxInvalidOperation(t *testing.T) {
+	// Verifies that unknown operations return a meaningful error rather than silently succeeding or panicking.
 	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -25,8 +25,8 @@ func TestTmuxInvalidOperation(t *testing.T) {
 	}
 }
 
-// TestTmuxStartNoName verifies that sessions can be started without explicit names (auto-generated).
 func TestTmuxStartNoName(t *testing.T) {
+	// Verifies that omitting the name parameter auto-generates a foci-prefixed session name rather than failing.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -48,8 +48,8 @@ func TestTmuxStartNoName(t *testing.T) {
 	tmuxSetup(t, name)
 }
 
-// TestTmuxSendNoEnter verifies that text can be sent without pressing Enter.
 func TestTmuxSendNoEnter(t *testing.T) {
+	// Verifies that keys can be sent without triggering Enter, leaving typed text in the input buffer without executing it.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -83,8 +83,8 @@ func TestTmuxSendNoEnter(t *testing.T) {
 	}
 }
 
-// TestTmuxSendBareEnter verifies that bare Enter (without keys) works when enter=true.
 func TestTmuxSendBareEnter(t *testing.T) {
+	// Verifies that enter=true with no keys succeeds (sends just Enter), while enter=false with no keys correctly fails as an empty operation.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -128,8 +128,8 @@ func TestTmuxSendBareEnter(t *testing.T) {
 	}
 }
 
-// TestTmuxMissingName verifies that operations without name are properly rejected.
 func TestTmuxMissingName(t *testing.T) {
+	// Verifies that send, read, and kill all fail with an error when no session name is supplied, covering required-parameter validation.
 	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 

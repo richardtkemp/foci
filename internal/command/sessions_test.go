@@ -24,6 +24,7 @@ func testSessionsDeps(sessions []SessionChatInfo, defaultChat int64) SessionsDep
 }
 
 func TestSessionsListEmpty(t *testing.T) {
+	// Verifies that "list" with no sessions returns an appropriate no-sessions message.
 	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
 	result, err := cmd.Execute(context.Background(), "list")
 	if err != nil {
@@ -35,6 +36,8 @@ func TestSessionsListEmpty(t *testing.T) {
 }
 
 func TestSessionsListWithSessions(t *testing.T) {
+	// Verifies that "list" renders all sessions with chat IDs, usernames, message
+	// counts, and the default marker (★) on the correct entry.
 	now := time.Now().UTC()
 	sessions := []SessionChatInfo{
 		{ChatID: 123456789, Username: "alice", MessageCount: 42, LastActivity: now},
@@ -64,6 +67,8 @@ func TestSessionsListWithSessions(t *testing.T) {
 }
 
 func TestSessionsDefaultValid(t *testing.T) {
+	// Verifies that "default <chatID>" sets the default to a known chat ID and
+	// returns a confirmation including that ID.
 	sessions := []SessionChatInfo{
 		{ChatID: 123456789},
 		{ChatID: 987654321},
@@ -89,6 +94,8 @@ func TestSessionsDefaultValid(t *testing.T) {
 }
 
 func TestSessionsDefaultInvalid(t *testing.T) {
+	// Verifies that "default <chatID>" with an ID that doesn't match any session
+	// returns a "No session found" message rather than an error.
 	sessions := []SessionChatInfo{
 		{ChatID: 123456789},
 	}
@@ -104,6 +111,7 @@ func TestSessionsDefaultInvalid(t *testing.T) {
 }
 
 func TestSessionsDefaultBadInput(t *testing.T) {
+	// Verifies that "default <non-numeric>" returns an "Invalid chat ID" message.
 	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
 
 	result, err := cmd.Execute(context.Background(), "default abc")
@@ -116,6 +124,7 @@ func TestSessionsDefaultBadInput(t *testing.T) {
 }
 
 func TestSessionsDefaultNoArg(t *testing.T) {
+	// Verifies that "default" with no argument shows a usage message.
 	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
 
 	result, err := cmd.Execute(context.Background(), "default")
@@ -128,6 +137,8 @@ func TestSessionsDefaultNoArg(t *testing.T) {
 }
 
 func TestSessionsInfo(t *testing.T) {
+	// Verifies that "info" using the caller's chat ID (from context) shows chat ID,
+	// username, message count, and whether the session is the default.
 	now := time.Now().UTC()
 	sessions := []SessionChatInfo{
 		{ChatID: 123456789, Username: "alice", MessageCount: 42, LastActivity: now},
@@ -154,6 +165,8 @@ func TestSessionsInfo(t *testing.T) {
 }
 
 func TestSessionsInfoNoChatID(t *testing.T) {
+	// Verifies that "info" without a ChatIDKey in context returns an appropriate
+	// "Not in a chat context" message.
 	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
 
 	result, err := cmd.Execute(context.Background(), "info")
@@ -166,6 +179,7 @@ func TestSessionsInfoNoChatID(t *testing.T) {
 }
 
 func TestSessionsInfoNonDefault(t *testing.T) {
+	// Verifies that "info" for a chat that is not the default session shows "Default: no".
 	sessions := []SessionChatInfo{
 		{ChatID: 123456789, MessageCount: 5},
 	}
@@ -182,6 +196,7 @@ func TestSessionsInfoNonDefault(t *testing.T) {
 }
 
 func TestSessionsUnknownSubcommand(t *testing.T) {
+	// Verifies that an unrecognised subcommand returns usage text rather than an error.
 	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
 
 	result, err := cmd.Execute(context.Background(), "foo")
@@ -194,6 +209,8 @@ func TestSessionsUnknownSubcommand(t *testing.T) {
 }
 
 func TestSessionsNoArgsShowsUsage(t *testing.T) {
+	// Verifies that invoking /sessions with no args returns a usage message listing
+	// all available subcommands: list, default, and info.
 	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
 
 	result, err := cmd.Execute(context.Background(), "")
@@ -282,6 +299,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 }
 
 func TestSessionsIndexEmpty(t *testing.T) {
+	// Verifies that "index" with an IndexFn returning no results shows a "No sessions found" message.
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
 		return nil, nil
@@ -297,6 +315,8 @@ func TestSessionsIndexEmpty(t *testing.T) {
 }
 
 func TestSessionsIndexNotAvailable(t *testing.T) {
+	// Verifies that "index" when IndexFn is not configured returns "not available"
+	// rather than panicking or showing an empty table.
 	deps := testSessionsDeps(nil, 0) // IndexFn is nil
 	cmd := NewSessionsCommand(deps)
 	result, err := cmd.Execute(context.Background(), "index")
@@ -309,6 +329,7 @@ func TestSessionsIndexNotAvailable(t *testing.T) {
 }
 
 func TestSessionsKeyboardIncludesIndex(t *testing.T) {
+	// Verifies that keyboard options include "index" when IndexFn is configured.
 	deps := testSessionsDeps(nil, 0)
 	deps.IndexFn = func(SessionIndexOpts) ([]SessionIndexInfo, error) { return nil, nil }
 	cmd := NewSessionsCommand(deps)
@@ -325,6 +346,7 @@ func TestSessionsKeyboardIncludesIndex(t *testing.T) {
 }
 
 func TestSessionsKeyboardExcludesIndexWhenNil(t *testing.T) {
+	// Verifies that keyboard options do not include "index" when IndexFn is nil.
 	deps := testSessionsDeps(nil, 0) // IndexFn is nil
 	cmd := NewSessionsCommand(deps)
 	opts := cmd.KeyboardOptions(context.Background())
@@ -336,6 +358,8 @@ func TestSessionsKeyboardExcludesIndexWhenNil(t *testing.T) {
 }
 
 func TestSessionsListCurrentMarker(t *testing.T) {
+	// Verifies that "list" distinguishes the calling session (◉) from the default
+	// session (★) when they are different chats, and shows both legend entries.
 	now := time.Now().UTC()
 	sessions := []SessionChatInfo{
 		{ChatID: 111, Username: "alice", MessageCount: 5, LastActivity: now},
@@ -537,6 +561,7 @@ func TestParseIndexArgsCount(t *testing.T) {
 }
 
 func TestSessionsListError(t *testing.T) {
+	// Verifies that a ListFn error is propagated as a Go error from Execute.
 	deps := SessionsDeps{
 		AgentID: "test",
 		ListFn: func() ([]SessionChatInfo, error) {

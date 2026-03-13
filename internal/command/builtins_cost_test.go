@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TestCostCommandUsage verifies usage message shows all available subcommands.
 func TestCostCommandUsage(t *testing.T) {
+	// Verifies usage message shows all available subcommands.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "s", CostUSD: 0.01},
@@ -26,8 +26,8 @@ func TestCostCommandUsage(t *testing.T) {
 	}
 }
 
-// TestCostCommandToday verifies today's costs are aggregated by session with correct formatting.
 func TestCostCommandToday(t *testing.T) {
+	// Verifies today's costs are aggregated by session with correct formatting.
 	now := time.Now().UTC()
 	yesterday := now.AddDate(0, 0, -1)
 	path := writeAPILog(t, []apiEntry{
@@ -64,8 +64,8 @@ func TestCostCommandToday(t *testing.T) {
 	}
 }
 
-// TestCostCommandSession verifies sessions are sorted by cost in descending order.
 func TestCostCommandSession(t *testing.T) {
+	// Verifies sessions are sorted by cost in descending order.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "session-a", CostUSD: 0.010},
@@ -91,8 +91,8 @@ func TestCostCommandSession(t *testing.T) {
 	}
 }
 
-// TestCostCommandTop10Limit verifies output is capped at top 10 sessions with overflow indicator.
 func TestCostCommandTop10Limit(t *testing.T) {
+	// Verifies output is capped at top 10 sessions with overflow indicator.
 	now := time.Now().UTC()
 	var entries []apiEntry
 	for i := 0; i < 12; i++ {
@@ -124,8 +124,8 @@ func TestCostCommandTop10Limit(t *testing.T) {
 	}
 }
 
-// TestCostCommandDays verifies costs over specified number of days are summed correctly.
 func TestCostCommandDays(t *testing.T) {
+	// Verifies costs over specified number of days are summed correctly.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now.AddDate(0, 0, -10), CostUSD: 0.100},
@@ -143,8 +143,8 @@ func TestCostCommandDays(t *testing.T) {
 	}
 }
 
-// TestCostCommand24h verifies costs from last 24 hours are correctly filtered and categorized.
 func TestCostCommand24h(t *testing.T) {
+	// Verifies costs from last 24 hours are correctly filtered and categorized.
 	now := time.Now().UTC()
 	entries := []apiEntry{
 		// 25h ago — should be excluded
@@ -184,8 +184,8 @@ func TestCostCommand24h(t *testing.T) {
 	}
 }
 
-// TestCostCommandWeek verifies 7-day cost summary with daily breakdown and averages.
 func TestCostCommandWeek(t *testing.T) {
+	// Verifies 7-day cost summary with daily breakdown and averages.
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	entries := []apiEntry{

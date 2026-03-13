@@ -27,8 +27,8 @@ func execTaskList(t *testing.T, tool *Tool, params any) (ToolResult, error) {
 	return tool.Execute(context.Background(), data)
 }
 
-// Verifies create returns the new task ID and subject.
 func TestTaskListCreate(t *testing.T) {
+	// Verifies create returns the new task ID and subject.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -47,8 +47,8 @@ func TestTaskListCreate(t *testing.T) {
 	}
 }
 
-// Verifies create requires subject.
 func TestTaskListCreateValidation(t *testing.T) {
+	// Verifies create requires subject.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -58,8 +58,8 @@ func TestTaskListCreateValidation(t *testing.T) {
 	}
 }
 
-// Verifies get returns full task details.
 func TestTaskListGet(t *testing.T) {
+	// Verifies get returns full task details.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -84,8 +84,8 @@ func TestTaskListGet(t *testing.T) {
 	}
 }
 
-// Verifies get returns error for nonexistent task.
 func TestTaskListGetNotFound(t *testing.T) {
+	// Verifies get returns error for nonexistent task.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -95,8 +95,8 @@ func TestTaskListGetNotFound(t *testing.T) {
 	}
 }
 
-// Verifies get requires id.
 func TestTaskListGetRequiresID(t *testing.T) {
+	// Verifies get requires id.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -106,8 +106,8 @@ func TestTaskListGetRequiresID(t *testing.T) {
 	}
 }
 
-// Verifies update changes task fields and returns updated state.
 func TestTaskListUpdate(t *testing.T) {
+	// Verifies update changes task fields and returns updated state.
 	t.Parallel()
 	tool, store := testTaskListTool(t)
 
@@ -139,8 +139,8 @@ func TestTaskListUpdate(t *testing.T) {
 	}
 }
 
-// Verifies update with status=deleted removes the task.
 func TestTaskListUpdateDelete(t *testing.T) {
+	// Verifies update with status=deleted removes the task.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -168,8 +168,8 @@ func TestTaskListUpdateDelete(t *testing.T) {
 	}
 }
 
-// Verifies update requires id.
 func TestTaskListUpdateRequiresID(t *testing.T) {
+	// Verifies update requires id.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -179,8 +179,8 @@ func TestTaskListUpdateRequiresID(t *testing.T) {
 	}
 }
 
-// Verifies list returns all tasks with progress summary.
 func TestTaskListList(t *testing.T) {
+	// Verifies list returns all tasks with progress summary.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -213,8 +213,8 @@ func TestTaskListList(t *testing.T) {
 	}
 }
 
-// Verifies notifications fire on create and status-changing update.
 func TestTaskListNotifications(t *testing.T) {
+	// Verifies notifications fire on create and status-changing update.
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "tasklist.db")
 	s, err := memory.NewTaskListStore(dbPath)
@@ -279,8 +279,8 @@ func TestTaskListNotifications(t *testing.T) {
 	}
 }
 
-// Verifies unknown action returns an error.
 func TestTaskListUnknownAction(t *testing.T) {
+	// Verifies unknown action returns an error.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
@@ -293,8 +293,8 @@ func TestTaskListUnknownAction(t *testing.T) {
 	}
 }
 
-// Verifies FormatTasks renders markers correctly.
 func TestFormatTasks(t *testing.T) {
+	// Verifies FormatTasks renders markers correctly.
 	t.Parallel()
 	tasks := []memory.Task{
 		{ID: 1, Subject: "Done task", Status: "completed"},
@@ -318,8 +318,8 @@ func TestFormatTasks(t *testing.T) {
 	}
 }
 
-// Verifies FormatTask renders a single task with all fields.
 func TestFormatTask(t *testing.T) {
+	// Verifies FormatTask renders a single task with all fields.
 	t.Parallel()
 	task := &memory.Task{
 		ID:          1,

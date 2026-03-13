@@ -7,6 +7,8 @@ import (
 )
 
 func TestResolvePath(t *testing.T) {
+	// Proves that ResolvePath returns absolute paths unchanged and resolves relative
+	// paths against the user's home directory.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("UserHomeDir: %v", err)
@@ -26,8 +28,9 @@ func TestResolvePath(t *testing.T) {
 	}
 }
 
-// TestAgentDataPath verifies workspace-scoped per-agent data paths.
 func TestAgentDataPath(t *testing.T) {
+	// Proves that AgentDataPath constructs the correct <workspace>/.data/<filename>
+	// path for workspace-scoped per-agent data files.
 	tests := []struct {
 		workspace string
 		filename  string
@@ -46,6 +49,7 @@ func TestAgentDataPath(t *testing.T) {
 }
 
 func TestDataPathAbsoluteDataDir(t *testing.T) {
+	// Proves that DataPath correctly joins an absolute data_dir with the filename.
 	cfg := &Config{DataDir: "/opt/foci/data"}
 	got := cfg.DataPath("memory.db")
 	want := "/opt/foci/data/memory.db"
@@ -55,6 +59,8 @@ func TestDataPathAbsoluteDataDir(t *testing.T) {
 }
 
 func TestDataPathRelativeDataDir(t *testing.T) {
+	// Proves that DataPath resolves a relative data_dir against the home directory
+	// before joining with the filename.
 	home, _ := os.UserHomeDir()
 	cfg := &Config{DataDir: "mydata"}
 	got := cfg.DataPath("state.json")
@@ -65,6 +71,7 @@ func TestDataPathRelativeDataDir(t *testing.T) {
 }
 
 func TestDataPathDefault(t *testing.T) {
+	// Proves that DataPath falls back to ~/data when data_dir is empty.
 	home, _ := os.UserHomeDir()
 	cfg := &Config{DataDir: ""}
 	got := cfg.DataPath("memory.db")
@@ -75,6 +82,8 @@ func TestDataPathDefault(t *testing.T) {
 }
 
 func TestDataPathLoadsFromConfig(t *testing.T) {
+	// Proves that data_dir loaded from a TOML file is used by DataPath to construct
+	// the correct absolute path to a named data file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -100,6 +109,8 @@ id = "test"
 }
 
 func TestPromptFilePathsConfig(t *testing.T) {
+	// Proves that an explicit compaction_summary_prompt path in [sessions] is
+	// preserved exactly as configured after loading.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -121,6 +132,8 @@ compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
 }
 
 func TestPromptFilePathsDefaultEmpty(t *testing.T) {
+	// Proves that compaction_summary_prompt defaults to empty string when not
+	// configured, rather than some non-empty fallback.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -139,6 +152,9 @@ id = "test"
 }
 
 func TestResolveAllPaths(t *testing.T) {
+	// Proves that all default path fields (log files, sessions dir, conversation db,
+	// welcome file) resolve to the expected home-relative locations when not
+	// explicitly configured.
 	home, _ := os.UserHomeDir()
 
 	dir := t.TempDir()
@@ -185,6 +201,8 @@ id = "test"
 }
 
 func TestResolveAllPathsAbsoluteOverrides(t *testing.T) {
+	// Proves that absolute path overrides in the config file are preserved exactly
+	// and are not re-resolved against the home directory.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
