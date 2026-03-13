@@ -6,11 +6,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"foci/internal/tools/browserjs"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
 	"github.com/go-rod/rod/lib/proto"
+	"gopkg.in/yaml.v3"
 )
 
 // withAutoSnapshot captures a fresh snapshot after an action and appends it
@@ -31,6 +35,112 @@ func withAutoSnapshot(mgr *BrowserManager, result string) ToolResult {
 
 	return ToolResult{Text: result + "\n\n" + snap.String()}
 }
+
+// withScopedSnapshot captures a snapshot scoped to the form context around the
+// given refs, rather than the full page. Falls back to a full snapshot if
+// scoping fails. This saves tokens on large pages after fill actions.
+func withScopedSnapshot(mgr *BrowserManager, result string, refs []string) ToolResult {
+	page, err := mgr.getPage()
+	if err != nil {
+		return ToolResult{Text: result + "\n\n(auto-snapshot failed: " + err.Error() + ")"}
+	}
+
+	mgr.WaitDOMStable(page)
+
+	snap := mgr.LatestSnapshot()
+	if snap == nil || len(refs) == 0 {
+		return withAutoSnapshot(mgr, result)
+	}
+
+	// Resolve the first filled element to find its form context
+	el, err := snap.LocatorInFrame(refs[0])
+	if err != nil {
+		return withAutoSnapshot(mgr, result)
+	}
+
+	scopedText, err := buildScopedSnapshot(page, el, mgr)
+	if err != nil {
+		return withAutoSnapshot(mgr, result)
+	}
+
+	return ToolResult{Text: result + "\n\n" + scopedText}
+}
+
+// buildScopedSnapshot captures an ARIA snapshot rooted at the closest <form>
+// ancestor of el. If no form is found, walks up 3 levels as a fallback.
+// Returns the formatted snapshot text.
+func buildScopedSnapshot(page *rod.Page, el *rod.Element, mgr *BrowserManager) (string, error) {
+	// Inject snapshot JS and capture scoped snapshot
+	if err := injectSnapshotJS(page); err != nil {
+		return "", fmt.Errorf("inject snapshot JS: %w", err)
+	}
+
+	// Find the closest <form> ancestor (or walk up 3 levels) and store
+	// it on window so AriaSnapshot can reference it.
+	if _, err := el.Eval(storeScopeRootJS); err != nil {
+		return "", fmt.Errorf("store scope root: %w", err)
+	}
+
+	mgr.mu.Lock()
+	mgr.generation++
+	gen := mgr.generation
+	mgr.mu.Unlock()
+
+	snapResult, err := page.Eval(browserjs.AriaSnapshot, "window.__fociScopeRoot", "({ref: true})")
+	if err != nil {
+		return "", fmt.Errorf("capture scoped snapshot: %w", err)
+	}
+
+	var snapNode yaml.Node
+	if err := yaml.Unmarshal([]byte(snapResult.Value.String()), &snapNode); err != nil {
+		return "", fmt.Errorf("unmarshal scoped snapshot: %w", err)
+	}
+
+	yamlBytes, err := yaml.Marshal(&snapNode)
+	if err != nil {
+		return "", fmt.Errorf("marshal scoped snapshot: %w", err)
+	}
+
+	info, err := page.Info()
+	if err != nil {
+		return "", fmt.Errorf("get page info: %w", err)
+	}
+
+	// Store as the latest snapshot so refs from it can be used
+	snap := &Snapshot{
+		frames:     []*rod.Page{page},
+		generation: gen,
+	}
+	lang := snapshotLang(page, yamlBytes)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "- Page URL: %s\n", info.URL)
+	fmt.Fprintf(&b, "- Page Title: %s\n", info.Title)
+	b.WriteString("- Form Context Snapshot (scoped to form around filled fields)\n")
+	fmt.Fprintf(&b, "```%s\n", lang)
+	b.WriteString(strings.TrimSpace(string(yamlBytes)))
+	b.WriteString("\n```\n")
+
+	snap.text = b.String()
+
+	mgr.mu.Lock()
+	mgr.snapshot = snap
+	mgr.mu.Unlock()
+
+	return snap.text, nil
+}
+
+// storeScopeRootJS finds the closest <form> ancestor of the element (or walks
+// up 3 levels as fallback) and stores it on window for AriaSnapshot to use.
+const storeScopeRootJS = `function() {
+	let form = this.closest('form');
+	if (form) { window.__fociScopeRoot = form; return; }
+	let node = this;
+	for (let i = 0; i < 3 && node.parentElement; i++) {
+		node = node.parentElement;
+	}
+	window.__fociScopeRoot = node;
+}`
 
 // resolveRef validates and resolves a ref from the current snapshot to a rod.Element.
 func resolveRef(mgr *BrowserManager, ref string) (*rod.Element, error) {
@@ -105,25 +215,42 @@ func browserClick(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 }
 
 func browserFill(mgr *BrowserManager, p browserParams) (ToolResult, error) {
-	el, err := resolveRef(mgr, p.Ref)
-	if err != nil {
-		return ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+	// Build the list of fields to fill — either from "fields" array or
+	// single ref+value for backward compatibility.
+	fields := p.Fields
+	if len(fields) == 0 {
+		if p.Ref == "" {
+			return ToolResult{Text: "Error: ref or fields required"}, nil
+		}
+		fields = []fillField{{Ref: p.Ref, Value: p.Value}}
+	}
+
+	var filledRefs []string
+	var descriptions []string
+
+	for _, f := range fields {
+		el, err := resolveRef(mgr, f.Ref)
+		if err != nil {
+			return ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil
+		}
+
+		// Clear existing value then type new one
+		if err := el.SelectAllText(); err != nil {
+			return ToolResult{Text: fmt.Sprintf("Error: select text failed for %s: %v", f.Ref, err)}, nil
+		}
+		if err := el.Input(f.Value); err != nil {
+			return ToolResult{Text: fmt.Sprintf("Error: fill failed for %s: %v", f.Ref, err)}, nil
+		}
+
+		filledRefs = append(filledRefs, f.Ref)
+		descriptions = append(descriptions, fmt.Sprintf("%s=%q", f.Ref, f.Value))
 	}
 
 	desc := p.Element
 	if desc == "" {
-		desc = p.Ref
+		desc = strings.Join(descriptions, ", ")
 	}
-
-	// Clear existing value then type new one
-	if err := el.SelectAllText(); err != nil {
-		return ToolResult{Text: fmt.Sprintf("Error: select text failed: %v", err)}, nil
-	}
-	if err := el.Input(p.Value); err != nil {
-		return ToolResult{Text: fmt.Sprintf("Error: fill failed: %v", err)}, nil
-	}
-
-	result := fmt.Sprintf("Filled %s with %q", desc, p.Value)
+	result := fmt.Sprintf("Filled %s", desc)
 
 	if p.Submit {
 		page, err := mgr.getPage()
@@ -136,7 +263,7 @@ func browserFill(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 		result += " and submitted"
 	}
 
-	return withAutoSnapshot(mgr, result), nil
+	return withScopedSnapshot(mgr, result, filledRefs), nil
 }
 
 func browserSelect(mgr *BrowserManager, p browserParams) (ToolResult, error) {

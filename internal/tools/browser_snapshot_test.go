@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-rod/rod"
@@ -104,5 +105,48 @@ func TestSnapshotString(t *testing.T) {
 	}
 	if snap.Generation() != 42 {
 		t.Errorf("Generation() = %d, want 42", snap.Generation())
+	}
+}
+
+// TestSnapshotJSONContentType verifies that navigating to a JSON endpoint
+// produces a snapshot with ```json code block instead of ```yaml.
+func TestSnapshotJSONContentType(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	srv := testJSONServer(t, `{"status":"ok","count":42}`)
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(t.Context(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "```json") {
+		t.Errorf("expected ```json code block for JSON content type, got:\n%s", result.Text)
+	}
+	if strings.Contains(result.Text, "```yaml") {
+		t.Error("should not contain ```yaml for JSON content type")
+	}
+}
+
+// TestSnapshotHTMLContentType verifies that navigating to an HTML page
+// produces a snapshot with ```yaml code block (the default for accessibility trees).
+func TestSnapshotHTMLContentType(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	srv := testHTMLServer(t, `<html><head><title>Test</title></head><body><h1>Hello</h1></body></html>`)
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(t.Context(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "```yaml") {
+		t.Errorf("expected ```yaml code block for HTML content type, got:\n%s", result.Text)
 	}
 }

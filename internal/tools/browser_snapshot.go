@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -60,16 +61,35 @@ func BuildSnapshot(page *rod.Page, generation int) (*Snapshot, error) {
 		return nil, fmt.Errorf("get page info: %w", err)
 	}
 
+	// Detect content type — use "json" label if the page serves JSON,
+	// otherwise default to "yaml" for the accessibility tree.
+	lang := snapshotLang(page, yamlBytes)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "- Page URL: %s\n", info.URL)
 	fmt.Fprintf(&b, "- Page Title: %s\n", info.Title)
 	fmt.Fprintf(&b, "- Frame Count: %d\n", len(snap.frames))
-	b.WriteString("- Page Snapshot\n```yaml\n")
+	fmt.Fprintf(&b, "- Page Snapshot\n```%s\n", lang)
 	b.WriteString(strings.TrimSpace(string(yamlBytes)))
 	b.WriteString("\n```\n")
 
 	snap.text = b.String()
 	return snap, nil
+}
+
+// snapshotLang determines the code block language tag for a snapshot.
+// Returns "json" if the page content type is JSON, "yaml" otherwise.
+func snapshotLang(page *rod.Page, yamlBytes []byte) string {
+	ct, err := page.Eval(`() => document.contentType`)
+	if err == nil && strings.Contains(ct.Value.String(), "json") {
+		return "json"
+	}
+	// Fallback: if the marshaled content is valid JSON, label it as such
+	trimmed := strings.TrimSpace(string(yamlBytes))
+	if json.Valid([]byte(trimmed)) {
+		return "json"
+	}
+	return "yaml"
 }
 
 // captureWithFrames injects JS into the page, runs the ARIA snapshot,

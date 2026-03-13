@@ -206,7 +206,7 @@ Actions:
 - snapshot: Capture current page accessibility tree
 - navigate: Go to URL (params: url). Auto-snapshot.
 - click: Click element (params: ref, element). Auto-snapshot.
-- fill: Fill input (params: ref, element, value, submit). Auto-snapshot.
+- fill: Fill input (params: ref, element, value, submit). Or fill multiple: (params: fields [{ref,value},...], submit). Auto-snapshot scoped to form context.
 - select: Select option(s) (params: ref, element, values). Auto-snapshot.
 - press: Press keyboard key (params: key)
 - go_back: Browser back. Auto-snapshot.
@@ -236,6 +236,7 @@ The "ref" param is the [ref=...] value from the snapshot — this is the actual 
 				"ref": {"type": "string", "description": "Element ref from snapshot (e.g., s1e5)"},
 				"element": {"type": "string", "description": "Human-readable element description (for logging)"},
 				"value": {"type": "string", "description": "Value to fill into input"},
+				"fields": {"type": "array", "items": {"type": "object", "properties": {"ref": {"type": "string"}, "value": {"type": "string"}}, "required": ["ref", "value"]}, "description": "Multiple fields to fill at once: [{ref, value}, ...]. Takes one snapshot at the end."},
 				"values": {"type": "array", "items": {"type": "string"}, "description": "Values for select"},
 				"submit": {"type": "boolean", "description": "Press Enter after filling"},
 				"key": {"type": "string", "description": "Key to press (Enter, Tab, Escape, etc.)"},
@@ -252,19 +253,26 @@ The "ref" param is the [ref=...] value from the snapshot — this is the actual 
 	}
 }
 
+// fillField is a single ref+value pair for multi-fill operations.
+type fillField struct {
+	Ref   string `json:"ref"`
+	Value string `json:"value"`
+}
+
 type browserParams struct {
-	Action   string   `json:"action"`
-	URL      string   `json:"url"`
-	Ref      string   `json:"ref"`
-	Element  string   `json:"element"`
-	Value    string   `json:"value"`
-	Values   []string `json:"values"`
-	Submit   bool     `json:"submit"`
-	Key      string   `json:"key"`
-	Script   string   `json:"script"`
-	WaitType string   `json:"waitType"`
-	FullPage bool     `json:"fullPage"`
-	RetPath  bool     `json:"returnPath"`
+	Action   string      `json:"action"`
+	URL      string      `json:"url"`
+	Ref      string      `json:"ref"`
+	Element  string      `json:"element"`
+	Value    string      `json:"value"`
+	Values   []string    `json:"values"`
+	Fields   []fillField `json:"fields"`
+	Submit   bool        `json:"submit"`
+	Key      string      `json:"key"`
+	Script   string      `json:"script"`
+	WaitType string      `json:"waitType"`
+	FullPage bool        `json:"fullPage"`
+	RetPath  bool        `json:"returnPath"`
 }
 
 func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *BrowserManager) (ToolResult, error) {
