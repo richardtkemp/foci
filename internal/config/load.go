@@ -289,13 +289,13 @@ func Load(path string) (*Config, error) {
 	setIntDefaultDefined(&cfg.Defaults.NudgeMaxPerBatch, 1, md.IsDefined("defaults", "nudge_max_per_batch"))
 	setIntDefaultDefined(&cfg.Defaults.NudgePreAnswerMinTools, 2, md.IsDefined("defaults", "nudge_pre_answer_min_tools"))
 	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
-	if cfg.Defaults.ShowToolCalls == nil {
+	if cfg.Telegram.ShowToolCalls == nil {
 		v := ToolCallOff
-		cfg.Defaults.ShowToolCalls = &v
+		cfg.Telegram.ShowToolCalls = &v
 	}
-	if cfg.Defaults.ShowThinking == nil {
+	if cfg.Telegram.ShowThinking == nil {
 		v := ShowThinkingOff
-		cfg.Defaults.ShowThinking = &v
+		cfg.Telegram.ShowThinking = &v
 	}
 	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))

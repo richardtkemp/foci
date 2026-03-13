@@ -43,11 +43,11 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if agent.StartupNotify == nil && !cfg.Defaults.EnableStartupNotify {
 		opts = append(opts, availableOption{"agent", "startup_notify", "(global)", "send startup notification (nil = use global)"})
 	}
-	if agent.ShowToolCalls == nil && cfg.Defaults.ShowToolCalls != nil && *cfg.Defaults.ShowToolCalls == ToolCallOff {
-		opts = append(opts, availableOption{"agent", "show_tool_calls", "(defaults)", "tool call display mode: off, preview, full (nil = use defaults)"})
+	if agent.ShowToolCalls == nil && cfg.Telegram.ShowToolCalls != nil && *cfg.Telegram.ShowToolCalls == ToolCallOff {
+		opts = append(opts, availableOption{"agent", "show_tool_calls", "(telegram)", "tool call display mode: off, preview, full (nil = use telegram)"})
 	}
-	if agent.ShowThinking == nil && cfg.Defaults.ShowThinking != nil && *cfg.Defaults.ShowThinking == ShowThinkingOff {
-		opts = append(opts, availableOption{"agent", "show_thinking", "(defaults)", "thinking display mode: off, compact, true (nil = use defaults)"})
+	if agent.ShowThinking == nil && cfg.Telegram.ShowThinking != nil && *cfg.Telegram.ShowThinking == ShowThinkingOff {
+		opts = append(opts, availableOption{"agent", "show_thinking", "(telegram)", "thinking display mode: off, compact, true (nil = use telegram)"})
 	}
 	if agent.DisplayWidth == nil {
 		dw := 44

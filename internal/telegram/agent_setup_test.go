@@ -20,11 +20,9 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 		ReceivedFilesDir: "/agent/files",
 	}
 	cfg := &config.Config{
-		Defaults: config.DefaultsConfig{
-			ShowToolCalls: ptr(config.ToolCallOff),
-			ShowThinking:  ptr(config.ShowThinkingOff),
-		},
 		Telegram: config.TelegramConfig{
+			ShowToolCalls:    ptr(config.ToolCallOff),
+			ShowThinking:     ptr(config.ShowThinkingOff),
 			DisplayWidth:     ptr(44),
 			ReceivedFilesDir: "/global/files",
 		},
@@ -57,13 +55,11 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 // agent-level settings are set, global defaults are used.
 func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 	bot := NewBotForTest()
-	acfg := config.AgentConfig{} // all nil/zero — should fall back to defaults
+	acfg := config.AgentConfig{} // all nil/zero — should fall back to telegram
 	cfg := &config.Config{
-		Defaults: config.DefaultsConfig{
-			ShowToolCalls: ptr(config.ToolCallPreview),
-			ShowThinking:  ptr(config.ShowThinkingTrue),
-		},
 		Telegram: config.TelegramConfig{
+			ShowToolCalls:    ptr(config.ToolCallPreview),
+			ShowThinking:     ptr(config.ShowThinkingTrue),
 			DisplayWidth:     ptr(60),
 			ReceivedFilesDir: "/global/files",
 		},
@@ -76,10 +72,10 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 
 	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "preview" {
-		t.Errorf("ShowToolCalls = %q, want %q (defaults fallback)", stc, "preview")
+		t.Errorf("ShowToolCalls = %q, want %q (telegram fallback)", stc, "preview")
 	}
 	if st != "true" {
-		t.Errorf("ShowThinking = %q, want %q (defaults fallback)", st, "true")
+		t.Errorf("ShowThinking = %q, want %q (telegram fallback)", st, "true")
 	}
 	if dw != 60 {
 		t.Errorf("DisplayWidth = %d, want 60 (telegram fallback)", dw)
@@ -116,17 +112,15 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 // overrides work correctly with defaults filling the gaps.
 func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	bot := NewBotForTest()
-	// Only override ShowToolCalls; rest falls back to defaults
+	// Only override ShowToolCalls; rest falls back to telegram
 	acfg := config.AgentConfig{
 		ShowToolCalls: ptr(config.ToolCallFull),
 	}
 	cfg := &config.Config{
-		Defaults: config.DefaultsConfig{
+		Telegram: config.TelegramConfig{
 			ShowToolCalls: ptr(config.ToolCallOff),
 			ShowThinking:  ptr(config.ShowThinkingCompact),
-		},
-		Telegram: config.TelegramConfig{
-			DisplayWidth: ptr(44),
+			DisplayWidth:  ptr(44),
 		},
 		Logging: config.LoggingConfig{
 			MessagesInLog: true,
@@ -140,7 +134,7 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 		t.Errorf("ShowToolCalls = %q, want %q (agent override)", stc, "full")
 	}
 	if st != "compact" {
-		t.Errorf("ShowThinking = %q, want %q (defaults fallback)", st, "compact")
+		t.Errorf("ShowThinking = %q, want %q (telegram fallback)", st, "compact")
 	}
 	if dw != 44 {
 		t.Errorf("DisplayWidth = %d, want 44 (telegram fallback)", dw)

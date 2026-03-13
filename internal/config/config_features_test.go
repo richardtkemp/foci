@@ -247,12 +247,9 @@ id = "b"
 		if *cfg.Agents[0].ShowToolCalls != ToolCallFull {
 			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].ShowToolCalls, ToolCallFull)
 		}
-		// Agent b inherits ShowToolCalls from [defaults] (ToolCallOff)
-		if cfg.Agents[1].ShowToolCalls == nil {
-			t.Fatal("agent b: ShowToolCalls should be non-nil (inherited from defaults)")
-		}
-		if *cfg.Agents[1].ShowToolCalls != ToolCallOff {
-			t.Errorf("agent b: ShowToolCalls = %q, want %q (inherited from defaults)", *cfg.Agents[1].ShowToolCalls, ToolCallOff)
+		// Agent b has no show_tool_calls set — should be nil (resolved at runtime via telegram config)
+		if cfg.Agents[1].ShowToolCalls != nil {
+			t.Errorf("agent b: ShowToolCalls = %q, want nil (not set)", *cfg.Agents[1].ShowToolCalls)
 		}
 	})
 
@@ -277,25 +274,25 @@ show_tool_calls = true
 		}
 	})
 
-	// Defaults section
-	t.Run("defaults string", func(t *testing.T) {
+	// Telegram section
+	t.Run("telegram string", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[defaults]
+[telegram]
 show_tool_calls = "full"
 `), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallFull {
-			t.Errorf("Defaults.ShowToolCalls = %v, want %q", cfg.Defaults.ShowToolCalls, ToolCallFull)
+		if cfg.Telegram.ShowToolCalls == nil || *cfg.Telegram.ShowToolCalls != ToolCallFull {
+			t.Errorf("Telegram.ShowToolCalls = %v, want %q", cfg.Telegram.ShowToolCalls, ToolCallFull)
 		}
 	})
 
 	// Global default (not set) — defaults to ToolCallOff
-	t.Run("defaults default", func(t *testing.T) {
+	t.Run("telegram default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(``), 0644)
@@ -303,8 +300,8 @@ show_tool_calls = "full"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Defaults.ShowToolCalls == nil || *cfg.Defaults.ShowToolCalls != ToolCallOff {
-			t.Errorf("Defaults.ShowToolCalls = %v, want %q", cfg.Defaults.ShowToolCalls, ToolCallOff)
+		if cfg.Telegram.ShowToolCalls == nil || *cfg.Telegram.ShowToolCalls != ToolCallOff {
+			t.Errorf("Telegram.ShowToolCalls = %v, want %q", cfg.Telegram.ShowToolCalls, ToolCallOff)
 		}
 	})
 

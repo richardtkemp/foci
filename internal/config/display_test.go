@@ -13,10 +13,6 @@ func testConfig() (*Config, AgentConfig) {
 			HTTPTimeout:     "120s",
 			UsageAPITimeout: "10s",
 		},
-		Defaults: DefaultsConfig{
-			ShowToolCalls: func() *ToolCallDisplay { v := ToolCallPreview; return &v }(),
-			ShowThinking:  func() *ShowThinking { v := ShowThinkingOff; return &v }(),
-		},
 		Telegram: TelegramConfig{
 			AllowedUsers:        []string{"alice"},
 			EnableStopAliases:   true,
@@ -24,6 +20,8 @@ func testConfig() (*Config, AgentConfig) {
 			MultiballSessionTTL: "60m",
 			MessageQueueSize:    64,
 			LongPollTimeout:     "65s",
+			ShowToolCalls:       func() *ToolCallDisplay { v := ToolCallPreview; return &v }(),
+			ShowThinking:        func() *ShowThinking { v := ShowThinkingOff; return &v }(),
 			DisplayWidth:        func() *int { v := 44; return &v }(),
 		},
 		Sessions: SessionsConfig{
