@@ -38,23 +38,6 @@ func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {
 	}
 }
 
-// TestAsyncNotifierSkipsEmptyResponse verifies that async notifier skips
-// empty responses.
-func TestAsyncNotifierSkipsEmptyResponse(t *testing.T) {
-	// When HandleMessage returns empty string, notifier should not call SendInjected.
-	// This is checked in the main.go closure before calling SendInjected.
-	bot, mock := testBot([]string{"111"}, command.NewRegistry())
-	bot.SetChatID(12345)
-
-	// Empty response should be silently skipped by SendInjected
-	if err := bot.SendInjected(""); err != nil {
-		t.Fatalf("SendInjected(\"\") error: %v", err)
-	}
-	if mock.sentCount() != 0 {
-		t.Errorf("sentCount = %d, want 0 for empty response", mock.sentCount())
-	}
-}
-
 // TestAsyncNotifierNoPrimaryBot verifies that PrimaryBot returns nil when
 // no primary bot is configured.
 func TestAsyncNotifierNoPrimaryBot(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 )
 
 func TestBuildSDKParamsBasic(t *testing.T) {
+	// Proves that buildSDKParams correctly maps the core request fields (model, max_tokens, system blocks, and messages) to the SDK parameter types.
 	req := &MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 1024,
@@ -45,6 +46,7 @@ func TestBuildSDKParamsBasic(t *testing.T) {
 
 // TestBuildSDKParamsWithEffort verifies effort is set for models that support it (Sonnet).
 func TestBuildSDKParamsWithEffort(t *testing.T) {
+	// Proves that the effort output config is passed through to SDK params for Sonnet, which supports the effort parameter.
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-6",
 		MaxTokens: 1024,
@@ -62,6 +64,7 @@ func TestBuildSDKParamsWithEffort(t *testing.T) {
 // TestStripUnsupportedParamsEffort verifies effort is silently dropped for Haiku,
 // which does not support the effort parameter and returns a 400 error.
 func TestStripUnsupportedParamsEffort(t *testing.T) {
+	// Proves that stripUnsupportedParams removes the Output/effort config for Haiku to avoid sending unsupported parameters that would cause a 400 error.
 	req := &MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 1024,
@@ -78,6 +81,7 @@ func TestStripUnsupportedParamsEffort(t *testing.T) {
 
 // TestBuildSDKParamsWithThinking verifies thinking is set for supported models (Sonnet).
 func TestBuildSDKParamsWithThinking(t *testing.T) {
+	// Proves that the adaptive thinking config is passed through to SDK params for Sonnet, which supports extended thinking.
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-6",
 		MaxTokens: 1024,
@@ -94,6 +98,7 @@ func TestBuildSDKParamsWithThinking(t *testing.T) {
 
 // TestStripUnsupportedParamsThinking verifies thinking is silently dropped for Haiku.
 func TestStripUnsupportedParamsThinking(t *testing.T) {
+	// Proves that stripUnsupportedParams removes the Thinking config for Haiku, which does not support extended thinking.
 	req := &MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 1024,
@@ -110,6 +115,7 @@ func TestStripUnsupportedParamsThinking(t *testing.T) {
 
 // TestStripUnsupportedParamsPreservedForSonnet verifies params are kept for supported models.
 func TestStripUnsupportedParamsPreservedForSonnet(t *testing.T) {
+	// Proves that stripUnsupportedParams leaves both Output/effort and Thinking configs intact for Sonnet, which supports both features.
 	req := &MessageRequest{
 		Model:     "claude-sonnet-4-6",
 		MaxTokens: 1024,
@@ -129,7 +135,7 @@ func TestStripUnsupportedParamsPreservedForSonnet(t *testing.T) {
 }
 
 func TestBuildSDKParamsWithAutoCache(t *testing.T) {
-	// Verify that CacheStrategy "auto" sets top-level CacheControl and system marker.
+	// Proves that CacheStrategy "auto" sets a top-level ephemeral CacheControl on the request and marks the last system block with a cache breakpoint.
 	req := &MessageRequest{
 		Model:         "claude-haiku-4-5",
 		MaxTokens:     1024,
@@ -149,6 +155,7 @@ func TestBuildSDKParamsWithAutoCache(t *testing.T) {
 }
 
 func TestBuildSDKParamsWithTools(t *testing.T) {
+	// Proves that tool definitions in the request are translated to the SDK tools slice.
 	tool := NewCustomTool("search", "Search the web", json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`))
 	req := &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -165,6 +172,7 @@ func TestBuildSDKParamsWithTools(t *testing.T) {
 }
 
 func TestContentBlockToSDKText(t *testing.T) {
+	// Proves that a text ContentBlock converts to the SDK OfText union variant with its text preserved.
 	b := ContentBlock{Type: "text", Text: "hello world"}
 	sdk := contentBlockToSDK(b)
 	if sdk.OfText == nil {
@@ -176,6 +184,7 @@ func TestContentBlockToSDKText(t *testing.T) {
 }
 
 func TestContentBlockToSDKToolResult(t *testing.T) {
+	// Proves that a tool_result ContentBlock converts to the SDK OfToolResult variant with the correct tool_use_id.
 	b := ContentBlock{
 		Type:      "tool_result",
 		ToolUseID: "tool_123",
@@ -192,6 +201,7 @@ func TestContentBlockToSDKToolResult(t *testing.T) {
 }
 
 func TestContentBlockToSDKThinking(t *testing.T) {
+	// Proves that a thinking ContentBlock converts to the SDK OfThinking variant with both the thinking text and signature preserved.
 	b := ContentBlock{
 		Type:      "thinking",
 		Thinking:  "let me think...",
@@ -210,6 +220,7 @@ func TestContentBlockToSDKThinking(t *testing.T) {
 }
 
 func TestContentBlockToSDKImage(t *testing.T) {
+	// Proves that an image ContentBlock with a base64 source converts to the SDK OfImage variant without error.
 	b := ContentBlock{
 		Type: "image",
 		Source: &ContentSource{
@@ -225,6 +236,7 @@ func TestContentBlockToSDKImage(t *testing.T) {
 }
 
 func TestContentBlockToSDKToolUse(t *testing.T) {
+	// Proves that a tool_use ContentBlock converts to the SDK OfToolUse variant with its ID and name preserved.
 	b := ContentBlock{
 		Type:  "tool_use",
 		ID:    "tu_123",
@@ -244,6 +256,7 @@ func TestContentBlockToSDKToolUse(t *testing.T) {
 }
 
 func TestContentBlockToSDKRedactedThinking(t *testing.T) {
+	// Proves that a redacted_thinking ContentBlock converts to the SDK OfRedactedThinking variant with its encrypted data preserved.
 	b := ContentBlock{Type: "redacted_thinking", Data: "encrypted"}
 	sdk := contentBlockToSDK(b)
 	if sdk.OfRedactedThinking == nil {
@@ -255,6 +268,7 @@ func TestContentBlockToSDKRedactedThinking(t *testing.T) {
 }
 
 func TestToolToSDKCustomTool(t *testing.T) {
+	// Proves that a custom tool (with name, description, and input schema) converts to the SDK OfTool union variant with its name intact.
 	tool := NewCustomTool("search", "Search things", json.RawMessage(`{"type":"object","properties":{}}`))
 	sdk := toolToSDK(tool)
 	if sdk.OfTool == nil {
@@ -266,6 +280,7 @@ func TestToolToSDKCustomTool(t *testing.T) {
 }
 
 func TestToolToSDKServerTool(t *testing.T) {
+	// Proves that a server tool (which uses raw JSON passthrough for unknown fields) can be converted via toolToSDK without panicking.
 	tool := NewServerTool(map[string]interface{}{
 		"type": "web_search_20250305",
 		"name": "web_search",
@@ -278,12 +293,14 @@ func TestToolToSDKServerTool(t *testing.T) {
 }
 
 func TestClassifySDKErrorNil(t *testing.T) {
+	// Proves that classifySDKError is a no-op when passed nil, returning nil rather than a non-nil error.
 	if err := classifySDKError(nil); err != nil {
 		t.Errorf("expected nil, got %v", err)
 	}
 }
 
 func TestClassifySDKErrorNonAPI(t *testing.T) {
+	// Proves that a plain non-SDK error (e.g. a network error) passes through classifySDKError unchanged and is not wrapped as an *APIError.
 	err := classifySDKError(errors.New("some network error"))
 	if err == nil {
 		t.Fatal("expected non-nil error")
@@ -296,7 +313,7 @@ func TestClassifySDKErrorNonAPI(t *testing.T) {
 }
 
 func TestClassifySDKErrorStreamingOverloaded(t *testing.T) {
-	// SDK streaming uses fmt.Errorf (not *sdk.Error) for SSE "error" events.
+	// Proves that an overloaded_error embedded in an SSE streaming error string is classified as an *APIError with status 529 and IsOverloaded()/IsRetryable() both true.
 	sseErr := fmt.Errorf(`received error while streaming: {"type":"error","error":{"details":null,"type":"overloaded_error","message":"Overloaded"},"request_id":"req_abc123"}`)
 	err := classifySDKError(sseErr)
 	if err == nil {
@@ -318,6 +335,7 @@ func TestClassifySDKErrorStreamingOverloaded(t *testing.T) {
 }
 
 func TestClassifySDKErrorStreamingRateLimit(t *testing.T) {
+	// Proves that a rate_limit_error in an SSE streaming error string is classified as an *APIError with status 429.
 	sseErr := fmt.Errorf(`received error while streaming: {"type":"error","error":{"type":"rate_limit_error","message":"Rate limited"}}`)
 	err := classifySDKError(sseErr)
 	var apiErr *APIError
@@ -330,7 +348,7 @@ func TestClassifySDKErrorStreamingRateLimit(t *testing.T) {
 }
 
 func TestClassifySDKErrorStreamingUnknownType(t *testing.T) {
-	// Unknown error types should pass through unchanged.
+	// Proves that an unrecognised error type in an SSE streaming error string is not classified as an *APIError — it passes through so unknown errors are not silently swallowed.
 	sseErr := fmt.Errorf(`received error while streaming: {"type":"error","error":{"type":"unknown_error","message":"wat"}}`)
 	err := classifySDKError(sseErr)
 	var apiErr *APIError
@@ -340,6 +358,7 @@ func TestClassifySDKErrorStreamingUnknownType(t *testing.T) {
 }
 
 func TestBuildSDKCountParams(t *testing.T) {
+	// Proves that buildSDKCountParams correctly maps the model and messages from a MessageRequest to the SDK count_tokens parameter types.
 	req := &MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 1024,
@@ -362,7 +381,7 @@ func TestBuildSDKCountParams(t *testing.T) {
 }
 
 func TestBuildSDKParamsWithCacheTTL(t *testing.T) {
-	// Verify that CacheTTL propagates to cache markers via CacheStrategy.
+	// Proves that a non-empty CacheTTL is propagated to both the top-level CacheControl and the system block's cache marker when CacheStrategy is "auto".
 	req := &MessageRequest{
 		Model:         "claude-haiku-4-5",
 		MaxTokens:     1024,
@@ -387,7 +406,7 @@ func TestBuildSDKParamsWithCacheTTL(t *testing.T) {
 }
 
 func TestApplyCacheMarkersAuto(t *testing.T) {
-	// Auto strategy: top-level CacheControl + last system block marker.
+	// Proves the "auto" cache strategy sets an ephemeral top-level CacheControl and marks only the last system block, leaving earlier system blocks untagged.
 	params := &sdk.MessageNewParams{
 		System: []sdk.TextBlockParam{
 			{Text: "first"},
@@ -412,7 +431,7 @@ func TestApplyCacheMarkersAuto(t *testing.T) {
 }
 
 func TestApplyCacheMarkersExplicit(t *testing.T) {
-	// Explicit strategy: last system block marker + second-to-last message marker.
+	// Proves the "explicit" cache strategy marks the last system block and the last content block of the second-to-last message (the shared prefix boundary), and does not set a top-level CacheControl.
 	params := &sdk.MessageNewParams{
 		System: []sdk.TextBlockParam{
 			{Text: "sys"},
@@ -446,7 +465,7 @@ func TestApplyCacheMarkersExplicit(t *testing.T) {
 }
 
 func TestApplyCacheMarkersExplicitToolResult(t *testing.T) {
-	// Explicit strategy with tool_result as the breakpoint block.
+	// Proves that when the second-to-last message ends with a tool_result block, the explicit strategy correctly attaches the cache breakpoint to that tool_result block.
 	params := &sdk.MessageNewParams{
 		System: []sdk.TextBlockParam{{Text: "sys"}},
 		Messages: []sdk.MessageParam{
@@ -467,7 +486,7 @@ func TestApplyCacheMarkersExplicitToolResult(t *testing.T) {
 }
 
 func TestApplyCacheMarkersNoSystem(t *testing.T) {
-	// No system blocks — should not panic.
+	// Proves that applyCacheMarkers does not panic when there are no system blocks, and still sets the top-level CacheControl for the "auto" strategy.
 	params := &sdk.MessageNewParams{
 		Messages: []sdk.MessageParam{
 			{Role: "user", Content: []sdk.ContentBlockParamUnion{sdk.NewTextBlock("hi")}},
@@ -482,7 +501,7 @@ func TestApplyCacheMarkersNoSystem(t *testing.T) {
 }
 
 func TestApplyCacheMarkersExplicitSingleMessage(t *testing.T) {
-	// Only one message — no second-to-last, should not panic.
+	// Proves that applyCacheMarkers does not panic with the "explicit" strategy when there is only one message (no second-to-last message to mark), and still tags the system block.
 	params := &sdk.MessageNewParams{
 		System: []sdk.TextBlockParam{{Text: "sys"}},
 		Messages: []sdk.MessageParam{
@@ -499,7 +518,7 @@ func TestApplyCacheMarkersExplicitSingleMessage(t *testing.T) {
 }
 
 func TestSystemToSDKClean(t *testing.T) {
-	// systemToSDK should produce clean blocks without cache markers.
+	// Proves that systemToSDK converts system blocks without attaching any cache markers, since marker placement is handled separately by applyCacheMarkers.
 	blocks := []SystemBlock{
 		{Type: "text", Text: "first"},
 		{Type: "text", Text: "second"},

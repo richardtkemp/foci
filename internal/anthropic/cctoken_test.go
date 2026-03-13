@@ -30,6 +30,7 @@ func writeCCCreds(t *testing.T, path, accessToken, refreshToken string, expiresA
 }
 
 func TestCCTokenSource_ReadsFile(t *testing.T) {
+	// Proves that NewCCTokenSource successfully reads a valid credentials file and Token() returns the access token.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	writeCCCreds(t, path, "tok-abc", "ref-123", time.Now().Add(time.Hour))
@@ -49,6 +50,7 @@ func TestCCTokenSource_ReadsFile(t *testing.T) {
 }
 
 func TestCCTokenSource_CachesWithinPollInterval(t *testing.T) {
+	// Proves that the token source serves the cached value without re-reading the file when called within the poll interval, even after the file has been updated.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	writeCCCreds(t, path, "tok-1", "ref-1", time.Now().Add(time.Hour))
@@ -68,6 +70,7 @@ func TestCCTokenSource_CachesWithinPollInterval(t *testing.T) {
 }
 
 func TestCCTokenSource_DetectsChanges(t *testing.T) {
+	// Proves that after the poll interval expires the token source re-reads the file and returns the updated token.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	writeCCCreds(t, path, "tok-old", "ref-1", time.Now().Add(time.Hour))
@@ -90,6 +93,7 @@ func TestCCTokenSource_DetectsChanges(t *testing.T) {
 }
 
 func TestCCTokenSource_HandlesMissingFile(t *testing.T) {
+	// Proves that NewCCTokenSource returns an error rather than silently succeeding when the credentials file does not exist.
 	_, err := NewCCTokenSource("/nonexistent/path/creds.json", 30*time.Second)
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -97,6 +101,7 @@ func TestCCTokenSource_HandlesMissingFile(t *testing.T) {
 }
 
 func TestCCTokenSource_HandlesCorruptFile(t *testing.T) {
+	// Proves that NewCCTokenSource returns an error at construction time when the credentials file contains invalid JSON.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
@@ -110,6 +115,7 @@ func TestCCTokenSource_HandlesCorruptFile(t *testing.T) {
 }
 
 func TestCCTokenSource_HandlesCorruptFileMidRun(t *testing.T) {
+	// Proves that if the file becomes corrupt after successful startup, Token() returns the last known good token instead of an error, providing resilience during file rewrites.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	writeCCCreds(t, path, "tok-good", "ref-1", time.Now().Add(time.Hour))
@@ -137,6 +143,7 @@ func TestCCTokenSource_HandlesCorruptFileMidRun(t *testing.T) {
 }
 
 func TestCCTokenSource_DetectsExpiryAndFiresCallback(t *testing.T) {
+	// Proves that the OnExpired callback fires exactly once when an expired token is detected, and does not fire again on subsequent polls of the same expired token.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	// Write token that is already expired.
@@ -175,6 +182,7 @@ func TestCCTokenSource_DetectsExpiryAndFiresCallback(t *testing.T) {
 }
 
 func TestCCTokenSource_ResetsExpiredOnFreshToken(t *testing.T) {
+	// Proves that after an expiry fires the callback and the file is then updated with a valid token, the expiry flag resets so a subsequent re-expiry fires the callback a second time.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	// Start expired.
@@ -214,6 +222,7 @@ func TestCCTokenSource_ResetsExpiredOnFreshToken(t *testing.T) {
 }
 
 func TestCCTokenSource_StartStop(t *testing.T) {
+	// Proves that the background polling goroutine started by Start() picks up file changes automatically, and that Stop() cleanly terminates it.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	writeCCCreds(t, path, "tok-1", "ref-1", time.Now().Add(time.Hour))
@@ -239,6 +248,7 @@ func TestCCTokenSource_StartStop(t *testing.T) {
 }
 
 func TestCCTokenSource_FociFormat(t *testing.T) {
+	// Proves that the token source can parse foci's native flat credential format (access_token, refresh_token, expires_at at top level) in addition to the Claude Code nested format.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
