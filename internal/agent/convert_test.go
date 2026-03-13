@@ -121,7 +121,8 @@ func TestConvertUnsupportedMIME(t *testing.T) {
 }
 
 func TestIsConvertibleMIME(t *testing.T) {
-	// Verifies that the MIME type detection is correct.
+	// Verifies that the MIME type detection is correct, including
+	// parameterized and legacy MIME types.
 	tests := []struct {
 		mime string
 		want bool
@@ -135,6 +136,14 @@ func TestIsConvertibleMIME(t *testing.T) {
 		{"application/pdf", false},
 		{"image/jpeg", false},
 		{"application/zip", false},
+		// Parameterized MIME types
+		{"text/html; charset=utf-8", true},
+		{"text/plain; charset=us-ascii", true},
+		{"text/csv; header=present", true},
+		// Legacy Office MIME types
+		{"application/msword", true},
+		{"application/vnd.ms-excel", true},
+		{"application/vnd.ms-powerpoint", true},
 	}
 	for _, tt := range tests {
 		if got := isConvertibleMIME(tt.mime); got != tt.want {
@@ -144,7 +153,8 @@ func TestIsConvertibleMIME(t *testing.T) {
 }
 
 func TestLabelForMIME(t *testing.T) {
-	// Verifies the human-readable labels for MIME types.
+	// Verifies the human-readable labels for MIME types, including
+	// parameterized and legacy MIME types.
 	tests := []struct {
 		mime string
 		want string
@@ -159,11 +169,70 @@ func TestLabelForMIME(t *testing.T) {
 		{"image/jpeg", "Image"},
 		{"image/png", "Image"},
 		{"application/zip", "Document"},
+		// Parameterized MIME types
+		{"text/html; charset=utf-8", "HTML"},
+		{"text/csv; header=present", "CSV"},
+		// Legacy Office MIME types
+		{"application/msword", "DOCX"},
+		{"application/vnd.ms-excel", "XLSX"},
+		{"application/vnd.ms-powerpoint", "PPTX"},
 	}
 	for _, tt := range tests {
 		if got := labelForMIME(tt.mime); got != tt.want {
 			t.Errorf("labelForMIME(%q) = %q, want %q", tt.mime, got, tt.want)
 		}
+	}
+}
+
+func TestConvertHTMLWithCharsetParam(t *testing.T) {
+	// Verifies that HTML conversion works when the MIME type includes
+	// a charset parameter (e.g. "text/html; charset=utf-8").
+	html := []byte("<p>Content with charset param</p>")
+	result := convertDocument(html, "text/html; charset=utf-8", "/tmp/test.html")
+	if result.Err != "" {
+		t.Fatalf("unexpected error: %s", result.Err)
+	}
+	if !strings.Contains(result.Text, "Content with charset param") {
+		t.Errorf("expected content in output, got %q", result.Text)
+	}
+}
+
+func TestConvertLegacyDocMIME(t *testing.T) {
+	// Verifies that legacy application/msword MIME type is mapped to docx
+	// and routed to the pandoc converter (producing a helpful error when
+	// pandoc is not installed).
+	t.Setenv("PATH", "")
+	result := convertDocument([]byte("fake"), "application/msword", "/tmp/test.doc")
+	if result.Err == "" {
+		t.Fatal("expected error when pandoc not installed")
+	}
+	if !strings.Contains(result.Err, "pandoc") {
+		t.Errorf("error should mention pandoc: %q", result.Err)
+	}
+}
+
+func TestConvertLegacyXlsxMIME(t *testing.T) {
+	// Verifies that legacy application/vnd.ms-excel MIME type is mapped
+	// to xlsx and routed to the xlsx converter.
+	t.Setenv("PATH", "")
+	result := convertDocument([]byte("fake"), "application/vnd.ms-excel", "/tmp/test.xls")
+	if result.Err == "" {
+		t.Fatal("expected error when conversion tools not installed")
+	}
+	if !strings.Contains(result.Err, "ssconvert") || !strings.Contains(result.Err, "pandoc") {
+		t.Errorf("error should mention required tools: %q", result.Err)
+	}
+}
+
+func TestConvertPlainTextWithCharset(t *testing.T) {
+	// Verifies that text/plain with charset parameter passes through unchanged.
+	data := []byte("Plain text with charset")
+	result := convertDocument(data, "text/plain; charset=us-ascii", "/tmp/test.txt")
+	if result.Err != "" {
+		t.Fatalf("unexpected error: %s", result.Err)
+	}
+	if result.Text != "Plain text with charset" {
+		t.Errorf("text = %q", result.Text)
 	}
 }
 

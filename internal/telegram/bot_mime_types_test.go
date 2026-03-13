@@ -88,3 +88,72 @@ func TestIsPDFMIME(t *testing.T) {
 		t.Error("empty string should not be PDF")
 	}
 }
+
+func TestNormalizeMIME(t *testing.T) {
+	// Verifies that normalizeMIME strips parameters after ';' and maps
+	// legacy MIME types to their modern equivalents.
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// No-op for already-canonical types
+		{"text/html", "text/html"},
+		{"application/pdf", "application/pdf"},
+		{"image/jpeg", "image/jpeg"},
+
+		// Strip parameters
+		{"text/html; charset=utf-8", "text/html"},
+		{"text/plain; charset=us-ascii", "text/plain"},
+		{"text/csv; header=present", "text/csv"},
+		{"application/pdf; version=1.7", "application/pdf"},
+		{"image/png; foo=bar", "image/png"},
+
+		// Legacy → modern mappings
+		{"application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{"application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{"application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+
+		// Legacy with parameters (strip then map)
+		{"application/msword; charset=binary", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+
+		// Unknown types pass through unchanged
+		{"application/zip", "application/zip"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := normalizeMIME(tt.input); got != tt.want {
+			t.Errorf("normalizeMIME(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestMIMEChecksWithParameters(t *testing.T) {
+	// Verifies that isConvertibleDocMIME, isPDFMIME, and isImageMIME all
+	// handle MIME types with parameters (e.g. "; charset=utf-8").
+	if !isConvertibleDocMIME("text/html; charset=utf-8") {
+		t.Error("text/html with charset should be convertible")
+	}
+	if !isConvertibleDocMIME("text/csv; header=present") {
+		t.Error("text/csv with params should be convertible")
+	}
+	if !isPDFMIME("application/pdf; version=1.7") {
+		t.Error("application/pdf with params should be PDF")
+	}
+	if !isImageMIME("image/jpeg; quality=85") {
+		t.Error("image/jpeg with params should be image")
+	}
+}
+
+func TestMIMEChecksWithLegacyTypes(t *testing.T) {
+	// Verifies that isConvertibleDocMIME recognizes legacy Office MIME types
+	// (application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint).
+	if !isConvertibleDocMIME("application/msword") {
+		t.Error("application/msword should be convertible")
+	}
+	if !isConvertibleDocMIME("application/vnd.ms-excel") {
+		t.Error("application/vnd.ms-excel should be convertible")
+	}
+	if !isConvertibleDocMIME("application/vnd.ms-powerpoint") {
+		t.Error("application/vnd.ms-powerpoint should be convertible")
+	}
+}

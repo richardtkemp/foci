@@ -10,6 +10,34 @@ import (
 	"github.com/go-shiori/go-readability"
 )
 
+// legacyMIMEMap maps legacy MIME types to their modern convertible equivalents.
+// This is defense-in-depth — the telegram layer also normalizes, but non-Telegram
+// entry points should also work correctly.
+var legacyMIMEMap = map[string]string{
+	"application/msword":                                                          mimeDocx,
+	"application/vnd.ms-excel":                                                    mimeXlsx,
+	"application/vnd.ms-powerpoint":                                               mimePptx,
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.template":      mimeDocx,
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.template":         mimeXlsx,
+	"application/vnd.openxmlformats-officedocument.presentationml.template":        mimePptx,
+	"application/vnd.openxmlformats-officedocument.presentationml.slideshow":       mimePptx,
+	"application/vnd.ms-word.document.macroEnabled.12":                             mimeDocx,
+	"application/vnd.ms-excel.sheet.macroEnabled.12":                               mimeXlsx,
+	"application/vnd.ms-powerpoint.presentation.macroEnabled.12":                   mimePptx,
+}
+
+// normalizeMIME strips parameters (e.g. "; charset=utf-8") and maps legacy
+// MIME types to their modern equivalents.
+func normalizeMIME(mime string) string {
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	if mapped, ok := legacyMIMEMap[mime]; ok {
+		return mapped
+	}
+	return mime
+}
+
 // Convertible MIME types and their required tools.
 const (
 	mimeDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -21,9 +49,9 @@ const (
 )
 
 // isConvertibleMIME returns true if the MIME type can be converted to text
-// for LLM consumption.
+// for LLM consumption. Handles parameterized and legacy MIME types.
 func isConvertibleMIME(mime string) bool {
-	switch mime {
+	switch normalizeMIME(mime) {
 	case mimeDocx, mimeXlsx, mimePptx, mimeHTML, mimeCSV, mimeTXT:
 		return true
 	}
@@ -40,6 +68,7 @@ type convertResult struct {
 // savedPath is the on-disk path to the file (needed for external tool conversion).
 // Returns the converted text or a user-facing error message.
 func convertDocument(data []byte, mimeType, savedPath string) convertResult {
+	mimeType = normalizeMIME(mimeType)
 	switch mimeType {
 	case mimeCSV, mimeTXT:
 		return convertResult{Text: string(data)}
@@ -116,7 +145,9 @@ func convertXlsx(path string) convertResult {
 }
 
 // labelForMIME returns a human-readable label for a MIME type.
+// Handles parameterized and legacy MIME types.
 func labelForMIME(mime string) string {
+	mime = normalizeMIME(mime)
 	switch {
 	case mime == mimeDocx:
 		return "DOCX"
