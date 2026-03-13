@@ -13,6 +13,28 @@ import (
 	"foci/internal/config"
 )
 
+// marshalParams is a test helper that JSON-marshals params and fails the test on error.
+func marshalParams(t *testing.T, v map[string]any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	return b
+}
+
+// testJSONServer starts a test HTTP server serving the given JSON body
+// with application/json content type.
+func testJSONServer(t *testing.T, jsonBody string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, jsonBody)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // skipIfNoBrowser skips the test if Chrome/Chromium is not found in PATH.
 func skipIfNoBrowser(t *testing.T) {
 	t.Helper()
@@ -239,6 +261,215 @@ func TestBrowserInvalidRef(t *testing.T) {
 	if !strings.Contains(result.Text, "Error") {
 		t.Errorf("expected error for invalid ref, got: %s", result.Text)
 	}
+}
+
+// TestBrowserMultiFill verifies that the fill action supports a "fields"
+// array to fill multiple inputs in a single tool call with one snapshot.
+func TestBrowserMultiFill(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	srv := testHTMLServer(t, `<html><body>
+		<form>
+			<label for="first">First</label>
+			<input id="first" type="text" />
+			<label for="last">Last</label>
+			<input id="last" type="text" />
+		</form>
+	</body></html>`)
+
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	// Navigate
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// Extract refs for both textboxes
+	refs := extractAllRefs(t, result.Text, "textbox")
+	if len(refs) < 2 {
+		t.Fatalf("expected 2 textbox refs, got %d from snapshot:\n%s", len(refs), result.Text)
+	}
+
+	// Multi-fill both fields at once
+	params = marshalParams(t, map[string]any{
+		"action": "fill",
+		"fields": []map[string]string{
+			{"ref": refs[0], "value": "Alice"},
+			{"ref": refs[1], "value": "Smith"},
+		},
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("multi-fill: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "Filled") {
+		t.Error("multi-fill result missing confirmation")
+	}
+	// Both values should appear in the snapshot
+	if !strings.Contains(result.Text, "Alice") {
+		t.Error("snapshot after multi-fill missing first value 'Alice'")
+	}
+	if !strings.Contains(result.Text, "Smith") {
+		t.Error("snapshot after multi-fill missing second value 'Smith'")
+	}
+}
+
+// TestBrowserMultiFillBackwardCompat verifies that single ref+value fill
+// still works after adding multi-fill support.
+func TestBrowserMultiFillBackwardCompat(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	srv := testHTMLServer(t, `<html><body>
+		<form>
+			<label for="email">Email</label>
+			<input id="email" type="text" />
+		</form>
+	</body></html>`)
+
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	ref := extractRef(t, result.Text, "textbox")
+	if ref == "" {
+		t.Fatal("could not find textbox ref")
+	}
+
+	// Use old-style single ref+value
+	params = marshalParams(t, map[string]any{
+		"action": "fill", "ref": ref, "value": "test@example.com",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "Filled") {
+		t.Error("fill result missing confirmation")
+	}
+	if !strings.Contains(result.Text, "test@example.com") {
+		t.Error("snapshot after fill missing value")
+	}
+}
+
+// TestBrowserFillScopedSnapshot verifies that the snapshot returned after
+// a fill action is scoped to the form context, not the full page.
+func TestBrowserFillScopedSnapshot(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	// Page with a form and lots of unrelated content
+	srv := testHTMLServer(t, `<html><body>
+		<nav><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact</a></nav>
+		<h1>Big Page</h1>
+		<div id="sidebar"><p>Sidebar content with lots of stuff</p></div>
+		<form id="login-form">
+			<label for="user">Username</label>
+			<input id="user" type="text" />
+			<label for="pass">Password</label>
+			<input id="pass" type="password" />
+			<button type="submit">Login</button>
+		</form>
+		<footer><p>Footer content</p></footer>
+	</body></html>`)
+
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// The full page snapshot should contain nav/footer content
+	if !strings.Contains(result.Text, "Home") {
+		t.Error("full snapshot should contain nav links")
+	}
+
+	ref := extractRef(t, result.Text, "textbox")
+	if ref == "" {
+		t.Fatal("could not find textbox ref")
+	}
+
+	// Fill the username field
+	params = marshalParams(t, map[string]any{
+		"action": "fill", "ref": ref, "value": "admin",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+
+	// Scoped snapshot should contain the form elements
+	if !strings.Contains(result.Text, "Form Context Snapshot") {
+		t.Error("fill snapshot should be labeled as scoped/form context")
+	}
+	if !strings.Contains(result.Text, "admin") {
+		t.Error("scoped snapshot missing filled value")
+	}
+	if !strings.Contains(result.Text, "Login") {
+		t.Error("scoped snapshot should contain form's submit button")
+	}
+}
+
+// TestBrowserFillNoRefOrFields verifies that fill returns an error when
+// neither ref nor fields is provided.
+func TestBrowserFillNoRefOrFields(t *testing.T) {
+	skipIfNoBrowser(t)
+
+	srv := testHTMLServer(t, `<html><body><input type="text" /></body></html>`)
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	// Navigate first
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	_, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// Fill with no ref or fields
+	params = marshalParams(t, map[string]any{"action": "fill", "value": "test"})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+
+	if !strings.Contains(result.Text, "Error") {
+		t.Errorf("expected error for fill without ref/fields, got: %s", result.Text)
+	}
+}
+
+// extractAllRefs finds all ref strings in the snapshot text near a given
+// role keyword. Returns all matching refs.
+func extractAllRefs(t *testing.T, snapshot, roleKeyword string) []string {
+	t.Helper()
+
+	var refs []string
+	for _, line := range strings.Split(snapshot, "\n") {
+		if !strings.Contains(strings.ToLower(line), roleKeyword) {
+			continue
+		}
+		idx := strings.Index(line, "[ref=")
+		if idx < 0 {
+			continue
+		}
+		end := strings.Index(line[idx:], "]")
+		if end < 0 {
+			continue
+		}
+		refs = append(refs, line[idx+5:idx+end])
+	}
+	return refs
 }
 
 // extractRef finds a ref string (e.g. "s1e5") in the snapshot text near
