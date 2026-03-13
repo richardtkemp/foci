@@ -123,6 +123,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"environment":      reflect.TypeOf(EnvironmentConfig{}),
 		"cache":            reflect.TypeOf(CacheConfig{}),
 		"usage_warnings":   reflect.TypeOf(ManaWarningsConfig{}),
+		"debug":            reflect.TypeOf(DebugConfig{}),
 		"database":         reflect.TypeOf(DatabaseConfig{}),
 		"http":             reflect.TypeOf(HTTPConfig{}),
 	}

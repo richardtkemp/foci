@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/log"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -45,8 +46,13 @@ type Client struct {
 // If tokenFunc is set, it calls the function; otherwise returns the static apiKey.
 func (c *Client) resolveToken() (string, error) {
 	if c.tokenFunc != nil {
-		return c.tokenFunc()
+		tok, err := c.tokenFunc()
+		if err == nil {
+			log.KeySuffix("anthropic", tok)
+		}
+		return tok, err
 	}
+	log.KeySuffix("anthropic", c.apiKey)
 	return c.apiKey, nil
 }
 

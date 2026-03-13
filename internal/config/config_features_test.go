@@ -592,3 +592,89 @@ id = "b"
 		}
 	})
 }
+
+// Tests the [debug] section: new fields and backward compat migration from [sessions].
+func TestDebugSection(t *testing.T) {
+	// Test that [debug] fields are loaded directly.
+	t.Run("direct", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
+[[agents]]
+id = "a"
+
+[debug]
+log_api_key_suffix = true
+compaction_debug = true
+`), 0644)
+		cfg, err := Load(filepath.Join(dir, "foci.toml"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Debug.LogAPIKeySuffix {
+			t.Error("expected log_api_key_suffix = true")
+		}
+		if !cfg.Debug.CompactionDebug {
+			t.Error("expected compaction_debug = true")
+		}
+	})
+
+	// Test backward compat: sessions.compaction_debug migrates to debug.compaction_debug.
+	t.Run("backward_compat_from_sessions", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
+[[agents]]
+id = "a"
+
+[sessions]
+compaction_debug = true
+`), 0644)
+		cfg, err := Load(filepath.Join(dir, "foci.toml"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Debug.CompactionDebug {
+			t.Error("expected compaction_debug migrated from [sessions] to [debug]")
+		}
+	})
+
+	// Test that [debug] takes precedence over [sessions] backward compat.
+	t.Run("debug_overrides_sessions", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
+[[agents]]
+id = "a"
+
+[sessions]
+compaction_debug = true
+
+[debug]
+compaction_debug = false
+`), 0644)
+		cfg, err := Load(filepath.Join(dir, "foci.toml"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Debug.CompactionDebug {
+			t.Error("expected [debug] compaction_debug=false to override [sessions] compaction_debug=true")
+		}
+	})
+
+	// Test defaults: both fields should be false when unset.
+	t.Run("defaults", func(t *testing.T) {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
+[[agents]]
+id = "a"
+`), 0644)
+		cfg, err := Load(filepath.Join(dir, "foci.toml"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Debug.LogAPIKeySuffix {
+			t.Error("expected log_api_key_suffix default false")
+		}
+		if cfg.Debug.CompactionDebug {
+			t.Error("expected compaction_debug default false")
+		}
+	})
+}

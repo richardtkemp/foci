@@ -88,7 +88,7 @@ func wireAgentPlatformCallbacks(
 	}
 
 	// Compaction debug — session-specific connection for document
-	compactDebug := cfg.Sessions.CompactionDebug
+	compactDebug := cfg.Debug.CompactionDebug
 	if acfg.CompactionDebug != nil {
 		compactDebug = *acfg.CompactionDebug
 	}

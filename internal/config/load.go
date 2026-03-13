@@ -28,6 +28,7 @@ var boolKeys = map[string]bool{
 	"messages_in_log":       true,
 	"compaction_notify":     true,
 	"compaction_debug":      true,
+	"log_api_key_suffix":    true,
 	"tmux_autopilot":        true,
 	"auto_refresh":          true,
 	"enable_stop_aliases":   true,
@@ -408,6 +409,15 @@ func Load(path string) (*Config, error) {
 	setFloatDefault(&cfg.Sessions.CompactionIdlePressureMax, 0.15)
 	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "15m")
 	// CompactionManaRefreshPreserve: nil = special "preserve ALL" mode
+
+	// Backward compat: [sessions] compaction_debug → [debug] compaction_debug.
+	// If user set sessions.compaction_debug but not debug.compaction_debug, migrate it.
+	if cfg.Sessions.CompactionDebug && !md.IsDefined("debug", "compaction_debug") {
+		cfg.Debug.CompactionDebug = true
+	}
+	// Apply debug.log_api_key_suffix to the log package global.
+	log.DebugLogKeySuffix = cfg.Debug.LogAPIKeySuffix
+
 	setStringDefault(&cfg.Sessions.ArchiveAfter, "24h")
 	setIntDefault(&cfg.HTTP.Port, 18791)
 	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")

@@ -71,6 +71,23 @@ func TestGetLevel(t *testing.T) {
 	}
 }
 
+// TestKeySuffix verifies KeySuffix only logs when DebugLogKeySuffix is true
+// and the key has at least 4 characters; short keys are silently ignored.
+func TestKeySuffix(t *testing.T) {
+	orig := DebugLogKeySuffix
+	defer func() { DebugLogKeySuffix = orig }()
+
+	// Should not panic with short key or disabled flag.
+	DebugLogKeySuffix = false
+	KeySuffix("test", "abc") // short key, disabled — no-op
+	KeySuffix("test", "abcd") // enough chars but disabled — no-op
+
+	DebugLogKeySuffix = true
+	KeySuffix("test", "ab")     // too short — no-op
+	KeySuffix("test", "")       // empty — no-op
+	KeySuffix("test", "sk-1234") // long enough and enabled — logs (no crash)
+}
+
 // TestIsOpenAIModel verifies that model names are correctly identified as OpenAI or not,
 // covering gpt-, o1/o3/o4 prefixes, chatgpt- prefix, and non-OpenAI models.
 func TestIsOpenAIModel(t *testing.T) {

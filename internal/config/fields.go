@@ -143,7 +143,6 @@ var configFields = []ConfigField{
 	{"sessions", "compaction_threshold", FieldFloat, "compact at this fraction of context window"},
 	{"sessions", "compaction_max_tokens", FieldInt, "max output tokens for summary"},
 	{"sessions", "compaction_min_messages", FieldInt, "min messages before compacting"},
-	{"sessions", "compaction_debug", FieldBool, "send compaction summary as file"},
 	{"sessions", "compaction_preserve_messages", FieldInt, "preserve last N messages through compaction"},
 	{"sessions", "max_system_prompt_chars_file", FieldInt, "per-file char warning threshold"},
 	{"sessions", "max_system_prompt_chars_total", FieldInt, "total system prompt char warning threshold"},
@@ -219,6 +218,10 @@ var configFields = []ConfigField{
 
 	// database
 	{"database", "busy_timeout", FieldDuration, "SQLite busy timeout"},
+
+	// debug
+	{"debug", "log_api_key_suffix", FieldBool, "log last 4 chars of API keys on provider calls"},
+	{"debug", "compaction_debug", FieldBool, "send compaction summary as Telegram file"},
 
 	// http
 	{"http", "port", FieldInt, "HTTP server port"},

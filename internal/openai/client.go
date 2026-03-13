@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"foci/internal/log"
 	"foci/internal/provider"
 
 	"github.com/openai/openai-go/v3"
@@ -18,6 +19,7 @@ import (
 // Client wraps the OpenAI SDK to implement provider.Client.
 type Client struct {
 	client *openai.Client
+	apiKey string // kept for debug key-suffix logging
 }
 
 // Option configures a Client.
@@ -57,11 +59,12 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	}
 
 	client := openai.NewClient(sdkOpts...)
-	return &Client{client: &client}
+	return &Client{client: &client, apiKey: apiKey}
 }
 
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+	log.KeySuffix("openai", c.apiKey)
 	params := buildParams(req)
 
 	resp, err := c.client.Chat.Completions.New(ctx, params)
