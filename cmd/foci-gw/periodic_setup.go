@@ -62,8 +62,16 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			// Fire memory formation on the completed background branch.
 			// skipMetaCheck=true because background branches set NoResetHook
 			// but should still get memory formation on completion.
-			fireSessionEndMemory(inst.ag, p.sessions, branchKey, acfg.MemoryFormation,
-				buildOrient, inst.promptSearchDirs, p.ctx, true)
+			fireSessionEndMemory(sessionEndMemoryOpts{
+				ag:               inst.ag,
+				sessions:         p.sessions,
+				sessionKey:       branchKey,
+				mfCfg:            acfg.MemoryFormation,
+				buildOrientation: buildOrient,
+				searchDirs:       inst.promptSearchDirs,
+				parentCtx:        p.ctx,
+				skipMetaCheck:    true,
+			})
 		},
 	)
 
