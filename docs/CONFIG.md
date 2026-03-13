@@ -32,7 +32,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `data_dir` | string | `$HOME/data` | Directory for databases, sessions, and state files. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
+| `data_dir` | string | `$HOME/data` | Directory for shared databases (api.db, state.db), sessions, and state files. Per-agent databases (reminders, scratchpad, todo, tasklist, conversation, memory indices) are stored in each agent's `workspace/.data/` directory. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
 | `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
 | `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [SECRETS.md](SECRETS.md). |
 
@@ -155,7 +155,7 @@ Logging and diagnostics. The `messages_in_log` field can be overridden per-agent
 | `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
 | `api_db` | string | `$data_dir/api.db` | SQLite API call log. All API calls logged with `call_type` (conversation, compaction, summary, spawn). `""` disables. |
-| `conversation_file` | string | `$data_dir/conversation.db` | Base path for per-agent conversation SQLite logs. Each agent gets its own database (`conversation-{agentID}.db`). Set to `""` to disable conversation logging. |
+| `conversation_file` | string | `$data_dir/conversation.db` | Base path for per-agent conversation SQLite logs. Each agent's database is stored at `workspace/.data/conversation.db`. Set to `""` to disable conversation logging. On startup, databases at the old shared location (`conversation-{agentID}.db` in `data_dir`) are automatically migrated to the workspace. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). |
@@ -1005,16 +1005,22 @@ $HOME/
   logs/api.jsonl         ← API call log (JSONL)
   logs/api-payload.jsonl ← full payload log (if enabled)
   data/api.db            ← API call log (SQLite)
-  data/conversation-*.db ← per-agent conversation SQLite logs
-  data/todo-*.db         ← per-agent todo SQLite databases
   data/sessions/         ← session JSONL files
-  data/state.json        ← persistent state
-  data/memory.db         ← memory FTS index
-  data/reminders.db      ← reminder store (per-agent via agent_id)
-  data/scratchpad.db     ← scratchpad store (per-agent via agent_id)
-  data/todo.db           ← todo store (per-agent via agent_id)
+  data/state.db          ← persistent state
+  data/memory.db         ← memory FTS index (shared mode only)
   data/WELCOME.md        ← welcome/changelog file
+  <agent-workspace>/
+    .data/
+      conversation.db    ← conversation SQLite log
+      reminders.db       ← reminder store
+      scratchpad.db       ← scratchpad store
+      todo.db            ← todo store
+      tasklist.db        ← task list store
+      memory.db          ← memory FTS index (per-agent mode)
+      search.bleve       ← bleve search index (per-agent mode)
 ```
+
+Per-agent databases are automatically migrated from the old shared `data_dir` layout on first startup.
 
 ### Overriding with `data_dir`
 
@@ -1053,10 +1059,11 @@ For new installs, `setup.sh` creates this structure:
 ```
 /home/foci/
   config/            — foci.toml, secrets.toml
-  data/              — *.db, sessions/, .foci-commit, state.json, WELCOME.md
+  data/              — api.db, state.db, sessions/, WELCOME.md (shared databases)
   logs/              — foci.log, api.jsonl, api-payload.jsonl
   shared/            — skills/, scripts/
-  character/         — agent workspace (IDENTITY.md, SOUL.md, memory/, etc.)
+  <agent-id>/        — agent workspace (IDENTITY.md, SOUL.md, memory/, etc.)
+    .data/           — per-agent databases (conversation.db, reminders.db, etc.)
 ```
 
 The key config fields that wire this up:

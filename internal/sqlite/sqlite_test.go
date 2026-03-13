@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -69,6 +70,93 @@ func TestOpenInitBadPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for path in nonexistent directory")
 	}
+}
+
+// TestMigrateFile verifies that MigrateFile moves files from old to new
+// location, creates parent directories, handles sidecar files, and skips
+// migration when appropriate.
+func TestMigrateFile(t *testing.T) {
+	t.Run("migrates file and creates parent dirs", func(t *testing.T) {
+		// Verifies basic migration: file moves, parent dir is created.
+		dir := t.TempDir()
+		oldPath := filepath.Join(dir, "old", "test.db")
+		newPath := filepath.Join(dir, "new", "nested", "test.db")
+
+		os.MkdirAll(filepath.Dir(oldPath), 0755)
+		os.WriteFile(oldPath, []byte("data"), 0644)
+
+		migrated, err := MigrateFile(oldPath, newPath)
+		if err != nil {
+			t.Fatalf("MigrateFile: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migration to occur")
+		}
+		if _, err := os.Stat(newPath); err != nil {
+			t.Fatalf("new file should exist: %v", err)
+		}
+		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+			t.Fatal("old file should not exist after migration")
+		}
+	})
+
+	t.Run("migrates WAL and SHM sidecars", func(t *testing.T) {
+		// Verifies that -wal and -shm sidecar files are also moved.
+		dir := t.TempDir()
+		oldPath := filepath.Join(dir, "test.db")
+		newPath := filepath.Join(dir, "dest", "test.db")
+
+		os.WriteFile(oldPath, []byte("db"), 0644)
+		os.WriteFile(oldPath+"-wal", []byte("wal"), 0644)
+		os.WriteFile(oldPath+"-shm", []byte("shm"), 0644)
+
+		migrated, err := MigrateFile(oldPath, newPath)
+		if err != nil {
+			t.Fatalf("MigrateFile: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migration")
+		}
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			if _, err := os.Stat(newPath + suffix); err != nil {
+				t.Errorf("expected %s to exist", newPath+suffix)
+			}
+		}
+	})
+
+	t.Run("skips when old does not exist", func(t *testing.T) {
+		// Verifies no error and no migration when old path is missing.
+		dir := t.TempDir()
+		migrated, err := MigrateFile(filepath.Join(dir, "nope.db"), filepath.Join(dir, "dst.db"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if migrated {
+			t.Fatal("should not migrate when old file doesn't exist")
+		}
+	})
+
+	t.Run("skips when new already exists", func(t *testing.T) {
+		// Verifies that existing destination prevents migration (no clobber).
+		dir := t.TempDir()
+		oldPath := filepath.Join(dir, "old.db")
+		newPath := filepath.Join(dir, "new.db")
+
+		os.WriteFile(oldPath, []byte("old"), 0644)
+		os.WriteFile(newPath, []byte("new"), 0644)
+
+		migrated, err := MigrateFile(oldPath, newPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if migrated {
+			t.Fatal("should not migrate when new file already exists")
+		}
+		// Old file should still be there
+		if _, err := os.Stat(oldPath); err != nil {
+			t.Fatal("old file should still exist")
+		}
+	})
 }
 
 // TestAgentPath verifies the per-agent path construction.

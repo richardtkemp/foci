@@ -61,6 +61,14 @@ func (c *Config) DataPath(filename string) string {
 	return filepath.Join(ResolvePath("data"), filename)
 }
 
+// AgentDataPath resolves the path for a per-agent data file, stored in the
+// agent's workspace under a .data subdirectory. The agent name is NOT included
+// in the filename since the workspace already scopes by agent.
+// Example: workspace=/home/foci/clutch → /home/foci/clutch/.data/reminders.db
+func AgentDataPath(workspace, filename string) string {
+	return filepath.Join(workspace, ".data", filename)
+}
+
 // ResolveAllPaths resolves all path config fields in one place.
 // Called at the end of Load(), before validate().
 func (c *Config) ResolveAllPaths() {

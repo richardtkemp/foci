@@ -80,7 +80,9 @@ config.Load(path)                                        ← validates values; l
 
 **Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
-**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory-{agentID}.db` for FTS5, `memory-{agentID}.bleve` for bleve) combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index (backward compat). All standalone stores (reminder, scratchpad, todo, task list) use per-agent database files. Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
+**Per-agent data:** All per-agent databases (conversation, reminders, scratchpad, todo, tasklist, memory indices) are stored in each agent's `workspace/.data/` directory. On startup, databases at the old shared `data_dir` location are automatically migrated to the workspace. Shared databases (api.db, state.db, sessions/) remain in `data_dir`.
+
+**Per-agent memory:** When any agent has `[[agents.memory.sources]]` configured, each agent gets its own search indices (`memory.db` for FTS5, `search.bleve` for bleve) in `workspace/.data/`, combining global `[memory]` sources with agent-specific sources. Agent-specific sources receive a weight boost of +1.0. When no per-agent memory is configured, all agents share a single index in `data_dir` (backward compat). Which backends are active is controlled by `search_backends` — both FTS5 and bleve can run simultaneously.
 
 **Agent routing:** `agentInstance` map keyed by agent ID. HTTP endpoints use `resolveAgent(id)` — returns first agent when ID is empty (backward compat).
 
@@ -125,7 +127,7 @@ DiagnoseRestart(stateStore, startTime, logsDir)
 ```
 main
  ├── config        → table
- ├── sqlite        → modernc.org/sqlite (shared Open + AgentPath utility)
+ ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → sqlite
  ├── table         (no deps)
  ├── secrets       → BurntSushi/toml

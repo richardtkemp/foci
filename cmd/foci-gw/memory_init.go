@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -55,35 +56,60 @@ type memoryResult struct {
 	cleanup         func()
 }
 
+// migrateAgentDB migrates a per-agent database from the shared data_dir to
+// the agent's workspace .data directory. Logs the migration if it occurs.
+func migrateAgentDB(cfg *config.Config, acfg config.AgentConfig, filename string) {
+	oldPath := sqlite.AgentPath(cfg.DataPath(filename), acfg.ID)
+	newPath := config.AgentDataPath(acfg.Workspace, filename)
+	migrated, err := sqlite.MigrateFile(oldPath, newPath)
+	if err != nil {
+		log.Errorf("main", "migrate %s for %s: %v", filename, acfg.ID, err)
+	} else if migrated {
+		log.Infof("main", "migrated %s → %s", oldPath, newPath)
+	}
+}
+
 // initStandaloneStores creates per-agent standalone memory stores (reminder,
 // scratchpad, todo, task list) that should always exist regardless of whether
-// memory search sources are configured. Appends to closers for cleanup.
+// memory search sources are configured. Databases are stored in each agent's
+// workspace .data directory. Appends to closers for cleanup.
 func initStandaloneStores(cfg *config.Config, result memoryResult, closers *[]io.Closer) memoryResult {
 	for _, acfg := range cfg.Agents {
 		id := acfg.ID
 
-		rs, err := memory.NewReminderStore(sqlite.AgentPath(cfg.DataPath("reminders.db"), id))
+		// Ensure workspace .data directory exists
+		dataDir := filepath.Join(acfg.Workspace, ".data")
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			log.Fatalf("main", "create agent data dir %s: %v", dataDir, err)
+		}
+
+		// Migrate databases from shared data_dir to workspace .data
+		for _, filename := range []string{"reminders.db", "scratchpad.db", "todo.db", "tasklist.db"} {
+			migrateAgentDB(cfg, acfg, filename)
+		}
+
+		rs, err := memory.NewReminderStore(config.AgentDataPath(acfg.Workspace, "reminders.db"))
 		if err != nil {
 			log.Fatalf("main", "create reminder store for %s: %v", id, err)
 		}
 		result.reminderStores[id] = rs
 		*closers = append(*closers, rs)
 
-		sp, err := memory.NewScratchpad(sqlite.AgentPath(cfg.DataPath("scratchpad.db"), id))
+		sp, err := memory.NewScratchpad(config.AgentDataPath(acfg.Workspace, "scratchpad.db"))
 		if err != nil {
 			log.Fatalf("main", "create scratchpad for %s: %v", id, err)
 		}
 		result.scratchpadStores[id] = sp
 		*closers = append(*closers, sp)
 
-		ts, err := memory.NewTodoStore(sqlite.AgentPath(cfg.DataPath("todo.db"), id))
+		ts, err := memory.NewTodoStore(config.AgentDataPath(acfg.Workspace, "todo.db"))
 		if err != nil {
 			log.Fatalf("main", "create todo store for %s: %v", id, err)
 		}
 		result.todoStores[id] = ts
 		*closers = append(*closers, ts)
 
-		tl, err := memory.NewTaskListStore(sqlite.AgentPath(cfg.DataPath("tasklist.db"), id))
+		tl, err := memory.NewTaskListStore(config.AgentDataPath(acfg.Workspace, "tasklist.db"))
 		if err != nil {
 			log.Fatalf("main", "create task list store for %s: %v", id, err)
 		}
@@ -201,13 +227,14 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 
 	// initBackends creates FTS5 and/or bleve backends for a given set of sources,
 	// returning the backend map and (optionally) the typed indices for conversation hooks.
-	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPrefix string, blevePrefix string) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex) {
+	// dbPath and blevePath must be fully resolved absolute paths.
+	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPath string, blevePath string) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex) {
 		backends := make(map[string]memory.Searcher)
 		var fts5Idx *memory.Index
 		var bleveIdx *memory.BleveIndex
 
 		if wantFTS5 {
-			idx, err := memory.NewIndex(cfg.DataPath(dbPrefix), sources, memDebounce, cfg.Memory.ConversationWeight)
+			idx, err := memory.NewIndex(dbPath, sources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create FTS5 index (%s): %v", label, err)
 			}
@@ -217,7 +244,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 
 		if wantBleve {
-			bidx, err := memory.NewBleveIndex(cfg.DataPath(blevePrefix), sources, memDebounce, cfg.Memory.ConversationWeight)
+			bidx, err := memory.NewBleveIndex(blevePath, sources, memDebounce, cfg.Memory.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create bleve index (%s): %v", label, err)
 			}
@@ -236,13 +263,29 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if len(combined) == 0 {
 				continue
 			}
-			bleveName := fmt.Sprintf("search-%s.bleve", acfg.ID)
-			migrateBlevePath(fmt.Sprintf("memory-%s.bleve", acfg.ID), bleveName)
+
+			// Migrate memory indices from shared data_dir to workspace .data
+			migrateAgentDB(cfg, acfg, "memory.db")
+			oldBleveName := fmt.Sprintf("search-%s.bleve", acfg.ID)
+			legacyBleveName := fmt.Sprintf("memory-%s.bleve", acfg.ID)
+			// Migrate legacy memory-*.bleve → search-*.bleve in data_dir first
+			migrateBlevePath(legacyBleveName, oldBleveName)
+			// Then migrate search-*.bleve from data_dir to workspace .data/search.bleve
+			oldBlevePath := cfg.DataPath(oldBleveName)
+			newBlevePath := config.AgentDataPath(acfg.Workspace, "search.bleve")
+			if migrated, err := sqlite.MigrateFile(oldBlevePath, newBlevePath); err != nil {
+				log.Errorf("main", "migrate bleve index for %s: %v", acfg.ID, err)
+			} else if migrated {
+				log.Infof("main", "migrated %s → %s", oldBlevePath, newBlevePath)
+			}
+
+			fts5Path := config.AgentDataPath(acfg.Workspace, "memory.db")
+			blevePath := config.AgentDataPath(acfg.Workspace, "search.bleve")
 			backends, fts5Idx, bleveIdx := initBackends(
 				fmt.Sprintf("agent %s", acfg.ID),
 				combined,
-				fmt.Sprintf("memory-%s.db", acfg.ID),
-				bleveName,
+				fts5Path,
+				blevePath,
 			)
 			result.agentBackends[acfg.ID] = backends
 			if fts5Idx != nil {
@@ -274,7 +317,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	} else {
 		// Shared indices (backward compat — no agent has per-agent memory)
 		migrateBlevePath("memory.bleve", "search.bleve")
-		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, "memory.db", "search.bleve")
+		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, cfg.DataPath("memory.db"), cfg.DataPath("search.bleve"))
 		result.sharedBackends = backends
 		result.sharedFTS5 = fts5Idx
 		result.sharedBleve = bleveIdx
