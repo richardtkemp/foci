@@ -12,8 +12,14 @@ import (
 	"foci/prompts"
 )
 
+// BranchDoneFunc is called after a branch session completes, receiving the
+// branch type and the branch session key.
+type BranchDoneFunc func(branchType, branchKey string)
+
 // buildBranchFunc returns a function that creates a branch session from the
 // agent's default session and runs a single turn with the given prompt.
+// If onDone is non-nil, it is called after the turn completes with the
+// branch type and branch session key.
 func buildBranchFunc(
 	agentID string,
 	ag *agent.Agent,
@@ -21,6 +27,7 @@ func buildBranchFunc(
 	defaultSessionKey func() string,
 	buildOrientation func(branchKey, parentKey, branchType string) string,
 	ctx context.Context,
+	onDone BranchDoneFunc,
 ) periodic.BranchFunc {
 	return func(branchType, promptText string, noCompact bool) {
 		parentKey := defaultSessionKey()
@@ -56,13 +63,19 @@ func buildBranchFunc(
 			return
 		}
 		_ = resp
+
+		if onDone != nil {
+			onDone(branchType, branchKey)
+		}
 	}
 }
 
 // fireSessionEndMemory runs memory formation on the expiring session before it is cleared.
 // Creates an async branch from the session so the caller can proceed immediately.
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
-func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context) {
+// If skipMetaCheck is true, the NoResetHook check is skipped (used for background
+// work branches which set NoResetHook but should still get memory formation).
+func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
 	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
 		return
 	}
@@ -79,14 +92,16 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 		return
 	}
 
-	// Check branch metadata for NoResetHook
-	meta, err := sessions.GetBranchMeta(sessionKey)
-	if err != nil {
-		log.Warnf("session-end-memory", "check branch meta for %s: %v", sessionKey, err)
-	}
-	if meta != nil && meta.NoResetHook {
-		log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
-		return
+	// Check branch metadata for NoResetHook (skipped for background work branches)
+	if !skipMetaCheck {
+		meta, err := sessions.GetBranchMeta(sessionKey)
+		if err != nil {
+			log.Warnf("session-end-memory", "check branch meta for %s: %v", sessionKey, err)
+		}
+		if meta != nil && meta.NoResetHook {
+			log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
+			return
+		}
 	}
 
 	// Branch from expiring session so the memory formation job has conversation history.
