@@ -5,6 +5,8 @@ import (
 )
 
 func TestSessionKeyString(t *testing.T) {
+	// Proves that SessionKey.String() produces the correct slash-separated path
+	// for chat roots, independent roots, branch children, and collision suffixes.
 	tests := []struct {
 		name string
 		key  SessionKey
@@ -68,6 +70,9 @@ func TestSessionKeyString(t *testing.T) {
 }
 
 func TestParseSessionKey(t *testing.T) {
+	// Proves that ParseSessionKey correctly round-trips all key formats including
+	// chat roots, independent roots, branch and independent children, collision
+	// suffixes, and rejects invalid input with an error.
 	tests := []struct {
 		name    string
 		input   string
@@ -153,6 +158,8 @@ func TestParseSessionKey(t *testing.T) {
 }
 
 func TestSessionKeyBranch(t *testing.T) {
+	// Proves that Branch() returns a child key that inherits the parent's identity
+	// fields, sets ChildType to 'b', and generates a non-zero ChildTS timestamp.
 	parent := SessionKey{
 		AgentID:   "main",
 		Type:      'c',
@@ -238,6 +245,8 @@ func TestChatIDFromKey(t *testing.T) {
 }
 
 func TestChatID(t *testing.T) {
+	// Proves that ChatID() returns the numeric chat ID for 'c'-type sessions and
+	// zero for independent ('i'-type) sessions.
 	tests := []struct {
 		name string
 		key  SessionKey

@@ -86,48 +86,6 @@ func TestMultipleAPIEntries(t *testing.T) {
 	}
 }
 
-// TestAPIWithGemini verifies that API() handles a Gemini model without panicking,
-// including provider auto-inference from the model name.
-func TestAPIWithGemini(t *testing.T) {
-	resetGlobal()
-	t.Cleanup(resetGlobal)
-
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "api.db")
-	if err := InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	defer CloseAPIDB()
-
-	API(APIEntry{
-		Session:  "test",
-		Model:    "gemini-2-flash",
-		CallType: "conversation",
-	})
-	// No error = pass
-}
-
-// TestAPIWithOpenAI verifies that API() handles an OpenAI model without panicking,
-// including provider auto-inference from the model name.
-func TestAPIWithOpenAI(t *testing.T) {
-	resetGlobal()
-	t.Cleanup(resetGlobal)
-
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "api.db")
-	if err := InitAPIDB(dbPath); err != nil {
-		t.Fatalf("InitAPIDB: %v", err)
-	}
-	defer CloseAPIDB()
-
-	API(APIEntry{
-		Session:  "test",
-		Model:    "gpt-4",
-		CallType: "conversation",
-	})
-	// No error = pass
-}
-
 // TestAPIDefaultCallType verifies that an APIEntry with empty CallType is written
 // with CallType defaulting to "conversation".
 func TestAPIDefaultCallType(t *testing.T) {

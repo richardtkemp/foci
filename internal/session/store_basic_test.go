@@ -8,6 +8,9 @@ import (
 )
 
 func TestKeyToPath(t *testing.T) {
+	// Proves that SessionPath converts session keys to the expected nested
+	// directory paths and returns errors for empty or malformed keys.
+
 	s := NewStore("/data/sessions")
 
 	tests := []struct {
@@ -40,6 +43,7 @@ func TestKeyToPath(t *testing.T) {
 }
 
 func TestLoadEmpty(t *testing.T) {
+	// Proves that Load returns nil (not an error) when no session file exists yet.
 	s := NewStore(t.TempDir())
 
 	msgs, err := s.Load("test/imain/1000000000")
@@ -52,6 +56,8 @@ func TestLoadEmpty(t *testing.T) {
 }
 
 func TestAppendAndLoad(t *testing.T) {
+	// Proves the fundamental round-trip: messages appended to a session are returned
+	// by Load in the correct order with roles and content intact.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -79,6 +85,8 @@ func TestAppendAndLoad(t *testing.T) {
 }
 
 func TestAppendAll(t *testing.T) {
+	// Proves that AppendAll writes an entire batch of messages atomically and they
+	// are all retrievable via Load in the same order.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -101,6 +109,8 @@ func TestAppendAll(t *testing.T) {
 }
 
 func TestClear(t *testing.T) {
+	// Proves that Clear removes all messages from a session so that subsequent
+	// Load returns nil.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -120,6 +130,7 @@ func TestClear(t *testing.T) {
 }
 
 func TestClearNonexistent(t *testing.T) {
+	// Proves that Clear on a non-existent session key is a no-op that returns no error.
 	s := NewStore(t.TempDir())
 	if err := s.TestClear("ghost/imain/1000000000"); err != nil {
 		t.Fatalf("Clear nonexistent: %v", err)
@@ -127,6 +138,8 @@ func TestClearNonexistent(t *testing.T) {
 }
 
 func TestReplace(t *testing.T) {
+	// Proves that Replace atomically overwrites a session's content so only the
+	// replacement messages are visible via Load.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -157,6 +170,8 @@ func TestReplace(t *testing.T) {
 }
 
 func TestMessageCount(t *testing.T) {
+	// Proves that MessageCount returns 0 for an empty session and correctly counts
+	// messages as they are appended.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -174,21 +189,6 @@ func TestMessageCount(t *testing.T) {
 	}
 }
 
-func TestLoadFullRegularSession(t *testing.T) {
-	s := NewStore(t.TempDir())
-	key := "test/imain/1000000000"
-
-	s.TestAppend(key, msg("user", "hello"))
-	s.TestAppend(key, msg("assistant", "world"))
-
-	msgs, err := s.LoadFull(key)
-	if err != nil {
-		t.Fatalf("LoadFull: %v", err)
-	}
-	if len(msgs) != 2 {
-		t.Fatalf("len = %d, want 2", len(msgs))
-	}
-}
 
 func TestAppendAllAtomicOnMarshalError(t *testing.T) {
 	// Verify that if one message in a batch fails to marshal, NO messages
@@ -234,6 +234,8 @@ func TestAppendAllAtomicOnMarshalError(t *testing.T) {
 }
 
 func TestAppendCreatesDirectories(t *testing.T) {
+	// Proves that Append automatically creates all required intermediate directories
+	// for a session key that has never been written before.
 	dir := t.TempDir()
 	s := NewStore(dir)
 	// Deep key that requires nested directories

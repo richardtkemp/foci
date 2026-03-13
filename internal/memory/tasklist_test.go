@@ -16,8 +16,8 @@ func testTaskListStore(t *testing.T) *TaskListStore {
 	return s
 }
 
-// Verifies Create returns auto-incrementing IDs and Get retrieves them.
 func TestTaskCreateAndGet(t *testing.T) {
+	// Verifies Create returns auto-incrementing IDs and Get retrieves them.
 	s := testTaskListStore(t)
 
 	id1, err := s.Create("test", "First task", "Description 1")
@@ -57,8 +57,8 @@ func TestTaskCreateAndGet(t *testing.T) {
 	}
 }
 
-// Verifies Get returns nil for a nonexistent task.
 func TestTaskGetMissing(t *testing.T) {
+	// Verifies Get returns nil for a nonexistent task.
 	s := testTaskListStore(t)
 
 	task, err := s.Get("test", 999)
@@ -70,8 +70,8 @@ func TestTaskGetMissing(t *testing.T) {
 	}
 }
 
-// Verifies Update changes fields and sets updated_at.
 func TestTaskUpdate(t *testing.T) {
+	// Verifies Update changes fields and sets updated_at.
 	s := testTaskListStore(t)
 
 	id, _ := s.Create("test", "Original", "Desc")
@@ -96,8 +96,8 @@ func TestTaskUpdate(t *testing.T) {
 	}
 }
 
-// Verifies Update with status="deleted" removes the task.
 func TestTaskUpdateDelete(t *testing.T) {
+	// Verifies Update with status="deleted" removes the task.
 	s := testTaskListStore(t)
 
 	id, _ := s.Create("test", "To delete", "")
@@ -113,8 +113,8 @@ func TestTaskUpdateDelete(t *testing.T) {
 	}
 }
 
-// Verifies Update returns error for nonexistent task.
 func TestTaskUpdateNotFound(t *testing.T) {
+	// Verifies Update returns error for nonexistent task.
 	s := testTaskListStore(t)
 
 	err := s.Update("test", 999, "x", "", "")
@@ -123,8 +123,8 @@ func TestTaskUpdateNotFound(t *testing.T) {
 	}
 }
 
-// Verifies Update with nothing to change returns error.
 func TestTaskUpdateNoop(t *testing.T) {
+	// Verifies Update with nothing to change returns error.
 	s := testTaskListStore(t)
 
 	id, _ := s.Create("test", "Task", "")
@@ -135,8 +135,8 @@ func TestTaskUpdateNoop(t *testing.T) {
 	}
 }
 
-// Verifies List returns all tasks ordered by ID.
 func TestTaskList(t *testing.T) {
+	// Verifies List returns all tasks ordered by ID.
 	s := testTaskListStore(t)
 
 	s.Create("test", "Task A", "")
@@ -161,8 +161,8 @@ func TestTaskList(t *testing.T) {
 	}
 }
 
-// Verifies List returns empty slice (not nil) when no tasks exist.
 func TestTaskListEmpty(t *testing.T) {
+	// Verifies List returns empty slice (not nil) when no tasks exist.
 	s := testTaskListStore(t)
 
 	tasks, err := s.List("test")
@@ -174,8 +174,8 @@ func TestTaskListEmpty(t *testing.T) {
 	}
 }
 
-// Verifies Clear removes all tasks for an agent.
 func TestTaskClear(t *testing.T) {
+	// Verifies Clear removes all tasks for an agent.
 	s := testTaskListStore(t)
 
 	s.Create("test", "Task", "")
@@ -189,8 +189,8 @@ func TestTaskClear(t *testing.T) {
 	}
 }
 
-// Verifies different agents have isolated task ID sequences and data.
 func TestTaskAgentIsolation(t *testing.T) {
+	// Verifies different agents have isolated task ID sequences and data, and clearing one agent's tasks doesn't affect another's.
 	s := testTaskListStore(t)
 
 	id1, _ := s.Create("agent1", "Agent1 task", "")

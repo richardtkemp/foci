@@ -5,7 +5,9 @@ import (
 	"testing"
 )
 
-// TestLoadPerAgentSecrets verifies loading and accessing per-agent overrides.
+// TestLoadPerAgentSecrets proves that per-agent secret sections override global values
+// for matching keys, add agent-exclusive keys, and leave global sections untouched,
+// while also correctly loading per-agent allowed_hosts.
 func TestLoadPerAgentSecrets(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -55,7 +57,9 @@ allowed_hosts = ["api.fotini.com"]
 	}
 }
 
-// TestForAgentOverridesGlobal verifies agent overrides win over global.
+// TestForAgentOverridesGlobal proves that when the same key exists in both the
+// global section and an agent's override section, the agent view returns the override
+// while the root store still returns the global value.
 func TestForAgentOverridesGlobal(t *testing.T) {
 	path := writeSecrets(t, `
 [custom]
@@ -78,7 +82,9 @@ api_key = "alpha_key"
 	}
 }
 
-// TestForAgentFallbackToGlobal verifies missing agent keys fall back to global.
+// TestForAgentFallbackToGlobal proves that keys not present in an agent's override
+// section transparently resolve from the global store, covering both same-section
+// and different-section fallback paths.
 func TestForAgentFallbackToGlobal(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -108,7 +114,8 @@ key_a = "beta_a"
 	}
 }
 
-// TestForAgentIsolation verifies agents can't see each other's secrets.
+// TestForAgentIsolation proves that per-agent secret sections are fully isolated:
+// agent A cannot see agent B's private keys, while both can still access global ones.
 func TestForAgentIsolation(t *testing.T) {
 	path := writeSecrets(t, `
 [custom]
@@ -143,7 +150,8 @@ private = "bob_secret"
 	}
 }
 
-// TestForAgentNames verifies Names() includes both global and agent secrets.
+// TestForAgentNames proves that Names() on an agent view includes both global keys
+// and the agent's own keys, sorted alphabetically, with no duplicates.
 func TestForAgentNames(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -170,7 +178,9 @@ extra = "extra_val"
 	}
 }
 
-// TestForAgentResolve verifies template resolution uses agent secrets.
+// TestForAgentResolve proves that template resolution on an agent view substitutes
+// the agent's overridden value, while the same template on the root store uses the
+// global value.
 func TestForAgentResolve(t *testing.T) {
 	path := writeSecrets(t, `
 [custom]
@@ -199,7 +209,8 @@ token = "delta_tok"
 	}
 }
 
-// TestForAgentRedact verifies redaction includes all agent and global secrets.
+// TestForAgentRedact proves that Redact on an agent view scrubs both the agent's
+// own secrets and global secrets from the output, leaving non-secret text intact.
 func TestForAgentRedact(t *testing.T) {
 	path := writeSecrets(t, `
 [custom]
@@ -225,7 +236,8 @@ agent_key = "supersecretagent"
 	}
 }
 
-// TestForAgentNoSection verifies agent without section gets global secrets.
+// TestForAgentNoSection proves that ForAgent for an agent with no dedicated section
+// in the file behaves identically to the global store — all global secrets are visible.
 func TestForAgentNoSection(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -252,7 +264,9 @@ key = "val"
 	}
 }
 
-// TestLoadPerAgentBackwardCompat verifies old format without agents still works.
+// TestLoadPerAgentBackwardCompat proves that a secrets file with no [agents] section
+// loads correctly and any agent view falls back entirely to the global secrets, ensuring
+// backward compatibility with pre-per-agent configurations.
 func TestLoadPerAgentBackwardCompat(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -279,7 +293,8 @@ allowed_hosts = ["api.github.com"]
 	}
 }
 
-// TestSavePreservesAgentSections verifies agent sections survive save/load.
+// TestSavePreservesAgentSections proves that agent-specific sections, including their
+// secrets and allowed_hosts, are fully preserved through a save/load roundtrip.
 func TestSavePreservesAgentSections(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]

@@ -32,6 +32,7 @@ func testBleveIndex(t *testing.T) (*BleveIndex, string) {
 }
 
 func TestBleveNewIndex(t *testing.T) {
+	// Verifies that NewBleveIndex returns a usable index with a non-nil internal bleve handle.
 	idx, _ := testBleveIndex(t)
 	if idx.index == nil {
 		t.Fatal("index should not be nil")
@@ -39,6 +40,7 @@ func TestBleveNewIndex(t *testing.T) {
 }
 
 func TestBleveReindex(t *testing.T) {
+	// Verifies that Reindex scans markdown files from a source directory and makes them searchable, with the correct source tag.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The Go programming language is great for systems work."), 0644)
@@ -61,6 +63,7 @@ func TestBleveReindex(t *testing.T) {
 }
 
 func TestBleveReindexIdempotent(t *testing.T) {
+	// Verifies that calling Reindex twice does not produce duplicate search results for the same file.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("unique content for testing"), 0644)
@@ -78,6 +81,7 @@ func TestBleveReindexIdempotent(t *testing.T) {
 }
 
 func TestBleveReindexSkipsNonMarkdown(t *testing.T) {
+	// Verifies that Reindex only indexes .md files, ignoring other file types such as JSON.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("markdown content here"), 0644)
@@ -97,6 +101,7 @@ func TestBleveReindexSkipsNonMarkdown(t *testing.T) {
 }
 
 func TestBleveSearchNoMatches(t *testing.T) {
+	// Verifies that Search returns an empty slice (not an error) when no documents match the query.
 	idx, memDir := testBleveIndex(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("nothing relevant here"), 0644)
 	idx.Reindex()
@@ -111,6 +116,7 @@ func TestBleveSearchNoMatches(t *testing.T) {
 }
 
 func TestBleveSearchEmptyIndex(t *testing.T) {
+	// Verifies that searching an empty index returns zero results without error.
 	idx, _ := testBleveIndex(t)
 
 	results, err := idx.Search("anything", "", nil)
@@ -123,6 +129,7 @@ func TestBleveSearchEmptyIndex(t *testing.T) {
 }
 
 func TestBleveSearchSubdirectories(t *testing.T) {
+	// Verifies that Reindex recurses into subdirectories and that result paths are relative to the source root.
 	idx, memDir := testBleveIndex(t)
 
 	sub := filepath.Join(memDir, "2024")
@@ -144,6 +151,7 @@ func TestBleveSearchSubdirectories(t *testing.T) {
 }
 
 func TestBlevePorterStemming(t *testing.T) {
+	// Verifies that the English analyzer's Porter stemmer matches a root form against morphological variants in indexed content.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The programmer was programming a programmatic solution"), 0644)
@@ -160,6 +168,7 @@ func TestBlevePorterStemming(t *testing.T) {
 }
 
 func TestBleveMultiSourceIndexing(t *testing.T) {
+	// Verifies that documents from multiple named source directories are all indexed and tagged with their correct source name.
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "memory.bleve")
 
@@ -204,6 +213,7 @@ func TestBleveMultiSourceIndexing(t *testing.T) {
 }
 
 func TestBleveWeightedRanking(t *testing.T) {
+	// Verifies that identical content from a higher-weight source ranks above the same content from a lower-weight source.
 	dir := t.TempDir()
 	indexPath := filepath.Join(dir, "memory.bleve")
 
@@ -245,6 +255,7 @@ func TestBleveWeightedRanking(t *testing.T) {
 }
 
 func TestBleveSearchRecency(t *testing.T) {
+	// Verifies that "newest" and "oldest" sort modes order results by file modification time rather than relevance.
 	idx, memDir := testBleveIndex(t)
 
 	oldFile := filepath.Join(memDir, "old.md")
@@ -292,6 +303,7 @@ func TestBleveSearchRecency(t *testing.T) {
 }
 
 func TestBleveSearchRelevanceDefault(t *testing.T) {
+	// Verifies that both an empty sort string and the explicit "relevance" sort value return matching results.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Go programming language features"), 0644)
@@ -315,6 +327,7 @@ func TestBleveSearchRelevanceDefault(t *testing.T) {
 }
 
 func TestBleveStartSweep(t *testing.T) {
+	// Verifies that StartSweep periodically reindexes the source directories so new files become searchable without an explicit Reindex call.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "sweep_test.md"), []byte("sweep discovers this file automatically"), 0644)
@@ -336,6 +349,7 @@ func TestBleveStartSweep(t *testing.T) {
 }
 
 func TestBleveStartSweepDisabledByClose(t *testing.T) {
+	// Verifies that closing the index stops the sweep goroutine so files written after Close are never indexed.
 	idx, memDir := testBleveIndex(t)
 
 	idx.StartSweep(1*time.Hour, 1*time.Hour)
@@ -363,6 +377,7 @@ func TestBleveStartSweepDisabledByClose(t *testing.T) {
 }
 
 func TestBleveReopenExisting(t *testing.T) {
+	// Verifies that indexed data persists on disk so it remains searchable after the index is closed and reopened.
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -401,6 +416,7 @@ func TestBleveReopenExisting(t *testing.T) {
 }
 
 func TestBleveSnippetContainsHighlight(t *testing.T) {
+	// Verifies that search results include a non-empty snippet field containing context around the matched terms.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The quick brown fox jumps over the lazy dog in the sunny afternoon"), 0644)

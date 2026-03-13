@@ -37,6 +37,8 @@ func independentKey(agentID string) string {
 }
 
 func TestSessionIndex_UpsertAndQuery(t *testing.T) {
+	// Proves the basic insert-then-query contract: upserted entries are retrievable
+	// via Query, returned in created_at descending order, and parent keys are preserved.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -79,6 +81,8 @@ func TestSessionIndex_UpsertAndQuery(t *testing.T) {
 }
 
 func TestSessionIndex_QueryByType(t *testing.T) {
+	// Proves that QueryOptions.SessionType filters results to only entries of
+	// the specified type, leaving other types out of the result set.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC()
@@ -104,6 +108,8 @@ func TestSessionIndex_QueryByType(t *testing.T) {
 }
 
 func TestSessionIndex_QueryByStatus(t *testing.T) {
+	// Proves that QueryOptions.Status filters results to only entries matching
+	// the requested status, excluding those with a different status.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC()
@@ -126,6 +132,8 @@ func TestSessionIndex_QueryByStatus(t *testing.T) {
 }
 
 func TestSessionIndex_QueryByAgent(t *testing.T) {
+	// Proves that QueryOptions.AgentID scopes results to a single agent,
+	// excluding entries belonging to other agents in the same index.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC()
@@ -151,6 +159,8 @@ func TestSessionIndex_QueryByAgent(t *testing.T) {
 }
 
 func TestSessionIndex_QueryLimit(t *testing.T) {
+	// Proves that QueryOptions.Limit caps the number of returned entries, enabling
+	// pagination over large indexes.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC()
@@ -172,6 +182,8 @@ func TestSessionIndex_QueryLimit(t *testing.T) {
 }
 
 func TestSessionIndex_SetStatus(t *testing.T) {
+	// Proves that UpdateStatus mutates only the status field of an existing entry
+	// without otherwise altering the record.
 	idx := tempIndex(t)
 
 	idx.Upsert(SessionIndexEntry{
@@ -192,6 +204,8 @@ func TestSessionIndex_SetStatus(t *testing.T) {
 }
 
 func TestSessionIndex_Delete(t *testing.T) {
+	// Proves that Delete removes the entry from the index so Count returns zero
+	// and it no longer appears in Query results.
 	idx := tempIndex(t)
 
 	idx.Upsert(SessionIndexEntry{
@@ -209,6 +223,8 @@ func TestSessionIndex_Delete(t *testing.T) {
 }
 
 func TestSessionIndex_Upsert_Replaces(t *testing.T) {
+	// Proves that upserting an entry with the same session key updates the existing
+	// row rather than inserting a duplicate, keeping the count at 1.
 	idx := tempIndex(t)
 
 	now := time.Now().UTC()
@@ -234,6 +250,9 @@ func TestSessionIndex_Upsert_Replaces(t *testing.T) {
 }
 
 func TestClassifySessionKey(t *testing.T) {
+	// Proves that ClassifySessionKey correctly identifies chat, branch, and unknown
+	// session types from their key format, including edge cases like independent
+	// keys that can't be further distinguished from the key alone.
 	tests := []struct {
 		key  string
 		want SessionType
@@ -255,6 +274,8 @@ func TestClassifySessionKey(t *testing.T) {
 }
 
 func TestSessionIndex_Rebuild(t *testing.T) {
+	// Proves that Rebuild scans all session files on disk and populates the index
+	// with the correct count, types, and parent keys — including branch sessions.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -295,6 +316,9 @@ func TestSessionIndex_Rebuild(t *testing.T) {
 }
 
 func TestSessionIndex_EventFiring(t *testing.T) {
+	// Proves that session store events (create, replace, clear) propagate correctly
+	// through the OnSessionEvent hook to update the index in real time, with create
+	// firing only once per session key.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
@@ -356,6 +380,8 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 }
 
 func TestSessionIndex_BranchEventFiring(t *testing.T) {
+	// Proves that CreateBranch fires an active event carrying the correct parent
+	// key, so the index can link branch sessions to their parents.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
@@ -393,6 +419,8 @@ func TestSessionIndex_BranchEventFiring(t *testing.T) {
 }
 
 func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
+	// Proves that the SQLite-backed index survives a close/reopen cycle: entries
+	// inserted before close are still present after reopening the same database file.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "persist.db")
 
@@ -422,6 +450,7 @@ func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
 // ========== Count tests ==========
 
 func TestSessionIndex_Count_Empty(t *testing.T) {
+	// Proves that Count returns zero on a freshly created index with no entries.
 	idx := tempIndex(t)
 
 	count, err := idx.Count()
@@ -434,6 +463,8 @@ func TestSessionIndex_Count_Empty(t *testing.T) {
 }
 
 func TestSessionIndex_Count_ReflectsInsertionsAndDeletions(t *testing.T) {
+	// Proves that Count accurately tracks inserts, deletes, and upserts of existing
+	// keys — verifying the count never double-counts on upsert.
 	idx := tempIndex(t)
 	now := time.Now().UTC()
 
@@ -579,21 +610,29 @@ func testMetadataCRUD(t *testing.T, ops metadataOps) {
 }
 
 func TestAgentMetadata_CRUD(t *testing.T) {
+	// Proves that agent-scoped metadata supports the full set/get/upsert/delete
+	// operations using the shared CRUD battery.
 	idx := tempIndex(t)
 	testMetadataCRUD(t, agentMetaOps(idx, "bot1"))
 }
 
 func TestChatMetadata_CRUD(t *testing.T) {
+	// Proves that chat-scoped metadata supports the full set/get/upsert/delete
+	// operations using the shared CRUD battery.
 	idx := tempIndex(t)
 	testMetadataCRUD(t, chatMetaOps(idx, "bot1", 42))
 }
 
 func TestSessionMetadata_CRUD(t *testing.T) {
+	// Proves that session-scoped metadata supports the full set/get/upsert/delete
+	// operations using the shared CRUD battery.
 	idx := tempIndex(t)
 	testMetadataCRUD(t, sessionMetaOps(idx, "bot/c1/1000000000"))
 }
 
 func TestSystemState_CRUD(t *testing.T) {
+	// Proves that global system-state metadata supports the full set/get/upsert/delete
+	// operations using the shared CRUD battery.
 	idx := tempIndex(t)
 	testMetadataCRUD(t, systemStateOps(idx))
 }
@@ -601,6 +640,8 @@ func TestSystemState_CRUD(t *testing.T) {
 // ========== Domain-specific isolation and multi-key tests ==========
 
 func TestAgentMetadata_IsolationBetweenAgents(t *testing.T) {
+	// Proves that the same metadata key set on different agents returns separate
+	// values — agent IDs act as namespaces.
 	idx := tempIndex(t)
 
 	idx.SetAgentMetadata("bot1", "model", "claude-3")
@@ -618,6 +659,8 @@ func TestAgentMetadata_IsolationBetweenAgents(t *testing.T) {
 }
 
 func TestAgentMetadata_MultipleKeys(t *testing.T) {
+	// Proves that an agent can store independent values under multiple keys and
+	// that deleting one key leaves the others unaffected.
 	idx := tempIndex(t)
 
 	idx.SetAgentMetadata("bot1", "model", "claude-3")
@@ -645,6 +688,8 @@ func TestAgentMetadata_MultipleKeys(t *testing.T) {
 }
 
 func TestChatMetadata_IsolationBetweenChats(t *testing.T) {
+	// Proves that chat metadata is namespaced by both agent ID and chat ID:
+	// the same key on different chats or different agents stores independent values.
 	idx := tempIndex(t)
 
 	// Same agent, different chats
@@ -669,6 +714,8 @@ func TestChatMetadata_IsolationBetweenChats(t *testing.T) {
 }
 
 func TestSessionMetadata_IsolationBetweenSessions(t *testing.T) {
+	// Proves that session metadata is namespaced by session key: the same metadata
+	// key on two different sessions holds independent values.
 	idx := tempIndex(t)
 
 	idx.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true")
@@ -683,6 +730,8 @@ func TestSessionMetadata_IsolationBetweenSessions(t *testing.T) {
 }
 
 func TestSystemState_MultipleKeys(t *testing.T) {
+	// Proves that multiple system-state keys coexist independently and that
+	// deleting one key leaves the remaining keys intact.
 	idx := tempIndex(t)
 
 	idx.SetSystemState("key1", "val1")
@@ -711,6 +760,8 @@ func TestSystemState_MultipleKeys(t *testing.T) {
 // ========== Metadata persistence across reopen ==========
 
 func TestMetadata_PersistsAcrossReopen(t *testing.T) {
+	// Proves that all four metadata scopes (agent, chat, session, system state)
+	// survive a database close and reopen, confirming durable SQLite persistence.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "persist.db")
 
@@ -747,6 +798,9 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 // ========== Metadata tables don't interfere with session index ==========
 
 func TestMetadata_IndependentOfSessionIndex(t *testing.T) {
+	// Proves that metadata operations don't affect the session entry count and that
+	// session operations don't corrupt metadata values — the two concerns are fully
+	// isolated within the same database.
 	idx := tempIndex(t)
 
 	// Metadata operations should work with an empty session index

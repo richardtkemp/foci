@@ -14,7 +14,9 @@ import (
 	"foci/internal/session"
 )
 
-// TestWithConfigOverrides verifies config override method.
+// TestWithConfigOverrides verifies that WithConfig applies maxTokens, minMessages, and
+// preserveMessages correctly, and that the model is never changed by WithConfig since it
+// must always match the agent's configured model.
 func TestWithConfigOverrides(t *testing.T) {
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	c.WithConfig(2048, 8, 10)
@@ -34,7 +36,9 @@ func TestWithConfigOverrides(t *testing.T) {
 	}
 }
 
-// TestWithConfigEmptyValues verifies that zero values are handled correctly.
+// TestWithConfigEmptyValues verifies that passing zero values to WithConfig does not
+// overwrite maxTokens or minMessages (zero is not a valid value), but preserveMessages=0
+// is a valid setting that should be applied as-is.
 func TestWithConfigEmptyValues(t *testing.T) {
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	original := *c
@@ -52,7 +56,8 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	}
 }
 
-// TestWithEffort verifies effort configuration setting.
+// TestWithEffort verifies that WithEffort stores the given effort string and that
+// clearing it with an empty string returns to the no-effort default state.
 func TestWithEffort(t *testing.T) {
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	if c.effort != "" {
@@ -70,7 +75,9 @@ func TestWithEffort(t *testing.T) {
 	}
 }
 
-// TestCompactCustomPrompts verifies custom summary and handoff prompts.
+// TestCompactCustomPrompts verifies that caller-supplied summary and handoff prompts
+// are sent to the API and appear in the resulting session, proving the customisation
+// path overrides the built-in defaults end-to-end.
 func TestCompactCustomPrompts(t *testing.T) {
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +125,10 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}
 }
 
-// TestCompactDefaultPrompts verifies default prompts are used when empty.
+// TestCompactDefaultPrompts verifies that passing empty strings for the summary and
+// handoff prompts falls back to the built-in defaults, by inspecting the captured API
+// request body for the fallback summary phrase and comparing the handoff text against
+// DefaultHandoffMessage.
 func TestCompactDefaultPrompts(t *testing.T) {
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +174,9 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	}
 }
 
-// TestCheckConfig_Safe verifies checkConfig when configuration is safe.
+// TestCheckConfig_Safe verifies that checkConfig does not panic or error when the
+// sum of the compaction trigger point and maxTokens fits within the model's context
+// window, confirming a well-configured compactor is accepted silently.
 func TestCheckConfig_Safe(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	// With Claude (200k context) and 80% threshold, 160k is trigger point
@@ -176,7 +188,9 @@ func TestCheckConfig_Safe(t *testing.T) {
 	c.checkConfig()
 }
 
-// TestCheckConfig_Unsafe verifies checkConfig when configuration may exceed window.
+// TestCheckConfig_Unsafe verifies that checkConfig handles the case where maxTokens
+// is large enough that trigger point + maxTokens would exceed the context window,
+// and does so without panicking (it logs a warning rather than returning an error).
 func TestCheckConfig_Unsafe(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	// With Claude (200k context) and 80% threshold, 160k is trigger point

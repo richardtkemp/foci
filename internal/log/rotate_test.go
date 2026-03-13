@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// TestParseJSONLTimestamp verifies that parseJSONLTimestamp correctly extracts
+// RFC3339 timestamps from JSONL lines, handling nanoseconds, missing fields,
+// malformed values, and empty input.
 func TestParseJSONLTimestamp(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -63,6 +66,9 @@ func TestParseJSONLTimestamp(t *testing.T) {
 	}
 }
 
+// TestParseEventTimestamp verifies that parseEventTimestamp extracts RFC3339
+// timestamps from the first token of a plain-text event log line, returning
+// false for empty lines, missing space separators, and invalid date strings.
 func TestParseEventTimestamp(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -109,6 +115,9 @@ func TestParseEventTimestamp(t *testing.T) {
 	}
 }
 
+// TestRotateFile verifies the core rotation logic: old lines are moved to a
+// gzip archive, recent lines stay in the active file, and corrupt (unparseable)
+// lines are retained in the active file rather than dropped.
 func TestRotateFile(t *testing.T) {
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
@@ -158,6 +167,8 @@ func TestRotateFile(t *testing.T) {
 	}
 }
 
+// TestRotateFileAllFresh verifies that rotateFile is a no-op when all lines are
+// within the retention window: the file is unchanged and no archive is created.
 func TestRotateFileAllFresh(t *testing.T) {
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
@@ -186,6 +197,8 @@ func TestRotateFileAllFresh(t *testing.T) {
 	}
 }
 
+// TestRotateFileEmpty verifies that rotateFile handles an empty log file without
+// error, producing no archive.
 func TestRotateFileEmpty(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "empty.jsonl")
@@ -197,6 +210,8 @@ func TestRotateFileEmpty(t *testing.T) {
 	}
 }
 
+// TestRotateFileMissing verifies that rotateFile treats a non-existent file as a
+// no-op, returning nil rather than an error.
 func TestRotateFileMissing(t *testing.T) {
 	err := rotateFile("/nonexistent/path/log.jsonl", 48*time.Hour, "/tmp/archive", 1024*1024)
 	if err != nil {
@@ -204,6 +219,9 @@ func TestRotateFileMissing(t *testing.T) {
 	}
 }
 
+// TestRotateFileArchiveNaming verifies that archiveName produces correctly formatted
+// archive filenames for different log file extensions (.jsonl and .log), embedding
+// first-line and last-line timestamps in the name.
 func TestRotateFileArchiveNaming(t *testing.T) {
 	first := time.Date(2026, 3, 1, 17, 0, 0, 0, time.UTC)
 	last := time.Date(2026, 3, 1, 19, 15, 0, 0, time.UTC)
@@ -225,6 +243,8 @@ func TestRotateFileArchiveNaming(t *testing.T) {
 	}
 }
 
+// TestRotateFileArchiveNamingSpansDays verifies that archiveName correctly handles
+// a time range that crosses a day boundary (e.g. Feb 28 into Mar 1).
 func TestRotateFileArchiveNamingSpansDays(t *testing.T) {
 	first := time.Date(2026, 2, 28, 23, 0, 0, 0, time.UTC)
 	last := time.Date(2026, 3, 1, 1, 30, 0, 0, time.UTC)
@@ -236,6 +256,9 @@ func TestRotateFileArchiveNamingSpansDays(t *testing.T) {
 	}
 }
 
+// TestRotateFileEventLog verifies that rotation works on plain-text event log
+// files (not JSONL), using the space-separated timestamp parser to split old
+// from recent lines.
 func TestRotateFileEventLog(t *testing.T) {
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
@@ -270,6 +293,8 @@ func TestRotateFileEventLog(t *testing.T) {
 	}
 }
 
+// TestStartRotationStop verifies that StartRotation launches a background goroutine
+// that can be cleanly stopped via the returned stop function within a reasonable timeout.
 func TestStartRotationStop(t *testing.T) {
 	stop := StartRotation(RotationConfig{
 		Period:      100 * time.Millisecond,

@@ -20,6 +20,7 @@ func testScratchpad(t *testing.T) *Scratchpad {
 }
 
 func TestScratchpadWriteRead(t *testing.T) {
+	// Verifies that Write stores a value and Read retrieves it exactly by agent ID and key.
 	s := testScratchpad(t)
 
 	if err := s.Write("test", "investigation", "checking FTS5 phrase boosting"); err != nil {
@@ -36,6 +37,7 @@ func TestScratchpadWriteRead(t *testing.T) {
 }
 
 func TestScratchpadReadMissing(t *testing.T) {
+	// Verifies that Read returns an empty string (not an error) for a key that has never been written.
 	s := testScratchpad(t)
 
 	content, err := s.Read("test", "nonexistent")
@@ -48,6 +50,7 @@ func TestScratchpadReadMissing(t *testing.T) {
 }
 
 func TestScratchpadOverwrite(t *testing.T) {
+	// Verifies that writing to the same key twice replaces the value rather than creating duplicates.
 	s := testScratchpad(t)
 
 	s.Write("test", "notes", "first version")
@@ -60,6 +63,7 @@ func TestScratchpadOverwrite(t *testing.T) {
 }
 
 func TestScratchpadClear(t *testing.T) {
+	// Verifies that Clear removes a key so it returns empty on the next Read.
 	s := testScratchpad(t)
 
 	s.Write("test", "temp", "temporary data")
@@ -74,15 +78,16 @@ func TestScratchpadClear(t *testing.T) {
 }
 
 func TestScratchpadClearNonexistent(t *testing.T) {
+	// Verifies that clearing a key that does not exist is a no-op and does not return an error.
 	s := testScratchpad(t)
 
-	// Should not error
 	if err := s.Clear("test", "nonexistent"); err != nil {
 		t.Fatalf("Clear nonexistent: %v", err)
 	}
 }
 
 func TestScratchpadAll(t *testing.T) {
+	// Verifies that All returns all keys for an agent in alphabetical order.
 	s := testScratchpad(t)
 
 	s.Write("test", "alpha", "first")
@@ -104,6 +109,7 @@ func TestScratchpadAll(t *testing.T) {
 }
 
 func TestScratchpadAllEmpty(t *testing.T) {
+	// Verifies that All returns an empty (not nil) slice when no entries exist for the agent.
 	s := testScratchpad(t)
 
 	entries, err := s.All("test")
@@ -116,6 +122,7 @@ func TestScratchpadAllEmpty(t *testing.T) {
 }
 
 func TestScratchpadMultipleKeys(t *testing.T) {
+	// Verifies that multiple keys are stored independently and clearing one does not affect the others.
 	s := testScratchpad(t)
 
 	s.Write("test", "task1", "working on auth")
@@ -144,6 +151,7 @@ func TestScratchpadMultipleKeys(t *testing.T) {
 }
 
 func TestScratchpadAgentIsolation(t *testing.T) {
+	// Verifies that different agents using the same key name do not see each other's data.
 	s := testScratchpad(t)
 
 	s.Write("agent1", "key1", "agent 1 data")
@@ -170,6 +178,7 @@ func TestScratchpadAgentIsolation(t *testing.T) {
 }
 
 func TestScratchpadBusyTimeout(t *testing.T) {
+	// Verifies that the SQLite connection is configured with a 5-second busy timeout to avoid immediate lock failures under contention.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, err := NewScratchpad(dbPath)
 	if err != nil {
@@ -189,6 +198,7 @@ func TestScratchpadBusyTimeout(t *testing.T) {
 
 
 func TestScratchpadList(t *testing.T) {
+	// Verifies that List returns metadata (key, size, updated timestamp) for each entry in alphabetical order, without content.
 	s := testScratchpad(t)
 
 	s.Write("test", "alpha", "short")
@@ -218,6 +228,7 @@ func TestScratchpadList(t *testing.T) {
 }
 
 func TestScratchpadListEmpty(t *testing.T) {
+	// Verifies that List returns an empty slice (not nil) when no entries exist for the agent.
 	s := testScratchpad(t)
 
 	entries, err := s.List("test")

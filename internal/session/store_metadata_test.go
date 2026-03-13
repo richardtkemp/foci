@@ -11,6 +11,8 @@ import (
 )
 
 func TestCreatedAtNewSession(t *testing.T) {
+	// Proves that CreatedAt returns "n/a" before any messages are written and a
+	// valid RFC3339 timestamp after the first append.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -33,6 +35,8 @@ func TestCreatedAtNewSession(t *testing.T) {
 }
 
 func TestCreatedAtPreservedThroughReplace(t *testing.T) {
+	// Proves that the original creation timestamp survives a Replace (compaction)
+	// operation and is unchanged in the resulting file.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -58,6 +62,8 @@ func TestCreatedAtPreservedThroughReplace(t *testing.T) {
 }
 
 func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
+	// Proves that the first line of a new session file is a session_meta record
+	// with a non-empty created_at field, by inspecting the raw JSONL on disk.
 	dir := t.TempDir()
 	s := NewStore(dir)
 	key := "test/imain/1000000000"
@@ -88,6 +94,8 @@ func TestCreatedAtWrittenOnFirstAppend(t *testing.T) {
 }
 
 func TestCreatedAtPreservedAfterRestart(t *testing.T) {
+	// Proves that CreatedAt reads the persisted value from disk on a fresh store
+	// instance, meaning the timestamp survives process restart.
 	dir := t.TempDir()
 	key := "test/imain/1000000000"
 
@@ -108,6 +116,8 @@ func TestCreatedAtPreservedAfterRestart(t *testing.T) {
 }
 
 func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
+	// Proves that CreatedAt returns the value embedded in the session_meta record,
+	// not the file's modification time — it's stable even when mtime changes.
 	dir := t.TempDir()
 	key := "test/imain/1000000000"
 
@@ -132,8 +142,9 @@ func TestCreatedAtPreservedWithChangedMtime(t *testing.T) {
 	}
 }
 
-// TestLastActivity tests the LastActivity function
 func TestLastActivity(t *testing.T) {
+	// Proves that LastActivity returns a valid RFC3339 timestamp after a message
+	// has been written to the session file.
 	s := NewStore(t.TempDir())
 	key := "test/c123/1000000000"
 
@@ -152,8 +163,8 @@ func TestLastActivity(t *testing.T) {
 	}
 }
 
-// TestLastActivity_Missing tests LastActivity with a non-existent session
 func TestLastActivity_Missing(t *testing.T) {
+	// Proves that LastActivity returns "n/a" when the session file does not exist.
 	s := NewStore(t.TempDir())
 	key := "test/c999/1000000000"
 
@@ -166,8 +177,9 @@ func TestLastActivity_Missing(t *testing.T) {
 	}
 }
 
-// TestLastActivity_InvalidKey tests LastActivity with an invalid key
 func TestLastActivity_InvalidKey(t *testing.T) {
+	// Proves that LastActivity returns "n/a" for a malformed key that cannot be
+	// resolved to a valid file path.
 	s := NewStore(t.TempDir())
 
 	// Try with invalid key (missing parts)

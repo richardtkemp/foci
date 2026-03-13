@@ -29,6 +29,7 @@ func testIndex(t *testing.T) (*Index, string) {
 }
 
 func TestNewIndex(t *testing.T) {
+	// Verifies that NewIndex returns a usable index with a non-nil database handle.
 	idx, _ := testIndex(t)
 	if idx.db == nil {
 		t.Fatal("db should not be nil")
@@ -36,6 +37,7 @@ func TestNewIndex(t *testing.T) {
 }
 
 func TestReindex(t *testing.T) {
+	// Verifies that Reindex scans markdown files from a source directory and makes them searchable with the correct source tag.
 	idx, memDir := testIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The Go programming language is great for systems work."), 0644)
@@ -58,6 +60,7 @@ func TestReindex(t *testing.T) {
 }
 
 func TestReindexIdempotent(t *testing.T) {
+	// Verifies that calling Reindex twice does not produce duplicate search results for the same file.
 	idx, memDir := testIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("unique content for testing"), 0644)
@@ -75,6 +78,7 @@ func TestReindexIdempotent(t *testing.T) {
 }
 
 func TestReindexSkipsNonMarkdown(t *testing.T) {
+	// Verifies that Reindex only indexes .md files, ignoring other file types such as JSON.
 	idx, memDir := testIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("markdown content here"), 0644)
@@ -95,6 +99,7 @@ func TestReindexSkipsNonMarkdown(t *testing.T) {
 }
 
 func TestIndexConversation(t *testing.T) {
+	// Verifies that IndexConversation stores messages so they are searchable and tagged with the "conversation" source.
 	idx, _ := testIndex(t)
 
 	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
@@ -115,6 +120,7 @@ func TestIndexConversation(t *testing.T) {
 }
 
 func TestMemoryWeightedHigher(t *testing.T) {
+	// Verifies that memory file results rank above conversation results when both contain matching content, due to the higher source weight.
 	idx, memDir := testIndex(t)
 
 	// Add same content as both memory and conversation
@@ -137,6 +143,7 @@ func TestMemoryWeightedHigher(t *testing.T) {
 }
 
 func TestConversationWeightConfigurable(t *testing.T) {
+	// Verifies that a custom conversation weight is applied correctly, keeping memory results above conversation results in ranking.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "memory.db")
 
@@ -177,6 +184,7 @@ func TestConversationWeightConfigurable(t *testing.T) {
 }
 
 func TestSearchNoMatches(t *testing.T) {
+	// Verifies that Search returns an empty slice (not an error) when no documents match the query.
 	idx, memDir := testIndex(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("nothing relevant here"), 0644)
 	idx.Reindex()
@@ -191,6 +199,7 @@ func TestSearchNoMatches(t *testing.T) {
 }
 
 func TestSearchEmptyIndex(t *testing.T) {
+	// Verifies that searching an empty index returns zero results without error.
 	idx, _ := testIndex(t)
 
 	results, err := idx.Search("anything", "", nil)
@@ -203,6 +212,7 @@ func TestSearchEmptyIndex(t *testing.T) {
 }
 
 func TestSearchSubdirectories(t *testing.T) {
+	// Verifies that Reindex recurses into subdirectories and that result paths are relative to the source root.
 	idx, memDir := testIndex(t)
 
 	sub := filepath.Join(memDir, "2024")
@@ -224,12 +234,13 @@ func TestSearchSubdirectories(t *testing.T) {
 }
 
 func TestIndexConversationEmpty(t *testing.T) {
+	// Verifies that IndexConversation with empty text is a no-op and does not panic or error.
 	idx, _ := testIndex(t)
-	// Should not panic or error on empty text
 	idx.IndexConversation("", "agent:main:main")
 }
 
 func TestPorterStemming(t *testing.T) {
+	// Verifies that the FTS5 Porter stemmer matches a root form query against morphological variants in indexed content.
 	idx, memDir := testIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The programmer was programming a programmatic solution"), 0644)
@@ -246,6 +257,7 @@ func TestPorterStemming(t *testing.T) {
 }
 
 func TestMultiSourceIndexing(t *testing.T) {
+	// Verifies that documents from multiple named source directories are all indexed and tagged with their correct source name.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "memory.db")
 
@@ -292,6 +304,7 @@ func TestMultiSourceIndexing(t *testing.T) {
 }
 
 func TestWeightedRanking(t *testing.T) {
+	// Verifies that identical content from a higher-weight source ranks above the same content from a lower-weight source.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "memory.db")
 
@@ -336,6 +349,7 @@ func TestWeightedRanking(t *testing.T) {
 }
 
 func TestBackwardCompatSingleDir(t *testing.T) {
+	// Verifies that a single-source configuration indexes and returns results correctly, covering the common single-directory deployment.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "memory.db")
 	memDir := filepath.Join(dir, "memory")
@@ -371,6 +385,7 @@ func TestBackwardCompatSingleDir(t *testing.T) {
 }
 
 func TestSearchRecency(t *testing.T) {
+	// Verifies that "newest" and "oldest" sort modes order results by file modification time rather than relevance.
 	idx, memDir := testIndex(t)
 
 	// Create files with different mtimes
@@ -422,6 +437,7 @@ func TestSearchRecency(t *testing.T) {
 }
 
 func TestSearchRelevanceDefault(t *testing.T) {
+	// Verifies that both an empty sort string and the explicit "relevance" sort value return matching results.
 	idx, memDir := testIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Go programming language features"), 0644)
@@ -447,6 +463,7 @@ func TestSearchRelevanceDefault(t *testing.T) {
 }
 
 func TestMetaTablePopulated(t *testing.T) {
+	// Verifies that Reindex populates the memory_meta table with the correct source tag and a non-zero mtime for each indexed file.
 	idx, memDir := testIndex(t)
 
 	testFile := filepath.Join(memDir, "meta_test.md")
@@ -474,6 +491,7 @@ func TestMetaTablePopulated(t *testing.T) {
 }
 
 func TestStartSweep(t *testing.T) {
+	// Verifies that StartSweep periodically reindexes source directories so new files become searchable without an explicit Reindex call.
 	idx, memDir := testIndex(t)
 
 	// Write a file but don't call Reindex — the sweep should pick it up.
@@ -497,6 +515,7 @@ func TestStartSweep(t *testing.T) {
 }
 
 func TestStartSweepDisabledByClose(t *testing.T) {
+	// Verifies that closing the index stops the sweep goroutine so files written after Close are never indexed.
 	idx, memDir := testIndex(t)
 
 	// Start sweep with a long initial delay, then close immediately.
@@ -526,6 +545,7 @@ func TestStartSweepDisabledByClose(t *testing.T) {
 }
 
 func TestIndexBusyTimeout(t *testing.T) {
+	// Verifies that the SQLite connection is configured with a 5-second busy timeout to avoid immediate lock failures under contention.
 	idx, _ := testIndex(t)
 
 	var timeout int
