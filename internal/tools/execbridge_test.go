@@ -43,6 +43,7 @@ func testRegistry() *Registry {
 }
 
 func TestExecBridgeLifecycle(t *testing.T) {
+	// Verifies that NewExecBridge creates the socket and funcs files, and that Close removes them cleanly.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -70,6 +71,7 @@ func TestExecBridgeLifecycle(t *testing.T) {
 }
 
 func TestExecBridgeCallTool(t *testing.T) {
+	// Verifies that calling an exported tool via the bridge socket returns the correct result.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -88,6 +90,7 @@ func TestExecBridgeCallTool(t *testing.T) {
 }
 
 func TestExecBridgeToolError(t *testing.T) {
+	// Verifies that when a tool returns an error, the bridge propagates it as an error field in the response.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -106,6 +109,7 @@ func TestExecBridgeToolError(t *testing.T) {
 }
 
 func TestExecBridgePrivateToolRejected(t *testing.T) {
+	// Verifies that tools with ExecExport:false cannot be called through the bridge socket.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -124,6 +128,7 @@ func TestExecBridgePrivateToolRejected(t *testing.T) {
 }
 
 func TestExecBridgeUnknownTool(t *testing.T) {
+	// Verifies that requesting a tool name not registered in the registry returns an "unknown tool" error.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -142,6 +147,7 @@ func TestExecBridgeUnknownTool(t *testing.T) {
 }
 
 func TestExecBridgeInvalidJSON(t *testing.T) {
+	// Verifies that malformed JSON sent to the bridge socket returns an error rather than panicking or hanging.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -160,6 +166,7 @@ func TestExecBridgeInvalidJSON(t *testing.T) {
 }
 
 func TestExecBridgeShellFuncsContent(t *testing.T) {
+	// Verifies that the generated shell funcs file includes exported tools and excludes private tools.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -219,6 +226,7 @@ func TestExecBridgeSessionKeyPropagated(t *testing.T) {
 }
 
 func TestExecBridgeConcurrentCalls(t *testing.T) {
+	// Verifies that multiple goroutines can call tools through the bridge simultaneously without data races or corruption.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -251,6 +259,7 @@ func TestExecBridgeConcurrentCalls(t *testing.T) {
 }
 
 func TestExecBridgeUniquePaths(t *testing.T) {
+	// Verifies that two bridges created concurrently get distinct socket paths so they don't collide.
 	t.Parallel()
 	r := testRegistry()
 	b1, err := NewExecBridge(r, context.Background())
@@ -271,6 +280,7 @@ func TestExecBridgeUniquePaths(t *testing.T) {
 }
 
 func TestStripHTTPHeaders(t *testing.T) {
+	// Verifies that stripHTTPHeaders removes the status line and headers, returning only the body, across multiple response shapes.
 	t.Parallel()
 	tests := []struct {
 		name  string
@@ -319,6 +329,7 @@ func TestStripHTTPHeaders(t *testing.T) {
 }
 
 func TestToolParamKeys(t *testing.T) {
+	// Verifies that toolParamKeys extracts and alphabetically sorts property names from a tool's JSON schema.
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -358,6 +369,7 @@ func TestToolParamKeys(t *testing.T) {
 }
 
 func TestShellFuncsContainJSONGuard(t *testing.T) {
+	// Verifies that the generated shell funcs file includes the _foci_json guard helper and that exported tools reference it with their valid parameter keys.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -527,6 +539,7 @@ func TestExecBridgeShellFuncIncludeHeadersFlag(t *testing.T) {
 }
 
 func TestExecBridgeTmuxShellFunc(t *testing.T) {
+	// Verifies that the generated foci_tmux shell function handles all expected subcommands and supports stdin piping for send.
 	t.Parallel()
 	r := NewRegistry()
 	r.Register(&Tool{
@@ -571,6 +584,7 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 }
 
 func TestFinalizeShellDescription(t *testing.T) {
+	// Verifies that FinalizeShellDescription appends an alphabetically-sorted list of exported tool names to the shell tool description, excluding non-exported tools, and is idempotent.
 	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{
@@ -626,6 +640,7 @@ func TestFinalizeShellDescription(t *testing.T) {
 }
 
 func TestExportedNamesAlphabetical(t *testing.T) {
+	// Verifies that ExportedNames returns only ExecExport:true tools in alphabetical order with the foci_ prefix.
 	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{Name: "zebra", ExecExport: true, Parameters: json.RawMessage(`{}`)})
@@ -645,8 +660,6 @@ func TestExportedNamesAlphabetical(t *testing.T) {
 	}
 }
 
-// TestExecExportToolsHaveShellFunc verifies that every tool with ExecExport:true
-// produces a non-empty shell function via generateShellFunc.
 func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	// All tools that set ExecExport:true in production code.
 	t.Parallel()
@@ -681,10 +694,6 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	}
 }
 
-// TestAllToolsExportedOrSkipped ensures every known tool is either exported
-// to the exec bridge (ExecExport:true) or explicitly listed in the skip
-// list below with a reason. When a new tool is added, this test fails until
-// the developer either exports it or adds it to the skip list.
 func TestAllToolsExportedOrSkipped(t *testing.T) {
 	// Tools that intentionally do NOT have ExecExport:true.
 	t.Parallel()

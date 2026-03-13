@@ -19,8 +19,8 @@ func testDeps(agents []AgentInfo, preFlightFn func(string) []string) AgentNewDep
 	}
 }
 
-// Verifies the full wizard flow: name → model → character mode, collecting all values correctly.
 func TestAgentWizardHappyPath(t *testing.T) {
+	// Verifies the full wizard flow: name → model → character mode, collecting all values correctly.
 	deps := testDeps(
 		[]AgentInfo{{ID: "existing"}},
 		nil, // no pre-flight warnings
@@ -70,8 +70,8 @@ func TestAgentWizardHappyPath(t *testing.T) {
 	}
 }
 
-// Verifies that empty or unparseable names are rejected.
 func TestAgentWizardInvalidName(t *testing.T) {
+	// Verifies that empty or unparseable names are rejected.
 	deps := testDeps(nil, nil) // no agents, no pre-flight
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
@@ -98,8 +98,8 @@ func TestAgentWizardInvalidName(t *testing.T) {
 	}
 }
 
-// Verifies that a name matching an existing agent's ID is rejected.
 func TestAgentWizardDuplicateName(t *testing.T) {
+	// Verifies that a name matching an existing agent's ID is rejected.
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil) // no pre-flight
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
@@ -113,8 +113,8 @@ func TestAgentWizardDuplicateName(t *testing.T) {
 	}
 }
 
-// Verifies that the ID is correctly slugified from the display name.
 func TestAgentWizardSlugFromName(t *testing.T) {
+	// Verifies that the ID is correctly slugified from the display name.
 	deps := testDeps(nil, nil) // no pre-flight
 	w := newAgentWizard(deps)
 	var captured *agentWizard
@@ -135,8 +135,8 @@ func TestAgentWizardSlugFromName(t *testing.T) {
 	}
 }
 
-// Verifies that pre-flight warnings appear after the model step.
 func TestAgentWizardPreFlightWarning(t *testing.T) {
+	// Verifies that pre-flight warnings appear after the model step.
 	deps := testDeps(nil, func(agentID string) []string {
 		return []string{"Secret `platform." + agentID + "` not found"}
 	})
@@ -158,8 +158,8 @@ func TestAgentWizardPreFlightWarning(t *testing.T) {
 	}
 }
 
-// Verifies no warning when pre-flight returns nothing.
 func TestAgentWizardNoPreFlightWarning(t *testing.T) {
+	// Verifies no warning when pre-flight returns nothing.
 	deps := testDeps(nil, func(agentID string) []string { return nil })
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
@@ -175,8 +175,8 @@ func TestAgentWizardNoPreFlightWarning(t *testing.T) {
 	}
 }
 
-// Verifies model alias resolution.
 func TestAgentWizardModelResolution(t *testing.T) {
+	// Verifies model alias resolution.
 	tests := []struct {
 		input string
 		want  string
@@ -197,8 +197,8 @@ func TestAgentWizardModelResolution(t *testing.T) {
 	}
 }
 
-// Verifies copying character files from an existing agent.
 func TestAgentWizardCharModeCopy(t *testing.T) {
+	// Verifies copying character files from an existing agent.
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)
 	w := newAgentWizard(deps)
 	var captured *agentWizard
@@ -220,8 +220,8 @@ func TestAgentWizardCharModeCopy(t *testing.T) {
 	_ = resp
 }
 
-// Verifies that copying from a nonexistent agent is rejected.
 func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
+	// Verifies that copying from a nonexistent agent is rejected.
 	deps := testDeps([]AgentInfo{{ID: "clutch"}}, nil)
 	w := newAgentWizard(deps)
 	w.createFn = func(wiz *agentWizard) (string, error) { return "ok", nil }
@@ -238,8 +238,8 @@ func TestAgentWizardCharModeCopyNonexistent(t *testing.T) {
 	}
 }
 
-// Verifies the openclaw character mode.
 func TestAgentWizardCharModeOpenclaw(t *testing.T) {
+	// Verifies the openclaw character mode.
 	deps := testDeps(nil, nil)
 	w := newAgentWizard(deps)
 	var mode string
@@ -256,8 +256,8 @@ func TestAgentWizardCharModeOpenclaw(t *testing.T) {
 	}
 }
 
-// Verifies blank, defaults (empty input), and invalid character modes.
 func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
+	// Verifies blank, defaults (empty input), and invalid character modes.
 	deps := testDeps(nil, nil)
 
 	// Test "blank"
@@ -301,8 +301,8 @@ func TestAgentWizardCharModeBlankAndDefaults(t *testing.T) {
 	}
 }
 
-// Verifies the full agent creation including workspace, config, and character files.
 func TestCreateWorkspace(t *testing.T) {
+	// Verifies the full agent creation including workspace, config, and character files.
 	tmpDir := t.TempDir()
 
 	// Set up defaults directory
@@ -393,8 +393,8 @@ func TestCreateWorkspace(t *testing.T) {
 	}
 }
 
-// Verifies blank character mode creates empty template files.
 func TestCreateWorkspaceBlank(t *testing.T) {
+	// Verifies blank character mode creates empty template files.
 	tmpDir := t.TempDir()
 
 	configPath := filepath.Join(tmpDir, "foci.toml")
@@ -438,8 +438,8 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 	}
 }
 
-// Verifies the wizard registry routes messages correctly and cleans up when done.
 func TestRegistryHandleMessage(t *testing.T) {
+	// Verifies the wizard registry routes messages correctly and cleans up when done.
 	reg := NewRegistry()
 
 	// No wizard: should pass through
@@ -480,8 +480,8 @@ func TestRegistryHandleMessage(t *testing.T) {
 	}
 }
 
-// Verifies /cancel clears the active wizard.
 func TestRegistryHandleMessageCancel(t *testing.T) {
+	// Verifies /cancel clears the active wizard.
 	reg := NewRegistry()
 	w := &testWizard{responses: []string{"should not see"}, doneAt: 99}
 	reg.SetWizard(w)
@@ -500,8 +500,8 @@ func TestRegistryHandleMessageCancel(t *testing.T) {
 	}
 }
 
-// Verifies /stop also clears the active wizard.
 func TestRegistryHandleMessageStop(t *testing.T) {
+	// Verifies /stop also clears the active wizard.
 	reg := NewRegistry()
 	w := &testWizard{responses: []string{"should not see"}, doneAt: 99}
 	reg.SetWizard(w)
@@ -515,8 +515,8 @@ func TestRegistryHandleMessageStop(t *testing.T) {
 	}
 }
 
-// Verifies the /agents new subcommand starts the wizard with the correct prompt.
 func TestAgentsNewSubcommand(t *testing.T) {
+	// Verifies the /agents new subcommand starts the wizard with the correct prompt.
 	reg := NewRegistry()
 	deps := &AgentNewDeps{
 		ConfigPath:  "/tmp/test.toml",
@@ -543,8 +543,8 @@ func TestAgentsNewSubcommand(t *testing.T) {
 	}
 }
 
-// Verifies wizard is unavailable when deps are nil.
 func TestAgentsNewDisabled(t *testing.T) {
+	// Verifies wizard is unavailable when deps are nil.
 	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, nil, nil)
 
 	result, err := cmd.Execute(nil, "new")

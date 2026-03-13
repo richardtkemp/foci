@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// TestHTTPRequestBasicGET verifies basic HTTP GET request with JSON response
 func TestHTTPRequestBasicGET(t *testing.T) {
+	// Proves that a basic GET request succeeds, returns HTTP 200, and includes the JSON response body in the result.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -41,8 +41,8 @@ func TestHTTPRequestBasicGET(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestQueryParams verifies query parameter handling
 func TestHTTPRequestQueryParams(t *testing.T) {
+	// Proves that query parameters passed via the "query" map are correctly appended to the URL and received by the server.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "q=%s&page=%s", r.URL.Query().Get("q"), r.URL.Query().Get("page"))
@@ -71,8 +71,8 @@ func TestHTTPRequestQueryParams(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestCustomTimeout verifies custom timeout parameter is respected
 func TestHTTPRequestCustomTimeout(t *testing.T) {
+	// Proves that a request with an explicit timeout parameter completes normally when the server responds within the limit.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "ok")
@@ -94,8 +94,8 @@ func TestHTTPRequestCustomTimeout(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestTimeoutCap verifies timeout enforcement against slow servers
 func TestHTTPRequestTimeoutCap(t *testing.T) {
+	// Proves that a 1-second timeout causes a deadline-exceeded error when the server takes 1.5 seconds to respond.
 	t.Parallel()
 	// A slow server that takes 1.5 seconds
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -55,8 +55,8 @@ func parseMultipartRequest(t *testing.T, r *http.Request) (fields map[string]str
 	return
 }
 
-// TestHTTPRequestMultipartSingleFile verifies single file upload
 func TestHTTPRequestMultipartSingleFile(t *testing.T) {
+	// Proves that a single file upload sends a valid multipart/form-data body with the correct field name, filename, and file contents.
 	t.Parallel()
 	var receivedFields map[string]string
 	var receivedFiles map[string]struct {
@@ -104,8 +104,8 @@ func TestHTTPRequestMultipartSingleFile(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartFileAndFormFields verifies file upload with form fields
 func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
+	// Proves that form_fields and files are combined into a single multipart request with both the file part and all text fields received correctly.
 	t.Parallel()
 	var receivedFields map[string]string
 	var receivedFiles map[string]struct {
@@ -152,8 +152,8 @@ func TestHTTPRequestMultipartFileAndFormFields(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartMultipleFiles verifies multiple file upload
 func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
+	// Proves that uploading two files in a single request sends both as separate multipart parts with correct names and content.
 	t.Parallel()
 	var receivedFiles map[string]struct {
 		Filename string
@@ -196,8 +196,8 @@ func TestHTTPRequestMultipartMultipleFiles(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartBodyAndFilesConflict verifies body + files is rejected
 func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
+	// Proves that specifying both "body" and "files" is rejected with a mutually exclusive error, since they would produce conflicting request bodies.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 
@@ -219,8 +219,8 @@ func TestHTTPRequestMultipartBodyAndFilesConflict(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartFileMissing verifies missing files are rejected
 func TestHTTPRequestMultipartFileMissing(t *testing.T) {
+	// Proves that referencing a nonexistent file path in the files list returns an error rather than silently skipping the upload.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -240,9 +240,8 @@ func TestHTTPRequestMultipartFileMissing(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartFileTooLarge verifies oversized files are rejected
 func TestHTTPRequestMultipartFileTooLarge(t *testing.T) {
-	// Create a file that reports > 50MB via stat
+	// Proves that a file exceeding the 50MB upload limit is rejected with an error message mentioning the size cap.
 	t.Parallel()
 	// We can't easily make a real 50MB file in tests, so test the buildMultipartBody directly
 	dir := t.TempDir()
@@ -274,8 +273,8 @@ func TestHTTPRequestMultipartFileTooLarge(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartFormFieldsSecrets verifies secrets in form fields are resolved
 func TestHTTPRequestMultipartFormFieldsSecrets(t *testing.T) {
+	// Proves that secret templates in form_fields are resolved before sending, so the server receives the actual secret value rather than the template string.
 	t.Parallel()
 	var receivedFields map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -319,8 +318,8 @@ allowed_hosts = ["%s"]
 	}
 }
 
-// TestHTTPRequestMultipartFilenameOverride verifies custom filename in upload
 func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
+	// Proves that the "filename" field overrides the actual file's basename in the multipart Content-Disposition, so the server sees the custom name.
 	t.Parallel()
 	var receivedFiles map[string]struct {
 		Filename string
@@ -356,8 +355,8 @@ func TestHTTPRequestMultipartFilenameOverride(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestFormFieldsWithoutFiles verifies form_fields requires files
 func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
+	// Proves that specifying form_fields without any files is rejected, since form_fields only makes sense in a multipart context.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -377,9 +376,8 @@ func TestHTTPRequestFormFieldsWithoutFiles(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartCustomSizeLimit verifies file size limit enforcement
 func TestHTTPRequestMultipartCustomSizeLimit(t *testing.T) {
-	// Set a small custom limit (1KB) and verify it's enforced
+	// Proves that a custom 1KB size limit is enforced and a 2KB file is rejected with an "exceeds" error.
 	t.Parallel()
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "small.bin")
@@ -404,9 +402,8 @@ func TestHTTPRequestMultipartCustomSizeLimit(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestMultipartCustomSizeLimitAllows verifies larger size limit works
 func TestHTTPRequestMultipartCustomSizeLimitAllows(t *testing.T) {
-	// Set a 100MB limit — the file (2KB) should be accepted
+	// Proves that a generous 100MB size limit allows a small file to upload successfully without error.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"ok":true}`)

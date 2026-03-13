@@ -13,7 +13,12 @@ import (
 )
 
 func TestAgentCompactionIntegration(t *testing.T) {
+	// Integration test suite for session compaction, covering the full compaction cycle,
+	// scratchpad inclusion, message preservation, notifications, suppression, and per-session
+	// model-based context-limit selection.
 	t.Run("basic", func(t *testing.T) {
+		// Proves the full compaction lifecycle: turns accumulate until the token threshold
+		// is crossed, then the session is rotated and a summary+handoff replaces the history.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 		sessionKey := "test/icompact/1000000000"
@@ -64,6 +69,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 
 	t.Run("scratchpad", func(t *testing.T) {
+		// Proves that scratchpad entries are included in the compaction handoff message,
+		// so the agent retains important noted context across a compaction boundary.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
@@ -115,6 +122,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 
 	t.Run("preserve", func(t *testing.T) {
+		// Proves that when a preserve count is configured, the last N messages survive
+		// compaction verbatim and role alternation is maintained in the resulting session.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 		env.compactor.WithConfig(4096, 4, 4) // preserve last 4 messages
@@ -194,6 +203,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 
 	t.Run("notify", func(t *testing.T) {
+		// Proves that CompactionNotifyFunc is called exactly twice per compaction:
+		// once at the start ("Compacting...") and once at the end with a message count.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
@@ -219,6 +230,8 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 
 	t.Run("no_compact", func(t *testing.T) {
+		// Proves that SetSessionNoCompact suppresses compaction even when the token
+		// threshold is exceeded, leaving the session history intact and emitting no warnings.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 

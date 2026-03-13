@@ -5,8 +5,10 @@ import (
 	"testing"
 )
 
-// TestAllowedAgentsWhitelist verifies allowed_agents whitelist enforcement.
 func TestAllowedAgentsWhitelist(t *testing.T) {
+	// Proves that allowed_agents acts as an allowlist: only
+	// agents explicitly named can read the restricted secret, while unrestricted sections
+	// remain accessible to everyone.
 	path := writeSecrets(t, `
 [shared_api]
 token = "shared_token"
@@ -47,8 +49,10 @@ key = "open_key"
 	}
 }
 
-// TestDeniedAgentsBlacklist verifies denied_agents blacklist enforcement.
 func TestDeniedAgentsBlacklist(t *testing.T) {
+	// Proves that denied_agents acts as a denylist: the denied
+	// agent cannot read the restricted secret while all others can, and unrestricted
+	// sections remain visible to everyone including the denied agent.
 	path := writeSecrets(t, `
 [internal]
 token = "internal_token"
@@ -85,8 +89,9 @@ key = "public_key"
 	}
 }
 
-// TestBothAllowedAndDeniedError verifies error when both are specified.
 func TestBothAllowedAndDeniedError(t *testing.T) {
+	// Proves that specifying both allowed_agents and
+	// denied_agents on the same section is rejected at load time with a clear error.
 	path := writeSecrets(t, `
 [broken]
 token = "val"
@@ -102,8 +107,10 @@ denied_agents = ["bob"]
 	}
 }
 
-// TestAgentOverrideSurvivesDeny verifies agent overrides work even if denied in global.
 func TestAgentOverrideSurvivesDeny(t *testing.T) {
+	// Proves that an agent's own per-agent section can
+	// contain keys from a globally denied section — the override is visible, but the
+	// denied global key in the same section is still hidden.
 	path := writeSecrets(t, `
 [custom]
 global_key = "global_val"
@@ -129,8 +136,9 @@ agent_key = "alice_val"
 	}
 }
 
-// TestNoRestrictionsDefault verifies sections with no restrictions are visible to all.
 func TestNoRestrictionsDefault(t *testing.T) {
+	// Proves that a section without any agent restriction fields
+	// is accessible by every agent, including those with no dedicated per-agent section.
 	path := writeSecrets(t, `
 [unrestricted]
 token = "token_val"
@@ -152,8 +160,10 @@ key = "val"
 	}
 }
 
-// TestHasAgentRestrictions verifies checking if store has restrictions.
 func TestHasAgentRestrictions(t *testing.T) {
+	// Proves that HasAgentRestrictions returns false when no
+	// sections carry any restriction fields, and true when any section uses either
+	// allowed_agents or denied_agents.
 	pathNoRestrict := writeSecrets(t, `
 [open]
 key = "val"
@@ -184,8 +194,10 @@ denied_agents = ["bob"]
 	}
 }
 
-// TestSavePreservesAgentRestrictions verifies restrictions survive save/load.
 func TestSavePreservesAgentRestrictions(t *testing.T) {
+	// Proves that both allowed_agents and denied_agents
+	// fields survive a save/load roundtrip: allowed agents can still access their secrets
+	// and denied agents remain blocked after reload.
 	path := writeSecrets(t, `
 [restricted_allow]
 token = "token_val"
@@ -219,8 +231,10 @@ generic = "generic_val"
 	}
 }
 
-// TestAllowedAgentsHostsFiltered verifies allowed_agents filters allowed_hosts.
 func TestAllowedAgentsHostsFiltered(t *testing.T) {
+	// Proves that AllowedHosts respects agent restrictions:
+	// an agent in the allowlist sees the hosts, while an agent not in the allowlist gets
+	// nil as if the secret doesn't exist for them.
 	path := writeSecrets(t, `
 [myapi]
 token = "sk-test"

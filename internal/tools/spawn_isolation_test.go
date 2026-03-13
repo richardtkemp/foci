@@ -12,6 +12,7 @@ import (
 )
 
 func TestSpawnRawCreatesTempDir(t *testing.T) {
+	// Proves that raw context spawns create an isolated temp directory for file operations.
 	t.Parallel()
 	var spawnTempDir string
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -44,6 +45,8 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 }
 
 func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
+	// Proves that files written by the model during a raw spawn go into the isolated temp dir,
+	// and that the result includes a file list pointing to the temp dir.
 	t.Parallel()
 	callCount := 0
 	var spawnTempDir string
@@ -107,6 +110,8 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 }
 
 func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
+	// Proves that the sandbox rejects write attempts to absolute paths outside the temp dir,
+	// preventing the model from writing to arbitrary filesystem locations.
 	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -152,6 +157,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 }
 
 func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
+	// Proves that path-traversal attempts (../ sequences) in write paths are blocked by the sandbox.
 	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -197,6 +203,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 }
 
 func TestSpawnRawFileListMultiple(t *testing.T) {
+	// Proves that the result includes all files written during the spawn along with their sizes.
 	t.Parallel()
 	callCount := 0
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {

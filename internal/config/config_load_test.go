@@ -10,6 +10,8 @@ import (
 )
 
 func TestLoadFullConfig(t *testing.T) {
+	// Proves that a config file with multiple sections (agent, telegram, sessions,
+	// http, logging) is loaded correctly with all values parsed into their structs.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -79,6 +81,9 @@ api_file = "/tmp/api.jsonl"
 }
 
 func TestLoadDefaults(t *testing.T) {
+	// Proves that a minimal config with only an agent ID produces correct default
+	// values for model, compaction threshold, HTTP port/bind, logging level,
+	// log file paths, and usage warning name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -124,6 +129,8 @@ id = "test"
 }
 
 func TestLoadCustomManaName(t *testing.T) {
+	// Proves that a custom usage_warnings name and threshold list are loaded from
+	// the [usage_warnings] section and override the default "mana" name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -150,6 +157,8 @@ thresholds = [50, 25, 10]
 }
 
 func TestLoadCustomCommands(t *testing.T) {
+	// Proves that [[commands]] blocks are loaded into the Commands slice with all
+	// fields (name, description, script, timeout) correctly parsed.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -189,7 +198,8 @@ timeout = 30
 }
 
 func TestLoadSingleAgentBackwardCompat(t *testing.T) {
-	// Old [agent] format should populate Agents slice
+	// Proves that the legacy [agent] (singular) format still works, populating the
+	// Agents slice with one entry and mirroring it in cfg.Agent for backward compat.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -223,6 +233,9 @@ workspace = "/tmp/workspace"
 }
 
 func TestLoadMultiAgent(t *testing.T) {
+	// Proves that multiple [[agents]] entries are loaded into the Agents slice with
+	// correct per-agent values, that defaults are applied to agents missing fields,
+	// and that cfg.Agent mirrors the first agent.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -289,6 +302,9 @@ allowed_users = ["111"]
 }
 
 func TestLoadPerAgentUsageWarnings(t *testing.T) {
+	// Proves that per-agent [agents.usage_warnings] overrides the global thresholds
+	// for that agent, while agents without an override have an empty threshold list,
+	// and the global configuration remains unaffected.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -328,7 +344,8 @@ id = "other"
 }
 
 func TestLoadAgentsIgnoresLegacyWhenBothPresent(t *testing.T) {
-	// If both [agent] and [[agents]] are present, [[agents]] wins
+	// Proves that when both legacy [agent] and new [[agents]] are present, the
+	// [[agents]] format takes precedence and the [agent] block is ignored.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -358,6 +375,8 @@ id = "used"
 }
 
 func TestUnknownKeysDetected(t *testing.T) {
+	// Proves that UnknownKeys returns both unrecognized fields within known sections
+	// and entire unknown sections, as dotted paths sorted for deterministic comparison.
 	tomlData := `
 [agent]
 id = "main"
@@ -393,7 +412,8 @@ some_key = "value"
 }
 
 func TestLoadWarnsUnknownKeys(t *testing.T) {
-	// Load should succeed even with unknown keys (just warns)
+	// Proves that Load succeeds and returns a valid config even when unknown keys
+	// are present, rather than failing with an error (they are only warned about).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -416,6 +436,7 @@ foo = "bar"
 }
 
 func TestLoadMissingFile(t *testing.T) {
+	// Proves that Load returns an error when the config file does not exist.
 	_, err := Load("/nonexistent/path/foci.toml")
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -423,6 +444,8 @@ func TestLoadMissingFile(t *testing.T) {
 }
 
 func TestLoadInvalidTOML(t *testing.T) {
+	// Proves that Load returns an error when the file contains syntactically
+	// invalid TOML rather than silently returning a zero-value config.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.toml")
 	os.WriteFile(path, []byte("this is not valid toml [[["), 0644)
@@ -433,9 +456,10 @@ func TestLoadInvalidTOML(t *testing.T) {
 	}
 }
 
-// TestLoadPlatformConfigMigration verifies that old telegram_* fields are
-// migrated to the new [agents.platforms.telegram] structure at load time.
 func TestLoadPlatformConfigMigration(t *testing.T) {
+	// Proves that legacy telegram_* fields at the agent level are migrated to the
+	// new [agents.platforms.telegram] structure at load time, with all values
+	// (bot, bot_secret, multiball_bots, allowed_users, show_tool_calls) preserved.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -496,9 +520,10 @@ allowed_users = ["789"]
 	}
 }
 
-// TestLoadPlatformConfigNewStyle verifies that new-style [agents.platforms.telegram]
-// config is loaded correctly without migration.
 func TestLoadPlatformConfigNewStyle(t *testing.T) {
+	// Proves that the new-style [agents.platforms.telegram] config block is loaded
+	// directly into Platforms.Telegram without any migration, including stream_output
+	// as a nullable bool.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 

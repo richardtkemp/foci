@@ -11,6 +11,7 @@ import (
 )
 
 func TestSendMessageSuccess(t *testing.T) {
+	// Proves that SendMessage correctly serializes the request, sends it to the endpoint, deserializes the response, and surfaces all response fields (ID, content, usage, stop_reason).
 	var receivedReq *MessageRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +83,7 @@ func TestSendMessageSuccess(t *testing.T) {
 }
 
 func TestSendMessageHeaders(t *testing.T) {
+	// Proves that SendMessage sends the correct HTTP headers: Bearer authorization, anthropic-version, Content-Type, and the oauth beta flag (but not the now-GA prompt-caching flag).
 	var receivedHeaders http.Header
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +131,7 @@ func TestSendMessageHeaders(t *testing.T) {
 }
 
 func TestSendMessageAPIError(t *testing.T) {
+	// Proves that a 4xx HTTP response is surfaced as an *APIError with the correct status code and that IsRateLimit() returns false for non-429 errors.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"max_tokens too large"}}`))
@@ -167,6 +170,7 @@ func TestSendMessageAPIError(t *testing.T) {
 }
 
 func TestSendMessageRateLimit(t *testing.T) {
+	// Proves that a 429 response is surfaced as an *APIError with IsRateLimit() true and that the Retry-After header value is correctly parsed and exposed via RetryAfterSeconds().
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "30")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -206,13 +210,14 @@ func TestSendMessageRateLimit(t *testing.T) {
 
 
 func TestSignalRecoveryNoOp(t *testing.T) {
-	// signalRecovery with nil channel should not panic.
+	// Proves that signalRecovery is safe to call when no recovery channel has been configured — it should be a no-op that does not panic.
 	client := NewClient("test-key")
 	client.signalRecovery() // no-op, no panic
 }
 
 
 func TestSendMessageInvalidJSON(t *testing.T) {
+	// Proves that a 200 response with malformed JSON body returns a descriptive unmarshal error rather than silently returning a zero-value response.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("not valid json{{{"))
@@ -236,6 +241,7 @@ func TestSendMessageInvalidJSON(t *testing.T) {
 }
 
 func TestCountTokensSuccess(t *testing.T) {
+	// Proves that CountTokens sends to the correct endpoint (/v1/messages/count_tokens), properly serializes the request, and returns the token count from the response.
 	var receivedPath string
 	var receivedReq *MessageRequest
 
@@ -276,6 +282,7 @@ func TestCountTokensSuccess(t *testing.T) {
 }
 
 func TestCountTokensAPIError(t *testing.T) {
+	// Proves that CountTokens propagates API errors correctly, returning an *APIError with the right status code on a 400 response.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"bad request"}}`))
@@ -303,6 +310,7 @@ func TestCountTokensAPIError(t *testing.T) {
 }
 
 func TestCountTokensInvalidJSON(t *testing.T) {
+	// Proves that CountTokens returns a descriptive unmarshal error when the server responds with malformed JSON.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("not json{{{"))
@@ -325,6 +333,7 @@ func TestCountTokensInvalidJSON(t *testing.T) {
 }
 
 func TestNewClientDefaults(t *testing.T) {
+	// Proves that NewClient sets the production Anthropic API base URL and stores the provided API key.
 	client := NewClient("my-key")
 	if client.baseURL != "https://api.anthropic.com" {
 		t.Errorf("baseURL = %q", client.baseURL)
@@ -335,6 +344,7 @@ func TestNewClientDefaults(t *testing.T) {
 }
 
 func TestNewClientWithBase(t *testing.T) {
+	// Proves that NewClientWithBase overrides the base URL, enabling tests to point the client at a local mock server.
 	client := NewClientWithBase("http://localhost:8080", "test-key")
 	if client.baseURL != "http://localhost:8080" {
 		t.Errorf("baseURL = %q", client.baseURL)

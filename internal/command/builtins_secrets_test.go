@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestSecretsListTable verifies secrets are displayed in table format with section grouping.
 func TestSecretsListTable(t *testing.T) {
+	// Verifies secrets are displayed in table format with section grouping.
 	store := &mockSecretsStore{
 		data: map[string]string{
 			"anthropic.setup_token":     "x",
@@ -58,8 +58,8 @@ func TestSecretsListTable(t *testing.T) {
 	}
 }
 
-// TestSecretsListEmpty verifies appropriate message for no secrets.
 func TestSecretsListEmpty(t *testing.T) {
+	// Verifies appropriate message for no secrets.
 	store := &mockSecretsStore{data: map[string]string{}}
 	cmd := NewSecretsCommand(store)
 	result, _ := cmd.Execute(context.Background(), "list")
@@ -68,8 +68,8 @@ func TestSecretsListEmpty(t *testing.T) {
 	}
 }
 
-// TestSecretsHostsView verifies viewing allowed hosts for a section.
 func TestSecretsHostsView(t *testing.T) {
+	// Verifies viewing allowed hosts for a section.
 	store := &mockSecretsStore{
 		data: map[string]string{"myapi.token": "x"},
 		allowedHosts: map[string][]string{
@@ -94,8 +94,8 @@ func TestSecretsHostsView(t *testing.T) {
 	}
 }
 
-// TestSecretsHostsAdd verifies adding an allowed host to a section.
 func TestSecretsHostsAdd(t *testing.T) {
+	// Verifies adding an allowed host to a section.
 	store := &mockSecretsStore{
 		data:         map[string]string{"myapi.token": "x"},
 		allowedHosts: map[string][]string{},
@@ -118,8 +118,8 @@ func TestSecretsHostsAdd(t *testing.T) {
 	}
 }
 
-// TestSecretsHostsRemove verifies removing an allowed host from a section.
 func TestSecretsHostsRemove(t *testing.T) {
+	// Verifies removing an allowed host from a section.
 	store := &mockSecretsStore{
 		data: map[string]string{"myapi.token": "x"},
 		allowedHosts: map[string][]string{
@@ -147,8 +147,8 @@ func TestSecretsHostsRemove(t *testing.T) {
 	}
 }
 
-// TestSecretsHostsClear verifies clearing all allowed hosts for a section.
 func TestSecretsHostsClear(t *testing.T) {
+	// Verifies clearing all allowed hosts for a section.
 	store := &mockSecretsStore{
 		data: map[string]string{"myapi.token": "x"},
 		allowedHosts: map[string][]string{
@@ -169,8 +169,8 @@ func TestSecretsHostsClear(t *testing.T) {
 	}
 }
 
-// TestSecretsHostsUsage verifies usage message for hosts subcommand.
 func TestSecretsHostsUsage(t *testing.T) {
+	// Verifies usage message for hosts subcommand.
 	store := &mockSecretsStore{data: map[string]string{}}
 	cmd := NewSecretsCommand(store)
 

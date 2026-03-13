@@ -7,6 +7,7 @@ import (
 )
 
 func TestTextContent(t *testing.T) {
+	// Proves that TextContent wraps a string into a single-element content block slice with type "text".
 	blocks := TextContent("hello")
 	if len(blocks) != 1 {
 		t.Fatalf("len = %d, want 1", len(blocks))
@@ -17,6 +18,7 @@ func TestTextContent(t *testing.T) {
 }
 
 func TestTextOf(t *testing.T) {
+	// Proves that TextOf extracts only the text content from a mixed slice of blocks, ignoring non-text blocks such as tool_use.
 	blocks := []ContentBlock{
 		{Type: "tool_use", Name: "exec"},
 		{Type: "text", Text: "hello"},
@@ -28,6 +30,7 @@ func TestTextOf(t *testing.T) {
 }
 
 func TestTextOfMultipleBlocks(t *testing.T) {
+	// Proves that TextOf joins multiple text blocks with double newlines and skips non-text blocks (server_tool_use, web_search_tool_result) in the middle.
 	blocks := []ContentBlock{
 		{Type: "text", Text: "before search"},
 		{Type: "server_tool_use", Name: "web_search"},
@@ -42,6 +45,7 @@ func TestTextOfMultipleBlocks(t *testing.T) {
 }
 
 func TestTextOfSkipsEmptyText(t *testing.T) {
+	// Proves that TextOf skips text blocks whose text is an empty string when joining, so empty blocks don't produce spurious separators.
 	blocks := []ContentBlock{
 		{Type: "text", Text: "hello"},
 		{Type: "text", Text: ""},
@@ -55,6 +59,7 @@ func TestTextOfSkipsEmptyText(t *testing.T) {
 }
 
 func TestTextOfEmpty(t *testing.T) {
+	// Proves that TextOf returns an empty string for a nil block slice rather than panicking.
 	got := TextOf(nil)
 	if got != "" {
 		t.Errorf("TextOf(nil) = %q, want empty", got)
@@ -62,6 +67,7 @@ func TestTextOfEmpty(t *testing.T) {
 }
 
 func TestToolResultBlock(t *testing.T) {
+	// Proves that ToolResultBlock constructs a correctly-typed tool_result block with the expected tool_use_id, content, and isError=false.
 	block := ToolResultBlock("tu_123", "result text", false)
 	if block.Type != "tool_result" {
 		t.Errorf("Type = %q", block.Type)
@@ -78,6 +84,7 @@ func TestToolResultBlock(t *testing.T) {
 }
 
 func TestToolResultBlockError(t *testing.T) {
+	// Proves that ToolResultBlock sets IsError=true when the error flag is passed, allowing callers to signal tool failures to the model.
 	block := ToolResultBlock("tu_456", "something failed", true)
 	if !block.IsError {
 		t.Error("IsError should be true")
@@ -85,7 +92,7 @@ func TestToolResultBlockError(t *testing.T) {
 }
 
 func TestContentBlockJSON(t *testing.T) {
-	// Tool use block should marshal with correct fields
+	// Proves that a tool_use ContentBlock round-trips through JSON with all fields (type, ID, name, and raw input) intact.
 	block := ContentBlock{
 		Type:  "tool_use",
 		ID:    "tu_abc",
@@ -115,6 +122,7 @@ func TestContentBlockJSON(t *testing.T) {
 }
 
 func TestToolResultJSON(t *testing.T) {
+	// Proves that a tool_result ContentBlock serializes to and from JSON correctly, preserving type, tool_use_id, and content.
 	block := ToolResultBlock("tu_999", "file.txt contents", false)
 
 	data, err := json.Marshal(block)
@@ -131,6 +139,7 @@ func TestToolResultJSON(t *testing.T) {
 }
 
 func TestMessageRequestJSON(t *testing.T) {
+	// Proves that a full MessageRequest (including system, messages, and tools) serializes and deserializes correctly, with the tool name surviving the round-trip.
 	req := MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 1024,
@@ -162,6 +171,7 @@ func TestMessageRequestJSON(t *testing.T) {
 }
 
 func TestMessageResponseStopReason(t *testing.T) {
+	// Proves that a MessageResponse deserializes correctly from the API JSON format, with stop_reason and usage token counts populated.
 	jsonStr := `{
 		"id": "msg_123",
 		"type": "message",
@@ -186,6 +196,7 @@ func TestMessageResponseStopReason(t *testing.T) {
 }
 
 func TestImageBlock(t *testing.T) {
+	// Proves that ImageBlock constructs a correctly-typed image block with a base64 source containing the given MIME type and data.
 	block := ImageBlock("image/jpeg", "dGVzdGRhdGE=")
 	if block.Type != "image" {
 		t.Errorf("Type = %q, want %q", block.Type, "image")
@@ -205,6 +216,7 @@ func TestImageBlock(t *testing.T) {
 }
 
 func TestImageBlockJSON(t *testing.T) {
+	// Proves that an image block round-trips through JSON with its type and MIME type preserved.
 	block := ImageBlock("image/png", "AAAA")
 	data, err := json.Marshal(block)
 	if err != nil {
@@ -224,6 +236,7 @@ func TestImageBlockJSON(t *testing.T) {
 }
 
 func TestDocumentBlock(t *testing.T) {
+	// Proves that DocumentBlock constructs a correctly-typed document block with a base64 source containing the given MIME type and data.
 	block := DocumentBlock("application/pdf", "JVBER...")
 	if block.Type != "document" {
 		t.Errorf("Type = %q, want %q", block.Type, "document")
@@ -243,6 +256,7 @@ func TestDocumentBlock(t *testing.T) {
 }
 
 func TestDocumentBlockJSON(t *testing.T) {
+	// Proves that a document block round-trips through JSON with its type and MIME type preserved.
 	block := DocumentBlock("application/pdf", "AAAA")
 	data, err := json.Marshal(block)
 	if err != nil {
@@ -262,6 +276,7 @@ func TestDocumentBlockJSON(t *testing.T) {
 }
 
 func TestThinkingConfigJSON(t *testing.T) {
+	// Proves that a ThinkingConfig round-trips through JSON with its type preserved and zero-value BudgetTokens omitted.
 	cfg := ThinkingConfig{Type: "adaptive"}
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -281,6 +296,7 @@ func TestThinkingConfigJSON(t *testing.T) {
 }
 
 func TestThinkingConfigOmitsEmpty(t *testing.T) {
+	// Proves that the "thinking" key is omitted entirely from the JSON output when the Thinking field is nil, preventing the API from receiving an unexpected null value.
 	req := MessageRequest{
 		Model:     "claude-opus-4-6",
 		MaxTokens: 8192,
@@ -299,6 +315,7 @@ func TestThinkingConfigOmitsEmpty(t *testing.T) {
 }
 
 func TestThinkingConfigInRequest(t *testing.T) {
+	// Proves that a MessageRequest containing a ThinkingConfig serializes and deserializes correctly, with the config type preserved in the round-trip.
 	req := MessageRequest{
 		Model:     "claude-opus-4-6",
 		MaxTokens: 8192,
@@ -323,6 +340,7 @@ func TestThinkingConfigInRequest(t *testing.T) {
 }
 
 func TestThinkingContentBlock(t *testing.T) {
+	// Proves that a thinking content block from the API JSON is correctly deserialized, populating the Thinking field.
 	jsonStr := `{"type": "thinking", "thinking": "Let me reason about this..."}`
 	var block ContentBlock
 	if err := json.Unmarshal([]byte(jsonStr), &block); err != nil {
@@ -337,6 +355,7 @@ func TestThinkingContentBlock(t *testing.T) {
 }
 
 func TestTextOfIgnoresThinking(t *testing.T) {
+	// Proves that TextOf skips thinking blocks and returns only the visible text content, so internal reasoning does not leak into the response text.
 	blocks := []ContentBlock{
 		{Type: "thinking", Thinking: "internal reasoning"},
 		{Type: "text", Text: "visible response"},
@@ -348,6 +367,7 @@ func TestTextOfIgnoresThinking(t *testing.T) {
 }
 
 func TestTextOfOnlyThinking(t *testing.T) {
+	// Proves that TextOf returns an empty string when the response contains only a thinking block and no text blocks.
 	blocks := []ContentBlock{
 		{Type: "thinking", Thinking: "only thinking, no text"},
 	}
@@ -358,6 +378,7 @@ func TestTextOfOnlyThinking(t *testing.T) {
 }
 
 func TestNewCustomToolJSON(t *testing.T) {
+	// Proves that a custom tool definition serializes to JSON with the correct name, description, and input_schema fields.
 	td := NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`))
 	if td.Name() != "exec" {
 		t.Errorf("Name() = %q, want %q", td.Name(), "exec")
@@ -381,6 +402,7 @@ func TestNewCustomToolJSON(t *testing.T) {
 }
 
 func TestNewServerToolJSON(t *testing.T) {
+	// Proves that a server tool definition (which carries arbitrary extra fields like max_uses and allowed_domains) serializes all fields to JSON correctly.
 	td := NewServerTool(map[string]interface{}{
 		"type":            "web_search_20250305",
 		"name":            "web_search",
@@ -410,6 +432,7 @@ func TestNewServerToolJSON(t *testing.T) {
 }
 
 func TestToolDefRoundTrip(t *testing.T) {
+	// Proves that a ToolDef (specifically a server tool) survives a full JSON marshal/unmarshal round-trip with identical output, ensuring no data is lost when storing or transmitting tool definitions.
 	original := NewServerTool(map[string]interface{}{
 		"type": "web_search_20250305",
 		"name": "web_search",
@@ -431,7 +454,7 @@ func TestToolDefRoundTrip(t *testing.T) {
 }
 
 func TestContentBlockServerToolPassthrough(t *testing.T) {
-	// Simulate a server_tool_use block with fields not modeled by the struct.
+	// Proves that a server_tool_use block from the API (with fields beyond what the struct models) round-trips through JSON losslessly using the Raw field, so extra server-tool fields are not discarded.
 	serverJSON := `{
 		"type": "server_tool_use",
 		"id": "srvtoolu_abc",
@@ -476,7 +499,7 @@ func TestContentBlockServerToolPassthrough(t *testing.T) {
 }
 
 func TestContentBlockWebSearchResultPassthrough(t *testing.T) {
-	// Simulate a web_search_tool_result with encrypted_content and other unknown fields.
+	// Proves that a web_search_tool_result block preserves all unknown fields (including encrypted_content and page_age) through a JSON round-trip via the Raw field, which is critical for passing server-encrypted content back to the API.
 	resultJSON := `{
 		"type": "web_search_tool_result",
 		"tool_use_id": "srvtoolu_abc",
@@ -518,7 +541,7 @@ func TestContentBlockWebSearchResultPassthrough(t *testing.T) {
 }
 
 func TestContentBlockKnownTypeUsesStruct(t *testing.T) {
-	// Known types should marshal from struct fields, not Raw.
+	// Proves that well-known content block types (like "text") marshal from struct fields rather than the Raw passthrough, ensuring struct values take precedence.
 	block := ContentBlock{Type: "text", Text: "hello"}
 
 	data, err := json.Marshal(block)
@@ -537,7 +560,7 @@ func TestContentBlockKnownTypeUsesStruct(t *testing.T) {
 }
 
 func TestContentBlockToolUseRoundTrip(t *testing.T) {
-	// Ensure tool_use (a known type) still works after adding custom marshal.
+	// Proves that tool_use blocks (a known type) continue to round-trip correctly after the custom marshal/unmarshal logic was added to support unknown types via Raw.
 	original := ContentBlock{
 		Type:  "tool_use",
 		ID:    "tu_123",

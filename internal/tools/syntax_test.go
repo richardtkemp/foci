@@ -6,6 +6,7 @@ import (
 )
 
 func TestCheckJSON(t *testing.T) {
+	// Proves that valid JSON passes and invalid JSON is rejected.
 	t.Parallel()
 	if err := checkJSON([]byte(`{"key": "value"}`)); err != nil {
 		t.Errorf("valid JSON rejected: %v", err)
@@ -16,6 +17,7 @@ func TestCheckJSON(t *testing.T) {
 }
 
 func TestCheckTOML(t *testing.T) {
+	// Proves that valid TOML passes and invalid TOML is rejected.
 	t.Parallel()
 	if err := checkTOML([]byte("[section]\nkey = \"val\"\n")); err != nil {
 		t.Errorf("valid TOML rejected: %v", err)
@@ -26,6 +28,7 @@ func TestCheckTOML(t *testing.T) {
 }
 
 func TestCheckGo(t *testing.T) {
+	// Proves that valid Go source passes and Go with a parse error is rejected.
 	t.Parallel()
 	if err := checkGo([]byte("package main\n\nfunc main() {}\n")); err != nil {
 		t.Errorf("valid Go rejected: %v", err)
@@ -44,6 +47,7 @@ func TestCheckSyntaxUnknownExtension(t *testing.T) {
 }
 
 func TestCheckYAML(t *testing.T) {
+	// Proves that valid YAML passes and YAML with bad indentation is rejected.
 	t.Parallel()
 	valid := []byte("name: test\nitems:\n  - one\n  - two\n")
 	if err := checkYAML(valid); err != nil {
@@ -57,6 +61,7 @@ func TestCheckYAML(t *testing.T) {
 }
 
 func TestCheckYAMLExtensions(t *testing.T) {
+	// Proves that both .yaml and .yml extensions trigger YAML syntax checking.
 	t.Parallel()
 	content := []byte("key: value\n")
 	if err := checkSyntax("config.yaml", content); err != nil {
@@ -68,6 +73,7 @@ func TestCheckYAMLExtensions(t *testing.T) {
 }
 
 func TestCheckXML(t *testing.T) {
+	// Proves that valid XML passes and XML with unclosed tags is rejected.
 	t.Parallel()
 	valid := []byte(`<?xml version="1.0"?><root><item>hello</item></root>`)
 	if err := checkXML(valid); err != nil {
@@ -81,6 +87,7 @@ func TestCheckXML(t *testing.T) {
 }
 
 func TestCheckPython(t *testing.T) {
+	// Proves that valid Python passes and Python with a syntax error is rejected, using python3.
 	t.Parallel()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available")
@@ -110,6 +117,7 @@ func TestCheckPythonSkipsWhenUnavailable(t *testing.T) {
 }
 
 func TestCheckShell(t *testing.T) {
+	// Proves that valid shell scripts pass and shell with unclosed if-then blocks is rejected.
 	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")
@@ -127,6 +135,7 @@ func TestCheckShell(t *testing.T) {
 }
 
 func TestCheckShellExtensions(t *testing.T) {
+	// Proves that both .sh and .bash extensions trigger shell syntax checking via bash -n.
 	t.Parallel()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available")

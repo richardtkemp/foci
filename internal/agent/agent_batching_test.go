@@ -12,6 +12,8 @@ import (
 )
 
 func TestThinkingAdaptiveInRequest(t *testing.T) {
+	// Proves that configuring Thinking="adaptive" on the agent causes the
+	// API request to include a Thinking field with Type="adaptive".
 	var capturedReq *provider.MessageRequest
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		capturedReq = req
@@ -51,6 +53,8 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 }
 
 func TestThinkingOffOmitsField(t *testing.T) {
+	// Proves that when Thinking is not configured (empty string), the API request
+	// has no Thinking field, so non-thinking models are not accidentally sent thinking params.
 	var capturedReq *provider.MessageRequest
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		capturedReq = req
@@ -87,6 +91,8 @@ func TestThinkingOffOmitsField(t *testing.T) {
 }
 
 func TestThinkingBlocksPreservedInSession(t *testing.T) {
+	// Proves that thinking content blocks are saved to the session alongside text blocks,
+	// and that the returned string contains only the text (not the thinking content).
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:   "msg_think_blocks",

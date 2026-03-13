@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestModelCommand verifies model can be switched between options and short names are resolved.
 func TestModelCommand(t *testing.T) {
+	// Verifies model can be switched between options and short names are resolved.
 	model := "claude-haiku-4-5"
 	resolveModel := func(input string) (string, string, string) {
 		switch strings.ToLower(strings.TrimSpace(input)) {
@@ -63,8 +63,8 @@ func TestModelCommand(t *testing.T) {
 	}
 }
 
-// TestEffortCommand verifies effort levels can be set by name or number and persisted.
 func TestEffortCommand(t *testing.T) {
+	// Verifies effort levels can be set by name or number and persisted.
 	effort := ""
 	cmd := NewEffortCommand(
 		func(context.Context) string { return effort },
@@ -134,8 +134,8 @@ func TestEffortCommand(t *testing.T) {
 	}
 }
 
-// TestThinkingCommand verifies thinking mode can be toggled between off, adaptive, and extended.
 func TestThinkingCommand(t *testing.T) {
+	// Verifies thinking mode can be toggled between off, adaptive, and extended.
 	thinking := ""
 	cmd := NewThinkingCommand(
 		func(context.Context) string { return thinking },
@@ -194,8 +194,8 @@ func TestThinkingCommand(t *testing.T) {
 	}
 }
 
-// TestThinkingCommandContextRouting verifies the callback receives context so callers can resolve per-session state.
 func TestThinkingCommandContextRouting(t *testing.T) {
+	// Verifies the callback receives context so callers can resolve per-session state.
 	// Verify the callback receives context so callers can resolve per-session state.
 	// This tests the fix for bug #134 — Telegram commands need the ChatIDKey
 	// from context to resolve the correct session key.
@@ -216,8 +216,8 @@ func TestThinkingCommandContextRouting(t *testing.T) {
 	}
 }
 
-// TestConfigCommand verifies config subcommands delegate correctly.
 func TestConfigCommand(t *testing.T) {
+	// Verifies config subcommands delegate correctly.
 	cmd := NewConfigCommand(func(ctx context.Context, args string) (string, error) {
 		switch args {
 		case "toml":

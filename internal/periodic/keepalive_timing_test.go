@@ -5,16 +5,17 @@ import (
 	"time"
 )
 
-// TestTickInterval verifies that the tick interval is set to 30 seconds.
 func TestTickInterval(t *testing.T) {
+	// Guards the tickInterval constant against accidental changes; the 30-second value is relied
+	// upon by all periodic scheduling logic.
 	if tickInterval != 30*time.Second {
 		t.Errorf("tick interval = %v, want 30s", tickInterval)
 	}
 }
 
-// TestWallClockAlignment_NextFire verifies wall clock alignment logic for 1-hour intervals.
-// It tests that tasks fire at truncated hour boundaries, not relative to last seen time.
 func TestWallClockAlignment_NextFire(t *testing.T) {
+	// Verifies the wall-clock alignment formula for 1-hour intervals: tasks fire at the next
+	// truncated hour boundary, not at an offset from when the task was last run.
 	interval := 1 * time.Hour
 
 	cases := []struct {
@@ -79,9 +80,9 @@ func TestWallClockAlignment_NextFire(t *testing.T) {
 	}
 }
 
-// TestWallClockAlignment_30MinInterval verifies wall clock alignment for 30-minute intervals.
-// Tests that :00 and :30 boundaries trigger correctly regardless of when the task started.
 func TestWallClockAlignment_30MinInterval(t *testing.T) {
+	// Verifies wall-clock alignment for 30-minute intervals: tasks fire at :00 and :30 boundaries
+	// regardless of when within the interval the task was last run.
 	interval := 30 * time.Minute
 
 	cases := []struct {
@@ -134,9 +135,9 @@ func TestWallClockAlignment_30MinInterval(t *testing.T) {
 	}
 }
 
-// TestWallClockAlignment_RestartDoesNotDelay verifies that restarting the service
-// mid-interval doesn't delay the next fire time. Both restarts should fire at the same boundary.
 func TestWallClockAlignment_RestartDoesNotDelay(t *testing.T) {
+	// Verifies that restarting the service at different points mid-interval always produces the
+	// same next-fire time, proving restarts cannot delay or advance task scheduling.
 	interval := 1 * time.Hour
 
 	start := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)

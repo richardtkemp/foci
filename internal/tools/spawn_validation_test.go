@@ -14,6 +14,7 @@ import (
 )
 
 func TestSpawnEmptyPrompt(t *testing.T) {
+	// Proves that an empty prompt is rejected with a descriptive error before any API call is made.
 	t.Parallel()
 	deps := SpawnDeps{Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
 	tool := NewSpawnTool(deps, nil)
@@ -33,6 +34,7 @@ func TestSpawnEmptyPrompt(t *testing.T) {
 }
 
 func TestSpawnInvalidContext(t *testing.T) {
+	// Proves that an unrecognized context value is rejected with an "invalid context" error.
 	t.Parallel()
 	server := mockModelServer(okResponse("ok"))
 	defer server.Close()
@@ -56,6 +58,8 @@ func TestSpawnInvalidContext(t *testing.T) {
 }
 
 func TestSpawnInheritNoParentSession(t *testing.T) {
+	// Proves that clone context without a session key in the context returns a "no parent session" error,
+	// since clone requires an existing session to branch from.
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "ok"}
 	mockSessions := &mockSessionBrancher{}
@@ -84,6 +88,8 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 }
 
 func TestSpawnNoRecursiveInherit(t *testing.T) {
+	// Proves that nested clone spawns (a spawned agent trying to spawn another clone) are rejected,
+	// while raw and character modes are still allowed from within a spawned context.
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "ok"}
 	mockSessions := &mockSessionBrancher{}
@@ -147,6 +153,8 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 }
 
 func TestSpawnInheritOrientationBuilder(t *testing.T) {
+	// Proves that the OrientationBuilder callback is called with the correct branch and parent keys
+	// and that its returned message is stored in the branch options.
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
@@ -191,6 +199,8 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 }
 
 func TestSpawnModelShortNames(t *testing.T) {
+	// Proves that model aliases (haiku, sonnet, opus) and qualified names are resolved to their
+	// canonical model IDs before the request is sent to the API.
 	t.Parallel()
 	tests := []struct {
 		short string
@@ -232,6 +242,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 }
 
 func TestSpawnModelDefault(t *testing.T) {
+	// Proves that omitting the model parameter causes the spawn to inherit the parent agent's configured model.
 	t.Parallel()
 	var receivedModel string
 	var receivedReq *provider.MessageRequest
@@ -270,8 +281,9 @@ func TestSpawnModelDefault(t *testing.T) {
 }
 
 func TestSpawnTimeout(t *testing.T) {
+	// Proves that the timeout parameter is respected: a hanging server causes the spawn to fail
+	// within the specified number of seconds rather than blocking indefinitely.
 	t.Parallel()
-	// Server that never responds
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second) // longer than our timeout
 	}))

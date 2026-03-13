@@ -11,6 +11,7 @@ import (
 )
 
 func TestChildSysProcAttr(t *testing.T) {
+	// Verifies that ChildSysProcAttr returns a non-nil SysProcAttr with Setpgid enabled so child processes are placed in their own process group.
 	t.Parallel()
 	attr := ChildSysProcAttr()
 	if attr == nil {
@@ -22,6 +23,7 @@ func TestChildSysProcAttr(t *testing.T) {
 }
 
 func TestChildSysProcAttrSetsid(t *testing.T) {
+	// Verifies that ChildSysProcAttrSetsid returns a non-nil SysProcAttr with Setsid enabled so child processes start a new session.
 	t.Parallel()
 	attr := ChildSysProcAttrSetsid()
 	if attr == nil {
@@ -33,6 +35,7 @@ func TestChildSysProcAttrSetsid(t *testing.T) {
 }
 
 func TestChildCredentialPreservesOtherGroups(t *testing.T) {
+	// Verifies that when a child credential is set, the foci-secrets group is excluded from its group list while all other supplementary groups are preserved.
 	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root user")
@@ -73,7 +76,7 @@ func mustParseUint(s string) uint64 {
 }
 
 func TestExecStillWorks(t *testing.T) {
-	// Verify that exec commands still work with the SysProcAttr
+	// Verifies that a real subprocess can be successfully launched with ChildSysProcAttr applied, proving it does not break basic execution.
 	t.Parallel()
 	// (regardless of whether credential is set or nil).
 	proc := exec.Command("echo", "hello")
@@ -89,6 +92,7 @@ func TestExecStillWorks(t *testing.T) {
 }
 
 func TestExecSetsidStillWorks(t *testing.T) {
+	// Verifies that a real subprocess can be launched with ChildSysProcAttrSetsid applied, proving it does not break basic execution.
 	t.Parallel()
 	proc := exec.Command("echo", "hello")
 	proc.SysProcAttr = ChildSysProcAttrSetsid()
@@ -103,9 +107,8 @@ func TestExecSetsidStillWorks(t *testing.T) {
 }
 
 func TestNoCredentialWithoutSecretsGroup(t *testing.T) {
-	// If foci-secrets group doesn't exist on this system,
+	// Verifies that childCredential is nil when the foci-secrets group does not exist on this system, since there is no group to drop credentials for.
 	t.Parallel()
-	// credential should be nil (no group to drop).
 	_, err := user.LookupGroup(secrets.SecurityGroupName)
 	if err != nil {
 		// Group doesn't exist — credential must be nil

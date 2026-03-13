@@ -13,6 +13,9 @@ import (
 )
 
 func TestOpenAISTT_Transcribe(t *testing.T) {
+	// Proves that OpenAISTT sends the correct multipart request to the Whisper
+	// endpoint, including auth header, filename, model, and response_format,
+	// and returns the plain-text transcription from the response body.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
@@ -70,6 +73,8 @@ func TestOpenAISTT_Transcribe(t *testing.T) {
 }
 
 func TestOpenAISTT_APIError(t *testing.T) {
+	// Proves that a non-200 response from the Whisper API is surfaced as a
+	// descriptive error that includes the HTTP status code and body.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte("invalid api key"))
@@ -92,6 +97,8 @@ func TestOpenAISTT_APIError(t *testing.T) {
 }
 
 func TestOpenAITTS_Synthesize(t *testing.T) {
+	// Proves that OpenAITTS sends a correctly authenticated POST with a JSON
+	// body and returns the raw audio bytes from the response.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
@@ -132,6 +139,8 @@ func TestOpenAITTS_Synthesize(t *testing.T) {
 }
 
 func TestOpenAITTS_APIError(t *testing.T) {
+	// Proves that a non-200 response from the TTS API is surfaced as an error
+	// rather than silently returning empty audio.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("invalid voice"))
@@ -151,6 +160,8 @@ func TestOpenAITTS_APIError(t *testing.T) {
 }
 
 func TestOpenAITTS_DefaultVoice(t *testing.T) {
+	// Proves that omitting Voice from OpenAITTS config still produces a
+	// successful request, confirming a sensible default is applied.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("audio"))
@@ -171,6 +182,8 @@ func TestOpenAITTS_DefaultVoice(t *testing.T) {
 }
 
 func TestOpenAITTS_SpeedIncluded(t *testing.T) {
+	// Proves that a non-zero Speed value is included in the JSON payload sent
+	// to the TTS API, enabling playback rate control.
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -199,6 +212,8 @@ func TestOpenAITTS_SpeedIncluded(t *testing.T) {
 }
 
 func TestOpenAITTS_SpeedOmittedWhenZero(t *testing.T) {
+	// Proves that a zero Speed is omitted from the JSON payload, keeping the
+	// request minimal and relying on the API's default playback rate.
 	var gotBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -227,6 +242,8 @@ func TestOpenAITTS_SpeedOmittedWhenZero(t *testing.T) {
 }
 
 func TestRateToEdgeTTS(t *testing.T) {
+	// Proves that rateToEdgeTTS converts a float multiplier into the signed
+	// percentage string format expected by edge-tts (e.g. 1.3 → "+30%").
 	tests := []struct {
 		rate float64
 		want string
@@ -247,6 +264,8 @@ func TestRateToEdgeTTS(t *testing.T) {
 }
 
 func TestWithRate_EdgeTTS(t *testing.T) {
+	// Proves that WithRate returns a new EdgeTTS instance with the updated rate
+	// without mutating the original provider.
 	orig := &EdgeTTS{Voice: "en-US-AndrewNeural", Rate: 1.0}
 	overridden := WithRate(orig, 1.5)
 
@@ -264,6 +283,8 @@ func TestWithRate_EdgeTTS(t *testing.T) {
 }
 
 func TestWithRate_OpenAITTS(t *testing.T) {
+	// Proves that WithRate returns a new OpenAITTS instance with the updated
+	// Speed without mutating the original provider.
 	orig := &OpenAITTS{Model: "tts-1", Speed: 1.0}
 	overridden := WithRate(orig, 2.0)
 
@@ -280,6 +301,8 @@ func TestWithRate_OpenAITTS(t *testing.T) {
 }
 
 func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
+	// Proves that passing rate 0 to WithRate is a no-op and returns the
+	// original provider unchanged, avoiding spurious wrapper allocation.
 	orig := &EdgeTTS{Rate: 1.3}
 	result := WithRate(orig, 0)
 	if result != orig {
@@ -289,9 +312,9 @@ func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
 
 // --- Factory function tests ---
 
-// TestNewTTS_OpenAI verifies that NewTTS with an openai config returns an *OpenAITTS
-// with all fields wired correctly from the TTSConfig struct.
 func TestNewTTS_OpenAI(t *testing.T) {
+	// Verifies that NewTTS with an openai config returns an *OpenAITTS
+	// with all fields wired correctly from the TTSConfig struct.
 	cfg := config.TTSConfig{
 		Format:         "openai",
 		Endpoint:       "https://api.example.com/tts",
@@ -327,9 +350,9 @@ func TestNewTTS_OpenAI(t *testing.T) {
 	}
 }
 
-// TestNewTTS_EdgeTTS verifies that NewTTS with an edge-tts config returns an *EdgeTTS
-// with voice and command fields set.
 func TestNewTTS_EdgeTTS(t *testing.T) {
+	// Verifies that NewTTS with an edge-tts config returns an *EdgeTTS
+	// with voice and command fields set.
 	cfg := config.TTSConfig{
 		Format:  "edge-tts",
 		Voice:   "en-US-AndrewNeural",
@@ -351,8 +374,8 @@ func TestNewTTS_EdgeTTS(t *testing.T) {
 	}
 }
 
-// TestNewTTS_UnknownFormat verifies that NewTTS rejects unknown format strings.
 func TestNewTTS_UnknownFormat(t *testing.T) {
+	// Verifies that NewTTS rejects unknown format strings.
 	_, err := NewTTS(config.TTSConfig{Format: "whisper"}, "")
 	if err == nil {
 		t.Fatal("expected error for unknown format")
@@ -362,9 +385,9 @@ func TestNewTTS_UnknownFormat(t *testing.T) {
 	}
 }
 
-// TestNewSTT_OpenAI verifies that NewSTT("openai", ...) returns an *OpenAISTT
-// with all fields wired correctly.
 func TestNewSTT_OpenAI(t *testing.T) {
+	// Verifies that NewSTT("openai", ...) returns an *OpenAISTT
+	// with all fields wired correctly.
 	stt, err := NewSTT("openai", "https://api.groq.com/stt", "groq-key", "whisper-large-v3")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -384,8 +407,8 @@ func TestNewSTT_OpenAI(t *testing.T) {
 	}
 }
 
-// TestNewSTT_UnknownFormat verifies that NewSTT rejects unknown format strings.
 func TestNewSTT_UnknownFormat(t *testing.T) {
+	// Verifies that NewSTT rejects unknown format strings.
 	_, err := NewSTT("edge-tts", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for unknown format")
@@ -395,9 +418,9 @@ func TestNewSTT_UnknownFormat(t *testing.T) {
 	}
 }
 
-// TestOpenAITTS_ResponseFormatInPayload verifies that response_format from config
-// is included in the JSON payload sent to the TTS API.
 func TestOpenAITTS_ResponseFormatInPayload(t *testing.T) {
+	// Verifies that response_format from config
+	// is included in the JSON payload sent to the TTS API.
 	var gotBody map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

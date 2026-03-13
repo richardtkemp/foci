@@ -7,9 +7,9 @@ import (
 	"foci/internal/command"
 )
 
-// TestReceiveMessage_SlashCommandBypassesQueue verifies that slash commands
-// are executed immediately and do not go through the agent queue.
 func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
+	// Verifies that slash commands
+	// are executed immediately and do not go through the agent queue.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name:        "ping",
@@ -35,9 +35,9 @@ func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_UnknownSlashCommandGetsSuggestion verifies that unknown
-// slash commands receive a suggestion reply instead of being queued.
 func TestReceiveMessage_UnknownSlashCommandGetsSuggestion(t *testing.T) {
+	// Verifies that unknown
+	// slash commands receive a suggestion reply instead of being queued.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name: "ping",

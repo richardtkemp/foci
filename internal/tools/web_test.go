@@ -10,6 +10,8 @@ import (
 )
 
 func TestWebFetchSuccess(t *testing.T) {
+	// Proves that a successful fetch extracts HTML as markdown (no raw tags), sets the correct
+	// User-Agent header, and returns the page text.
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") != "Foci/1.0" {
@@ -38,6 +40,7 @@ func TestWebFetchSuccess(t *testing.T) {
 }
 
 func TestWebFetchRaw(t *testing.T) {
+	// Proves that raw=true skips HTML-to-markdown conversion and returns the unprocessed HTML body.
 	t.Parallel()
 	html := "<html><body><h1>Title</h1><p>Content</p></body></html>"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +91,8 @@ func TestWebFetchReadabilityFallback(t *testing.T) {
 }
 
 func TestWebFetchMarkdownStructure(t *testing.T) {
+	// Proves that article HTML is converted to valid markdown with headings and links,
+	// and that no raw HTML tags survive the conversion.
 	t.Parallel()
 	articleHTML := `<html><head><title>Test</title></head><body>
 		<article>
@@ -148,6 +153,8 @@ func TestWebFetchNoTruncation(t *testing.T) {
 }
 
 func TestWebFetchServerError(t *testing.T) {
+	// Proves that HTTP error responses (5xx) are not returned as Go errors — the body is returned
+	// as the result, consistent with how curl works.
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -171,6 +178,8 @@ func TestWebFetchServerError(t *testing.T) {
 }
 
 func TestWebSearchSuccess(t *testing.T) {
+	// Proves that the search tool sends the correct headers and query string, and that the
+	// tool is constructed with the right name.
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify headers
@@ -204,6 +213,7 @@ func TestWebSearchSuccess(t *testing.T) {
 }
 
 func TestWebSearchNoAPIKey(t *testing.T) {
+	// Proves that executing a search without a configured API key returns a descriptive error.
 	t.Parallel()
 	tool := NewWebSearchTool("")
 
@@ -221,6 +231,8 @@ func TestWebSearchNoAPIKey(t *testing.T) {
 }
 
 func TestWebSearchEmptyResults(t *testing.T) {
+	// Placeholder test exercising the empty-results path; actual Brave API integration
+	// is not mocked here, so the test primarily documents intent.
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -245,7 +257,8 @@ func TestWebSearchEmptyResults(t *testing.T) {
 }
 
 func TestWebSearchAPIError(t *testing.T) {
-	// Test with invalid URL to force connection error through the tool
+	// Placeholder for the API error path; verifies the tool and params can be constructed
+	// without exercising the live Brave API.
 	t.Parallel()
 	tool := NewWebSearchTool("test-key")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -259,6 +272,7 @@ func TestWebSearchAPIError(t *testing.T) {
 }
 
 func TestWebFetchInvalidURL(t *testing.T) {
+	// Proves that a URL with no scheme/host returns an error rather than making a network request.
 	t.Parallel()
 	tool := NewWebFetchTool()
 	params, _ := json.Marshal(map[string]interface{}{
@@ -272,6 +286,7 @@ func TestWebFetchInvalidURL(t *testing.T) {
 }
 
 func TestWebFetchToolName(t *testing.T) {
+	// Proves that the web_fetch tool is registered with the correct name for tool dispatch.
 	t.Parallel()
 	tool := NewWebFetchTool()
 	if tool.Name != "web_fetch" {

@@ -11,9 +11,8 @@ import (
 	"time"
 )
 
-// TestHTTPRequestAutoBackgroundFast verifies fast requests don't trigger background mode
 func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
-	// A fast request should complete before the threshold — no notification
+	// Proves that a fast-responding server completes synchronously and never triggers the async notifier, even when a background threshold is set.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "fast response")
@@ -41,10 +40,9 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestAutoBackgroundSlow verifies slow requests auto-background after threshold
 func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
+	// Proves that when a request exceeds the auto-background threshold, the tool returns a "still running" message immediately and delivers the final result via the notifier.
 	t.Parallel()
-	// A slow request should auto-background after 1 second
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(1500 * time.Millisecond)
 		fmt.Fprint(w, "slow response")
@@ -85,10 +83,9 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestAutoBackgroundSessionKey verifies session key context is passed to notifier
 func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
+	// Proves that the session key embedded in the context is propagated to the notifier callback when a request auto-backgrounds.
 	t.Parallel()
-	// Verify the session key from context reaches the notifier callback
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(1500 * time.Millisecond)
 		fmt.Fprint(w, "done")
@@ -130,9 +127,8 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestExplicitBackground verifies background=true returns immediately
 func TestHTTPRequestExplicitBackground(t *testing.T) {
-	// background=true should return immediately and deliver via notifier
+	// Proves that background=true causes the tool to return immediately with a background acknowledgment, then deliver the response body via the notifier once complete.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "bg response")
@@ -170,9 +166,8 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestBackgroundNoNotifier verifies background=true runs sync without notifier
 func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
-	// background=true but no notifier — should run synchronously
+	// Proves that background=true falls back to synchronous execution and returns the response inline when no notifier is configured.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "sync response")

@@ -75,6 +75,9 @@ func collectTOMLKeys(t reflect.Type, prefix string) []string {
 }
 
 func TestParseByteSize(t *testing.T) {
+	// Proves that ParseByteSize correctly converts human-readable size strings
+	// (with KB/MB/GB suffixes, case-insensitive) to byte counts, and returns
+	// errors for empty or malformed input.
 	tests := []struct {
 		name    string
 		input   string

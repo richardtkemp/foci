@@ -16,6 +16,8 @@ import (
 )
 
 func TestHandleMessageEndTurn(t *testing.T) {
+	// Proves the basic happy path: a single-turn exchange returns the assistant's
+	// text and saves user+assistant messages to the session store.
 	// Set up mock API server
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
@@ -62,6 +64,9 @@ func TestHandleMessageEndTurn(t *testing.T) {
 }
 
 func TestHandleMessageWithToolUse(t *testing.T) {
+	// Proves that tool_use responses trigger tool execution and a follow-up API call,
+	// and that all four messages (user, assistant-with-tool, tool-result, final-assistant)
+	// are persisted in the session.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -142,6 +147,8 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 }
 
 func TestHandleMessageUnknownTool(t *testing.T) {
+	// Proves that when the model calls a tool that isn't registered, the agent
+	// sends an error tool_result back and the loop continues to a normal end_turn.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -195,6 +202,8 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 }
 
 func TestHandleMessageSessionContinuity(t *testing.T) {
+	// Proves that session history is carried forward between turns: the second
+	// message is sent to the API with the prior exchange already included.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		// Count messages in request to verify session history is sent
 		msgCount := len(req.Messages)
@@ -295,6 +304,8 @@ func TestHandleMessageCancellation(t *testing.T) {
 }
 
 func TestIsProcessing(t *testing.T) {
+	// Proves that IsProcessing returns false both before and after a HandleMessage call,
+	// confirming the processing flag is correctly cleared on completion.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -393,6 +404,8 @@ func TestProcessingDetails(t *testing.T) {
 }
 
 func TestTriggerContext(t *testing.T) {
+	// Proves that WithTrigger stores the trigger string in context and
+	// TriggerFromContext retrieves it, with an empty string as the default.
 	ctx := context.Background()
 	if trigger := TriggerFromContext(ctx); trigger != "" {
 		t.Errorf("expected empty trigger, got %q", trigger)

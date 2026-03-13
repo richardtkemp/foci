@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// TestTmuxInstanceIsolation verifies that multiple tool instances don't interfere.
 func TestTmuxInstanceIsolation(t *testing.T) {
+	// Verifies that separate tool instances have independent ownership state: instance B cannot read, send to, or kill sessions owned by instance A.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -114,8 +114,8 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	}
 }
 
-// TestTmuxWakeRoutesToCorrectAgent verifies that wake notifications route to correct instances.
 func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
+	// Verifies that wake callbacks fire on the correct tool instance: when agent A's watch triggers, only agent A's callback is invoked, not agent B's.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -207,8 +207,8 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	toolB.Execute(context.Background(), unwatchB)
 }
 
-// TestTmuxWatchIsolation verifies that watches in different instances don't interfere.
 func TestTmuxWatchIsolation(t *testing.T) {
+	// Verifies that watch/unwatch state is per-instance: instance B can watch the same session name as A, and A's unwatch does not affect B's watch.
 	t.Parallel()
 	tmuxAvailable(t)
 

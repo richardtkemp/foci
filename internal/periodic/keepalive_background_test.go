@@ -10,10 +10,9 @@ import (
 	"foci/internal/log"
 )
 
-// TestBackgroundRunningGuard verifies the backgroundRunning flag prevents concurrent dispatch.
-// It ensures that calling maybeBackgroundWork twice while the first is still running
-// will skip the second call entirely.
 func TestBackgroundRunningGuard(t *testing.T) {
+	// Verifies the backgroundRunning flag prevents concurrent dispatch. Calls maybeBackgroundWork
+	// twice while the first is still running and confirms only one branchFn invocation occurs.
 	var mu sync.Mutex
 	calls := 0
 
@@ -55,9 +54,9 @@ func TestBackgroundRunningGuard(t *testing.T) {
 	}
 }
 
-// TestBackgroundCooldown verifies that background work respects cooldown interval after the
-// previous session ENDS, not when it started. This prevents rapid-fire background sessions.
 func TestBackgroundCooldown(t *testing.T) {
+	// Verifies that background work respects the cooldown interval measured from when the previous
+	// session ended. Fires once, then immediately tries again and confirms the second is skipped.
 	var mu sync.Mutex
 	calls := 0
 
@@ -98,9 +97,9 @@ func TestBackgroundCooldown(t *testing.T) {
 	}
 }
 
-// TestBackgroundCooldownFromEndNotStart verifies that a session running longer than the interval
-// doesn't block the next session. Cooldown is measured from session END, not START.
 func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
+	// Verifies lastBackgroundEnded is stamped when the session finishes, not when it starts.
+	// Runs a simulated long session and checks the timestamp is recent relative to completion.
 	var mu sync.Mutex
 	calls := 0
 
@@ -139,9 +138,9 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 	}
 }
 
-// TestBackgroundNoSelfChaining verifies background completion does NOT reset lastInteraction.
-// This prevents background sessions from triggering more background sessions.
 func TestBackgroundNoSelfChaining(t *testing.T) {
+	// Verifies that completing a background session does not reset lastInteraction, which would
+	// cause the runner to immediately schedule another background session (self-chaining loop).
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
