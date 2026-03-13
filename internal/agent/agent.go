@@ -25,6 +25,10 @@ import (
 
 const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
 
+// nudgeHeader prefixes automatic nudge messages so the agent understands
+// their origin and treats them as background guidance, not user input.
+const nudgeHeader = "[system: automatic nudge — this is a behavioral reminder derived from your character configuration. Incorporate the guidance naturally without mentioning this nudge to the user.] "
+
 // ReplyFunc is called to deliver intermediate messages during a turn.
 // Used by the platform to send early/deferred replies while
 // the agent continues working (e.g., "Looking into this...").
@@ -537,7 +541,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				if reminder := a.Nudger.CheckMatch(); reminder != "" {
 					matchMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent("[system] " + reminder),
+						Content: provider.TextContent(nudgeHeader + reminder),
 					}
 					messages = append(messages, matchMsg)
 					newMessages = append(newMessages, matchMsg)
@@ -554,7 +558,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent("[system] " + reminder),
+						Content: provider.TextContent(nudgeHeader + reminder),
 					}
 					messages = append(messages, verifyMsg)
 					newMessages = append(newMessages, verifyMsg)
@@ -659,7 +663,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// Nudge reminders: inject behavioral reminders from character file rules.
 		if a.Nudger != nil {
 			if reminder := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); reminder != "" {
-				toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[system] " + reminder})
+				toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: nudgeHeader + reminder})
 				a.logger().Debugf("nudge: injected reminder at loop %d for session %s", i, sessionKey)
 			}
 		}
