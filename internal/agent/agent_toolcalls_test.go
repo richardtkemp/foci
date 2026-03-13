@@ -16,6 +16,7 @@ import (
 )
 
 func TestRepairInterruptedToolCalls(t *testing.T) {
+	// Proves that repairInterruptedToolCalls returns nil for benign cases (empty, last message is user, no tool_use) and produces a synthetic error tool_result for every unmatched tool_use block when an assistant message ends mid-call.
 	t.Run("empty messages", func(t *testing.T) {
 		if got := repairInterruptedToolCalls(nil); got != nil {
 			t.Errorf("expected nil for empty messages, got %v", got)
@@ -263,6 +264,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 }
 
 func TestToolResultRedaction(t *testing.T) {
+	// Proves that the Redact function is applied to tool output before it is saved to the session store, preventing secrets from being persisted in plaintext.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -331,6 +333,7 @@ func TestToolResultRedaction(t *testing.T) {
 }
 
 func TestToolErrorRedaction(t *testing.T) {
+	// Proves that the Redact function is applied to tool error messages as well as successful results, so that secrets in error text are not stored in the session.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

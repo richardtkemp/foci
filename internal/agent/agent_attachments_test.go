@@ -13,6 +13,8 @@ import (
 )
 
 func TestHandleMessageWithAttachments(t *testing.T) {
+	// Proves that image attachments are sent as an image content block followed by
+	// a text block containing the user's message and a [meta] prefix.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -81,6 +83,8 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 }
 
 func TestHandleMessageWithPDFAttachment(t *testing.T) {
+	// Proves that PDF attachments use a "document" content block rather than "image",
+	// ensuring the correct block type is sent to the API for PDF MIME types.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -138,6 +142,8 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 }
 
 func TestHandleMessageWithPDFSavedPath(t *testing.T) {
+	// Proves that when a PDF attachment has a SavedPath, the text block includes
+	// a "[PDF saved to: ...]" annotation so the model knows where the file is stored.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -178,6 +184,8 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
+	// Proves that an image-only message (empty user text) succeeds and returns the
+	// assistant's response, confirming no panic or error when text is absent.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -249,6 +257,8 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
+	// Proves that when an image attachment has a SavedPath, the text block includes
+	// an "[Image saved to: ...]" annotation alongside the user's message text.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -295,6 +305,8 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 }
 
 func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
+	// Proves that when an image attachment has no SavedPath, the text block does
+	// NOT contain any "[Image saved to:]" annotation, keeping the message clean.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

@@ -62,6 +62,8 @@ func TestCacheStrategyInRequest(t *testing.T) {
 }
 
 func TestCacheBustDetection(t *testing.T) {
+	// Proves that when cache_read_input_tokens drops from a high value to zero on
+	// consecutive turns, the CacheBustAlert hook fires with the correct session and token counts.
 	callCount := 0
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
@@ -112,6 +114,8 @@ func TestCacheBustDetection(t *testing.T) {
 }
 
 func TestCacheBustSuppressedWhenIdle(t *testing.T) {
+	// Proves that if a session has been idle longer than CacheBustIdleThreshold,
+	// a cache_read drop is not reported as a bust (cache expiry is expected, not a problem).
 	callCount := 0
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++

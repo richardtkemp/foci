@@ -27,6 +27,7 @@ func makePNG(w, h int) []byte {
 // TestDownscaleUnderThreshold verifies that images smaller than maxPixels
 // are returned unchanged.
 func TestDownscaleUnderThreshold(t *testing.T) {
+	// Proves that images whose pixel count is within the limit are returned byte-for-byte identical with no re-encoding.
 	data := makeJPEG(100, 100) // 10,000 pixels
 	out, mt := maybeDownscaleImage("", data,"image/jpeg", 100*100)
 	if mt != "image/jpeg" {
@@ -40,6 +41,7 @@ func TestDownscaleUnderThreshold(t *testing.T) {
 // TestDownscaleOverThreshold verifies that images exceeding maxPixels are
 // resized and re-encoded as JPEG with smaller dimensions.
 func TestDownscaleOverThreshold(t *testing.T) {
+	// Proves that images exceeding the pixel limit are re-encoded at reduced dimensions so the output pixel count does not exceed the threshold.
 	data := makeJPEG(200, 200) // 40,000 pixels
 	maxPixels := 10000         // should trigger downscale
 
@@ -64,6 +66,7 @@ func TestDownscaleOverThreshold(t *testing.T) {
 // TestDownscalePNGtoJPEG verifies that PNG images are downscaled and
 // re-encoded as JPEG.
 func TestDownscalePNGtoJPEG(t *testing.T) {
+	// Proves that PNG input exceeding the pixel limit is converted and returned as valid JPEG (not PNG), normalising the media type for API compatibility.
 	data := makePNG(300, 300) // 90,000 pixels
 	out, mt := maybeDownscaleImage("", data,"image/png", 10000)
 	if mt != "image/jpeg" {
@@ -78,6 +81,7 @@ func TestDownscalePNGtoJPEG(t *testing.T) {
 // TestDownscaleNonImage verifies that non-image media types are returned
 // unchanged.
 func TestDownscaleNonImage(t *testing.T) {
+	// Proves that maybeDownscaleImage is a no-op for non-image MIME types, returning the original data and media type unmodified.
 	data := []byte("not an image")
 	out, mt := maybeDownscaleImage("", data,"application/pdf", 1000)
 	if mt != "application/pdf" {
@@ -90,6 +94,7 @@ func TestDownscaleNonImage(t *testing.T) {
 
 // TestDownscaleDisabled verifies that maxPixels=0 disables downscaling.
 func TestDownscaleDisabled(t *testing.T) {
+	// Proves that passing maxPixels=0 completely disables downscaling, returning even very large images unchanged.
 	data := makeJPEG(1000, 1000)
 	out, mt := maybeDownscaleImage("", data,"image/jpeg", 0)
 	if mt != "image/jpeg" {
@@ -103,6 +108,7 @@ func TestDownscaleDisabled(t *testing.T) {
 // TestDownscaleCorruptData verifies that corrupt image data is returned
 // unchanged rather than causing an error.
 func TestDownscaleCorruptData(t *testing.T) {
+	// Proves that corrupt or undecodable image data does not cause a panic or error — it is passed through unchanged as a safe fallback.
 	data := []byte("corrupt jpeg data that cannot be decoded")
 	out, mt := maybeDownscaleImage("", data,"image/jpeg", 1000)
 	if !bytes.Equal(out, data) {

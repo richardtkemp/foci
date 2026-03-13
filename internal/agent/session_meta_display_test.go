@@ -12,6 +12,7 @@ import (
 // (show_tool_calls, display_show_thinking, stream_output, display_width) can
 // be set, retrieved, and cleared independently.
 func TestSessionDisplayOverrides(t *testing.T) {
+	// Proves that all four per-session display settings start empty, can be set to specific values, and are all cleared together by ClearSessionDisplayOverrides.
 	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
 	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 	sk := "bot/c100/1000000000"
@@ -63,6 +64,7 @@ func TestSessionDisplayOverrides(t *testing.T) {
 // TestSessionDisplayOverrides_Restore verifies that display overrides persist
 // to the state store and can be restored after an Agent restart.
 func TestSessionDisplayOverrides_Restore(t *testing.T) {
+	// Proves that display overrides survive an agent restart by writing to and reading from the shared state store via RestoreSessionOverrides.
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	stateStore := state.New(statePath)
 	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
@@ -94,6 +96,7 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 // TestSessionDisplayOverrides_Rotate verifies that display overrides migrate
 // correctly when a session key rotates (e.g. during session branching).
 func TestSessionDisplayOverrides_Rotate(t *testing.T) {
+	// Proves that display overrides move from the old session key to the new one after RotateSession, and that the state store reflects the new key with the old key's values removed.
 	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
 	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 

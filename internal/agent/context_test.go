@@ -7,6 +7,7 @@ import (
 )
 
 func TestTurnCallbacksRoundTrip(t *testing.T) {
+	// Proves that TurnCallbacks stored in a context via WithTurnCallbacks can be retrieved with TurnCallbacksFromContext and that the retrieved callbacks are the exact same object.
 	var called bool
 	cb := &TurnCallbacks{
 		ReplyFunc: func(text string) { called = true },
@@ -27,6 +28,7 @@ func TestTurnCallbacksRoundTrip(t *testing.T) {
 }
 
 func TestTurnCallbacksNilContext(t *testing.T) {
+	// Proves that TurnCallbacksFromContext returns nil when no callbacks have been stored in the context.
 	got := TurnCallbacksFromContext(context.Background())
 	if got != nil {
 		t.Errorf("expected nil from empty context, got %v", got)
@@ -34,7 +36,7 @@ func TestTurnCallbacksNilContext(t *testing.T) {
 }
 
 func TestSendIntermediateCtxNilSafe(t *testing.T) {
-	// Should not panic with no callbacks
+	// Proves that sendIntermediateCtx is nil-safe: it does not panic when the context has no callbacks, when ReplyFunc is nil, or when called with empty text.
 	sendIntermediateCtx(context.Background(), "test")
 
 	// Should not panic with nil ReplyFunc
@@ -53,17 +55,17 @@ func TestSendIntermediateCtxNilSafe(t *testing.T) {
 }
 
 func TestNotifyToolCallCtxNilSafe(t *testing.T) {
-	// Should not panic with no callbacks
+	// Proves that notifyToolCallCtx does not panic when the context has no callbacks registered.
 	notifyToolCallCtx(context.Background(), "test", json.RawMessage(`{}`))
 }
 
 func TestSignalActivityCtxNilSafe(t *testing.T) {
-	// Should not panic with no callbacks
+	// Proves that signalActivityCtx does not panic when the context has no callbacks registered.
 	signalActivityCtx(context.Background())
 }
 
 func TestNotifyThinkingCtxNilSafe(t *testing.T) {
-	// Should not panic with no callbacks
+	// Proves that notifyThinkingCtx is nil-safe and guards against empty input: it does not panic without callbacks, skips empty thinking text, and correctly delivers non-empty thinking to the observer.
 	notifyThinkingCtx(context.Background(), "some thinking")
 
 	// Should not panic with nil ThinkingObserver
