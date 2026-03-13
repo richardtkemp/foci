@@ -533,8 +533,8 @@ func setupAgent(p setupParams) *agentInstance {
 		},
 	}, lastMsgStore)
 
-	// Finalize exec tool description with dynamically-generated shell function list.
-	registry.FinalizeExecDescription()
+	// Finalize shell tool description with dynamically-generated shell function list.
+	registry.FinalizeShellDescription()
 
 	// Log registered tools
 	allTools := registry.All()
