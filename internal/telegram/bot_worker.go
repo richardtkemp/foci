@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/log"
 	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -101,7 +100,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		// creates a fresh message below the text instead of editing the stale
 		// earlier message (which would appear above the text in chat).
 		ReplyFunc: func(text string) {
-			b.sendReply(qm.msg, qm.userID, text)
+			b.sendReply(qm.msg, text)
 			tracker.resetMsgID()
 		},
 		// Refresh typing indicator when tools complete
@@ -135,6 +134,11 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
+	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
+		UserID:   qm.userID,
+		Username: qm.msg.From.Username,
+		ChatID:   qm.msg.Chat.Id,
+	})
 
 	var response string
 	var err error
@@ -208,15 +212,6 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			ParseMode: "HTML",
 		})
 		if editErr == nil {
-			log.Conversation(log.ConversationEntry{
-				Direction: "sent",
-				UserID:    qm.userID,
-				Username:  qm.msg.From.Username,
-				ChatID:    qm.msg.Chat.Id,
-				Text:      htmlResp,
-				ParseMode: "HTML",
-				Session:   b.SessionKey(),
-			})
 			return
 		}
 		b.logger().Debugf("edit final response failed, falling back: %v", editErr)
@@ -224,19 +219,19 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	// Full thinking: prepend italic thinking + divider to response
 	if showThinkMode == "true" && thinkingText != "" {
-		b.sendReplyWithFullThinking(qm.msg, qm.userID, response, thinkingText)
+		b.sendReplyWithFullThinking(qm.msg, response, thinkingText)
 		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
 
 	// Compact thinking: send response with "Show thinking" toggle button
 	if showThinkMode == "compact" && thinkingText != "" {
-		b.sendReplyWithThinking(qm.msg, qm.userID, response, thinkingText)
+		b.sendReplyWithThinking(qm.msg, response, thinkingText)
 		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
 
-	b.sendReply(qm.msg, qm.userID, response)
+	b.sendReply(qm.msg, response)
 	b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 }
 

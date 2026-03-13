@@ -287,10 +287,7 @@ func TestGuardToolResult_FileExtension(t *testing.T) {
 // mockSendMessage is a minimal provider.Client stand-in for testing.
 // It captures the request and returns a canned response.
 type mockSendMessage struct {
-	called  bool
-	request *provider.MessageRequest
-	resp    *provider.MessageResponse
-	err     error
+	resp *provider.MessageResponse
 }
 
 // stubClient satisfies provider.Client for tests that need a non-nil client

@@ -17,7 +17,6 @@ import (
 // Client wraps the Google genai SDK to implement provider.Client.
 type Client struct {
 	client *genai.Client
-	model  string        // default model (can be overridden per request)
 	cache  *CacheManager // nil if caching disabled
 	apiKey string        // kept for debug key-suffix logging
 }

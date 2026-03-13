@@ -293,9 +293,6 @@ func TestSendMessage_APIError(t *testing.T) {
 
 // isAPIError is a test helper that checks if err is or wraps a *provider.APIError.
 func isAPIError(err error, target **provider.APIError) bool {
-	type apiErr interface {
-		Error() string
-	}
 	// Check if the error itself is a *provider.APIError
 	if e, ok := err.(*provider.APIError); ok {
 		*target = e

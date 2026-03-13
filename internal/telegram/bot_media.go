@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
-
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
@@ -99,7 +97,7 @@ func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
 	return nil
 }
 
@@ -123,13 +121,6 @@ func (b *Bot) sendMediaFile(chatID int64, filePath, mediaType string, sendFn fun
 	if _, err := sendFn(chatID, gotgbot.InputFileByReader(filepath.Base(filePath), f), nil); err != nil {
 		return fmt.Errorf("send %s: %w", mediaType, err)
 	}
-
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		ChatID:    chatID,
-		Text:      fmt.Sprintf("[%s %s]", mediaType, filePath),
-		Session:   b.SessionKey(),
-	})
 	return nil
 }
 
@@ -172,22 +163,6 @@ func (b *Bot) SendAudioToChat(chatID int64, filePath string) error {
 func (b *Bot) SendAnimationToChat(chatID int64, filePath string) error {
 	return b.sendMediaFile(chatID, filePath, "animation", func(cid int64, file gotgbot.InputFile, opts *gotgbot.SendDocumentOpts) (*gotgbot.Message, error) {
 		return b.client.SendAnimation(cid, file, nil)
-	})
-}
-
-// sendVoiceNote sends audio data as a Telegram voice note.
-func (b *Bot) sendVoiceNote(chatID int64, userID string, username string, audioData []byte) {
-	if _, err := b.client.SendVoice(chatID, gotgbot.InputFileByReader("voice.mp3", bytes.NewReader(audioData)), nil); err != nil {
-		b.logger().Errorf("send voice note: %s", b.sanitizeError(err))
-	}
-
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		UserID:    userID,
-		Username:  username,
-		ChatID:    chatID,
-		Text:      fmt.Sprintf("[voice note %d bytes]", len(audioData)),
-		Session:   b.SessionKey(),
 	})
 }
 
@@ -357,7 +332,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachm
 	if err != nil {
 		b.logger().Errorf("download attachment: %s", b.sanitizeError(err))
 		if b.handler == nil || b.handler.Warnings() == nil {
-			b.sendHTMLChunks(chatID, "Could not download attachment — please try again.", "", "")
+			b.sendHTMLChunks(chatID, "Could not download attachment — please try again.")
 		}
 		return attachment{}, false
 	}
@@ -388,7 +363,7 @@ func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType,
 		}
 		b.logger().Errorf("download %s: %s", mediaType, b.sanitizeError(err))
 		if b.handler == nil || b.handler.Warnings() == nil {
-			b.sendHTMLChunks(chatID, fmt.Sprintf("Could not download %s — please try again.", label), "", "")
+			b.sendHTMLChunks(chatID, fmt.Sprintf("Could not download %s — please try again.", label))
 		}
 		return text
 	}
