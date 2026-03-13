@@ -153,6 +153,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.ModelCommand())
 	cmds.Register(command.EffortCommand())
 	cmds.Register(command.ThinkingCommand())
+	cmds.Register(command.SpeedCommand())
 	cmds.Register(command.DisplayCommand())
 	cmds.Register(command.ToolsCommand())
 	cmds.Register(command.ConfigCommand())

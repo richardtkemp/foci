@@ -201,7 +201,7 @@ func (c *Client) sendOnce(ctx context.Context, body []byte, req *MessageRequest)
 	if c.useSDK {
 		return c.sendOnceSDK(ctx, req)
 	}
-	return c.sendOnceRaw(ctx, body)
+	return c.sendOnceRaw(ctx, body, req.Speed)
 }
 
 // sendOnceSDK sends a message using the official Anthropic SDK.
@@ -218,7 +218,7 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 	slog.Debug("anthropic: sdk_call_start", "model", req.Model)
 	callStart := time.Now()
 
-	msg, err := sc.Messages.New(ctx, params, sdkRequestOptions(token)...)
+	msg, err := sc.Messages.New(ctx, params, sdkRequestOptions(token, req.Speed)...)
 
 	callDur := time.Since(callStart)
 	if err != nil {
@@ -234,7 +234,7 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 
 // sendOnceRaw performs a single HTTP request to the messages API and returns the
 // parsed response, or an error. The original hand-rolled transport.
-func (c *Client) sendOnceRaw(ctx context.Context, body []byte) (*MessageResponse, error) {
+func (c *Client) sendOnceRaw(ctx context.Context, body []byte, speed string) (*MessageResponse, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, fmt.Errorf("resolve token: %w", err)
@@ -245,10 +245,14 @@ func (c *Client) sendOnceRaw(ctx context.Context, body []byte) (*MessageResponse
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
+	betaHeader := "oauth-2025-04-20"
+	if speed == "fast" {
+		betaHeader += ",fast-mode-2026-02-01"
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	httpReq.Header.Set("anthropic-beta", betaHeader)
 
 	deadline, hasDeadline := ctx.Deadline()
 	httpTimeout := c.httpClient.Timeout
@@ -317,6 +321,9 @@ func stripUnsupportedParams(req *MessageRequest) {
 	if req.Thinking != nil && !caps.Thinking {
 		req.Thinking = nil
 	}
+	if req.Speed != "" && !caps.Speed {
+		req.Speed = ""
+	}
 }
 
 
@@ -344,7 +351,7 @@ func (c *Client) countTokensSDK(ctx context.Context, req *MessageRequest) (int, 
 	params := buildSDKCountParams(req)
 	sc := c.ensureSDKClient()
 
-	result, err := sc.Messages.CountTokens(ctx, params, sdkRequestOptions(token)...)
+	result, err := sc.Messages.CountTokens(ctx, params, sdkRequestOptions(token, "")...)
 	if err != nil {
 		return 0, classifySDKError(err)
 	}
@@ -418,7 +425,7 @@ func (c *Client) listModelsSDK() ([]ModelInfo, error) {
 	sc := c.ensureSDKClient()
 	page, err := sc.Models.List(context.Background(), sdk.ModelListParams{
 		Limit: param.NewOpt(int64(100)),
-	}, sdkRequestOptions(token)...)
+	}, sdkRequestOptions(token, "")...)
 	if err != nil {
 		return nil, classifySDKError(err)
 	}

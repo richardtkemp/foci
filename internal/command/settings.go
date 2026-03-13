@@ -70,11 +70,15 @@ func ModelCommand() *Command {
 }
 
 // EffortCommand returns a /effort command to show or set the effort level.
+// Visible is set to hide the command when the current model doesn't support effort.
 func EffortCommand() *Command {
 	return &Command{
 		Name:        "effort",
 		Description: "Show or set effort level (low/medium/high)",
 		Category:    "operations",
+		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
+			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Effort
+		},
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			const optionsLine = "Options: 1) low  2) medium  3) high"
 			if req.Args == "" {
@@ -116,11 +120,15 @@ func EffortCommand() *Command {
 }
 
 // ThinkingCommand returns a /thinking command to show or set the thinking mode.
+// Visible is set to hide the command when the current model doesn't support thinking.
 func ThinkingCommand() *Command {
 	return &Command{
 		Name:        "thinking",
 		Description: "Show or set thinking mode (off/adaptive)",
 		Category:    "operations",
+		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
+			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Thinking
+		},
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			const optionsLine = "Options: 0) off  1) adaptive"
 			if req.Args == "" {
@@ -152,6 +160,59 @@ func ThinkingCommand() *Command {
 			return []KeyboardOption{
 				{Label: "off", Data: "off"},
 				{Label: "adaptive", Data: "adaptive"},
+			}
+		},
+	}
+}
+
+// SpeedCommand returns a /speed command to show or set Anthropic fast mode.
+// Visible is set to hide the command when the current model doesn't support speed.
+func SpeedCommand() *Command {
+	return &Command{
+		Name:        "speed",
+		Description: "Show or set speed mode (standard/fast)",
+		Category:    "operations",
+		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
+			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Speed
+		},
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			const optionsLine = "Options: 0) standard  1) fast"
+
+			// Gate: reject if current model doesn't support speed
+			m := cc.Agent.SessionModel(req.SessionKey)
+			if !config.ModelCapabilities(m).Speed {
+				return Response{Text: fmt.Sprintf("Speed is not supported by %s (Opus only)", m)}, nil
+			}
+
+			if req.Args == "" {
+				s := cc.Agent.SessionSpeed(req.SessionKey)
+				if s == "" || s == "standard" {
+					return Response{Text: "Speed: standard\n" + optionsLine}, nil
+				}
+				return Response{Text: fmt.Sprintf("Speed: %s\n%s", s, optionsLine)}, nil
+			}
+			arg := strings.ToLower(strings.TrimSpace(req.Args))
+			switch arg {
+			case "0":
+				arg = "standard"
+			case "1":
+				arg = "fast"
+			}
+			switch arg {
+			case "standard", "off", "none":
+				cc.Agent.SetSessionSpeed(req.SessionKey, "")
+				return Response{Text: "Speed: standard"}, nil
+			case "fast":
+				cc.Agent.SetSessionSpeed(req.SessionKey, "fast")
+				return Response{Text: "Speed: fast (6x pricing, separate prompt cache)"}, nil
+			default:
+				return Response{Text: fmt.Sprintf("Invalid speed mode: %q\n%s", req.Args, optionsLine)}, nil
+			}
+		},
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "standard", Data: "standard"},
+				{Label: "fast", Data: "fast"},
 			}
 		},
 	}
