@@ -1,10 +1,9 @@
-package command
+package agent
 
 import (
 	"context"
 	"time"
 
-	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
@@ -16,7 +15,7 @@ import (
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
 // work branches which set NoResetHook but should still get memory formation).
-func FireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
+func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
 	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
 		return
 	}
@@ -62,7 +61,7 @@ func FireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 	go func() {
 		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
 		defer cancel()
-		hookCtx = agent.WithTrigger(hookCtx, "session_end_memory")
+		hookCtx = WithTrigger(hookCtx, "session_end_memory")
 		ag.SetSessionNoCompact(branchKey, true)
 		if _, err := ag.HandleMessage(hookCtx, branchKey, prompt); err != nil {
 			log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)

@@ -5,6 +5,7 @@ package prompts
 
 import (
 	"embed"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,42 @@ func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string)
 		return embeddedDefault
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// BuildBranchOrientation constructs orientation text for a branch session.
+// Resolves the prompt through ResolvePrompt: explicit path → search dirs → embedded default.
+// Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
+func BuildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool, searchDirs []string) string {
+	var filename, embedded string
+	if directChat {
+		filename = "branch-orientation-multiball.md"
+		embedded = BranchOrientationMultiball()
+	} else {
+		filename = "branch-orientation-headless.md"
+		embedded = BranchOrientationHeadless()
+	}
+	text := ResolvePrompt(promptPath, filename, embedded, searchDirs...)
+	return ReplaceVars(text, map[string]string{
+		"branch_key":  branchKey,
+		"parent_key":  parentKey,
+		"branch_type": branchType,
+		"direct_chat": fmt.Sprintf("%v", directChat),
+	})
+}
+
+// ResolveOrientPath picks the first non-empty value from a priority list:
+// specific type → global type → specific fallback → global fallback.
+func ResolveOrientPath(specific, globalSpecific, fallback, globalFallback string) string {
+	if specific != "" {
+		return specific
+	}
+	if globalSpecific != "" {
+		return globalSpecific
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return globalFallback
 }
 
 // ReplaceVars performs template variable substitution on text.

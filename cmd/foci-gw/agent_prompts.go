@@ -47,21 +47,6 @@ func seedDefaultPrompts(dir string) {
 	}
 }
 
-// buildBranchOrientation constructs orientation text for a branch session.
-// Resolves the prompt through ResolvePrompt: explicit path → search dirs → embedded default.
-// Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
-func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, searchDirs []string) string {
-	filename := "branch-orientation-headless.md"
-	embedded := prompts.BranchOrientationHeadless()
-	text := prompts.ResolvePrompt(promptPath, filename, embedded, searchDirs...)
-	return prompts.ReplaceVars(text, map[string]string{
-		"branch_key":  branchKey,
-		"parent_key":  parentKey,
-		"branch_type": branchType,
-		"direct_chat": "false",
-	})
-}
-
 // resolvePromptInfo builds a PromptInfo for a file-path-based prompt, comparing
 // the resolved text against the embedded default via md5 to detect customisation.
 func resolvePromptInfo(label, configPath, filename, embeddedDefault string, searchDirs []string) command.PromptInfo {
