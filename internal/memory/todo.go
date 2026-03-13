@@ -76,59 +76,7 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		}
 	}
 
-	if err := initTodoFTS(db); err != nil {
-		return closeOnErr("init todo FTS", err)
-	}
-
 	return &TodoStore{db: db}, nil
-}
-
-// initTodoFTS creates the FTS5 virtual table and sync triggers for
-// full-text search over todo text. Uses an external content table
-// backed by todos, so no content is duplicated. Porter stemming
-// provides morphological matching (e.g. "running" matches "run").
-func initTodoFTS(db *sql.DB) error {
-	// Check if FTS table already exists (to know if we need a rebuild).
-	var ftsExists bool
-	if err := db.QueryRow("SELECT 1 FROM sqlite_master WHERE type='table' AND name='todos_fts'").Scan(new(int)); err == nil {
-		ftsExists = true
-	}
-
-	_, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS todos_fts USING fts5(
-		text,
-		content='todos',
-		content_rowid='rowid',
-		tokenize='porter unicode61'
-	)`)
-	if err != nil {
-		return fmt.Errorf("create todos_fts: %w", err)
-	}
-
-	// Triggers keep the FTS index in sync with the todos table.
-	for _, stmt := range []string{
-		`CREATE TRIGGER IF NOT EXISTS todos_fts_ai AFTER INSERT ON todos BEGIN
-			INSERT INTO todos_fts(rowid, text) VALUES (new.rowid, new.text);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS todos_fts_ad AFTER DELETE ON todos BEGIN
-			INSERT INTO todos_fts(todos_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS todos_fts_au AFTER UPDATE ON todos BEGIN
-			INSERT INTO todos_fts(todos_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-			INSERT INTO todos_fts(rowid, text) VALUES (new.rowid, new.text);
-		END`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("create fts trigger: %w", err)
-		}
-	}
-
-	// Populate FTS index from existing content on first creation.
-	if !ftsExists {
-		if _, err := db.Exec("INSERT INTO todos_fts(todos_fts) VALUES('rebuild')"); err != nil {
-			return fmt.Errorf("rebuild fts index: %w", err)
-		}
-	}
-	return nil
 }
 
 // columnExists checks whether a column exists in the given table.
@@ -449,15 +397,15 @@ type TodoSearchOpts struct {
 // Search returns todo items matching the query using full-text search
 // with porter stemming (e.g. "running" matches "run"). Results are ranked
 // by relevance, with a secondary sort by status and priority for ties.
-// Uses the bleve search index when available, falling back to FTS5.
+// Requires a bleve search index (set via SetSearchIndex).
 func (s *TodoStore) Search(agentID, query string, opts *TodoSearchOpts) ([]TodoItem, error) {
 	if opts == nil {
 		opts = &TodoSearchOpts{}
 	}
-	if s.searchIndex != nil {
-		return s.searchBleve(agentID, query, opts)
+	if s.searchIndex == nil {
+		return nil, fmt.Errorf("todo search requires a search index (call SetSearchIndex)")
 	}
-	return s.searchFTS5(agentID, query)
+	return s.searchBleve(agentID, query, opts)
 }
 
 // searchBleve queries the bleve index for matching todos, then loads
@@ -592,47 +540,6 @@ func priorityOrd(p string) int {
 	default:
 		return 3
 	}
-}
-
-// searchFTS5 queries the embedded FTS5 index (fallback when no bleve index).
-func (s *TodoStore) searchFTS5(agentID, query string) ([]TodoItem, error) {
-	ftsQuery := buildFTSQuery(query)
-	if ftsQuery == "" {
-		return nil, nil
-	}
-	rows, err := s.db.Query(
-		`SELECT t.id, t.text, t.status, t.priority, t.tags, t.close_reason,
-		        t.agent_id, t.created_at, t.updated_at, t.completed_at
-		 FROM todos_fts f
-		 JOIN todos t ON t.rowid = f.rowid
-		 WHERE todos_fts MATCH ? AND t.agent_id = ?
-		 ORDER BY f.rank,
-		          CASE t.status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END,
-		          CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END,
-		          t.id
-		 LIMIT 50`,
-		ftsQuery, agentID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	return scanTodos(rows)
-}
-
-// buildFTSQuery converts a user query into an FTS5 match expression.
-// Each term is quoted to prevent FTS5 syntax errors from special
-// characters, while still allowing porter stemming to apply.
-func buildFTSQuery(query string) string {
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
-		return ""
-	}
-	quoted := make([]string, len(terms))
-	for i, t := range terms {
-		quoted[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
-	}
-	return strings.Join(quoted, " ")
 }
 
 // Close closes the underlying database.
