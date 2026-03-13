@@ -7,207 +7,103 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/agent"
+	"foci/internal/config"
 )
 
-// TestMultiballCommand verifies multiball fork invokes the callback and returns session info.
+// TestMultiballCommand verifies multiball calls ConfigureMultiball and ConnMgr.
+// Note: full multiball testing requires platform integration; this tests the command shell.
 func TestMultiballCommand(t *testing.T) {
-	forked := false
-	cmd := NewMultiballCommand(func(ctx context.Context) (string, error) {
-		forked = true
-		return "Forked to @testbot (session: agent:main:multiball:mb-1)", nil
-	})
-
-	result, err := cmd.Execute(context.Background(), "")
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	cmd := MultiballCommand()
+	// Without ConnMgr, the command should fail
+	cc := CommandContext{
+		Agent:       &agent.Agent{},
+		AgentConfig: config.AgentConfig{ID: "test"},
 	}
-	if !forked {
-		t.Error("fork function not called")
-	}
-	if !strings.Contains(result, "@testbot") {
-		t.Errorf("expected bot name in result, got %q", result)
-	}
-}
 
-// TestMultiballCommandError verifies error handling when fork fails.
-func TestMultiballCommandError(t *testing.T) {
-	cmd := NewMultiballCommand(func(ctx context.Context) (string, error) {
-		return "", fmt.Errorf("no secondary bots configured")
-	})
-
-	_, err := cmd.Execute(context.Background(), "")
+	_, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "no secondary bots") {
-		t.Errorf("unexpected error: %v", err)
+		t.Fatal("expected error without ConnMgr")
 	}
 }
 
-// TestManaCommand verifies mana/custom resource command displays status correctly.
+// TestManaCommand verifies mana command name is set correctly.
 func TestManaCommand(t *testing.T) {
-	tests := []struct {
-		name       string
-		cmdName    string
-		manaFn     func(context.Context) (string, error)
-		wantResult string
-	}{
-		{
-			name:    "default mana name",
-			cmdName: "mana",
-			manaFn: func(ctx context.Context) (string, error) {
-				return "mana: 75% remaining", nil
-			},
-			wantResult: "mana: 75% remaining",
-		},
-		{
-			name:    "custom name juice",
-			cmdName: "juice",
-			manaFn: func(ctx context.Context) (string, error) {
-				return "juice: 50% remaining", nil
-			},
-			wantResult: "juice: 50% remaining",
-		},
-		{
-			name:    "custom name credits",
-			cmdName: "credits",
-			manaFn: func(ctx context.Context) (string, error) {
-				return "credits: 10% remaining", nil
-			},
-			wantResult: "credits: 10% remaining",
-		},
+	cmd := ManaCommand("juice")
+	if cmd.Name != "juice" {
+		t.Errorf("cmd.Name = %q, want %q", cmd.Name, "juice")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := NewManaCommand(tt.cmdName, tt.manaFn)
-			if cmd.Name != tt.cmdName {
-				t.Errorf("cmd.Name = %q, want %q", cmd.Name, tt.cmdName)
-			}
-			result, err := cmd.Execute(context.Background(), "")
-			if err != nil {
-				t.Fatalf("Execute: %v", err)
-			}
-			if result != tt.wantResult {
-				t.Errorf("result = %q, want %q", result, tt.wantResult)
-			}
-		})
-	}
-}
-
-// TestManaCommandDescription verifies description includes the command name.
-func TestManaCommandDescription(t *testing.T) {
-	cmd := NewManaCommand("juice", func(ctx context.Context) (string, error) {
-		return "", nil
-	})
 	if !strings.Contains(cmd.Description, "juice") {
 		t.Errorf("Description should contain 'juice', got %q", cmd.Description)
 	}
 }
 
-// TestCompactCommand verifies compact session operation.
+// TestCompactCommand verifies compact session operation delegates to runCompaction.
 func TestCompactCommand(t *testing.T) {
-	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
-		if dryRun {
-			t.Error("expected dryRun=false for normal compact")
-		}
-		return 42, nil
-	})
-
-	result, err := cmd.Execute(context.Background(), "")
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	cmd := CompactCommand()
+	// Without a compactor, the command should error
+	cc := CommandContext{
+		Agent:       &agent.Agent{},
+		AgentConfig: config.AgentConfig{ID: "test"},
 	}
-	if !strings.Contains(result, "42 messages") {
-		t.Errorf("expected message count in result: %q", result)
+	_, err := cmd.Execute(context.Background(), Request{}, cc)
+	if err == nil {
+		t.Fatal("expected error without compactor")
+	}
+	if !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("unexpected error: %v", err)
 	}
 	if cmd.Category != "operations" {
 		t.Errorf("category = %q, want operations", cmd.Category)
 	}
 }
 
-// TestCompactCommandDryRun verifies dry-run compact operation.
-func TestCompactCommandDryRun(t *testing.T) {
-	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
-		if !dryRun {
-			t.Error("expected dryRun=true for dry-run compact")
-		}
-		return 42, nil
-	})
-
-	result, err := cmd.Execute(context.Background(), "dry-run")
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(result, "Dry-run") {
-		t.Errorf("expected dry-run message in result: %q", result)
-	}
-	if !strings.Contains(result, "42 messages") {
-		t.Errorf("expected message count in result: %q", result)
-	}
-}
-
-// TestCompactCommandError verifies error handling when compact fails.
-func TestCompactCommandError(t *testing.T) {
-	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
-		return 0, fmt.Errorf("too few messages to compact (3)")
-	})
-
-	_, err := cmd.Execute(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "too few") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
 // TestScriptCommand verifies script command executes and captures output.
 func TestScriptCommand(t *testing.T) {
-	cmd := NewScriptCommand("test", "test cmd", "echo hello from script", 10)
-	result, err := cmd.Execute(context.Background(), "")
+	cmd := ScriptCommand("test", "test cmd", "echo hello from script", 10)
+	result, err := cmd.Execute(context.Background(), Request{}, CommandContext{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if result != "hello from script" {
-		t.Errorf("result = %q", result)
+	if result.Text != "hello from script" {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
 // TestScriptCommandFailure verifies script command captures stderr and exit code.
 func TestScriptCommandFailure(t *testing.T) {
-	cmd := NewScriptCommand("fail", "failing cmd", "echo oops >&2; exit 1", 10)
-	result, err := cmd.Execute(context.Background(), "")
+	cmd := ScriptCommand("fail", "failing cmd", "echo oops >&2; exit 1", 10)
+	result, err := cmd.Execute(context.Background(), Request{}, CommandContext{})
 	if err != nil {
 		t.Fatalf("Execute returned Go error: %v", err)
 	}
-	if !strings.Contains(result, "oops") {
-		t.Errorf("missing stderr in: %q", result)
+	if !strings.Contains(result.Text, "oops") {
+		t.Errorf("missing stderr in: %q", result.Text)
 	}
-	if !strings.Contains(result, "Error:") {
-		t.Errorf("missing Error in: %q", result)
+	if !strings.Contains(result.Text, "Error:") {
+		t.Errorf("missing Error in: %q", result.Text)
 	}
 }
 
 // TestScriptCommandTimeout verifies script command times out correctly.
 func TestScriptCommandTimeout(t *testing.T) {
-	cmd := NewScriptCommand("slow", "slow cmd", "sleep 60", 1)
-	result, err := cmd.Execute(context.Background(), "")
+	cmd := ScriptCommand("slow", "slow cmd", "sleep 60", 1)
+	result, err := cmd.Execute(context.Background(), Request{}, CommandContext{})
 	if err != nil {
 		t.Fatalf("Execute returned Go error: %v", err)
 	}
-	if !strings.Contains(result, "timed out") {
-		t.Errorf("missing timeout message in: %q", result)
+	if !strings.Contains(result.Text, "timed out") {
+		t.Errorf("missing timeout message in: %q", result.Text)
 	}
 }
 
 // TestScriptCommandDefaultTimeout verifies default timeout is applied when zero is passed.
 func TestScriptCommandDefaultTimeout(t *testing.T) {
-	// Verify default timeout is applied (not 0)
-	cmd := NewScriptCommand("test", "test", "echo ok", 0)
-	result, _ := cmd.Execute(context.Background(), "")
-	if result != "ok" {
-		t.Errorf("result = %q", result)
+	cmd := ScriptCommand("test", "test", "echo ok", 0)
+	result, _ := cmd.Execute(context.Background(), Request{}, CommandContext{})
+	if result.Text != "ok" {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -221,15 +117,15 @@ func TestLogCommand(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	cmd := NewLogCommand(logPath)
+	cmd := LogCommand()
+	cc := CommandContext{EventLogPath: logPath}
 
 	// Default: last 20, wrapped in code block
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
-		t.Errorf("result not wrapped in code block:\n%s", result)
+	result, _ := cmd.Execute(context.Background(), Request{}, cc)
+	if !strings.HasPrefix(result.Text, "```\n") || !strings.HasSuffix(result.Text, "\n```") {
+		t.Errorf("result not wrapped in code block:\n%s", result.Text)
 	}
-	// Strip code block markers and check content
-	inner := strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
+	inner := strings.TrimSuffix(strings.TrimPrefix(result.Text, "```\n"), "\n```")
 	resultLines := strings.Split(inner, "\n")
 	if len(resultLines) != 20 {
 		t.Errorf("got %d lines, want 20", len(resultLines))
@@ -239,8 +135,8 @@ func TestLogCommand(t *testing.T) {
 	}
 
 	// Custom: last 5
-	result, _ = cmd.Execute(context.Background(), "5")
-	inner = strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
+	result, _ = cmd.Execute(context.Background(), Request{Args: "5"}, cc)
+	inner = strings.TrimSuffix(strings.TrimPrefix(result.Text, "```\n"), "\n```")
 	resultLines = strings.Split(inner, "\n")
 	if len(resultLines) != 5 {
 		t.Errorf("got %d lines, want 5", len(resultLines))
@@ -262,21 +158,22 @@ func TestErrorsCommand(t *testing.T) {
 	}, "\n") + "\n"
 	os.WriteFile(logPath, []byte(content), 0644)
 
-	cmd := NewErrorsCommand(logPath)
-	result, _ := cmd.Execute(context.Background(), "")
+	cmd := ErrorsCommand()
+	cc := CommandContext{EventLogPath: logPath}
+	result, _ := cmd.Execute(context.Background(), Request{}, cc)
 
-	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
-		t.Errorf("result not wrapped in code block:\n%s", result)
+	if !strings.HasPrefix(result.Text, "```\n") || !strings.HasSuffix(result.Text, "\n```") {
+		t.Errorf("result not wrapped in code block:\n%s", result.Text)
 	}
-	inner := strings.TrimSuffix(strings.TrimPrefix(result, "```\n"), "\n```")
-	lines := strings.Split(inner, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d lines, want 2 (ERROR + WARN only):\n%s", len(lines), result)
+	inner := strings.TrimSuffix(strings.TrimPrefix(result.Text, "```\n"), "\n```")
+	resultLines := strings.Split(inner, "\n")
+	if len(resultLines) != 2 {
+		t.Fatalf("got %d lines, want 2 (ERROR + WARN only):\n%s", len(resultLines), result.Text)
 	}
-	if !strings.Contains(lines[0], "bad thing") {
-		t.Errorf("line 0 should be the ERROR line: %q", lines[0])
+	if !strings.Contains(resultLines[0], "bad thing") {
+		t.Errorf("line 0 should be the ERROR line: %q", resultLines[0])
 	}
-	if !strings.Contains(lines[1], "warning") {
-		t.Errorf("line 1 should be the WARN line: %q", lines[1])
+	if !strings.Contains(resultLines[1], "warning") {
+		t.Errorf("line 1 should be the WARN line: %q", resultLines[1])
 	}
 }

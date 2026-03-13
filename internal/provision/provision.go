@@ -36,7 +36,7 @@ type AgentSpec struct {
 	DisplayName string // "Greek Tutor" (optional)
 	HomeDir     string // workspace parent: /home/foci
 	DefaultsDir string // shared/defaults/ root (in repo or on disk)
-	CharMode    string // "defaults", "openclaw", "copy", "blank"
+	CharMode    string // "defaults", "openclaw", "copy", "import", "blank"
 	CopyFrom    string // source agent ID when CharMode=="copy"
 	SystemFiles []string // nil → DefaultSystemFiles
 }
@@ -68,7 +68,7 @@ func Provision(spec AgentSpec) (*Result, error) {
 	// 2. Character files based on CharMode
 	switch spec.CharMode {
 	case "defaults":
-		if err := copyCharacterFiles(spec.DefaultsDir, workspace); err != nil {
+		if err := copyDefaultFiles(spec.DefaultsDir, workspace); err != nil {
 			return nil, fmt.Errorf("copy defaults: %w", err)
 		}
 		if err := templateSoulFile(filepath.Join(workspace, "character", "SOUL.md"), spec.DisplayName); err != nil {
@@ -89,6 +89,9 @@ func Provision(spec AgentSpec) (*Result, error) {
 		if err := copyDir(filepath.Join(sourceWorkspace, "character"), filepath.Join(workspace, "character")); err != nil {
 			return nil, fmt.Errorf("copy from %s: %w", spec.CopyFrom, err)
 		}
+
+	case "import":
+		// Dirs already created above; caller handles the interactive file import.
 
 	case "blank":
 		for _, name := range DefaultCharacterFileNames {
@@ -119,8 +122,8 @@ func Provision(spec AgentSpec) (*Result, error) {
 	}, nil
 }
 
-// copyCharacterFiles copies default character and prompt files to a new workspace.
-func copyCharacterFiles(defaultsDir, workspace string) error {
+// copyDefaultFiles copies default character and prompt files to a new workspace.
+func copyDefaultFiles(defaultsDir, workspace string) error {
 	charSrc := filepath.Join(defaultsDir, "character")
 	charDst := filepath.Join(workspace, "character")
 

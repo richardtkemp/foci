@@ -141,7 +141,8 @@ func extractTempDir(result string) string {
 }
 
 func TestSpawnGuardResult(t *testing.T) {
-	// Small result — returned as-is
+	// Proves that small results pass through unchanged while large results are written to a temp file
+	// and replaced with a "Result too large" guard message pointing to the file.
 	t.Parallel()
 	small := strings.Repeat("x", 100)
 	if got := spawnGuardResult("test", small, spawnMaxResultChars); got != small {

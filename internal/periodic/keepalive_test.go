@@ -10,9 +10,9 @@ import (
 	"foci/internal/log"
 )
 
-// TestBackgroundBlockedByActiveWork verifies that HasActiveWorkFn returning true prevents background dispatch.
-// When active work is in progress, maybeBackgroundWork should skip the dispatch and try again when it clears.
 func TestBackgroundBlockedByActiveWork(t *testing.T) {
+	// Verifies that hasActiveWorkFn returning a non-zero count blocks background dispatch.
+	// After clearing active work, the same conditions should allow the next call to fire.
 	var mu sync.Mutex
 	calls := 0
 
@@ -59,9 +59,9 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 	}
 }
 
-// TestMaybeBackgroundWork_WithBadInvestInterval tests the code path where InvestInterval parsing fails.
-// It verifies that background work attempts even with bad InvestInterval (falls back to default mana check).
 func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
+	// Verifies that an unparseable manaInvestInterval does not block background dispatch entirely;
+	// the runner falls back gracefully rather than aborting the attempt.
 	var calls int
 	r := &Runner{
 		log:                log.NewComponentLogger("keepalive:test"),
@@ -85,9 +85,9 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 	// (it just falls back to 30m for mana check)
 }
 
-// TestMaybeMemoryFormation_SkipsWhenRateLimited proves that memory formation
-// respects the canFireFn check and skips when it returns false.
 func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
+	// Verifies that maybeMemoryFormation respects the canFireFn gate: if the function returns
+	// false (e.g. insufficient mana), no branch is dispatched even when all other conditions are met.
 	called := false
 	now := time.Now()
 	r := &Runner{
@@ -115,9 +115,9 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 	}
 }
 
-// TestMaybeConsolidation_SkipsWhenRateLimited proves that consolidation
-// respects the canFireFn check and skips when it returns false.
 func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
+	// Verifies that maybeConsolidation respects the canFireFn gate: if the function returns
+	// false (e.g. insufficient mana), no branch is dispatched even when all other conditions are met.
 	called := false
 	now := time.Now()
 	r := &Runner{
@@ -145,9 +145,9 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 	}
 }
 
-// TestMaybeBackgroundWork_SkipsWhenRateLimited proves that background work
-// respects the canFireFn check and skips when it returns false.
 func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
+	// Verifies that maybeBackgroundWork respects the canFireFn gate: if the function returns
+	// false (e.g. insufficient mana), no branch is dispatched even when all other conditions are met.
 	called := false
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),

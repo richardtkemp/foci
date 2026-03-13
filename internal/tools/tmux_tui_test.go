@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TestNormalizePaneContent_ElapsedTimers verifies that elapsed timers are normalized.
 func TestNormalizePaneContent_ElapsedTimers(t *testing.T) {
+	// Verifies that elapsed time patterns like "2h 30m" and "45m 12s" are stripped from pane content so they don't cause false-positive change detection.
 	t.Parallel()
 	tests := []struct {
 		input string
@@ -28,8 +28,8 @@ func TestNormalizePaneContent_ElapsedTimers(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_Clocks verifies that clock times are normalized.
 func TestNormalizePaneContent_Clocks(t *testing.T) {
+	// Verifies that wall-clock timestamps like "14:30" and "2:30:00 PM" are stripped so constantly-updating status bars don't appear as activity.
 	t.Parallel()
 	tests := []struct {
 		input string
@@ -48,9 +48,8 @@ func TestNormalizePaneContent_Clocks(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_TokenCountsPreserved verifies that token counts are preserved.
 func TestNormalizePaneContent_TokenCountsPreserved(t *testing.T) {
-	// Token counts indicate active work — should NOT be stripped
+	// Verifies that token count values are preserved by normalization since changing token counts indicate genuine agent activity, not just clock noise.
 	t.Parallel()
 	tests := []string{
 		"Context: 88,447 tokens used",
@@ -65,9 +64,8 @@ func TestNormalizePaneContent_TokenCountsPreserved(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_PercentagesPreserved verifies that percentages are preserved.
 func TestNormalizePaneContent_PercentagesPreserved(t *testing.T) {
-	// Percentages indicate active work — should NOT be stripped
+	// Verifies that percentage values like context usage are preserved, since changing percentages reflect real progress rather than clock noise.
 	t.Parallel()
 	tests := []string{
 		"44% used",
@@ -82,9 +80,8 @@ func TestNormalizePaneContent_PercentagesPreserved(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_CostsPreserved verifies that costs are preserved.
 func TestNormalizePaneContent_CostsPreserved(t *testing.T) {
-	// Cost changes indicate active work — should NOT be stripped
+	// Verifies that dollar cost values are preserved during normalization since accumulating costs indicate genuine token-consuming activity.
 	t.Parallel()
 	tests := []string{
 		"Cost: $0.0430",
@@ -98,8 +95,8 @@ func TestNormalizePaneContent_CostsPreserved(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_Durations verifies that short durations are normalized.
 func TestNormalizePaneContent_Durations(t *testing.T) {
+	// Verifies that short decimal second durations like "3.2s" are stripped, preventing response-time display from causing false-positive activity detection.
 	t.Parallel()
 	tests := []struct {
 		input string
@@ -116,9 +113,8 @@ func TestNormalizePaneContent_Durations(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_SpinnersPreserved verifies that spinners are preserved.
 func TestNormalizePaneContent_SpinnersPreserved(t *testing.T) {
-	// Spinners indicate active work — should NOT be stripped
+	// Verifies that different spinner frames normalize to different strings, preserving spinner-based activity detection (different frames mean work is in progress).
 	t.Parallel()
 	input1 := "⠋ Loading..."
 	input2 := "⠙ Loading..."
@@ -129,9 +125,8 @@ func TestNormalizePaneContent_SpinnersPreserved(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_PreservesContent verifies that meaningful content is preserved.
 func TestNormalizePaneContent_PreservesContent(t *testing.T) {
-	// Meaningful content should be preserved
+	// Verifies that meaningful content like shell commands, error messages, and build output is not stripped, only volatile noise patterns are removed.
 	t.Parallel()
 	tests := []string{
 		"$ ls -la",
@@ -149,9 +144,8 @@ func TestNormalizePaneContent_PreservesContent(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_MixedLine verifies mixed realistic content.
 func TestNormalizePaneContent_MixedLine(t *testing.T) {
-	// A realistic TUI status bar line
+	// Verifies that a realistic TUI status bar strips only elapsed timers while preserving percentages, token counts, costs, and spinner frames.
 	t.Parallel()
 	input := "⠙ Thinking  Claude 3.5 | 44% context | 12,543 tokens | 2m 30s | $0.0430"
 	got := normalizePaneContent(input)
@@ -170,11 +164,9 @@ func TestNormalizePaneContent_MixedLine(t *testing.T) {
 	}
 }
 
-// TestNormalizePaneContent_StableHash verifies that normalized content is stable.
 func TestNormalizePaneContent_StableHash(t *testing.T) {
-	// Two snapshots that differ only in clocks/timers should normalize
+	// Verifies that two snapshots differing only in elapsed timer values normalize to the same string, enabling deduplication of unchanged content.
 	t.Parallel()
-	// to identical strings. Spinners/tokens/percentages are NOT noise.
 	snap1 := `$ opencode
 OpenCode v0.1 | claude-3-5-sonnet
 Thinking... | 1m 3s
@@ -193,11 +185,9 @@ Thinking... | 2m 54s
 	}
 }
 
-// TestNormalizePaneContent_DifferentContent verifies that different content stays different.
 func TestNormalizePaneContent_DifferentContent(t *testing.T) {
-	// Two snapshots with genuinely different content should NOT normalize
+	// Verifies that snapshots with genuinely different content (agent thinking vs. response) do not normalize to the same string.
 	t.Parallel()
-	// to the same string.
 	snap1 := `$ opencode
 ⠋ Thinking... | 44% context
 > How do I fix the bug?`
@@ -214,8 +204,8 @@ Here's the fix for the bug:
 	}
 }
 
-// TestDetectTUIAgent_CC verifies Claude Code detection.
 func TestDetectTUIAgent_CC(t *testing.T) {
+	// Verifies that Claude Code TUI markers (version string, bypass indicator, completion phrases) are correctly detected and return "cc".
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -237,8 +227,8 @@ func TestDetectTUIAgent_CC(t *testing.T) {
 	}
 }
 
-// TestDetectTUIAgent_OC verifies OpenCode detection.
 func TestDetectTUIAgent_OC(t *testing.T) {
+	// Verifies that OpenCode TUI markers (version line, GLM, Build) are correctly detected and return "oc".
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -258,8 +248,8 @@ func TestDetectTUIAgent_OC(t *testing.T) {
 	}
 }
 
-// TestDetectTUIAgent_None verifies non-detection of TUI agents.
 func TestDetectTUIAgent_None(t *testing.T) {
+	// Verifies that plain shell output and command results are not misidentified as a TUI agent, returning an empty string.
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -279,8 +269,8 @@ func TestDetectTUIAgent_None(t *testing.T) {
 	}
 }
 
-// TestCleanTUIOutput_CC verifies CC output cleaning.
 func TestCleanTUIOutput_CC(t *testing.T) {
+	// Verifies that CC cleaning strips box-drawing chrome, decorative symbols, and status hints while preserving the actual response content.
 	t.Parallel()
 	input := strings.Join([]string{
 		"Claude Code v1.2.3",
@@ -346,8 +336,8 @@ func TestCleanTUIOutput_CC(t *testing.T) {
 	}
 }
 
-// TestCleanTUIOutput_OC verifies OpenCode output cleaning.
 func TestCleanTUIOutput_OC(t *testing.T) {
+	// Verifies that OC cleaning removes sidebar labels, box-drawing, section headers, and diff summaries while preserving the actual agent response.
 	t.Parallel()
 	input := strings.Join([]string{
 		"OpenCode v0.1",
@@ -401,8 +391,8 @@ func TestCleanTUIOutput_OC(t *testing.T) {
 	}
 }
 
-// TestCleanTUIOutput_NoAgent verifies that empty agent type returns content unchanged.
 func TestCleanTUIOutput_NoAgent(t *testing.T) {
+	// Verifies that when no TUI agent is detected, cleanTUIOutput returns the content unchanged rather than incorrectly stripping anything.
 	t.Parallel()
 	input := "$ ls -la\ntotal 42\ndrwxr-xr-x 5 user user 4096 file.go"
 	got := cleanTUIOutput(input, "")
@@ -411,8 +401,8 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 	}
 }
 
-// TestTmuxReadRaw verifies that raw reads preserve all content.
 func TestTmuxReadRaw(t *testing.T) {
+	// Verifies that raw=true bypasses TUI cleaning and preserves all content including CC markers, while raw=false (default) applies the cleaning pipeline.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)

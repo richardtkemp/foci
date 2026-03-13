@@ -9,6 +9,9 @@ import (
 )
 
 func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
+	// Proves that RepairOrphans detects a session ending with an unanswered
+	// tool_use message and appends a synthetic error tool_result, making the
+	// session structurally valid again.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -54,6 +57,8 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 }
 
 func TestRepairOrphansNoOpWhenClean(t *testing.T) {
+	// Proves that RepairOrphans leaves a structurally sound session untouched
+	// and reports zero repaired sessions.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -76,6 +81,8 @@ func TestRepairOrphansNoOpWhenClean(t *testing.T) {
 }
 
 func TestRepairOrphansMultipleSessions(t *testing.T) {
+	// Proves that RepairOrphans correctly repairs only the broken sessions across
+	// multiple sessions in the store, leaving clean sessions unchanged.
 	s := NewStore(t.TempDir())
 
 	// Broken session
@@ -110,6 +117,9 @@ func TestRepairOrphansMultipleSessions(t *testing.T) {
 }
 
 func TestRepairOrphansMultipleToolUse(t *testing.T) {
+	// Proves that when a trailing assistant message contains multiple tool_use
+	// blocks, RepairOrphans injects a single repair message with one tool_result
+	// per block, preserving each tool_use ID.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -142,6 +152,7 @@ func TestRepairOrphansMultipleToolUse(t *testing.T) {
 }
 
 func TestRepairOrphansEmptyDir(t *testing.T) {
+	// Proves that RepairOrphans is a no-op on an empty store and returns no error.
 	s := NewStore(t.TempDir())
 
 	n, err := s.RepairOrphans()
@@ -154,6 +165,8 @@ func TestRepairOrphansEmptyDir(t *testing.T) {
 }
 
 func TestInjectRestartMarkersRecentFile(t *testing.T) {
+	// Proves that InjectRestartMarkers appends a SYSTEM RESTART marker to a session
+	// whose file was modified within the recency window.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -188,6 +201,8 @@ func TestInjectRestartMarkersRecentFile(t *testing.T) {
 }
 
 func TestInjectRestartMarkersOldFile(t *testing.T) {
+	// Proves that InjectRestartMarkers skips sessions whose files are older than
+	// the recency threshold, leaving them unmodified.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -215,6 +230,8 @@ func TestInjectRestartMarkersOldFile(t *testing.T) {
 }
 
 func TestInjectRestartMarkersEmptyDir(t *testing.T) {
+	// Proves that InjectRestartMarkers handles an empty store gracefully and
+	// returns zero with no error.
 	s := NewStore(t.TempDir())
 
 	n, err := s.InjectRestartMarkers(1 * time.Hour)
@@ -227,6 +244,8 @@ func TestInjectRestartMarkersEmptyDir(t *testing.T) {
 }
 
 func TestInjectRestartMarkersMultipleSessions(t *testing.T) {
+	// Proves that InjectRestartMarkers selectively marks only the sessions that
+	// fall within the recency window, leaving stale sessions untouched.
 	s := NewStore(t.TempDir())
 
 	// Recent session

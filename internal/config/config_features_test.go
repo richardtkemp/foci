@@ -10,7 +10,8 @@ import (
 )
 
 func TestLoadTelegramToggleDefaults(t *testing.T) {
-	// When not set, both toggles default to true
+	// Proves that enable_stop_aliases and enable_startup_notify both default to
+	// true when not set in the config file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -32,7 +33,8 @@ id = "test"
 }
 
 func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
-	// When explicitly set to false, they stay false
+	// Proves that explicitly setting enable_stop_aliases and enable_startup_notify
+	// to false in the [telegram] section correctly disables both toggles.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -58,6 +60,8 @@ enable_startup_notify = false
 }
 
 func TestAgentStartupNotification(t *testing.T) {
+	// Proves that per-agent startup_notify is nil when unset (falls back to global),
+	// and correctly stores true or false as a non-nil pointer when explicitly configured.
 	t.Run("defaults to nil", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
@@ -116,6 +120,9 @@ startup_notify = false
 }
 
 func TestLoadThinkingConfig(t *testing.T) {
+	// Proves that the thinking setting in [anthropic] is applied to agents via
+	// ApplyProviderDefaults, that an agent with an explicit per-agent override
+	// keeps it, and that ApplyProviderDefaults does not overwrite existing values.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -162,6 +169,9 @@ thinking = "off"
 }
 
 func TestLoadThinkingPerAgent(t *testing.T) {
+	// Proves that thinking can be set per-agent directly in the [[agents]] block
+	// without requiring an [anthropic] section, and that agents without an override
+	// have an empty thinking field until ApplyProviderDefaults is called.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -190,6 +200,9 @@ id = "default"
 }
 
 func TestShowToolCallsDisplay(t *testing.T) {
+	// Proves that ToolCallDisplay accepts bool (true→preview, false→off) and string
+	// values ("off", "preview", "full"), rejects invalid strings, and works both
+	// at the defaults level and per-agent with nil meaning unset.
 	tests := []struct {
 		name    string
 		toml    string
@@ -308,6 +321,9 @@ show_tool_calls = "full"
 }
 
 func TestNormalizeBoolStrings(t *testing.T) {
+	// Proves that normalizeBoolStrings converts "on"/"true" to bare true and
+	// "off"/"false" to bare false only for known bool-typed config keys, leaving
+	// non-bool keys (like thinking = "off") and other string values unchanged.
 	tests := []struct {
 		name  string
 		input string
@@ -339,6 +355,8 @@ func TestNormalizeBoolStrings(t *testing.T) {
 }
 
 func TestBoolStringConfigLoad(t *testing.T) {
+	// Proves that bool-typed config fields accept string values "on"/"off"/"true"/"false"
+	// and are correctly decoded to their boolean equivalents during Load.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -371,6 +389,8 @@ log_rotation = "false"
 }
 
 func TestLoadMultiballBotsPlural(t *testing.T) {
+	// Proves that a per-agent multiball_bots list is correctly loaded with all
+	// configured bot names in order.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -398,6 +418,8 @@ allowed_users = ["111"]
 }
 
 func TestLoadSharedMultiballBots(t *testing.T) {
+	// Proves that the global [telegram] multiball_bots list is correctly loaded
+	// into the TelegramConfig and made available for shared cross-agent routing.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -425,6 +447,9 @@ multiball_bots = ["spare1", "spare2"]
 }
 
 func TestCompactionPreserveMessagesConfig(t *testing.T) {
+	// Proves that compaction_preserve_messages defaults to 25, can be overridden
+	// globally or to zero, supports per-agent override (nil when unset), and
+	// rejects negative values with an error.
 	t.Run("global default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
@@ -526,6 +551,8 @@ compaction_preserve_messages = -1
 }
 
 func TestMessagesInLogConfig(t *testing.T) {
+	// Proves that messages_in_log defaults to false, can be enabled globally, and
+	// supports per-agent override via a nullable bool (nil = unset, inherits global).
 	t.Run("default false", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
@@ -590,9 +617,10 @@ id = "b"
 	})
 }
 
-// Tests the [debug] section: new fields and backward compat migration from [sessions].
 func TestDebugSection(t *testing.T) {
-	// Test that [debug] fields are loaded directly.
+	// Proves that [debug] fields are loaded directly, that legacy [sessions] debug
+	// keys migrate to [debug] for backward compatibility, and that [debug] takes
+	// precedence when both sections are present.
 	t.Run("direct", func(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
@@ -676,9 +704,9 @@ id = "a"
 	})
 }
 
-// TestMultiballNoCompactConfig verifies multiball_no_compact *bool parsing:
-// nil (default) means true, explicit true/false are preserved.
 func TestMultiballNoCompactConfig(t *testing.T) {
+	// Proves that multiball_no_compact is nil when unset (semantically true), and
+	// stores an explicit non-nil pointer when set to true or false in the config.
 	t.Run("defaults to nil", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")

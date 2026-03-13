@@ -17,18 +17,8 @@ import (
 	"foci/internal/workspace"
 )
 
-// TestBranchCacheSharing is the full-stack integration test matching SPEC.md Testing Priority.
-// It validates that session branching through the agent loop produces cache hits.
-//
-// Flow:
-//  1. Create session with system prompt + messages → observe cache write
-//  2. Send another request on same session → observe cache read
-//  3. Create a branch from this session
-//  4. Send a request on the branch → must show cache READ for shared prefix
-//  5. Send on parent → parent cache still works
-//
-// Requires ANTHROPIC_API_KEY environment variable.
 func TestBranchCacheSharing(t *testing.T) {
+	// Proves end-to-end that branched sessions share the Anthropic prompt cache with their parent: a branch request must show cache_read > 0, confirming no redundant token billing for the shared system prompt prefix.
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		t.Skip("ANTHROPIC_API_KEY not set")

@@ -7,9 +7,9 @@ import (
 	"foci/internal/command"
 )
 
-// TestReceiveMessage_DoneOnPrimaryBot verifies that /done on the primary bot
-// returns a "nothing to detach" message.
 func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
+	// Verifies that /done on the primary bot
+	// returns a "nothing to detach" message.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	msg := makeMsg(111, "owner", "/done")
@@ -24,9 +24,9 @@ func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_DoneOnSecondaryBot verifies that /done on a secondary bot
-// with an active session detaches the session.
 func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
+	// Verifies that /done on a secondary bot
+	// with an active session detaches the session.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	pool := NewPool()
 	b.isSecondary = true
@@ -48,9 +48,9 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_IdleSecondaryBot verifies that idle secondary bots
-// (with no assigned session) silently drop messages.
 func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
+	// Verifies that idle secondary bots
+	// (with no assigned session) silently drop messages.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
 	b.SetSessionKey("") // idle — no session assigned
@@ -67,9 +67,9 @@ func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_SecondaryBotWithSession verifies that secondary bots
-// with an active session queue messages normally.
 func TestReceiveMessage_SecondaryBotWithSession(t *testing.T) {
+	// Verifies that secondary bots
+	// with an active session queue messages normally.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
 	b.SetSessionKey("agent:main:multiball:mb-1")

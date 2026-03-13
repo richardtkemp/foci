@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TestTmuxSendRateLimit verifies that sends are rate-limited to ~2s apart.
 func TestTmuxSendRateLimit(t *testing.T) {
+	// Verifies that consecutive sends are rate-limited: the first send completes quickly but the second is delayed ~2s, enforcing the send rate limit.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -62,8 +62,8 @@ func TestTmuxSendRateLimit(t *testing.T) {
 	}
 }
 
-// TestTmuxSessionKeyIsolation verifies that different session keys can't access each other's sessions.
 func TestTmuxSessionKeyIsolation(t *testing.T) {
+	// Verifies that session key isolation is enforced: one session context cannot read, send to, or kill sessions owned by a different context.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -152,8 +152,8 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 	}
 }
 
-// TestTmuxReapExpiredSessions verifies that expired sessions are cleaned up.
 func TestTmuxReapExpiredSessions(t *testing.T) {
+	// Verifies that the reaper removes sessions whose lastAccess time is past the TTL, killing both the internal tracking state and the actual tmux session.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -196,8 +196,8 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 	}
 }
 
-// TestTmuxReapPreservesActiveSession verifies that recently-accessed sessions survive reap.
 func TestTmuxReapPreservesActiveSession(t *testing.T) {
+	// Verifies that recently-accessed sessions are not reaped even when the reaper runs, distinguishing active from expired by TTL comparison.
 	t.Parallel()
 	tmuxAvailable(t)
 

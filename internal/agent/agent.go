@@ -25,6 +25,10 @@ import (
 
 const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
 
+// nudgeHeader prefixes automatic nudge messages so the agent understands
+// their origin and treats them as background guidance, not user input.
+const nudgeHeader = "[system: automatic nudge — this is a behavioral reminder derived from your character configuration. Incorporate the guidance naturally without mentioning this nudge to the user.] "
+
 // ReplyFunc is called to deliver intermediate messages during a turn.
 // Used by the platform to send early/deferred replies while
 // the agent continues working (e.g., "Looking into this...").
@@ -117,6 +121,7 @@ type Agent struct {
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
 	Effort                        string                       // effort level for API requests (empty = omit from request)
 	Thinking                      string                       // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
+	Speed                         string                       // speed mode: "fast" for Anthropic fast mode (Opus only, empty = standard)
 	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
@@ -333,6 +338,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	turnClient := a.SessionClient(sessionKey)
 	turnEffort := a.SessionEffort(sessionKey)
 	turnThinking := a.SessionThinking(sessionKey)
+	turnSpeed := a.SessionSpeed(sessionKey)
 
 	// When extended thinking is active with effort above "low", duplicate_messages
 	// wastes tokens — thinking already produces high-quality first responses.
@@ -428,6 +434,9 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		if turnThinking == "adaptive" {
 			req.Thinking = &provider.ThinkingConfig{Type: "adaptive"}
 		}
+		if turnSpeed == "fast" {
+			req.Speed = "fast"
+		}
 
 		// Debug: log cache placement
 		logCacheDebug(sessionKey, system, messages, turnModel)
@@ -474,7 +483,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// Error-and-retry: if a 400 suggests unsupported thinking/effort,
 		// strip the offending params and retry once.
 		if err != nil {
-			if req.Thinking != nil || req.Output != nil {
+			if req.Thinking != nil || req.Output != nil || req.Speed != "" {
 				var apiErr *provider.APIError
 				if errors.As(err, &apiErr) && apiErr.StatusCode == 400 {
 					body := strings.ToLower(apiErr.Body)
@@ -487,6 +496,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 					if req.Output != nil && (strings.Contains(body, "effort") || strings.Contains(body, "output")) {
 						a.logger().Warnf("session=%s model %s rejected effort param, retrying without it", sessionKey, turnModel)
 						req.Output = nil
+						stripped = true
+					}
+					if req.Speed != "" && strings.Contains(body, "speed") {
+						a.logger().Warnf("session=%s model %s rejected speed param, retrying without it", sessionKey, turnModel)
+						req.Speed = ""
 						stripped = true
 					}
 					if stripped {
@@ -537,7 +551,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				if reminder := a.Nudger.CheckMatch(); reminder != "" {
 					matchMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent("[system] " + reminder),
+						Content: provider.TextContent(nudgeHeader + reminder),
 					}
 					messages = append(messages, matchMsg)
 					newMessages = append(newMessages, matchMsg)
@@ -554,7 +568,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent("[system] " + reminder),
+						Content: provider.TextContent(nudgeHeader + reminder),
 					}
 					messages = append(messages, verifyMsg)
 					newMessages = append(newMessages, verifyMsg)
@@ -659,7 +673,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		// Nudge reminders: inject behavioral reminders from character file rules.
 		if a.Nudger != nil {
 			if reminder := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); reminder != "" {
-				toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[system] " + reminder})
+				toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: nudgeHeader + reminder})
 				a.logger().Debugf("nudge: injected reminder at loop %d for session %s", i, sessionKey)
 			}
 		}

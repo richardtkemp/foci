@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// TestHTTPRequestWithSecretHeaders verifies secrets are resolved in headers
 func TestHTTPRequestWithSecretHeaders(t *testing.T) {
+	// Proves that secret templates in request headers are resolved to their actual values before sending, so the server receives the real secret.
 	t.Parallel()
 	var receivedAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,8 +50,8 @@ allowed_hosts = ["%s"]
 	}
 }
 
-// TestHTTPRequestBlockedHost verifies secrets cannot be sent to unauthorized hosts
 func TestHTTPRequestBlockedHost(t *testing.T) {
+	// Proves that a request to a host not in allowed_hosts is blocked before sending, protecting secrets from being leaked to unauthorized endpoints.
 	t.Parallel()
 	store := writeTestSecrets(t, `
 [custom]
@@ -76,8 +76,8 @@ allowed_hosts = ["api.allowed.com"]
 	}
 }
 
-// TestHTTPRequestUserinfoAttack verifies URL userinfo spoofing is blocked
 func TestHTTPRequestUserinfoAttack(t *testing.T) {
+	// Proves that a URL using userinfo to spoof an allowed host (e.g. allowed.com@evil.com) is detected and blocked, not matched against the allowlist.
 	t.Parallel()
 	store := writeTestSecrets(t, `
 [custom]
@@ -102,8 +102,8 @@ allowed_hosts = ["api.example.com"]
 	}
 }
 
-// TestHTTPRequestNoAllowedHosts verifies secrets without allowed_hosts are rejected
 func TestHTTPRequestNoAllowedHosts(t *testing.T) {
+	// Proves that a secret section missing an allowed_hosts list is rejected rather than allowing the secret to be sent to any host.
 	t.Parallel()
 	store := writeTestSecrets(t, `
 [legacy]
@@ -127,8 +127,8 @@ token = "sk-legacy-token"
 	}
 }
 
-// TestHTTPRequestNoSecretsNoRestriction verifies public requests work without secrets
 func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
+	// Proves that requests without any secret templates succeed without restriction, even when no secrets store is configured.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "public data")
@@ -151,8 +151,8 @@ func TestHTTPRequestNoSecretsNoRestriction(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestRedactResponse verifies secrets are redacted from response bodies
 func TestHTTPRequestRedactResponse(t *testing.T) {
+	// Proves that secret values appearing in the response body are replaced with [REDACTED] before the result is returned to the caller.
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Echo back the Authorization header (simulating an API that leaks tokens)
@@ -187,8 +187,8 @@ allowed_hosts = ["%s"]
 	}
 }
 
-// TestHTTPRequestMultipleSecretsAllChecked verifies all referenced secrets are validated
 func TestHTTPRequestMultipleSecretsAllChecked(t *testing.T) {
+	// Proves that when multiple secrets are referenced, all of them are validated against the target host — a single secret with a mismatched allowlist blocks the entire request.
 	t.Parallel()
 	store := writeTestSecrets(t, `
 [apiA]

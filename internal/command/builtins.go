@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"foci/internal/display"
-	"foci/internal/tools"
 )
+
 // ChildSysProcAttr is called to get the SysProcAttr for child processes.
 // Set this from main to drop supplementary groups (foci-secrets).
 // If nil, defaults to {Setpgid: true}.
@@ -25,7 +25,6 @@ func childSysProcAttr() *syscall.SysProcAttr {
 	}
 	return &syscall.SysProcAttr{Setpgid: true}
 }
-
 
 type LastMessageStore struct {
 	mu       sync.RWMutex
@@ -53,70 +52,76 @@ func (s *LastMessageStore) Get(userID string) string {
 	return s.messages[userID]
 }
 
-// LastMessageUserKey is the context key for storing the user ID.
-type LastMessageUserKey struct{}
-
-// NewRepeatCommand creates the // command that repeats the last message.
-// Expects userID to be stored in context via context.WithValue(ctx, LastMessageUserKey{}, userID).
-func NewRepeatCommand(store *LastMessageStore) *Command {
-	return &Command{
-		Name:        "repeat",
-		Description: "Repeat your last message (command: //)",
-		Hidden:      true,
-		Execute: func(ctx context.Context, args string) (string, error) {
-			userID, ok := ctx.Value(LastMessageUserKey{}).(string)
-			if !ok || userID == "" {
-				return "", fmt.Errorf("unable to determine user")
-			}
-
-			lastMsg := store.Get(userID)
-			if lastMsg == "" {
-				return "", fmt.Errorf("no previous message to repeat")
-			}
-
-			return lastMsg, nil
-		},
-	}
-}
-
-func NewPingCommand() *Command {
+// PingCommand returns a /ping command for liveness checks.
+func PingCommand() *Command {
 	return &Command{
 		Name:        "ping",
 		Description: "Liveness check",
 		Category:    "session",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return fmt.Sprintf("pong %s", time.Now().UTC().Format(time.RFC3339)), nil
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+			return Response{Text: fmt.Sprintf("pong %s", time.Now().UTC().Format(time.RFC3339))}, nil
 		},
 	}
 }
 
+// RepeatCommand creates the // command that repeats the last message.
+func RepeatCommand() *Command {
+	return &Command{
+		Name:        "repeat",
+		Description: "Repeat your last message (command: //)",
+		Hidden:      true,
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			if req.UserID == "" {
+				return Response{}, fmt.Errorf("unable to determine user")
+			}
+			if cc.LastMessageStore == nil {
+				return Response{}, fmt.Errorf("no message store")
+			}
+			lastMsg := cc.LastMessageStore.Get(req.UserID)
+			if lastMsg == "" {
+				return Response{}, fmt.Errorf("no previous message to repeat")
+			}
+			return Response{Text: lastMsg}, nil
+		},
+	}
+}
 
-// NewMultiballCommand returns a /multiball command that forks the current session to a secondary bot.
-// forkFn does the actual branch creation, bot acquisition, and notification.
-// The context is passed through so the fork can access the requesting chat ID.
-func NewMultiballCommand(forkFn func(ctx context.Context) (string, error)) *Command {
+// MultiballCommand returns a /multiball command that forks the current session to a secondary bot.
+func MultiballCommand() *Command {
 	return &Command{
 		Name:        "multiball",
 		Description: "Fork session to a secondary bot",
 		Category:    "session",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return forkFn(ctx)
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			text, err := forkMultiball(ctx, req, cc)
+			if err != nil {
+				return Response{}, err
+			}
+			return Response{Text: text}, nil
 		},
 	}
 }
 
-// NewTmuxCommand returns a /tmux command that wraps the tmux tool, exposing all
-// operations via slash-command syntax. It delegates to execFn (the tool's Execute).
-func NewTmuxCommand(execFn func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error)) *Command {
+// TmuxCommand returns a /tmux command that wraps the tmux tool, exposing all
+// operations via slash-command syntax.
+func TmuxCommand() *Command {
 	const usage = `Usage: /tmux <command> [args...]
 
 Commands: list, start, send, read, kill, watch, unwatch`
+
+	execTmux := func(ctx context.Context, cc CommandContext, params json.RawMessage) (string, error) {
+		if cc.TmuxTool == nil {
+			return "", fmt.Errorf("tmux tool not available")
+		}
+		result, err := cc.TmuxTool.Execute(ctx, params)
+		return result.Text, err
+	}
 
 	return &Command{
 		Name:        "tmux",
 		Description: "Manage tmux sessions — start, send, read, list, kill, watch, unwatch",
 		Category:    "observability",
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "list", Data: "list"},
 				{Label: "kill", Data: "kill"},
@@ -124,15 +129,18 @@ Commands: list, start, send, read, kill, watch, unwatch`
 				{Label: "watch", Data: "watch"},
 			}
 		},
-		ChainKeyboard: func(ctx context.Context, subcommand string) []KeyboardOption {
+		ChainKeyboard: func(ctx context.Context, subcommand string, cc CommandContext) []KeyboardOption {
 			switch subcommand {
 			case "kill", "read", "watch":
 			default:
 				return nil
 			}
+			if cc.TmuxTool == nil {
+				return nil
+			}
 			// List owned + watched sessions to build dynamic buttons
 			listParams, _ := json.Marshal(map[string]interface{}{"operation": "list"})
-			result, err := execFn(ctx, listParams)
+			result, err := cc.TmuxTool.Execute(ctx, listParams)
 			if err != nil || result.Text == "No tmux sessions." {
 				return nil
 			}
@@ -152,8 +160,6 @@ Commands: list, start, send, read, kill, watch, unwatch`
 					continue
 				}
 				seen[name] = true
-				// For kill/read: show owned and watched sessions
-				// Find status field (4th field: owned/watched/idle)
 				status := ""
 				if len(fields) >= 4 {
 					status = fields[3]
@@ -167,11 +173,11 @@ Commands: list, start, send, read, kill, watch, unwatch`
 			}
 			return opts
 		},
-		Execute: func(ctx context.Context, args string) (string, error) {
-			fields := strings.Fields(args)
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			fields := strings.Fields(req.Args)
 
 			if len(fields) == 0 {
-				return usage, nil
+				return Response{Text: usage}, nil
 			}
 
 			op := fields[0]
@@ -204,34 +210,31 @@ Commands: list, start, send, read, kill, watch, unwatch`
 				}
 
 				raw, _ := json.Marshal(params)
-				result, err := execFn(ctx, raw)
+				text, err := execTmux(ctx, cc, raw)
 				if err != nil {
-					return "", err
+					return Response{}, err
 				}
 
-				// Auto-watch unless --no-watch
 				if autoWatch {
-					// Extract session name from result "Session started: <name>"
 					name, _ := params["name"].(string)
 					if name == "" {
-						// Auto-generated name — parse from result
-						name = strings.TrimPrefix(result.Text, "Session started: ")
+						name = strings.TrimPrefix(text, "Session started: ")
 					}
 					watchParams, _ := json.Marshal(map[string]interface{}{
 						"operation": "watch",
 						"name":      name,
 					})
-					watchResult, watchErr := execFn(ctx, watchParams)
+					watchText, watchErr := execTmux(ctx, cc, watchParams)
 					if watchErr != nil {
-						return result.Text + "\n(auto-watch failed: " + watchErr.Error() + ")", nil
+						return Response{Text: text + "\n(auto-watch failed: " + watchErr.Error() + ")"}, nil
 					}
-					return result.Text + "\n" + watchResult.Text, nil
+					return Response{Text: text + "\n" + watchText}, nil
 				}
-				return result.Text, nil
+				return Response{Text: text}, nil
 
 			case "send":
 				if len(fields) < 2 {
-					return "", fmt.Errorf("usage: /tmux send <name> <keys...>")
+					return Response{}, fmt.Errorf("usage: /tmux send <name> <keys...>")
 				}
 				params = map[string]interface{}{
 					"operation": "send",
@@ -241,7 +244,7 @@ Commands: list, start, send, read, kill, watch, unwatch`
 
 			case "read":
 				if len(fields) < 1 {
-					return "", fmt.Errorf("usage: /tmux read <name> [lines]")
+					return Response{}, fmt.Errorf("usage: /tmux read <name> [lines]")
 				}
 				params = map[string]interface{}{
 					"operation": "read",
@@ -254,15 +257,15 @@ Commands: list, start, send, read, kill, watch, unwatch`
 				}
 
 				raw, _ := json.Marshal(params)
-				result, err := execFn(ctx, raw)
+				text, err := execTmux(ctx, cc, raw)
 				if err != nil {
-					return "", err
+					return Response{}, err
 				}
-				return "```\n" + result.Text + "\n```", nil
+				return Response{Text: "```\n" + text + "\n```"}, nil
 
 			case "kill":
 				if len(fields) < 1 {
-					return "", fmt.Errorf("usage: /tmux kill <name>")
+					return Response{}, fmt.Errorf("usage: /tmux kill <name>")
 				}
 				params = map[string]interface{}{
 					"operation": "kill",
@@ -271,7 +274,7 @@ Commands: list, start, send, read, kill, watch, unwatch`
 
 			case "watch":
 				if len(fields) < 1 {
-					return "", fmt.Errorf("usage: /tmux watch <name> [threshold_secs]")
+					return Response{}, fmt.Errorf("usage: /tmux watch <name> [threshold_secs]")
 				}
 				params = map[string]interface{}{
 					"operation": "watch",
@@ -285,7 +288,7 @@ Commands: list, start, send, read, kill, watch, unwatch`
 
 			case "unwatch":
 				if len(fields) < 1 {
-					return "", fmt.Errorf("usage: /tmux unwatch <name>")
+					return Response{}, fmt.Errorf("usage: /tmux unwatch <name>")
 				}
 				params = map[string]interface{}{
 					"operation": "unwatch",
@@ -293,24 +296,25 @@ Commands: list, start, send, read, kill, watch, unwatch`
 				}
 
 			default:
-				return usage, nil
+				return Response{Text: usage}, nil
 			}
 
 			raw, _ := json.Marshal(params)
-			r, err := execFn(ctx, raw)
-			return r.Text, err
+			text, err := execTmux(ctx, cc, raw)
+			return Response{Text: text}, err
 		},
 	}
 }
 
-func NewScriptCommand(name, description, script string, timeout int) *Command {
+// ScriptCommand returns a command that runs a shell script.
+func ScriptCommand(name, description, script string, timeout int) *Command {
 	if timeout <= 0 {
 		timeout = 10
 	}
 	return &Command{
 		Name:        name,
 		Description: description,
-		Execute: func(ctx context.Context, args string) (string, error) {
+		Execute: func(ctx context.Context, _ Request, _ CommandContext) (Response, error) {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 			defer cancel()
 
@@ -325,11 +329,11 @@ func NewScriptCommand(name, description, script string, timeout int) *Command {
 
 			if err != nil {
 				if ctx.Err() != nil {
-					return result + "\n(timed out)", nil
+					return Response{Text: result + "\n(timed out)"}, nil
 				}
-				return result + "\nError: " + err.Error(), nil
+				return Response{Text: result + "\nError: " + err.Error()}, nil
 			}
-			return result, nil
+			return Response{Text: result}, nil
 		},
 	}
 }
@@ -344,30 +348,34 @@ type AgentInfo struct {
 	LastActivity string
 }
 
-// NewAgentsCommand returns a /agents command listing active agent sessions.
-// If registry and deps are non-nil, also supports "/agents new" to launch the creation wizard.
-func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *AgentNewDeps) *Command {
+// AgentsCommand returns a /agents command listing active agent sessions.
+func AgentsCommand() *Command {
 	return &Command{
 		Name:        "agents",
 		Description: "List active agent sessions",
 		Category:    "session",
-		Execute: func(ctx context.Context, args string) (string, error) {
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			// /agents new — start wizard
-			if strings.TrimSpace(strings.ToLower(args)) == "new" {
-				if registry == nil || deps == nil {
-					return "Agent creation wizard is not available.", nil
+			if strings.TrimSpace(strings.ToLower(req.Args)) == "new" {
+				if cc.AgentNewDeps == nil {
+					return Response{Text: "Agent creation wizard is not available."}, nil
 				}
-				w := newAgentWizard(*deps)
-				registry.SetWizard(w)
-				return "🧙 New Agent Wizard\n\nAgent name (e.g. `Greek Tutor`):", nil
+				w := newAgentWizard(*cc.AgentNewDeps)
+				// Need registry reference — pass via AgentNewDeps.Registry
+				if cc.AgentNewDeps.Registry != nil {
+					cc.AgentNewDeps.Registry.SetWizard(w)
+				}
+				return Response{Text: "🧙 New Agent Wizard\n\nAgent name (e.g. `Greek Tutor`):"}, nil
 			}
 
-			agents := listFn()
+			if cc.AgentListFn == nil {
+				return Response{Text: "No agents configured."}, nil
+			}
+			agents := cc.AgentListFn()
 			if len(agents) == 0 {
-				return "No agents configured.", nil
+				return Response{Text: "No agents configured."}, nil
 			}
 
-			// Build row data
 			type agentRow struct {
 				id, session, status, model, msgs string
 			}
@@ -403,10 +411,7 @@ func NewAgentsCommand(listFn func() []AgentInfo, registry *Registry, deps *Agent
 			for i, r := range rows {
 				tableRows[i] = []string{r.id, r.session, r.status, r.model, r.msgs}
 			}
-			return "Agents\n\n" + display.MarkdownTable(cols, tableRows), nil
+			return Response{Text: "Agents\n\n" + display.MarkdownTable(cols, tableRows)}, nil
 		},
 	}
 }
-
-// NewCompactCommand creates a /compact command that triggers manual session compaction.
-

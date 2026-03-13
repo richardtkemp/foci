@@ -12,6 +12,7 @@ import (
 )
 
 func TestListModels(t *testing.T) {
+	// Proves that ListModels hits GET /models, parses the response correctly, and maps unix timestamps to time.Time values.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Errorf("method = %q, want GET", r.Method)
@@ -57,6 +58,7 @@ func TestListModels(t *testing.T) {
 }
 
 func TestListModels_APIError(t *testing.T) {
+	// Proves that a 401 Unauthorized response from the API causes ListModels to return an error rather than silently succeed.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -78,6 +80,7 @@ func TestListModels_APIError(t *testing.T) {
 }
 
 func TestCountTokens(t *testing.T) {
+	// Proves that CountTokens is intentionally unimplemented for OpenAI and returns a specific descriptive error.
 	c := NewClient("test-key")
 	_, err := c.CountTokens(context.Background(), &provider.MessageRequest{})
 	if err == nil {
@@ -89,6 +92,7 @@ func TestCountTokens(t *testing.T) {
 }
 
 func TestSendMessage(t *testing.T) {
+	// Proves a basic text completion round-trip: verifies the request hits the correct endpoint with the right model, and that the response is translated into the provider-neutral MessageResponse format including usage stats and text content.
 	// Mock OpenAI API
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -165,6 +169,7 @@ func TestSendMessage(t *testing.T) {
 }
 
 func TestSendMessage_ToolCalls(t *testing.T) {
+	// Proves that when the API returns a tool_calls finish reason, the client correctly translates it into a provider tool_use content block with the right name, ID, and arguments, and sets StopReason to "tool_use".
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -248,6 +253,7 @@ func TestSendMessage_ToolCalls(t *testing.T) {
 }
 
 func TestSendMessage_APIError(t *testing.T) {
+	// Proves that a 429 rate-limit response is surfaced as a *provider.APIError with the correct status code and IsRateLimit returning true.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -299,6 +305,7 @@ func isAPIError(err error, target **provider.APIError) bool {
 }
 
 func TestMessagesToOpenAI(t *testing.T) {
+	// Proves that system blocks are prepended as a single developer message before the user/assistant turns, producing the correct total message count and order.
 	system := []provider.SystemBlock{
 		{Type: "text", Text: "You are helpful."},
 		{Type: "text", Text: "Be concise."},
@@ -321,6 +328,7 @@ func TestMessagesToOpenAI(t *testing.T) {
 }
 
 func TestMessagesToOpenAI_ToolResult(t *testing.T) {
+	// Proves that a provider tool_result content block is translated into an OpenAI tool message (not a user message).
 	msgs := []provider.Message{
 		{Role: "user", Content: []provider.ContentBlock{
 			{Type: "tool_result", ToolUseID: "call_1", Content: "file1\nfile2"},
@@ -337,6 +345,7 @@ func TestMessagesToOpenAI_ToolResult(t *testing.T) {
 }
 
 func TestToolsToOpenAI(t *testing.T) {
+	// Proves that a custom tool definition is correctly serialized into the OpenAI function-tool wire format with the right type and name fields.
 	defs := []provider.ToolDef{
 		provider.NewCustomTool("exec", "run commands", json.RawMessage(`{
 			"type": "object",
@@ -369,6 +378,7 @@ func TestToolsToOpenAI(t *testing.T) {
 }
 
 func TestToolsToOpenAI_FiltersServerTools(t *testing.T) {
+	// Proves that server-side tools (e.g. web_search) are silently dropped from the OpenAI tool list, since they are not supported as function calls.
 	defs := []provider.ToolDef{
 		provider.NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`)),
 		provider.NewServerTool(map[string]interface{}{
@@ -384,6 +394,7 @@ func TestToolsToOpenAI_FiltersServerTools(t *testing.T) {
 }
 
 func TestMapFinishReason(t *testing.T) {
+	// Proves the OpenAI finish reason strings are mapped to the correct provider-neutral stop reason values, including that unknown or content-filtered responses fall back to "end_turn".
 	tests := []struct {
 		reason string
 		want   string
@@ -403,6 +414,7 @@ func TestMapFinishReason(t *testing.T) {
 }
 
 func TestResponseFromOpenAI_NilResponse(t *testing.T) {
+	// Proves that passing a nil response to responseFromOpenAI returns an error rather than panicking or silently returning an empty result.
 	_, err := responseFromOpenAI(nil, "gpt-4o")
 	if err == nil {
 		t.Fatal("expected error for nil response")
@@ -410,6 +422,7 @@ func TestResponseFromOpenAI_NilResponse(t *testing.T) {
 }
 
 func TestResponseFromOpenAI_EmptyChoices(t *testing.T) {
+	// Proves that a response with no choices (e.g. a degenerate API reply) is handled gracefully, defaulting to "end_turn" rather than an error.
 	resp := &openaiChatCompletion{
 		ID:      "test",
 		Choices: nil,
@@ -513,6 +526,7 @@ func responseFromOpenAIHelper(resp *openaiChatCompletion, model string) (*provid
 }
 
 func TestAssistantMessage_WithToolCalls(t *testing.T) {
+	// Proves that assistantMessageToOpenAI correctly maps tool_use blocks to OpenAI function tool calls, and that thinking blocks are silently skipped.
 	blocks := []provider.ContentBlock{
 		{Type: "text", Text: "Let me run that."},
 		{Type: "tool_use", ID: "call_1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
@@ -539,6 +553,7 @@ func TestAssistantMessage_WithToolCalls(t *testing.T) {
 }
 
 func TestUserMessage_WithImage(t *testing.T) {
+	// Proves that a mixed user message containing text and a base64 image is translated into a single OpenAI user message (multi-part content).
 	blocks := []provider.ContentBlock{
 		{Type: "text", Text: "what is this?"},
 		{Type: "image", Source: &provider.ContentSource{

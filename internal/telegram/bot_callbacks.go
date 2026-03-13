@@ -118,17 +118,19 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 // handleCommandCallback executes a command from an inline keyboard press
 // and edits the original message to show the result.
 func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cmdText string) {
-	cmdCtx := context.WithValue(ctx, command.LastMessageUserKey{}, "")
-	cmdCtx = context.WithValue(cmdCtx, command.ChatIDKey{}, chatID)
+	if b.dispatcher == nil {
+		return
+	}
 
 	// Check if this bare subcommand needs a chained keyboard (e.g. /tmux kill → pick session)
-	if parentName, opts, ok := b.commands.LookupChainKeyboard(cmdCtx, cmdText); ok {
+	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText); ok {
 		b.editMessageWithKeyboard(chatID, msgID, parentName, cmdText, opts)
 		return
 	}
 
-	result, ok := b.commands.Dispatch(cmdCtx, cmdText)
-	if !ok {
+	dr := b.dispatcher.DispatchCallback(ctx, chatID, cmdText)
+	result := dr.Response.Text
+	if !dr.Handled {
 		result = "Unknown command: " + cmdText
 	}
 

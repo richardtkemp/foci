@@ -9,6 +9,7 @@ import (
 )
 
 func TestRepairDuplicateToolIDs_NoDuplicates(t *testing.T) {
+	// Proves that sessions with no duplicate tool IDs are returned unchanged with repaired=false.
 	// No duplicates: messages should be returned unchanged.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
@@ -44,6 +45,7 @@ func TestRepairDuplicateToolIDs_NoDuplicates(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_DuplicateToolUse(t *testing.T) {
+	// Proves that a repeated tool_use ID is renamed in later occurrences, with matching tool_results updated.
 	// Duplicate tool_use ID: toolu_1 appears in messages 1 and 3.
 	// The second occurrence and its matching tool_result should be rewritten.
 	msgs := []provider.Message{
@@ -113,6 +115,7 @@ func TestRepairDuplicateToolIDs_DuplicateToolUse(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_DuplicateToolResults(t *testing.T) {
+	// Proves that duplicate tool_result messages (from defer replay) are collapsed, keeping only the first.
 	// Duplicate tool_results without duplicate tool_uses: happens when the defer
 	// safety-net replays messages that were already saved to disk.
 	// One tool_use with ID "toolu_1", but two tool_results reference it.
@@ -159,6 +162,7 @@ func TestRepairDuplicateToolIDs_DuplicateToolResults(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_DuplicateResultsSameMessage(t *testing.T) {
+	// Proves that two tool_results for the same tool_use_id within one message are deduplicated to one.
 	// Two tool_results for the same tool_use_id within a single user message.
 	// Only the first should be kept.
 	msgs := []provider.Message{
@@ -196,6 +200,7 @@ func TestRepairDuplicateToolIDs_DuplicateResultsSameMessage(t *testing.T) {
 }
 
 func TestSanitizeEmptyTextBlocks(t *testing.T) {
+	// Proves that empty text blocks are stripped from messages, with all-empty messages replaced by a placeholder.
 	// Empty text blocks should be removed; messages with only empty text
 	// blocks get a placeholder.
 	msgs := []provider.Message{
@@ -232,6 +237,8 @@ func TestSanitizeEmptyTextBlocks(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_SameMessageBatch(t *testing.T) {
+	// Proves that Gemini-style batches where all tool_use blocks share one ID are repaired with unique IDs
+	// and the corresponding tool_results are rewritten to match.
 	// Gemini emits ALL tool_use blocks with the same ID in a single message.
 	// All 4 should be deduped: first keeps original, rest get dedup suffixes.
 	// The corresponding 4 tool_results must be rewritten to match.
@@ -312,6 +319,7 @@ func TestRepairDuplicateToolIDs_SameMessageBatch(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_OrphanedDedupUse(t *testing.T) {
+	// Proves that orphaned tool_use blocks (no matching tool_result due to partial replay) get synthetic results.
 	// More duplicate tool_use blocks than tool_results (corruption from partial
 	// defer replay that wrote assistant messages but not tool_results).
 	// Phase 3 should synthesize missing tool_results for orphaned dedup IDs.
@@ -369,6 +377,7 @@ func TestRepairDuplicateToolIDs_OrphanedDedupUse(t *testing.T) {
 }
 
 func TestRepairDuplicateToolIDs_EmptyMessages(t *testing.T) {
+	// Proves that nil input is handled gracefully, returning nil with repaired=false.
 	// Empty messages should be handled gracefully.
 	result, repaired := repairDuplicateToolIDs(nil, func(format string, args ...any) {
 		t.Error("unexpected warning")

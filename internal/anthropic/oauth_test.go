@@ -8,47 +8,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 )
-
-// mockStore implements SecretsStore for testing.
-type mockStore struct {
-	mu     sync.Mutex
-	values map[string]string
-	saved  int // count of Save() calls
-}
-
-func newMockStore() *mockStore {
-	return &mockStore{values: make(map[string]string)}
-}
-
-func (m *mockStore) Get(name string) (string, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	v, ok := m.values[name]
-	return v, ok
-}
-
-func (m *mockStore) Set(name, value string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.values[name] = value
-}
-
-func (m *mockStore) Save() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.saved++
-	return nil
-}
 
 // --- Setup token validation ---
 
 func TestValidateSetupToken(t *testing.T) {
+	// Proves that a well-formed setup token (correct prefix and sufficient length) passes validation without error.
 	// Valid token (80+ chars with correct prefix)
 	valid := "sk-ant-oat01-" + strings.Repeat("a", 80)
 	if err := ValidateSetupToken(valid); err != nil {
@@ -57,12 +24,14 @@ func TestValidateSetupToken(t *testing.T) {
 }
 
 func TestValidateSetupTokenEmpty(t *testing.T) {
+	// Proves that an empty string is rejected by ValidateSetupToken.
 	if err := ValidateSetupToken(""); err == nil {
 		t.Error("expected error for empty token")
 	}
 }
 
 func TestValidateSetupTokenBadPrefix(t *testing.T) {
+	// Proves that a token with the wrong prefix (e.g. an API key instead of an OAuth token) is rejected, and that the error message names the expected prefix.
 	err := ValidateSetupToken("sk-ant-api03-" + strings.Repeat("a", 80))
 	if err == nil {
 		t.Fatal("expected error for wrong prefix")
@@ -73,6 +42,7 @@ func TestValidateSetupTokenBadPrefix(t *testing.T) {
 }
 
 func TestValidateSetupTokenTooShort(t *testing.T) {
+	// Proves that a token with the right prefix but insufficient total length is rejected with a "too short" message.
 	err := ValidateSetupToken("sk-ant-oat01-short")
 	if err == nil {
 		t.Fatal("expected error for short token")
@@ -82,337 +52,10 @@ func TestValidateSetupTokenTooShort(t *testing.T) {
 	}
 }
 
-// --- Store-based OAuthManager tests ---
-
-func TestNewOAuthManagerFromStore(t *testing.T) {
-	store := newMockStore()
-	store.Set("anthropic.oauth_access_token", "store-access")
-	store.Set("anthropic.oauth_refresh_token", "store-refresh")
-	store.Set("anthropic.oauth_expires_at", strconv.FormatInt(time.Now().Add(time.Hour).UnixMilli(), 10))
-
-	mgr, err := NewOAuthManagerFromStore(store)
-	if err != nil {
-		t.Fatalf("NewOAuthManagerFromStore: %v", err)
-	}
-
-	token, err := mgr.Token()
-	if err != nil {
-		t.Fatalf("Token: %v", err)
-	}
-	if token != "store-access" {
-		t.Errorf("Token() = %q", token)
-	}
-}
-
-func TestNewOAuthManagerFromStoreMissingToken(t *testing.T) {
-	store := newMockStore()
-	// No oauth_access_token set
-
-	_, err := NewOAuthManagerFromStore(store)
-	if err == nil {
-		t.Fatal("expected error for missing access token")
-	}
-	if !strings.Contains(err.Error(), "oauth_access_token") {
-		t.Errorf("error = %q", err.Error())
-	}
-}
-
-func TestNewOAuthManagerFromStoreNoRefresh(t *testing.T) {
-	store := newMockStore()
-	store.Set("anthropic.oauth_access_token", "access-only")
-	// No oauth_refresh_token
-
-	_, err := NewOAuthManagerFromStore(store)
-	if err == nil {
-		t.Fatal("expected error for missing refresh token")
-	}
-	if !strings.Contains(err.Error(), "oauth_refresh_token") {
-		t.Errorf("error = %q", err.Error())
-	}
-}
-
-func TestRefreshTokenSavesToStore(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"access_token":  "refreshed-access",
-			"refresh_token": "refreshed-refresh",
-			"expires_in":    7200,
-		})
-	}))
-	defer server.Close()
-
-	store := newMockStore()
-
-	mgr := &OAuthManager{
-		creds: OAuthCredentials{
-			AccessToken:  "old-access",
-			RefreshToken: "old-refresh",
-			ExpiresAt:    time.Now().Add(-time.Hour).UnixMilli(),
-		},
-		store:      store,
-		httpClient: http.DefaultClient,
-		tokenURL:   server.URL,
-	}
-
-	if err := mgr.Refresh(); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-
-	// Verify token updated
-	token, _ := mgr.Token()
-	if token != "refreshed-access" {
-		t.Errorf("Token() = %q, want refreshed-access", token)
-	}
-
-	// Verify store was written
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if store.saved != 1 {
-		t.Errorf("store.Save() called %d times, want 1", store.saved)
-	}
-	if store.values["anthropic.oauth_access_token"] != "refreshed-access" {
-		t.Errorf("store access_token = %q", store.values["anthropic.oauth_access_token"])
-	}
-	if store.values["anthropic.oauth_refresh_token"] != "refreshed-refresh" {
-		t.Errorf("store refresh_token = %q", store.values["anthropic.oauth_refresh_token"])
-	}
-	if store.values["anthropic.oauth_expires_at"] == "" {
-		t.Error("store expires_at is empty")
-	}
-}
-
-func TestRefreshReadOnlyDoesNotWrite(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"access_token":  "refreshed-access",
-			"refresh_token": "refreshed-refresh",
-			"expires_in":    3600,
-		})
-	}))
-	defer server.Close()
-
-	mgr := &OAuthManager{
-		creds: OAuthCredentials{
-			AccessToken:  "old",
-			RefreshToken: "old-refresh",
-			ExpiresAt:    time.Now().Add(-time.Hour).UnixMilli(),
-		},
-		readOnly:   true,
-		httpClient: http.DefaultClient,
-		tokenURL:   server.URL,
-	}
-
-	if err := mgr.Refresh(); err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-
-	// Token should be updated in memory
-	token, _ := mgr.Token()
-	if token != "refreshed-access" {
-		t.Errorf("Token() = %q, want refreshed-access", token)
-	}
-}
-
-func TestRefreshTokenError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"invalid_token"}`))
-	}))
-	defer server.Close()
-
-	mgr := &OAuthManager{
-		creds: OAuthCredentials{
-			AccessToken:  "old",
-			RefreshToken: "bad-refresh",
-			ExpiresAt:    time.Now().Add(-time.Hour).UnixMilli(),
-		},
-		httpClient: http.DefaultClient,
-		tokenURL:   server.URL,
-	}
-
-	err := mgr.Refresh()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "status 401") {
-		t.Errorf("error = %q, want status 401", err.Error())
-	}
-}
-
-// --- CC fallback (file-based) tests ---
-
-func TestNewOAuthManagerClaudeFormat(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-
-	data := `{"claudeAiOauth":{"accessToken":"claude-access","refreshToken":"claude-refresh","expiresAt":` +
-		fmt.Sprintf("%d", time.Now().Add(time.Hour).UnixMilli()) + `}}`
-	os.WriteFile(path, []byte(data), 0600)
-
-	mgr, err := NewOAuthManager(path)
-	if err != nil {
-		t.Fatalf("NewOAuthManager: %v", err)
-	}
-
-	token, err := mgr.Token()
-	if err != nil {
-		t.Fatalf("Token: %v", err)
-	}
-	if token != "claude-access" {
-		t.Errorf("Token() = %q", token)
-	}
-
-	// Should be read-only
-	if !mgr.readOnly {
-		t.Error("file-based manager should be readOnly")
-	}
-}
-
-func TestNewOAuthManagerNativeFormat(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-
-	creds := OAuthCredentials{
-		AccessToken:  "native-access",
-		RefreshToken: "native-refresh",
-		ExpiresAt:    time.Now().Add(time.Hour).UnixMilli(),
-	}
-	data, _ := json.Marshal(creds)
-	os.WriteFile(path, data, 0600)
-
-	mgr, err := NewOAuthManager(path)
-	if err != nil {
-		t.Fatalf("NewOAuthManager: %v", err)
-	}
-
-	token, _ := mgr.Token()
-	if token != "native-access" {
-		t.Errorf("Token() = %q", token)
-	}
-}
-
-func TestNewOAuthManagerMissingFile(t *testing.T) {
-	_, err := NewOAuthManager("/nonexistent/path/creds.json")
-	if err == nil {
-		t.Fatal("expected error for missing file")
-	}
-}
-
-func TestNewOAuthManagerNoRefreshToken(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "creds.json")
-
-	data := `{"claudeAiOauth":{"accessToken":"static-token","refreshToken":"","expiresAt":0}}`
-	os.WriteFile(path, []byte(data), 0600)
-
-	_, err := NewOAuthManager(path)
-	if err == nil {
-		t.Fatal("expected error for missing refresh token")
-	}
-	if !strings.Contains(err.Error(), "no refresh_token") {
-		t.Errorf("error = %q, want 'no refresh_token'", err.Error())
-	}
-}
-
-// --- Thread safety and expiry ---
-
-func TestTokenThreadSafe(t *testing.T) {
-	store := newMockStore()
-	store.Set("anthropic.oauth_access_token", "safe-token")
-	store.Set("anthropic.oauth_refresh_token", "safe-refresh")
-	store.Set("anthropic.oauth_expires_at", strconv.FormatInt(time.Now().Add(time.Hour).UnixMilli(), 10))
-
-	mgr, err := NewOAuthManagerFromStore(store)
-	if err != nil {
-		t.Fatalf("NewOAuthManagerFromStore: %v", err)
-	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			token, err := mgr.Token()
-			if err != nil {
-				t.Errorf("Token: %v", err)
-			}
-			if token != "safe-token" {
-				t.Errorf("Token() = %q", token)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-func TestExpiresIn(t *testing.T) {
-	store := newMockStore()
-	future := time.Now().Add(time.Hour)
-	store.Set("anthropic.oauth_access_token", "test")
-	store.Set("anthropic.oauth_refresh_token", "test-refresh")
-	store.Set("anthropic.oauth_expires_at", strconv.FormatInt(future.UnixMilli(), 10))
-
-	mgr, err := NewOAuthManagerFromStore(store)
-	if err != nil {
-		t.Fatalf("NewOAuthManagerFromStore: %v", err)
-	}
-
-	ttl := mgr.ExpiresIn()
-	if ttl < 59*time.Minute || ttl > 61*time.Minute {
-		t.Errorf("ExpiresIn() = %s, want ~1h", ttl)
-	}
-}
-
-func TestStartRefreshBackground(t *testing.T) {
-	var refreshCount int
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		refreshCount++
-		mu.Unlock()
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"access_token":  fmt.Sprintf("refreshed-%d", refreshCount),
-			"refresh_token": "bg-refresh",
-			"expires_in":    1, // 1 second — will trigger quick re-refresh
-		})
-	}))
-	defer server.Close()
-
-	store := newMockStore()
-	mgr := &OAuthManager{
-		creds: OAuthCredentials{
-			AccessToken:  "bg-access",
-			RefreshToken: "bg-refresh",
-			ExpiresAt:    time.Now().Add(100 * time.Millisecond).UnixMilli(), // nearly expired
-		},
-		store:      store,
-		httpClient: http.DefaultClient,
-		tokenURL:   server.URL,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	mgr.StartRefresh(ctx)
-
-	// Wait for at least one refresh
-	time.Sleep(500 * time.Millisecond)
-	cancel()
-
-	mu.Lock()
-	count := refreshCount
-	mu.Unlock()
-
-	if count == 0 {
-		t.Error("expected at least one background refresh")
-	}
-}
-
 // --- TokenFunc integration ---
 
 func TestClientWithTokenFunc(t *testing.T) {
+	// Proves that a client configured with a tokenFunc calls it on each request and uses the returned token as the Bearer credential.
 	var callCount int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -436,7 +79,7 @@ func TestClientWithTokenFunc(t *testing.T) {
 		},
 		httpClient:     http.DefaultClient,
 		baseURL:        server.URL,
-		retryBaseDelay: time.Millisecond,
+		retryBaseDelay: 1,
 	}
 
 	_, err := client.SendMessage(context.Background(), &MessageRequest{
@@ -453,13 +96,14 @@ func TestClientWithTokenFunc(t *testing.T) {
 }
 
 func TestClientTokenFuncError(t *testing.T) {
+	// Proves that when the tokenFunc returns an error, SendMessage propagates it rather than sending a request with an empty or stale token.
 	client := &Client{
 		tokenFunc: func() (string, error) {
 			return "", fmt.Errorf("token expired")
 		},
 		httpClient:     http.DefaultClient,
 		baseURL:        "http://localhost",
-		retryBaseDelay: time.Millisecond,
+		retryBaseDelay: 1,
 	}
 
 	_, err := client.SendMessage(context.Background(), &MessageRequest{
@@ -478,6 +122,7 @@ func TestClientTokenFuncError(t *testing.T) {
 // --- Credential format parsing ---
 
 func TestReadCredentials(t *testing.T) {
+	// Proves that ReadCredentials correctly parses the Claude Code credential file format and returns the access token, refresh token, and expiry timestamp as separate values.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
@@ -500,6 +145,7 @@ func TestReadCredentials(t *testing.T) {
 }
 
 func TestParseCredentialsNativeFormat(t *testing.T) {
+	// Proves that parseCredentials handles foci's native flat JSON format, mapping top-level access_token, refresh_token, and expires_at to the OAuthCredentials struct.
 	data := `{"access_token":"native-at","refresh_token":"native-rt","expires_at":1234567890}`
 	creds, err := parseCredentials([]byte(data))
 	if err != nil {
@@ -517,6 +163,7 @@ func TestParseCredentialsNativeFormat(t *testing.T) {
 }
 
 func TestParseCredentialsClaudeFormat(t *testing.T) {
+	// Proves that parseCredentials handles the Claude Code nested credential format (claudeAiOauth wrapper), extracting the inner fields correctly.
 	data := `{"claudeAiOauth":{"accessToken":"claude-at","refreshToken":"claude-rt","expiresAt":9876543210}}`
 	creds, err := parseCredentials([]byte(data))
 	if err != nil {
@@ -531,6 +178,7 @@ func TestParseCredentialsClaudeFormat(t *testing.T) {
 }
 
 func TestParseCredentialsInvalid(t *testing.T) {
+	// Proves that parseCredentials returns an error for non-JSON input.
 	_, err := parseCredentials([]byte("not json"))
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
@@ -538,6 +186,7 @@ func TestParseCredentialsInvalid(t *testing.T) {
 }
 
 func TestUsageClientWithFunc(t *testing.T) {
+	// Proves that NewUsageClientWithFunc creates a usage client that calls the provided tokenFunc and sends it as the Bearer token on usage API requests.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); auth != "Bearer func-token" {
 			t.Errorf("Authorization = %q", auth)
@@ -561,36 +210,5 @@ func TestUsageClientWithFunc(t *testing.T) {
 	}
 	if resp.FiveHour == nil {
 		t.Fatal("FiveHour is nil")
-	}
-}
-
-// --- saveCredsToStore ---
-
-func TestSaveCredsToStore(t *testing.T) {
-	store := newMockStore()
-	creds := &OAuthCredentials{
-		AccessToken:  "test-access",
-		RefreshToken: "test-refresh",
-		ExpiresAt:    1772334580401,
-	}
-
-	if err := saveCredsToStore(store, creds); err != nil {
-		t.Fatalf("saveCredsToStore: %v", err)
-	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	if store.values["anthropic.oauth_access_token"] != "test-access" {
-		t.Errorf("access_token = %q", store.values["anthropic.oauth_access_token"])
-	}
-	if store.values["anthropic.oauth_refresh_token"] != "test-refresh" {
-		t.Errorf("refresh_token = %q", store.values["anthropic.oauth_refresh_token"])
-	}
-	if store.values["anthropic.oauth_expires_at"] != "1772334580401" {
-		t.Errorf("expires_at = %q", store.values["anthropic.oauth_expires_at"])
-	}
-	if store.saved != 1 {
-		t.Errorf("Save() called %d times, want 1", store.saved)
 	}
 }

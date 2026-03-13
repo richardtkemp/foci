@@ -254,6 +254,9 @@ func ApplyProviderDefaults(agent *AgentConfig, format string, cfg *Config) {
 			agent.Thinking = cfg.Gemini.Thinking
 		}
 	}
+	if agent.Speed == "" && format == "anthropic" {
+		agent.Speed = cfg.Anthropic.Speed
+	}
 }
 
 // Load reads config from the given TOML file path.

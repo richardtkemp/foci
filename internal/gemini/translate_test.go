@@ -12,6 +12,7 @@ import (
 )
 
 func TestSystemToGenai(t *testing.T) {
+	// Proves that multiple text system blocks are correctly converted to a single genai.Content with one Part per block.
 	blocks := []provider.SystemBlock{
 		{Type: "text", Text: "You are helpful."},
 		{Type: "text", Text: "Be concise."},
@@ -33,6 +34,7 @@ func TestSystemToGenai(t *testing.T) {
 }
 
 func TestSystemToGenai_Empty(t *testing.T) {
+	// Proves that nil input and blocks with empty text both produce nil, preventing empty cache entries from being created.
 	content := systemToGenai(nil)
 	if content != nil {
 		t.Errorf("expected nil for empty blocks")
@@ -45,6 +47,7 @@ func TestSystemToGenai_Empty(t *testing.T) {
 }
 
 func TestMessagesToGenai(t *testing.T) {
+	// Proves that a basic user/assistant/user conversation is correctly translated, including the "assistant" → "model" role rename required by the Gemini API.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
 		{Role: "assistant", Content: provider.TextContent("hi there")},
@@ -68,6 +71,7 @@ func TestMessagesToGenai(t *testing.T) {
 }
 
 func TestMessagesToGenai_ToolUse(t *testing.T) {
+	// Proves that tool_use blocks are translated to FunctionCall parts and tool_result blocks to FunctionResponse parts, with args and output preserved.
 	msgs := []provider.Message{
 		{Role: "assistant", Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "tu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
@@ -105,6 +109,7 @@ func TestMessagesToGenai_ToolUse(t *testing.T) {
 }
 
 func TestMessagesToGenai_ToolResultError(t *testing.T) {
+	// Proves that tool_result blocks marked as errors are translated with an "error" key in the FunctionResponse rather than "output", so the model can distinguish failure from success.
 	msgs := []provider.Message{
 		{Role: "user", Content: []provider.ContentBlock{
 			{Type: "tool_result", ToolUseID: "tu_1", Content: "command not found", IsError: true},
@@ -122,8 +127,7 @@ func TestMessagesToGenai_ToolResultError(t *testing.T) {
 }
 
 func TestMessagesToGenai_ToolResultNameLookup(t *testing.T) {
-	// Test that FunctionResponse.Name is populated by looking up the tool_use
-	// even when the tool_result block's Name field is empty.
+	// Proves that FunctionResponse.Name is resolved by looking up the matching tool_use ID when the tool_result block has no Name set — a requirement of the Gemini API.
 	msgs := []provider.Message{
 		{Role: "assistant", Content: []provider.ContentBlock{
 			{Type: "tool_use", ID: "tu_1", Name: "exec", Input: json.RawMessage(`{"cmd":"ls"}`)},
@@ -153,8 +157,7 @@ func TestMessagesToGenai_ToolResultNameLookup(t *testing.T) {
 }
 
 func TestMessagesToGenai_ToolResultNameFallback(t *testing.T) {
-	// Test fallback behavior when ToolUseID doesn't match any previous tool_use
-	// (shouldn't happen in normal flow, but the code should be defensive)
+	// Proves that when a tool_result's ToolUseID has no matching tool_use in history, the block's own Name field is used as a safe fallback rather than producing an empty name.
 	msgs := []provider.Message{
 		{Role: "user", Content: []provider.ContentBlock{
 			{Type: "tool_result", ToolUseID: "tu_unknown", Name: "fallback_name", Content: "result"},
@@ -173,6 +176,7 @@ func TestMessagesToGenai_ToolResultNameFallback(t *testing.T) {
 }
 
 func TestToolsToGenai(t *testing.T) {
+	// Proves that custom tool definitions are grouped into a single genai.Tool with multiple FunctionDeclarations, and that parameter schemas (including nested properties and required fields) are faithfully translated.
 	defs := []provider.ToolDef{
 		provider.NewCustomTool("exec", "run commands", json.RawMessage(`{
 			"type": "object",
@@ -217,6 +221,7 @@ func TestToolsToGenai(t *testing.T) {
 }
 
 func TestToolsToGenai_FiltersServerTools(t *testing.T) {
+	// Proves that server-side tools (e.g. web_search) are excluded from the Gemini function declarations, since Gemini does not support that tool type natively.
 	defs := []provider.ToolDef{
 		provider.NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`)),
 		provider.NewServerTool(map[string]interface{}{
@@ -235,6 +240,7 @@ func TestToolsToGenai_FiltersServerTools(t *testing.T) {
 }
 
 func TestToolsToGenai_Empty(t *testing.T) {
+	// Proves that nil or empty tool definitions produce a nil result rather than an empty slice, keeping the API request clean.
 	tools := toolsToGenai(nil)
 	if tools != nil {
 		t.Errorf("expected nil for empty defs")
@@ -242,7 +248,7 @@ func TestToolsToGenai_Empty(t *testing.T) {
 }
 
 func TestThinkingToGenai(t *testing.T) {
-	// Adaptive → default budget
+	// Proves that thinking config is translated correctly: adaptive mode uses a default budget, explicit budgets are preserved, and nil input yields nil output.
 	tc := thinkingToGenai(&provider.ThinkingConfig{Type: "adaptive"})
 	if tc == nil {
 		t.Fatal("nil config")
@@ -268,6 +274,7 @@ func TestThinkingToGenai(t *testing.T) {
 }
 
 func TestResponseFromGenai(t *testing.T) {
+	// Proves that a standard text response is correctly translated into the provider format, mapping finish reason, token counts, and text content.
 	resp := &genai.GenerateContentResponse{
 		ResponseID: "resp_123",
 		Candidates: []*genai.Candidate{
@@ -308,10 +315,8 @@ func TestResponseFromGenai(t *testing.T) {
 	}
 }
 
-// Verifies that Gemini's overlapping token counts are normalized to non-overlapping
-// semantics matching Anthropic. PromptTokenCount includes CachedContentTokenCount,
-// so InputTokens = Prompt - Cached, CacheRead = Cached.
 func TestResponseFromGenai_CachedTokensNonOverlapping(t *testing.T) {
+	// Proves that Gemini's overlapping token counts (PromptTokenCount includes CachedContentTokenCount) are normalized so that InputTokens reflects only the non-cached portion, matching Anthropic's non-overlapping semantics.
 	resp := &genai.GenerateContentResponse{
 		ResponseID: "resp_cached",
 		Candidates: []*genai.Candidate{
@@ -350,6 +355,7 @@ func TestResponseFromGenai_CachedTokensNonOverlapping(t *testing.T) {
 }
 
 func TestResponseFromGenai_ToolUse(t *testing.T) {
+	// Proves that a FunctionCall in the Gemini response is translated into a tool_use content block with the correct name, ID, and a "tool_use" stop reason for the agent loop.
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{
 			{
@@ -394,8 +400,7 @@ func TestResponseFromGenai_ToolUse(t *testing.T) {
 }
 
 func TestResponseFromGenai_ToolUseGeneratesUniqueIDs(t *testing.T) {
-	// When Gemini doesn't provide a FunctionCall ID, we generate unique ones.
-	// Two calls to the same tool in one response must get distinct IDs.
+	// Proves that multiple tool calls without Gemini-provided IDs each receive unique generated IDs, preventing collisions that would break tool result matching in the agent loop.
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{
 			{
@@ -436,6 +441,7 @@ func TestResponseFromGenai_ToolUseGeneratesUniqueIDs(t *testing.T) {
 }
 
 func TestResponseFromGenai_Thinking(t *testing.T) {
+	// Proves that thought parts (Thought=true) are translated into "thinking" content blocks and normal text parts into "text" blocks, preserving their order.
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{
 			{
@@ -470,6 +476,7 @@ func TestResponseFromGenai_Thinking(t *testing.T) {
 }
 
 func TestMapFinishReason(t *testing.T) {
+	// Proves that Gemini finish reasons map to the expected provider stop reason strings, including that safety and recitation map to "end_turn" rather than exposing internal Gemini codes.
 	tests := []struct {
 		reason genai.FinishReason
 		want   string
@@ -488,6 +495,7 @@ func TestMapFinishReason(t *testing.T) {
 }
 
 func TestJSONSchemaToGenai(t *testing.T) {
+	// Proves that a JSON Schema object with nested properties, array items, descriptions, and required fields is faithfully converted into the equivalent genai.Schema structure.
 	raw := json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -526,6 +534,7 @@ func TestJSONSchemaToGenai(t *testing.T) {
 }
 
 func TestContextLimit(t *testing.T) {
+	// Proves that each known Gemini model variant returns the correct context window size, and that unknown models fall back to the default limit.
 	tests := []struct {
 		model string
 		want  int
@@ -547,8 +556,8 @@ func TestContextLimit(t *testing.T) {
 // Compile-time check: *Client implements provider.Client.
 var _ provider.Client = (*Client)(nil)
 
-// Tests for error classification functions
 func TestClassifyError(t *testing.T) {
+	// Proves that error strings from the Gemini API (both numeric HTTP codes and gRPC status names) are classified into the correct provider.APIError status codes, nil passes through, and unrecognised errors are returned unchanged without being wrapped as APIError.
 	t.Run("nil", func(t *testing.T) {
 		if err := classifyError(nil); err != nil {
 			t.Errorf("classifyError(nil) should return nil, got %v", err)
@@ -603,6 +612,7 @@ func TestClassifyError(t *testing.T) {
 }
 
 func TestIsSafetyError(t *testing.T) {
+	// Proves that safety-related error messages (SAFETY, RECITATION, "blocked") are correctly identified, while generic errors are not, ensuring proper retry/abort decisions in the agent loop.
 	tests := []struct {
 		msg  string
 		want bool

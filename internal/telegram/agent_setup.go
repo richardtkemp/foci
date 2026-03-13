@@ -17,10 +17,11 @@ import (
 
 // AgentSetupParams holds all dependencies needed to set up platform bots for an agent.
 type AgentSetupParams struct {
-	Agent           platform.MessageHandler
-	Commands        *command.Registry
-	LastMsgStore    *command.LastMessageStore
-	AgentConfig     config.AgentConfig
+	Agent          platform.MessageHandler
+	Commands       *command.Registry
+	CommandContext command.CommandContext
+	LastMsgStore   *command.LastMessageStore
+	AgentConfig    config.AgentConfig
 	GlobalConfig    *config.Config
 	SecretStore     *secrets.Store
 	Sessions        *session.Store
@@ -72,6 +73,7 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 				return
 			}
 			tBot.SetHandlerAndCommands(p.Agent, p.Commands)
+			tBot.SetCommandContext(p.CommandContext)
 			ApplyAgentDisplaySettings(tBot, acfg, cfg)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
@@ -133,6 +135,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		log.Errorf("telegram", "agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
 		return
 	}
+
+	primaryBot.SetCommandContext(p.CommandContext)
 
 	if p.StateStore != nil {
 		botKey := "bot:" + botName

@@ -16,6 +16,7 @@ import (
 
 	_ "foci/internal/telegram" // register telegram messaging provider
 
+	"foci/internal/agent"
 	"foci/internal/anthropic"
 	"foci/internal/command"
 	"foci/internal/config"
@@ -24,6 +25,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/startup"
+	"foci/prompts"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."
@@ -288,18 +290,10 @@ Subcommands:
 				for _, id := range agentOrder {
 					inst := agents[id]
 					if strings.HasPrefix(sessionKey, id+"/") {
-						orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
-						fireSessionEndMemory(sessionEndMemoryOpts{
-							ag:         inst.ag,
-							sessions:   si.sessions,
-							sessionKey: sessionKey,
-							mfCfg:      inst.agentCfg.MemoryFormation,
-							buildOrientation: func(bk, pk, bt string) string {
-								return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
-							},
-							searchDirs: inst.promptSearchDirs,
-							parentCtx:  ctx,
-						})
+						orientPath := prompts.ResolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
+						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
+							return prompts.BuildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
+						}, inst.promptSearchDirs, ctx, false)
 						return
 					}
 				}
@@ -325,12 +319,12 @@ Subcommands:
 
 	plat.RestoreMultiballSessions(platform.RestoreParams{
 		AgentOrder: agentOrder,
-		Resolver: func(agentID string) (platform.MessageHandler, any, config.AgentConfig, bool) {
+		Resolver: func(agentID string) (platform.MessageHandler, any, any, config.AgentConfig, bool) {
 			inst, found := agents[agentID]
 			if !found {
-				return nil, nil, config.AgentConfig{}, false
+				return nil, nil, nil, config.AgentConfig{}, false
 			}
-			return inst.ag, inst.cmds, inst.agentCfg, true
+			return inst.ag, inst.cmds, inst.cc, inst.agentCfg, true
 		},
 	})
 	plat.StartAll(ctx)

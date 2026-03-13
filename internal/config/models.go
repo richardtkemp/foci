@@ -116,6 +116,7 @@ func StripDeveloperPrefix(model string) string {
 type ModelCaps struct {
 	Effort   bool // supports output_config.effort
 	Thinking bool // supports thinking (adaptive/enabled)
+	Speed    bool // supports fast mode (speed: "fast")
 }
 
 // ModelCapabilities returns the capabilities of a model based on its ID.
@@ -128,9 +129,12 @@ func ModelCapabilities(model string) ModelCaps {
 	// Sonnet and Opus support both.
 	if strings.Contains(modelID, "claude") {
 		if strings.Contains(modelID, "haiku") {
-			return ModelCaps{Effort: false, Thinking: false}
+			return ModelCaps{Effort: false, Thinking: false, Speed: false}
 		}
-		return ModelCaps{Effort: true, Thinking: true}
+		if strings.Contains(modelID, "opus") {
+			return ModelCaps{Effort: true, Thinking: true, Speed: true}
+		}
+		return ModelCaps{Effort: true, Thinking: true, Speed: false}
 	}
 
 	// Non-Anthropic models: effort and thinking are Anthropic-specific.

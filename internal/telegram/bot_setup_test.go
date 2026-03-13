@@ -138,6 +138,7 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 		queue:           make(chan queuedMessage, 64),
 		chatSessionKeys: make(map[int64]string),
 	}
+	b.dispatcher = NewDispatcher(cmds, command.CommandContext{}, "test")
 	return b, mock
 }
 

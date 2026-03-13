@@ -2,15 +2,14 @@ package telegram
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"foci/internal/command"
 )
 
-// TestRegisterCommands verifies that RegisterCommands properly registers
-// commands with the Telegram API.
 func TestRegisterCommands(t *testing.T) {
+	// Verifies that RegisterCommands properly registers
+	// commands with the Telegram API.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "help", Description: "List available commands"})
 	cmds.Register(&command.Command{Name: "ping", Description: "Check bot health"})
@@ -49,9 +48,9 @@ func TestRegisterCommands(t *testing.T) {
 	}
 }
 
-// TestRegisterCommands_EmptyDescription verifies that RegisterCommands falls
-// back to the command name when description is empty.
 func TestRegisterCommands_EmptyDescription(t *testing.T) {
+	// Verifies that RegisterCommands falls
+	// back to the command name when description is empty.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "test", Description: ""})
 
@@ -66,9 +65,9 @@ func TestRegisterCommands_EmptyDescription(t *testing.T) {
 	}
 }
 
-// TestRegisterCommands_APIError verifies that RegisterCommands handles API
-// errors gracefully without panicking.
 func TestRegisterCommands_APIError(t *testing.T) {
+	// Verifies that RegisterCommands handles API
+	// errors gracefully without panicking.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "help", Description: "List commands"})
 
@@ -79,8 +78,6 @@ func TestRegisterCommands_APIError(t *testing.T) {
 	b.RegisterCommands()
 }
 
-// TestSendReply_SkipsEmptyText verifies that sendReply skips empty text
-// without sending.
 func TestSendReply_SkipsEmptyText(t *testing.T) {
 	// sendReply trims parts and skips empty text — callers don't need to guard.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
@@ -92,31 +89,9 @@ func TestSendReply_SkipsEmptyText(t *testing.T) {
 	}
 }
 
-// TestEmptyResponseGuard verifies the logic for detecting empty responses.
-func TestEmptyResponseGuard(t *testing.T) {
-	// Verify the guard logic: empty and whitespace-only strings should be
-	// detected. This mirrors the strings.TrimSpace check in processAgentMessage.
-	cases := []struct {
-		response string
-		isEmpty  bool
-	}{
-		{"", true},
-		{"   ", true},
-		{"\n\t", true},
-		{"hello", false},
-		{" x ", false},
-	}
-	for _, tc := range cases {
-		got := strings.TrimSpace(tc.response) == ""
-		if got != tc.isEmpty {
-			t.Errorf("TrimSpace(%q)==\"\" = %v, want %v", tc.response, got, tc.isEmpty)
-		}
-	}
-}
-
-// TestSendNotification_EmptyTextSkipped verifies that SendNotification skips
-// empty or whitespace-only text.
 func TestSendNotification_EmptyTextSkipped(t *testing.T) {
+	// Verifies that SendNotification skips
+	// empty or whitespace-only text.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.SetChatID(12345)
 

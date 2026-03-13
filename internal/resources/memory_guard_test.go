@@ -73,6 +73,8 @@ type mockState struct {
 }
 
 func TestMemoryGuard_BelowThreshold_NoAction(t *testing.T) {
+	// Proves that no warning or kill fires when memory usage is well below the warn threshold,
+	// by setting RSS to 10% of total and confirming no warnings are emitted.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// 10% usage — well below 25% warn
@@ -88,6 +90,8 @@ func TestMemoryGuard_BelowThreshold_NoAction(t *testing.T) {
 }
 
 func TestMemoryGuard_AboveWarn_NoPressure_NoAction(t *testing.T) {
+	// Proves that memory pressure is a required co-condition: even when RSS exceeds the warn
+	// threshold, no warning fires if memory pressure is below its own threshold.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// 30% usage — above warn, but no pressure
@@ -104,6 +108,8 @@ func TestMemoryGuard_AboveWarn_NoPressure_NoAction(t *testing.T) {
 }
 
 func TestMemoryGuard_AboveWarn_WithPressure_Warns(t *testing.T) {
+	// Proves that a WARNING is emitted when both RSS exceeds the warn threshold and memory
+	// pressure exceeds its threshold simultaneously.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// 30% usage + pressure
@@ -123,6 +129,8 @@ func TestMemoryGuard_AboveWarn_WithPressure_Warns(t *testing.T) {
 }
 
 func TestMemoryGuard_WarnDedup(t *testing.T) {
+	// Proves that repeated checks under the same high-memory condition only produce one warning,
+	// preventing log spam by deduplicating the warning until conditions recover.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	ms.userRSSKB = ms.memTotalKB * 30 / 100
@@ -139,6 +147,8 @@ func TestMemoryGuard_WarnDedup(t *testing.T) {
 }
 
 func TestMemoryGuard_WarnResetsOnRecovery(t *testing.T) {
+	// Proves that the dedup latch resets once memory drops below the threshold, allowing a new
+	// warning to fire on the next spike — validated by triggering, recovering, then spiking again.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// Trigger warn
@@ -166,6 +176,8 @@ func TestMemoryGuard_WarnResetsOnRecovery(t *testing.T) {
 }
 
 func TestMemoryGuard_AboveKill_WithPressure_Kills(t *testing.T) {
+	// Proves that when RSS exceeds the kill threshold and pressure is high, the largest process
+	// is killed and a KILL warning is emitted.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// 50% usage + pressure + target process
@@ -195,6 +207,8 @@ func TestMemoryGuard_AboveKill_WithPressure_Kills(t *testing.T) {
 }
 
 func TestMemoryGuard_Kill_NoPressure_NoAction(t *testing.T) {
+	// Proves that pressure is required even for kill-level memory: RSS above kill threshold alone
+	// does not cause any kill or warning when pressure is low.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// 50% usage but no pressure
@@ -217,6 +231,8 @@ func TestMemoryGuard_Kill_NoPressure_NoAction(t *testing.T) {
 }
 
 func TestMemoryGuard_Kill_NoProcess_WarnsError(t *testing.T) {
+	// Proves that when conditions call for a kill but no target process can be found, a CRITICAL
+	// warning is emitted and no kill attempt is made.
 	g, ms := newTestGuard(25, 40, 10.0)
 
 	// 50% usage + pressure but no process to kill
@@ -244,7 +260,8 @@ func TestMemoryGuard_Kill_NoProcess_WarnsError(t *testing.T) {
 }
 
 func TestReadMemoryPressure_ParseFormat(t *testing.T) {
-	// Test the parsing logic by calling the real function if /proc/pressure/memory exists
+	// Proves that readMemoryPressure can parse the real kernel PSI file without error when
+	// running on a Linux system that supports /proc/pressure/memory; skips otherwise.
 	_, err := readMemoryPressure()
 	if err != nil {
 		t.Skipf("skipping on systems without /proc/pressure/memory: %v", err)
@@ -252,7 +269,8 @@ func TestReadMemoryPressure_ParseFormat(t *testing.T) {
 }
 
 func TestReadStatusRSS(t *testing.T) {
-	// Smoke test — just ensure the function handles missing files gracefully
+	// Proves that readStatusRSS returns zero and false (not owned) for a nonexistent path,
+	// ensuring graceful handling of missing or inaccessible proc status files.
 	rss, owned := readStatusRSS("/proc/nonexistent/status", "1000")
 	if owned {
 		t.Error("readStatusRSS should return false for nonexistent path")
@@ -263,6 +281,8 @@ func TestReadStatusRSS(t *testing.T) {
 }
 
 func TestReadStatusFull(t *testing.T) {
+	// Proves that readStatusFull returns zero values for all outputs when given a nonexistent
+	// path, confirming safe error handling for missing proc files.
 	rss, owned, comm := readStatusFull("/proc/nonexistent/status", "1000")
 	if owned {
 		t.Error("readStatusFull should return false for nonexistent path")
@@ -273,6 +293,8 @@ func TestReadStatusFull(t *testing.T) {
 }
 
 func TestStartStop(t *testing.T) {
+	// Proves that the guard starts a polling goroutine and shuts down cleanly when the context
+	// is cancelled and Stop is called — no deadlock or panic.
 	g, _ := newTestGuard(25, 40, 10.0)
 	g.cfg.Interval = 10 * time.Millisecond
 
@@ -286,6 +308,8 @@ func TestStartStop(t *testing.T) {
 }
 
 func TestNewMemoryGuard(t *testing.T) {
+	// Proves that the constructor correctly stores the config and sets uid to the current user
+	// (non-zero), confirming proper initialization of the guard.
 	cfg := MemoryGuardConfig{
 		Interval:          time.Second,
 		WarnPercent:       25,
@@ -310,6 +334,8 @@ func TestNewMemoryGuard(t *testing.T) {
 }
 
 func TestMemoryGuard_Start_ZeroInterval(t *testing.T) {
+	// Proves that a zero interval disables polling entirely: Start returns immediately without
+	// spawning a goroutine, leaving the done channel nil.
 	cfg := MemoryGuardConfig{
 		Interval: 0, // Disabled
 	}
@@ -318,18 +344,20 @@ func TestMemoryGuard_Start_ZeroInterval(t *testing.T) {
 	ctx := context.Background()
 	g.Start(ctx)
 
-	// Should return immediately without starting goroutine
 	if g.done != nil {
 		t.Errorf("done channel should not be created with zero interval")
 	}
 }
 
 func TestMemoryGuard_Stop_WithoutStart(t *testing.T) {
+	// Proves that calling Stop on a guard that was never started does not panic.
 	g := NewMemoryGuard(MemoryGuardConfig{}, func(msg string) {})
 	g.Stop() // Should not panic
 }
 
 func TestMemoryGuard_GetMemTotal_Error(t *testing.T) {
+	// Proves that a failure reading total memory causes checkOnce to abort silently without
+	// panicking, since a missing total makes percentage calculations impossible.
 	g := &MemoryGuard{
 		cfg: MemoryGuardConfig{
 			WarnPercent: 25,
@@ -351,6 +379,8 @@ func TestMemoryGuard_GetMemTotal_Error(t *testing.T) {
 }
 
 func TestMemoryGuard_GetUserRSS_Error(t *testing.T) {
+	// Proves that a failure reading the user's RSS causes checkOnce to abort silently without
+	// panicking, since no usage figure means no meaningful threshold comparison.
 	g := &MemoryGuard{
 		cfg: MemoryGuardConfig{
 			WarnPercent: 25,
@@ -372,6 +402,8 @@ func TestMemoryGuard_GetUserRSS_Error(t *testing.T) {
 }
 
 func TestMemoryGuard_GetPressure_Error(t *testing.T) {
+	// Proves that a failure reading memory pressure causes checkOnce to abort silently even when
+	// RSS is above the warn threshold — no panic, no spurious warning.
 	g, ms := newTestGuard(25, 40, 10.0)
 	ms.userRSSKB = ms.memTotalKB * 30 / 100 // Above warn threshold
 
@@ -383,6 +415,8 @@ func TestMemoryGuard_GetPressure_Error(t *testing.T) {
 }
 
 func TestMemoryGuard_Multiple_Kills(t *testing.T) {
+	// Proves that checkOnce performs at most one kill per invocation, even if RSS remains above
+	// the kill threshold after the first kill — the caller must re-invoke for subsequent kills.
 	g, ms := newTestGuard(25, 40, 10.0)
 	ms.memTotalKB = 1000 // Small total to make ratios work
 

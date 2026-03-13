@@ -7,15 +7,15 @@ import (
 	"foci/internal/command"
 )
 
-// TestReceiveMessage_SlashCommandBypassesQueue verifies that slash commands
-// are executed immediately and do not go through the agent queue.
 func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
+	// Verifies that slash commands
+	// are executed immediately and do not go through the agent queue.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name:        "ping",
 		Description: "test",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "pong", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
 		},
 	})
 
@@ -35,14 +35,14 @@ func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_UnknownSlashCommandGetsSuggestion verifies that unknown
-// slash commands receive a suggestion reply instead of being queued.
 func TestReceiveMessage_UnknownSlashCommandGetsSuggestion(t *testing.T) {
+	// Verifies that unknown
+	// slash commands receive a suggestion reply instead of being queued.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name: "ping",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "pong", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
 		},
 	})
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"foci/internal/command"
-
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
@@ -29,17 +27,15 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, user
 		}
 	}
 
-	// Try platform-aware dispatcher first (DispatchV2 path)
-	if b.dispatcher != nil {
-		return b.tryDispatchV2(ctx, msg, userID, text)
+	if b.dispatcher == nil {
+		return false
 	}
 
-	// Legacy dispatch path (original Dispatch method)
-	return b.tryDispatchLegacy(ctx, msg, userID, text)
+	return b.tryDispatchViaDispatcher(ctx, msg, userID, text)
 }
 
-// tryDispatchV2 uses the platform-aware dispatcher (DispatchV2).
-func (b *Bot) tryDispatchV2(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
+// tryDispatchViaDispatcher uses the platform-aware Dispatcher.
+func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
 	result := b.dispatcher.Dispatch(ctx, msg)
 	if !result.Handled {
 		return false
@@ -60,49 +56,6 @@ func (b *Bot) tryDispatchV2(ctx context.Context, msg *gotgbot.Message, userID, t
 	return true
 }
 
-// tryDispatchLegacy uses the original command.Dispatch method.
-func (b *Bot) tryDispatchLegacy(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
-	// Dot-command alias (.xxx → /xxx) — easier to type on phone keyboards.
-	// Only treated as a command if it matches a registered command.
-	if strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
-		dotText := strings.TrimSpace(text)[1:] // strip leading dot, preserve case
-		cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
-		if b.commands.Get(cmdName) != nil || b.isStopCommand("/"+cmdName) {
-			dotCmd := "/" + dotText
-			cmdCtx := b.commandContext(ctx, userID, msg.Chat.Id)
-			if _, opts, ok := b.commands.LookupKeyboard(cmdCtx, dotCmd); ok {
-				b.sendCommandKeyboard(msg.Chat.Id, cmdName, opts)
-				return true
-			}
-			if result, ok := b.commands.Dispatch(cmdCtx, dotCmd); ok {
-				b.logger().Debugf("command %s → %s dispatched", text, dotCmd)
-				b.sendReply(msg, userID, result)
-				return true
-			}
-		}
-	}
-
-	// Slash commands
-	if strings.HasPrefix(text, "/") {
-		cmdCtx := b.commandContext(ctx, userID, msg.Chat.Id)
-
-		// Check for inline keyboard (bare command, no args)
-		if name, opts, ok := b.commands.LookupKeyboard(cmdCtx, text); ok {
-			b.logger().Debugf("command /%s showing keyboard (%d options)", name, len(opts))
-			b.sendCommandKeyboard(msg.Chat.Id, name, opts)
-			return true
-		}
-
-		if result, ok := b.commands.Dispatch(cmdCtx, text); ok {
-			b.logger().Debugf("command %s dispatched", text)
-			b.sendReply(msg, userID, result)
-			return true
-		}
-	}
-
-	return false
-}
-
 // handleDoneCommand handles the /done command for secondary bots.
 func (b *Bot) handleDoneCommand(msg *gotgbot.Message, userID string) bool {
 	if !b.isSecondary {
@@ -121,11 +74,4 @@ func (b *Bot) handleDoneCommand(msg *gotgbot.Message, userID string) bool {
 	b.sendReply(msg, userID, "Session ended.")
 	b.logger().Infof("secondary bot detached from %s", sk)
 	return true
-}
-
-// commandContext creates a context with metadata for command dispatch.
-func (b *Bot) commandContext(ctx context.Context, userID string, chatID int64) context.Context {
-	ctx = context.WithValue(ctx, command.LastMessageUserKey{}, userID)
-	ctx = context.WithValue(ctx, command.ChatIDKey{}, chatID)
-	return ctx
 }

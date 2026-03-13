@@ -8,9 +8,8 @@ import (
 	"foci/internal/tools"
 )
 
-// TestRotateSession verifies that RotateSession migrates the meta map,
-// StateStore keys, turn locks, and fires the rotation callback.
 func TestRotateSession(t *testing.T) {
+	// Proves that RotateSession atomically moves all session state (effort, no_compact, state store keys, turn lock) from the old key to the new one and fires the registered rotation callback.
 	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
 	ag := &Agent{StateStore: stateStore}
 
@@ -69,10 +68,8 @@ func TestRotateSession(t *testing.T) {
 	}
 }
 
-// TestRotateSession_MigratesAsyncPending verifies that RotateSession calls
-// AsyncNotifier.MigrateSession so that in-flight async goroutines holding the
-// old key resolve to the new key for both delivery and pending tracking.
 func TestRotateSession_MigratesAsyncPending(t *testing.T) {
+	// Proves that pending async tool results and MarkDone calls using the old session key are transparently redirected to the new key after RotateSession.
 	var delivered string
 	notifier := tools.NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		delivered = sk
@@ -109,9 +106,8 @@ func TestRotateSession_MigratesAsyncPending(t *testing.T) {
 	}
 }
 
-// TestRotateSession_NoOp verifies that RotateSession is a no-op when
-// oldKey equals newKey or newKey is empty.
 func TestRotateSession_NoOp(t *testing.T) {
+	// Proves that RotateSession does not fire the rotation callback when the old and new keys are identical or the new key is empty.
 	ag := &Agent{}
 
 	var called bool

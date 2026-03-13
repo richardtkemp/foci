@@ -7,8 +7,8 @@ import (
 	"foci/internal/command"
 )
 
-// TestReceiveMessage_StopCancelsTurn verifies that /stop cancels an active turn.
 func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
+	// Verifies that /stop cancels an active turn.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Simulate an active turn
@@ -34,9 +34,9 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 	// We can't directly check this, but the cancel function was called
 }
 
-// TestReceiveMessage_StopAlias verifies that stop aliases like /wait work
-// when enabled.
 func TestReceiveMessage_StopAlias(t *testing.T) {
+	// Verifies that stop aliases like /wait work
+	// when enabled.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set stop aliases with enabled=true
@@ -60,9 +60,9 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_StopAliasNotConfigured verifies that aliases don't work
-// when disabled.
 func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
+	// Verifies that aliases don't work
+	// when disabled.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Aliases disabled — even with aliases configured, they shouldn't work

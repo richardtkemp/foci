@@ -13,6 +13,8 @@ import (
 )
 
 func TestBuildMetaPrefix(t *testing.T) {
+	// Proves that buildMetaPrefix emits correct timestamp, gap, model, platform,
+	// and cost fields for both the first message and subsequent messages with prior-turn data.
 	now := time.Date(2026, 2, 21, 5, 30, 0, 0, time.UTC)
 
 	// First message — no previous turn data
@@ -61,6 +63,8 @@ func TestBuildMetaPrefix(t *testing.T) {
 }
 
 func TestMetadataInjectedInMessage(t *testing.T) {
+	// Proves that every outgoing user message has a [meta] prefix containing at least
+	// the model name, and that the original user text is preserved after the prefix.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -105,6 +109,8 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 }
 
 func TestBuildMetaPrefix_Mana(t *testing.T) {
+	// Proves that mana status is omitted when empty, and shown with a red/green indicator
+	// based on the goodMana flag, both on first and subsequent messages.
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 
 	// Without mana
@@ -206,6 +212,8 @@ func TestMetaPlatformFromTrigger(t *testing.T) {
 }
 
 func TestDuplicateMessages(t *testing.T) {
+	// Proves that DuplicateMessages=true causes the user text to appear twice in the
+	// outgoing message and in the saved session, while [meta] prefix appears only once.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -253,6 +261,7 @@ func TestDuplicateMessages(t *testing.T) {
 }
 
 func TestDuplicateMessagesDisabled(t *testing.T) {
+	// Proves that DuplicateMessages=false (the default) sends each user text exactly once.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -287,6 +296,8 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 }
 
 func TestDuplicateMessagesSkippedForWake(t *testing.T) {
+	// Proves that duplication only applies to human-typed triggers (telegram, user, voice)
+	// and is suppressed for automated/system triggers (wake, keepalive, proactive_warning, etc.).
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

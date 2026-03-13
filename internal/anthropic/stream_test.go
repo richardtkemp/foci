@@ -12,6 +12,7 @@ import (
 )
 
 func TestStreamMessageRequiresSDK(t *testing.T) {
+	// Proves that StreamMessage returns a clear error when useSDK is false, guarding against misconfigured clients accidentally calling the streaming path.
 	client := NewClientWithBase("http://localhost", "test-key")
 	// NewClientWithBase sets useSDK=false
 
@@ -30,7 +31,7 @@ func TestStreamMessageRequiresSDK(t *testing.T) {
 }
 
 func TestStreamMessageSSESuccess(t *testing.T) {
-	// Mock SSE server that returns a complete streaming response.
+	// Proves that StreamMessage correctly reassembles text deltas from a sequence of SSE events, invokes OnTextDelta for each delta, and produces a complete MessageResponse with the right ID, stop reason, and concatenated text.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/messages" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -112,6 +113,7 @@ data: {"type":"message_stop"}`,
 }
 
 func TestStreamMessageSSEWithThinking(t *testing.T) {
+	// Proves that a response containing both a thinking block and a text block is parsed correctly: the thinking content is accumulated via OnThinkingDelta, the text via OnTextDelta, and both content blocks appear in the final response.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
@@ -189,11 +191,12 @@ data: {"type":"message_stop"}`,
 }
 
 func TestStreamMessagePreStreamRetry(t *testing.T) {
+	// Placeholder test documenting that pre-stream retry logic has moved to the provider layer.
 	t.Skip("Retry logic moved to provider layer - see provider.TestRetryStreamingClient")
 }
 
 func TestStreamMessageNilHandler(t *testing.T) {
-	// Stream with nil handler should still work.
+	// Proves that StreamMessage completes successfully when passed a nil handler, allowing callers that only want the final response to omit the handler.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, _ := w.(http.Flusher)
@@ -237,6 +240,6 @@ data: {"type":"message_stop"}`,
 }
 
 func TestStreamingClientInterface(t *testing.T) {
-	// Compile-time check is in stream.go, but verify at runtime too.
+	// Proves that *Client satisfies the provider.StreamingClient interface at runtime (compile-time assertion exists in stream.go; this documents the contract explicitly in the test suite).
 	var _ provider.StreamingClient = (*Client)(nil)
 }

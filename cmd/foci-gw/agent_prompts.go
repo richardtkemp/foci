@@ -1,20 +1,12 @@
 package main
 
 import (
-	"crypto/md5" // #nosec G501 - used for content checksums, not security
-	"fmt"
 	"os"
 	"path/filepath"
 
-	"foci/internal/command"
 	"foci/internal/log"
 	"foci/prompts"
 )
-
-// isDefaultPrompt compares resolved text to the embedded default via MD5.
-func isDefaultPrompt(resolved, embeddedDefault string) bool {
-	return md5.Sum([]byte(resolved)) == md5.Sum([]byte(embeddedDefault)) // #nosec G401 - content comparison, not security
-}
 
 // seedDefaultPrompts writes embedded prompt files to dir if they don't already
 // exist. This gives users editable copies they can customise.
@@ -46,69 +38,4 @@ func seedDefaultPrompts(dir string) {
 		}
 		log.Infof("main", "seeded default prompt: %s", path)
 	}
-}
-
-// buildBranchOrientation constructs orientation text for a branch session.
-// Resolves the prompt through ResolvePrompt: explicit path → search dirs → embedded default.
-// Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
-func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool, searchDirs []string) string {
-	var filename, embedded string
-	if directChat {
-		filename = "branch-orientation-multiball.md"
-		embedded = prompts.BranchOrientationMultiball()
-	} else {
-		filename = "branch-orientation-headless.md"
-		embedded = prompts.BranchOrientationHeadless()
-	}
-	text := prompts.ResolvePrompt(promptPath, filename, embedded, searchDirs...)
-	return prompts.ReplaceVars(text, map[string]string{
-		"branch_key":  branchKey,
-		"parent_key":  parentKey,
-		"branch_type": branchType,
-		"direct_chat": fmt.Sprintf("%v", directChat),
-	})
-}
-
-// resolvePromptInfo builds a PromptInfo for a file-path-based prompt, comparing
-// the resolved text against the embedded default via md5 to detect customisation.
-func resolvePromptInfo(label, configPath, filename, embeddedDefault string, searchDirs []string) command.PromptInfo {
-	if configPath == "none" {
-		return command.PromptInfo{Label: label, Filename: filename, Disabled: true}
-	}
-
-	resolved := prompts.ResolvePrompt(configPath, filename, embeddedDefault, searchDirs...)
-	def := isDefaultPrompt(resolved, embeddedDefault)
-
-	// Find the actual file path being used
-	path := configPath
-	if path == "" || path == "default" {
-		// Search dirs — find which file was used
-		for _, dir := range searchDirs {
-			fp := filepath.Join(dir, filename)
-			if _, err := os.Stat(fp); err == nil {
-				path = fp
-				break
-			}
-		}
-	}
-
-	if path == "" || path == "default" {
-		// Using embedded default, no file on disk
-		return command.PromptInfo{Label: label, Filename: filename, Default: def}
-	}
-
-	_, err := os.Stat(path)
-	return command.PromptInfo{Label: label, Path: path, Filename: filename, Exists: err == nil, Default: def}
-}
-
-// inlinePromptInfo builds a PromptInfo for an inline prompt value,
-// comparing against the embedded default via md5.
-func inlinePromptInfo(label, value, embeddedDefault string) command.PromptInfo {
-	if value == "" {
-		return command.PromptInfo{Label: label, Inline: embeddedDefault, Default: true}
-	}
-	if value == "none" {
-		return command.PromptInfo{Label: label, Disabled: true}
-	}
-	return command.PromptInfo{Label: label, Inline: value, Default: isDefaultPrompt(value, embeddedDefault)}
 }

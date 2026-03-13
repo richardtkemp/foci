@@ -50,6 +50,7 @@ func newTestBWStore(t *testing.T, mock *testBWExecutor) *bitwarden.Store {
 }
 
 func TestBitwardenSearchTool(t *testing.T) {
+	// Verifies that the search tool returns the matching item's name, ID, and URI when queried by keyword.
 	t.Parallel()
 	mock := &testBWExecutor{listJSON: testBWListJSON}
 	store := newTestBWStore(t, mock)
@@ -73,6 +74,7 @@ func TestBitwardenSearchTool(t *testing.T) {
 }
 
 func TestBitwardenSearchEmpty(t *testing.T) {
+	// Verifies that searching with a query that matches nothing returns a "No matching" message rather than an error.
 	t.Parallel()
 	mock := &testBWExecutor{listJSON: testBWListJSON}
 	store := newTestBWStore(t, mock)
@@ -90,6 +92,7 @@ func TestBitwardenSearchEmpty(t *testing.T) {
 }
 
 func TestBitwardenUnlockTool(t *testing.T) {
+	// Verifies that a successful unlock confirms the action and returns a template reference rather than the raw secret.
 	t.Parallel()
 	mock := &testBWExecutor{
 		listJSON: testBWListJSON,
@@ -113,6 +116,7 @@ func TestBitwardenUnlockTool(t *testing.T) {
 }
 
 func TestBitwardenUnlockDenied(t *testing.T) {
+	// Verifies that when the executor reports an aisudo denial, the tool returns an error describing the denial.
 	t.Parallel()
 	mock := &testBWExecutor{
 		listJSON: testBWListJSON,
@@ -132,6 +136,7 @@ func TestBitwardenUnlockDenied(t *testing.T) {
 }
 
 func TestBitwardenUnlockNeverReturnsValue(t *testing.T) {
+	// Proves that the actual secret value never appears in the tool result, even on success — only the template reference does.
 	t.Parallel()
 	mock := &testBWExecutor{
 		listJSON: testBWListJSON,
