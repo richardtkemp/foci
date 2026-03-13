@@ -24,7 +24,7 @@ type Command struct {
 
 	Execute func(ctx context.Context, args string) (string, error)
 
-	ExecuteV2 func(ctx context.Context, req Request, deps Deps) (Response, error)
+	ExecuteRich func(ctx context.Context, req Request, deps Deps) (Response, error)
 
 	KeyboardOptions func(ctx context.Context) []KeyboardOption
 	ChainKeyboard   func(ctx context.Context, subcommand string) []KeyboardOption
@@ -164,9 +164,9 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 		return result, true
 	}
 
-	// Fall back to ExecuteV2 with a minimal Request if Execute is nil.
-	if cmd.ExecuteV2 != nil {
-		resp, err := cmd.ExecuteV2(ctx, Request{Name: name, Args: args}, Deps{})
+	// Fall back to ExecuteRich with a minimal Request if Execute is nil.
+	if cmd.ExecuteRich != nil {
+		resp, err := cmd.ExecuteRich(ctx, Request{Name: name, Args: args}, Deps{})
 		if err != nil {
 			return "Error: " + err.Error(), true
 		}
@@ -176,16 +176,16 @@ func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
 	return fmt.Sprintf("Error: command /%s has no handler", name), true
 }
 
-// DispatchV2 executes a command using the platform-agnostic Request/Response pattern.
+// DispatchRich executes a command using the platform-agnostic Request/Response pattern.
 // Returns (Response, true) if the command was found, or (Response{}, false) if not.
-func (r *Registry) DispatchV2(ctx context.Context, req Request, deps Deps) (Response, bool, error) {
+func (r *Registry) DispatchRich(ctx context.Context, req Request, deps Deps) (Response, bool, error) {
 	cmd := r.commands[req.Name]
 	if cmd == nil {
 		return Response{Text: r.suggestCommand(req.Name)}, true, nil
 	}
 
-	if cmd.ExecuteV2 != nil {
-		resp, err := cmd.ExecuteV2(ctx, req, deps)
+	if cmd.ExecuteRich != nil {
+		resp, err := cmd.ExecuteRich(ctx, req, deps)
 		if err != nil {
 			return Response{Text: "Error: " + err.Error()}, true, nil
 		}
@@ -200,7 +200,7 @@ func (r *Registry) DispatchV2(ctx context.Context, req Request, deps Deps) (Resp
 		return Response{Text: result}, true, nil
 	}
 
-	return Response{}, false, fmt.Errorf("command /%s has no Execute or ExecuteV2 function", req.Name)
+	return Response{}, false, fmt.Errorf("command /%s has no Execute or ExecuteRich function", req.Name)
 }
 
 // suggestCommand returns a helpful message when a command isn't found,

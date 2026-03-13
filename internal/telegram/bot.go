@@ -356,7 +356,7 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 }
 
 // SetDeps configures the command dispatcher with platform-agnostic dependencies.
-// When set, the bot uses DispatchV2 for command execution.
+// When set, the bot uses DispatchRich for command execution.
 func (b *Bot) SetDeps(deps command.Deps) {
 	b.dispatcher = NewDispatcher(b.commands, deps, b.agentID)
 	b.dispatcher.SetSessionKeyFunc(b.sessionKeyForMsg)

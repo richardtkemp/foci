@@ -78,7 +78,7 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message,
 		UserID:    userID,
 	}
 
-	resp, handled, err := d.registry.DispatchV2(ctx, req, d.deps)
+	resp, handled, err := d.registry.DispatchRich(ctx, req, d.deps)
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
@@ -104,7 +104,7 @@ func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Messag
 		UserID:    userID,
 	}
 
-	resp, handled, err := d.registry.DispatchV2(ctx, req, d.deps)
+	resp, handled, err := d.registry.DispatchRich(ctx, req, d.deps)
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
@@ -126,7 +126,7 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 		UserID:    "",
 	}
 
-	resp, handled, err := d.registry.DispatchV2(ctx, req, d.deps)
+	resp, handled, err := d.registry.DispatchRich(ctx, req, d.deps)
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
