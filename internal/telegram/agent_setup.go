@@ -273,16 +273,16 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 		bot.SetShowToolCalls(string(*tg.ShowToolCalls))
 	case acfg.ShowToolCalls != nil:
 		bot.SetShowToolCalls(string(*acfg.ShowToolCalls))
-	case cfg.Defaults.ShowToolCalls != nil:
-		bot.SetShowToolCalls(string(*cfg.Defaults.ShowToolCalls))
+	case cfg.Telegram.ShowToolCalls != nil:
+		bot.SetShowToolCalls(string(*cfg.Telegram.ShowToolCalls))
 	}
 	switch {
 	case tg != nil && tg.ShowThinking != nil:
 		bot.SetShowThinking(string(*tg.ShowThinking))
 	case acfg.ShowThinking != nil:
 		bot.SetShowThinking(string(*acfg.ShowThinking))
-	case cfg.Defaults.ShowThinking != nil:
-		bot.SetShowThinking(string(*cfg.Defaults.ShowThinking))
+	case cfg.Telegram.ShowThinking != nil:
+		bot.SetShowThinking(string(*cfg.Telegram.ShowThinking))
 	}
 	switch {
 	case tg != nil && tg.DisplayWidth != nil:

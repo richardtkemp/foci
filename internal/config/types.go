@@ -235,6 +235,8 @@ type TelegramConfig struct {
 	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string   `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 	ReceivedFilesDir    string   `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
+	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"` // default show_tool_calls (default: "off")
+	ShowThinking        *ShowThinking    `toml:"show_thinking"`   // default show_thinking (default: "off")
 	DisplayWidth        *int     `toml:"display_width"`         // display width for dividers (default 44)
 	TableWrapLines      *int     `toml:"table_wrap_lines"`      // max wrapped lines per table cell (default 5)
 	TableStyle          *string  `toml:"table_style"`           // table style: "pretty" (default) or "markdown"
@@ -533,10 +535,8 @@ type DefaultsConfig struct {
 	BraindeadPrompt       string `toml:"braindead_prompt"`         // default braindead prompt
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // default turn lock warn threshold (default: "3m")
 
-	Streaming        *bool            `toml:"streaming"`         // default streaming (nil = use global anthropic.streaming)
-	ShowToolCalls    *ToolCallDisplay `toml:"show_tool_calls"`   // default show_tool_calls (default: "off")
-	ShowThinking     *ShowThinking    `toml:"show_thinking"`     // default show_thinking (default: "off")
-	SystemFiles      []string         `toml:"system_files"`      // default system file list
+	Streaming   *bool    `toml:"streaming"`    // default streaming (nil = use global anthropic.streaming)
+	SystemFiles []string `toml:"system_files"` // default system file list
 	CompactionEffort string           `toml:"compaction_effort"` // default compaction effort (empty = use session effort)
 
 	MaxResultChars       int   `toml:"max_result_chars"`        // default max_result_chars (default 15000)

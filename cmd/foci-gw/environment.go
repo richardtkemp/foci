@@ -354,15 +354,15 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	switch {
 	case acfg.ShowToolCalls != nil:
 		toolCalls = *acfg.ShowToolCalls
-	case cfg.Defaults.ShowToolCalls != nil:
-		toolCalls = *cfg.Defaults.ShowToolCalls
+	case cfg.Telegram.ShowToolCalls != nil:
+		toolCalls = *cfg.Telegram.ShowToolCalls
 	}
 	thinking := config.ShowThinkingOff
 	switch {
 	case acfg.ShowThinking != nil:
 		thinking = *acfg.ShowThinking
-	case cfg.Defaults.ShowThinking != nil:
-		thinking = *cfg.Defaults.ShowThinking
+	case cfg.Telegram.ShowThinking != nil:
+		thinking = *cfg.Telegram.ShowThinking
 	}
 	var toolDesc, thinkDesc string
 	switch toolCalls {

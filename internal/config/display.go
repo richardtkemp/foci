@@ -87,11 +87,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Defaults.InjectAgentWarnings {
 		add("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
 	}
-	if cfg.Defaults.ShowToolCalls != nil {
-		add("defaults", "show_tool_calls", string(*cfg.Defaults.ShowToolCalls))
+	if cfg.Telegram.ShowToolCalls != nil {
+		add("telegram", "show_tool_calls", string(*cfg.Telegram.ShowToolCalls))
 	}
-	if cfg.Defaults.ShowThinking != nil {
-		add("defaults", "show_thinking", string(*cfg.Defaults.ShowThinking))
+	if cfg.Telegram.ShowThinking != nil {
+		add("telegram", "show_thinking", string(*cfg.Telegram.ShowThinking))
 	}
 	if cfg.Defaults.InjectedMessageHeader != "" {
 		add("defaults", "injected_message_header", cfg.Defaults.InjectedMessageHeader)

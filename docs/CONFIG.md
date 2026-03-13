@@ -671,7 +671,7 @@ Available in both `[defaults]` and `[[agents]]`.
 
 ### Display
 
-Set in `[defaults]`, overridable per-agent. At runtime, the `/display` command sets per-session overrides without modifying the config file:
+Set in `[telegram]`, overridable per-agent via `[agents.platforms.telegram]`. At runtime, the `/display` command sets per-session overrides without modifying the config file:
 
 ```
 /display                          # show current effective values
@@ -938,8 +938,8 @@ received_files_dir = ""
 | `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"telegram.<bot>"`. |
 | `multiball_bots` | string[] | `[]` | Per-agent multiball bot pool. Tokens resolved via `"telegram.<name>"` secret. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. Empty uses global `[telegram] allowed_users`. |
-| `show_tool_calls` | string | `[defaults]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
-| `show_thinking` | string | `[defaults]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
+| `show_tool_calls` | string | `[telegram]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
+| `show_thinking` | string | `[telegram]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
 | `display_width` | int | `[telegram]` | Display width for dividers in Telegram messages. |
 | `table_wrap_lines` | int | `[telegram]` | Max wrapped lines per table cell. |
 | `table_style` | string | `[telegram]` | Table style: `pretty` or `markdown`. |

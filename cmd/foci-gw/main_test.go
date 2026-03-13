@@ -249,7 +249,7 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 				Workspace: "/tmp/test",
 			}
 			cfg := &config.Config{
-				Defaults: config.DefaultsConfig{
+				Telegram: config.TelegramConfig{
 					ShowToolCalls: &tt.toolCalls,
 					ShowThinking:  &tt.thinking,
 				},
@@ -281,7 +281,7 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 		ShowThinking:  ptr(config.ShowThinkingTrue),
 	}
 	cfg := &config.Config{
-		Defaults: config.DefaultsConfig{
+		Telegram: config.TelegramConfig{
 			ShowToolCalls: ptr(config.ToolCallOff),
 			ShowThinking:  ptr(config.ShowThinkingOff),
 		},
