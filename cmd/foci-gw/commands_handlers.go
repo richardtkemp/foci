@@ -58,7 +58,7 @@ func runReset(p cmdRegParams) error {
 	)
 	fireSessionEndMemory(p.ag, p.sessions, sk, p.acfg.MemoryFormation, func(bk, pk, bt string) string {
 		return buildBranchOrientation(resetOrientPath, bk, pk, bt, false, p.promptSearchDirs)
-	}, p.promptSearchDirs, p.ctx)
+	}, p.promptSearchDirs, p.ctx, false)
 	newKey, err := p.sessions.RotateKey(sk)
 	if err != nil {
 		return err

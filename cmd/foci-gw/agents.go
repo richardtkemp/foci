@@ -568,7 +568,7 @@ func setupAgent(p setupParams) *agentInstance {
 			ReclaimHook: func(sessionKey string) {
 				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
 					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
-				}, reclaimSearchDirs, p.ctx)
+				}, reclaimSearchDirs, p.ctx, false)
 			},
 		})
 		for _, result := range results {

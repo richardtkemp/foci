@@ -291,7 +291,7 @@ Subcommands:
 						orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt)
 						fireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
 							return buildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
-						}, inst.promptSearchDirs, ctx)
+						}, inst.promptSearchDirs, ctx, false)
 						return
 					}
 				}
