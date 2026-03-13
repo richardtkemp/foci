@@ -25,8 +25,9 @@ func bwCC(store BitwardenStoreInfo, enabled bool) CommandContext {
 	}
 }
 
+// TestBitwardenCommandUsage verifies that calling /bitwarden with no args returns
+// a usage message listing the available subcommands (setup, status).
 func TestBitwardenCommandUsage(t *testing.T) {
-	// Verifies that calling /bitwarden with no args returns usage with known subcommands.
 	cmd := BitwardenCommand()
 	result, err := cmd.Execute(context.Background(), Request{}, bwCC(nil, false))
 	if err != nil {
@@ -37,8 +38,9 @@ func TestBitwardenCommandUsage(t *testing.T) {
 	}
 }
 
+// TestBitwardenStatusDisabled verifies that /bitwarden status reports "DISABLED"
+// when BitwardenEnabled is false in the CommandContext, regardless of store state.
 func TestBitwardenStatusDisabled(t *testing.T) {
-	// Verifies that /bitwarden status reports DISABLED when BitwardenEnabled is false.
 	cmd := BitwardenCommand()
 	result, err := cmd.Execute(context.Background(), Request{Args: "status"}, bwCC(nil, false))
 	if err != nil {
@@ -49,8 +51,10 @@ func TestBitwardenStatusDisabled(t *testing.T) {
 	}
 }
 
+// TestBitwardenStatusEnabled verifies that /bitwarden status with an active store
+// shows ENABLED, the vault item count, unlocked/cached credential count, and lists
+// the cached credential IDs.
 func TestBitwardenStatusEnabled(t *testing.T) {
-	// Verifies that /bitwarden status shows item count, unlocked count, and cached IDs when enabled.
 	store := &mockBWStore{
 		items:     42,
 		refreshed: time.Now().Add(-5 * time.Minute),
@@ -75,8 +79,10 @@ func TestBitwardenStatusEnabled(t *testing.T) {
 	}
 }
 
+// TestBitwardenStatusEnabledNoStore verifies that /bitwarden status with
+// BitwardenEnabled=true but a nil store reports "not initialized", covering the
+// case where Bitwarden is configured but the CLI session hasn't been unlocked.
 func TestBitwardenStatusEnabledNoStore(t *testing.T) {
-	// Verifies that /bitwarden status reports not initialized when enabled but store is nil.
 	cmd := BitwardenCommand()
 	result, err := cmd.Execute(context.Background(), Request{Args: "status"}, bwCC(nil, true))
 	if err != nil {
@@ -87,8 +93,9 @@ func TestBitwardenStatusEnabledNoStore(t *testing.T) {
 	}
 }
 
+// TestBitwardenUnknownSubcommand verifies that an unrecognised subcommand
+// (e.g. "bogus") falls back to showing the same usage text as no-arg invocation.
 func TestBitwardenUnknownSubcommand(t *testing.T) {
-	// Verifies that an unknown subcommand falls back to usage output.
 	cmd := BitwardenCommand()
 	result, err := cmd.Execute(context.Background(), Request{Args: "bogus"}, bwCC(nil, false))
 	if err != nil {
