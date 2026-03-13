@@ -80,6 +80,7 @@ func (m *GoroutineMonitor) checkOnce() {
 	}
 
 	count := getCount()
+	log.Debugf("goroutine_monitor", "goroutines=%d", count)
 
 	if count > m.cfg.Threshold {
 		m.mu.Lock()
@@ -93,13 +94,11 @@ func (m *GoroutineMonitor) checkOnce() {
 		return
 	}
 
-	// Back below threshold — reset dedup and log at debug
+	// Back below threshold — reset dedup
 	m.mu.Lock()
 	if m.warnFired {
 		log.Infof("goroutine_monitor", "goroutine count %d back below threshold %d", count, m.cfg.Threshold)
 	}
 	m.warnFired = false
 	m.mu.Unlock()
-
-	log.Debugf("goroutine_monitor", "goroutines=%d", count)
 }
