@@ -140,8 +140,8 @@ func TestTemplateSoulFileReadError(t *testing.T) {
 	}
 }
 
-// TestCopyCharacterFilesWithKeepalive tests copyCharacterFiles with keepalive file.
-func TestCopyCharacterFilesWithKeepalive(t *testing.T) {
+// TestCopyDefaultFilesWithKeepalive tests copyDefaultFiles with keepalive file.
+func TestCopyDefaultFilesWithKeepalive(t *testing.T) {
 	tmpDir := t.TempDir()
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
@@ -153,8 +153,8 @@ func TestCopyCharacterFilesWithKeepalive(t *testing.T) {
 	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
 	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
 
-	if err := copyCharacterFiles(defaultsDir, workspace); err != nil {
-		t.Fatalf("copyCharacterFiles: %v", err)
+	if err := copyDefaultFiles(defaultsDir, workspace); err != nil {
+		t.Fatalf("copyDefaultFiles: %v", err)
 	}
 
 	// Verify KEEPALIVE.md was copied
@@ -164,8 +164,8 @@ func TestCopyCharacterFilesWithKeepalive(t *testing.T) {
 	}
 }
 
-// TestCopyCharacterFilesNoKeepalive verifies copyCharacterFiles returns nil when no KEEPALIVE.md exists.
-func TestCopyCharacterFilesNoKeepalive(t *testing.T) {
+// TestCopyDefaultFilesNoKeepalive verifies copyDefaultFiles returns nil when no KEEPALIVE.md exists.
+func TestCopyDefaultFilesNoKeepalive(t *testing.T) {
 	tmpDir := t.TempDir()
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
@@ -176,8 +176,8 @@ func TestCopyCharacterFilesNoKeepalive(t *testing.T) {
 	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
 	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
 
-	if err := copyCharacterFiles(defaultsDir, workspace); err != nil {
-		t.Fatalf("copyCharacterFiles: %v", err)
+	if err := copyDefaultFiles(defaultsDir, workspace); err != nil {
+		t.Fatalf("copyDefaultFiles: %v", err)
 	}
 
 	// KEEPALIVE.md should not exist in workspace
@@ -186,14 +186,14 @@ func TestCopyCharacterFilesNoKeepalive(t *testing.T) {
 	}
 }
 
-// TestCopyCharacterFilesNoDefaults tests copyCharacterFiles with missing defaults dir.
-func TestCopyCharacterFilesNoDefaults(t *testing.T) {
+// TestCopyDefaultFilesNoDefaults tests copyDefaultFiles with missing defaults dir.
+func TestCopyDefaultFilesNoDefaults(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
 	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
 
 	// Copy from nonexistent defaults dir should fail
-	err := copyCharacterFiles("/nonexistent/defaults", workspace)
+	err := copyDefaultFiles("/nonexistent/defaults", workspace)
 	if err == nil {
 		t.Error("expected error when defaults dir doesn't exist")
 	}
