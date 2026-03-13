@@ -331,13 +331,13 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	case tg != nil && tg.StreamOutput != nil:
 		bot.SetStreamOutput(*tg.StreamOutput)
 	default:
-		bot.SetStreamOutput(cfg.Defaults.StreamOutput)
+		bot.SetStreamOutput(cfg.Telegram.StreamOutput)
 	}
 	streamInterval := ""
 	if tg != nil && tg.StreamInterval != "" {
 		streamInterval = tg.StreamInterval
 	} else {
-		streamInterval = cfg.Defaults.StreamUpdateInterval
+		streamInterval = cfg.Telegram.StreamUpdateInterval
 	}
 	if d, err := time.ParseDuration(streamInterval); err == nil && d > 0 {
 		bot.SetStreamUpdateInterval(d)

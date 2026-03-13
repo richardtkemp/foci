@@ -237,6 +237,8 @@ type TelegramConfig struct {
 	ReceivedFilesDir    string   `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
 	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"` // default show_tool_calls (default: "off")
 	ShowThinking        *ShowThinking    `toml:"show_thinking"`   // default show_thinking (default: "off")
+	StreamOutput         bool    `toml:"stream_output"`          // default stream_output (default: false)
+	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")
 	DisplayWidth        *int     `toml:"display_width"`         // display width for dividers (default 44)
 	TableWrapLines      *int     `toml:"table_wrap_lines"`      // max wrapped lines per table cell (default 5)
 	TableStyle          *string  `toml:"table_style"`           // table style: "pretty" (default) or "markdown"
@@ -556,10 +558,8 @@ type DefaultsConfig struct {
 	TTSRate              float64           `toml:"tts_rate"`               // default TTS speech rate multiplier
 	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
 	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
-	SteerMode            bool    `toml:"steer_mode"`             // default steer_mode (default: true)
-	StreamOutput         bool    `toml:"stream_output"`          // default stream_output (default: false)
-	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")
-	EnableStartupNotify  bool    `toml:"enable_startup_notify"`  // send notification on startup (default true)
+	SteerMode           bool   `toml:"steer_mode"`            // default steer_mode (default: true)
+	EnableStartupNotify bool   `toml:"enable_startup_notify"` // send notification on startup (default true)
 	CacheTTL             string  `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 
 	// Nudge system: mid-turn behavioral reminders extracted from character files
