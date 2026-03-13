@@ -35,7 +35,7 @@ func TestTodoToolBatchTransitionDone(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "", "", "")
+	items, _ := store.List("agent1", "done", "", "", "", false, 0)
 	if len(items) != 3 {
 		t.Errorf("expected 3 done items, got %d", len(items))
 	}
@@ -64,7 +64,7 @@ func TestTodoToolBatchEdit(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "", "", "", "")
+	items, _ := store.List("agent1", "", "", "", "", false, 0)
 	for _, item := range items {
 		if item.Priority != "high" {
 			t.Errorf("item %d priority = %q, want high", item.ID, item.Priority)
@@ -94,7 +94,7 @@ func TestTodoToolBatchRemove(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "", "", "", "")
+	items, _ := store.List("agent1", "", "", "", "", false, 0)
 	if len(items) != 1 {
 		t.Errorf("expected 1 remaining item, got %d", len(items))
 	}
@@ -147,7 +147,7 @@ func TestTodoToolBatchPartialFailure(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "", "", "")
+	items, _ := store.List("agent1", "done", "", "", "", false, 0)
 	if len(items) != 2 {
 		t.Errorf("expected 2 done items (valid ones), got %d", len(items))
 	}
@@ -175,7 +175,7 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "", "", "")
+	items, _ := store.List("agent1", "done", "", "", "", false, 0)
 	if len(items) != 1 {
 		t.Errorf("expected 1 done item, got %d", len(items))
 	}
@@ -308,7 +308,7 @@ func TestTodoToolTransitionDropped(t *testing.T) {
 		t.Errorf("expected 'dropped' in result, got: %s", result)
 	}
 
-	items, _ := store.List("agent1", "dropped", "", "", "")
+	items, _ := store.List("agent1", "dropped", "", "", "", false, 0)
 	if len(items) != 1 {
 		t.Errorf("expected 1 dropped item, got %d", len(items))
 	}
@@ -521,7 +521,9 @@ func executeTodoTool(tool *Tool, params map[string]interface{}) (string, error) 
 }
 
 func TestTodoToolListWithSort(t *testing.T) {
-	// Proves that sort=created returns items oldest-first and sort=updated returns most-recently-modified first.
+	// Proves that sort=created returns items newest-first by default,
+	// reverse=true flips to oldest-first, and sort=updated returns
+	// most-recently-modified first.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -532,7 +534,7 @@ func TestTodoToolListWithSort(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	store.Add("agent1", "Third", "medium", "")
 
-	// Test sort by created
+	// Test sort by created (default: newest first)
 	params := map[string]interface{}{
 		"action": "list",
 		"sort":   "created",
@@ -541,14 +543,26 @@ func TestTodoToolListWithSort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list with sort=created: %v", err)
 	}
-	if !strings.Contains(result, "First") {
-		t.Errorf("result should contain First task, got: %s", result)
-	}
 	lines := strings.Split(strings.TrimSpace(result), "\n")
 	if len(lines) < 1 {
 		t.Fatal("expected at least one line in result")
 	}
-	// First line should be the oldest (First)
+	// First line should be the newest (Third)
+	if !strings.Contains(lines[0], "Third") {
+		t.Errorf("first line should contain Third (newest), got: %s", lines[0])
+	}
+
+	// Test sort by created with reverse=true (oldest first)
+	params = map[string]interface{}{
+		"action":  "list",
+		"sort":    "created",
+		"reverse": true,
+	}
+	result, err = executeTodoTool(tool, params)
+	if err != nil {
+		t.Fatalf("list with sort=created reverse: %v", err)
+	}
+	lines = strings.Split(strings.TrimSpace(result), "\n")
 	if !strings.Contains(lines[0], "First") {
 		t.Errorf("first line should contain First (oldest), got: %s", lines[0])
 	}
