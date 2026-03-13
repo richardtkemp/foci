@@ -248,8 +248,17 @@ func formatDisplayStatus(ctx context.Context, g DisplayGetters) string {
 	return b.String()
 }
 
+// displayKeyAliases maps short alias names to canonical display key names.
+var displayKeyAliases = map[string]string{
+	"stream": "stream_output",
+	"width":  "display_width",
+}
+
 // formatSingleDisplay returns the status of a single display key.
 func formatSingleDisplay(ctx context.Context, g DisplayGetters, key string) (string, error) {
+	if canonical, ok := displayKeyAliases[key]; ok {
+		key = canonical
+	}
 	fields := allDisplayFields(ctx, g)
 	for _, f := range fields {
 		if f.Key == key {
@@ -259,7 +268,7 @@ func formatSingleDisplay(ctx context.Context, g DisplayGetters, key string) (str
 			return fmt.Sprintf("%s: %s", f.Key, f.Value), nil
 		}
 	}
-	return "", fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output, display_width", key)
+	return "", fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output (stream), display_width (width)", key)
 }
 
 // allDisplayFields returns all display fields with their current status.
@@ -278,6 +287,9 @@ func allDisplayFields(ctx context.Context, g DisplayGetters) []DisplayField {
 
 // applyDisplaySetting validates and applies a display setting override.
 func applyDisplaySetting(ctx context.Context, s DisplaySetters, key, value string) (string, error) {
+	if canonical, ok := displayKeyAliases[key]; ok {
+		key = canonical
+	}
 	value = strings.ToLower(value)
 
 	switch key {
@@ -299,7 +311,7 @@ func applyDisplaySetting(ctx context.Context, s DisplaySetters, key, value strin
 			return "", fmt.Errorf("invalid show_thinking value: %q\nOptions: off, compact, true", value)
 		}
 
-	case "stream_output", "stream":
+	case "stream_output":
 		switch value {
 		case "on", "true":
 			s.SetStreamOutput(ctx, "true")
@@ -311,7 +323,7 @@ func applyDisplaySetting(ctx context.Context, s DisplaySetters, key, value strin
 			return "", fmt.Errorf("invalid stream_output value: %q\nOptions: on, off", value)
 		}
 
-	case "display_width", "width":
+	case "display_width":
 		w, err := strconv.Atoi(value)
 		if err != nil || w < 20 || w > 200 {
 			return "", fmt.Errorf("invalid display_width: %q (must be 20–200)", value)
