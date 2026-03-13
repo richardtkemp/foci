@@ -217,21 +217,21 @@ func (b *Bot) SendInjected(text string) error {
 	return b.SendText(text)
 }
 
-// SendToSession sends a system/injected text message to the chat associated
-// with the given session key. Falls back to the bot's default chat if the
-// session key doesn't contain a chat ID (e.g. independent sessions).
+// SendInjectedMessage sends a system/injected text message to the chat
+// associated with the given session key. Falls back to the bot's default chat
+// if the session key doesn't contain a chat ID (e.g. independent sessions).
 // Prepends the configured InjectedMessageHeader (if non-empty).
-func (b *Bot) SendToSession(sessionKey, text string) error {
+func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
 	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
 		text = b.injectedMessageHeader + "\n" + text
 	}
-	return b.SendTextToSession(sessionKey, text)
+	return b.SendToSession(sessionKey, text)
 }
 
-// SendTextToSession sends a text message (without header) to the chat
+// SendToSession sends a text message (without header) to the chat
 // associated with the given session key. Falls back to the bot's default chat
 // if the session key doesn't contain a chat ID.
-func (b *Bot) SendTextToSession(sessionKey, text string) error {
+func (b *Bot) SendToSession(sessionKey, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
