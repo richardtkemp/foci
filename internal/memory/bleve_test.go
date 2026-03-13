@@ -493,8 +493,8 @@ func TestBleveSearchDateRangeFilter(t *testing.T) {
 func TestBleveIndexConversation(t *testing.T) {
 	idx, _ := testBleveIndex(t)
 
-	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
-	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main")
+	idx.IndexConversation("Tell me about quantum computing", "agent:main:main", 1)
+	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main", 2)
 
 	results, err := idx.Search("quantum", "", nil)
 	if err != nil {
@@ -513,7 +513,7 @@ func TestBleveIndexConversation(t *testing.T) {
 // TestBleveConversationEmpty verifies that empty conversation text is a no-op.
 func TestBleveConversationEmpty(t *testing.T) {
 	idx, _ := testBleveIndex(t)
-	idx.IndexConversation("", "agent:main:main") // should not panic or error
+	idx.IndexConversation("", "agent:main:main", 1) // should not panic or error
 }
 
 // TestBleveMemoryWeightedHigher verifies that memory results rank higher
@@ -523,7 +523,7 @@ func TestBleveMemoryWeightedHigher(t *testing.T) {
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Important fact about neural networks"), 0644)
 	idx.Reindex()
-	idx.IndexConversation("Random fact about neural networks", "agent:main:main")
+	idx.IndexConversation("Random fact about neural networks", "agent:main:main", 1)
 
 	results, err := idx.Search("neural networks", "", nil)
 	if err != nil {
@@ -544,7 +544,7 @@ func TestBleveMemoryWeightedHigher(t *testing.T) {
 func TestBleveConversationSurvivedReindex(t *testing.T) {
 	idx, memDir := testBleveIndex(t)
 
-	idx.IndexConversation("Discussing special relativity theory", "agent:main:main")
+	idx.IndexConversation("Discussing special relativity theory", "agent:main:main", 1)
 
 	// Add a file and reindex — conversations should survive
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("General notes about physics"), 0644)
@@ -599,7 +599,7 @@ func TestBleveConversationWeight(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	idx.IndexConversation("Neural networks are interesting", "agent:main:main")
+	idx.IndexConversation("Neural networks are interesting", "agent:main:main", 1)
 
 	results, err := idx.Search("neural", "", nil)
 	if err != nil {

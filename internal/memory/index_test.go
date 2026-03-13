@@ -97,8 +97,8 @@ func TestReindexSkipsNonMarkdown(t *testing.T) {
 func TestIndexConversation(t *testing.T) {
 	idx, _ := testIndex(t)
 
-	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
-	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main")
+	idx.IndexConversation("Tell me about quantum computing", "agent:main:main", 1)
+	idx.IndexConversation("Quantum computing uses qubits for parallel computation", "agent:main:main", 2)
 
 	results, err := idx.Search("quantum", "", nil)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestMemoryWeightedHigher(t *testing.T) {
 	// Add same content as both memory and conversation
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Important fact about neural networks"), 0644)
 	idx.Reindex()
-	idx.IndexConversation("Random fact about neural networks", "agent:main:main")
+	idx.IndexConversation("Random fact about neural networks", "agent:main:main", 1)
 
 	results, err := idx.Search("neural networks", "", nil)
 	if err != nil {
@@ -158,7 +158,7 @@ func TestConversationWeightConfigurable(t *testing.T) {
 		t.Fatalf("Reindex: %v", err)
 	}
 
-	idx.IndexConversation("Neural networks are interesting", "agent:main:main")
+	idx.IndexConversation("Neural networks are interesting", "agent:main:main", 1)
 
 	results, err := idx.Search("neural", "", nil)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestSearchSubdirectories(t *testing.T) {
 func TestIndexConversationEmpty(t *testing.T) {
 	idx, _ := testIndex(t)
 	// Should not panic or error on empty text
-	idx.IndexConversation("", "agent:main:main")
+	idx.IndexConversation("", "agent:main:main", 1)
 }
 
 func TestPorterStemming(t *testing.T) {

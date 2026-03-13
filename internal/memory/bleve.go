@@ -217,16 +217,18 @@ func (b *BleveIndex) collectDynamicDocs() []dynamicDoc {
 }
 
 // IndexConversation adds a conversation message to the bleve index.
-func (b *BleveIndex) IndexConversation(text, session string) {
+// IndexConversation indexes a conversation message. The rowID should be the
+// SQLite row ID from the conversation log — this ensures the doc ID matches
+// what BackfillConversations uses, preventing duplicates.
+func (b *BleveIndex) IndexConversation(text, session string, rowID int64) {
 	if text == "" {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Use a unique doc ID to allow multiple messages per session.
-	// Prefix with "conversation:" to avoid collision with file doc IDs.
-	docID := fmt.Sprintf("conversation:%s:%d", session, time.Now().UnixNano())
+	// Use conversation:{session}:{rowID} — same scheme as BackfillConversations.
+	docID := fmt.Sprintf("conversation:%s:%d", session, rowID)
 	doc := map[string]interface{}{
 		"content": text,
 		"path":    session,

@@ -34,8 +34,9 @@ var (
 )
 
 // ConversationHook is called for each logged conversation entry.
-// Set by main.go to index conversation text into the memory FTS5 index.
-var ConversationHook func(text, session string)
+// Set by main.go to index conversation text into the memory index.
+// rowID is the SQLite row ID from the conversation log INSERT.
+var ConversationHook func(text, session string, rowID int64)
 
 // openConversationLog opens a single conversation log database.
 func openConversationLog(path string) (*ConversationLog, error) {
@@ -106,10 +107,10 @@ func Conversation(entry ConversationEntry) {
 	if cl == nil {
 		return
 	}
-	cl.log(entry)
+	rowID := cl.log(entry)
 
 	if ConversationHook != nil && entry.Text != "" {
-		ConversationHook(entry.Text, entry.Session)
+		ConversationHook(entry.Text, entry.Session, rowID)
 	}
 }
 
@@ -137,13 +138,14 @@ func agentFromSession(session string) string {
 	return ""
 }
 
-func (c *ConversationLog) log(entry ConversationEntry) {
+// log inserts a conversation entry and returns the SQLite row ID (0 on error).
+func (c *ConversationLog) log(entry ConversationEntry) int64 {
 	ts := time.Now().UTC().Format(time.RFC3339Nano)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, err := c.db.Exec(
+	res, err := c.db.Exec(
 		`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, parse_mode, session, error)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts, entry.Direction, entry.UserID, entry.Username, entry.ChatID,
@@ -151,5 +153,8 @@ func (c *ConversationLog) log(entry ConversationEntry) {
 	)
 	if err != nil {
 		std.event(ERROR, "conversation", "insert error: %v", err)
+		return 0
 	}
+	rowID, _ := res.LastInsertId()
+	return rowID
 }

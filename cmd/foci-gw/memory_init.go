@@ -299,16 +299,16 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 
 		// Conversation hook: route to agent's indices by session key prefix
 		if wantFTS5 || wantBleve {
-			log.ConversationHook = func(text, session string) {
+			log.ConversationHook = func(text, session string, rowID int64) {
 				for agentID, idx := range result.agentFTS5 {
 					if strings.HasPrefix(session, agentID+"/") {
-						idx.IndexConversation(text, session)
+						idx.IndexConversation(text, session, rowID)
 						break
 					}
 				}
 				for agentID, idx := range result.agentBleve {
 					if strings.HasPrefix(session, agentID+"/") {
-						idx.IndexConversation(text, session)
+						idx.IndexConversation(text, session, rowID)
 						break
 					}
 				}
@@ -325,9 +325,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		// Wire conversation hook to all active backends
 		switch {
 		case fts5Idx != nil && bleveIdx != nil:
-			log.ConversationHook = func(text, session string) {
-				fts5Idx.IndexConversation(text, session)
-				bleveIdx.IndexConversation(text, session)
+			log.ConversationHook = func(text, session string, rowID int64) {
+				fts5Idx.IndexConversation(text, session, rowID)
+				bleveIdx.IndexConversation(text, session, rowID)
 			}
 		case fts5Idx != nil:
 			log.ConversationHook = fts5Idx.IndexConversation

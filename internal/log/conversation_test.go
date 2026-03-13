@@ -197,9 +197,11 @@ func TestConversationHook(t *testing.T) {
 	defer CloseConversation()
 
 	var hookedText, hookedSession string
-	ConversationHook = func(text, session string) {
+	var hookedRowID int64
+	ConversationHook = func(text, session string, rowID int64) {
 		hookedText = text
 		hookedSession = session
+		hookedRowID = rowID
 	}
 	defer func() { ConversationHook = nil }()
 
@@ -213,6 +215,9 @@ func TestConversationHook(t *testing.T) {
 	}
 	if hookedSession != "main/c1/1000" {
 		t.Errorf("hook session = %q, want %q", hookedSession, "main/c1/1000")
+	}
+	if hookedRowID <= 0 {
+		t.Errorf("hook rowID = %d, want > 0", hookedRowID)
 	}
 
 	// Empty text should NOT trigger the hook
