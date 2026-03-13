@@ -185,7 +185,7 @@ func HelpCommand(registry *Registry) *Command {
 		Name:        "help",
 		Description: "List available commands",
 		Category:    "session",
-		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			type group struct {
 				emoji string
 				label string
@@ -201,7 +201,7 @@ func HelpCommand(registry *Registry) *Command {
 			var other []*Command
 
 			for _, cmd := range registry.All() {
-				if cmd.Hidden {
+				if cmd.Hidden || (cmd.Visible != nil && !cmd.Visible(ctx, req, cc)) {
 					continue
 				}
 				if cmd.Category != "" {

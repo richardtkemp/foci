@@ -205,3 +205,152 @@ func TestConfigCommand(t *testing.T) {
 		t.Error("available result should not be empty")
 	}
 }
+
+// TestSpeedCommand verifies speed mode can be set to fast/standard by name or number and cleared.
+func TestSpeedCommand(t *testing.T) {
+	ag := &agent.Agent{Model: "anthropic/claude-opus-4-6"}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := SpeedCommand()
+
+	// Show when standard (default)
+	result, _ := cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "standard") {
+		t.Errorf("expected 'standard', got %q", result.Text)
+	}
+
+	// Set to fast
+	result, _ = cmd.Execute(context.Background(), Request{Args: "fast", SessionKey: sk}, cc)
+	if ag.SessionSpeed(sk) != "fast" {
+		t.Errorf("speed not set to fast: %q", ag.SessionSpeed(sk))
+	}
+	if !strings.Contains(result.Text, "fast") {
+		t.Errorf("result = %q", result.Text)
+	}
+
+	// Set via numeric alias
+	_, _ = cmd.Execute(context.Background(), Request{Args: "0", SessionKey: sk}, cc)
+	if ag.SessionSpeed(sk) != "" {
+		t.Errorf("speed not cleared via '0': %q", ag.SessionSpeed(sk))
+	}
+
+	_, _ = cmd.Execute(context.Background(), Request{Args: "1", SessionKey: sk}, cc)
+	if ag.SessionSpeed(sk) != "fast" {
+		t.Errorf("speed not set via '1': %q", ag.SessionSpeed(sk))
+	}
+
+	// Show when set
+	result, _ = cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "fast") {
+		t.Errorf("expected 'fast', got %q", result.Text)
+	}
+
+	// Clear via "standard"
+	result, _ = cmd.Execute(context.Background(), Request{Args: "standard", SessionKey: sk}, cc)
+	if ag.SessionSpeed(sk) != "" {
+		t.Errorf("speed not cleared: %q", ag.SessionSpeed(sk))
+	}
+	if !strings.Contains(result.Text, "standard") {
+		t.Errorf("result = %q", result.Text)
+	}
+
+	// Invalid value
+	ag.SetSessionSpeed(sk, "fast")
+	result, _ = cmd.Execute(context.Background(), Request{Args: "turbo", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "Invalid") {
+		t.Errorf("expected 'Invalid', got %q", result.Text)
+	}
+	if ag.SessionSpeed(sk) != "fast" {
+		t.Errorf("speed changed on invalid input: %q", ag.SessionSpeed(sk))
+	}
+}
+
+// TestSpeedCommandUnsupportedModel proves that /speed returns an error when the model doesn't support fast mode.
+func TestSpeedCommandUnsupportedModel(t *testing.T) {
+	ag := &agent.Agent{Model: "anthropic/claude-haiku-4-5-20251001"}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := SpeedCommand()
+
+	result, _ := cmd.Execute(context.Background(), Request{Args: "fast", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "not supported") {
+		t.Errorf("expected unsupported error, got %q", result.Text)
+	}
+	if ag.SessionSpeed(sk) != "" {
+		t.Errorf("speed should not be set: %q", ag.SessionSpeed(sk))
+	}
+}
+
+// TestSpeedCommandVisibility proves that the Visible callback returns false for haiku and true for opus.
+func TestSpeedCommandVisibility(t *testing.T) {
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := SpeedCommand()
+
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set")
+	}
+	ctx := context.Background()
+
+	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
+	if cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return false for haiku")
+	}
+
+	ag.SetSessionModel(sk, "anthropic/claude-opus-4-6", "", "", nil)
+	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return true for opus")
+	}
+
+	ag.SetSessionModel(sk, "anthropic/claude-sonnet-4-6", "", "", nil)
+	if cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return false for sonnet")
+	}
+}
+
+// TestEffortCommandVisibility proves that the Visible callback returns false for haiku and true for sonnet/opus.
+func TestEffortCommandVisibility(t *testing.T) {
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := EffortCommand()
+
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set")
+	}
+	ctx := context.Background()
+
+	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
+	if cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return false for haiku")
+	}
+
+	ag.SetSessionModel(sk, "anthropic/claude-sonnet-4-6", "", "", nil)
+	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return true for sonnet")
+	}
+}
+
+// TestThinkingCommandVisibility proves that the Visible callback returns false for haiku and true for sonnet/opus.
+func TestThinkingCommandVisibility(t *testing.T) {
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := ThinkingCommand()
+
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set")
+	}
+	ctx := context.Background()
+
+	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
+	if cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return false for haiku")
+	}
+
+	ag.SetSessionModel(sk, "anthropic/claude-opus-4-6", "", "", nil)
+	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("Visible should return true for opus")
+	}
+}

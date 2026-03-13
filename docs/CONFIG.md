@@ -53,6 +53,7 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `streaming` | bool | `false` | Use streaming API for Anthropic requests (global default). Requires `use_sdk = true`. When enabled, text and thinking deltas are delivered incrementally. Per-agent override available in `[defaults]` and `[[agents]]`. |
 | `effort` | string | `"low"` | Effort level for Anthropic API requests: `"low"`, `"medium"`, `"high"`. Applied as default for agents using Anthropic models. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/effort`. |
 | `thinking` | string | `"adaptive"` | Thinking mode for Anthropic models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
+| `speed` | string | `""` | Speed mode: `"fast"` enables Anthropic fast mode (beta) for ~2.5x faster output at 6x pricing. Only supported on Opus models. Uses a separate prompt cache from standard requests. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/speed`. |
 
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
@@ -545,7 +546,7 @@ This is separate from the security-based path blocking in `secrets.toml` (which 
 
 Custom slash commands. Each entry is a `[[commands]]` table array.
 
-**Inline keyboards:** Built-in commands with parameters (`/model`, `/thinking`, `/effort`, `/display`, `/config`, `/sessions`, `/tmux`) show inline keyboard buttons when invoked bare. No configuration needed.
+**Inline keyboards:** Built-in commands with parameters (`/model`, `/thinking`, `/effort`, `/speed`, `/display`, `/config`, `/sessions`, `/tmux`) show inline keyboard buttons when invoked bare. No configuration needed. `/effort`, `/thinking`, and `/speed` are hidden from `/help` and keyboards when the current model doesn't support them.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -603,7 +604,7 @@ max_tool_loops = 50
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
 
-Effort and thinking defaults are set in provider sections (`[anthropic]`, `[gemini]`) and automatically applied based on the agent's model format. Per-agent overrides in `[[agents]]` still work. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort, the params are stripped and the request is retried once.
+Effort, thinking, and speed defaults are set in provider sections (`[anthropic]`, `[gemini]`) and automatically applied based on the agent's model format. Per-agent overrides in `[[agents]]` still work. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once.
 
 Override per-agent in `[[agents]]`:
 ```toml
@@ -625,6 +626,7 @@ effort = "high"
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults come from provider sections (`[anthropic] thinking`, `[gemini] thinking`). Only applied for Anthropic and Gemini models — silently skipped for other providers. Overridable at runtime via `/thinking`. |
+| `speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Per-agent override; defaults from `[anthropic] speed`. Overridable at runtime via `/speed`. |
 | `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
 | `cache_ttl` | string | `""` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |

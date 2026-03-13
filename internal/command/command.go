@@ -21,6 +21,7 @@ type Command struct {
 	Description string
 	Category    string
 	Hidden      bool
+	Visible func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
 
 	Execute func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 
@@ -88,6 +89,9 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandCo
 
 	cmd := r.commands[name]
 	if cmd == nil || cmd.KeyboardOptions == nil {
+		return "", nil, false
+	}
+	if cmd.Visible != nil && !cmd.Visible(ctx, Request{Name: name}, cc) {
 		return "", nil, false
 	}
 

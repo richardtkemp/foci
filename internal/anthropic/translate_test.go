@@ -527,3 +527,51 @@ func TestSystemToSDKClean(t *testing.T) {
 		}
 	}
 }
+
+func TestSdkRequestOptionsNoSpeed(t *testing.T) {
+	// Proves that sdkRequestOptions with empty speed produces the default beta header without fast-mode.
+	opts := sdkRequestOptions("test-token", "")
+	// Should have exactly 2 options: auth token + beta header
+	if len(opts) != 2 {
+		t.Errorf("expected 2 options, got %d", len(opts))
+	}
+}
+
+func TestSdkRequestOptionsFastSpeed(t *testing.T) {
+	// Proves that sdkRequestOptions with speed="fast" adds the fast-mode beta and an extra WithJSONSet option.
+	opts := sdkRequestOptions("test-token", "fast")
+	// Should have 3 options: auth token + beta header + WithJSONSet("speed", "fast")
+	if len(opts) != 3 {
+		t.Errorf("expected 3 options, got %d", len(opts))
+	}
+}
+
+func TestStripUnsupportedParamsSpeed(t *testing.T) {
+	// Proves that stripUnsupportedParams clears Speed for Haiku (which doesn't support it) but preserves it for Opus.
+	reqHaiku := &MessageRequest{
+		Model: "claude-haiku-4-5",
+		Speed: "fast",
+	}
+	stripUnsupportedParams(reqHaiku)
+	if reqHaiku.Speed != "" {
+		t.Errorf("Speed should be cleared for haiku, got %q", reqHaiku.Speed)
+	}
+
+	reqOpus := &MessageRequest{
+		Model: "claude-opus-4-6",
+		Speed: "fast",
+	}
+	stripUnsupportedParams(reqOpus)
+	if reqOpus.Speed != "fast" {
+		t.Errorf("Speed should be preserved for opus, got %q", reqOpus.Speed)
+	}
+
+	reqSonnet := &MessageRequest{
+		Model: "claude-sonnet-4-6",
+		Speed: "fast",
+	}
+	stripUnsupportedParams(reqSonnet)
+	if reqSonnet.Speed != "" {
+		t.Errorf("Speed should be cleared for sonnet, got %q", reqSonnet.Speed)
+	}
+}
