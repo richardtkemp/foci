@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// contextCC builds a minimal CommandContext for testing ContextCommand.
+// It injects info via ContextInfoFn so that buildContextInfo is bypassed.
+func contextCC(apiLogPath string, info ContextInfo) CommandContext {
+	return CommandContext{
+		APILogPath: apiLogPath,
+		ContextInfoFn: func(_ CommandContext) ContextInfo {
+			return info
+		},
+	}
+}
+
 // TestContextCommand verifies context display shows token usage, threshold status, and system prompt breakdown.
 func TestContextCommand(t *testing.T) {
 	now := time.Now().UTC()
@@ -18,9 +29,9 @@ func TestContextCommand(t *testing.T) {
 	})
 
 	info := testContextInfo()
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -54,17 +65,17 @@ func TestContextCommand(t *testing.T) {
 		"1,500", // output tokens
 	}
 	// Should have 4 separate code blocks (header, system, conversation, last API call)
-	if strings.Count(result, "```") != 8 { // 4 opening + 4 closing
-		t.Errorf("expected 4 code blocks (8 backtick markers), got %d in:\n%s", strings.Count(result, "```"), result)
+	if strings.Count(result.Text, "```") != 8 { // 4 opening + 4 closing
+		t.Errorf("expected 4 code blocks (8 backtick markers), got %d in:\n%s", strings.Count(result.Text, "```"), result.Text)
 	}
 	for _, check := range checks {
-		if !strings.Contains(result, check) {
-			t.Errorf("missing %q in:\n%s", check, result)
+		if !strings.Contains(result.Text, check) {
+			t.Errorf("missing %q in:\n%s", check, result.Text)
 		}
 	}
 	// Should NOT contain "chars" — all counts are in tokens now
-	if strings.Contains(result, "chars") {
-		t.Errorf("should not contain 'chars', all counts should be in tokens:\n%s", result)
+	if strings.Contains(result.Text, "chars") {
+		t.Errorf("should not contain 'chars', all counts should be in tokens:\n%s", result.Text)
 	}
 }
 
@@ -78,16 +89,16 @@ func TestContextCommandAtThreshold(t *testing.T) {
 	info := testContextInfo()
 	info.CompactionThresh = 0.8
 	info.ContextLimit = 200000
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	// 170000 tokens is 85%, above 80% threshold
-	if !strings.Contains(result, "at/above threshold") {
-		t.Errorf("expected 'at/above threshold' in:\n%s", result)
+	if !strings.Contains(result.Text, "at/above threshold") {
+		t.Errorf("expected 'at/above threshold' in:\n%s", result.Text)
 	}
 }
 
@@ -96,15 +107,15 @@ func TestContextCommandNoApiCalls(t *testing.T) {
 	path := writeAPILog(t, nil)
 
 	info := testContextInfo()
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if result != "No API calls yet for this session." {
-		t.Errorf("result = %q", result)
+	if result.Text != "No API calls yet for this session." {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -116,16 +127,16 @@ func TestContextCommandOtherSession(t *testing.T) {
 	})
 
 	info := testContextInfo()
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	// No entries for this session
-	if result != "No API calls yet for this session." {
-		t.Errorf("result = %q", result)
+	if result.Text != "No API calls yet for this session." {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -140,13 +151,13 @@ func TestContextCommandCustomThreshold(t *testing.T) {
 	info.Model = "claude-sonnet-4-5"
 	info.CompactionThresh = 0.5
 	info.ContextLimit = 200000
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, _ := cmd.Execute(context.Background(), "")
+	result, _ := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 
 	// 100000 tokens is 50%, at threshold
-	if !strings.Contains(result, "at/above threshold") {
-		t.Errorf("expected 'at/above threshold' with 50%% threshold:\n%s", result)
+	if !strings.Contains(result.Text, "at/above threshold") {
+		t.Errorf("expected 'at/above threshold' with 50%% threshold:\n%s", result.Text)
 	}
 }
 
@@ -161,22 +172,22 @@ func TestContextCommandNoSkillsOrEnv(t *testing.T) {
 	info.EnvironmentChars = 0
 	info.SkillsChars = 0
 	info.Messages.ToolResultChars = 0
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	// Environment and Skills lines should not appear
-	if strings.Contains(result, "Environment") {
-		t.Errorf("should not show Environment when 0 tokens:\n%s", result)
+	if strings.Contains(result.Text, "Environment") {
+		t.Errorf("should not show Environment when 0 tokens:\n%s", result.Text)
 	}
-	if strings.Contains(result, "Skills") {
-		t.Errorf("should not show Skills when 0 tokens:\n%s", result)
+	if strings.Contains(result.Text, "Skills") {
+		t.Errorf("should not show Skills when 0 tokens:\n%s", result.Text)
 	}
-	if strings.Contains(result, "Tool results") {
-		t.Errorf("should not show Tool results when 0 tokens:\n%s", result)
+	if strings.Contains(result.Text, "Tool results") {
+		t.Errorf("should not show Tool results when 0 tokens:\n%s", result.Text)
 	}
 }
 
@@ -200,9 +211,9 @@ func TestContextCommandExactTokens(t *testing.T) {
 			},
 		}, nil
 	}
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -221,17 +232,17 @@ func TestContextCommandExactTokens(t *testing.T) {
 		"User messages",               // per-role still shown
 	}
 	for _, check := range checks {
-		if !strings.Contains(result, check) {
-			t.Errorf("missing %q in:\n%s", check, result)
+		if !strings.Contains(result.Text, check) {
+			t.Errorf("missing %q in:\n%s", check, result.Text)
 		}
 	}
 	// Header should NOT have ~ prefix (exact)
-	if strings.Contains(result, "~25,000") {
-		t.Errorf("exact total should not have ~ prefix:\n%s", result)
+	if strings.Contains(result.Text, "~25,000") {
+		t.Errorf("exact total should not have ~ prefix:\n%s", result.Text)
 	}
 	// Per-role conversation should have ~ (estimated)
-	if !strings.Contains(result, "~") {
-		t.Errorf("per-role estimates should have ~ prefix:\n%s", result)
+	if !strings.Contains(result.Text, "~") {
+		t.Errorf("per-role estimates should have ~ prefix:\n%s", result.Text)
 	}
 }
 
@@ -246,18 +257,18 @@ func TestContextCommandCountingAPIError(t *testing.T) {
 	info.CountTokensFn = func(ctx context.Context) (*TokenCounts, error) {
 		return nil, fmt.Errorf("API error")
 	}
-	cmd := NewContextCommand(path, func() ContextInfo { return info })
+	cmd := ContextCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, contextCC(path, info))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	// Should fall back to estimates
-	if !strings.Contains(result, "~90,000") { // 50000 + 30000 + 10000
-		t.Errorf("expected fallback to estimated ~90,000 tokens:\n%s", result)
+	if !strings.Contains(result.Text, "~90,000") { // 50000 + 30000 + 10000
+		t.Errorf("expected fallback to estimated ~90,000 tokens:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "System prompt: ~") {
-		t.Errorf("expected estimated system prompt:\n%s", result)
+	if !strings.Contains(result.Text, "System prompt: ~") {
+		t.Errorf("expected estimated system prompt:\n%s", result.Text)
 	}
 }
