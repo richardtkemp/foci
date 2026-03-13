@@ -60,7 +60,7 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
 	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
-	divider := "\n" + strings.Repeat("—", b.displayWidth) + "\n\n"
+	divider := "\n" + strings.Repeat("—", b.effectiveDisplayWidth()) + "\n\n"
 	b.sendHTMLChunks(msg.Chat.Id, thinkingHTML+divider+responseHTML, userID, msg.From.Username)
 }
 

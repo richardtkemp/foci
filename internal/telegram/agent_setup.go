@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"foci/internal/command"
@@ -34,6 +35,10 @@ type AgentSetupParams struct {
 
 	// ReclaimHook is called when a multiball session is reclaimed.
 	ReclaimHook func(sessionKey string)
+
+	// DisplayOverrideFn returns per-session display overrides.
+	// See platform.AgentConnectionParams for details.
+	DisplayOverrideFn func(sessionKey string) (showToolCalls, showThinking, streamOutput, displayWidth string)
 
 	// ResolveTTS resolves the TTS provider for a given agent config.
 	ResolveTTS func(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, rate float64, replacements map[string]string) voice.TTS
@@ -136,6 +141,24 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
 	primaryBot.SetToolCallPreviewChars(cfg.Tools.ToolCallPreviewChars)
 	ApplyAgentDisplaySettings(primaryBot, acfg, cfg)
+
+	if p.DisplayOverrideFn != nil {
+		overrideFn := p.DisplayOverrideFn
+		primaryBot.SetDisplayOverrideFn(func() DisplayOverrides {
+			sk := primaryBot.SessionKey()
+			stc, st, so, dw := overrideFn(sk)
+			var dwi int
+			if dw != "" {
+				_, _ = fmt.Sscanf(dw, "%d", &dwi)
+			}
+			return DisplayOverrides{
+				ShowToolCalls: stc,
+				ShowThinking:  st,
+				StreamOutput:  so,
+				DisplayWidth:  dwi,
+			}
+		})
+	}
 
 	mgr.AddPrimary(acfg.ID, primaryBot)
 

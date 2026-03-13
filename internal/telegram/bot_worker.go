@@ -83,7 +83,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	// Stream writer: real-time message updates during streaming.
 	var sw *streamWriter
-	if b.streamOutput {
+	if b.effectiveStreamOutput() {
 		interval := b.streamUpdateInterval
 		if interval == 0 {
 			interval = 250 * time.Millisecond
@@ -112,7 +112,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		ToolResultObserver: tracker.observeToolResult,
 		// Thinking block accumulator (gated by showThinking)
 		ThinkingObserver: func(thinking string) {
-			if b.showThinking == "off" || b.showThinking == "" {
+			if b.effectiveShowThinking() == "off" || b.effectiveShowThinking() == "" {
 				return
 			}
 			if thinkingBuf.Len() > 0 {
@@ -180,7 +180,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// Determine which message to edit with the final response.
 	// The stream message takes priority (it's what the user sees as "in-progress"),
 	// then the tool call preview message.
-	hasThinking := thinkingText != "" && b.showThinking != "off" && b.showThinking != ""
+	showThinkMode := b.effectiveShowThinking()
+	hasThinking := thinkingText != "" && showThinkMode != "off" && showThinkMode != ""
 
 	editID := tracker.lastMsgID()
 	if streamMsgID != 0 {
@@ -196,7 +197,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		canEditInPlace = editID != 0 && !hasThinking && len(response) <= 4096
 	} else {
 		// Tool call preview: only edit in preview mode.
-		canEditInPlace = editID != 0 && b.showToolCalls == "preview" && !hasThinking && len(response) <= 4096
+		canEditInPlace = editID != 0 && b.effectiveShowToolCalls() == "preview" && !hasThinking && len(response) <= 4096
 	}
 
 	if canEditInPlace {
@@ -222,14 +223,14 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}
 
 	// Full thinking: prepend italic thinking + divider to response
-	if b.showThinking == "true" && thinkingText != "" {
+	if showThinkMode == "true" && thinkingText != "" {
 		b.sendReplyWithFullThinking(qm.msg, qm.userID, response, thinkingText)
 		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
 
 	// Compact thinking: send response with "Show thinking" toggle button
-	if b.showThinking == "compact" && thinkingText != "" {
+	if showThinkMode == "compact" && thinkingText != "" {
 		b.sendReplyWithThinking(qm.msg, qm.userID, response, thinkingText)
 		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return

@@ -218,7 +218,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.displayWidth)
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.effectiveDisplayWidth())
 		kb := singleButtonKeyboard("Hide thinking", fmt.Sprintf("th:hide:%d", msgID))
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
@@ -301,13 +301,14 @@ func (t *toolCallTracker) resetMsgID() {
 
 // observeToolCall handles tool call visibility via send+edit pattern.
 func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessage) {
-	if t.bot.showToolCalls == "off" || t.bot.showToolCalls == "" {
+	mode := t.bot.effectiveShowToolCalls()
+	if mode == "off" || mode == "" {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.bot.showToolCalls == "full" {
+	if mode == "full" {
 		t.sendFullModeToolCall(toolName, params)
 		return
 	}
@@ -371,7 +372,7 @@ func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.R
 
 // observeToolResult stores tool results for inline keyboard expansion (full mode only).
 func (t *toolCallTracker) observeToolResult(toolName string, result string, isError bool) {
-	if t.bot.showToolCalls != "full" {
+	if t.bot.effectiveShowToolCalls() != "full" {
 		return
 	}
 	t.mu.Lock()

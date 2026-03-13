@@ -545,7 +545,7 @@ This is separate from the security-based path blocking in `secrets.toml` (which 
 
 Custom slash commands. Each entry is a `[[commands]]` table array.
 
-**Inline keyboards:** Built-in commands with parameters (`/model`, `/thinking`, `/effort`, `/config`, `/sessions`, `/tmux`) show inline keyboard buttons when invoked bare. No configuration needed.
+**Inline keyboards:** Built-in commands with parameters (`/model`, `/thinking`, `/effort`, `/display`, `/config`, `/sessions`, `/tmux`) show inline keyboard buttons when invoked bare. No configuration needed.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -671,12 +671,22 @@ Available in both `[defaults]` and `[[agents]]`.
 
 ### Display
 
-Set in `[defaults]`, overridable per-agent.
+Set in `[defaults]`, overridable per-agent. At runtime, the `/display` command sets per-session overrides without modifying the config file:
+
+```
+/display                          # show current effective values
+/display show_tool_calls preview  # set per-session override
+/display stream_output on         # set per-session override
+/display display_width 80         # set per-session override
+/display reset                    # clear all overrides back to config defaults
+```
+
+Supported keys: `show_tool_calls`, `show_thinking`, `stream_output`, `display_width`. Aliases: `stream` → `stream_output`, `width` → `display_width`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). |
-| `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Accepts bool (`true` → `"true"`, `false` → `"off"`). |
+| `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"` (hidden), `"preview"` (shown then overwritten by reply), `"full"` (shown and kept; reply is a separate message). Accepts bool for backwards compat (`true` → `"preview"`, `false` → `"off"`). Overridable at runtime via `/display`. |
+| `show_thinking` | string | `"off"` | Thinking block display mode: `"off"` (stripped), `"compact"` (toggle button), `"true"` (always shown). Accepts bool (`true` → `"true"`, `false` → `"off"`). Overridable at runtime via `/display`. |
 | `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages (keepalive, async notifier, HTTP API, proactive warnings) so users can distinguish them from agent replies. Empty string disables the header. |
 
 ### Message Handling

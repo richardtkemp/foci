@@ -115,7 +115,21 @@ type Bot struct {
 
 	streamOutput         bool          // stream model output to Telegram in real-time
 	streamUpdateInterval time.Duration // duration between Telegram message edits during streaming
+
+	displayOverrideFn DisplayOverrideFn // per-session display override callback; nil = use bot defaults
 }
+
+// DisplayOverrides holds per-session overrides for display settings.
+// Empty strings / zero values mean "not overridden, use bot default".
+type DisplayOverrides struct {
+	ShowToolCalls string // "off"/"preview"/"full"
+	ShowThinking  string // "off"/"compact"/"true"
+	StreamOutput  string // "true"/"false"
+	DisplayWidth  int    // 0 = not overridden
+}
+
+// DisplayOverrideFn returns per-session display overrides.
+type DisplayOverrideFn func() DisplayOverrides
 
 // defaultLogger is used when a Bot is constructed without a ComponentLogger
 // (e.g. in tests that build the struct literal directly).
@@ -222,7 +236,7 @@ func (b *Bot) SetTableStyle(style string) {
 
 // tableOpts returns the RenderOpts for this bot's display settings.
 func (b *Bot) tableOpts() display.RenderOpts {
-	return display.RenderOpts{MaxWidth: b.displayWidth, WrapLines: b.tableWrapLines, Style: b.tableStyle}
+	return display.RenderOpts{MaxWidth: b.effectiveDisplayWidth(), WrapLines: b.tableWrapLines, Style: b.tableStyle}
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -247,6 +261,52 @@ func (b *Bot) SetInjectedMessageHeader(s string) {
 // instead of queuing behind the turn lock.
 func (b *Bot) SetSteerMode(enabled bool) {
 	b.steerMode = enabled
+}
+
+// SetDisplayOverrideFn sets the callback that provides per-session display overrides.
+func (b *Bot) SetDisplayOverrideFn(fn DisplayOverrideFn) { b.displayOverrideFn = fn }
+
+// effectiveShowToolCalls returns the show_tool_calls mode, checking per-session overrides first.
+func (b *Bot) effectiveShowToolCalls() string {
+	if b.displayOverrideFn != nil {
+		if v := b.displayOverrideFn().ShowToolCalls; v != "" {
+			return v
+		}
+	}
+	return b.showToolCalls
+}
+
+// effectiveShowThinking returns the show_thinking mode, checking per-session overrides first.
+func (b *Bot) effectiveShowThinking() string {
+	if b.displayOverrideFn != nil {
+		if v := b.displayOverrideFn().ShowThinking; v != "" {
+			return v
+		}
+	}
+	return b.showThinking
+}
+
+// effectiveDisplayWidth returns the display width, checking per-session overrides first.
+func (b *Bot) effectiveDisplayWidth() int {
+	if b.displayOverrideFn != nil {
+		if v := b.displayOverrideFn().DisplayWidth; v > 0 {
+			return v
+		}
+	}
+	return b.displayWidth
+}
+
+// effectiveStreamOutput returns the stream_output setting, checking per-session overrides first.
+func (b *Bot) effectiveStreamOutput() bool {
+	if b.displayOverrideFn != nil {
+		switch b.displayOverrideFn().StreamOutput {
+		case "true":
+			return true
+		case "false":
+			return false
+		}
+	}
+	return b.streamOutput
 }
 
 // SetStreamOutput enables or disables real-time streaming of model output to Telegram.
@@ -304,7 +364,7 @@ func (b *Bot) SetDeps(deps command.Deps) {
 
 // DisplaySettings returns the current display settings for inspection/testing.
 func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string, injectedMessageHeader string) {
-	return b.showToolCalls, b.showThinking, b.displayWidth, b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
+	return b.effectiveShowToolCalls(), b.effectiveShowThinking(), b.effectiveDisplayWidth(), b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
 }
 
 // NewBotForTest creates a Bot without connecting to the Telegram API.
