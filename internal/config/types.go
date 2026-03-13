@@ -123,6 +123,7 @@ type AgentConfig struct {
 	Effort                string `toml:"effort"`                   // effort level: "low" (default), "medium", "high"
 	Thinking              string `toml:"thinking"`                 // thinking mode: "adaptive" (default) or "off"
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
+	MultiballNoCompact    *bool  `toml:"multiball_no_compact"`     // set no_compact on multiball sessions (nil = true)
 
 	TTS              string            `toml:"tts"`               // per-agent TTS provider id (empty = default [[tts]] entry)
 	STT              string            `toml:"stt"`               // per-agent STT provider id (empty = default [[stt]] entry)

@@ -114,6 +114,7 @@ var configFields = []ConfigField{
 	{"agent", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"agent", "search_provider", FieldString, "web search: brave or anthropic"},
 	{"agent", "fetch_provider", FieldString, "web fetch: anthropic or builtin"},
+	{"agent", "multiball_no_compact", FieldBool, "set no_compact on multiball sessions (default true)"},
 	{"agent", "tts", FieldString, "TTS provider id"},
 	{"agent", "stt", FieldString, "STT provider id"},
 	{"agent", "tts_rate", FieldFloat, "TTS speech rate multiplier"},

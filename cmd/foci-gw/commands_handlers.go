@@ -363,6 +363,11 @@ func forkMultiball(p cmdRegParams, ctx context.Context) (string, error) {
 		return "", fmt.Errorf("create branch: %w", err)
 	}
 
+	// Multiball sessions default to no_compact=true (short-lived, shouldn't trigger compaction).
+	if p.acfg.MultiballNoCompact == nil || *p.acfg.MultiballNoCompact {
+		p.ag.SetSessionNoCompact(branchKey, true)
+	}
+
 	secConn.SetSessionKey(branchKey)
 	if primary := p.connMgr.Primary(p.acfg.ID); primary != nil {
 		secConn.SetChatID(primary.ChatID())
