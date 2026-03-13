@@ -455,7 +455,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
 	// Uses lazy getter for agent since ag is assigned later in this function.
-	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
 		ClientProvider:  p.clientProvider,
@@ -470,7 +470,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
 		Notifier:        notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
-			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", promptSearchDirs)
+			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
 		},
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
@@ -536,7 +536,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Create and register platform connections (allowed users resolved by each provider)
 	if p.plat != nil {
-		reclaimOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		reclaimMfCfg := acfg.MemoryFormation
 		reclaimSearchDirs := promptSearchDirs
 
@@ -550,8 +550,8 @@ func setupAgent(p setupParams) *agentInstance {
 			STT:          resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
 			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
 			ReclaimHook: func(sessionKey string) {
-				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, reclaimSearchDirs)
+				agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
+					return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
 				}, reclaimSearchDirs, p.ctx, false)
 			},
 			DisplayOverrideFn: func(sessionKey string) (string, string, string, string) {

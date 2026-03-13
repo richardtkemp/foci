@@ -41,11 +41,11 @@ func forkMultiball(_ context.Context, req Request, cc CommandContext) (string, e
 		return "", fmt.Errorf("create multiball key: %w", err)
 	}
 
-	orientPath := resolveOrientPath(
+	orientPath := prompts.ResolveOrientPath(
 		cc.AgentConfig.BranchOrientationMultiballPrompt, cc.Config.Sessions.BranchOrientationMultiballPrompt,
 		cc.AgentConfig.BranchOrientationPrompt, cc.Config.Sessions.BranchOrientationPrompt,
 	)
-	orientText := BuildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true, cc.PromptSearchDirs)
+	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true, cc.PromptSearchDirs)
 	if err := cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		OrientationMessage: orientText,
 	}); err != nil {
@@ -67,38 +67,3 @@ func forkMultiball(_ context.Context, req Request, cc CommandContext) (string, e
 	return fmt.Sprintf("Forked to @%s (session: %s)", secConn.Username(), branchKey), nil
 }
 
-// BuildBranchOrientation constructs orientation text for a branch session.
-// Resolves the prompt through ResolvePrompt: explicit path → search dirs → embedded default.
-// Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
-func BuildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool, searchDirs []string) string {
-	var filename, embedded string
-	if directChat {
-		filename = "branch-orientation-multiball.md"
-		embedded = prompts.BranchOrientationMultiball()
-	} else {
-		filename = "branch-orientation-headless.md"
-		embedded = prompts.BranchOrientationHeadless()
-	}
-	text := prompts.ResolvePrompt(promptPath, filename, embedded, searchDirs...)
-	return prompts.ReplaceVars(text, map[string]string{
-		"branch_key":  branchKey,
-		"parent_key":  parentKey,
-		"branch_type": branchType,
-		"direct_chat": fmt.Sprintf("%v", directChat),
-	})
-}
-
-// resolveOrientPath picks the first non-empty value from a priority list:
-// specific type → global type → specific fallback → global fallback.
-func resolveOrientPath(specific, globalSpecific, fallback, globalFallback string) string {
-	if specific != "" {
-		return specific
-	}
-	if globalSpecific != "" {
-		return globalSpecific
-	}
-	if fallback != "" {
-		return fallback
-	}
-	return globalFallback
-}

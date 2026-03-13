@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/display"
@@ -34,12 +35,12 @@ func ResetCommand() *Command {
 			if sk == "" {
 				return Response{}, fmt.Errorf("no active session to reset")
 			}
-			resetOrientPath := resolveOrientPath(
+			resetOrientPath := prompts.ResolveOrientPath(
 				cc.AgentConfig.BranchOrientationHeadlessPrompt, cc.Config.Sessions.BranchOrientationHeadlessPrompt,
 				cc.AgentConfig.BranchOrientationPrompt, cc.Config.Sessions.BranchOrientationPrompt,
 			)
-			FireSessionEndMemory(cc.Agent, cc.Sessions, sk, cc.AgentConfig.MemoryFormation, func(bk, pk, bt string) string {
-				return BuildBranchOrientation(resetOrientPath, bk, pk, bt, false, cc.PromptSearchDirs)
+			agent.FireSessionEndMemory(cc.Agent, cc.Sessions, sk, cc.AgentConfig.MemoryFormation, func(bk, pk, bt string) string {
+				return prompts.BuildBranchOrientation(resetOrientPath, bk, pk, bt, false, cc.PromptSearchDirs)
 			}, cc.PromptSearchDirs, ctx, false)
 			newKey, err := cc.Sessions.RotateKey(sk)
 			if err != nil {
