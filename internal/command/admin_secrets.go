@@ -19,36 +19,42 @@ type SecretsStore interface {
 	SetAllowedHosts(section string, hosts []string)
 }
 
-// NewSecretsCommand creates the /secrets slash command for managing secrets.
-func NewSecretsCommand(store SecretsStore) *Command {
+// SecretsCommand creates the /secrets slash command for managing secrets.
+func SecretsCommand() *Command {
 	return &Command{
 		Name:        "secrets",
 		Description: "Manage secrets (list/set/remove)",
 		Category:    "operations",
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "list", Data: "list"},
 				{Label: "set", Data: "set"},
 				{Label: "remove", Data: "remove"},
 			}
 		},
-		Execute: func(ctx context.Context, args string) (string, error) {
-			parts := strings.Fields(args)
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			if cc.SecretsStore == nil {
+				return Response{Text: "Secrets store not configured."}, nil
+			}
+			parts := strings.Fields(req.Args)
 			if len(parts) == 0 {
-				return secretsUsage, nil
+				return Response{Text: secretsUsage}, nil
 			}
 
 			switch parts[0] {
 			case "list":
-				return secretsList(store)
+				return Response{Text: secretsList(cc.SecretsStore)}, nil
 			case "hosts":
-				return secretsHostsSubcmd(store, parts[1:])
+				text, err := secretsHostsSubcmd(cc.SecretsStore, parts[1:])
+				return Response{Text: text}, err
 			case "set":
-				return secretsSet(store, parts[1:])
+				text, err := secretsSet(cc.SecretsStore, parts[1:])
+				return Response{Text: text}, err
 			case "remove":
-				return secretsRemove(store, parts[1:])
+				text, err := secretsRemove(cc.SecretsStore, parts[1:])
+				return Response{Text: text}, err
 			default:
-				return secretsUsage, nil
+				return Response{Text: secretsUsage}, nil
 			}
 		},
 	}
@@ -56,12 +62,11 @@ func NewSecretsCommand(store SecretsStore) *Command {
 
 const secretsUsage = "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key> | /secrets hosts <section> [add|remove|clear] [host]"
 
-func secretsList(store SecretsStore) (string, error) {
+func secretsList(store SecretsStore) string {
 	names := store.Names()
 	if len(names) == 0 {
-		return "No secrets configured.", nil
+		return "No secrets configured."
 	}
-	// Group by section, preserving insertion order
 	type secGroup struct {
 		name string
 		keys []string
@@ -83,7 +88,6 @@ func secretsList(store SecretsStore) (string, error) {
 		}
 	}
 
-	// Build hosts display per section
 	sectionHosts := make(map[string]string)
 	for _, g := range groups {
 		hosts := store.SectionAllowedHosts(g.name)
@@ -105,14 +109,14 @@ func secretsList(store SecretsStore) (string, error) {
 			sec := g.name
 			hosts := sectionHosts[g.name]
 			if i > 0 {
-				sec = ""   // don't repeat section name
-				hosts = "" // don't repeat hosts
+				sec = ""
+				hosts = ""
 			}
 			tableRows = append(tableRows, []string{sec, k, hosts})
 		}
 	}
 	return fmt.Sprintf("Secrets (%d keys)\n\n%s",
-		len(names), display.MarkdownTable(cols, tableRows)), nil
+		len(names), display.MarkdownTable(cols, tableRows))
 }
 
 func secretsSet(store SecretsStore, args []string) (string, error) {
@@ -145,7 +149,6 @@ func secretsRemove(store SecretsStore, args []string) (string, error) {
 	return fmt.Sprintf("Secret %s removed.", name), nil
 }
 
-// secretsHostsSubcmd handles /secrets hosts <section> [add|remove|clear] [host].
 func secretsHostsSubcmd(store SecretsStore, args []string) (string, error) {
 	if len(args) == 0 {
 		return "Usage: /secrets hosts <section> [add <host> | remove <host> | clear]", nil
@@ -153,7 +156,6 @@ func secretsHostsSubcmd(store SecretsStore, args []string) (string, error) {
 
 	section := args[0]
 
-	// /secrets hosts <section> — show current hosts
 	if len(args) == 1 {
 		hosts := store.SectionAllowedHosts(section)
 		if len(hosts) == 0 {

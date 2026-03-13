@@ -17,6 +17,7 @@ type AgentNewDeps struct {
 	ListFn       func() []AgentInfo
 	PreFlightFn  func(agentID string) []string // platform pre-flight warnings
 	ResolveModel func(string) string
+	Registry     *Registry // for setting wizard
 }
 
 // agentWizard implements WizardHandler for interactive agent creation.
