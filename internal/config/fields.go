@@ -90,6 +90,7 @@ var configFields = []ConfigField{
 	{"defaults", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"defaults", "search_provider", FieldString, "web search: brave or anthropic"},
 	{"defaults", "fetch_provider", FieldString, "web fetch: anthropic or builtin"},
+	{"defaults", "multiball_no_compact", FieldBool, "set no_compact on multiball sessions (default true)"},
 
 	// agent — per-agent fields (written to [[agents]] block)
 	{"agent", "model", FieldString, "model for this agent"},

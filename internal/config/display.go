@@ -87,6 +87,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Defaults.InjectAgentWarnings {
 		add("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
 	}
+	if cfg.Defaults.MultiballNoCompact != nil {
+		add("defaults", "multiball_no_compact", *cfg.Defaults.MultiballNoCompact)
+	}
 	if cfg.Telegram.ShowToolCalls != nil {
 		add("telegram", "show_tool_calls", string(*cfg.Telegram.ShowToolCalls))
 	}
