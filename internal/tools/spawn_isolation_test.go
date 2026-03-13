@@ -68,7 +68,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil, nil))
+	reg.Register(NewWriteTool(nil, "", nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
@@ -130,7 +130,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil, nil))
+	reg.Register(NewWriteTool(nil, "", nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
@@ -175,7 +175,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil, nil))
+	reg.Register(NewWriteTool(nil, "", nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
@@ -230,7 +230,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 	defer server.Close()
 
 	reg := NewRegistry()
-	reg.Register(NewWriteTool(nil, nil))
+	reg.Register(NewWriteTool(nil, "", nil))
 
 	client := anthropic.NewClientWithBase(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
