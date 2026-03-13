@@ -50,7 +50,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	stateBlock := a.collectStateDashboard(sessionKey)
 	msgBody := manaRestoreNote + attachmentPaths + userMessage
 	if duplicateMessages && isUserTrigger(trigger) {
-		msgBody = userMessage + "\n\n" + userMessage
+		msgBody = manaRestoreNote + attachmentPaths + userMessage + "\n\n" + userMessage
 	}
 	annotatedMessage := metaPrefix + reminderBlock + stateBlock + "\n" + msgBody
 
