@@ -144,28 +144,56 @@ func TestCacheCommandEmpty(t *testing.T) {
 	}
 }
 
-// TestLastCommand verifies last API call shows all details correctly.
+// TestLastCommand verifies /last shows the most recent API call per agent
+// as a table, and supports filtering by agent name.
 func TestLastCommand(t *testing.T) {
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
-		{Timestamp: now, Session: "agent:main:main", Model: "claude-haiku-4-5", Input: 100, Output: 50, StopReason: "end_turn", DurationMS: 1234, CostUSD: 0.001},
-		{Timestamp: now.Add(time.Minute), Session: "agent:main:main", Model: "claude-haiku-4-5", Input: 200, Output: 100, StopReason: "tool_use", DurationMS: 567, CostUSD: 0.002},
+		{Timestamp: now, Session: "main/c1/100", Model: "claude-haiku-4-5", Input: 100, Output: 50, CostUSD: 0.001},
+		{Timestamp: now.Add(time.Minute), Session: "main/c1/100", Model: "claude-haiku-4-5", Input: 200, Output: 100, CostUSD: 0.002},
+		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2/200", Model: "claude-sonnet-4-5", Input: 300, Output: 150, CostUSD: 0.005},
 	})
 
 	cmd := NewLastCommand(path)
+
+	// No args: should show one row per agent (main and helper).
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-
-	// Should show the last entry
-	if !strings.Contains(result, "tool_use") {
-		t.Errorf("missing stop_reason in:\n%s", result)
+	if !strings.Contains(result, "Last API call per agent") {
+		t.Errorf("missing title in:\n%s", result)
 	}
-	if !strings.Contains(result, "567ms") {
-		t.Errorf("missing duration in:\n%s", result)
+	if !strings.Contains(result, "main") || !strings.Contains(result, "helper") {
+		t.Errorf("should show both agents in:\n%s", result)
 	}
+	// main's latest should be the second entry (in=200)
 	if !strings.Contains(result, "in=200") {
-		t.Errorf("missing input tokens in:\n%s", result)
+		t.Errorf("should show main's latest call (in=200) in:\n%s", result)
+	}
+	// helper's entry
+	if !strings.Contains(result, "in=300") {
+		t.Errorf("should show helper's call (in=300) in:\n%s", result)
+	}
+
+	// Filter to specific agent.
+	result, err = cmd.Execute(context.Background(), "helper")
+	if err != nil {
+		t.Fatalf("Execute with filter: %v", err)
+	}
+	if !strings.Contains(result, "helper") {
+		t.Errorf("filtered result should contain helper in:\n%s", result)
+	}
+	if strings.Contains(result, "in=200") {
+		t.Errorf("filtered result should not contain main's call in:\n%s", result)
+	}
+
+	// Filter to non-existent agent.
+	result, err = cmd.Execute(context.Background(), "nobody")
+	if err != nil {
+		t.Fatalf("Execute with bad filter: %v", err)
+	}
+	if !strings.Contains(result, "No API calls for agent") {
+		t.Errorf("expected no-calls message, got:\n%s", result)
 	}
 }
