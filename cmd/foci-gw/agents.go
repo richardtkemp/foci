@@ -577,9 +577,17 @@ func setupAgent(p setupParams) *agentInstance {
 			STT:          resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
 			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
 			ReclaimHook: func(sessionKey string) {
-				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
-				}, reclaimSearchDirs, p.ctx, false)
+				fireSessionEndMemory(sessionEndMemoryOpts{
+					ag:         ag,
+					sessions:   p.sessions,
+					sessionKey: sessionKey,
+					mfCfg:      reclaimMfCfg,
+					buildOrientation: func(bk, pk, bt string) string {
+						return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
+					},
+					searchDirs: reclaimSearchDirs,
+					parentCtx:  p.ctx,
+				})
 			},
 			DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
 				return platform.DisplaySettings{

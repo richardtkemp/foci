@@ -70,30 +70,44 @@ func buildBranchFunc(
 	}
 }
 
+// sessionEndMemoryOpts holds the parameters for fireSessionEndMemory.
+type sessionEndMemoryOpts struct {
+	ag               *agent.Agent
+	sessions         *session.Store
+	sessionKey       string
+	mfCfg            config.MemoryFormationConfig
+	buildOrientation func(branchKey, parentKey, branchType string) string
+	searchDirs       []string
+	parentCtx        context.Context
+	skipMetaCheck    bool // skip NoResetHook check (for background work branches)
+}
+
 // fireSessionEndMemory runs memory formation on the expiring session before it is cleared.
 // Creates an async branch from the session so the caller can proceed immediately.
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
-// If skipMetaCheck is true, the NoResetHook check is skipped (used for background
-// work branches which set NoResetHook but should still get memory formation).
-func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
+func fireSessionEndMemory(opts sessionEndMemoryOpts) {
+	ag := opts.ag
+	sessions := opts.sessions
+	sessionKey := opts.sessionKey
+	mfCfg := opts.mfCfg
 	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
 		return
 	}
 
 	// Check availability before doing any work
-	canFire, reason := ag.CanFireBackgroundOperation(parentCtx, sessionKey)
+	canFire, reason := ag.CanFireBackgroundOperation(opts.parentCtx, sessionKey)
 	if !canFire {
 		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "memory-formation.md", prompts.MemoryFormation(), searchDirs...)
+	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "memory-formation.md", prompts.MemoryFormation(), opts.searchDirs...)
 	if prompt == "" {
 		return
 	}
 
 	// Check branch metadata for NoResetHook (skipped for background work branches)
-	if !skipMetaCheck {
+	if !opts.skipMetaCheck {
 		meta, err := sessions.GetBranchMeta(sessionKey)
 		if err != nil {
 			log.Warnf("session-end-memory", "check branch meta for %s: %v", sessionKey, err)
@@ -112,7 +126,7 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 		log.Errorf("session-end-memory", "create branch key for session %s: %v", sessionKey, err)
 		return
 	}
-	orientText := buildOrientation(branchKey, sessionKey, "session-end-memory")
+	orientText := opts.buildOrientation(branchKey, sessionKey, "session-end-memory")
 	if err := sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
 		NoResetHook:        true,
 		OrientationMessage: orientText,
@@ -124,7 +138,7 @@ func fireSessionEndMemory(ag *agent.Agent, sessions *session.Store, sessionKey s
 	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, branchKey)
 
 	go func() {
-		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
+		hookCtx, cancel := context.WithTimeout(opts.parentCtx, 120*time.Second)
 		defer cancel()
 		hookCtx = agent.WithTrigger(hookCtx, "session_end_memory")
 		ag.SetSessionNoCompact(branchKey, true)
