@@ -125,7 +125,7 @@ HTTP API server.
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
 | `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 
-Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `POST /webhook/{agent}/{prompt}`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
+Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `POST /webhook/{agent}/{hookid}`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
 
 All endpoints accept an `agent` field (JSON body for POST, query param for GET) to target a specific agent by ID. When empty or omitted, the first configured agent is used. The `/send` endpoint also accepts an optional `session` field to target a specific session key (defaults to `main`).
 
@@ -878,6 +878,23 @@ Per-agent mana warning thresholds. When set, completely replaces the global `[us
 | `skills_dirs` | string[] | `[]` | `[skills] dirs` | Directories to scan for skill subdirectories. `[]` inherits from global `[skills] dirs`. |
 | `message_transforms` | array | `[]` | `[[message_transforms]]` | Regex find/replace rules applied to inbound messages. `[]` inherits from global `[[message_transforms]]`. |
 | `blocked_paths` | array | `[]` | `[[blocked_paths]]` | Path prefixes blocked for write/edit tools. `[]` inherits from global `[[blocked_paths]]`. Per-agent replaces global (not merged). |
+
+### Webhooks
+
+| Key | Type | Default | Global location | Description |
+|-----|------|---------|-----------------|-------------|
+| `webhooks` | map[string]string | `{}` | `[defaults]` | Maps webhook hook IDs to prompt file paths. Used by `POST /webhook/{agent}/{hookid}`. Per-agent merges with global (agent keys override matching global keys; unmatched global keys are preserved). |
+
+Prompt paths are resolved via `prompts.ResolvePrompt`: bare filenames (e.g. `"deploy.md"`) are searched in `{workspace}/prompts/` then `{shared}/prompts/`; absolute paths are read directly.
+
+```toml
+[defaults]
+webhooks = { new_commit = "new_commit.md", deploy = "deploy.md" }
+
+[[agents]]
+id = "scout"
+webhooks = { alert = "alert-handler.md" }  # adds alert; inherits new_commit, deploy from defaults
+```
 
 ---
 

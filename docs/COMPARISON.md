@@ -180,7 +180,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Cron jobs | ✅ via system cron + CLI | ✅ built-in CronService | ✅ CronService |
 | Heartbeat / periodic tasks | ✅ keepalive + background work | ✅ configurable interval | ✅ HeartbeatService |
-| Webhook ingestion | 🔜 coming soon | ✅ token-validated hooks | ❌ |
+| Webhook ingestion | ✅ config-declared hooks | ✅ token-validated hooks | ❌ |
 | Idle-triggered background work | ✅ mana-gated, todo-driven | ❌ | ❌ |
 | Gmail integration | ❌ | ✅ Pub/Sub | ❌ |
 

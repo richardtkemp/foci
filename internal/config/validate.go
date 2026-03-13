@@ -62,6 +62,20 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	// Validate webhook keys contain no path separators (defense in depth)
+	for k := range cfg.Defaults.Webhooks {
+		if strings.ContainsAny(k, "/\\") {
+			return fmt.Errorf("[defaults] webhooks: key %q must not contain path separators", k)
+		}
+	}
+	for _, a := range cfg.Agents {
+		for k := range a.Webhooks {
+			if strings.ContainsAny(k, "/\\") {
+				return fmt.Errorf("agent %q webhooks: key %q must not contain path separators", a.ID, k)
+			}
+		}
+	}
+
 	// Validate agent model format (must use slash syntax, not colon)
 	for _, a := range cfg.Agents {
 		if a.Model == "" {

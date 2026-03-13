@@ -54,9 +54,9 @@ func (m *mockWebhookClient) IsCachingAvailable() bool { return false }
 func (m *mockWebhookClient) RetryBaseDelay() time.Duration { return time.Millisecond }
 
 // webhookTestSetup builds httpHandlerDeps with a single agent whose prompt
-// search dirs point at promptDir. Returns deps, the mock client (for assertions),
-// and a cleanup function.
-func webhookTestSetup(t *testing.T, promptDir string, sessionKey string) (httpHandlerDeps, *mockWebhookClient) {
+// search dirs point at promptDir and webhooks map is configured.
+// Returns deps, the mock client (for assertions).
+func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhooks map[string]string) (httpHandlerDeps, *mockWebhookClient) {
 	t.Helper()
 	mock := &mockWebhookClient{}
 	sessDir := filepath.Join(t.TempDir(), "sessions")
@@ -81,6 +81,7 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string) (httpHa
 		ag:                ag,
 		defaultSessionKey: func() string { return sk },
 		promptSearchDirs:  []string{promptDir},
+		webhooks:          webhooks,
 	}
 
 	d := httpHandlerDeps{
@@ -99,17 +100,18 @@ func newWebhookMux(d httpHandlerDeps) *http.ServeMux {
 	return mux
 }
 
-// TestWebhook_SyncSuccess tests the happy path: known agent, existing prompt
-// file, body payload, sync=true → 200 with agent response.
+// TestWebhook_SyncSuccess tests the happy path: known agent, configured hook ID,
+// existing prompt file, body payload, sync=true → 200 with agent response.
 func TestWebhook_SyncSuccess(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "deploy.md"), []byte("Handle this deploy event."), 0644)
 
-	d, mock := webhookTestSetup(t, dir, "")
+	webhooks := map[string]string{"deploy": "deploy.md"}
+	d, mock := webhookTestSetup(t, dir, "", webhooks)
 	mux := newWebhookMux(d)
 
 	body := `{"action":"completed","repo":"foci"}`
-	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/deploy.md?sync=true", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/deploy?sync=true", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -140,10 +142,11 @@ func TestWebhook_AsyncDefault(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "alert.md"), []byte("Process this alert."), 0644)
 
-	d, _ := webhookTestSetup(t, dir, "")
+	webhooks := map[string]string{"alert": "alert.md"}
+	d, _ := webhookTestSetup(t, dir, "", webhooks)
 	mux := newWebhookMux(d)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/alert.md", strings.NewReader("payload"))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/alert", strings.NewReader("payload"))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -167,10 +170,11 @@ func TestWebhook_EmptyBody(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "ping.md"), []byte("Ping check."), 0644)
 
-	d, mock := webhookTestSetup(t, dir, "")
+	webhooks := map[string]string{"ping": "ping.md"}
+	d, mock := webhookTestSetup(t, dir, "", webhooks)
 	mux := newWebhookMux(d)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/ping.md?sync=true", nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/ping?sync=true", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -187,10 +191,10 @@ func TestWebhook_EmptyBody(t *testing.T) {
 
 // TestWebhook_UnknownAgent returns 400 for an unknown agent ID.
 func TestWebhook_UnknownAgent(t *testing.T) {
-	d, _ := webhookTestSetup(t, t.TempDir(), "")
+	d, _ := webhookTestSetup(t, t.TempDir(), "", nil)
 	mux := newWebhookMux(d)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook/nonexistent/deploy.md", nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/nonexistent/deploy", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -199,12 +203,51 @@ func TestWebhook_UnknownAgent(t *testing.T) {
 	}
 }
 
-// TestWebhook_PromptNotFound returns 404 when the prompt file doesn't exist.
-func TestWebhook_PromptNotFound(t *testing.T) {
-	d, _ := webhookTestSetup(t, t.TempDir(), "") // empty dir, no prompts
+// TestWebhook_UnknownHookID returns 404 when the hook ID is not in the webhooks map.
+func TestWebhook_UnknownHookID(t *testing.T) {
+	webhooks := map[string]string{"deploy": "deploy.md"}
+	d, _ := webhookTestSetup(t, t.TempDir(), "", webhooks)
 	mux := newWebhookMux(d)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/missing.md?sync=true", nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/nonexistent?sync=true", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestWebhook_PathTraversal tests that path-traversal-style hook IDs return 404.
+// Since hookid is a map key lookup, traversal strings simply won't match any key.
+func TestWebhook_PathTraversal(t *testing.T) {
+	webhooks := map[string]string{"deploy": "deploy.md"}
+	d, _ := webhookTestSetup(t, t.TempDir(), "", webhooks)
+	mux := newWebhookMux(d)
+
+	// These hookIDs look like traversal attempts but are just map keys that don't exist.
+	hookIDs := []string{
+		"..%2F..%2Fetc%2Fpasswd",
+		"..%2Fdeploy",
+		"deploy.md%00",
+	}
+	for _, hookID := range hookIDs {
+		req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/"+hookID, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("hookID %q: status = %d, want 404", hookID, w.Code)
+		}
+	}
+}
+
+// TestWebhook_PromptFileNotFound returns 404 when the hook is configured but the prompt file doesn't exist.
+func TestWebhook_PromptFileNotFound(t *testing.T) {
+	webhooks := map[string]string{"missing": "nonexistent.md"}
+	d, _ := webhookTestSetup(t, t.TempDir(), "", webhooks) // empty dir, no prompts
+	mux := newWebhookMux(d)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/missing?sync=true", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -215,7 +258,7 @@ func TestWebhook_PromptNotFound(t *testing.T) {
 
 // TestWebhook_BadPath tests various malformed paths.
 func TestWebhook_BadPath(t *testing.T) {
-	d, _ := webhookTestSetup(t, t.TempDir(), "")
+	d, _ := webhookTestSetup(t, t.TempDir(), "", nil)
 	mux := newWebhookMux(d)
 
 	paths := []string{
@@ -235,11 +278,11 @@ func TestWebhook_BadPath(t *testing.T) {
 
 // TestWebhook_MethodNotAllowed verifies only POST is accepted.
 func TestWebhook_MethodNotAllowed(t *testing.T) {
-	d, _ := webhookTestSetup(t, t.TempDir(), "")
+	d, _ := webhookTestSetup(t, t.TempDir(), "", nil)
 	mux := newWebhookMux(d)
 
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		req := httptest.NewRequest(method, "/webhook/test-agent/deploy.md", nil)
+		req := httptest.NewRequest(method, "/webhook/test-agent/deploy", nil)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, req)
 		if w.Code != http.StatusMethodNotAllowed {
@@ -253,13 +296,14 @@ func TestWebhook_NoSession(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt text"), 0644)
 
-	d, _ := webhookTestSetup(t, dir, "EMPTY")
+	webhooks := map[string]string{"test": "test.md"}
+	d, _ := webhookTestSetup(t, dir, "EMPTY", webhooks)
 	// Override to return empty session key.
 	d.agents["test-agent"].defaultSessionKey = func() string { return "" }
 
 	mux := newWebhookMux(d)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/test.md?sync=true", nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/test?sync=true", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -273,7 +317,8 @@ func TestWebhook_IfInactive(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt"), 0644)
 
-	d, _ := webhookTestSetup(t, dir, "")
+	webhooks := map[string]string{"test": "test.md"}
+	d, _ := webhookTestSetup(t, dir, "", webhooks)
 
 	// Simulate recent activity via state store.
 	ss := state.New(filepath.Join(t.TempDir(), "state.json"))
@@ -282,7 +327,7 @@ func TestWebhook_IfInactive(t *testing.T) {
 
 	mux := newWebhookMux(d)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/test.md?if_inactive=1h", strings.NewReader("payload"))
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/test?if_inactive=1h", strings.NewReader("payload"))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -294,5 +339,19 @@ func TestWebhook_IfInactive(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["response"] != "skipped: session recently active" {
 		t.Errorf("response = %q, want skipped message", resp["response"])
+	}
+}
+
+// TestWebhook_NoWebhooksConfigured returns 404 when agent has no webhooks configured.
+func TestWebhook_NoWebhooksConfigured(t *testing.T) {
+	d, _ := webhookTestSetup(t, t.TempDir(), "", nil) // nil webhooks
+	mux := newWebhookMux(d)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/anything?sync=true", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body.String())
 	}
 }
